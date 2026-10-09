@@ -77,6 +77,14 @@ DEM sources to evaluate: USGS 3DEP (US, high resolution), Copernicus GLO-30 (glo
 - Wire format: versioned schema (kotlinx.serialization with protobuf or CBOR) so old clients keep working.
 - Candidates to evaluate instead of building our own: Automerge, Electric/PowerSync-style sync, Couchbase Lite.
 
+### Peer-to-peer (long-term goal)
+Ideally modules talk directly with no central server, BitTorrent-style. Not built early, but these choices keep it possible:
+- **Identity is a keypair, not a server account.** Each device/user has a public key; ops are signed. A server can vouch for keys but isn't required.
+- **Content-addressed data.** Tile packs and large files are identified by hash and split into chunks, so any peer can serve any chunk and the receiver verifies it. This is the BitTorrent/IPFS model.
+- **The op log is already peer-friendly.** UUIDs + HLC timestamps + "send me the ops I'm missing" works the same between two phones as between a phone and a server.
+- **Transport stays pluggable.** Start with direct HTTP/WebSocket to a known peer. Later: LAN discovery (mDNS), a DHT for finding peers, relays for NAT traversal. Evaluate jvm-libp2p (MIT/Apache) before building our own.
+- **The server is just an always-on peer** that also seeds content and can act as a relay.
+
 ### Routing (future)
 - BRouter (Java, offline, hiking/bike profiles, already runs on Android) or GraphHopper (Java, offline-capable). Both are JVM-only, so they sit behind a `Router` interface.
 
@@ -84,6 +92,19 @@ DEM sources to evaluate: USGS 3DEP (US, high resolution), Copernicus GLO-30 (glo
 - Kotlin coroutines + Flow throughout.
 - CPU-heavy work (DEM decoding, contour generation, tile rendering) runs on `Dispatchers.Default`, which sizes to the device's cores. Large jobs are split per tile so they parallelize. This is where multi-core and hyperthreaded CPUs pay off.
 - I/O (disk, network, database) runs on `Dispatchers.IO`. GPS tracking runs in a foreground service.
+
+## Phasing
+Build and explore ideas first; the full system comes later.
+
+| Phase | Goal | Where it runs |
+|---|---|---|
+| 0. Explore map generation | DEM → hillshade, slope shading, contours. Output PNGs and tiles; check quality and speed. | JVM: `shared` + `devtool` CLI (fast iteration, no emulator) |
+| 1. Android shell | MapLibre map showing phase-0 output from local files; GPS location; debug server | Android, early, so phone constraints show up quickly |
+| 2. Offline + user data | Download manager, tracks, waypoints, GPX import/export, local DB | Android |
+| 3. Sync | Op log, sync simulator, then a Ktor peer | `shared` + server |
+| Later | OSM base map + routing, P2P transports, desktop, web, iOS | |
+
+Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
 Agents can't tap a screen or watch a map scroll, so every feature also needs an interface an agent can drive.
@@ -172,7 +193,7 @@ The project will be fully open source. Code and map content may need different l
 ## Open questions
 1. Which "simple features" is BackCountry Navigator missing? What does each reference app do that must be kept?
 2. What does "local map generation" mean: on the phone itself, or on infrastructure you control (your own server/desktop) instead of third-party tile providers?
-3. What does "distributed" mean: (a) multi-device sync for one user, (b) multi-user collaboration like CalTopo shared maps, (c) device-to-device with no internet (e.g. a group in the backcountry), or all three?
+3. ~~What does "distributed" mean?~~ Decided: ideally peer-to-peer with no central server (BitTorrent-like); a server is an optional always-on peer. Not built early. See [Peer-to-peer](#peer-to-peer-long-term-goal).
 4. ~~Region~~ Decided: global, using the best available data for each region.
 5. ~~Open source?~~ Decided: fully open source, with working license choices that can be revisited. See [Licensing](#licensing).
 6. App name and package ID.
