@@ -128,6 +128,23 @@ class GeoTiffTest {
     }
 
     @Test
+    fun horizontalPredictorUndoesIntegerDifferences() {
+        val values = floatArrayOf(2341.5f, 2342.25f, 2340f, -999999f, 1f, 2f)
+        val width = 3
+        val bytes = ByteArray(values.size * 4)
+        for (y in 0 until 2) {
+            var prev = 0
+            for (x in 0 until width) {
+                val bits = values[y * width + x].toRawBits()
+                val diff = bits - prev
+                prev = bits
+                for (k in 0 until 4) bytes[(y * width + x) * 4 + k] = ((diff shr (8 * k)) and 0xFF).toByte()
+            }
+        }
+        assertEquals(values.toList(), GeoTiff.undoHorizontalPredictor32(bytes, width, 2, littleEndian = true).toList())
+    }
+
+    @Test
     fun lzwDecodesKnownStream() {
         // "ABABABA" hand-encoded: CLEAR, 'A', 'B', 258(AB), 260(ABA), EOI with 9-bit codes.
         val codes = listOf(256, 65, 66, 258, 260, 257)

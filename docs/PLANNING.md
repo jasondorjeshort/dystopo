@@ -174,6 +174,14 @@ Findings to follow up:
 
 **2026-10-09: USGS 3DEP 1/3″ source + `devtool compare`.** Pure-Kotlin GeoTIFF reader in `shared` (tiled float32, LZW + floating-point predictor, georeferencing; deflate injected on JVM) reads 3DEP Cloud-Optimized GeoTIFFs over HTTP range requests: only 22 requests and 20 internal tiles for a 16 km area instead of two ~400 MB files. Compared with Terrarium on an identical Web Mercator grid (a 16 km Colorado mountain area, z14, 4.6M cells): mean difference 0.9 m, RMS 7 m, max 140 m (cliffs). 3DEP removes Terrarium's seam line and terrace striping and gives crisper gullies and ridges. Next: 3DEP 1 m lidar, then compositing.
 
+**2026-10-09: 1 m lidar + first compositing.** `shared` gained UTM projection math (Krüger series), GeoTIFF overviews and predictor 2, and `Composite.over` (fills gaps from a fallback, smoothstep-feathered over a band at coverage edges using a chamfer distance transform). New devtool sources: `3dep-1m` (lidar only: finds tiles via the USGS TNM API, samples each survey project separately, composites newer surveys on top) and `3dep-best` (lidar over the 10 m DEM). Each lidar tile is read at the coarsest internal overview that still matches the output resolution, so a zoomed-out render reads 4 m data, not 1 m.
+
+Test in a Colorado mountain area covered by two overlapping lidar surveys:
+- At ~1.9 m/px (z16) lidar shows talus, gullies, and cliff bands that 10 m data smooths away. The highest point matches the published summit elevation to within 0.2 m; the 10 m DEM is 4 m low.
+- At ~7.5 m/px (z14) over 16 km: no visible seam between the two surveys. Lidar vs 10 m: mean −0.04 m, RMS 2.3 m. First fetch 13 s (180 range requests), 2.4 s once cached.
+- Not yet exercised on real data: the lidar → 10 m fallback seam (this area is fully covered). It's unit-tested; needs a real test area at a lidar coverage edge.
+- For per-tile rendering later: feathering needs a halo of neighboring data, or tiles will disagree at their borders when a coverage edge sits just outside a tile.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
