@@ -104,6 +104,20 @@ Rough estimates for one 1°×1° cell (~9,000 km² at 40°N), to be measured in 
 - The same packs are what peers share: small, content-addressable, and style-independent.
 - Raster exports (PNG/MBTiles/XYZ for other apps) are rendered from these on desktop/server, or on device on request.
 
+### Elevation compositing: seamless multi-source DEM (key differentiator)
+Source quality varies hugely: USGS 3DEP (1 m lidar in much of the US, 10 m everywhere in the US) is far better than global sources (Copernicus/SRTM, ~30 m). Some other countries have national lidar too (e.g. Switzerland, Austria, Norway, UK, NZ). **No existing app moves smoothly between sources.** That's a core feature to build.
+
+What "smooth" requires:
+- **A source catalog.** Each source has a coverage footprint (polygon or tile mask; 3DEP 1 m is patchy), resolution, accuracy, capture date, vertical datum, and license/attribution.
+- **Best available per location.** For any area and zoom, use the highest-ranked source that covers each cell. Don't fetch 1 m data for a zoom-10 view.
+- **Common vertical datum.** Sources use different datums (US NAVD88, EGM96, EGM2008, ellipsoid heights). Unconverted, they disagree by metres and leave a step at every boundary. Convert everything to one datum before blending.
+- **Feathered seams.** Near a coverage edge, blend the two sources over a transition band (weight by distance to the edge) so there's no cliff or kink in the hillshade or contours.
+- **Void filling.** Holes in a high-resolution source (water, data gaps) are filled from the next source down.
+- **Provenance.** Output records which sources contributed, for attribution and so the app can show where high-resolution data exists.
+- **Where it runs.** Compositing runs on the server/desktop when building region packs, so phones get one seamless DEM pyramid. The same `shared` code can composite on device when a user has downloaded raw sources.
+
+Phase-0 source so far: **Mapzen Terrarium** (AWS Open Data), a frozen ~2017 global mosaic. In the US it's mostly the old 10 m NED, resampled to Web Mercator at z≤15; outside the US it's mostly 30–90 m SRTM and similar. The seams and striping seen in phase-0 renders likely come from its resampling and source boundaries.
+
 ### Local map generation (feasibility notes)
 | Layer | Source | On-device feasibility |
 |---|---|---|
