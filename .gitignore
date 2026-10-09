@@ -23,6 +23,15 @@ local.properties
 *.dex
 output-metadata.json
 
+# Personal/local config (test areas etc.) - never commit, may reveal locations
+*.local.*
+local/
+
+# Generated output, downloaded data, caches
+out/
+data/
+cache/
+
 # Kotlin
 .kotlin/
 

@@ -172,6 +172,14 @@ Agents can't tap a screen or watch a map scroll, so every feature also needs an 
 | UI end-to-end | Maestro flows (YAML) or UI Automator, run against the emulator | Critical user journeys |
 | Server debug endpoints | Same debug API on the Ktor server; local multi-peer setup via Docker Compose | Server-side state and sync inspection |
 
+### Privacy in the repo
+This is a public, open-source repo. **Nothing that reveals where the developer lives or travels is ever committed.**
+- Personal test areas are defined in a gitignored local file (`*.local.*`, e.g. `devtool.local.json`). It can hold several named areas ("home", "trip") and be changed freely.
+- Committed tests, fixtures, and golden images use only well-known public places. Initial defaults: **Mount Rainier, WA** (US, high-resolution USGS lidar) and **Mont Blanc / Chamonix** (non-US, Copernicus 30 m).
+- Generated output, downloaded data, and caches go in gitignored directories (`out/`, `data/`, `cache/`).
+- Test GPS tracks and waypoints are synthetic or come from public places. Real recorded tracks are never used as fixtures.
+- The same rule applies to the app's debug tooling: logs and state dumps that may contain locations stay local.
+
 ### Command-line environment
 - Gradle wrapper builds everything; no Android Studio required for agents (it's still useful for humans).
 - Android SDK command-line tools + `adb` + headless emulator (`emulator -no-window`).
