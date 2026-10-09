@@ -149,6 +149,15 @@ Build and explore ideas first; the full system comes later.
 | 3. Sync | Op log, sync simulator, then a Ktor peer | `shared` + server |
 | Later | OSM base map + routing, P2P transports, desktop, web, iOS | |
 
+### Phase 0 log
+**2026-10-09: first pipeline working.** `devtool render` fetches Terrarium elevation tiles (Mapzen/AWS, global, z≤15), stitches and crops them to an area, then draws hillshade + contours to PNG. JVM timings for Mount Rainier at z13 (1166×1279 px, 13 m/px, 30 tiles): hillshade 41 ms, contours 577 ms (273 levels at 40 ft, 1.1M points), drawing 785 ms. That's whole-area work in ~0.6 s total, so per-tile work on a phone looks very feasible.
+
+Findings to follow up:
+- **Contour density must depend on zoom.** 40 ft at 13 m/px is an unreadable solid mass on steep terrain; 200 ft is clean. Need a zoom → interval table, and probably to hide lines where they'd merge (steep cliffs).
+- **Faint striping on smooth slopes** (visible on Rainier's glaciers in the hillshade). Likely the source being upsampled from lower resolution; check other zooms, and try light smoothing before hillshade/contours.
+- **Contours are unsmoothed and unsimplified.** Add Douglas–Peucker simplification (point count) and possibly smoothing.
+- Terrarium is a convenient starting source, but its resolution varies by region. Next sources to try directly: Copernicus GLO-30 and USGS 3DEP.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development

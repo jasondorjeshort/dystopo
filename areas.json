@@ -1,0 +1,12 @@
+{
+  "areas": {
+    "rainier": {
+      "bbox": [-121.86, 46.78, -121.66, 46.93],
+      "description": "Mount Rainier, WA, USA. Glaciated stratovolcano; US high-resolution elevation coverage."
+    },
+    "mont-blanc": {
+      "bbox": [6.78, 45.80, 6.95, 45.93],
+      "description": "Mont Blanc massif and the Chamonix valley, France/Italy. Non-US coverage."
+    }
+  }
+}
