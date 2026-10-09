@@ -126,7 +126,15 @@ class LidarSource(private val cacheDir: File = File("cache/3dep1m")) : Elevation
             grids += ElevationGrid(window.width, window.height, window.cellSizeMeters, values)
         }
 
+        // USGS lidar DEMs are NAVD88; convert to the internal EGM2008 datum.
+        var unconverted = 0L
+        if (grids.isNotEmpty()) {
+            val offsets = Geoids.navd88ToEgm2008(window)
+            for (g in grids) unconverted += Geoids.apply(g.values, offsets).second
+        }
+
         val counters = LinkedHashMap<String, Long>()
+        counters["datumUnconvertedCells"] = unconverted
         counters["lidarProjects"] = projects.size.toLong()
         counters["lidarTilesUsed"] = tilesUsed
         counters["tilesDecoded"] = projects.sumOf { p -> p.tiles.sumOf { it.tilesDecoded } }.toLong()
@@ -165,7 +173,8 @@ class LidarSource(private val cacheDir: File = File("cache/3dep1m")) : Elevation
 /** Best available USGS elevation: 1 m lidar where it exists, feathered into the 10 m DEM elsewhere. */
 class ThreeDepBestSource : ElevationSource {
     override val id = "3dep-best"
-    override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar and 1/3 arc-second DEMs, public domain."
+    override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar and 1/3 arc-second DEMs, public domain. " +
+        Geoids.ATTRIBUTION
 
     override fun fetch(window: MercatorWindow): ElevationSource.Result {
         val base = ThreeDepSource().fetch(window)
@@ -174,6 +183,32 @@ class ThreeDepBestSource : ElevationSource {
         val counters = LinkedHashMap<String, Long>()
         base.counters.forEach { (k, v) -> counters["base.$k"] = v }
         lidar.counters.forEach { (k, v) -> counters["lidar.$k"] = v }
+        counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
+        return ElevationSource.Result(merged, counters)
+    }
+}
+
+/**
+ * Best available elevation anywhere: Copernicus 30 m globally, with US 3DEP (10 m, then 1 m lidar)
+ * laid over it where available. Everything is in EGM2008. The 30 m -> 10 m transition gets a
+ * wider blend band than lidar -> 10 m, scaled to the coarser source's resolution.
+ */
+class BestSource : ElevationSource {
+    companion object {
+        const val GLOBAL_FEATHER_METERS = 300.0
+    }
+
+    override val id = "best"
+    override val attribution = CopernicusSource().attribution + " " + ThreeDepBestSource().attribution
+
+    override fun fetch(window: MercatorWindow): ElevationSource.Result {
+        val global = CopernicusSource().fetch(window)
+        val us = ThreeDepBestSource().fetch(window)
+        val merged = Composite.over(us.grid, global.grid, GLOBAL_FEATHER_METERS / window.cellSizeMeters)
+        val counters = LinkedHashMap<String, Long>()
+        global.counters.forEach { (k, v) -> counters["copernicus.$k"] = v }
+        us.counters.forEach { (k, v) -> counters["3dep.$k"] = v }
+        counters["usCoveragePermille"] = (Composite.coverage(us.grid) * 1000).toLong()
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
         return ElevationSource.Result(merged, counters)
     }

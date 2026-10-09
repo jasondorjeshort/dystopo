@@ -37,7 +37,7 @@ class RenderCommand : AreaCommand("render") {
     override fun help(context: Context) =
         "Fetch elevation for an area and render hillshade + contours to a PNG. Prints a JSON report."
 
-    private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("terrarium")
+    private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
     private val style by StyleOptions()
     private val out by option("--out", help = "Output PNG (default out/<area>-<source>-z<zoom>.png)").file()
 

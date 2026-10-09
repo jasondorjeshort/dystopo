@@ -182,6 +182,12 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 - Not yet exercised on real data: the lidar → 10 m fallback seam (this area is fully covered). It's unit-tested; needs a real test area at a lidar coverage edge.
 - For per-tile rendering later: feathering needs a halo of neighboring data, or tiles will disagree at their borders when a coverage edge sits just outside a tile.
 
+**2026-10-09: global coverage + common vertical datum.** All sources now output **EGM2008** heights. 3DEP (NAVD88) is converted per pixel with NGS GEOID18 + the NAD83(2011)→WGS84 ellipsoid shift − NGA EGM2008, using public-domain grids from the PROJ CDN read by range requests. New `copernicus` source (GLO-30 COGs on AWS; samples across 1° cell boundaries so cells join seamlessly) and `best` source: Copernicus globally, 3DEP 10 m over it (300 m blend band), lidar over that (60 m band). `best` is now the default.
+- Datum check on bare, flat ground (Bonneville Salt Flats): converted 3DEP minus Copernicus = **+0.20 m** mean (0.40 m mean abs). Unconverted it would be +1.0 m; with the ellipsoid shift's sign flipped, +1.5 m. Conversion confirmed.
+- Border seam (Glacier/Waterton, 49°N): contours and hillshade continue smoothly through the US→Canada transition. US data's edge follows lidar UTM tile edges, not the border, so the transition is irregular; the feathering handles it.
+- Copernicus is a surface model (includes forest canopy): in forest it sits several meters above bare-earth 3DEP (mean −3.7 m best vs Copernicus at the border). Feathering hides that as a gentle ramp, but contours outside the US will run high in forests. Bare-earth global alternatives: FABDEM (CC BY-NC-SA, non-commercial: check against our licensing before use), or national lidar DTMs (Canada HRDEM, Swisstopo, etc.) added as more layers.
+- Bug found by viewing output: pixel-is-point cells (Copernicus) left a 1-px seam at every 1° boundary until sampling read neighbors across cells.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development

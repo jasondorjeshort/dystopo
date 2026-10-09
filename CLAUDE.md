@@ -14,8 +14,8 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ./gradlew check                                           # all tests (no device needed)
 ./gradlew :devtool:run --args="areas"                     # list named areas
 ./gradlew :devtool:run --args="render --area rainier"     # hillshade + contours -> out/rainier-z13.png + JSON report
-./gradlew :devtool:run --args="render --area rainier --source 3dep"   # sources: terrarium (global), 3dep (US 10 m),
-                                                                      #   3dep-1m (US lidar, NaN = magenta), 3dep-best (lidar over 10 m)
+./gradlew :devtool:run --args="render --area rainier --source 3dep"   # sources: best (default; global, EGM2008), copernicus (global 30 m),
+                                                                      #   3dep (US 10 m), 3dep-1m (US lidar, NaN = magenta), 3dep-best, terrarium (legacy)
 ./gradlew :devtool:run --args="compare --area rainier --zoom 14"      # sources side by side + diff stats
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```

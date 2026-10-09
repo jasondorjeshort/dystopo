@@ -7,6 +7,14 @@
     "mont-blanc": {
       "bbox": [6.78, 45.80, 6.95, 45.93],
       "description": "Mont Blanc massif and the Chamonix valley, France/Italy. Non-US coverage."
+    },
+    "bonneville": {
+      "bbox": [-113.95, 40.70, -113.80, 40.80],
+      "description": "Bonneville Salt Flats, UT, USA. Flat and bare, for checking vertical datum offsets between sources."
+    },
+    "glacier-waterton": {
+      "bbox": [-114.05, 48.92, -113.80, 49.08],
+      "description": "US-Canada border between Glacier and Waterton Lakes national parks. Tests the US 3DEP -> global Copernicus seam."
     }
   }
 }

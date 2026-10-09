@@ -60,7 +60,7 @@ class CompareCommand : AreaCommand("compare") {
         "Render the same area from several elevation sources, side by side on an identical pixel grid."
 
     private val sources by option("--sources", help = "Comma-separated sources, left to right")
-        .split(",").default(listOf("terrarium", "3dep"))
+        .split(",").default(listOf("copernicus", "best"))
     private val style by StyleOptions()
     private val out by option("--out", help = "Output PNG (default out/<area>-compare-z<zoom>.png)").file()
 

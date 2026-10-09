@@ -67,12 +67,16 @@ class RemoteTiff(url: String, cacheDir: File) {
         return x >= e[0] && x < e[2] && y > e[1] && y <= e[3]
     }
 
-    /** Bilinear sample at CRS (x, y). NaN outside the image or if any neighbor is no-data. */
+    /**
+     * Bilinear sample at CRS (x, y). NaN if any neighbor is no-data, or more than one pixel
+     * beyond the outermost pixel centers. Within that pixel the edge value is extended, which
+     * closes the sliver between adjacent pixel-is-point files (e.g. Copernicus 1° cells).
+     */
     fun sample(levelIndex: Int, x: Double, y: Double): Float {
         val l = levels[levelIndex]
         val col = l.colOf(x)
         val row = l.rowOf(y)
-        if (col < -0.5 || row < -0.5 || col > l.width - 0.5 || row > l.height - 0.5) return Float.NaN
+        if (col < -1.0 || row < -1.0 || col > l.width.toDouble() || row > l.height.toDouble()) return Float.NaN
         val c0 = floor(col).toInt()
         val r0 = floor(row).toInt()
         val fx = (col - c0).toFloat()
@@ -84,7 +88,8 @@ class RemoteTiff(url: String, cacheDir: File) {
         return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
     }
 
-    private fun at(levelIndex: Int, col: Int, row: Int): Float {
+    /** Value of pixel ([col], [row]) at [levelIndex], clamped to the image; NaN for no-data. */
+    fun at(levelIndex: Int, col: Int, row: Int): Float {
         val l = levels[levelIndex]
         val c = col.coerceIn(0, l.width - 1)
         val r = row.coerceIn(0, l.height - 1)

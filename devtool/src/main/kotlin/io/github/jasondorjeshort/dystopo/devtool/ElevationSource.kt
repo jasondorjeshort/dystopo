@@ -23,9 +23,11 @@ interface ElevationSource {
     fun fetch(window: MercatorWindow): Result
 
     companion object {
-        val ids = listOf("terrarium", "3dep", "3dep-1m", "3dep-best")
+        val ids = listOf("best", "copernicus", "terrarium", "3dep", "3dep-1m", "3dep-best")
 
         fun byId(id: String): ElevationSource = when (id) {
+            "best" -> BestSource()
+            "copernicus" -> CopernicusSource()
             "terrarium" -> TerrariumSource()
             "3dep" -> ThreeDepSource()
             "3dep-1m" -> LidarSource()

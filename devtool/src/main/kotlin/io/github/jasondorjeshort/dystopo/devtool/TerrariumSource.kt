@@ -12,6 +12,7 @@ import javax.imageio.ImageIO
  * Mapzen/Tilezen terrain tiles in Terrarium encoding, hosted on AWS Open Data.
  * Global, z0-15, already in Web Mercator. A frozen ~2017 mosaic: mostly 10 m NED in the US,
  * 30-90 m SRTM and similar elsewhere. Tiles are cached on disk under [cacheDir].
+ * Heights are in each underlying source's own datum and are not converted; use for comparison only.
  */
 class TerrariumSource(private val cacheDir: File = File("cache/terrarium")) : ElevationSource {
     companion object {
