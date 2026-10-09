@@ -1,0 +1,10 @@
+#!/bin/sh
+# Blocks commits containing personal locations from devtool.local.json. See tools/PrivacyCheck.java.
+root="$(git rev-parse --show-toplevel)"
+java_bin="java"
+if [ -n "$JAVA_HOME" ]; then java_bin="$JAVA_HOME/bin/java"; fi
+if ! command -v "$java_bin" >/dev/null 2>&1; then
+    echo "pre-commit: Java not found (set JAVA_HOME or put java on PATH); privacy check can't run." >&2
+    exit 1
+fi
+exec "$java_bin" "$root/tools/PrivacyCheck.java" staged
