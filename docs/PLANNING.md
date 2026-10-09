@@ -113,7 +113,18 @@ Agents can't tap a screen or watch a map scroll, so every feature also needs an 
 - A `CLAUDE.md` at the repo root documents these commands and conventions for agents.
 
 ## Licensing
-The project will be fully open source. Code and map content may need different licenses. _Not decided yet; notes below._
+The project will be fully open source. Code and map content may need different licenses. Working choices: GPLv3 for apps, AGPLv3 for the server, LGPLv3 possible for `shared`; ODbL for OSM-derived vector tiles, CC BY-SA 4.0 for other content. These can be revisited later (see below).
+
+### Hard rules
+1. **Data compatibility.** Everything we produce must comply with the licenses of OSM (ODbL) and every elevation or other data source we use, including attribution.
+2. **iOS compatibility.** Tiles, the sync protocol, and anything else other modules exchange must be usable by a future iPhone app. Tile formats and the wire protocol are open, documented specs, so any client can implement them regardless of the code license.
+3. **Keep relicensing possible.** We can change the license later only as long as we remain the sole copyright holders. So:
+   - Write our own code. Don't copy code from other projects into the repo.
+   - Dependencies must be permissively licensed (MIT, BSD, Apache-2.0, EPL/EDL, etc.). **No GPL/LGPL/AGPL dependencies.** Those would lock in our license choice.
+   - No outside contributions until there's a contribution policy (CLA or copyright assignment).
+   - An automated dependency-license check fails the build on any disallowed license.
+   - Versions already released under a license stay available under that license; relicensing applies going forward.
+4. **Data source registry.** Every data source (DEM, OSM, overlays) is listed with its license, required attribution text, and allowed uses. Tile builds read attribution from this registry and write it into tile metadata.
 
 ### Code: GPL family
 | Option | Effect | Fit |
@@ -163,5 +174,5 @@ The project will be fully open source. Code and map content may need different l
 2. What does "local map generation" mean: on the phone itself, or on infrastructure you control (your own server/desktop) instead of third-party tile providers?
 3. What does "distributed" mean: (a) multi-device sync for one user, (b) multi-user collaboration like CalTopo shared maps, (c) device-to-device with no internet (e.g. a group in the backcountry), or all three?
 4. ~~Region~~ Decided: global, using the best available data for each region.
-5. ~~Open source?~~ Decided: fully open source. Still open: GPL vs AGPL vs LGPL per module, and CC BY-SA vs CC BY for non-OSM tiles. See [Licensing](#licensing).
+5. ~~Open source?~~ Decided: fully open source, with working license choices that can be revisited. See [Licensing](#licensing).
 6. App name and package ID.
