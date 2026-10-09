@@ -59,6 +59,38 @@ We expect features to multiply quickly. Total code complexity can grow large, bu
 - Vectors: Mapbox Vector Tiles (MVT). Elevation: terrain-RGB / Terrarium DEM tiles.
 - User data import/export: GPX, KML/KMZ, GeoJSON.
 
+### Raw data + on-device rendering vs downloaded tiles
+Rough estimates for one 1°×1° cell (~9,000 km² at 40°N), to be measured in phase 0:
+
+| What's stored offline | Size per 1°×1° | Device CPU when viewing | Restylable on device? |
+|---|---|---|---|
+| Raster topo tiles to z16 (CalTopo/BCN style) | ~1.5–2.5 GB | Almost none (decode images) | No |
+| Raster topo tiles to z15 | ~0.4–0.6 GB | Almost none | No |
+| OSM vector tiles (PMTiles) | ~20–100 MB | GPU rendering, low CPU | Yes |
+| DEM, 30 m (Copernicus GLO-30), compressed | ~15–30 MB | See below | Yes |
+| DEM, 10 m (USGS 3DEP 1/3″), compressed | ~100–250 MB | See below | Yes |
+| DEM, 1 m lidar | Several GB | See below | Yes; small areas only |
+| Raw OSM extract (.osm.pbf) | Similar to vector tiles | **Not renderable directly**: needs preprocessing that is heavy in RAM | n/a |
+
+**Elevation: generate on the fly. Feasible and cheap.**
+- Hillshade and slope shading: a small per-pixel kernel. MapLibre already does hillshade on the GPU from DEM tiles. Effectively free.
+- Contours: marching squares per tile, ~1–10 ms per 256–512 px tile on one phone core, parallel across cores. maplibre-contour does this in browsers today.
+- Memory: a 512×512 16-bit DEM tile is 512 KB. A 50-tile LRU cache is ~25 MB.
+- Generated contour tiles are cached on disk, so CPU is spent once per area, not on every pan.
+- The DEM needs zoomed-out overview levels (a pyramid) so low-zoom contours stay smooth and fast.
+- **Product win:** contour interval, units (ft/m), shading, and slope-angle thresholds become user settings rather than baked into images.
+
+**OSM: download vector tiles, don't process raw OSM on the phone.**
+- Raw OSM has no spatial index. Turning it into something renderable means resolving every node location, which takes lots of RAM and minutes to hours. Fine on desktop/server (Planetiler), impractical on a phone beyond a county-sized area.
+- Vector tiles are already "data rendered on device": MapLibre styles them on the GPU at view time. OsmAnd, Organic Maps, and Mapsforge-based apps have used this model on phones for over a decade.
+- Possible later experiment: on-device conversion of small raw extracts.
+
+**Decision (proposed): hybrid.**
+- Offline packs contain **DEM (as a pyramid) + OSM vector tiles + overlays**, not rendered rasters.
+- Hillshade, slope shading, and contours are generated on device and cached.
+- The same packs are what peers share: small, content-addressable, and style-independent.
+- Raster exports (PNG/MBTiles/XYZ for other apps) are rendered from these on desktop/server, or on device on request.
+
 ### Local map generation (feasibility notes)
 | Layer | Source | On-device feasibility |
 |---|---|---|
