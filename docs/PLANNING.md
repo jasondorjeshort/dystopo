@@ -25,6 +25,7 @@ The core problem: each reference app has features the others lack. The goal is t
 3. **Offline downloads as easy as BackCountry Navigator.** Pick an area and zoom range, see the size estimate, download, done.
 4. **Many map sources, kept fresh.** A pluggable map-source catalog: built-in sources, user-added XYZ/WMS/WMTS sources, and regularly regenerated OSM-based maps.
 5. **Modern UI.**
+6. **The user controls how the map is drawn.** Contour interval, units, shading, slope-angle thresholds, which layers show, and **label/text size** are settings. Most map apps draw text far too small on average phone screens. Default to larger, readable labels, scaled to screen size and density, with a user text-scale setting.
 
 ## Architecture goal: rapid feature growth, small footprint where it counts
 We expect features to multiply quickly. Total code complexity can grow large, but **the Android app must stay small in CPU, memory, battery, and APK size.**
@@ -84,6 +85,18 @@ Rough estimates for one 1°×1° cell (~9,000 km² at 40°N), to be measured in 
 - Raw OSM has no spatial index. Turning it into something renderable means resolving every node location, which takes lots of RAM and minutes to hours. Fine on desktop/server (Planetiler), impractical on a phone beyond a county-sized area.
 - Vector tiles are already "data rendered on device": MapLibre styles them on the GPU at view time. OsmAnd, Organic Maps, and Mapsforge-based apps have used this model on phones for over a decade.
 - Possible later experiment: on-device conversion of small raw extracts.
+
+**How offline navigation apps do it.** OsmAnd (`.obf`), Organic Maps (`.mwm`), MapFactor Navigator, and Mapsforge-based apps all use the same model: a server converts OSM once into **one compact file per country/state**, and the phone renders and routes from it. Each file holds:
+- Vector geometry with a spatial index and pre-simplified versions for zoomed-out views.
+- A **routing graph** (roads/paths as a network with costs) for on-device route finding.
+- A search index (place names, addresses).
+"Very simple map" apps draw only a subset (roads, water, places) with minimal styling, which keeps files small and rendering cheap.
+
+**Our equivalent: region packs.**
+- One pack per country/state (matching standard extract boundaries, e.g. Geofabrik), built by Planetiler + routing tools on desktop/server/peers.
+- A pack contains: OSM vector tiles (PMTiles), a routing graph (format depends on BRouter vs GraphHopper), a search index, and the DEM pyramid. Each part is optional and separately versioned.
+- **Two ways to download:** whole region (simple, like Navigator) or a drawn area (like BackCountry Navigator). Area downloads are cut from region packs; PMTiles supports extracting a bounding box by HTTP range requests.
+- Map detail is a style choice, not a data choice: the same pack can be drawn as a simple navigation map or a detailed topo map.
 
 **Decision (proposed): hybrid.**
 - Offline packs contain **DEM (as a pyramid) + OSM vector tiles + overlays**, not rendered rasters.
