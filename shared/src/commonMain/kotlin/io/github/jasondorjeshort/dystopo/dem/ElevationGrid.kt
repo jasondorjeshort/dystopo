@@ -22,9 +22,19 @@ class ElevationGrid(
     /** Like [get], but coordinates outside the grid are clamped to the nearest edge sample. */
     fun clamped(x: Int, y: Int): Float = values[y.coerceIn(0, height - 1) * width + x.coerceIn(0, width - 1)]
 
-    fun min(): Float = values.min()
+    /** Lowest elevation, ignoring NaN (no data). */
+    fun min(): Float {
+        var m = Float.POSITIVE_INFINITY
+        for (v in values) if (v < m) m = v
+        return m
+    }
 
-    fun max(): Float = values.max()
+    /** Highest elevation, ignoring NaN (no data). */
+    fun max(): Float {
+        var m = Float.NEGATIVE_INFINITY
+        for (v in values) if (v > m) m = v
+        return m
+    }
 
     fun crop(x0: Int, y0: Int, w: Int, h: Int): ElevationGrid {
         require(x0 >= 0 && y0 >= 0 && x0 + w <= width && y0 + h <= height) {

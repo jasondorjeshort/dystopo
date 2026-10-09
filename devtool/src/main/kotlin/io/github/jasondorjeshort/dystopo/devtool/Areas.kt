@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.devtool
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.UsageError
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -44,6 +45,22 @@ object Areas {
             }
         }
         return result
+    }
+
+    /** Resolves --area / --bbox options to an optional area name and a bounding box. */
+    fun resolve(areaName: String?, bboxText: String?): Pair<String?, BoundingBox> = when {
+        areaName != null && bboxText != null -> throw UsageError("use --area or --bbox, not both")
+        areaName != null -> {
+            val areas = load()
+            val found = areas[areaName] ?: throw UsageError("unknown area '$areaName'; known: ${areas.keys.joinToString()}")
+            areaName to found.boundingBox()
+        }
+        bboxText != null -> {
+            val parts = bboxText.split(",").map { it.trim().toDoubleOrNull() }
+            if (parts.size != 4 || parts.any { it == null }) throw UsageError("--bbox must be west,south,east,north")
+            null to BoundingBox(parts[0]!!, parts[1]!!, parts[2]!!, parts[3]!!)
+        }
+        else -> throw UsageError("one of --area or --bbox is required")
     }
 }
 

@@ -14,6 +14,8 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ./gradlew check                                           # all tests (no device needed)
 ./gradlew :devtool:run --args="areas"                     # list named areas
 ./gradlew :devtool:run --args="render --area rainier"     # hillshade + contours -> out/rainier-z13.png + JSON report
+./gradlew :devtool:run --args="render --area rainier --source 3dep"   # sources: terrarium (global), 3dep (US)
+./gradlew :devtool:run --args="compare --area rainier --zoom 14"      # sources side by side + diff stats
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```
 `devtool` runs with the repo root as working directory. Downloads are cached in `cache/`, output goes to `out/`. Both are gitignored. View output PNGs to check rendering.

@@ -17,5 +17,5 @@ class Devtool : CliktCommand(name = "devtool") {
 }
 
 fun main(args: Array<String>) = Devtool()
-    .subcommands(AreasCommand(), RenderCommand())
+    .subcommands(AreasCommand(), RenderCommand(), CompareCommand())
     .main(args)

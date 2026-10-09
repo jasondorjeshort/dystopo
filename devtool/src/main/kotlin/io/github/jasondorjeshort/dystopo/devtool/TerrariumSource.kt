@@ -2,68 +2,43 @@ package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
-import io.github.jasondorjeshort.dystopo.geo.BoundingBox
+import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.TileId
-import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import java.io.File
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.time.Duration
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.imageio.ImageIO
-import kotlin.math.ceil
-import kotlin.math.floor
 
 /**
  * Mapzen/Tilezen terrain tiles in Terrarium encoding, hosted on AWS Open Data.
- * Global, z0-15, already in Web Mercator. Tiles are cached on disk under [cacheDir].
+ * Global, z0-15, already in Web Mercator. A frozen ~2017 mosaic: mostly 10 m NED in the US,
+ * 30-90 m SRTM and similar elsewhere. Tiles are cached on disk under [cacheDir].
  */
-class TerrariumSource(private val cacheDir: File = File("cache/terrarium")) {
+class TerrariumSource(private val cacheDir: File = File("cache/terrarium")) : ElevationSource {
     companion object {
         const val MAX_ZOOM = 15
         const val TILE_SIZE = 256
         private const val URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%d/%d/%d.png"
-        const val ATTRIBUTION = "Elevation: Mapzen Terrain Tiles (AWS Open Data), from SRTM, USGS 3DEP/NED, " +
-            "GMTED2010, ETOPO1 and national datasets. " +
-            "https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
     }
 
-    data class Mosaic(val grid: ElevationGrid, val tiles: Int, val downloaded: Int)
-
-    private val client = HttpClient.newBuilder()
-        .followRedirects(HttpClient.Redirect.NORMAL)
-        .connectTimeout(Duration.ofSeconds(20))
-        .build()
+    override val id = "terrarium"
+    override val attribution = "Elevation: Mapzen Terrain Tiles (AWS Open Data), from SRTM, USGS 3DEP/NED, " +
+        "GMTED2010, ETOPO1 and national datasets. " +
+        "https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
 
     private fun cacheFile(tile: TileId) = File(cacheDir, "${tile.z}/${tile.x}/${tile.y}.png")
 
-    /** Returns the cached tile file, downloading it first if needed (and counting the download). */
-    private fun ensureCached(tile: TileId, downloaded: AtomicInteger): File {
-        val file = cacheFile(tile)
-        if (file.exists()) return file
-        file.parentFile.mkdirs()
-        val request = HttpRequest.newBuilder(URI(URL.format(tile.z, tile.x, tile.y)))
-            .header("User-Agent", "dystopo-devtool/0.1")
-            .timeout(Duration.ofSeconds(60))
-            .build()
-        val tmp = File(file.parentFile, "${file.name}.part")
-        val response = client.send(request, HttpResponse.BodyHandlers.ofFile(tmp.toPath()))
-        check(response.statusCode() == 200) { "HTTP ${response.statusCode()} for tile $tile" }
-        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        downloaded.incrementAndGet()
-        return file
-    }
-
-    /** Elevation grid covering exactly [bbox] at [zoom], stitched from tiles. */
-    fun mosaic(bbox: BoundingBox, zoom: Int): Mosaic {
-        require(zoom in 0..MAX_ZOOM) { "zoom must be 0..$MAX_ZOOM" }
-        val tiles = WebMercator.tilesCovering(bbox, zoom)
-        val downloaded = AtomicInteger()
-        tiles.parallelStream().forEach { ensureCached(it, downloaded) }
+    override fun fetch(window: MercatorWindow): ElevationSource.Result {
+        require(window.zoom in 0..MAX_ZOOM) { "terrarium zoom must be 0..$MAX_ZOOM" }
+        require(window.tileSize == TILE_SIZE) { "terrarium tiles are $TILE_SIZE px" }
+        val tiles = window.tiles()
+        val downloaded = AtomicLong()
+        tiles.parallelStream().forEach { tile ->
+            val file = cacheFile(tile)
+            if (!file.exists()) {
+                Http.download(URL.format(tile.z, tile.x, tile.y), file)
+                downloaded.incrementAndGet()
+            }
+        }
 
         val tx0 = tiles.minOf { it.x }
         val ty0 = tiles.minOf { it.y }
@@ -82,14 +57,8 @@ class TerrariumSource(private val cacheDir: File = File("cache/terrarium")) {
                 }
             }
         }
-
-        // Crop the tile mosaic to the bbox, in pixels.
-        val px0 = floor((WebMercator.lonToX(bbox.west, zoom) - tx0) * TILE_SIZE).toInt().coerceIn(0, fullW - 1)
-        val px1 = ceil((WebMercator.lonToX(bbox.east, zoom) - tx0) * TILE_SIZE).toInt().coerceIn(px0 + 1, fullW)
-        val py0 = floor((WebMercator.latToY(bbox.north, zoom) - ty0) * TILE_SIZE).toInt().coerceIn(0, fullH - 1)
-        val py1 = ceil((WebMercator.latToY(bbox.south, zoom) - ty0) * TILE_SIZE).toInt().coerceIn(py0 + 1, fullH)
-        val cellSize = WebMercator.metersPerPixel(bbox.centerLat, zoom, TILE_SIZE)
-        val full = ElevationGrid(fullW, fullH, cellSize, values)
-        return Mosaic(full.crop(px0, py0, px1 - px0, py1 - py0), tiles.size, downloaded.get())
+        val full = ElevationGrid(fullW, fullH, window.cellSizeMeters, values)
+        val grid = full.crop(window.x0 - tx0 * TILE_SIZE, window.y0 - ty0 * TILE_SIZE, window.width, window.height)
+        return ElevationSource.Result(grid, mapOf("tiles" to tiles.size.toLong(), "tilesDownloaded" to downloaded.get()))
     }
 }

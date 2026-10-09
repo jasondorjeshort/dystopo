@@ -172,6 +172,8 @@ Findings to follow up:
 - **Contours are unsmoothed and unsimplified.** Add Douglas–Peucker simplification (point count) and possibly smoothing.
 - Terrarium is a convenient starting source, but its resolution varies by region. Next sources to try directly: Copernicus GLO-30 and USGS 3DEP.
 
+**2026-10-09: USGS 3DEP 1/3″ source + `devtool compare`.** Pure-Kotlin GeoTIFF reader in `shared` (tiled float32, LZW + floating-point predictor, georeferencing; deflate injected on JVM) reads 3DEP Cloud-Optimized GeoTIFFs over HTTP range requests: only 22 requests and 20 internal tiles for a 16 km area instead of two ~400 MB files. Compared with Terrarium on an identical Web Mercator grid (a 16 km Colorado mountain area, z14, 4.6M cells): mean difference 0.9 m, RMS 7 m, max 140 m (cliffs). 3DEP removes Terrarium's seam line and terrace striping and gives crisper gullies and ridges. Next: 3DEP 1 m lidar, then compositing.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
