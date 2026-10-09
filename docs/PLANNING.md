@@ -39,8 +39,8 @@ We expect features to multiply quickly. Total code complexity can grow large, bu
 ## Exploration tracks
 | Track | Question | Status |
 |---|---|---|
-| Local map generation | Can we produce topo maps (contours, hillshade, slope shading, base features) from raw data on the device or the user's own machine instead of relying on third-party tile servers? | Explore first; may abandon |
-| OSM map + routing | Full offline vector map and trail/road routing from OpenStreetMap | Future |
+| Local map generation | Can we produce topo maps (contours, hillshade, slope shading, base features) from raw data on the device or the user's own machine instead of relying on third-party tile servers? | **Elevation side proven on desktop** (see Phase 0 log). OSM base map is next. |
+| OSM map + routing | Full offline vector map and trail/road routing from OpenStreetMap | Base map: starting (tasks T5, T6). Routing: future |
 | Multi-platform | Android → server → desktop → iOS | Architecture must allow it from day 1 |
 
 ## Proposed architecture
@@ -116,7 +116,7 @@ What "smooth" requires:
 - **Provenance.** Output records which sources contributed, for attribution and so the app can show where high-resolution data exists.
 - **Where it runs.** Compositing runs on the server/desktop when building region packs, so phones get one seamless DEM pyramid. The same `shared` code can composite on device when a user has downloaded raw sources.
 
-Phase-0 source so far: **Mapzen Terrarium** (AWS Open Data), a frozen ~2017 global mosaic. In the US it's mostly the old 10 m NED, resampled to Web Mercator at z≤15; outside the US it's mostly 30–90 m SRTM and similar. The seams and striping seen in phase-0 renders likely come from its resampling and source boundaries.
+Status: built in `devtool` as of 2026-10-09 (details in the Phase 0 log). Sources: `copernicus` (GLO-30, global), `3dep` (USGS 10 m), `3dep-1m` (USGS lidar, found through the TNM API), and `best`, which layers them with feathered edges in a common EGM2008 datum. `terrarium` (Mapzen's frozen 2017 mosaic) is kept only for comparison. Still missing: the source catalog with coverage footprints and dates, provenance in outputs, and per-tile compositing with halos.
 
 ### Local map generation (feasibility notes)
 | Layer | Source | On-device feasibility |
@@ -126,7 +126,7 @@ Phase-0 source so far: **Mapzen Terrarium** (AWS Open Data), a frozen ~2017 glob
 | Base map (roads, trails, water, land use) | OSM extracts | **Region-sized only.** Do it on the server/desktop with Planetiler (Java), then ship PMTiles to the device |
 | Land ownership, other overlays | Public datasets (e.g. PAD-US) | Server-side preprocessing |
 
-DEM sources to evaluate: USGS 3DEP (US, high resolution), Copernicus GLO-30 (global), AWS Terrain Tiles.
+DEM sources in use: USGS 3DEP 1/3″ and 1 m lidar (US), Copernicus GLO-30 (global). Candidates to add as more layers: national bare-earth lidar outside the US (Canada HRDEM, swissALTI3D, Austria, Norway, UK, NZ). FABDEM (bare-earth global) is CC BY-NC-SA, which conflicts with our licensing; don't use it.
 
 ### Offline-first data and sync
 - Local SQLite (SQLDelight, KMP-compatible) is the source of truth on every device.
@@ -158,10 +158,13 @@ Build and explore ideas first; the full system comes later.
 | Phase | Goal | Where it runs |
 |---|---|---|
 | 0. Explore map generation | DEM → hillshade, slope shading, contours. Output PNGs and tiles; check quality and speed. | JVM: `shared` + `devtool` CLI (fast iteration, no emulator) |
+| 0b. OSM base map on desktop | Planetiler → PMTiles for a region; MVT decoding in `shared`; trails, water, and names drawn over the terrain in `devtool` | JVM |
 | 1. Android shell | MapLibre map showing phase-0 output from local files; GPS location; debug server | Android, early, so phone constraints show up quickly |
 | 2. Offline + user data | Download manager, tracks, waypoints, GPX import/export, local DB | Android |
 | 3. Sync | Op log, sync simulator, then a Ktor peer | `shared` + server |
 | Later | OSM base map + routing, P2P transports, desktop, web, iOS | |
+
+Phases 0b and 1 are broken into independent tasks for parallel agents in [TASKS.md](TASKS.md).
 
 ### Phase 0 log
 **2026-10-09: first pipeline working.** `devtool render` fetches Terrarium elevation tiles (Mapzen/AWS, global, z≤15), stitches and crops them to an area, then draws hillshade + contours to PNG. JVM timings for Mount Rainier at z13 (1166×1279 px, 13 m/px, 30 tiles): hillshade 41 ms, contours 577 ms (273 levels at 40 ft, 1.1M points), drawing 785 ms. That's whole-area work in ~0.6 s total, so per-tile work on a phone looks very feasible.
@@ -204,7 +207,7 @@ Agents can't tap a screen or watch a map scroll, so every feature also needs an 
 | Layer | What it is | Used for |
 |---|---|---|
 | JVM unit tests | `shared` module tests, run with Gradle | Geo math, DEM decoding, contour generation, sync logic, storage |
-| Dev CLI (`devtool`) | JVM command-line app that calls into `shared` | `devtool contours --bbox … --out x.png`, `devtool sync-sim --peers 3`, inspecting PMTiles/GPX files |
+| Dev CLI (`devtool`) | JVM command-line app that calls into `shared` | Exists: `render`, `compare`, `areas`. Later: tile export, `sync-sim --peers 3`, PMTiles/GPX inspection |
 | Golden-image tests | Rendered tiles and screens compared against approved PNGs | Map rendering, hillshade, contours, UI screens (Roborazzi/Paparazzi run Compose screenshots on the JVM) |
 | Sync simulator | Many in-process peers over a fake network with latency, partitions, and reordering, driven by a seed | Proving offline/online convergence; any failure replays exactly from its seed |
 | In-app debug server | Debug builds run a small HTTP/JSON server, reached via `adb forward` | Query state, invoke actions, inject GPS fixes and tracks, toggle offline mode, load fixtures, dump the DB, fetch logs, take screenshots, read map camera/layers |
@@ -266,21 +269,23 @@ The project will be fully open source. Code and map content may need different l
 | Area | Choice | Status |
 |---|---|---|
 | Language | Kotlin (Java libraries where useful, JVM targets only) | Decided |
-| Code sharing | Kotlin Multiplatform | Proposed |
+| Code sharing | Kotlin Multiplatform | Decided; in use (JVM target now, Android and iOS targets added later) |
 | Android UI | Jetpack Compose (Compose Multiplatform later?) | Proposed |
 | Map renderer | MapLibre Native | Proposed |
 | Local DB | SQLDelight (SQLite) | Proposed |
 | Sync | Op log + HLC, pluggable transport | Proposed; evaluate libraries first |
 | Server | Ktor (Kotlin, JVM) | Proposed |
-| Tile generation | Planetiler (server/desktop) + on-device DEM processing | To explore |
+| Tile generation | Elevation: own code in `shared` (working). OSM: Planetiler on server/desktop | Elevation done on desktop; Planetiler is task T6 |
 | Routing | BRouter or GraphHopper | Future |
-| Build | Gradle (Kotlin DSL) | Proposed |
-| Min SDK | _TBD_ | Open |
+| Build | Gradle 8.14 (Kotlin DSL), JDK 21, Kotlin 2.2 | Decided |
+| Package ID | `io.github.jasondorjeshort.dystopo` | Decided (GitHub namespace) |
+| Min SDK | _TBD_ (proposal: 26) | Open |
 
 ## Dev environment setup
-- [x] Git
-- [ ] Android Studio (bundles JDK, Android SDK, emulator)
-- [ ] Emulator or physical device with USB debugging
+- [x] Git, GitHub CLI (`gh`), repo at https://github.com/jasondorjeshort/dystopo (private until there's something to show)
+- [x] JDK 21 (Temurin), Gradle wrapper
+- [ ] Android SDK command-line tools + headless emulator (task T10; Android Studio is optional)
+- [ ] Physical device with USB debugging
 
 ## Open questions
 1. Which "simple features" is BackCountry Navigator missing? What does each reference app do that must be kept?
@@ -288,4 +293,5 @@ The project will be fully open source. Code and map content may need different l
 3. ~~What does "distributed" mean?~~ Decided: ideally peer-to-peer with no central server (BitTorrent-like); a server is an optional always-on peer. Not built early. See [Peer-to-peer](#peer-to-peer-long-term-goal).
 4. ~~Region~~ Decided: global, using the best available data for each region.
 5. ~~Open source?~~ Decided: fully open source, with working license choices that can be revisited. See [Licensing](#licensing).
-6. ~~App name~~ Decided: **Dystopo** (dystopia + topographic); tagline TBD. Still open: package ID, which needs a domain or namespace we control (e.g. `io.github.<user>.dystopo`).
+6. ~~App name~~ Decided: **Dystopo** (dystopia + topographic); tagline TBD. Package ID: `io.github.jasondorjeshort.dystopo`.
+7. Bare-earth elevation outside the US: Copernicus includes tree canopy. Which national lidar sources to add first?

@@ -20,7 +20,7 @@ import java.util.Locale
  * projects are composited newest survey on top, feathered at coverage edges. Cells with no
  * lidar are NaN, so this source is meant to be composited over a fallback (see [ThreeDepBestSource]).
  */
-class LidarSource(private val cacheDir: File = File("cache/3dep1m")) : ElevationSource {
+class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : ElevationSource {
     override val id = "3dep-1m"
     override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar DEM, public domain."
 

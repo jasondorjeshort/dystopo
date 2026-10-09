@@ -12,7 +12,7 @@ import kotlin.math.floor
  * Open Data. It's a surface model (DSM): heights include forest canopy and buildings, so it sits
  * above bare-earth DEMs like 3DEP in forests. Cells with no file (open ocean) are NaN.
  */
-class CopernicusSource(private val cacheDir: File = File("cache/copernicus30")) : ElevationSource {
+class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) : ElevationSource {
     override val id = "copernicus"
     override val attribution = "Elevation: Copernicus DEM GLO-30, produced using Copernicus WorldDEM-30 " +
         "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS " +

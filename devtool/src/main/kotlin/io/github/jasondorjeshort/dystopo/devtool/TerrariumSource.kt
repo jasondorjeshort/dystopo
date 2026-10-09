@@ -14,7 +14,7 @@ import javax.imageio.ImageIO
  * 30-90 m SRTM and similar elsewhere. Tiles are cached on disk under [cacheDir].
  * Heights are in each underlying source's own datum and are not converted; use for comparison only.
  */
-class TerrariumSource(private val cacheDir: File = File("cache/terrarium")) : ElevationSource {
+class TerrariumSource(private val cacheDir: File = Caches.dir("terrarium")) : ElevationSource {
     companion object {
         const val MAX_ZOOM = 15
         const val TILE_SIZE = 256

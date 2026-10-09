@@ -14,7 +14,7 @@ import kotlin.math.floor
  * Resampled to Web Mercator with bilinear interpolation. NAD83 vs WGS84 differs horizontally by
  * ~1 m, well under a pixel, and is ignored.
  */
-class ThreeDepSource(private val cacheDir: File = File("cache/3dep13")) : ElevationSource {
+class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : ElevationSource {
     override val id = "3dep"
     override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1/3 arc-second DEM, public domain. " +
         Geoids.ATTRIBUTION

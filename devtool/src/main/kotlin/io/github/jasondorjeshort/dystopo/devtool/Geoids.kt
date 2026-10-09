@@ -33,10 +33,10 @@ class ProjGeoid(url: String, cacheDir: File) : GeoidModel {
 
 object Geoids {
     /** NGS GEOID18 (CONUS): NAVD88 relative to the NAD83(2011) ellipsoid. */
-    val geoid18 by lazy { ProjGeoid("https://cdn.proj.org/us_noaa_g2018u0.tif", File("cache/geoids/us_noaa_g2018u0")) }
+    val geoid18 by lazy { ProjGeoid("https://cdn.proj.org/us_noaa_g2018u0.tif", Caches.dir("geoids/us_noaa_g2018u0")) }
 
     /** NGA EGM2008, 2.5' grid, relative to the WGS84 ellipsoid. */
-    val egm2008 by lazy { ProjGeoid("https://cdn.proj.org/us_nga_egm08_25.tif", File("cache/geoids/us_nga_egm08_25")) }
+    val egm2008 by lazy { ProjGeoid("https://cdn.proj.org/us_nga_egm08_25.tif", Caches.dir("geoids/us_nga_egm08_25")) }
 
     const val ATTRIBUTION = "Geoid models: NGS GEOID18 and NGA EGM2008 (public domain), via PROJ data."
 

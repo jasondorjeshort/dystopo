@@ -34,7 +34,10 @@ public class PrivacyCheck {
     public static void main(String[] args) throws Exception {
         if (args.length == 0) usage();
         Path root = Path.of(run("git", "rev-parse", "--show-toplevel").trim());
+        // In a linked worktree the personal file lives only in the main checkout, next to the common .git dir.
+        Path mainRoot = Path.of(run("git", "rev-parse", "--git-common-dir").trim()).toAbsolutePath().normalize().getParent();
         Path local = root.resolve("devtool.local.json");
+        if (!Files.exists(local) && mainRoot != null) local = mainRoot.resolve("devtool.local.json");
         if (!Files.exists(local)) return;
         String json = Files.readString(local, StandardCharsets.UTF_8);
 
