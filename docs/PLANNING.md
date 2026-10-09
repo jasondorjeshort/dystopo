@@ -249,4 +249,4 @@ The project will be fully open source. Code and map content may need different l
 3. ~~What does "distributed" mean?~~ Decided: ideally peer-to-peer with no central server (BitTorrent-like); a server is an optional always-on peer. Not built early. See [Peer-to-peer](#peer-to-peer-long-term-goal).
 4. ~~Region~~ Decided: global, using the best available data for each region.
 5. ~~Open source?~~ Decided: fully open source, with working license choices that can be revisited. See [Licensing](#licensing).
-6. App name and package ID.
+6. ~~App name~~ Decided: **Dystopo** (dystopia + topographic); tagline TBD. Still open: package ID, which needs a domain or namespace we control (e.g. `io.github.<user>.dystopo`).
