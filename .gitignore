@@ -38,3 +38,7 @@ cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent worktrees created by Claude Code
+.claude/worktrees/
+
