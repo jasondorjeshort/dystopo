@@ -30,6 +30,8 @@ class PackManager private constructor(private val app: DystopoApp) {
     /** Where downloads land (the internal files dir; pushed packs may also sit in the external one). */
     val packsDir: File = File(app.filesDir, PackSet.PACKS_DIR).apply { mkdirs() }
     val downloads = PackDownloader(this, packsDir)
+    /** T53: the server's pack catalog, installed-pack hashes, downloads and updates from it. */
+    val catalogClient = PackCatalogClient(this, packsDir)
 
     private class Cached(val size: Long, val mtime: Long, val info: PackArchiveInfo?, val error: String?)
     private val archiveCache = ConcurrentHashMap<String, Cached>()
@@ -147,6 +149,7 @@ class PackManager private constructor(private val app: DystopoApp) {
         val index = pack?.vector?.let { v -> File(v.absoluteFile.parentFile, SearchIndex.fileNameFor(v.name)) }
         val deleted = (files + listOfNotNull(index?.takeIf { it.isFile })).filter { it.delete() }.map { it.name }
         PlaceSearch.forget(name)
+        catalogClient.forget(name) // T53: its recorded content hashes
         // T41: and its contour tiles (no DEM file on the device has that identity any more).
         app.collectContourGarbage()
         if (wasActive) app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h)) }
@@ -176,6 +179,43 @@ class PackManager private constructor(private val app: DystopoApp) {
             Log.i(TAG, "downloaded pack $name is on the map (primary stays ${activeName()})")
         } catch (e: Exception) {
             Log.w(TAG, "opening downloaded pack $name failed", e)
+        }
+    }
+
+    /**
+     * T53: swaps verified update files in for pack [name]: closes the pack (the map keeps the others), renames
+     * each `(part, target)` in [swaps], deletes the old copies they replace (another root, or a `-osm` name)
+     * and the archives of [removed] roles, which the server's pack no longer has. [onUpdated] reopens it.
+     */
+    @Synchronized
+    internal fun installUpdate(name: String, swaps: List<Pair<File, File>>, removed: List<io.github.jasondorjeshort.dystopo.packs.PackRole>) {
+        val old = catalog().firstOrNull { it.name == name }
+        if (name in inUse()) app.reload(skip = setOf(name))
+        for ((part, target) in swaps) {
+            target.delete()
+            if (!part.renameTo(target)) throw java.io.IOException("rename ${part.name} -> ${target.name} failed")
+            archiveCache.remove(target.path)
+        }
+        val targets = swaps.map { it.second.absolutePath }.toSet()
+        val replaced = swaps.mapNotNull { (_, t) -> io.github.jasondorjeshort.dystopo.packs.PackNames.parse(t.name)?.role }.toSet() + removed
+        for (role in replaced) {
+            val f = (if (role == io.github.jasondorjeshort.dystopo.packs.PackRole.DEM) old?.dem else old?.vector) ?: continue
+            if (f.absolutePath !in targets && f.delete()) {
+                archiveCache.remove(f.path)
+                Log.i(TAG, "update of $name replaced ${f.path}")
+            }
+        }
+    }
+
+    /** T53: an update of [name] is installed: reopen the packs (search and contours follow the new files). */
+    internal fun onUpdated(name: String) {
+        try {
+            PlaceSearch.forget(name)
+            app.reload()
+            app.collectContourGarbage()
+            Log.i(TAG, "updated pack $name is on the map")
+        } catch (e: Exception) {
+            Log.w(TAG, "reopening updated pack $name failed", e)
         }
     }
 

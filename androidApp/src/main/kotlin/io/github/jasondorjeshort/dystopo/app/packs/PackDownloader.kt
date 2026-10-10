@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.app.FileRangeSource
 import io.github.jasondorjeshort.dystopo.app.gunzip
 import io.github.jasondorjeshort.dystopo.packs.PackArchiveInfo
 import io.github.jasondorjeshort.dystopo.packs.PackDownload
+import io.github.jasondorjeshort.dystopo.packs.PackHash
 import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
 import io.github.jasondorjeshort.dystopo.packs.PackSource
@@ -17,6 +18,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
@@ -30,6 +32,13 @@ import java.util.concurrent.atomic.AtomicLong
  * being spliced. [PackDownload.plan] decides what each response means. A finished part file is checked
  * (PMTiles header readable, file as long as the header says) before it gets its final name, so a
  * pack never appears half-written. The vector archive is optional: a 404 for it is fine.
+ *
+ * T53: a download from a server's catalog ([startCatalog]) knows each archive's SHA-256 and size; the
+ * finished part file must match ([PackHash.matches]) or it is deleted and the job fails with
+ * `hash mismatch` (no resume: the bytes were wrong, not short). Catalog downloads keep verified files as
+ * part files until every archive is ready, so a rejected archive installs none of the pack; an update
+ * (`update = true`) fetches only the archives whose content changed, then closes the pack, swaps the
+ * files in and reopens it, so the map never mixes old and new archives.
  */
 class PackDownloader(private val manager: PackManager, private val dir: File) {
     private val stateDir = File(dir, ".downloads").apply { mkdirs() }
@@ -38,10 +47,15 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     class FileJob(val role: PackRole, val url: String, val target: File, val optional: Boolean) {
         val part = File(target.parentFile, target.name + ".part")
+        /** T53: the SHA-256 and size the catalog promises (null for a plain URL download). */
+        @Volatile var expectSha256: String? = null
+        @Volatile var expectBytes: Long? = null
+        /** T53: the SHA-256 of the verified file. */
+        @Volatile var sha256: String? = null
         @Volatile var total: Long? = null
         @Volatile var etag: String? = null
         @Volatile var lastModified: String? = null
-        @Volatile var status = "pending" // pending, downloading, verifying, done, missing
+        @Volatile var status = "pending" // pending, downloading, verifying, verified (update, not swapped in yet), done, missing, unchanged
         val done = AtomicLong()
         val responses = ArrayList<String>()
         val resumedFrom = ArrayList<Long>()
@@ -49,11 +63,20 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         fun json(): Map<String, Any?> = linkedMapOf(
             "role" to role.label, "url" to url, "file" to target.name, "status" to status, "bytesDone" to done.get(),
             "bytesTotal" to total, "resumedFrom" to synchronized(resumedFrom) { resumedFrom.toList() },
+            "expectSha256" to expectSha256, "sha256" to sha256,
             "responses" to synchronized(responses) { responses.takeLast(10) },
         )
     }
 
-    inner class Job(val source: PackSource, val activate: Boolean, val createdAt: Long) {
+    inner class Job(
+        val source: PackSource,
+        val activate: Boolean,
+        val createdAt: Long,
+        /** T53: replace the installed pack of this name (only the archives listed in [files] with a URL). */
+        val update: Boolean = false,
+        /** T53: the catalog this pack came from: server, id and content hash (recorded once installed). */
+        val catalog: Map<String, Any?>? = null,
+    ) {
         val name get() = source.name
         // The (small, optional) vector archive first: the DEM getting its final name is what makes the
         // pack appear in the list, so it appears complete.
@@ -70,8 +93,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         @Volatile var sessionStartBytes = 0L
         @Volatile var finishedAt: Long? = null
 
-        val bytesDone get() = files.sumOf { it.done.get() }
-        val bytesTotal: Long? get() = files.filter { it.status != "missing" }.map { it.total }.let { t -> if (t.any { it == null }) null else t.sumOf { it!! } }
+        val bytesDone get() = files.filter { it.status != "unchanged" }.sumOf { it.done.get() }
+        val bytesTotal: Long? get() = files.filter { it.status != "missing" && it.status != "unchanged" }.map { it.total }.let { t -> if (t.any { it == null }) null else t.sumOf { it!! } }
 
         fun json(): Map<String, Any?> {
             val done = bytesDone
@@ -79,6 +102,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             val elapsed = if (sessionStartedAt == 0L) 0L else (finishedAt ?: SystemClock.elapsedRealtime()) - sessionStartedAt
             return linkedMapOf(
                 "name" to name, "state" to state, "error" to error, "activate" to activate,
+                "update" to update, "catalog" to catalog,
                 "bytesDone" to done, "bytesTotal" to total,
                 "percent" to total?.takeIf { it > 0 }?.let { Math.round(done * 1000.0 / it) / 10.0 },
                 "bytesPerSec" to if (elapsed > 0) (done - sessionStartBytes) * 1000 / elapsed else null,
@@ -92,11 +116,44 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     fun start(url: String, name: String? = null, activate: Boolean = false): Job {
         val source = PackDownload.resolve(url.trim(), name)
             ?: throw IllegalArgumentException("not a pack URL: '$url' (want http(s)://host/path/<name>-dem.pmtiles or .../<name>)")
+        return enqueue(source) { Job(source, activate, System.currentTimeMillis()) }
+    }
+
+    /**
+     * T53: downloads a catalog pack: [files] maps each archive to download to its URL, SHA-256 and size;
+     * [unchanged] archives (update only) stay as installed; a role in neither has no archive on the server.
+     */
+    fun startCatalog(
+        name: String,
+        files: Map<PackRole, Triple<String, String, Long>>,
+        unchanged: Set<PackRole>,
+        update: Boolean,
+        activate: Boolean,
+        catalog: Map<String, Any?>,
+    ): Job {
+        require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
+        require(PackRole.DEM in files || (update && PackRole.DEM in unchanged)) { "pack '$name' has no DEM archive" }
+        val source = PackSource(name, files[PackRole.DEM]?.first.orEmpty(), files[PackRole.VECTOR]?.first.orEmpty())
+        return enqueue(source, update) {
+            Job(source, activate, System.currentTimeMillis(), update, catalog).also { job ->
+                for (f in job.files) {
+                    val e = files[f.role]
+                    when {
+                        e != null -> { f.expectSha256 = e.second; f.expectBytes = e.third }
+                        f.role in unchanged -> f.status = "unchanged"
+                        else -> f.status = "missing"
+                    }
+                }
+            }
+        }
+    }
+
+    private fun enqueue(source: PackSource, update: Boolean = false, make: () -> Job): Job {
         synchronized(jobs) {
             jobs[source.name]?.let { if (it.state == "queued" || it.state == "running") return it }
             val existing = File(dir, PackNames.fileName(source.name, PackRole.DEM))
-            require(!existing.exists() || File(stateDir, "${source.name}.json").exists()) { "pack '${source.name}' is already on the device; DELETE /packs/${source.name} first" }
-            val job = Job(source, activate, System.currentTimeMillis())
+            require(update || !existing.exists() || File(stateDir, "${source.name}.json").exists()) { "pack '${source.name}' is already on the device; DELETE /packs/${source.name} first" }
+            val job = make()
             jobs[source.name] = job
             save(job)
             executor.execute { run(job) }
@@ -111,7 +168,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             try {
                 val m = MiniJson.parseObject(f.readText())
                 val source = PackSource(m["name"] as String, m["demUrl"] as String, m["vectorUrl"] as String)
-                val job = Job(source, m["activate"] == true, (m["createdAt"] as? Number)?.toLong() ?: 0L)
+                @Suppress("UNCHECKED_CAST")
+                val job = Job(source, m["activate"] == true, (m["createdAt"] as? Number)?.toLong() ?: 0L, m["update"] == true, m["catalog"] as? Map<String, Any?>)
                 job.restarts = ((m["restarts"] as? Number)?.toInt() ?: 0) + 1
                 @Suppress("UNCHECKED_CAST")
                 for (fm in (m["files"] as? List<Map<String, Any?>>).orEmpty()) {
@@ -119,7 +177,9 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     fj.total = (fm["total"] as? Number)?.toLong()
                     fj.etag = fm["etag"] as? String
                     fj.lastModified = fm["lastModified"] as? String
-                    if (fm["status"] == "missing") fj.status = "missing"
+                    if (fm["status"] == "missing" || fm["status"] == "unchanged") fj.status = fm["status"] as String
+                    fj.expectSha256 = fm["expectSha256"] as? String
+                    fj.expectBytes = (fm["expectBytes"] as? Number)?.toLong()
                 }
                 synchronized(jobs) {
                     if (jobs[source.name]?.state.let { it == "queued" || it == "running" }) return@synchronized
@@ -159,8 +219,13 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         if (job.cancelled) return
         val m = linkedMapOf(
             "name" to job.name, "demUrl" to job.source.demUrl, "vectorUrl" to job.source.vectorUrl, "activate" to job.activate,
-            "createdAt" to job.createdAt, "restarts" to job.restarts,
-            "files" to job.files.map { mapOf("role" to it.role.label, "total" to it.total, "etag" to it.etag, "lastModified" to it.lastModified, "status" to it.status) },
+            "createdAt" to job.createdAt, "restarts" to job.restarts, "update" to job.update, "catalog" to job.catalog,
+            "files" to job.files.map {
+                mapOf(
+                    "role" to it.role.label, "total" to it.total, "etag" to it.etag, "lastModified" to it.lastModified, "status" to it.status,
+                    "expectSha256" to it.expectSha256, "expectBytes" to it.expectBytes,
+                )
+            },
         )
         val f = File(stateDir, "${job.name}.json")
         val tmp = File(stateDir, "${job.name}.json.tmp")
@@ -170,25 +235,39 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     private class Cancelled : Exception()
 
+    /** T53: the downloaded bytes are not what the catalog promised. Not retried, not resumed. */
+    class HashMismatch(message: String) : IOException(message)
+
     private fun run(job: Job) {
         if (job.cancelled) return
         job.state = "running"
         job.sessionStartedAt = SystemClock.elapsedRealtime()
-        job.files.forEach { it.done.set(if (it.target.isFile) it.target.length() else it.part.length()) }
+        job.files.forEach { it.done.set(if (!job.update && it.target.isFile) it.target.length() else it.part.length()) }
         job.sessionStartBytes = job.bytesDone
         try {
             for (f in job.files) {
-                if (f.status == "missing") continue
-                if (f.target.isFile && f.total == f.target.length()) { f.status = "done"; continue }
+                if (f.status == "missing" || f.status == "unchanged") continue
+                if (!job.update && f.expectSha256 == null && f.target.isFile && f.total == f.target.length()) { f.status = "done"; continue }
                 fetch(job, f)
             }
+            if (job.update || job.catalog != null) manager.installUpdate(job.name, job.files.filter { it.status == "verified" }.map { it.part to it.target }, job.files.filter { it.status == "missing" }.map { it.role })
+            job.files.filter { it.status == "verified" }.forEach { it.status = "done" }
             job.finishedAt = SystemClock.elapsedRealtime()
+            job.catalog?.let { c -> manager.catalogClient.recordInstalled(job.name, c, job.files.filter { it.sha256 != null }.associate { it.role to (it.target to it.sha256!!) }) }
             job.state = "done"
             File(stateDir, "${job.name}.json").delete()
-            Log.i(PackManager.TAG, "downloaded pack ${job.name}: ${job.bytesDone} bytes")
-            manager.onDownloaded(job.name, job.activate)
+            Log.i(PackManager.TAG, "downloaded pack ${job.name}: ${job.bytesDone} bytes${if (job.update) " (update)" else ""}")
+            if (job.update) manager.onUpdated(job.name) else manager.onDownloaded(job.name, job.activate)
         } catch (_: Cancelled) {
             job.state = "cancelled"
+        } catch (e: HashMismatch) {
+            Log.w(PackManager.TAG, "download of ${job.name} rejected: ${e.message}")
+            job.finishedAt = SystemClock.elapsedRealtime()
+            job.error = e.message
+            job.state = "failed"
+            // Wrong bytes: nothing to resume. The parts of the other archives go too.
+            File(stateDir, "${job.name}.json").delete()
+            job.files.forEach { it.part.delete() }
         } catch (e: Exception) {
             Log.w(PackManager.TAG, "download of ${job.name} failed", e)
             job.finishedAt = SystemClock.elapsedRealtime()
@@ -250,6 +329,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     is PackDownload.Plan.Fail -> throw IOException("${f.url}: ${plan.reason}")
                 }
             } catch (e: IOException) {
+                if (e is HashMismatch) throw e
                 if (job.cancelled) throw Cancelled()
                 if (++failures > 5) throw e
                 synchronized(f.responses) { f.responses += "error: ${e.message}" }
@@ -258,7 +338,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             } finally {
                 conn.disconnect()
             }
-            finish(f)
+            finish(f, stage = job.update || job.catalog != null)
             return
         }
     }
@@ -280,8 +360,11 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         }
     }
 
-    /** Checks the part file is a whole PMTiles archive and gives it its final name. */
-    private fun finish(f: FileJob) {
+    /**
+     * Checks the part file is a whole PMTiles archive (and, from a catalog, has the promised SHA-256) and
+     * gives it its final name; an update leaves it as a verified part file for [PackManager.installUpdate].
+     */
+    private fun finish(f: FileJob, stage: Boolean) {
         f.status = "verifying"
         val size = f.part.length()
         val info = try {
@@ -291,10 +374,41 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             throw IOException("${f.target.name}: not a PMTiles archive (${e.message}); part file deleted")
         }
         if (!info.complete) throw IOException("${f.target.name}: $size bytes, the header needs ${info.expectedBytes}")
+        f.expectSha256?.let { expected ->
+            val actual = sha256(f.part)
+            if (!PackHash.matches(expected, actual)) {
+                f.part.delete()
+                f.sha256 = actual
+                throw HashMismatch("${f.target.name}: hash mismatch, got sha256 $actual ($size bytes), the catalog says $expected (${f.expectBytes} bytes); part file deleted")
+            }
+            f.sha256 = actual
+        }
+        if (stage) {
+            f.done.set(size)
+            f.total = size
+            f.status = "verified"
+            return
+        }
         f.target.delete()
         if (!f.part.renameTo(f.target)) throw IOException("rename ${f.part} -> ${f.target} failed")
         f.done.set(size)
         f.total = size
         f.status = "done"
+    }
+
+    companion object {
+        /** SHA-256 of [file] as 64 lowercase hex digits (the platform digest, much faster than the pure Kotlin one). */
+        fun sha256(file: File): String {
+            val md = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buf = ByteArray(1 shl 20)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            return io.github.jasondorjeshort.dystopo.packs.Sha256.toHex(md.digest())
+        }
     }
 }

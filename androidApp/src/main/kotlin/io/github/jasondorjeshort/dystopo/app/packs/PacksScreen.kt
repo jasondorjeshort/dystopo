@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,15 +36,32 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.packs.CatalogStatus
+import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.concurrent.thread
+import kotlin.math.PI
+import kotlin.math.atan
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sinh
 
 /** Whether the pack list is showing (main thread; `POST /packs/ui` sets it too). */
 object PacksUi {
     var visible by mutableStateOf(false)
+
+    /** T53: the "From server" section is open (the list shrinks to the lower part, the map shows the catalog outlines). */
+    var catalogOpen by mutableStateOf(false)
+
+    /** Bumped to make the open screen fit the camera to the catalog again (`POST /packs/ui?catalog=1`). */
+    var fitRequest by mutableStateOf(0)
+
+    /** Height of the list while the catalog section is open; the map shows above it. */
+    const val CATALOG_SHEET = 0.6f
 }
 
 private val Ink = Color(0xFF2B2420)
@@ -70,6 +89,35 @@ fun PacksOverlay() {
             PacksScreen(PackManager.get()) { PacksUi.visible = false }
         }
     }
+    // T53: catalog outlines on the map while the server section is open.
+    val showOutlines = PacksUi.visible && PacksUi.catalogOpen
+    LaunchedEffect(showOutlines) {
+        DystopoApp.instance.map.mapView?.let { CatalogOverlay.bind(it) }
+        if (!showOutlines) CatalogOverlay.show(null)
+    }
+}
+
+/**
+ * T53: moves the camera so [b] fills the part of the map above the pack list ([visible] of the height from
+ * the top), or the whole map when [visible] is 1.
+ */
+fun fitAbove(b: PackBounds, visible: Double = 1.0 - PacksUi.CATALOG_SHEET): Map<String, Any?>? {
+    val app = DystopoApp.instance
+    val view = app.map.mapView ?: return null
+    return try {
+        val (w, h, density) = app.map.onMain { Triple(view.width, view.height, view.resources.displayMetrics.density) }
+        if (w <= 0 || h <= 0) return null
+        val wd = w / density.toDouble()
+        val hd = h / density.toDouble()
+        val zoom = b.fitZoom(wd, hd * visible, 512.0, 24.0).coerceIn(3.0, 16.0) // the map stops at z3
+        // The box centre goes to the middle of the visible band, (1 - visible) / 2 of the height above the map centre.
+        val worldPx = 512.0 * 2.0.pow(zoom)
+        val y = (PackBounds.mercatorY(b.centerLat) + hd * (1 - visible) / 2 / worldPx).coerceIn(0.0, 1.0)
+        val lat = atan(sinh(PI * (1 - 2 * y))) * 180 / PI
+        app.map.setCamera(lat, b.centerLon, zoom, 0.0, 0.0)
+    } catch (e: Exception) {
+        null
+    }
 }
 
 @Composable
@@ -81,6 +129,30 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     var url by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableStateOf(0) }
+    // T53: the server's catalog
+    val client = manager.catalogClient
+    var rows by remember { mutableStateOf<List<PackCatalogClient.Row>>(emptyList()) }
+    var catalogError by remember { mutableStateOf<String?>(null) }
+    var catalogLoading by remember { mutableStateOf(false) }
+    var catalogRefresh by remember { mutableStateOf(0) }
+    val catalogOpen = PacksUi.catalogOpen
+
+    LaunchedEffect(catalogOpen, catalogRefresh, PacksUi.fitRequest) {
+        if (!catalogOpen) return@LaunchedEffect
+        catalogLoading = true
+        catalogError = withContext(Dispatchers.IO) { runCatching { client.refresh() }.exceptionOrNull()?.message }
+        catalogLoading = false
+        val first = withContext(Dispatchers.IO) { client.rows() }
+        rows = first
+        CatalogOverlay.show(first)
+        withContext(Dispatchers.IO) { CatalogOverlay.framing(first, runCatching { DystopoApp.instance.map.camera() }.getOrNull())?.let { fitAbove(it) } }
+        while (true) {
+            delay(if (rows.any { it.status == CatalogStatus.DOWNLOADING || it.status == CatalogStatus.CHECKING }) 700 else 2000)
+            val r = withContext(Dispatchers.IO) { client.rows() }
+            rows = r
+            CatalogOverlay.show(r)
+        }
+    }
 
     LaunchedEffect(refresh) {
         while (true) {
@@ -102,8 +174,13 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
         }
     }
 
+    // T53: with the server section open the list takes the lower part of the screen and the map, with the
+    // catalog outlines, shows above it.
+    Box(Modifier.fillMaxSize()) {
     Column(
-        Modifier.fillMaxSize().background(Paper).statusBarsPadding().navigationBarsPadding().padding(16.dp),
+        (if (catalogOpen) Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(PacksUi.CATALOG_SHEET).background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).border(1.dp, Line, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+        else Modifier.fillMaxSize().background(Paper).statusBarsPadding())
+            .navigationBarsPadding().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -120,20 +197,114 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                     onShow = { background("Opening ${p.info.name}") { manager.activate(p.info.name); close() } },
                     onDelete = { background("Deleting ${p.info.name}") { manager.delete(p.info.name) } })
             }
-            items(jobs, key = { "job-" + it["name"] }) { j -> JobRow(j) }
+            // Catalog downloads have their progress in the catalog row.
+            items(jobs.filter { j -> !catalogOpen || rows.none { it.pack.name == j["name"] } }, key = { "job-" + it["name"] }) { j -> JobRow(j) }
+            // T53: "From server"
+            item(key = "server-header") {
+                Row(
+                    Modifier.fillMaxWidth().clickable { PacksUi.catalogOpen = !catalogOpen }.padding(top = 8.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BasicText((if (catalogOpen) "\u25BE " else "\u25B8 ") + "From server", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
+                    if (catalogOpen) Chip("Refresh") { catalogRefresh++ }
+                }
+            }
+            if (catalogOpen) {
+                item(key = "server-status") {
+                    val server = client.server ?: client.configuredServer()
+                    val text = when {
+                        server == null -> "No server set (Settings)."
+                        catalogLoading -> "Loading the catalog from $server..."
+                        catalogError != null -> "Catalog unavailable: $catalogError"
+                        rows.isEmpty() -> "$server has no packs."
+                        else -> "${rows.size} packs on $server"
+                    }
+                    BasicText(text, style = TextStyle(color = if (catalogError != null) Color(0xFFB0302A) else Muted, fontSize = 13.sp))
+                }
+                items(rows, key = { "cat-" + it.pack.id }) { r ->
+                    CatalogRow(
+                        r,
+                        onShow = { r.pack.bounds?.let { b -> thread { fitAbove(b) } } },
+                        onDownload = { background("Downloading ${r.pack.name}") { client.download(r.pack.id) } },
+                        onUpdate = { background("Updating ${r.pack.name}") { client.update(r.pack.name) } },
+                        onDelete = { background("Deleting ${r.pack.name}") { manager.delete(r.pack.name) } },
+                    )
+                }
+            }
         }
-        BasicText("Download a pack (URL of <name>-dem.pmtiles)", style = TextStyle(color = Muted, fontSize = 13.sp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(
-                url, { url = it },
-                singleLine = true,
-                textStyle = TextStyle(color = Ink, fontSize = 14.sp),
-                modifier = Modifier.weight(1f).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(10.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Chip("Download") { if (url.isNotBlank()) background("Starting download") { manager.downloads.start(url) } }
+        if (!catalogOpen) {
+            BasicText("Download a pack (URL of <name>-dem.pmtiles)", style = TextStyle(color = Muted, fontSize = 13.sp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicTextField(
+                    url, { url = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+                    modifier = Modifier.weight(1f).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(10.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Chip("Download") { if (url.isNotBlank()) background("Starting download") { manager.downloads.start(url) } }
+            }
         }
     }
+    }
+}
+
+private val StatusColors = mapOf(
+    CatalogStatus.AVAILABLE to Color(0xFF2C7FB8),
+    CatalogStatus.INSTALLED to Color(0xFF1A9850),
+    CatalogStatus.UPDATE to Color(0xFFE66101),
+    CatalogStatus.DOWNLOADING to Color(0xFF7B3294),
+    CatalogStatus.CHECKING to Color(0xFF808080),
+)
+
+/** T53: one pack of the server's catalog: name and status, zooms, size, profile, build date, area, and its actions. */
+@Composable
+private fun CatalogRow(r: PackCatalogClient.Row, onShow: () -> Unit, onDownload: () -> Unit, onUpdate: () -> Unit, onDelete: () -> Unit) {
+    val p = r.pack
+    val color = StatusColors.getValue(r.status)
+    Column(
+        Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).clickable(onClick = onShow).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(p.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold))
+            BasicText(CatalogOverlay.statusText(r.status).uppercase(Locale.US), style = TextStyle(color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+        }
+        val parts = listOfNotNull(
+            if (p.minZoom != null && p.maxZoom != null) "z${p.minZoom}-${p.maxZoom}" else null,
+            mb(p.bytes),
+            p.profile ?: "terrain only",
+            p.builtDate?.let { "built $it" },
+        )
+        BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
+        p.bounds?.let { b -> BasicText(area(b), style = TextStyle(color = Muted, fontSize = 12.sp)) }
+        val job = r.job
+        if (r.status == CatalogStatus.DOWNLOADING && job != null) {
+            val done = (job["bytesDone"] as? Number)?.toLong() ?: 0L
+            val total = (job["bytesTotal"] as? Number)?.toLong()
+            val fraction = if (total != null && total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+            BasicText("${if (job["update"] == true) "Updating" else "Downloading"}: ${mb(done)} of ${total?.let(::mb) ?: "?"}", style = TextStyle(color = Muted, fontSize = 13.sp))
+            Box(Modifier.fillMaxWidth().height(6.dp).background(Line, RoundedCornerShape(3.dp))) {
+                Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(color, RoundedCornerShape(3.dp)))
+            }
+        }
+        if (job?.get("state") == "failed") (job["error"] as? String)?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 3) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+            when (r.status) {
+                CatalogStatus.AVAILABLE -> Chip("Download", onClick = onDownload)
+                CatalogStatus.UPDATE -> { Chip("Update", onClick = onUpdate); Chip("Delete", onClick = onDelete) }
+                CatalogStatus.INSTALLED, CatalogStatus.CHECKING -> Chip("Delete", onClick = onDelete)
+                CatalogStatus.DOWNLOADING -> {}
+            }
+        }
+    }
+}
+
+/** A box's rough size and corners, for the catalog list. */
+private fun area(b: PackBounds): String {
+    val w = (b.maxLon - b.minLon) * 111.32 * cos(b.centerLat * PI / 180)
+    val h = (b.maxLat - b.minLat) * 110.57
+    return String.format(Locale.US, "%.0f x %.0f km  ·  %.2f, %.2f to %.2f, %.2f", w, h, b.minLat, b.minLon, b.maxLat, b.maxLon)
 }
 
 @Composable
