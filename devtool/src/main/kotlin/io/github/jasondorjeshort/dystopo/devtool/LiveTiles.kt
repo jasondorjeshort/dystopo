@@ -475,6 +475,7 @@ class LiveTiles(
                     osmTiles = "$base/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = OSM_MAX_ZOOM,
                     glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
                     attribution = osmAttributionHtml + " " + demAttributionHtml,
+                    sprite = "$base/sprite",
                 ),
                 units = u,
                 textScale = textScale,
@@ -510,6 +511,7 @@ class LiveTiles(
         val path = ex.requestURI.path
         if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
+        SpriteSheets.route(path, outDir)?.let { (bytes, type) -> return reply(ex, bytes, type) }
         tileRe.matchEntire(path)?.let { m ->
             val (kind, zs, xs, ys) = m.destructured
             val z = zs.toInt(); val x = xs.toInt(); val y = ys.toInt()

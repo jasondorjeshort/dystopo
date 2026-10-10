@@ -2,11 +2,13 @@ package io.github.jasondorjeshort.dystopo.maplibre
 
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
+import io.github.jasondorjeshort.dystopo.style.Sprites
 import io.github.jasondorjeshort.dystopo.style.StyleLayer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MapLibreStyleTest {
@@ -16,6 +18,8 @@ class MapLibreStyleTest {
         osmTiles = "http://127.0.0.1:1/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = 14,
         glyphs = "http://127.0.0.1:1/glyphs/{fontstack}/{range}.pbf",
     )
+
+    private val spriteSources = sources.copy(sprite = "file:///data/sprites/sprite")
 
     @Suppress("UNCHECKED_CAST")
     private fun layers(json: String): List<Map<String, Any?>> = MiniJson.parseObject(json)["layers"] as List<Map<String, Any?>>
@@ -89,10 +93,13 @@ class MapLibreStyleTest {
     fun everySymbolLayerHasAFontTheGlyphRouteServes() {
         // MapLibre Native falls back to its own default stack (Open Sans / Arial Unicode MS) when a layer
         // names no font; our glyph route only has the fonts in FONTS (tools/android-push-pack.ps1).
-        for (json in listOf(MapLibreStyle(sources).json(), MapLibreStyle(sources.copy(osmTiles = null)).json())) {
+        val styles = listOf(MapLibreStyle(sources).json(), MapLibreStyle(sources.copy(osmTiles = null)).json(), MapLibreStyle(spriteSources).json())
+        for (json in styles) {
             val symbols = layers(json).filter { it["type"] == "symbol" }
             assertTrue(symbols.isNotEmpty())
             for (l in symbols) {
+                // An icon-only symbol (parking with a sprite) has no text and needs no font.
+                if (layout(l)["text-field"] == null && layout(l)["icon-image"] != null) continue
                 val fonts = layout(l)["text-font"]
                 assertTrue(fonts is List<*> && fonts.size == 1, "${l["id"]}: one font, got $fonts")
                 assertTrue(fonts[0] in MapLibreStyle.FONTS, "${l["id"]}: ${fonts[0]} not in ${MapLibreStyle.FONTS}")
@@ -117,7 +124,9 @@ class MapLibreStyleTest {
             if (l["type"] == "symbol") {
                 val s0 = maxNumber(layout(l)["text-size"])
                 val s1 = maxNumber(layout(big.getValue(id))["text-size"])
-                assertEquals(s0 * 1.6, s1, 1e-6, "$id text-size")
+                // Contour numbers grow with the square root (longer labels fit fewer bent contours).
+                val k = if (id == "contour-labels") kotlin.math.sqrt(1.6) else 1.6
+                assertEquals(s0 * k, s1, 1e-6, "$id text-size")
                 // Never overlap names: only marker glyphs (drawn on their own disc) may ignore collisions.
                 if (!id.endsWith("-glyph")) assertTrue(layout(l)["text-allow-overlap"] != true, "$id overlaps")
             }
@@ -125,13 +134,74 @@ class MapLibreStyleTest {
                 assertEquals(maxNumber(paint(l)["circle-radius"]) * 1.6, maxNumber(paint(big.getValue(id))["circle-radius"]), 1e-6, "$id radius")
             }
         }
-        // Larger labels get more room: padding and line-label spacing grow.
+        // Larger labels get more room: padding grows, and name spacing along lines. Contour label spacing
+        // stays (a wider one only cost labels; collision padding keeps them apart).
         for (id in listOf("contour-labels", "road-names")) {
             assertTrue(maxNumber(layout(big.getValue(id))["text-padding"]) > maxNumber(layout(base.getValue(id))["text-padding"]), "$id padding")
-            assertTrue(maxNumber(layout(big.getValue(id))["symbol-spacing"]) > maxNumber(layout(base.getValue(id))["symbol-spacing"]), "$id spacing")
         }
+        assertTrue(maxNumber(layout(big.getValue("road-names"))["symbol-spacing"]) > maxNumber(layout(base.getValue("road-names"))["symbol-spacing"]))
         // Default 1.0 is the built-in readable size: devtool contour label 11 px times BASE_TEXT_SCALE.
         assertEquals(11.0 * MapLibreStyle.BASE_TEXT_SCALE, maxNumber(layout(base.getValue("contour-labels"))["text-size"]), 1e-9)
+    }
+
+    @Test
+    fun spriteMarkersAreIconsInTheLabelLayers() {
+        val plain = MiniJson.parseObject(MapLibreStyle(sources).json())
+        assertFalse("sprite" in plain, "no sprite key without a sprite")
+        val root = MiniJson.parseObject(MapLibreStyle(spriteSources).json())
+        assertEquals("file:///data/sprites/sprite", root["sprite"])
+        val ls = layers(MapLibreStyle(spriteSources).json())
+        val byId = ls.associateBy { it["id"] as String }
+        // No discs and no separate glyph layers: the sprite icon carries the shape and the P.
+        assertTrue(ls.none { it["type"] == "circle" }, "circle layers with a sprite")
+        assertTrue(ls.none { (it["id"] as String).endsWith("-glyph") || (it["id"] as String).endsWith("-marker") })
+        val iconNames = Sprites.icons().map { it.name }.toSet()
+        val markerLayers = DefaultOsmStyle.style.layers.filterIsInstance<StyleLayer.Symbol>().filter { it.marker != null }
+        assertTrue(markerLayers.size >= 10)
+        for (sl in markerLayers) {
+            val l = byId.getValue(sl.id)
+            assertEquals("symbol", l["type"])
+            val lay = layout(l)
+            assertEquals(Sprites.iconName(sl.marker!!), lay["icon-image"], sl.id)
+            assertTrue(lay["icon-image"] in iconNames, "${sl.id} icon in the sheet")
+            assertEquals(MapLibreStyle.BASE_TEXT_SCALE / Sprites.ICON_SCALE, (lay["icon-size"] as Number).toDouble(), 1e-3, "${sl.id} icon-size")
+            assertTrue(lay["icon-allow-overlap"] != true && lay["text-allow-overlap"] != true, "${sl.id} collides")
+            if (sl.text.isNotBlank()) {
+                assertEquals(sl.textOptional, lay["text-optional"], "${sl.id} text-optional")
+                assertEquals("top", (lay["text-variable-anchor"] as List<*>)[0], "${sl.id} label below the icon first")
+                assertTrue((lay["text-radial-offset"] as Number).toDouble() > 0.3)
+            } else {
+                assertNull(lay["text-field"], "${sl.id} icon only")
+            }
+        }
+        // Icons scale with the text scale.
+        val big = layers(MapLibreStyle(spriteSources, textScale = 2.0).json()).associateBy { it["id"] as String }
+        assertEquals(2.0 * (layout(byId.getValue("huts"))["icon-size"] as Number).toDouble(), (layout(big.getValue("huts"))["icon-size"] as Number).toDouble(), 2e-3)
+        // Same label priority order as without a sprite.
+        val plainOrder = layers(MapLibreStyle(sources).json()).map { it["id"] as String }.filter { it in byId }
+        val spriteOrder = ls.map { it["id"] as String }
+        assertEquals(plainOrder.filter { it in spriteOrder }, spriteOrder.filter { it in plainOrder })
+    }
+
+    @Test
+    fun contourLabelsAreDenseFromZ12() {
+        val l = layers(MapLibreStyle(sources).json()).first { it["id"] == "contour-labels" }
+        val spacing = layout(l)["symbol-spacing"] as List<*>
+        // ["interpolate", ["linear"], ["zoom"], 10, 260, 12, 120]: 120 px from MapLibre z12 (devtool z13).
+        assertEquals(12.0, (spacing[spacing.size - 2] as Number).toDouble())
+        assertTrue((spacing.last() as Number).toDouble() <= 150.0)
+        assertEquals(MapLibreStyle.CONTOUR_LABEL_MAX_ANGLE.toDouble(), (layout(l)["text-max-angle"] as Number).toDouble())
+        assertTrue(MapLibreStyle.CONTOUR_LABEL_MAX_ANGLE > 45)
+    }
+
+    @Test
+    fun cliffTicksGrowWithZoom() {
+        val ticks = layers(MapLibreStyle(sources).json()).first { it["id"] == "cliff-ticks" }
+        val width = paint(ticks)["line-width"] as List<*>
+        // Tick length stops reach devtool z17 (MapLibre 16), so ticks keep growing past z14.
+        val stops = width.drop(3).chunked(2).map { (z, v) -> (z as Number).toDouble() to (v as Number).toDouble() }
+        assertEquals(16.0, stops.last().first)
+        assertTrue(stops.last().second > stops.first { it.first == 14.0 }.second)
     }
 
     @Test

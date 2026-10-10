@@ -12,7 +12,6 @@ import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
 import io.github.jasondorjeshort.dystopo.style.LabelPlacer
 import io.github.jasondorjeshort.dystopo.style.LineTicks
 import io.github.jasondorjeshort.dystopo.style.Marker
-import io.github.jasondorjeshort.dystopo.style.MarkerShape
 import io.github.jasondorjeshort.dystopo.style.OsmScene
 import io.github.jasondorjeshort.dystopo.style.OsmStyle
 import io.github.jasondorjeshort.dystopo.style.PlacedLabel
@@ -32,9 +31,7 @@ import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.font.FontRenderContext
 import java.awt.geom.AffineTransform
-import java.awt.geom.Ellipse2D
 import java.awt.geom.Path2D
-import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import kotlin.math.roundToInt
 
@@ -302,59 +299,8 @@ class OsmLayer private constructor(
         g2.draw(ticks)
     }
 
-    private fun markerShape(m: Marker, cx: Double, cy: Double, r: Double): java.awt.Shape = when (m.shape) {
-        MarkerShape.CIRCLE -> Ellipse2D.Double(cx - r, cy - r, 2 * r, 2 * r)
-        MarkerShape.SQUARE -> Rectangle2D.Double(cx - r * 0.9, cy - r * 0.9, 1.8 * r, 1.8 * r)
-        MarkerShape.TRIANGLE -> Path2D.Double().apply {
-            moveTo(cx, cy - r * 1.1)
-            lineTo(cx + r, cy + r * 0.8)
-            lineTo(cx - r, cy + r * 0.8)
-            closePath()
-        }
-        MarkerShape.DIAMOND -> Path2D.Double().apply {
-            moveTo(cx, cy - r * 1.15)
-            lineTo(cx + r * 0.9, cy)
-            lineTo(cx, cy + r * 1.15)
-            lineTo(cx - r * 0.9, cy)
-            closePath()
-        }
-        MarkerShape.HOUSE -> Path2D.Double().apply {
-            // A pitched roof over a square body.
-            moveTo(cx, cy - r * 1.1)
-            lineTo(cx + r, cy - r * 0.1)
-            lineTo(cx + r * 0.75, cy - r * 0.1)
-            lineTo(cx + r * 0.75, cy + r * 0.9)
-            lineTo(cx - r * 0.75, cy + r * 0.9)
-            lineTo(cx - r * 0.75, cy - r * 0.1)
-            lineTo(cx - r, cy - r * 0.1)
-            closePath()
-        }
-        MarkerShape.STAR -> Path2D.Double().apply {
-            for (k in 0 until 10) {
-                val a = -Math.PI / 2 + k * Math.PI / 5
-                val rr = if (k % 2 == 0) r * 1.2 else r * 0.5
-                val x = cx + rr * Math.cos(a)
-                val y = cy + rr * Math.sin(a)
-                if (k == 0) moveTo(x, y) else lineTo(x, y)
-            }
-            closePath()
-        }
-    }
-
-    private fun drawMarker(g2: Graphics2D, label: PlacedLabel, m: Marker, halo: Color) {
-        val shape = markerShape(m, label.markerX, label.markerY, label.markerPx / 2)
-        g2.color = halo
-        g2.stroke = BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-        g2.draw(shape)
-        g2.color = color(m.color)
-        g2.fill(shape)
-        val text = m.text ?: return
-        // A glyph inside the marker, sized to it (P for parking).
-        val gv = AwtTextMeasurer.font(label.markerPx * 0.8).createGlyphVector(g2.fontRenderContext, text)
-        val ink = gv.visualBounds
-        g2.color = color(m.textColor)
-        g2.fill(gv.getOutline((label.markerX - ink.centerX).toFloat(), (label.markerY - ink.centerY).toFloat()))
-    }
+    private fun drawMarker(g2: Graphics2D, label: PlacedLabel, m: Marker, halo: Color) =
+        MarkerShapes.draw(g2, m, label.markerX, label.markerY, label.markerPx, halo)
 
     private fun drawLabel(g2: Graphics2D, label: PlacedLabel) {
         val s = label.style

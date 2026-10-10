@@ -2,7 +2,8 @@
 # PMTiles go to the app's files dir as files/packs/dem.pmtiles and files/packs/osm.pmtiles (with -Name rainier:
 # files/packs/rainier-dem.pmtiles and rainier-outdoors.pmtiles, a named pack), and the label
 # glyphs (Noto Sans PBF ranges for MapLibre, SIL OFL 1.1 fonts, fetched once into the cache) to
-# files/glyphs/. Uses `run-as`, so it needs the debug build installed. Restart the app (or POST /reload
+# files/glyphs/, and the marker sprite sheet (`devtool sprite` into out/, remade on every push)
+# to files/sprites/. Uses `run-as`, so it needs the debug build installed. Restart the app (or POST /reload
 # on the debug server) afterwards.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\android-push-pack.ps1 -Dem out\rainier-dem.pmtiles -Osm out\rainier-outdoors.pmtiles
@@ -10,6 +11,7 @@ param(
     [string]$Dem = 'out\rainier-dem.pmtiles',
     [string]$Osm = 'out\rainier-outdoors.pmtiles',
     [switch]$NoGlyphs,
+    [switch]$NoSprites,
     [string]$Package = 'io.github.jasondorjeshort.dystopo',
     [string]$Name = '',
     [string]$Serial = ''
@@ -84,6 +86,27 @@ if (-not $NoGlyphs) {
     Write-Host "pushing glyphs ($($fonts.Count) fonts x $($ranges.Count) ranges)"
     Adb push $glyphDir "$staging/" | Out-Null
     Adb shell "run-as $Package rm -rf files/glyphs && run-as $Package cp -r $staging/glyphs files/glyphs" | Out-Null
+}
+
+if (-not $NoSprites) {
+    # Marker icons for MapLibre (Sprites.kt spec, drawn by devtool sprite with the renderer's shapes). The app
+    # points MapLibre at files/sprites/sprite with a file:// URL (SpriteFiles.kt); without all four files the
+    # style falls back to marker discs.
+    $spriteFiles = @('sprite.json', 'sprite.png', 'sprite@2x.json', 'sprite@2x.png')
+    $outDir = Join-Path $repoRoot 'out'
+    # Always remade (a few seconds with a warm Gradle daemon): a sheet left in out/ from an older marker table would
+    # lack icons the style names.
+    Write-Host 'making the sprite sheet (devtool sprite)'
+    Push-Location $repoRoot
+    try {
+        $ErrorActionPreference = 'Continue'
+        & .\gradlew.bat :devtool:run --args='sprite' --console=plain -q | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'devtool sprite failed' }
+    } finally { Pop-Location; $ErrorActionPreference = 'Stop' }
+    Adb shell "mkdir -p $staging/sprites" | Out-Null
+    foreach ($f in $spriteFiles) { Adb push (Join-Path $outDir $f) "$staging/sprites/$f" | Out-Null }
+    Write-Host "pushing sprites ($($spriteFiles.Count) files)"
+    Adb shell "run-as $Package rm -rf files/sprites && run-as $Package cp -r $staging/sprites files/sprites" | Out-Null
 }
 
 Adb shell "rm -rf $staging" | Out-Null

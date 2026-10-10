@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.mvt.Value
 import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
+import io.github.jasondorjeshort.dystopo.style.Sprites
 import io.github.jasondorjeshort.dystopo.style.StyleLayer
 import java.io.File
 import kotlin.test.Test
@@ -55,6 +56,28 @@ class MarkerTableTest {
             assertTrue(cls in demoClasses, "demo table lacks $cls")
         }
         assertEquals(outdoorLayers.size, demo.mapNotNull { rendererLayer(it.cls)?.id }.toSet().size, "every renderer POI marker layer is used by the demo")
+    }
+
+    /**
+     * The demo names its icons like the sprite sheet ([Sprites.iconName]), so with the sheet loaded every
+     * demo marker is a sheet icon, and without it the canvas fallback draws the same name.
+     */
+    @Test
+    fun demoIconNamesAreSpriteIcons() {
+        assertTrue(
+            """const iconName = m => "marker-" + m.shape + "-" + m.color.slice(1) + "-" + m.size + (m.text ? "-" + m.text : "");""" in html,
+            "the demo's iconName must spell Sprites.iconName",
+        )
+        val scale = Regex("""const SPRITE_ICON_SCALE = ([\d.]+);""").find(html)!!.groupValues[1].toDouble()
+        assertEquals(Sprites.ICON_SCALE, scale, "SPRITE_ICON_SCALE")
+        val sheet = Sprites.icons().map { it.name }.toSet()
+        for (d in demo) {
+            val size = if (d.size % 1.0 == 0.0) d.size.toLong().toString() else d.size.toString() // JS number to string
+            val name = "marker-${d.shape}-${d.color.drop(1)}-$size" + (d.text?.let { "-$it" } ?: "")
+            assertTrue(name in sheet, "${d.cls}: $name not in the sprite sheet $sheet")
+            assertEquals(Sprites.iconName(rendererLayer(d.cls)!!.marker!!), name, d.cls)
+        }
+        assertTrue("\"icon-image\": iconByClass" in html, "poi-markers use the sheet names")
     }
 
     @Test

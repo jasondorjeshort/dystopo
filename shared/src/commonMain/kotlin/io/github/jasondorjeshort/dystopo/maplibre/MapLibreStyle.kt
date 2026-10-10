@@ -4,9 +4,11 @@ import io.github.jasondorjeshort.dystopo.mvt.GeometryType
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
 import io.github.jasondorjeshort.dystopo.style.Filter
+import io.github.jasondorjeshort.dystopo.style.Marker
 import io.github.jasondorjeshort.dystopo.style.OsmStyle
 import io.github.jasondorjeshort.dystopo.style.Placement
 import io.github.jasondorjeshort.dystopo.style.Selector
+import io.github.jasondorjeshort.dystopo.style.Sprites
 import io.github.jasondorjeshort.dystopo.style.StyleColor
 import io.github.jasondorjeshort.dystopo.style.StyleLayer
 import io.github.jasondorjeshort.dystopo.style.ZoomValue
@@ -26,6 +28,12 @@ data class MapLibreSources(
     /** `{fontstack}/{range}` template for glyph PBFs. */
     val glyphs: String,
     val attribution: String = "",
+    /**
+     * Sprite sheet URL without extension (MapLibre appends `.json`/`.png`, `@2x` on dense screens), as
+     * written by `devtool sprite` ([Sprites]). With a sprite, markers are icons in the label layers, so
+     * icons and labels collide; without one they fall back to circle discs that never collide.
+     */
+    val sprite: String? = null,
 )
 
 /**
@@ -41,12 +49,20 @@ data class MapLibreSources(
  *   a line layer without an explicit geometry draws only LineStrings, as in the devtool.
  * - Line casings become a wider line layer underneath; `modifiers` become data-driven width and
  *   opacity factors. Cliff `ticks` become a dashed band offset to the right of the line (the OSM
- *   drop side; MapLibre cannot ask the DEM for "downhill").
+ *   drop side; MapLibre cannot ask the DEM for "downhill"). Tick length, width and spacing follow the
+ *   style's zoom stops (the dash pattern steps at each stop, as MapLibre does not interpolate dashes).
+ * - Contour labels ([contourLabels]): index lines only, lowest priority, spaced so every index line
+ *   in view gets a label from z13 on (devtool zooms) without stacking; see [contourLabelSpacing].
  * - Symbol `text` templates become `concat` expressions; `{elevation}` prints `ele` (metres in the
  *   tiles) in [units], which should match the contour tiles' unit (a setting; its default follows
  *   [io.github.jasondorjeshort.dystopo.render.UnitRegions]). `{name}` is [LABEL_NAME]: the English or
- *   Latin name first, and a local name in another script on a second line. Markers are discs (a `circle` layer; MapLibre has no shapes without a sprite
- *   sheet) with the label below; a marker `text` glyph is drawn on the disc.
+ *   Latin name first, and a local name in another script on a second line. Markers: with a sprite sheet
+ *   ([MapLibreSources.sprite], [Sprites]) the marker is
+ *   the label's `icon-image` (the renderer's shape, colour and glyph), so icon and text are one symbol
+ *   that collides as a whole; the text sits below the icon, or beside or above it when that is the only
+ *   place it fits (`text-variable-anchor`), and a layer with `text-optional` keeps the icon when its
+ *   text fits nowhere. Without a sprite, markers are discs (a `circle` layer, no collisions) with the
+ *   label below and a marker `text` glyph drawn on the disc.
  * - Label priority: the devtool places symbol layers in list order (first wins); MapLibre places the
  *   topmost layer first, so symbol layers are emitted in reverse. Contour labels are the lowest.
  * - Sizes: text sizes, halos and marker sizes are multiplied by [BASE_TEXT_SCALE] (readable labels by
@@ -80,6 +96,9 @@ class MapLibreStyle(
         const val FONT_REGULAR = "Noto Sans Regular"
         const val FONT_ITALIC = "Noto Sans Italic"
         const val FONT_MEDIUM = "Noto Sans Medium"
+
+        /** Largest bend (degrees) a contour label may follow; contours wiggle more than roads. */
+        const val CONTOUR_LABEL_MAX_ANGLE = 65
 
         /** The fonts the style uses; the glyph route (and tools/android-push-pack.ps1) must provide each. */
         val FONTS = listOf(FONT_REGULAR, FONT_ITALIC, FONT_MEDIUM)
@@ -148,6 +167,8 @@ class MapLibreStyle(
         layers += markers
         layers += contourLabels()
         layers += symbols.asReversed()
+        val doc = linkedMapOf<String, Any?>("version" to 8, "name" to "dystopo-${style.name}")
+        sources.sprite?.let { doc["sprite"] = it }
         val src = LinkedHashMap<String, Any?>()
         src["dem"] = mapOf(
             "type" to "raster-dem", "tiles" to listOf(sources.demTiles), "tileSize" to 256, "encoding" to "terrarium",
@@ -163,13 +184,10 @@ class MapLibreStyle(
                 "minzoom" to sources.osmMinZoom, "maxzoom" to sources.osmMaxZoom, "attribution" to sources.attribution,
             )
         }
-        return linkedMapOf(
-            "version" to 8,
-            "name" to "dystopo-${style.name}",
-            "glyphs" to sources.glyphs,
-            "sources" to src,
-            "layers" to layers,
-        )
+        doc["glyphs"] = sources.glyphs
+        doc["sources"] = src
+        doc["layers"] = layers
+        return doc
     }
 
     // ---- contours ----
@@ -196,13 +214,40 @@ class MapLibreStyle(
             "symbol-placement" to "line",
             "text-field" to listOf("to-string", listOf("get", "ele")),
             "text-font" to regular,
-            "text-size" to 11.0 * scale,
-            "symbol-spacing" to round1(260 * textScale.coerceAtLeast(1.0)),
-            "text-max-angle" to 45,
+            "text-size" to 11.0 * contourTextScale,
+            "symbol-spacing" to contourLabelSpacing(),
+            "text-max-angle" to CONTOUR_LABEL_MAX_ANGLE,
             "text-padding" to round1(4 * textScale),
         ),
         "paint" to mapOf("text-color" to "#6b3f12", "text-halo-color" to paper, "text-halo-width" to round1(1.6 * scale / BASE_TEXT_SCALE)),
     )
+
+    /**
+     * Contour labels grow with the square root of the user's text scale, not linearly: a line label
+     * must fit a stretch of line that bends less than [CONTOUR_LABEL_MAX_ANGLE], and contours bend a
+     * lot, so every extra pixel of label length costs labels. Measured in a 412x915 phone viewport
+     * (MapLibre GL JS over `devtool serve`, z13 on Rainier's south flank, 16 index lines in view):
+     * 14.9 px labels (text scale 1.0) labelled 11, 18 px 7 and 24 px 5, other layers hidden or not.
+     * Elevation numbers are short and secondary; names keep the full scale.
+     */
+    private val contourTextScale = BASE_TEXT_SCALE * kotlin.math.sqrt(textScale)
+
+    /**
+     * Contour label spacing (screen px between labels on one line) by MapLibre zoom.
+     *
+     * MapLibre places line labels per tile: a line piece gets anchors only every `symbol-spacing`
+     * along it, starting half a spacing in, so a 512-px tile cut into short pieces got no label at the
+     * old 260 px. Measured over Rainier views in a 412x915 phone viewport (MapLibre GL JS, `devtool
+     * serve`): at 260 px and 45 degrees, z13.5 near Paradise labelled 1 of 7 index lines and z13 on the
+     * south flank 5 of 16; at 120 px and 65 degrees, 6 of 7 and 12 of 16, and the remaining lines show
+     * under about 160 px of line on screen (MapLibre's own minimum length: the label must fit within
+     * the angle limit) or zigzag across glaciers. Collision (padding, which grows with the text scale;
+     * lowest priority) keeps neighbours from stacking, so the closer spacing labels more lines rather
+     * than repeating one; the spacing does not grow with the text scale, which only cost labels
+     * (1.6 at 192 px: 2 of 16). Below z11 (index lines far apart and long) the spacing opens up again.
+     */
+    private fun contourLabelSpacing(): Any? =
+        listOf("interpolate", listOf("linear"), listOf("zoom"), 10, 260, 12, 120)
 
     // ---- OSM layers ----
 
@@ -277,6 +322,10 @@ class MapLibreStyle(
     private fun symbol(l: StyleLayer.Symbol, markers: MutableList<Map<String, Any?>>, symbols: MutableList<Map<String, Any?>>) {
         val geometry = geometryFilter(l.select.geometry ?: if (l.placement == Placement.LINE) GeometryType.LINESTRING else GeometryType.POINT)
         val marker = l.marker
+        if (marker != null && sources.sprite != null) {
+            symbols += iconSymbol(l, marker, geometry)
+            return
+        }
         if (marker != null) {
             val radius = marker.size * scale / 2
             markers += base("${l.id}-marker", "circle", l.select, geometry).apply {
@@ -314,18 +363,54 @@ class MapLibreStyle(
                 layout["text-anchor"] = "top"
                 layout["text-offset"] = listOf(0.0, marker.size * scale / 2 / (l.size.at(14.0) * scale) + 0.3)
             }
-            when (l.sortKey) {
-                "rank" -> layout["symbol-sort-key"] = listOf("coalesce", listOf("to-number", listOf("get", "rank")), 99)
-                "-ele" -> layout["symbol-sort-key"] = listOf("-", 0, listOf("coalesce", listOf("to-number", listOf("get", "ele")), 0))
-            }
+            sortKey(l)?.let { layout["symbol-sort-key"] = it }
             this["layout"] = layout
-            this["paint"] = mapOf(
-                "text-color" to color(l.color),
-                "text-halo-color" to color(l.haloColor),
-                "text-halo-width" to l.haloWidth * scale,
-            )
+            this["paint"] = textPaint(l)
         }
     }
+
+    /**
+     * A marker layer with a sprite: the icon and the (optional) text in one symbol, so MapLibre places
+     * or drops them together and neither overlaps another label. The text prefers the spot under the
+     * icon and moves beside or above it when that collides.
+     */
+    private fun iconSymbol(l: StyleLayer.Symbol, marker: Marker,geometry: List<Any?>?): Map<String, Any?> =
+        base(l.id, "symbol", l.select, geometry).apply {
+            val layout = linkedMapOf<String, Any?>(
+                "icon-image" to Sprites.iconName(marker),
+                "icon-size" to round3(scale / Sprites.ICON_SCALE),
+                "icon-padding" to round1(1 * textScale),
+            )
+            if (l.text.isNotBlank()) {
+                val textSize = l.size.at(14.0) * scale
+                // Clearance between the icon's edge and the text, in ems of the text.
+                val offset = round3((marker.size * scale / 2 + 1.5) / textSize)
+                layout["text-field"] = textTemplate(l.text)
+                layout["text-font"] = if (l.italic) italic else regular
+                layout["text-size"] = zoomValue(l.size, null, scale)
+                layout["text-max-width"] = 9
+                layout["text-padding"] = round1(3 * textScale)
+                layout["text-variable-anchor"] = listOf("top", "right", "left", "bottom")
+                layout["text-radial-offset"] = offset
+                layout["text-justify"] = "auto"
+                layout["text-optional"] = l.textOptional
+            }
+            sortKey(l)?.let { layout["symbol-sort-key"] = it }
+            this["layout"] = layout
+            if (l.text.isNotBlank()) this["paint"] = textPaint(l)
+        }
+
+    private fun sortKey(l: StyleLayer.Symbol): Any? = when (l.sortKey) {
+        "rank" -> listOf("coalesce", listOf("to-number", listOf("get", "rank")), 99)
+        "-ele" -> listOf("-", 0, listOf("coalesce", listOf("to-number", listOf("get", "ele")), 0))
+        else -> null
+    }
+
+    private fun textPaint(l: StyleLayer.Symbol): Map<String, Any?> = mapOf(
+        "text-color" to color(l.color),
+        "text-halo-color" to color(l.haloColor),
+        "text-halo-width" to l.haloWidth * scale,
+    )
 
     // ---- expressions ----
 
@@ -422,6 +507,8 @@ class MapLibreStyle(
         if (c.a == 255) "rgb(${c.r},${c.g},${c.b})" else "rgba(${c.r},${c.g},${c.b},${fmt(c.a / 255.0)})"
 
     private fun round1(d: Double): Double = kotlin.math.round(d * 10) / 10
+
+    private fun round3(d: Double): Double = kotlin.math.round(d * 1000) / 1000
 
     private fun fmt(d: Double): String = ((d * 1000).toLong() / 1000.0).toString()
 }

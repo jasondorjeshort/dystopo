@@ -73,6 +73,7 @@ class ServeCommand : CliktCommand(name = "serve") {
                 osmTiles = osmReader?.let { "$base/osm/{z}/{x}/{y}.pbf" },
                 osmMinZoom = osmReader?.header?.minZoom ?: 0, osmMaxZoom = osmReader?.header?.maxZoom ?: 14,
                 glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
+                sprite = "$base/sprite",
             ),
             textScale = textScale,
         ).json()
@@ -93,6 +94,7 @@ class ServeCommand : CliktCommand(name = "serve") {
                 val path = ex.requestURI.path
                 // Static host for out/ (pack downloads in the app; ranges, ?kbps= throttle): see ServeStatic.
                 if (path.startsWith("/out/")) return@createContext ServeStatic.serve(ex, File("out"), path.removePrefix("/out/"))
+                SpriteSheets.route(path)?.let { (bytes, type) -> return@createContext reply(ex, bytes, type) }
                 tileRe.matchEntire(path)?.let { m ->
                     val (kind, zs, xs, ys) = m.destructured
                     val z = zs.toInt(); val x = xs.toInt(); val y = ys.toInt()

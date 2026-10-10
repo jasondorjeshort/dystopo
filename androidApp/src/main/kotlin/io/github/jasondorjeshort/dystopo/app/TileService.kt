@@ -201,6 +201,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 osmMaxZoom = osmPack?.header?.maxZoom ?: 14,
                 glyphs = Glyphs.styleUrl(packs.glyphDir, base),
                 attribution = attribution,
+                sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
             ),
             textScale = AppSettings.textScale,
         ).json()

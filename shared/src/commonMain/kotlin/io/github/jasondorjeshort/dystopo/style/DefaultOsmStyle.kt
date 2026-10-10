@@ -30,16 +30,20 @@ package io.github.jasondorjeshort.dystopo.style
  * hiking (or untagged) long red dashes, mountain_hiking medium dashes, demanding_mountain_hiking
  * short dark-red dashes, alpine grades dark dots; `footway` short red dashes, steps dots. Trails with
  * poor `trail_visibility` (bad, horrible, no; also the common non-standard `poor`) draw at half
- * opacity, `informal` ones at 65% width. Cliffs are dark brown lines with ticks on the downhill side.
+ * opacity, `informal` ones at 65% width. Cliffs are dark brown lines with ticks on the downhill side;
+ * the ticks grow with zoom up to z17 (length, width and spacing keep one ratio, so MapLibre's single
+ * dash pattern matches every zoom).
  * Park boundaries are green dashes; wilderness areas (outdoors class `wilderness`, OpenMapTiles
  * `wilderness_area`) teal dots, so the two read apart where they overlap.
  *
- * Point markers. This is the one marker table: the layers below implement it, and the browser demo
- * (`tools/demo/index.html`, `MARKERS`) draws the `outdoor_poi` rows with the same shapes and colours
- * as canvas icons, scaled for the screen (`MarkerTableTest` checks the two agree). Size is the
- * marker's pixel size before the text scale; change both places together. The rows marked
- * "renderer" are drawn by the devtool renderer and [io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle]
- * only: the demo labels peaks as text without a marker and has no OpenMapTiles `poi` layer.
+ * Point markers. This is the one marker table: the layers below implement it, [Sprites] turns it into
+ * the MapLibre sprite sheet (`devtool sprite`; one icon per distinct marker, used by the phone style
+ * and the browser demo), and the browser demo (`tools/demo/index.html`, `MARKERS`) keeps a copy for
+ * its canvas fallback when no sprite is served (`MarkerTableTest` checks the two agree). Size is the
+ * marker's pixel size before the text scale; change the demo copy together with this table. The rows
+ * marked "renderer" are drawn by the devtool renderer and
+ * [io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle] only: the demo labels peaks as text
+ * without a marker and has no OpenMapTiles `poi` layer.
  *
  * | layer / class (`outdoor_poi`)   | shape    | color     | size | from z | not drawn                    |
  * |---------------------------------|----------|-----------|------|--------|------------------------------|
@@ -95,8 +99,8 @@ object DefaultOsmStyle {
      "minzoom": 12, "color": "#4a8fd0", "width": [[12, 0.6], [15, 1.2]], "dash": [4, 2]},
 
     {"id": "cliff", "type": "line", "source-layer": "natural_line", "filter": {"class": "cliff"},
-     "minzoom": 12, "color": "#3d2f22", "opacity": 0.9, "width": [[12, 0.9], [15, 1.5]],
-     "ticks": {"spacing": [[12, 3.5], [15, 5]], "length": [[12, 3], [15, 4.5]], "width": [[12, 0.9], [15, 1.2]], "side": "downhill"}},
+     "minzoom": 12, "color": "#3d2f22", "opacity": 0.9, "width": [[12, 0.9], [15, 1.5], [17, 2.2]],
+     "ticks": {"spacing": [[12, 3.5], [15, 5], [17, 8.3]], "length": [[12, 3], [15, 4.5], [17, 7.5]], "width": [[12, 0.9], [15, 1.2], [17, 2]], "side": "downhill"}},
     {"id": "arete", "type": "line", "source-layer": "natural_line", "filter": {"class": "arete"},
      "minzoom": 13, "color": "#4a3b2c", "opacity": 0.6, "width": [[13, 0.7], [15, 1.1]]},
 

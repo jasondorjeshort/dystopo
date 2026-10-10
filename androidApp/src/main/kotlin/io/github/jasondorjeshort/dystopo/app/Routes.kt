@@ -65,6 +65,7 @@ class Routes(private val app: DystopoApp) {
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
         settings.handle(r)?.let { return it }
         labels.handle(r)?.let { return it }
+        ContourLabelRoutes(app).handle(r)?.let { return it } // T36: GET /contour-labels
         PacksRoutes.handle(app, r)?.let { return it }
         SearchRoutes.handle(app, r)?.let { return it } // T39: /search, /search/status, /search/build, /search/ui, /search/select
         return when (r.method to r.path) {
