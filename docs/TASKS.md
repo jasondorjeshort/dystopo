@@ -11,7 +11,7 @@ Every task is done only when:
 
 ## Owner actions pending (as of 2026-10-10)
 - **Before making the repo public:** decide about the edit history of PR #45 (an implementer's description named a private place; it was scrubbed, but GitHub keeps PR-description edit history visible to anyone with read access; recreating the repository from the git history would drop all PR text). Run the privacy scan once more at that time: `git log -p --all | java tools/PrivacyCheck.java scan`, plus the PR-text scan described in `CLAUDE.md`.
-- **Before the first release tag:** add the four `RELEASE_*` secrets (keystore base64, store password, key alias, key password) so the release workflow signs with the real key; otherwise it ships debug-signed and says so.
+- **Release key:** the four `RELEASE_*` secrets were set on 2026-10-10 from `tools/release.keystore` (RSA 4096, alias `dystopo`, CN "Dystopo release") and `v0.1.0-alpha` was tagged; the workflow publishes a *draft* release that the owner reviews and publishes. The keystore and `tools/release.properties` exist only on this machine and in the secrets: back them up privately, and never change the key (phones only update an app signed by the same key).
 - **Machine notes:** AVDs live under `E:\dystopo-avd` (set `ANDROID_AVD_HOME`); the SDK under `C:\Users\Dorje\Android\sdk`; the shared download cache is `DYSTOPO_CACHE=C:\Users\Dorje\Documents\src\android-app\cache`.
 - **Usage budget:** stop launching new agent work above about 75% of either the 5-hour or the weekly budget (`~/.claude/usage.json`, written by the status line).
 
