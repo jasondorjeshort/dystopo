@@ -229,6 +229,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T20b merged (PR #18): the browser demo reads the outdoors schema.** POI discs with class glyphs (trailheads, campsites, shelters, springs, viewpoints, waterfalls, parking), cliffs with ticks, named ridges, trails styled by `sac_scale` and faded when hard to follow, wilderness boundaries, lakes drawn over streams; the hillshade now uses the same ancestor fallback as the contours; a collapsible panel for phones. The tour grew to 21 views (phone width, lake views, outdoors views), all clean. The "missing lake names" question had a data answer: the profile only labels lakes about 48 px wide, so names appear from z14.
 
+**2026-10-09: T19 merged (PR #20): sources and formats sweep.** The cache race that crashed cold parallel exports twice is fixed (publish without replace; the loser reads the winner's bytes); open ocean renders and compares without crashing; lidar is skipped where the output is coarser than 20 m per cell (same results, fewer downloads); the lidar index fetch retries with backoff; antimeridian exports write proper bounds; `pmtiles` commands fail with one line on corrupt archives; large extracts stage to disk; and `tiles --verify` no longer compares cells its neighbour computes with more information (T22's false positive). 249 tests; world tour 50/50 at 25 areas.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
