@@ -213,6 +213,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T12 merged (PR #11): DEM region packs.** `tiles --pmtiles` writes a region's Terrarium tiles into one PMTiles archive (Rainier NP region z8–14: 1,404 tiles, 222 MB, 21 s warm), verified tile by tile against the XYZ output (identical grid digests); `pmtiles extract --bbox` cuts a sub-archive without re-encoding, including from the remote planet build. The browser demo now reads hillshade and contours from the archive. This is the "download a drawn area" mechanism from the product principles, working end to end on desktop.
 
+**2026-10-09: T18 merged (PR #12): browser demo tour.** `tools/demo-check.py --views-file tools/demo-tour.txt` drives 14 views across the Rainier region in one headless session and judges each (errors, missing tiles, per-layer counts, screenshots). It found and fixed: contours disappearing one tile in from the data edge (the contour library dropped any tile with a missing neighbour), a seam at the z12→z13 coverage boundary (missing tiles are now built from the nearest ancestor), no contour labels at z12, a solid brown summit at z13 (interval now 80/400 ft there), and a panel that hid a third of a phone screen. Known: contouring runs on the main thread in archive mode (2–4 s per view); the hillshade layer doesn't get the ancestor fallback, so at z9 it stops a little short of the contours.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development

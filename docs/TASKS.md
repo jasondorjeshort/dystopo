@@ -115,6 +115,7 @@ Every task is done only when:
 **Goal:** drive the viewer across the generated Rainier region the way a user would: ~12 views at z9–15 (valley floors, the summit, park edges, the region boundary, the z12→z13 coverage edge), each checked with `tools/demo-check.py` for errors, missing layers and missing tiles, screenshots viewed and judged (labels readable and not overlapping, contours continuous across tiles, no blank areas inside coverage, trails and water present where expected). Add a `--views` option to `demo-check.py` to run a list in one browser session and summarize. Fix small viewer issues (`tools/demo/index.html`) in the same PR; list anything bigger.
 **Owns:** `tools/demo-check.py`, `tools/demo/index.html`.
 **Done when:** the PR shows the per-view table and what was seen; `demo-check.py` exits 0 on every view inside coverage.
+**Status: merged (PR #12).** Follow-ups: route the hillshade layer through the same ancestor fallback as contours (z9 hillshade stops short); generate region packs with a one-tile margin so edges aren't ragged; contour labels only on index lines and none at z9–11; `water_name` shows nothing (check the archive has named water); add a phone-width view to the tour.
 
 ### Later
 - T10 Android shell (needs the SDK install approved).
