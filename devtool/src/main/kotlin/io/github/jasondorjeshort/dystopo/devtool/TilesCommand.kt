@@ -18,6 +18,7 @@ import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.TileId
+import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -43,6 +44,8 @@ data class VerifyStats(
     /** Cells where one tile's halo render differs (in any bit) from the neighbour's own render. */
     val mismatchCells: Long,
     val maxMismatchMeters: Double,
+    /** [GridDigest] of every written tile decoded back from its PNG; equal across XYZ and PMTiles exports of the same tiles. */
+    val gridDigest: String? = null,
 )
 
 @Serializable
@@ -86,6 +89,8 @@ data class TilesReport(
     /** Data source registry ids that contributed to any written tile (see `devtool sources`). */
     val provenance: List<String>,
     val attribution: String,
+    /** Present with `--pmtiles`: the archive written and, with `--verify`, its read-back check. */
+    val pmtiles: PmtilesOutputReport? = null,
 )
 
 /** Written next to the tiles as metadata.json; a TileJSON-like description for consumers (MapLibre, PMTiles packaging). */
@@ -110,7 +115,7 @@ data class TileSetMetadata(
 
 class TilesCommand : CliktCommand(name = "tiles") {
     override fun help(context: Context) =
-        "Write an elevation source as Terrarium-encoded PNG tiles, <out>/{z}/{x}/{y}.png, for a zoom range. " +
+        "Write an elevation source as Terrarium-encoded PNG tiles, <out>/{z}/{x}/{y}.png and/or a PMTiles archive (--pmtiles), for a zoom range. " +
             "Each tile is rendered through its own window with a halo so feathered seams match across tile borders. Prints a JSON report."
 
     private val area by option("--area", help = "Named area (see 'devtool areas')")
@@ -118,7 +123,8 @@ class TilesCommand : CliktCommand(name = "tiles") {
     private val minZoom by option("--min-zoom").int().required()
     private val maxZoom by option("--max-zoom").int().required()
     private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
-    private val out by option("--out", help = "Tile directory (default out/<area>-<source>)").file()
+    private val out by option("--out", help = "Tile directory (default out/<area>-<source>; with --pmtiles, written only when given)").file()
+    private val pmtiles by option("--pmtiles", help = "Also (or, without --out, only) write the tiles into this PMTiles archive").file(canBeDir = false)
     private val threads by option("--threads", help = "Tiles rendered in parallel (default: CPU count)").int()
         .default(Runtime.getRuntime().availableProcessors())
     private val verify by option("--verify", help = "Read every tile back and compare halo overlaps between neighbours (holds one zoom's grids in memory)").flag()
@@ -138,7 +144,13 @@ class TilesCommand : CliktCommand(name = "tiles") {
         val counters: Map<String, Long>,
         val decodeError: Float,
         val provenance: List<String>,
+        /** PNG bytes, kept for the PMTiles archive. */
+        val png: ByteArray? = null,
+        /** [GridDigest] of the decoded PNG (verify only). */
+        val gridDigest: Long = 0L,
     )
+
+    private val writeXyz: Boolean get() = pmtiles == null || out != null
 
     override fun run() {
         if (minZoom > maxZoom || minZoom < 0 || maxZoom > 22) throw UsageError("need 0 <= --min-zoom <= --max-zoom <= 22")
@@ -153,8 +165,13 @@ class TilesCommand : CliktCommand(name = "tiles") {
         val pool = Executors.newFixedThreadPool(threads)
         val zooms = ArrayList<ZoomReport>()
         val provenanceSeen = HashSet<String>()
+        val archive = pmtiles?.let { DemPmtilesWriter(it) }
+        val expectedDigests = HashMap<TileId, Long>()
         try {
-            for (z in minZoom..maxZoom) zooms += exportZoom(z, box, src, feather, outDir, tileSize, pool, provenanceSeen)
+            for (z in minZoom..maxZoom) zooms += exportZoom(z, box, src, feather, outDir, tileSize, pool, provenanceSeen, archive, expectedDigests)
+        } catch (e: Throwable) {
+            archive?.close()
+            throw e
         } finally {
             pool.shutdown()
         }
@@ -162,29 +179,38 @@ class TilesCommand : CliktCommand(name = "tiles") {
         // Credit what went into the written tiles; if nothing was written, credit the whole source.
         val creditIds = provenance.ifEmpty { src.registryIds }
 
-        outDir.mkdirs()
-        File(outDir, "metadata.json").writeText(
-            reportJson.encodeToString(
-                TileSetMetadata(
-                    name = outDir.name, tileSize = tileSize, bounds = listOf(box.west, box.south, box.east, box.north),
-                    minzoom = minZoom, maxzoom = maxZoom, source = source,
-                    attribution = SourceRegistry.builtIn.attribution(creditIds),
-                    attributionHtml = SourceRegistry.builtIn.attributionHtml(creditIds),
-                    provenance = provenance,
-                ),
-            ),
-        )
+        val archiveReport = archive?.use { a ->
+            val file = pmtiles!!
+            if (zooms.sumOf { it.written } == 0) throw UsageError("no tiles with data in the box; nothing to put in ${file.path}")
+            val written = a.finish(tileSetMetadata(file.nameWithoutExtension, box, tileSize, provenance, creditIds), box, minZoom, maxZoom)
+            if (!verify) written
+            else written.copy(verify = DemPmtilesWriter.verify(file, expectedDigests) { png -> readTile(png, 1.0).values })
+        }
+
+        if (writeXyz) {
+            outDir.mkdirs()
+            File(outDir, "metadata.json").writeText(
+                reportJson.encodeToString(tileSetMetadata(outDir.name, box, tileSize, provenance, creditIds)),
+            )
+        }
 
         val preview = previewZoom?.let { z ->
             if (z !in minZoom..maxZoom) throw UsageError("--preview-zoom must be within the exported range")
-            renderPreview(z, box, outDir, tileSize, TileWindows.referenceCellSizeMeters(box, z, tileSize))
+            val load: (TileId) -> ByteArray? = if (writeXyz) {
+                { t -> File(outDir, "${t.z}/${t.x}/${t.y}.png").takeIf { it.exists() }?.readBytes() }
+            } else {
+                val reader = PmtilesReader.open(FileRangeSource(pmtiles!!))
+                ({ t -> reader.tile(t.z, t.x, t.y) })
+            }
+            val previewBase = if (writeXyz) outDir else File(pmtiles!!.absoluteFile.parentFile, pmtiles!!.nameWithoutExtension)
+            renderPreview(z, box, previewBase, tileSize, TileWindows.referenceCellSizeMeters(box, z, tileSize), load)
         }
 
         val report = TilesReport(
             area = name,
             bbox = listOf(box.west, box.south, box.east, box.north),
             source = source,
-            output = outDir.path,
+            output = if (writeXyz) outDir.path else pmtiles!!.path,
             minZoom = minZoom,
             maxZoom = maxZoom,
             tileSize = tileSize,
@@ -197,9 +223,19 @@ class TilesCommand : CliktCommand(name = "tiles") {
             preview = preview,
             provenance = provenance,
             attribution = SourceRegistry.builtIn.attribution(creditIds),
+            pmtiles = archiveReport,
         )
         echo(reportJson.encodeToString(report))
     }
+
+    private fun tileSetMetadata(name: String, box: BoundingBox, tileSize: Int, provenance: List<String>, creditIds: List<String>) =
+        TileSetMetadata(
+            name = name, tileSize = tileSize, bounds = listOf(box.west, box.south, box.east, box.north),
+            minzoom = minZoom, maxzoom = maxZoom, source = source,
+            attribution = SourceRegistry.builtIn.attribution(creditIds),
+            attributionHtml = SourceRegistry.builtIn.attributionHtml(creditIds),
+            provenance = provenance,
+        )
 
     /** Widest blend band the source uses; the halo is sized from it. */
     private fun featherMeters(src: ElevationSource): Double = when (src) {
@@ -211,6 +247,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
     private fun exportZoom(
         z: Int, box: BoundingBox, src: ElevationSource, feather: Double, outDir: File, tileSize: Int,
         pool: ExecutorService, provenanceSeen: MutableSet<String>,
+        archive: DemPmtilesWriter? = null, expectedDigests: MutableMap<TileId, Long> = HashMap(),
     ): ZoomReport {
         val started = System.nanoTime()
         // One cell size per zoom so every tile's blend band (and halo) is the same; see TileWindows.
@@ -230,7 +267,12 @@ class TilesCommand : CliktCommand(name = "tiles") {
         for (r in results) for ((k, v) in r.counters) counterSums[k] = (counterSums[k] ?: 0L) + v
         val written = results.filter { !it.skipped }
         written.forEach { provenanceSeen += it.provenance }
-        val verifyStats = if (verify) verifySeams(plan, results) else null
+        // Added on this thread in plan order; the writer sorts by tile ID anyway.
+        if (archive != null) for (r in written) archive.add(r.tile, r.png!!)
+        if (verify) for (r in written) expectedDigests[r.tile] = r.gridDigest
+        val verifyStats = if (verify) {
+            verifySeams(plan, results).copy(gridDigest = GridDigest.hex(written.sumOf { it.gridDigest }))
+        } else null
 
         return ZoomReport(
             zoom = z,
@@ -265,22 +307,27 @@ class TilesCommand : CliktCommand(name = "tiles") {
         }
 
         val bytes = encodePng(TileWindows.encodeTerrarium(grid), grid.width, grid.height)
-        val file = File(outDir, "${tw.tile.z}/${tw.tile.x}/${tw.tile.y}.png")
-        file.parentFile.mkdirs()
-        file.writeBytes(bytes)
+        if (writeXyz) {
+            val file = File(outDir, "${tw.tile.z}/${tw.tile.x}/${tw.tile.y}.png")
+            file.parentFile.mkdirs()
+            file.writeBytes(bytes)
+        }
         val t2 = System.nanoTime()
 
         var decodeError = 0f
+        var digest = 0L
         if (verify) {
             val back = readTile(bytes, grid.cellSizeMeters)
             for (i in grid.values.indices) {
                 val expected = grid.values[i].let { if (it.isNaN()) 0f else it }
                 decodeError = maxOf(decodeError, abs(back.values[i] - expected))
             }
+            digest = GridDigest.tile(tw.tile, back.values)
         }
         return TileResult(
             tw.tile, if (verify) fetched.grid else null, false, bytes.size, noData, grid.min(), grid.max(),
             (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, fetched.counters, decodeError, fetched.provenance,
+            png = if (pmtiles != null) bytes else null, gridDigest = digest,
         )
     }
 
@@ -345,7 +392,10 @@ class TilesCommand : CliktCommand(name = "tiles") {
     }
 
     /** Stitches the written tiles of zoom [z] back into one grid (NaN where no tile was written) and renders it. */
-    private fun renderPreview(z: Int, box: BoundingBox, outDir: File, tileSize: Int, cellSize: Double): String {
+    private fun renderPreview(
+        z: Int, box: BoundingBox, outDir: File, tileSize: Int, cellSize: Double,
+        load: (TileId) -> ByteArray? = { t -> File(outDir, "${t.z}/${t.x}/${t.y}.png").takeIf { it.exists() }?.readBytes() },
+    ): String {
         val tiles = TileWindows.forBbox(box, z, 0.0, tileSize).map { it.tile }
         val tx0 = tiles.minOf { it.x }
         val ty0 = tiles.minOf { it.y }
@@ -356,9 +406,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         check(w <= 8192 && h <= 8192) { "preview at z$z would be ${w}x$h px; pick a smaller zoom" }
         val values = FloatArray(w * h) { Float.NaN }
         for (t in tiles) {
-            val file = File(outDir, "$z/${t.x}/${t.y}.png")
-            if (!file.exists()) continue
-            val grid = readTile(file.readBytes(), cellSize)
+            val grid = readTile(load(t) ?: continue, cellSize)
             val ox = (t.x - tx0) * tileSize
             val oy = (t.y - ty0) * tileSize
             for (j in 0 until tileSize) grid.values.copyInto(values, (oy + j) * w + ox, j * tileSize, (j + 1) * tileSize)
