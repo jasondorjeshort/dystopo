@@ -211,6 +211,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T11b merged (PR #10): hardening sweep.** Corrupt PMTiles archives now fail fast with a reason instead of allocating or looping (11 fixtures built by patching real writer output); tilebuild leaves no temp dirs; the license policy no longer lets "GPL ISC"-style strings through and reports multi-license choices; the registry carries the Copernicus licence document, honest 3DEP datum wording, SPDX expressions, and provenance is mandatory on every result with data.
 
+**2026-10-09: T12 merged (PR #11): DEM region packs.** `tiles --pmtiles` writes a region's Terrarium tiles into one PMTiles archive (Rainier NP region z8–14: 1,404 tiles, 222 MB, 21 s warm), verified tile by tile against the XYZ output (identical grid digests); `pmtiles extract --bbox` cuts a sub-archive without re-encoding, including from the remote planet build. The browser demo now reads hillshade and contours from the archive. This is the "download a drawn area" mechanism from the product principles, working end to end on desktop.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
