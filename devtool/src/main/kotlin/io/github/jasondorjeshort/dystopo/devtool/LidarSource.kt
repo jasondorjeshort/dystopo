@@ -20,7 +20,7 @@ import java.util.Locale
  * projects are composited newest survey on top, feathered at coverage edges. Cells with no
  * lidar are NaN, so this source is meant to be composited over a fallback (see [ThreeDepBestSource]).
  */
-class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : ElevationSource {
+class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : FeatheredSource {
     override val id = "3dep-1m"
     override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar DEM, public domain."
 
@@ -43,17 +43,23 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Elevation
         val n = window.latAt(0)
         val s = window.latAt(window.height - 1)
         val bbox = String.format(Locale.ROOT, "%.5f,%.5f,%.5f,%.5f", w, s, e, n)
-        // The cache file is keyed by a hash so the bbox itself isn't spelled out in file names.
-        val cache = File(cacheDir, "index/${bbox.hashCode().toUInt()}.json")
-        val text = if (cache.exists()) cache.readText() else {
-            val dataset = URLEncoder.encode("Digital Elevation Model (DEM) 1 meter", StandardCharsets.UTF_8)
-            val url = "https://tnmaccess.nationalmap.gov/api/v1/products?bbox=$bbox&datasets=$dataset&prodFormats=GeoTIFF&max=200"
-            Http.download(url, cache)
-            cache.readText()
+        val dataset = URLEncoder.encode("Digital Elevation Model (DEM) 1 meter", StandardCharsets.UTF_8)
+        // Pages of 200; wide windows (zoomed-out tiles) list more than that.
+        val items = ArrayList<TnmItem>()
+        var offset = 0
+        while (true) {
+            // The cache file is keyed by a hash so the bbox itself isn't spelled out in file names.
+            val cache = File(cacheDir, "index/${bbox.hashCode().toUInt()}${if (offset == 0) "" else "-$offset"}.json")
+            val text = if (cache.exists()) cache.readText() else {
+                val url = "https://tnmaccess.nationalmap.gov/api/v1/products?bbox=$bbox&datasets=$dataset&prodFormats=GeoTIFF&max=200&offset=$offset"
+                Http.download(url, cache)
+                cache.readText()
+            }
+            val response = json.decodeFromString<TnmResponse>(text)
+            items += response.items
+            if (response.items.isEmpty() || items.size >= response.total) return items
+            offset = items.size
         }
-        val response = json.decodeFromString<TnmResponse>(text)
-        check(response.items.size >= response.total) { "TNM returned ${response.items.size} of ${response.total} items; add paging" }
-        return response.items
     }
 
     private fun projects(window: MercatorWindow): List<Project> {
@@ -149,9 +155,9 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Elevation
         return Utm.zoneFromEpsg(epsg) ?: error("lidar tile EPSG:$epsg is not a supported UTM zone")
     }
 
-    override fun fetch(window: MercatorWindow): ElevationSource.Result {
+    override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val layers = layers(window)
-        val merged = mergeNewestOnTop(layers.grids, window) ?: ElevationGrid(
+        val merged = mergeNewestOnTop(layers.grids, featherCellSizeMeters) ?: ElevationGrid(
             window.width, window.height, window.cellSizeMeters, FloatArray(window.width * window.height) { Float.NaN },
         )
         val counters = layers.counters + ("coveragePermille" to (Composite.coverage(merged) * 1000).toLong())
@@ -162,24 +168,25 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Elevation
         /** Width of the blend band at coverage edges. */
         const val FEATHER_METERS = 60.0
 
-        fun featherCells(window: MercatorWindow) = FEATHER_METERS / window.cellSizeMeters
+        /** Blend band in cells for grids whose cells are [cellSizeMeters] on the ground. */
+        fun featherCells(cellSizeMeters: Double) = FEATHER_METERS / cellSizeMeters
 
         /** Composites [grids] (oldest first) so newer surveys win, feathered at their edges. */
-        fun mergeNewestOnTop(grids: List<ElevationGrid>, window: MercatorWindow): ElevationGrid? =
-            grids.reduceOrNull { below, above -> Composite.over(above, below, featherCells(window)) }
+        fun mergeNewestOnTop(grids: List<ElevationGrid>, cellSizeMeters: Double): ElevationGrid? =
+            grids.reduceOrNull { below, above -> Composite.over(above, below, featherCells(cellSizeMeters)) }
     }
 }
 
 /** Best available USGS elevation: 1 m lidar where it exists, feathered into the 10 m DEM elsewhere. */
-class ThreeDepBestSource : ElevationSource {
+class ThreeDepBestSource : FeatheredSource {
     override val id = "3dep-best"
     override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar and 1/3 arc-second DEMs, public domain. " +
         Geoids.ATTRIBUTION
 
-    override fun fetch(window: MercatorWindow): ElevationSource.Result {
+    override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val base = ThreeDepSource().fetch(window)
         val lidar = LidarSource().layers(window)
-        val merged = LidarSource.mergeNewestOnTop(listOf(base.grid) + lidar.grids, window)!!
+        val merged = LidarSource.mergeNewestOnTop(listOf(base.grid) + lidar.grids, featherCellSizeMeters)!!
         val counters = LinkedHashMap<String, Long>()
         base.counters.forEach { (k, v) -> counters["base.$k"] = v }
         lidar.counters.forEach { (k, v) -> counters["lidar.$k"] = v }
@@ -193,7 +200,7 @@ class ThreeDepBestSource : ElevationSource {
  * laid over it where available. Everything is in EGM2008. The 30 m -> 10 m transition gets a
  * wider blend band than lidar -> 10 m, scaled to the coarser source's resolution.
  */
-class BestSource : ElevationSource {
+class BestSource : FeatheredSource {
     companion object {
         const val GLOBAL_FEATHER_METERS = 300.0
     }
@@ -201,10 +208,10 @@ class BestSource : ElevationSource {
     override val id = "best"
     override val attribution = CopernicusSource().attribution + " " + ThreeDepBestSource().attribution
 
-    override fun fetch(window: MercatorWindow): ElevationSource.Result {
+    override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val global = CopernicusSource().fetch(window)
-        val us = ThreeDepBestSource().fetch(window)
-        val merged = Composite.over(us.grid, global.grid, GLOBAL_FEATHER_METERS / window.cellSizeMeters)
+        val us = ThreeDepBestSource().fetch(window, featherCellSizeMeters)
+        val merged = Composite.over(us.grid, global.grid, GLOBAL_FEATHER_METERS / featherCellSizeMeters)
         val counters = LinkedHashMap<String, Long>()
         global.counters.forEach { (k, v) -> counters["copernicus.$k"] = v }
         us.counters.forEach { (k, v) -> counters["3dep.$k"] = v }

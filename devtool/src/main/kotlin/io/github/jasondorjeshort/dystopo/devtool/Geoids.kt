@@ -57,10 +57,12 @@ object Geoids {
         val lh = (window.height - 1) / step + 2
         val lattice = DoubleArray(lw * lh)
         for (b in 0 until lh) for (a in 0 until lw) {
-            val i = minOf(a * step, window.width - 1)
-            val j = minOf(b * step, window.height - 1)
-            val lat = window.latAt(j)
-            val lon = window.lonAt(i)
+            // The last lattice column/row may lie just past the window edge; lonAt/latAt extrapolate.
+            // Keeping every lattice point on a multiple of `step` from the window origin means windows
+            // whose origins are 16-aligned (tile exports) sample identical points, so a cell's offset
+            // doesn't depend on which window computed it.
+            val lat = window.latAt(b * step)
+            val lon = window.lonAt(a * step)
             lattice[b * lw + a] = Datums.navd88ToEgm2008(lat, lon, geoid18, egm2008)
         }
         val out = FloatArray(window.width * window.height)

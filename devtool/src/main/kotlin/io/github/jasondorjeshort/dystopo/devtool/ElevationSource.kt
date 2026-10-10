@@ -37,6 +37,18 @@ interface ElevationSource {
     }
 }
 
+/**
+ * A source that blends layers at coverage edges. The blend band is sized in cells from a ground
+ * cell size; [ElevationSource.fetch] uses the window's own. Tile exports pass one reference cell
+ * size for a whole zoom level (see `TileWindows.referenceCellSizeMeters`) so adjacent tiles, whose
+ * windows sit at slightly different latitudes, weight the same cell identically.
+ */
+interface FeatheredSource : ElevationSource {
+    fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result
+
+    override fun fetch(window: MercatorWindow): ElevationSource.Result = fetch(window, window.cellSizeMeters)
+}
+
 object Http {
     val client: HttpClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
@@ -47,18 +59,37 @@ object Http {
         .header("User-Agent", "dystopo-devtool/0.1")
         .timeout(Duration.ofSeconds(120))
 
+    /**
+     * Retries dropped connections (EOF, reset), which happen under many parallel requests to one
+     * host. HTTP error statuses are not retried.
+     */
+    private fun <T> withRetry(attempts: Int = 4, block: () -> T): T {
+        var delay = 300L
+        var last: java.io.IOException? = null
+        repeat(attempts) {
+            try {
+                return block()
+            } catch (e: java.io.IOException) {
+                last = e
+                Thread.sleep(delay)
+                delay *= 2
+            }
+        }
+        throw last!!
+    }
+
     /** Downloads [url] to [file] atomically. */
     fun download(url: String, file: File) {
         file.parentFile.mkdirs()
-        val tmp = File(file.parentFile, "${file.name}.part")
-        val response = client.send(request(url).build(), HttpResponse.BodyHandlers.ofFile(tmp.toPath()))
+        val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().threadId()}.part")
+        val response = withRetry { client.send(request(url).build(), HttpResponse.BodyHandlers.ofFile(tmp.toPath())) }
         check(response.statusCode() == 200) { "HTTP ${response.statusCode()} for $url" }
         Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
     }
 
     fun range(url: String, offset: Long, length: Int): ByteArray {
         val req = request(url).header("Range", "bytes=$offset-${offset + length - 1}").build()
-        val response = client.send(req, HttpResponse.BodyHandlers.ofByteArray())
+        val response = withRetry { client.send(req, HttpResponse.BodyHandlers.ofByteArray()) }
         check(response.statusCode() == 206 || response.statusCode() == 200) { "HTTP ${response.statusCode()} for $url" }
         return response.body()
     }
@@ -78,7 +109,8 @@ class CachedHttpRangeSource(private val url: String, private val cacheDir: File)
         val bytes = Http.range(url, offset, length)
         synchronized(this) { fetches++ }
         file.parentFile.mkdirs()
-        val tmp = File(cacheDir, "$offset-$length.part")
+        // Unique temp name: parallel tile renders can fetch the same range at the same time.
+        val tmp = File(cacheDir, "$offset-$length.${Thread.currentThread().threadId()}.part")
         tmp.writeBytes(bytes)
         Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
         return bytes
