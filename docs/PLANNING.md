@@ -233,6 +233,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T20a merged (PR #21): renderer style for the outdoors schema.** The devtool renderer now draws everything the outdoors profile emits: POI markers by class, cliffs with ticks on the downhill side (decided from the DEM; 1 of 24 Rainier cliffs flipped from the OSM default), named ridges, trails darker and shorter-dashed as `sac_scale` rises, faded when hard to follow, wilderness boundaries. Trail names can no longer touch. A new golden renders a tiny synthetic outdoors archive built in the test (T5 encoder + T3 writer), so style regressions are caught offline; 255 tests. Wave 4 complete: 21 PRs merged today.
 
+**2026-10-09: T24 merged (PR #23): tracks, waypoints and GPX.** The first phase-2 piece, in `shared` so every platform shares it: waypoint/track/route model with UUID ids, GPX 1.1 import and export on a hand-written XML reader (extensions preserved byte for byte, Garmin heart rate and cadence read), stats with documented rules (3 m turning-point hysteresis for ascent, 0.3 m/s moving threshold), and `devtool gpx info|render|export`. The render draws a track with direction arrows, waypoints and a route over the terrain and OSM layers with an elevation profile strip. The fixture is a hand-written Skyline Trail loop (public trail geometry rounded to 10 m, invented times), never a recording.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
