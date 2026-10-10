@@ -29,6 +29,8 @@ jobs:
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the version code is the commit count
 
       - uses: actions/setup-java@v5
         with:
@@ -69,7 +71,8 @@ jobs:
         # Naming a release task turns on the ABI splits (androidApp/build.gradle.kts).
         run: |
           chmod +x gradlew
-          ./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist
+          # versionName is the tag without its v; versionCode is the commit count, which only grows on main.
+          ./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist \n            -PdystopoVersion="${TAG#v}" -PdystopoVersionCode="$(git rev-list --count HEAD)"
 
       - name: Collect artifacts
         run: |

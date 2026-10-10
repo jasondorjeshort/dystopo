@@ -9,9 +9,9 @@ each release gets a section here.
 
 (nothing yet)
 
-## v0.1.1-alpha (2026-10-10), the first published alpha
+## v0.1.2-alpha (2026-10-10), the first published alpha
 
-Everything from the start of the project to the first-run fix (T79). `v0.1.0-alpha` was tagged earlier the same day and never published: its APK dead-ended on a fresh phone.
+Everything from the start of the project to the first-run fix (T79), plus the app version now coming from the release tag (versionName is the tag, versionCode the commit count). `v0.1.0-alpha` and `v0.1.1-alpha` were tagged earlier the same day and never published: the first dead-ended on a fresh phone, the second still reported version 0.1.0.
 
 ### 2026-10-10
 

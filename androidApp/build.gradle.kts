@@ -17,8 +17,10 @@ android {
         applicationId = "io.github.jasondorjeshort.dystopo"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.compileSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        // The release workflow passes the tag: -PdystopoVersion=0.1.2-alpha -PdystopoVersionCode=<commit count>.
+        // Local builds are "0.1.0-dev" with code 1; a phone updates only to a higher or equal code.
+        versionCode = (project.findProperty("dystopoVersionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("dystopoVersion") as String?) ?: "0.1.0-dev"
         // Loopback port of the tile server (and, in debug builds, the debug endpoints).
         buildConfigField("int", "SERVER_PORT", "8686")
     }
