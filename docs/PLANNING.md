@@ -225,6 +225,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T22 merged (PR #17): the lidar → 10 m seam on real data.** A new public area, `rainier-lidar-edge` (south-west Mount Rainier NP, where a 2022 lidar project ends at about 46.77°N), finally exercises the lidar-to-10 m transition that was only unit-tested before. At z13 and z14, in hillshade, slope bands and contours, the edge is invisible: no step, no kink, no tone change, and the 60 m feather band can't be seen. Lidar vs 10 m over the covered cells: mean +0.19 m (tree canopy), so no datum bias. The only artifact was in the verifier itself: cells within a feather width of a haloed window edge are compared against a neighbour that can see no-data beyond the window; the check is being narrowed to the exactly-computed overlap (T19).
 
+**2026-10-09: T21 merged (PR #19): datums beyond CONUS.** The geoid grid is now chosen by location: GEOID18 for CONUS and Puerto Rico/USVI (which superseded GEOID12B there), GEOID12B for Alaska (a grid that crosses 180°) and Hawaii (on NAD83(PA11), with its own ellipsoid shift). Sources check geoid coverage before downloading, so areas outside the US no longer fetch 3DEP at all. Checks on bare ground: North Slope tundra agrees with Copernicus to +0.03 m (1.5 m off without the grid), Kona lava plain +0.10 m, Bonneville unchanged at +0.20 m. Denali and Mauna Kea now render from converted 3DEP; the tour is 50/50 with the two new flat areas. Verified against the PROJ grid index and README.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
