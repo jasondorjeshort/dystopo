@@ -33,8 +33,8 @@ class SourceRegistryMappingTest {
     fun bestCreditsEveryLayerAndTheGeoids() {
         assertEquals(
             listOf(
-                "copernicus", "3dep", "3dep-1m", "swissalti3d", "kartverket-dtm", "bev-als-dtm",
-                "geoid18", "geoid18-prvi", "geoid12b-alaska", "geoid12b-hawaii", "chgeo2004", "href2018b", "bev-geoid", "egm2008",
+                "copernicus", "3dep", "3dep-1m", "swissalti3d", "kartverket-dtm", "bev-als-dtm", "hrdem", "linz-dem",
+                "geoid18", "geoid18-prvi", "geoid12b-alaska", "geoid12b-hawaii", "chgeo2004", "href2018b", "bev-geoid", "cgg2013a", "nzgeoid2016", "egm2008",
             ),
             registry.ordered(ElevationSource.byId("best").registryIds),
         )

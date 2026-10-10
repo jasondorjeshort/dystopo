@@ -61,7 +61,7 @@ object NationalDem {
         Geoids.egm2008.prefetch(west, south, east, north)
         val lattice = DoubleArray(lw * lh)
         for (b in 0 until lh) for (a in 0 until lw) {
-            lattice[b * lw + a] = Datums.nationalToEgm2008(window.latAt(b * step), window.lonAt(a * step), national, Geoids.egm2008)
+            lattice[b * lw + a] = Datums.nationalToEgm2008(window.latAt(b * step), window.lonAt(a * step), national, Geoids.egm2008, geoid.nad83Frame)
         }
         val out = FloatArray(window.width * window.height)
         for (j in 0 until window.height) {

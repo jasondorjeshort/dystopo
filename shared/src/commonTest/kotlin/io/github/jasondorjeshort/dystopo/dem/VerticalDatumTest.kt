@@ -108,6 +108,31 @@ class VerticalDatumTest {
     }
 
     @Test
+    fun canadaAddsTheNad83ShiftAndNewZealandDoesNot() {
+        val national = GeoidModel { _, _ -> -17.0 }
+        val egm2008 = GeoidModel { _, _ -> -16.2 }
+        // Mount Robson: CGG2013a is relative to NAD83(CSRS), so the NAD83 -> WGS84 height shift (about -0.3 m there) applies.
+        val shift = Datums.wgs84MinusNad83Height(53.11, -119.16, Nad83Frame.NAD83_2011)
+        assertTrue(shift in -0.6..-0.1, "shift $shift")
+        assertEquals(
+            -0.8 + shift,
+            Datums.nationalToEgm2008(53.11, -119.16, national, egm2008, Datums.CANADA_GEOID.nad83Frame),
+            1e-12,
+        )
+        assertEquals(-0.8, Datums.nationalToEgm2008(-43.595, 170.142, national, egm2008, Datums.NEW_ZEALAND_GEOID.nad83Frame), 1e-12)
+        for (g in listOf(Datums.CANADA_GEOID, Datums.NEW_ZEALAND_GEOID)) {
+            val entry = SourceRegistry.builtIn[g.registryId] ?: error("${g.registryId} not in sources.json")
+            assertEquals(SourceKind.GEOID, entry.kind)
+            assertEquals("https://cdn.proj.org/${g.file}", entry.url)
+        }
+        assertEquals(VerticalDatum.CGVD2013, Datums.CANADA_GEOID.datum)
+        assertEquals(VerticalDatum.NZVD2016, Datums.NEW_ZEALAND_GEOID.datum)
+        assertTrue(Datums.CANADA_GEOID.intersects(-119.20, 53.08, -119.12, 53.14))
+        assertTrue(Datums.NEW_ZEALAND_GEOID.intersects(170.10, -43.62, 170.18, -43.57))
+        assertFalse(Datums.NEW_ZEALAND_GEOID.intersects(-121.86, 46.78, -121.66, 46.93))
+    }
+
+    @Test
     fun pa11ShiftDiffersFromNad83Of2011ByAboutTenCentimetersInHawaii() {
         val a = Datums.wgs84MinusNad83Height(19.82, -155.47, Nad83Frame.NAD83_2011)
         val b = Datums.wgs84MinusNad83Height(19.82, -155.47, Nad83Frame.NAD83_PA11)

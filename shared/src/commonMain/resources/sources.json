@@ -127,6 +127,48 @@
       "notes": "Bare-earth DTM from the BEV INSPIRE download service (ATOM feed of series eae5f98d-d605-4783-8292-8b913d163cac). Each tile is a Cloud-Optimized BigTIFF of about 7.7 GB (50001x50001 float32, 512 px LZW tiles with the floating-point predictor, overviews), read with range requests only for the blocks a window needs. Reprojected from EPSG:3035 with LambertAzimuthalEqualArea (EPSG guidance-note formulas). Heights converted EVRF2000 Austria -> EGM2008 with bev-geoid (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
     },
     {
+      "id": "hrdem",
+      "name": "NRCan High Resolution Digital Elevation Model (HRDEM) mosaic, DTM",
+      "kind": "dem",
+      "provider": "Natural Resources Canada (Canada Centre for Mapping and Earth Observation), from federal, provincial and territorial lidar; hosted on AWS (canelevation-dem)",
+      "coverage": {
+        "summary": "Where Canada has airborne lidar: much of southern Canada and growing (not Mount Robson, for one), in 500x500 km tiles of the EPSG:3979 grid; cells without lidar are no data (-32767), so what is below fills there. Read only inside Canada's box (north of 48.2 N, and southern Ontario, Quebec and the Maritimes); there it goes over 3DEP, whose 10 m base reaches into Canada.",
+        "bbox": [-141.1, 41.6, -52.5, 83.2]
+      },
+      "resolution": "1 m mosaic (lidar delivered at 1 m) and 2 m mosaic (all lidar, the larger coverage), each with internal overviews to 512x",
+      "verticalDatum": "CGVD2013 (EPSG:6647) on NAD83(CSRS) / Canada Atlas Lambert (EPSG:3979)",
+      "license": "OGL-Canada-2.0",
+      "licenseName": "Open Government Licence - Canada 2.0",
+      "licenseUrl": "https://open.canada.ca/en/open-government-licence-canada",
+      "attribution": "Elevation: HRDEM, Natural Resources Canada. Contains information licensed under the Open Government Licence - Canada.",
+      "attributionHtml": "Elevation: <a href=\"https://open.canada.ca/data/en/dataset/0fe65119-e96e-4a57-8bfe-9d9245fba06b\" target=\"_blank\">HRDEM</a>, Natural Resources Canada. Contains information licensed under the <a href=\"https://open.canada.ca/en/open-government-licence-canada\" target=\"_blank\">Open Government Licence - Canada</a>.",
+      "allowedUses": "Free use, adaptation and redistribution, including commercial, with the attribution statement.",
+      "url": "https://canelevation-dem.s3.ca-central-1.amazonaws.com/hrdem-mosaic-{res}m/{i}_{j}-mosaic-{res}m-dtm.tif",
+      "updateCadence": "Tiles are republished as new lidar projects are added (STAC API datacube.services.geo.ca/stac/api, collections hrdem-mosaic-1m and hrdem-mosaic-2m, carry the dates); the tile list is pinned in the source, the tiles are read as served.",
+      "notes": "Bare-earth DTM mosaics: one Cloud-Optimized BigTIFF per 500 km tile of EPSG:3979 (tile i_j spans x from (i - 6) * 500 km, y from (j - 3) * 500 km; 500000 or 250000 px square, float32, 512 px LZW tiles, overviews by 2 to 512, no-data -32767), sparse where there is no lidar. The 1 m mosaic is read where output cells are under 2 m and filled from the 2 m mosaic where it has none; the 2 m mosaic (with its overviews) everywhere else. Reprojected from EPSG:3979 with LambertConformalConic (EPSG guidance-note formulas). Heights converted CGVD2013 -> EGM2008 with cgg2013a (NAD83(CSRS) put in WGS84 with the NAD83(2011) translation) and egm2008. Composited over Copernicus and 3DEP with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
+    },
+    {
+      "id": "linz-dem",
+      "name": "New Zealand LiDAR 1m DEM (LINZ national mosaic)",
+      "kind": "dem",
+      "provider": "Toitu Te Whenua Land Information New Zealand (LINZ), with regional councils and lidar partners; hosted on AWS (nz-elevation)",
+      "coverage": {
+        "summary": "New Zealand where lidar has been flown (about 90 percent of the mainland, not all high alpine ground), on NZTopo50 sheets of 24x36 km; uncaptured cells are no data (-9999), so Copernicus fills there.",
+        "bbox": [166.3, -47.4, 178.6, -34.3]
+      },
+      "resolution": "1 m (airborne lidar), with internal overviews to 2, 4, 8 ... 128 m",
+      "verticalDatum": "NZVD2016 (EPSG:7839) on NZGD2000 / New Zealand Transverse Mercator 2000 (EPSG:2193)",
+      "license": "CC-BY-4.0",
+      "licenseName": "Creative Commons Attribution 4.0 International",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "Elevation: New Zealand LiDAR 1m DEM, sourced from LINZ (Toitu Te Whenua Land Information New Zealand). CC BY 4.0.",
+      "attributionHtml": "Elevation: <a href=\"https://data.linz.govt.nz/layer/121859-new-zealand-lidar-1m-dem/\" target=\"_blank\">New Zealand LiDAR 1m DEM</a>, sourced from LINZ (Toitu Te Whenua Land Information New Zealand). <a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>.",
+      "allowedUses": "Free use, adaptation and redistribution, including commercial, with attribution to LINZ.",
+      "url": "https://nz-elevation.s3.ap-southeast-2.amazonaws.com/new-zealand/new-zealand/dem_1m/2193/{sheet}.tiff",
+      "updateCadence": "Ongoing: sheets are rebuilt as new lidar is added (STAC collection new-zealand/new-zealand/dem_1m/2193/collection.json); the sheet list is pinned in the source.",
+      "notes": "Bare-earth DEM, the national mosaic of all LINZ lidar DEMs. One Cloud-Optimized GeoTIFF per NZTopo50 sheet (24000x36000 px, float32, 512 px tiles, LERC with a 1 mm maximum error at full resolution and 10 cm in the overviews, sparse tiles, no-data -9999); LERC (TIFF compression 34887) is decoded by our own Lerc2 reader. Sheet from NZTM: column (E - 988000) / 24000, row (6810000 - N) / 36000, rows lettered AA to CZ without I and O. Reprojected from NZTM2000 with the UTM transverse Mercator (same ellipsoid, scale and false northing; central meridian 173 E, false easting 1600000). Heights converted NZVD2016 -> EGM2008 with nzgeoid2016 (NZGD2000 taken as WGS84 vertically) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
+    },
+    {
       "id": "terrarium",
       "name": "Mapzen Terrain Tiles (Terrarium, legacy)",
       "kind": "dem",
@@ -292,6 +334,48 @@
       "url": "https://cdn.proj.org/at_bev_GEOID_GRS80_Oesterreich.tif",
       "updateCadence": "Static.",
       "notes": "EPSG:9276. EVRF2000 Austria height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put BEV ALS DTM heights in EGM2008. The GHA grid (at_bev_GV_Hoehengrid_plus_Geoid_V2.tif) would serve the 2021 edition, which is not used."
+    },
+    {
+      "id": "cgg2013a",
+      "name": "NRCan CGG2013a geoid (NAD83(CSRS) to CGVD2013)",
+      "kind": "geoid",
+      "provider": "Natural Resources Canada (Canadian Geodetic Survey); grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Canada and the surrounding ocean.",
+        "bbox": [-170.0, 10.0, -10.0, 90.0]
+      },
+      "resolution": "2 arc-minute grid",
+      "verticalDatum": "CGVD2013(CGG2013a) heights (EPSG:9245) relative to the NAD83(CSRS)v6 ellipsoid",
+      "license": "OGL-Canada-2.0",
+      "licenseName": "Open Government Licence - Canada 2.0",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/ca_nrc/ca_nrc_README.txt",
+      "attribution": "Geoid: CGG2013a, Natural Resources Canada, via PROJ-data. Contains information licensed under the Open Government Licence - Canada.",
+      "attributionHtml": "Geoid: CGG2013a, Natural Resources Canada, via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>. Contains information licensed under the <a href=\"https://open.canada.ca/en/open-government-licence-canada\" target=\"_blank\">Open Government Licence - Canada</a>.",
+      "allowedUses": "Free use with the attribution statement.",
+      "url": "https://cdn.proj.org/ca_nrc_CGG2013an83.tif",
+      "updateCadence": "Static.",
+      "notes": "EPSG:9247. CGVD2013 height + grid value = NAD83(CSRS) ellipsoidal height; the NAD83(2011) translation to WGS84 and egm2008 then put HRDEM heights in EGM2008."
+    },
+    {
+      "id": "nzgeoid2016",
+      "name": "LINZ NZGeoid2016 (NZGD2000 to NZVD2016)",
+      "kind": "geoid",
+      "provider": "Toitu Te Whenua Land Information New Zealand (LINZ); grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "New Zealand and the surrounding ocean.",
+        "bbox": [160.0, -60.0, 180.0, -25.0]
+      },
+      "resolution": "1 arc-minute grid",
+      "verticalDatum": "NZVD2016 (EPSG:7839) relative to the NZGD2000 ellipsoid",
+      "license": "CC-BY-4.0",
+      "licenseName": "Creative Commons Attribution 4.0 International",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/nz_linz/nz_linz_README.txt",
+      "attribution": "Geoid: NZGeoid2016, sourced from LINZ (CC BY 4.0), via PROJ-data.",
+      "attributionHtml": "Geoid: NZGeoid2016, sourced from LINZ (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Free use with attribution.",
+      "url": "https://cdn.proj.org/nz_linz_nzgeoid2016.tif",
+      "updateCadence": "Static.",
+      "notes": "EPSG:7840. NZVD2016 height + grid value = NZGD2000 ellipsoidal height (taken as WGS84, a few centimetres); used with egm2008 to put LINZ DEM heights in EGM2008."
     },
     {
       "id": "egm2008",

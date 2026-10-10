@@ -40,6 +40,19 @@ enum class VerticalDatum {
      * ETRS89 geoid for Austria ([Datums.AUSTRIA_GEOID]).
      */
     EVRF2000_AUSTRIA,
+
+    /**
+     * Canadian Geodetic Vertical Datum of 2013 (CGVD2013, EPSG:6647), used by NRCan's HRDEM. Realized
+     * through the CGG2013a geoid relative to NAD83(CSRS) ([Datums.CANADA_GEOID]); NAD83(CSRS)
+     * ellipsoidal heights are shifted to WGS84 like NAD83(2011) (CSRS v6 and later share its frame).
+     */
+    CGVD2013,
+
+    /**
+     * New Zealand Vertical Datum 2016 (EPSG:7839), used by LINZ's lidar DEMs. Realized through the
+     * NZGeoid2016 grid relative to NZGD2000 ([Datums.NEW_ZEALAND_GEOID]).
+     */
+    NZVD2016,
 }
 
 /**
@@ -58,6 +71,11 @@ data class NationalGeoid(
     val south: Double,
     val east: Double,
     val north: Double,
+    /**
+     * Set when the grid's ellipsoidal heights are NAD83, not ETRS89-like: the NAD83 -> WGS84
+     * height shift of that frame is then added ([Datums.wgs84MinusNad83Height]), a few decimetres in western Canada.
+     */
+    val nad83Frame: Nad83Frame? = null,
 ) {
     fun intersects(boxWest: Double, boxSouth: Double, boxEast: Double, boxNorth: Double): Boolean =
         boxEast >= west && boxWest <= east && boxNorth >= south && boxSouth <= north
@@ -220,6 +238,21 @@ object Datums {
      * height + national undulation = ETRS89 ellipsoidal height (= WGS84 to a few cm), minus the
      * EGM2008 undulation. Same form as [swissToEgm2008].
      */
-    fun nationalToEgm2008(lat: Double, lon: Double, national: GeoidModel, egm2008: GeoidModel): Double =
-        national.undulation(lat, lon) - egm2008.undulation(lat, lon)
+    fun nationalToEgm2008(lat: Double, lon: Double, national: GeoidModel, egm2008: GeoidModel, nad83Frame: Nad83Frame? = null): Double =
+        national.undulation(lat, lon) + (if (nad83Frame == null) 0.0 else wgs84MinusNad83Height(lat, lon, nad83Frame)) - egm2008.undulation(lat, lon)
+
+    /**
+     * NRCan CGG2013a (NAD83(CSRS)v6 -> CGVD2013(CGG2013a) heights; EPSG:9247), Open Government Licence
+     * - Canada via PROJ-data. A 2' grid over 170-10 W, 10-90 N; NAD83(CSRS) ellipsoidal heights are
+     * put in WGS84 with the NAD83(2011) translation (the frames agree to centimetres).
+     */
+    val CANADA_GEOID = NationalGeoid(
+        VerticalDatum.CGVD2013, "cgg2013a", "ca_nrc_CGG2013an83.tif", -170.0, 10.0, -10.0, 90.0, Nad83Frame.NAD83_2011,
+    )
+
+    /**
+     * LINZ NZGeoid2016 (NZGD2000 -> NZVD2016 heights; EPSG:7840), CC BY 4.0 via PROJ-data. A 1' grid
+     * over 160-180 E, 25-60 S. NZGD2000 is taken as WGS84 vertically (centimetres).
+     */
+    val NEW_ZEALAND_GEOID = NationalGeoid(VerticalDatum.NZVD2016, "nzgeoid2016", "nz_linz_nzgeoid2016.tif", 160.0, -60.0, 180.0, -25.0)
 }

@@ -856,6 +856,8 @@ class LiveTiles(
             "swissalti3d" in provenance -> "live-swissalti" // T50: swissALTI3D inside `best` (T56)
             "kartverket-dtm" in provenance -> "live-kartverket" // T59
             "bev-als-dtm" in provenance -> "live-bev" // T59
+            "hrdem" in provenance -> "live-hrdem" // T69
+            "linz-dem" in provenance -> "live-linz" // T69
             "copernicus" in provenance -> "live-copernicus"
             else -> "live-nodata"
         }

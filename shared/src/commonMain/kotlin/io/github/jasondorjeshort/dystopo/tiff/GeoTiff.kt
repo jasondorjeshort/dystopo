@@ -16,7 +16,9 @@ typealias Decompressor = (input: ByteArray, expectedSize: Int) -> ByteArray
  *
  * Supported: little/big-endian classic TIFF and BigTIFF (e.g. Austria's 7.7 GB ALS DTM tiles); compression none (1) and LZW (5) built in, others
  * via [Decompressor]s (e.g. deflate on the JVM); predictors none (1), horizontal (2) and
- * floating point (3); internal overviews (reduced-resolution IFDs), exposed as [overviews].
+ * floating point (3); internal overviews (reduced-resolution IFDs), exposed as [overviews]. 32-bit
+ * signed integer samples (PROJ's Canadian geoid grids) are read too, scaled by GDAL's SCALE and
+ * OFFSET metadata (tag 42112) into floats; they take predictors 1 and 2.
  */
 class GeoTiff private constructor(
     private val source: ByteRangeSource,
@@ -42,6 +44,10 @@ class GeoTiff private constructor(
     /** Reduced-resolution versions of this image, finest first. Empty for an overview itself. */
     val overviews: List<GeoTiff>,
     private val decompressors: Map<Int, Decompressor>,
+    /** Samples are signed 32-bit integers, read as `value * intScale + intOffset`. */
+    private val intSamples: Boolean = false,
+    private val intScale: Double = 1.0,
+    private val intOffset: Double = 0.0,
 ) {
     val tilesAcross: Int = (width + tileWidth - 1) / tileWidth
     val tilesDown: Int = (height + tileHeight - 1) / tileHeight
@@ -81,6 +87,15 @@ class GeoTiff private constructor(
             ?: throw UnsupportedOperationException("TIFF compression $compression not supported")
         // A short last strip decodes to fewer bytes than a full tile: pad it (rows past the image are never read).
         val bytes = decompress(raw, count * 4).let { if (it.size < count * 4) it.copyOf(count * 4) else it }
+        if (intSamples) {
+            val ints = IntArray(count) { u32(bytes, it * 4, littleEndian).toInt() }
+            when (predictor) {
+                1 -> {}
+                2 -> for (y in 0 until tileHeight) for (x in 1 until tileWidth) ints[y * tileWidth + x] += ints[y * tileWidth + x - 1]
+                else -> throw UnsupportedOperationException("TIFF predictor $predictor not supported for integer samples")
+            }
+            return FloatArray(count) { (ints[it] * intScale + intOffset).toFloat() }
+        }
         return when (predictor) {
             1 -> FloatArray(count) { Float.fromBits(u32(bytes, it * 4, littleEndian).toInt()) }
             2 -> undoHorizontalPredictor32(bytes, tileWidth, tileHeight, littleEndian)
@@ -105,6 +120,7 @@ class GeoTiff private constructor(
             val compression: Int,
             val predictor: Int,
             val subfileType: Int,
+            val intSamples: Boolean,
             val tileOffsets: LongArray,
             val tileByteCounts: LongArray,
             val numbers: (Int) -> DoubleArray?,
@@ -173,7 +189,9 @@ class GeoTiff private constructor(
 
                 val bits = number(258, 1.0).toInt()
                 val sampleFormat = number(339, 1.0).toInt()
-                require(bits == 32 && sampleFormat == 3) { "only 32-bit float samples supported (bits $bits, format $sampleFormat)" }
+                require(bits == 32 && (sampleFormat == 3 || sampleFormat == 2)) {
+                    "only 32-bit float or signed integer samples supported (bits $bits, format $sampleFormat)"
+                }
                 require(number(277, 1.0).toInt() == 1) { "only single-band TIFFs supported" }
                 // Strips are tiles the full width wide (RowsPerStrip, default the whole image, tall).
                 val tiled = tags.containsKey(322)
@@ -188,6 +206,7 @@ class GeoTiff private constructor(
                     compression = number(259, 1.0).toInt(),
                     predictor = number(317, 1.0).toInt(),
                     subfileType = number(254, 0.0).toInt(),
+                    intSamples = sampleFormat == 2,
                     tileOffsets = numbers(if (tiled) 324 else 273)!!.map { it.toLong() }.toLongArray(),
                     tileByteCounts = numbers(if (tiled) 325 else 279)!!.map { it.toLong() }.toLongArray(),
                     numbers = ::numbers,
@@ -214,6 +233,12 @@ class GeoTiff private constructor(
             val epsg = (geoKeys[3072] ?: geoKeys[2048])?.takeIf { it in 1..32766 }
             val noData = main.ascii(42113)?.toFloatOrNull()
             val decompressors = builtInDecompressors + extraDecompressors
+            // GDAL keeps integer grids' scale and offset in its metadata XML.
+            val gdalMetadata = main.ascii(42112).orEmpty()
+            fun gdalItem(name: String): Double? =
+                Regex("<Item name=\"$name\"[^>]*>([^<]+)</Item>").find(gdalMetadata)?.groupValues?.get(1)?.trim()?.toDoubleOrNull()
+            val intScale = gdalItem("SCALE") ?: 1.0
+            val intOffset = gdalItem("OFFSET") ?: 0.0
 
             fun build(ifd: Ifd, overviews: List<GeoTiff>): GeoTiff {
                 // Overviews cover the same extent with proportionally larger pixels.
@@ -224,6 +249,7 @@ class GeoTiff private constructor(
                 return GeoTiff(
                     source, le, ifd.width, ifd.height, ifd.tileWidth, ifd.tileHeight, ifd.compression, ifd.predictor,
                     ifd.tileOffsets, ifd.tileByteCounts, sx, sy, ox, oy, pixelIsPoint, noData, epsg, overviews, decompressors,
+                    ifd.intSamples, intScale, intOffset,
                 )
             }
 

@@ -162,6 +162,24 @@
       "expectedElevation": [2000, 3798],
       "tags": ["world"]
     },
+    "mount-robson": {
+      "bbox": [-119.24, 53.07, -119.09, 53.14],
+      "description": "Mount Robson (3954 m, summit 53.1105N 119.1566W), Canadian Rockies, British Columbia: the Emperor Face, Robson and Mist glaciers, Kinney Lake. NRCan HRDEM where lidar was flown, Copernicus elsewhere.",
+      "expectedElevation": [980, 3954],
+      "tags": ["world"]
+    },
+    "garibaldi": {
+      "bbox": [-123.08, 49.81, -122.93, 49.89],
+      "description": "Mount Garibaldi (2678 m, summit 49.8506N 123.0047W), Coast Mountains, British Columbia: the Warren and Sentinel glaciers and the Cheekye valley. HRDEM lidar in two blocks with Copernicus between them: the HRDEM -> Copernicus seam.",
+      "expectedElevation": [500, 2678],
+      "tags": ["world"]
+    },
+    "aoraki": {
+      "bbox": [170.08, -43.64, 170.21, -43.56],
+      "description": "Aoraki / Mount Cook (3724 m, summit 43.5950S 170.1418E), Southern Alps, New Zealand: the Hooker and Tasman glaciers and the Main Divide. LINZ 1 m lidar DEM.",
+      "expectedElevation": [800, 3724],
+      "tags": ["world"]
+    },
     "rainier-lidar-edge": {
       "bbox": [-121.90, 46.71, -121.78, 46.80],
       "description": "Southwest Mount Rainier National Park, WA, USA: Longmire, Tahoma Creek and the Nisqually valley. USGS 1 m lidar (WA_CentralWildfire_D22) ends along a roughly east-west line at about 46.768N; north of it only 3DEP 10 m exists. Forested valleys, cliffs and moraines on both sides of the edge.",

@@ -341,10 +341,11 @@ class ThreeDepBestSource : FeatheredSource {
 }
 
 /**
- * Best available elevation anywhere: Copernicus 30 m globally, with US 3DEP (10 m, then 1 m lidar)
- * and swissALTI3D (2 m, Switzerland and Liechtenstein) laid over it where available. Everything is
- * in EGM2008. The 30 m -> finer transitions get a wider blend band than lidar -> 10 m, scaled to
- * the coarser source's resolution.
+ * Best available elevation anywhere: Copernicus 30 m globally, with the national bare-earth models
+ * laid over it where available: swissALTI3D, BEV, Kartverket, then US 3DEP (10 m, then 1 m lidar),
+ * then NRCan HRDEM and LINZ. HRDEM goes over 3DEP because the 10 m 3DEP base reaches well into
+ * Canada (half of the Garibaldi area), where the Canadian lidar is the better model. Everything is in EGM2008. The 30 m -> finer transitions get a wider blend
+ * band than lidar -> 10 m, scaled to the coarser source's resolution.
  */
 class BestSource : FeatheredSource {
     companion object {
@@ -352,27 +353,36 @@ class BestSource : FeatheredSource {
     }
 
     override val id = "best"
-    override val registryIds = listOf("copernicus", "3dep", "3dep-1m", "swissalti3d", "kartverket-dtm", "bev-als-dtm", "chgeo2004", "href2018b", "bev-geoid") +
-        Geoids.REGISTRY_IDS
+    override val registryIds = listOf(
+        "copernicus", "3dep", "3dep-1m", "swissalti3d", "kartverket-dtm", "bev-als-dtm", "hrdem", "linz-dem",
+        "chgeo2004", "href2018b", "bev-geoid", "cgg2013a", "nzgeoid2016",
+    ) + Geoids.REGISTRY_IDS
 
     override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val global = CopernicusSource().fetch(window)
-        // Regional layers barely overlap (Switzerland, Austria, Norway, US), so each feathers into what is below it;
-        // where Swiss and Austrian data both reach past the border, Austria's goes on top.
+        // Regional layers barely overlap (Switzerland, Austria, Norway, US, Canada, New Zealand), so each feathers
+        // into what is below it; where Swiss and Austrian data both reach past the border, Austria's goes on top,
+        // and where 3DEP's 10 m base reaches into Canada, HRDEM lidar goes on top (T69).
         val swiss = SwissAltiSource().fetch(window)
         val austria = AustriaSource().fetch(window)
         val norway = NorwaySource().fetch(window)
         val us = ThreeDepBestSource().fetch(window, featherCellSizeMeters)
+        val canada = CanadaSource().fetch(window)
+        val newZealand = NewZealandSource().fetch(window)
         val feather = GLOBAL_FEATHER_METERS / featherCellSizeMeters
         val withSwiss = Composite.over(swiss.grid, global.grid, feather)
         val withAustria = Composite.over(austria.grid, withSwiss, feather)
         val withNorway = Composite.over(norway.grid, withAustria, feather)
-        val merged = Composite.over(us.grid, withNorway, feather)
+        val withUs = Composite.over(us.grid, withNorway, feather)
+        val withCanada = Composite.over(canada.grid, withUs, feather)
+        val merged = Composite.over(newZealand.grid, withCanada, feather)
         val counters = LinkedHashMap<String, Long>()
         global.counters.forEach { (k, v) -> counters["copernicus.$k"] = v }
         swiss.counters.forEach { (k, v) -> counters["swissalti3d.$k"] = v }
         austria.counters.forEach { (k, v) -> counters["bev.$k"] = v }
         norway.counters.forEach { (k, v) -> counters["kartverket.$k"] = v }
+        canada.counters.forEach { (k, v) -> counters["hrdem.$k"] = v }
+        newZealand.counters.forEach { (k, v) -> counters["linz.$k"] = v }
         us.counters.forEach { (k, v) -> counters["3dep.$k"] = v }
         counters["usCoveragePermille"] = (Composite.coverage(us.grid) * 1000).toLong()
         counters["swissCoveragePermille"] = (Composite.coverage(swiss.grid) * 1000).toLong()
@@ -390,16 +400,28 @@ class BestSource : FeatheredSource {
             counters["norwaySeamStepCm"] = Math.round(feathered * 100)
             counters["norwaySeamHardCutStepCm"] = Math.round(hard * 100)
         }
+        counters["canadaCoveragePermille"] = (Composite.coverage(canada.grid) * 1000).toLong()
+        SwissAltiSource.seamSteps(canada.grid, withUs, withCanada)?.let { (feathered, hard) ->
+            counters["canadaSeamStepCm"] = Math.round(feathered * 100)
+            counters["canadaSeamHardCutStepCm"] = Math.round(hard * 100)
+        }
+        counters["newZealandCoveragePermille"] = (Composite.coverage(newZealand.grid) * 1000).toLong()
+        SwissAltiSource.seamSteps(newZealand.grid, withCanada, merged)?.let { (feathered, hard) ->
+            counters["newZealandSeamStepCm"] = Math.round(feathered * 100)
+            counters["newZealandSeamHardCutStepCm"] = Math.round(hard * 100)
+        }
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
         // Each layer counts only if it shows: the regional layers have data (they're NaN elsewhere), and
-        // Copernicus is visible wherever both have holes (Composite.over leaves full cover untouched).
-        val globalShows = us.grid.values.indices.any {
-            us.grid.values[it].isNaN() && swiss.grid.values[it].isNaN() && austria.grid.values[it].isNaN() && norway.grid.values[it].isNaN()
-        }
+        // Copernicus is visible wherever all of them have holes (Composite.over leaves full cover untouched).
+        val regional = listOf(us.grid, swiss.grid, austria.grid, norway.grid, canada.grid, newZealand.grid)
+        val globalShows = us.grid.values.indices.any { k -> regional.all { it.values[k].isNaN() } }
+        // 3DEP is credited only where HRDEM doesn't cover it (its 10 m base reaches into Canada).
+        val usShows = us.grid.values.indices.any { k -> !us.grid.values[k].isNaN() && canada.grid.values[k].isNaN() }
         return ElevationSource.Result(
             merged, counters,
             ElevationSource.mergeProvenance(
-                if (globalShows) global.provenance else emptyList(), swiss.provenance, austria.provenance, norway.provenance, us.provenance,
+                if (globalShows) global.provenance else emptyList(),
+                swiss.provenance, austria.provenance, norway.provenance, if (usShows) us.provenance else emptyList(), canada.provenance, newZealand.provenance,
             ),
         )
     }

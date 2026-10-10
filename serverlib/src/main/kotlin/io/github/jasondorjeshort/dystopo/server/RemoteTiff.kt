@@ -21,11 +21,12 @@ private val deflate: Decompressor = { input, size ->
 
 /**
  * A Cloud-Optimized GeoTIFF read over HTTP range requests, with raw bytes cached on disk and
- * decoded tiles cached in memory per resolution level.
+ * decoded tiles cached in memory per resolution level. [extraDecompressors] add codecs by TIFF
+ * compression code (LERC for New Zealand's DEM).
  */
-class RemoteTiff(url: String, cacheDir: File) {
+class RemoteTiff(url: String, cacheDir: File, extraDecompressors: Map<Int, Decompressor> = emptyMap()) {
     val source = CachedHttpRangeSource(url, cacheDir)
-    val tiff: GeoTiff = GeoTiff.open(source, mapOf(8 to deflate, 32946 to deflate))
+    val tiff: GeoTiff = GeoTiff.open(source, mapOf(8 to deflate, 32946 to deflate) + extraDecompressors)
     private val levels = tiff.levels
     private val caches = levels.map { ConcurrentHashMap<Int, FloatArray>() }
 
