@@ -126,6 +126,12 @@
       "expectedElevation": [650, 3700],
       "tags": ["world"]
     },
+    "rainier-lidar-edge": {
+      "bbox": [-121.90, 46.71, -121.78, 46.80],
+      "description": "Southwest Mount Rainier National Park, WA, USA: Longmire, Tahoma Creek and the Nisqually valley. USGS 1 m lidar (WA_CentralWildfire_D22) ends along a roughly east-west line at about 46.768N; north of it only 3DEP 10 m exists. Forested valleys, cliffs and moraines on both sides of the edge.",
+      "expectedElevation": [500, 2200],
+      "tags": ["lidar-edge"]
+    },
     "pacific": {
       "bbox": [-140.08, 9.92, -139.92, 10.08],
       "description": "Open ocean in the central Pacific, 10N 140W. No elevation files at all: the whole grid should be NaN.",
