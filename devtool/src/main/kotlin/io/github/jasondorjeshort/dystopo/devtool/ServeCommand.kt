@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.devtool
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
@@ -45,8 +46,10 @@ class ServeCommand : CliktCommand(name = "serve") {
     private val glyphs by option("--glyphs", help = "glyph PBF directory (<font>/<range>.pbf); tools/android-push-pack.ps1 fills cache/glyphs")
     private val port by option("--port").int().default(8687)
     private val textScale by option("--text-scale", help = "label size multiplier, as the app's textScale setting (default 1.0)").double().default(1.0)
+    private val live by option("--live", help = "live world mode: packs in out/ first, else DEM from the cloud sources and OSM from OpenFreeMap, cached (see LiveTiles)").flag()
 
     override fun run() {
+        if (live) return LiveTiles.findPacks(listOf(File(dem), File(osm))).let { (d, o) -> LiveTiles(d, o).serve(port, File(glyphs ?: (System.getenv("DYSTOPO_CACHE") ?: "cache") + "/glyphs"), textScale = textScale) }
         val demReader = PmtilesReader.open(FileRangeSource(File(dem)), Gzip.decompressors)
         val osmReader = osm.takeIf { it.isNotEmpty() && File(it).isFile }?.let { PmtilesReader.open(FileRangeSource(File(it)), Gzip.decompressors) }
         val glyphDir = File(glyphs ?: (System.getenv("DYSTOPO_CACHE") ?: "cache") + "/glyphs")

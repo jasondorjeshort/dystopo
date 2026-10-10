@@ -12,6 +12,12 @@ A view is `z/lat/lon` with an optional `:label` and optional `|`-separated optio
 that view (e.g. `|390x844` for a phone) and `req=a+b` names layers that must have rendered features there
 (e.g. `|req=poi-markers+cliffs`). --views-file has one view per line (`#` comments).
 
+Live world mode (`devtool serve --live`, then --url http://localhost:8687/?live=1): every view counts as covered,
+and besides the contour layers it must show hillshade (DEM tiles from some source) and OSM base layers (any layer
+of the osm source with features). `|src=live-copernicus` requires the view's DEM tiles to come mostly from that
+source (pack, live-3dep, live-copernicus); the report's `sources` has the counts the page's status box shows.
+--views also takes several space-separated views (one argument per view).
+
 Needs the demo server running (tools/demo-server.py) and Playwright with Chrome (pip package
 `playwright`; uses the installed Google Chrome via channel="chrome", or `python -m playwright install
 chromium`). Exit code 1 if the map never became idle or any page error / console error occurred.
@@ -48,17 +54,19 @@ def parse_view(text):
     label = ""
     opts = text.split("|")[1:]
     text = text.split("|")[0]
-    size, req = None, []
+    size, req, src = None, [], None
     for o in opts:
         o = o.strip()
-        if o.startswith("req="):
+        if o.startswith("src="):
+            src = o[4:]
+        elif o.startswith("req="):
             req = [s for s in o[4:].split("+") if s]
         elif "x" in o:
             size = tuple(int(n) for n in o.split("x"))
     if ":" in text:
         text, label = text.split(":", 1)
     z, lat, lon = (float(x) for x in text.strip().split("/"))
-    return {"view": f"{z:g}/{lat:g}/{lon:g}", "z": z, "lat": lat, "lon": lon, "label": label.strip(), "size": size, "req": req}
+    return {"view": f"{z:g}/{lat:g}/{lon:g}", "z": z, "lat": lat, "lon": lon, "label": label.strip(), "size": size, "req": req, "src": src}
 
 
 def read_views(args):
@@ -66,7 +74,7 @@ def read_views(args):
     if args.view:
         items.append(args.view)
     if args.views:
-        items += [s for s in args.views.split(",") if s.strip()]
+        items += [s for v in args.views for s in v.split(",") if s.strip()]
     if args.views_file:
         with open(args.views_file, encoding="utf-8") as f:
             for line in f:
@@ -90,7 +98,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8765/tools/demo/")
     ap.add_argument("--view", default="", help="zoom/lat/lon appended as the URL hash, e.g. 13/46.80/-121.74")
-    ap.add_argument("--views", default="", help="comma-separated list of z/lat/lon[:label]; runs a tour in one session")
+    ap.add_argument("--views", nargs="*", default=[], help="z/lat/lon[:label] views, comma- or space-separated; runs a tour in one session")
     ap.add_argument("--views-file", default="", help="file with one z/lat/lon[:label] per line")
     ap.add_argument("--out", default="out/demo-check.png", help="screenshot path; a tour writes <stem>-<i>.png")
     ap.add_argument("--width", type=int, default=1280)
@@ -160,6 +168,7 @@ def main() -> int:
                 if state and state["loaded"] and state["tilesLoaded"] and state["styleLoaded"]:
                     if v["z"] is None or abs(state["zoom"] - v["z"]) < 0.05:
                         report["idle"] = True
+                        report["idleSeconds"] = round(time.time() - t0, 1)  # to idle, before the fixed settle wait below
                         break
                 time.sleep(0.5)
             report["map"] = state
@@ -174,14 +183,30 @@ def main() -> int:
             report["screenshot"] = shot
             report["seconds"] = round(time.time() - t0, 1)
 
+            live = report["idle"] and page.evaluate("() => typeof window.dystopoLiveSources === 'function'")
+            if live:
+                report["live"] = True
+                report["sources"] = page.evaluate("() => window.dystopoLiveSources()")
+                osm_ids = page.evaluate("() => map.getStyle().layers.filter(l => l.source === 'osm').map(l => l.id)")
+                report["osmFeatures"] = sum(report["layers"].get(l, 0) for l in osm_ids)
             ok = report["idle"] and not report["pageErrors"] and not report["failedRequests"] and not any(c["type"] == "error" for c in report["console"])
             if tour and v["z"] is not None:
-                inside = covered(v["z"], v["lat"], v["lon"])
+                inside = live or covered(v["z"], v["lat"], v["lon"])
                 report["inCoverage"] = inside
                 report["emptyLayers"] = []
                 if inside and report["idle"]:
                     report["emptyLayers"] = [l for l in REQUIRED_LAYERS if report["layers"].get(l, 0) == 0]
                     ok = ok and not report["emptyLayers"]
+                if live:
+                    dem = {k: n for k, n in report["sources"]["dem"].items() if k not in ("pending", "none")}
+                    report["demSource"] = max(dem, key=dem.get) if dem else None
+                    if not dem:
+                        report["emptyLayers"].append("hillshade")
+                    if report["osmFeatures"] == 0:
+                        report["emptyLayers"].append("osm")
+                    if v.get("src") and report["demSource"] != v["src"]:
+                        report["wrongSource"] = {"expected": v["src"], "got": report["demSource"]}
+                    ok = ok and not report["emptyLayers"] and "wrongSource" not in report
                 if v.get("req") and report["idle"]:
                     report["missingRequired"] = [l for l in v["req"] if report["layers"].get(l, 0) == 0]
                     ok = ok and not report["missingRequired"]
@@ -197,7 +222,8 @@ def main() -> int:
                   f"{'yes' if r.get('inCoverage') else 'no':<4} {r['missingTiles']:>5} "
                   f"{len(r['console']) + len(r['pageErrors']) + len(r['failedRequests']):>3} "
                   f"{L.get('contour-minor', 0):>5} {L.get('contour-index', 0):>4} {L.get('contour-labels', 0):>4} {L.get('trails', 0) + L.get('trails-mountain', 0) + L.get('trails-alpine', 0):>5} {L.get('poi-markers', 0):>4} {L.get('cliffs', 0):>5} "
-                  f"{L.get('water', 0) + L.get('waterway', 0):>5} {L.get('peaks', 0):>4} {L.get('places', 0):>5} {r['seconds']:>5}", file=sys.stderr)
+                  f"{L.get('water', 0) + L.get('waterway', 0):>5} {L.get('peaks', 0):>4} {L.get('places', 0):>5} {r['seconds']:>5}"
+                  + (f"  dem={r.get('demSource')} osm={r.get('osmFeatures')}" if r.get("live") else ""), file=sys.stderr)
         print(json.dumps(reports, indent=2))
         return 0 if all(r["ok"] for r in reports) else 1
     print(json.dumps(reports[0], indent=2))

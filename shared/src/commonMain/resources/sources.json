@@ -209,6 +209,26 @@
       "notes": "Tile archives built from it are ODbL derived databases."
     },
     {
+      "id": "openfreemap",
+      "name": "OpenFreeMap planet vector tiles",
+      "kind": "osm",
+      "provider": "OpenFreeMap (openfreemap.org), public instance at tiles.openfreemap.org; built from OpenStreetMap with the OpenMapTiles schema",
+      "coverage": {
+        "summary": "Global, z0-14 Web Mercator vector tiles.",
+        "bbox": [-180, -85.0511, 180, 85.0511]
+      },
+      "resolution": "Vector, z0-14 (overzoomed beyond)",
+      "license": "ODbL-1.0",
+      "licenseName": "ODbL 1.0 (the OpenStreetMap data); OpenMapTiles schema CC-BY 4.0",
+      "licenseUrl": "https://openfreemap.org/",
+      "attribution": "Tiles: OpenFreeMap",
+      "attributionHtml": "<a href=\"https://openfreemap.org\" target=\"_blank\">OpenFreeMap</a>",
+      "allowedUses": "Free public instance: no keys, no registration, no request limits, commercial use allowed (openfreemap.org FAQ). Required credit: OpenFreeMap (optional but asked), (c) OpenMapTiles, Data from OpenStreetMap; always compose this entry with openmaptiles and osm.",
+      "url": "https://tiles.openfreemap.org/planet",
+      "updateCadence": "Weekly planet builds; the TileJSON at the url names the current versioned tile path (immutable, cacheable).",
+      "notes": "Used only by devtool serve --live, outside region packs: each missing z/x/y is fetched once and cached on disk under <cache>/openfreemap/<build>/. The schema is OpenMapTiles 3.16, so the default style's outdoors-only layers (outdoor_poi, natural_line, wilderness) match nothing there."
+    },
+    {
       "id": "osm-water-polygons",
       "name": "OSM water polygons",
       "kind": "osm",

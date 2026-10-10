@@ -17,6 +17,12 @@
   with range requests; MapLibre + pmtiles.js + maplibre-contour); trails, water and names come from our OSM PMTiles
   archive. The older XYZ directory still works: add --out out/rainier-best to the tiles command and open the page
   with ?dem=xyz. Only public test areas are referenced here.
+
+  Live world mode: ./gradlew :devtool:run --args="serve --live --port 8687" and open http://localhost:8687/ (serve injects
+  window.DYSTOPO_LIVE; ?live=1 does the same from any page served by it). Hillshade, contours and OSM then come from the
+  serve routes: packs in out/ where they have the tile, else DEM rendered on request from the cloud sources (best: 3DEP,
+  Copernicus, EGM2008) and OpenFreeMap base tiles, both cached on disk. The bottom box says which source the visible
+  tiles came from; "Build pack here" prints the tiles + tilebuild commands for the current view.
 -->
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
@@ -31,7 +37,10 @@
   #panel label { display: block; margin: 4px 0; }
   #panel .hint { color: #6b5f55; font-size: 12px; margin-top: 6px; }
   @media (max-width: 520px) { #panel { max-width: 200px; padding: 6px 8px; } #panel .hint { display: none; } }
+  @media (max-width: 520px) { #sources { top: auto; right: auto; bottom: 56px; left: 12px; } }
   #status { position: absolute; bottom: 30px; left: 12px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+  #sources { position: absolute; top: 12px; right: 52px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; max-width: calc(100% - 40px); }
+  #buildcmd { white-space: pre-wrap; word-break: break-all; font-size: 11px; background: #fffaf0; border: 1px solid #e0d6c4; padding: 4px; max-height: 40vh; overflow: auto; }
 </style>
 </head>
 <body>
@@ -43,11 +52,15 @@
   <label><input type="checkbox" id="osm" checked> Trails, roads, water, names (OSM)</label>
   <label>OSM archive <select id="osmsel"><option value="outdoors">outdoors profile</option><option value="openmaptiles">OpenMapTiles profile</option></select></label>
   <label>Text size <input type="range" id="text" min="0.8" max="2" step="0.1" value="1.3"></label>
-  <div class="hint">Scroll to zoom, drag to pan. Demo data covers Rainier NP and surroundings at z8–14; the blank beyond is simply ungenerated. <span id="dem-mode"></span></div>
+  <div class="hint" id="hint">Scroll to zoom, drag to pan. Demo data covers Rainier NP and surroundings at z8–14; the blank beyond is simply ungenerated. <span id="dem-mode"></span></div>
+  <div id="live-tools" hidden><button id="buildpack" type="button">Build pack here</button><pre id="buildcmd" hidden></pre></div>
 </details>
+<div id="sources" hidden></div>
 <div id="status"></div>
 <script type="module">
 const base = location.origin;
+// Live world mode (devtool serve --live): serve injects window.DYSTOPO_LIVE; ?live=1 asks the server for the same.
+const LIVE = window.DYSTOPO_LIVE || (new URLSearchParams(location.search).get("live") === "1" ? await (await fetch(base + "/live/info")).json() : null);
 const phone = matchMedia("(max-width: 520px)");
 const collapseOnPhone = () => { document.getElementById("panel").open = !phone.matches; }; // phone: layer panel collapsed
 collapseOnPhone(); phone.onchange = collapseOnPhone;
@@ -55,10 +68,12 @@ collapseOnPhone(); phone.onchange = collapseOnPhone;
 // ?osm=openmaptiles (out/rainier-osm.pmtiles).
 const osmParam = new URLSearchParams(location.search).get("osm");
 let osmMode = osmParam === "openmaptiles" ? "openmaptiles" : "outdoors";
-if (osmMode === "outdoors" && osmParam !== "outdoors") {
+if (!LIVE && osmMode === "outdoors" && osmParam !== "outdoors") {
   try { if (!(await fetch(base + "/out/rainier-outdoors.pmtiles", { method: "HEAD" })).ok) osmMode = "openmaptiles"; } catch (e) { osmMode = "openmaptiles"; }
 }
 const osmArchiveUrl = base + (osmMode === "outdoors" ? "/out/rainier-outdoors.pmtiles" : "/out/rainier-osm.pmtiles");
+let demSource = null, contourTiles = null, demArchive = null; // pack mode only (null in live mode)
+if (!LIVE) {
 const protocol = new pmtiles.Protocol();
 maplibregl.addProtocol("pmtiles", protocol.tile);
 
@@ -66,7 +81,6 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
 const demMode = new URLSearchParams(location.search).get("dem") === "xyz" ? "xyz" : "pmtiles";
 const demArchiveUrl = base + "/out/rainier-dem.pmtiles";
 const demXyzUrl = base + "/out/rainier-best/{z}/{x}/{y}.png";
-let demArchive = null;
 if (demMode === "pmtiles") {
   demArchive = new pmtiles.PMTiles(demArchiveUrl);
   protocol.add(demArchive); // one instance (header and directory cache) for hillshade and contours
@@ -76,7 +90,7 @@ document.getElementById("dem-mode").textContent = (demMode === "pmtiles" ? "DEM:
 // Contours are generated from the Terrarium tiles; thresholds are in feet (multiplier).
 // maplibre-contour fetches tiles with fetch() in a worker, which cannot read a PMTiles archive, so in
 // pmtiles mode it runs on the main thread and gets its tiles from the archive through getTile.
-const demSource = new mlcontour.DemSource({
+demSource = new mlcontour.DemSource({
   url: demMode === "pmtiles" ? "pmtiles://" + demArchiveUrl + "/{z}/{x}/{y}" : demXyzUrl,
   encoding: "terrarium",
   maxzoom: 14,
@@ -148,6 +162,15 @@ demSource.manager.getTile = async (url, abortController) => {
 // region) is treated as no data instead of failing the whole tile.
 const fetchDem0 = demSource.manager.fetchDem.bind(demSource.manager);
 demSource.manager.fetchDem = (...a) => fetchDem0(...a).catch(e => { if (/Bad response: 404/.test(e.message)) return undefined; throw e; });
+contourTiles = demSource.contourProtocolUrl({
+  multiplier: 3.28084,
+  thresholds: { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
+  elevationKey: "ele",
+  levelKey: "level",
+  contourLayer: "contours",
+});
+} // end pack mode
+if (LIVE) document.getElementById("hint").textContent = "Scroll to zoom, drag to pan. " + "Live: packs in out/ first (" + (LIVE.demPacks.length + LIVE.osmPacks.length) + " open), else DEM from the cloud sources and OSM from OpenFreeMap.";
 
 // Outdoors POI markers: the renderer's marker table (DefaultOsmStyle in shared/.../style, see its KDoc), same
 // shapes, colours, relative sizes, first zoom and subclass exclusions. Keep the two in step. Shapes are drawn into
@@ -196,25 +219,23 @@ const byClass = key => ["match", ["get", "class"], ...markerClasses.flatMap(k =>
 const markerFilter = ["all", ["in", ["get", "class"], ["literal", markerClasses]], [">=", ["zoom"], byClass("minzoom")],
   ["!", ["in", ["coalesce", ["get", "subclass"], ""], ["literal", MARKER_EXCLUDED_SUBCLASSES]]]];
 
-const contourTiles = demSource.contourProtocolUrl({
-  multiplier: 3.28084,
-  thresholds: { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
-  elevationKey: "ele",
-  levelKey: "level",
-  contourLayer: "contours",
-});
-
 const map = new maplibregl.Map({
   container: "map",
   center: [-121.76, 46.86],
   zoom: 11,
-  minZoom: 7,
+  minZoom: LIVE ? 2 : 7,
   maxZoom: 17,
   hash: true,
   style: {
     version: 8,
     glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
-    sources: {
+    sources: LIVE ? {
+      // Live: the serve routes (pack first, then live DEM / server-side contours / OpenFreeMap).
+      dem: { type: "raster-dem", tiles: [base + "/dem/{z}/{x}/{y}.png"], tileSize: 256, encoding: "terrarium",
+             minzoom: LIVE.demMinZoom, maxzoom: LIVE.demMaxZoom, attribution: LIVE.demAttribution },
+      contours: { type: "vector", tiles: [base + "/contours/{z}/{x}/{y}.pbf"], minzoom: LIVE.contourMinZoom, maxzoom: LIVE.contourMaxZoom },
+      osm: { type: "vector", tiles: [base + "/osm/{z}/{x}/{y}.pbf"], minzoom: 0, maxzoom: LIVE.osmMaxZoom, attribution: LIVE.osmAttribution },
+    } : {
       // bounds = the generated region (Rainier NP and surroundings). In pmtiles mode MapLibre reads bounds and
       // zooms from the archive header via pmtiles.js.
       // Hillshade reads the same tiles as the contours, through the ancestor fallback (sharedDemProtocolUrl), in both modes.
@@ -324,6 +345,40 @@ map.on("load", () => {
 });
 const status = document.getElementById("status");
 map.on("move", () => { const c = map.getCenter(); status.textContent = `z ${map.getZoom().toFixed(1)}  ${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`; });
+if (LIVE) {
+  document.querySelector("#panel summary").textContent = "Dystopo: live world";
+  document.getElementById("osmsel").parentElement.style.display = "none";
+  document.getElementById("live-tools").hidden = false;
+  const srcBox = document.getElementById("sources");
+  srcBox.hidden = false;
+  // Which source the tiles of the current view came from (the server records every tile it answered).
+  // MapLibre asks raster-dem (256 px) tiles at round(zoom + 1) and vector (512 px) tiles at floor(zoom).
+  window.dystopoLiveSources = async () => {
+    const b = map.getBounds(), z = map.getZoom();
+    const dz = Math.max(LIVE.demMinZoom, Math.min(LIVE.demMaxZoom, Math.round(z + 1)));
+    const oz = Math.max(0, Math.min(LIVE.osmMaxZoom, Math.floor(z)));
+    const q = "bbox=" + [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(5)).join(",") + "&dz=" + dz + "&oz=" + oz;
+    const r = await (await fetch(base + "/live/sources?" + q)).json();
+    const fmt = o => Object.entries(o).map(([k, v]) => k + " " + v).join(", ") || "none";
+    srcBox.textContent = "DEM z" + r.demZoom + ": " + fmt(r.dem) + "  ·  OSM z" + r.osmZoom + ": " + fmt(r.osm);
+    window.dystopoLive = r;
+    return r;
+  };
+  map.on("idle", () => { window.dystopoLiveSources().catch(() => {}); });
+  // Build pack here: the commands that turn the current view into a region pack (no server-side build yet).
+  document.getElementById("buildpack").onclick = () => {
+    const b = map.getBounds(), r3 = (v, up) => (up ? Math.ceil(v * 1000) : Math.floor(v * 1000)) / 1000;
+    const bbox = [r3(Math.max(-180, b.getWest())), r3(Math.max(-85, b.getSouth())), r3(Math.min(180, b.getEast()), true), r3(Math.min(85, b.getNorth()), true)].join(",");
+    const text = [
+      "./gradlew :devtool:run --args=\"tiles --bbox " + bbox + " --min-zoom 8 --max-zoom 14 --pmtiles out/area-dem.pmtiles\"",
+      "./gradlew :tilebuild:run --args=\"--extract <geofabrik region, e.g. europe/alps> --bbox " + bbox + " --profile outdoors --out out/area-outdoors.pmtiles\"",
+      "# then restart serve --live: packs in out/ are picked up and take precedence over live tiles",
+    ].join("\n");
+    const pre = document.getElementById("buildcmd");
+    pre.textContent = text; pre.hidden = false;
+    console.log(text);
+  };
+}
 map.on("error", e => { if (e.error && !/404|Not Found/.test(e.error.message || "")) console.warn(e.error); });
 </script>
 </body>
