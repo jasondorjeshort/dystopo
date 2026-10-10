@@ -7,14 +7,33 @@ kotlinx-serialization = "1.9.0"
 # it was compiled against, so keep these two in step (profile v3.16 -> planetiler 0.9.3).
 planetiler = "0.9.3"
 planetiler-openmaptiles = "v3.16"
+# Android (T10). AGP 8.13 runs on the repo's Gradle 8.14; the AndroidX versions are the newest that still
+# compile against API 35 (the installed platform; newer AndroidX releases require compileSdk 36).
+android-gradle-plugin = "8.13.2"
+android-compileSdk = "35"
+android-minSdk = "26"
+compose-bom = "2025.05.01"
+activity-compose = "1.10.1"
+# MapLibre Native for Android (BSD-2-Clause), OpenGL ES backend.
+maplibre-android = "11.13.5"
 
 [libraries]
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 planetiler-core = { module = "com.onthegomap.planetiler:planetiler-core", version.ref = "planetiler" }
 planetiler-openmaptiles = { module = "com.github.openmaptiles:planetiler-openmaptiles", version.ref = "planetiler-openmaptiles" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+maplibre-android = { module = "org.maplibre.gl:android-sdk", version.ref = "maplibre-android" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "android-gradle-plugin" }
+android-library = { id = "com.android.library", version.ref = "android-gradle-plugin" }

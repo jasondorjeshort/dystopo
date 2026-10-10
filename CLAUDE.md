@@ -41,6 +41,27 @@ Browser demo (MapLibre over our DEM tiles and OSM PMTiles): generation commands 
 
 `devtool` runs with the repo root as working directory. Downloads are cached in `cache/` (or `$DYSTOPO_CACHE`), output goes to `out/`. Both are gitignored. **View output PNGs** to check rendering; several bugs so far were only visible in the image.
 
+## Android
+`androidApp/` (Compose + MapLibre Native + `shared`) shows a region pack: hillshade from the DEM PMTiles (MapLibre `raster-dem`), OSM from the outdoors PMTiles, and **contour tiles generated on the device** (`shared/.../tiles/ContourTiles.kt`, cached on disk). MapLibre can't read PMTiles, so the app runs a loopback-only HTTP server (port 8686) serving `/dem`, `/osm`, `/contours`, `/glyphs` and `/style.json` (the MapLibre style is translated from the devtool's `DefaultOsmStyle` by `shared/.../maplibre/MapLibreStyle.kt`). The module and `shared`'s android target exist only when an SDK is installed (`settings.gradle.kts` looks at `local.properties` / `ANDROID_HOME`), so SDK-less machines still build.
+```
+powershell -ExecutionPolicy Bypass -File tools\android-sdk.ps1     # SDK under %USERPROFILE%\Android\sdk + local.properties (no admin)
+./gradlew :androidApp:assembleDebug
+powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Build   # headless emulator, install, push out/rainier-*.pmtiles, launch, adb forward tcp:8686
+powershell -ExecutionPolicy Bypass -File tools\android-push-pack.ps1 -Dem out\rainier-dem.pmtiles -Osm out\rainier-outdoors.pmtiles   # packs + glyphs only
+adb forward tcp:8686 tcp:8686                                      # if you started the emulator yourself
+```
+Debug endpoints (debug builds only; `curl http://localhost:8686/...`):
+- `GET /health`: packs, map state (`styleLoaded`, `idle`), server requests.
+- `GET /screenshot[?wait=ms][&mode=window]`: PNG of the map (MapLibre snapshot) after waiting for the map to go idle; `mode=window` uses PixelCopy and includes overlays. **View it**, like the devtool PNGs.
+- `GET /camera`; `POST "/camera?lat=46.853&lon=-121.76&zoom=12&bearing=0"` (or a JSON body).
+- `GET /stats`: tiles served per source, contour generation ms (min/avg/max, recent tiles with sample/trace split), disk-cache hits, DEM decode cache, memory (Java heap, native heap, PSS by category), APK and pack bytes.
+- `POST "/location?lat=..&lon=..&accuracy=10"`: inject a fake GPS fix (the location puck moves); `GET /location`.
+- `POST /reload` (reopen packs after a push), `POST /cache/clear` (drop cached contour tiles).
+
+The emulator needs CPU virtualization, which an administrator enables once: Windows Hypervisor Platform (`Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All`, reboot) or the Android Emulator hypervisor driver. Without it, x86_64 images never start under `-accel off` and ARM images are refused on x86_64 hosts, so `android-emu.ps1` stops with these instructions; `-NoEmulator` uses a phone connected with USB debugging instead.
+
+**No device?** `./gradlew :devtool:run --args="serve"` serves the same routes from the same shared code (style, DEM with ancestor fallback, generated contours, glyphs from `cache/glyphs`) on http://127.0.0.1:8687/ with a MapLibre GL JS page, so the phone style can be checked with `python -I tools/demo-check.py --url http://localhost:8687/ --views 12.5/46.853/-121.76` (MapLibre GL JS, not Native: it catches style and tile bugs, not Android ones). `GET /stats` there gives desktop contour timings.
+
 ## Debug before you push
 The implementer debugs the change; the reviewer confirms. Before opening a PR:
 1. `./gradlew check` green (unit tests, goldens, license check).

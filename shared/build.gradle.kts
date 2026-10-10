@@ -2,6 +2,10 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
 }
 
+// Android target (T10): only when an SDK is installed (see settings.gradle.kts), so SDK-less machines still build.
+val androidSdk = gradle.extensions.extraProperties.properties["dystopoAndroidSdk"] == true
+if (androidSdk) apply(plugin = "com.android.library")
+
 /**
  * Embeds the data source registry (src/commonMain/resources/sources.json) in commonMain as a Kotlin
  * string constant, so every target (JVM now, Android/iOS later) gets it without a resource-loading hook.
@@ -33,9 +37,14 @@ val generateSourcesJson by tasks.registering {
 kotlin {
     jvmToolchain(21)
 
-    // Android and iOS targets are added in later phases. Code in commonMain must stay
-    // pure Kotlin (no java.* imports) so it compiles for all of them.
+    // Code in commonMain must stay pure Kotlin (no java.* imports) so it compiles for every target.
+    // androidMain holds the Android platform hooks (PNG decoding through BitmapFactory). iOS comes later.
     jvm()
+    if (androidSdk) {
+        androidTarget {
+            compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+        }
+    }
 
     sourceSets {
         commonMain {
@@ -44,5 +53,19 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+    }
+}
+
+if (androidSdk) {
+    extensions.configure<com.android.build.api.dsl.LibraryExtension>("android") {
+        namespace = "io.github.jasondorjeshort.dystopo.shared"
+        compileSdk = libs.versions.android.compileSdk.get().toInt()
+        defaultConfig { minSdk = libs.versions.android.minSdk.get().toInt() }
+        compileOptions {
+            sourceCompatibility = JavaVersion.VERSION_17
+            targetCompatibility = JavaVersion.VERSION_17
+        }
+        // PropertyEscape misreads the generated local.properties (sdk.dir) on Windows; version nags are noise.
+        lint.disable += setOf("PropertyEscape", "GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion")
     }
 }

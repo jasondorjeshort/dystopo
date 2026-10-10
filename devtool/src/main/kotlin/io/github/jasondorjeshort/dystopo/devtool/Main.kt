@@ -17,5 +17,5 @@ class Devtool : CliktCommand(name = "devtool") {
 }
 
 fun main(args: Array<String>) = Devtool()
-    .subcommands(AreasCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand())
+    .subcommands(AreasCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand(), ServeCommand())
     .main(args)

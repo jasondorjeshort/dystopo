@@ -1,0 +1,140 @@
+package io.github.jasondorjeshort.dystopo.app
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMapOptions
+import org.maplibre.android.maps.MapView
+
+/**
+ * The map screen: a MapLibre [MapView] showing the region pack through the loopback server, with an
+ * attribution line from the packs' metadata. The MapView lifecycle follows this activity.
+ */
+class MainActivity : ComponentActivity() {
+    private lateinit var mapView: MapView
+    private val app get() = application as DystopoApp
+
+    private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        app.map.onLocationPermissionChanged()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val tiles = app.tiles
+        val dem = tiles.packs.dem?.header
+        // Start over the middle of the DEM pack (a public test area such as Rainier), else a world view.
+        val start = if (dem != null) {
+            CameraPosition.Builder()
+                .target(LatLng((dem.minLat + dem.maxLat) / 2, (dem.minLon + dem.maxLon) / 2))
+                .zoom(12.0).build()
+        } else CameraPosition.Builder().target(LatLng(0.0, 0.0)).zoom(1.0).build()
+        mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
+        mapView.onCreate(savedInstanceState)
+        app.map.activity = this
+        app.map.attach(mapView, styleJson = { app.tiles.style() })
+
+        setContent {
+            MapScreen(mapView, attribution(), if (tiles.packs.dem == null) NO_PACK else null)
+        }
+
+        val wanted = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (wanted.none { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) permissionRequest.launch(wanted)
+    }
+
+    private fun attribution(): String {
+        val packs = app.tiles.packs
+        return listOfNotNull(packs.osm?.attribution, packs.dem?.attribution)
+            .filter { it.isNotEmpty() }
+            .joinToString(" | ")
+            .ifEmpty { "Dystopo" }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        mapView.onStart()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        mapView.onResume()
+    }
+
+    override fun onPause() {
+        mapView.onPause()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        mapView.onStop()
+        super.onStop()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        mapView.onLowMemory()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        mapView.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        app.map.detach()
+        if (app.map.activity === this) app.map.activity = null
+        mapView.onDestroy()
+        super.onDestroy()
+    }
+
+    companion object {
+        const val NO_PACK = "No region pack. Push one with tools/android-push-pack.ps1, then restart the app."
+    }
+}
+
+@Composable
+private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
+    Box(Modifier.fillMaxSize()) {
+        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+        if (message != null) {
+            BasicText(
+                message,
+                style = TextStyle(color = Color(0xFF2B2420), fontSize = 18.sp),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(24.dp)
+                    .background(Color(0xEEFFFCF5), RoundedCornerShape(8.dp))
+                    .padding(16.dp),
+            )
+        }
+        BasicText(
+            attribution,
+            style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                .padding(6.dp)
+                .background(Color(0xCCF6F1E4), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+}
