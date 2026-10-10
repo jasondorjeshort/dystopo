@@ -419,6 +419,7 @@ Shared rules as in wave 9. Debug calls on the phone need the per-launch token (`
 **Goal:** the phone's "Download this region" asks for `profile=outdoors` when the box is under the Overpass cap and falls back otherwise (shows which it got); the server builds larger outdoors packs from a Geofabrik regional extract when one is configured (`extracts` dir in the server config: a `.osm.pbf` per region with its bbox; a box inside a configured extract uses it instead of Overpass, so whole-park packs get the outdoors layers), with the extract's date in provenance; `GET /build/sources` lists what the server can use for a box.
 **Owns:** `serverlib/.../BuildRoutes.kt`, new `serverlib/.../Extracts.kt`, `server/` config keys, `docs/SERVER.md`, `androidApp/.../online/**` (profile choice), `tools/demo/index.html` (source choice).
 **Done when:** a Rainier-park-sized outdoors pack builds from a configured Washington extract (download it once into `cache/`; it is about 250 MB) in under 5 minutes and renders on the phone with wilderness and cliff ticks (screenshot viewed); a small box from the phone arrives as an outdoors pack; `check` green.
+**Status: merged (PR #59).** Follow-ups: extract download on demand; coverage by Geofabrik `.poly`; a proper status code for an uncovered extract request; the phone checks `/build/sources` first.
 
 ### Later
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.

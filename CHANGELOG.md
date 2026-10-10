@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T64: Outdoors profile for phone-built regions and larger server packs (#59)
 - T59: Norway and Austria bare-earth elevation (#57)
 - T62: Public release preparation (#58)
 - Wave 9 sweeps on main (coordinator, no PR)
