@@ -31,7 +31,15 @@ object Attribution {
     val LICENSE: String = registry.getValue("osm").license
 
     /** Where the archive's contents come from, one entry per Planetiler source, with each source's license. */
-    val sources: List<String> = registry.ordered(SOURCE_IDS).map { registry.getValue(it) }
+    val sources: List<String> = sourcesFor(SOURCE_IDS)
+
+    /** Registry ids of what the outdoors profile reads (no lake centerlines). */
+    val OUTDOORS_SOURCE_IDS = listOf("osm", "osm-water-polygons", "natural-earth", "openmaptiles")
+
+    /** The outdoors schema reuses OpenMapTiles layer names and class values, so the OpenMapTiles credit stays. */
+    const val OUTDOORS_SCHEMA = "Dystopo outdoors 1 (tilebuild/PROFILE.md; OpenMapTiles 3.16 layer names and classes, design CC-BY 4.0)"
+
+    fun sourcesFor(ids: List<String>): List<String> = registry.ordered(ids).map { registry.getValue(it) }
         .filter { it.id != "openmaptiles" } // the schema is recorded under dystopo:schema
         .map { s -> "${s.name} (${s.licenseName}, ${s.licenseUrl})" }
 
@@ -41,13 +49,18 @@ object Attribution {
      * Extra key/value metadata for the archive. Keys are prefixed `dystopo:` the way Planetiler
      * prefixes its own (`planetiler:version`), so readers can tell them apart from MBTiles-spec fields.
      */
-    fun extraMetadata(extract: String, bbox: DoubleArray?): Map<String, String> = buildMap {
+    fun extraMetadata(
+        extract: String,
+        bbox: DoubleArray?,
+        sourceIds: List<String> = SOURCE_IDS,
+        schema: String = SCHEMA,
+    ): Map<String, String> = buildMap {
         put("dystopo:attribution", TEXT)
         put("dystopo:license", LICENSE)
         put("dystopo:license_url", ODBL_URL)
-        put("dystopo:sources", sources.joinToString("; "))
-        put("dystopo:provenance", registry.ordered(SOURCE_IDS).joinToString(","))
-        put("dystopo:schema", SCHEMA)
+        put("dystopo:sources", sourcesFor(sourceIds).joinToString("; "))
+        put("dystopo:provenance", registry.ordered(sourceIds).joinToString(","))
+        put("dystopo:schema", schema)
         put("dystopo:extract", extract)
         if (bbox != null) put("dystopo:clip_bbox", bbox.joinToString(","))
     }

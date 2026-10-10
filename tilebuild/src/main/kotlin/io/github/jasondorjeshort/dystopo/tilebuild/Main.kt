@@ -8,6 +8,7 @@ import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
+import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import kotlinx.serialization.encodeToString
@@ -27,7 +28,7 @@ object Caches {
 
 class TileBuildCommand : CliktCommand(name = "tilebuild") {
     override fun help(context: Context) = """
-        Build an OpenMapTiles-schema PMTiles archive from an OpenStreetMap extract with Planetiler.
+        Build a vector PMTiles archive (OpenMapTiles schema, or --profile outdoors) from an OpenStreetMap extract with Planetiler.
 
         --extract is a Geofabrik region name ("liechtenstein", "washington"), a full Geofabrik path
         ("north-america/us/washington") or a local .osm.pbf file. Extracts are downloaded into
@@ -42,6 +43,8 @@ class TileBuildCommand : CliktCommand(name = "tilebuild") {
     private val minZoom by option("--min-zoom", help = "Minimum zoom (default 0)").int().default(0)
     private val maxZoom by option("--max-zoom", help = "Maximum zoom (default 14, max 15)").int().default(14)
     private val threads by option("--threads", help = "Worker threads (default: all cores)").int()
+    private val profile by option("--profile", help = "Tile schema: openmaptiles (default) or outdoors (tilebuild/PROFILE.md)")
+        .choice(*ProfileKind.entries.map { it.cliName }.toTypedArray()).default(ProfileKind.OPENMAPTILES.cliName)
     private val quiet by option("--quiet", help = "Only warnings and errors from Planetiler on stderr").flag()
 
     override fun run() {
@@ -63,6 +66,7 @@ class TileBuildCommand : CliktCommand(name = "tilebuild") {
             maxZoom = maxZoom,
             threads = threads,
             cacheRoot = Caches.root,
+            profile = ProfileKind.parse(profile),
         )
         val report = TileBuild.run(request)
         echo(reportJson.encodeToString(report))

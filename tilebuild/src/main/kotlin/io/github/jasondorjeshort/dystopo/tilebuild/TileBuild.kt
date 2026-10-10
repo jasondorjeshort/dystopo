@@ -9,7 +9,6 @@ import com.onthegomap.planetiler.util.Geofabrik
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import org.openmaptiles.OpenMapTilesProfile
-import org.openmaptiles.generated.OpenMapTilesSchema
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
@@ -24,6 +23,7 @@ data class BuildRequest(
     val maxZoom: Int,
     val threads: Int?,
     val cacheRoot: File,
+    val profile: ProfileKind = ProfileKind.OPENMAPTILES,
 )
 
 @Serializable
@@ -79,13 +79,6 @@ class DystopoOpenMapTilesProfile(runner: Planetiler, private val extract: String
 }
 
 object TileBuild {
-    private const val LAKE_CENTERLINE_URL = "https://dev.maptiler.download/geodata/omt/lake_centerline.shp.zip"
-    private const val WATER_POLYGONS_URL = "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip"
-    private const val NATURAL_EARTH_URL = "https://dev.maptiler.download/geodata/omt/natural_earth_vector.sqlite.zip"
-
-    // addNaturalEarthSource is deprecated in favour of the GeoPackage reader, but OpenMapTiles 3.16 still
-    // expects the Natural Earth sqlite tables, so this follows the profile's own main class.
-    @Suppress("DEPRECATION")
     fun run(req: BuildRequest): BuildReport {
         val started = System.nanoTime()
         val planetilerCache = File(req.cacheRoot, "planetiler").apply { mkdirs() }
@@ -119,27 +112,9 @@ object TileBuild {
             throw IllegalArgumentException("OSM extract ${req.input.path} does not exist")
         }
 
-        val extra = Attribution.extraMetadata(req.input.label, req.bbox)
-        val planetiler = Planetiler.create(arguments)
-            .setDefaultLanguages(OpenMapTilesSchema.LANGUAGES)
-            .setProfile { runner -> DystopoOpenMapTilesProfile(runner, req.input.label, extra) }
-            .addShapefileSource(
-                "EPSG:3857", OpenMapTilesProfile.LAKE_CENTERLINE_SOURCE,
-                File(planetilerCache, "lake_centerline.shp.zip").toPath(), LAKE_CENTERLINE_URL,
-            )
-            .addShapefileSource(
-                OpenMapTilesProfile.WATER_POLYGON_SOURCE,
-                File(planetilerCache, "water-polygons-split-3857.zip").toPath(), WATER_POLYGONS_URL,
-            )
-            .addNaturalEarthSource(
-                OpenMapTilesProfile.NATURAL_EARTH_SOURCE,
-                File(planetilerCache, "natural_earth_vector.sqlite.zip").toPath(), NATURAL_EARTH_URL,
-            )
-        if (osmUrl != null) {
-            planetiler.addOsmSource(OpenMapTilesProfile.OSM_SOURCE, req.input.path.toPath(), osmUrl)
-        } else {
-            planetiler.addOsmSource(OpenMapTilesProfile.OSM_SOURCE, req.input.path.toPath())
-        }
+        // Profile, auxiliary sources and metadata per --profile: see Profiles.
+        val setup = Profiles.create(req.profile, arguments, req, planetilerCache, osmUrl)
+        val planetiler = setup.planetiler
         planetiler.overwriteOutput(req.out.toPath())
         try {
             planetiler.run()
@@ -153,7 +128,7 @@ object TileBuild {
 
         val info = PmtilesInfo.read(req.out)
         return BuildReport(
-            profile = "${OpenMapTilesSchema.NAME} ${OpenMapTilesSchema.VERSION}",
+            profile = setup.label,
             input = InputReport(
                 extract = req.input.label,
                 kind = req.input.kind.name.lowercase(),
@@ -172,8 +147,8 @@ object TileBuild {
             attribution = info.attribution,
             attributionText = Attribution.TEXT,
             license = Attribution.LICENSE,
-            extraMetadata = extra,
-            auxiliaryData = listOf(LAKE_CENTERLINE_URL, WATER_POLYGONS_URL, NATURAL_EARTH_URL),
+            extraMetadata = setup.extraMetadata,
+            auxiliaryData = setup.auxiliaryData,
             stageSeconds = stages.seconds,
             stageSecondsError = stages.error,
             totalSeconds = (System.nanoTime() - started) / 1e9,
