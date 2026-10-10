@@ -219,6 +219,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T11a merged (PR #14): rendering and DEM follow-ups.** Labels no longer stack on merged cliff bands (a label is rejected when another index contour passes within 2 px); `--smooth-dem 1` removes most of the band striping on noisy glaciers while keeping ridges sharp (hillshade and slope only; contours stay on the raw grid); the Horn gradient is shared between hillshade and slope; the lidar index is fetched once per 1° cell and tile reads run on a dedicated I/O pool, so a fully cold Rainier z8 tile went from 81 s to 26 s; tile exports pick one overview level per zoom; golden tests now check a label manifest (text, position, angle) so an extra or wrong label can't hide.
 
+**2026-10-09: T13 merged (PR #15): OSM over terrain.** `render --osm` draws our own OpenStreetMap archive on top of the terrain: tints for forest, wetland, rock and glacier under the contours; lakes over them; streams, park boundaries, cased roads, tracks and trails by type; peaks with name and elevation; curved names along trails, roads, rivers and ridges, placed without overlaps and with contour labels yielding to them. The style is declarative JSON in `shared` (ordered layers, filters, zoom-dependent values), so the same style can later drive MapLibre on the phone and the website. Rainier z13 costs ~130 ms of OSM work on top of the terrain render. This is the first complete topographic map the project produces on its own data.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
