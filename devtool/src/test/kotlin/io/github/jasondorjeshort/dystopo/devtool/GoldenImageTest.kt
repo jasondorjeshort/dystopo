@@ -12,8 +12,9 @@ import kotlin.test.fail
  * look at the new images, and commit them.
  *
  * Tolerances. Everything except text is plain arithmetic plus Java2D antialiasing, so it is
- * compared tightly. Labels are drawn with the logical SANS_SERIF font, which maps to different
- * font files per OS and JDK, so the label boxes (plus halo and a 3 px margin) get a loose
+ * compared tightly. Labels are drawn with the bundled Noto Sans ([RenderFonts], T50), so text widths
+ * and label placement are the same on every OS; glyph rasterization can still differ slightly between
+ * JDK builds (font scaler, antialiasing), so the label boxes (plus halo and a 3 px margin) keep a loose
  * tolerance that still notices labels vanishing or moving. A changed hillshade azimuth, a changed
  * paper tone, a contour level shift or a lost contour all fail the tight part.
  */

@@ -22,8 +22,14 @@
   window.DYSTOPO_LIVE; ?live=1 does the same from any page served by it). Hillshade, contours and OSM then come from the
   serve routes: packs in out/ where they have the tile, else DEM rendered on request from the cloud sources (best: 3DEP,
   Copernicus, EGM2008) and OpenFreeMap base tiles, both cached on disk. The bottom box says which source the visible
-  tiles came from; "Build pack here" asks the server (POST /build) to make out/<name>-dem.pmtiles and
+  tiles came from (pack, live-3dep, live-swissalti, live-copernicus, openfreemap); "Build pack here" asks the server (POST /build) to make out/<name>-dem.pmtiles and
   out/<name>-outdoors.pmtiles (OpenFreeMap tiles, OpenMapTiles schema) for the current view and shows progress.
+
+  Map options (T50; the phone's T47 options, same keys as devtool serve's /style.json): the "Map options" section of the
+  panel, or the query string: hillshade=off|single|multi, hillshadeIntensity=0..1, slope=on (slope-angle bands; served
+  by devtool serve as /shade/ tiles, so live mode only), contourInterval=auto|<n> in the shown units, night=on, and
+  trails|water|landcover|pois|boundaries=off. Changes apply at once and are written back to the URL;
+  window.dystopoOptions has the current set.
 -->
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
@@ -42,6 +48,8 @@
   @media (max-width: 520px) { #sources { top: auto; right: auto; bottom: 56px; left: 12px; } }
   #status { position: absolute; bottom: 30px; left: 12px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
   #sources { position: absolute; top: 12px; right: 52px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; max-width: calc(100% - 40px); }
+  #options { margin: 6px 0; } #options summary { font-size: 13px; font-weight: 600; margin: 0; }
+  #options .row { display: flex; flex-wrap: wrap; gap: 0 10px; } #options .row label { margin: 2px 0; }
   #buildcmd { white-space: pre-wrap; word-break: break-all; font-size: 11px; background: #fffaf0; border: 1px solid #e0d6c4; padding: 4px; max-height: 40vh; overflow: auto; }
 </style>
 </head>
@@ -55,6 +63,20 @@
   <label><input type="checkbox" id="osm" checked> Trails, roads, water, names (OSM)</label>
   <label>OSM archive <select id="osmsel"><option value="outdoors">outdoors profile</option><option value="openmaptiles">OpenMapTiles profile</option></select></label>
   <label>Text size <input type="range" id="text" min="0.8" max="2" step="0.1" value="1.3"></label>
+  <details id="options">
+    <summary>Map options</summary>
+    <label>Hillshade <select id="opt-hillshade"><option value="single">single light</option><option value="multi">multidirectional</option><option value="off">off</option></select></label>
+    <label id="opt-slope-row"><input type="checkbox" id="opt-slope"> Slope-angle bands</label>
+    <label>Contour interval <select id="opt-interval"><option value="auto">auto</option></select></label>
+    <label><input type="checkbox" id="opt-night"> Night</label>
+    <div class="row">
+      <label><input type="checkbox" id="opt-trails" checked> trails</label>
+      <label><input type="checkbox" id="opt-water" checked> water</label>
+      <label><input type="checkbox" id="opt-landcover" checked> land cover</label>
+      <label><input type="checkbox" id="opt-pois" checked> POIs</label>
+      <label><input type="checkbox" id="opt-boundaries" checked> boundaries</label>
+    </div>
+  </details>
   <div class="hint" id="hint">Scroll to zoom, drag to pan. Demo data covers Rainier NP and surroundings at z8–14; the blank beyond is simply ungenerated. <span id="dem-mode"></span></div>
   <div id="live-tools" hidden>
     <label>Pack name <input id="packname" size="14" placeholder="from the view"></label>
@@ -109,7 +131,7 @@ window.dystopoUnits = { units: UNITS, source: unitsSource, stored: readUnits() }
 document.getElementById("contour-units").textContent = UNITS === "m" ? "metres" : "feet";
 const ELE = UNITS === "m" ? ["round", ["to-number", ["get", "ele"], 0]] : ["round", ["*", ["to-number", ["get", "ele"], 0], 3.28084]];
 
-let demSource = null, contourTiles = null, demArchive = null; // pack mode only (null in live mode)
+let demSource = null, contourTiles = null, demArchive = null, contourUrl = null; // pack mode only (null in live mode)
 if (!LIVE) {
 const protocol = new pmtiles.Protocol();
 maplibregl.addProtocol("pmtiles", protocol.tile);
@@ -199,15 +221,15 @@ demSource.manager.getTile = async (url, abortController) => {
 // region) is treated as no data instead of failing the whole tile.
 const fetchDem0 = demSource.manager.fetchDem.bind(demSource.manager);
 demSource.manager.fetchDem = (...a) => fetchDem0(...a).catch(e => { if (/Bad response: 404/.test(e.message)) return undefined; throw e; });
-contourTiles = demSource.contourProtocolUrl({
-  multiplier: UNITS === "m" ? 1 : 3.28084,
-  thresholds: UNITS === "m"
+contourUrl = interval => {
+  const thresholds = UNITS === "m"
     ? { 8: [250, 1000], 10: [100, 500], 11: [50, 250], 12: [20, 100], 13: [20, 100], 14: [10, 50], 15: [5, 25] }
-    : { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
-  elevationKey: "ele",
-  levelKey: "level",
-  contourLayer: "contours",
-});
+    : { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] };
+  // A fixed interval (map options) from contour zoom 11 up, index lines every fifth, as on the phone.
+  if (interval) for (const z of [11, 12, 13, 14, 15]) thresholds[z] = [interval, interval * 5];
+  return demSource.contourProtocolUrl({ multiplier: UNITS === "m" ? 1 : 3.28084, thresholds, elevationKey: "ele", levelKey: "level", contourLayer: "contours" });
+};
+contourTiles = contourUrl(null);
 } // end pack mode
 if (LIVE) document.getElementById("hint").textContent = "Scroll to zoom, drag to pan. " + "Live: packs in out/ first (" + (LIVE.demPacks.length + LIVE.osmPacks.length) + " open), else DEM from the cloud sources and OSM from OpenFreeMap.";
 
@@ -310,6 +332,9 @@ const map = new maplibregl.Map({
         paint: { "fill-color": "#eaf3ff", "fill-opacity": 0.55 } },
       { id: "wood", type: "fill", source: "osm", "source-layer": "landcover", filter: ["==", ["get", "class"], "wood"],
         paint: { "fill-color": "#cfe0bf", "fill-opacity": 0.35 } },
+      // A faint fill inside wilderness (outdoors class wilderness, OpenMapTiles wilderness_area), under the boundary lines.
+      { id: "wilderness-fill", type: "fill", source: "osm", "source-layer": "park", minzoom: 7, filter: ["in", ["get", "class"], ["literal", ["wilderness", "wilderness_area"]]],
+        paint: { "fill-color": "#2d5e2a", "fill-opacity": 0.07 } },
       { id: "park", type: "line", source: "osm", "source-layer": "park", filter: ["!=", ["get", "class"], "wilderness"],
         paint: { "line-color": "#4b8a3a", "line-width": 1.5, "line-dasharray": [4, 2] } },
       // Wilderness (outdoors archive class wilderness: protect_class 1b or a wilderness designation) is a distinct, darker green dash-dot.
@@ -412,8 +437,97 @@ map.on("load", () => {
     const u = new URL(location.href); u.searchParams.delete("units");
     if (u.href === location.href) location.reload(); else location.href = u.href;
   };
-  document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "trail-names", "water-names", "peaks", "places"], e.target.checked);
+  document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "wilderness-fill", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "trail-names", "water-names", "peaks", "places"], e.target.checked);
 });
+
+// Map options (T50): the phone's T47 options with the same keys as devtool serve's /style.json. Read from the query
+// string, applied to this page's style (layer visibility, hillshade method and strength, night paint, contour
+// interval; slope bands as devtool serve's /shade/ raster tiles in live mode) and written back to the URL.
+const OPTION_GROUPS = {
+  trails: ["tracks", "trails", "trails-mountain", "trails-alpine", "trail-names"],
+  water: ["water", "waterway", "water-names"],
+  landcover: ["glacier", "wood"],
+  pois: ["poi-markers"],
+  boundaries: ["wilderness-fill", "park", "wilderness"],
+};
+const INTERVALS = UNITS === "m" ? [2, 5, 10, 20, 25, 50, 100, 200, 250] : [10, 20, 40, 50, 80, 100, 200, 250, 500, 1000];
+const NIGHT = { // layer -> paint overrides at night (dark base, dimmed relief, light ink)
+  bg: { "background-color": "#1f1d1b" },
+  hillshade: { "hillshade-shadow-color": "#000000", "hillshade-highlight-color": "#3a3631", "hillshade-accent-color": "#1a1714" },
+  glacier: { "fill-color": "#3b4652" }, wood: { "fill-color": "#2d3a28" }, water: { "fill-color": "#1f3a55" }, waterway: { "line-color": "#3f6f9e" },
+  "contour-minor": { "line-color": "#b07a48" }, "contour-index": { "line-color": "#c98d55" }, roads: { "line-color": "#a49a90" },
+  ...Object.fromEntries(textLayers.map(id => [id, { "text-color": "#e8ddd0", "text-halo-color": "#1f1d1b" }])),
+};
+const dayPaint = {};
+const truthy = v => ["1", "true", "on", "yes"].includes(String(v).toLowerCase());
+const opts = (() => {
+  const q = new URLSearchParams(location.search), o = { hillshade: "single", hillshadeIntensity: 1, slope: false, contourInterval: "auto", night: false };
+  for (const k of Object.keys(OPTION_GROUPS)) o[k] = true;
+  if (["off", "single", "multi"].includes(q.get("hillshade"))) o.hillshade = q.get("hillshade");
+  const hi = parseFloat(q.get("hillshadeIntensity")); if (hi >= 0 && hi <= 1) o.hillshadeIntensity = hi;
+  if (q.has("slope")) o.slope = truthy(q.get("slope")) && !!LIVE;
+  if (INTERVALS.includes(Number(q.get("contourInterval")))) o.contourInterval = String(Number(q.get("contourInterval")));
+  if (q.has("night")) o.night = truthy(q.get("night"));
+  for (const k of Object.keys(OPTION_GROUPS)) if (q.has(k)) o[k] = truthy(q.get(k));
+  return o;
+})();
+window.dystopoOptions = opts;
+function writeOptions() {
+  const u = new URL(location.href), d = { hillshade: "single", hillshadeIntensity: 1, slope: false, contourInterval: "auto", night: false };
+  for (const [k, v] of Object.entries(opts)) {
+    const def = k in d ? d[k] : true;
+    if (v === def) u.searchParams.delete(k); else u.searchParams.set(k, typeof v === "boolean" ? (v ? "on" : "off") : String(v));
+  }
+  history.replaceState(null, "", u.href);
+}
+function applyOptions() {
+  toggle(["hillshade"], opts.hillshade !== "off");
+  map.setPaintProperty("hillshade", "hillshade-method", opts.hillshade === "multi" ? "multidirectional" : "standard");
+  map.setPaintProperty("hillshade", "hillshade-exaggeration", (opts.night ? 0.4 : 0.55) * opts.hillshadeIntensity);
+  for (const [k, ids] of Object.entries(OPTION_GROUPS)) toggle(ids, opts[k]);
+  for (const [id, paint] of Object.entries(NIGHT)) {
+    if (!map.getLayer(id)) continue;
+    for (const [p, v] of Object.entries(paint)) {
+      const key = id + "|" + p;
+      if (!(key in dayPaint)) dayPaint[key] = map.getPaintProperty(id, p);
+      map.setPaintProperty(id, p, opts.night ? v : dayPaint[key]);
+    }
+  }
+  const interval = opts.contourInterval === "auto" ? null : Number(opts.contourInterval);
+  const tiles = LIVE ? base + "/contours/{z}/{x}/{y}.pbf?units=" + UNITS + (interval ? "&interval=" + interval : "") : contourUrl(interval);
+  const src = map.getSource("contours");
+  if (src && src.tiles && src.tiles[0] !== tiles) src.setTiles([tiles]);
+  // Slope bands: devtool serve's shade tiles (hillshade off there: this page draws its own).
+  const shadeUrl = base + "/shade/{z}/{x}/{y}.png?hillshade=off&slope=on&night=" + (opts.night ? "on" : "off");
+  if (map.getLayer("slope")) map.removeLayer("slope");
+  if (map.getSource("slope")) map.removeSource("slope");
+  if (LIVE && opts.slope) {
+    map.addSource("slope", { type: "raster", tiles: [shadeUrl], tileSize: 256, minzoom: LIVE.demMinZoom, maxzoom: LIVE.demMaxZoom + 2 });
+    map.addLayer({ id: "slope", type: "raster", source: "slope", paint: { "raster-fade-duration": 0 } }, "contour-minor");
+  }
+  writeOptions();
+}
+map.on("load", () => {
+  const $ = id => document.getElementById(id);
+  const sel = $("opt-interval");
+  for (const v of INTERVALS) sel.add(new Option(v + " " + UNITS, String(v)));
+  sel.value = opts.contourInterval;
+  $("opt-hillshade").value = opts.hillshade;
+  $("opt-slope").checked = opts.slope;
+  $("opt-slope").disabled = !LIVE;
+  if (!LIVE) $("opt-slope-row").title = "Slope bands come from devtool serve (/shade/ tiles): open the page from serve --live.";
+  $("opt-night").checked = opts.night;
+  for (const k of Object.keys(OPTION_GROUPS)) $("opt-" + k).checked = opts[k];
+  if (new URLSearchParams(location.search).toString().match(/hillshade|slope|contourInterval|night|trails|water|landcover|pois|boundaries/)) $("options").open = true;
+  const on = (id, f) => { $(id).onchange = e => { f(e.target); applyOptions(); }; };
+  on("opt-hillshade", t => { opts.hillshade = t.value; document.getElementById("hill").checked = t.value !== "off"; });
+  on("opt-slope", t => { opts.slope = t.checked; });
+  on("opt-interval", t => { opts.contourInterval = t.value; });
+  on("opt-night", t => { opts.night = t.checked; });
+  for (const k of Object.keys(OPTION_GROUPS)) on("opt-" + k, t => { opts[k] = t.checked; });
+  applyOptions();
+});
+
 const status = document.getElementById("status");
 map.on("move", () => { const c = map.getCenter(); status.textContent = `z ${map.getZoom().toFixed(1)}  ${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`; });
 if (LIVE) {

@@ -9,12 +9,11 @@ import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
-import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileStats
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
-import io.github.jasondorjeshort.dystopo.tiles.ImageDecoder
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTileStats
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -44,25 +43,31 @@ class PackServer(
         val demReader = PmtilesReader.open(FileRangeSource(dem), Gzip.decompressors)
         val osmReader = osm?.takeIf { it.isFile }?.let { PmtilesReader.open(FileRangeSource(it), Gzip.decompressors) }
         val lock = Any()
-        val decoder = ImageDecoder { bytes ->
-            val img = ImageIO.read(bytes.inputStream())
-            ArgbImage(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
-        }
+        val decoder = demDecoder // T50: the shared Kotlin decoder (DemDecoder.kt)
         val h = demReader.header
         val pyramid = DemPyramid(h.minZoom, h.maxZoom, decoder, cacheTiles = 48) { z, x, y -> synchronized(lock) { demReader.tile(z, x, y) } }
         val options = ContourTileOptions()
         val base = "http://127.0.0.1:$port"
-        val style = MapLibreStyle(
-            MapLibreSources(
-                demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = h.minZoom, demMaxZoom = h.maxZoom,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf", contourMinZoom = (h.minZoom - 1).coerceAtLeast(0), contourMaxZoom = h.maxZoom + 1,
-                osmTiles = osmReader?.let { "$base/osm/{z}/{x}/{y}.pbf" },
-                osmMinZoom = osmReader?.header?.minZoom ?: 0, osmMaxZoom = osmReader?.header?.maxZoom ?: 14,
-                glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
-                sprite = "$base/sprite",
-            ),
-            textScale = textScale,
-        ).json()
+        // T50: the map options ride in the query string (ServeMapOptions); the style points at matching tile URLs.
+        fun style(q: Map<String, String>): String {
+            val mapOptions = ServeMapOptions.parse(q, options.units)
+            return MapLibreStyle(
+                MapLibreSources(
+                    demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = h.minZoom, demMaxZoom = h.maxZoom,
+                    contourTiles = "$base/contours/{z}/{x}/{y}.pbf?units=${options.units.symbol}${ServeMapOptions.contourQuery(mapOptions)}",
+                    contourMinZoom = (h.minZoom - 1).coerceAtLeast(0), contourMaxZoom = h.maxZoom + 1,
+                    osmTiles = osmReader?.let { "$base/osm/{z}/{x}/{y}.pbf" },
+                    osmMinZoom = osmReader?.header?.minZoom ?: 0, osmMaxZoom = osmReader?.header?.maxZoom ?: 14,
+                    glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
+                    sprite = "$base/sprite",
+                    shadeTiles = ServeMapOptions.shadeTiles(base, mapOptions), shadeMinZoom = h.minZoom, shadeMaxZoom = h.maxZoom + 2,
+                ),
+                units = options.units,
+                textScale = textScale,
+                options = mapOptions,
+            ).json()
+        }
+        val shadeStats = ShadeTileStats()
         // Fonts the style names but the glyph directory lacks: their labels would draw nothing.
         val missingFonts = MapLibreStyle.FONTS.filter { !File(glyphDir, "$it/0-255.pbf").isFile }
         val timings = ArrayList<Double>()
@@ -83,6 +88,11 @@ class PackServer(
                 // Static host for out/ (pack downloads in the app; ranges, ?kbps= throttle): see ServeStatic.
                 if (path.startsWith("/out/")) return@createContext ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
                 SpriteSheets.route(path)?.let { (bytes, type) -> return@createContext reply(ex, bytes, type) }
+                val q = ServeMapOptions.query(ex.requestURI.rawQuery)
+                ServeMapOptions.shadeRe.matchEntire(path)?.let { m ->
+                    val (z, x, y) = m.destructured
+                    return@createContext reply(ex, ServeMapOptions.shadePng(pyramid, z.toInt(), x.toInt(), y.toInt(), ServeMapOptions.shadeOptions(q), shadeStats), "image/png")
+                }
                 tileRe.matchEntire(path)?.let { m ->
                     val (kind, zs, xs, ys) = m.destructured
                     val z = zs.toInt(); val x = xs.toInt(); val y = ys.toInt()
@@ -103,10 +113,11 @@ class PackServer(
                             // The pyramid is thread-safe: tiles generate concurrently, up to the pool's 4 threads.
                             val started = System.nanoTime()
                             val concurrent = contourStats.begin()
-                            val plan = ContourTiles.plan(z, x, y, options)
+                            val tileOptions = ServeMapOptions.contourOptions(options, q) // T50: ?interval=
+                            val plan = ContourTiles.plan(z, x, y, tileOptions)
                             val grid = ContourTiles.sample(pyramid, plan)
                             val sampled = System.nanoTime()
-                            val tile = ContourTiles.build(grid, plan, options)
+                            val tile = ContourTiles.build(grid, plan, tileOptions)
                             contourStats.end(plan, tile, (System.nanoTime() - started) / 1e6, (sampled - started) / 1e6, concurrent)
                             synchronized(timings) {
                                 timings += (System.nanoTime() - started) / 1e6
@@ -123,7 +134,7 @@ class PackServer(
                     return@createContext
                 }
                 when (path) {
-                    "/style.json" -> reply(ex, style.toByteArray(), "application/json")
+                    "/style.json" -> reply(ex, style(q).toByteArray(), "application/json")
                     "/attribution" -> reply(ex, JsonWriter.write(PackAttribution.compose(listOfNotNull(osmReader?.let { PackMetadata("osm", osm!!.name, synchronized(lock) { it.metadata() }) }, PackMetadata("dem", dem.name, synchronized(lock) { demReader.metadata() })), if (glyphDir.isDirectory) listOf(PackAttribution.GLYPH_FONT_ID) else emptyList()).json()).toByteArray(), "application/json")
                     "/catalog", "/catalog.json" -> reply(ex, JsonWriter.write(catalog.json()).toByteArray(), "application/json")
                     "/stats" -> {
@@ -136,6 +147,7 @@ class PackServer(
                                 "sampleAvgMs" to s.average().takeIf { s.isNotEmpty() },
                                 "demTilesDecoded" to pyramid.tilesDecoded,
                                 "contourGeneration" to contourStats.json(),
+                                "shadeGeneration" to shadeStats.json(),
                             ),
                         )
                         reply(ex, json.toByteArray(), "application/json")
@@ -143,6 +155,8 @@ class PackServer(
                     "/" -> reply(ex, page(centerLat, centerLon).toByteArray(), "text/html")
                     else -> reply(ex, null, "text/plain")
                 }
+            } catch (e: IllegalArgumentException) {
+                reply(ex, ((e.message ?: e.toString()) + "\n").toByteArray(), "text/plain", status = 400) // a bad option or tile id
             } catch (e: Exception) {
                 reply(ex, (e.toString() + "\n").toByteArray(), "text/plain", status = 500)
             }
@@ -169,7 +183,8 @@ class PackServer(
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>html,body{margin:0;height:100%;background:#f6f1e4}#map{position:absolute;inset:0}</style></head>
 <body><div id="map"></div><script>
-window.map = new maplibregl.Map({container: "map", style: "/style.json", center: [$lon, $lat], zoom: 12, hash: true});
+// Map options (T50) pass through: /?slope=on&night=on asks /style.json?slope=on&night=on.
+window.map = new maplibregl.Map({container: "map", style: "/style.json" + location.search, center: [$lon, $lat], zoom: 12, hash: true});
 </script></body></html>
 """
 }

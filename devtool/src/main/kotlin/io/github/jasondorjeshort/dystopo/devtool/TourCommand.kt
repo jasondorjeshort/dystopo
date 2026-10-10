@@ -17,7 +17,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BasicStroke
 import java.awt.Color
-import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.File
@@ -317,7 +316,7 @@ class TourCommand : CliktCommand(name = "tour") {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
         g.color = Color(40, 40, 40)
         g.fillRect(0, 0, sheet.width, sheet.height)
-        g.font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
+        g.font = RenderFonts.regular(12.0)
         for ((k, entry) in entries.withIndex()) {
             val x = PAD + (k % cols) * cellW
             val y = PAD + (k / cols) * cellH

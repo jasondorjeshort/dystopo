@@ -61,7 +61,7 @@ class PngDecoder(private val inflate: Decompressor) {
         val w = header.width
         val h = header.height
         val stride = w.toLong() * channels + 1
-        require(stride * h <= Int.MAX_VALUE) { "PNG too large: ${w}x$h" }
+        require(stride * h <= MAX_RAW_BYTES) { "PNG too large: ${w}x$h" }
         val size = (stride * h).toInt()
         val t0 = clock.markNow()
         val raw = inflate(idat(bytes), size)
@@ -129,6 +129,9 @@ class PngDecoder(private val inflate: Decompressor) {
         private const val IDAT = 0x49444154
         private const val IEND = 0x49454E44
         private const val INV_256 = 1f / 256f
+
+        /** Unfiltered size cap (4096x4096 RGBA), so a forged IHDR cannot make us allocate gigabytes. */
+        const val MAX_RAW_BYTES = 64L shl 20
 
         /** Reads the signature and IHDR. */
         fun header(bytes: ByteArray): Header {

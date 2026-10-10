@@ -11,8 +11,9 @@ import kotlin.jvm.Synchronized
 /**
  * The DEM tile decoder shared by every platform: [PngDecoder] (pure Kotlin, zlib through [inflate])
  * decoding Terrarium PNGs straight to elevations for [io.github.jasondorjeshort.dystopo.tiles.DemPyramid].
- * A PNG it does not support ([UnsupportedPngException]: palette, grey, 16-bit, interlaced) goes to
- * [fallback] (ImageIO, BitmapFactory) when one is given; [fallbacks] counts those.
+ * A PNG it does not support ([UnsupportedPngException]: palette, grey, 16-bit, interlaced) or cannot
+ * decode (any [IllegalArgumentException]: a truncated stream, an Adler-32 mismatch, an oversized IHDR)
+ * goes to [fallback] (ImageIO, BitmapFactory) when one is given, which then decides; [fallbacks] counts those.
  */
 class TerrariumPngDecoder(inflate: Decompressor, private val fallback: ImageDecoder? = null) : ElevationImageDecoder {
     private val png = PngDecoder(inflate)
@@ -33,7 +34,7 @@ class TerrariumPngDecoder(inflate: Decompressor, private val fallback: ImageDeco
     override fun decode(bytes: ByteArray): ArgbImage = try {
         val p = png.decode(bytes)
         ArgbImage(p.width, p.height, p.argb())
-    } catch (e: UnsupportedPngException) {
+    } catch (e: IllegalArgumentException) {
         val f = fallback ?: throw e
         countFallback()
         f.decode(bytes)
@@ -44,7 +45,7 @@ class TerrariumPngDecoder(inflate: Decompressor, private val fallback: ImageDeco
             val t = png.terrarium(bytes)
             require(t.width == width && t.height == height) { "tile is ${t.width}x${t.height}, expected ${width}x$height" }
             t.elevations
-        } catch (e: UnsupportedPngException) {
+        } catch (e: IllegalArgumentException) {
             val f = fallback ?: throw e
             countFallback()
             val img = f.decode(bytes)

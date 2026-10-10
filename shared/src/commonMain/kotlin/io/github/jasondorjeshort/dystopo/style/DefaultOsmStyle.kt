@@ -34,7 +34,8 @@ package io.github.jasondorjeshort.dystopo.style
  * the ticks grow with zoom up to z17 (length, width and spacing keep one ratio, so MapLibre's single
  * dash pattern matches every zoom).
  * Park boundaries are green dashes; wilderness areas (outdoors class `wilderness`, OpenMapTiles
- * `wilderness_area`) teal dots, so the two read apart where they overlap.
+ * `wilderness_area`) teal dots, so the two read apart where they overlap, over a faint teal fill
+ * (under the contours, like the land cover tints) so the inside of a wilderness reads as such.
  *
  * Point markers. This is the one marker table: the layers below implement it, [Sprites] turns it into
  * the MapLibre sprite sheet (`devtool sprite`; one icon per distinct marker, used by the phone style
@@ -84,6 +85,8 @@ object DefaultOsmStyle {
      "color": "#d9d4cc", "opacity": 0.25},
     {"id": "glacier", "type": "fill", "source-layer": "landcover", "filter": {"class": "ice"},
      "color": "#eef6ff", "opacity": 0.65},
+    {"id": "wilderness-fill", "type": "fill", "source-layer": "park", "filter": {"class": ["wilderness", "wilderness_area"]},
+     "minzoom": 8, "color": "#1f7a6e", "opacity": 0.07},
 
     {"id": "contours", "type": "contours"},
 

@@ -12,7 +12,6 @@ import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.awt.Color
-import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.File
@@ -141,7 +140,7 @@ class CompareCommand : AreaCommand("compare") {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
         g.color = Color.WHITE
         g.fillRect(0, 0, w, h)
-        g.font = Font(Font.SANS_SERIF, Font.BOLD, 36)
+        g.font = RenderFonts.bold(36.0)
         var x = 0
         for ((panel, label) in panels.zip(labels)) {
             g.color = Color(40, 40, 40)

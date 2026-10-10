@@ -111,6 +111,36 @@ class PngDecoderTest {
         assertFailsWith<IllegalArgumentException> { d.elevations(good, 8, 8) }
     }
 
+    @Test
+    fun corruptOrOversizedPngsGoToTheFallback() {
+        val argb = IntArray(64) { Terrarium.encode(500f + it) }
+        val good = TinyPng.encode(8, 8, argb, alpha = false)
+        // Flip one pixel byte inside the stored IDAT payload: the size still matches, only Adler-32 notices.
+        val idatData = run {
+            var pos = 8
+            while (true) {
+                val len = ((good[pos].toInt() and 0xFF) shl 24) or ((good[pos + 1].toInt() and 0xFF) shl 16) or
+                    ((good[pos + 2].toInt() and 0xFF) shl 8) or (good[pos + 3].toInt() and 0xFF)
+                if (good[pos + 4] == 'I'.code.toByte() && good[pos + 5] == 'D'.code.toByte()) break
+                pos += 12 + len
+            }
+            pos + 8
+        }
+        val corrupt = good.copyOf().also { it[idatData + 12] = (it[idatData + 12].toInt() xor 0x10).toByte() }
+        assertFailsWith<IllegalArgumentException> { PngDecoder(Inflate.zlib).decode(corrupt) }
+        var fallbackCalls = 0
+        val d = TerrariumPngDecoder(Inflate.zlib, ImageDecoder { fallbackCalls++; ArgbImage(8, 8, argb) })
+        assertContentEquals(FloatArray(64) { 500f + it }, d.elevations(good, 8, 8))
+        assertEquals(0, fallbackCalls)
+        assertContentEquals(FloatArray(64) { 500f + it }, d.elevations(corrupt, 8, 8))
+        assertEquals(1, fallbackCalls)
+        // A forged IHDR (60000 x 60000) is refused before anything is allocated.
+        val huge = good.copyOf().also { b -> for (i in 16..23) b[i] = if (i % 4 == 2) 0xEA.toByte() else if (i % 4 == 3) 0x60 else 0 }
+        assertEquals(60000, PngDecoder.header(huge).width)
+        val e = assertFailsWith<IllegalArgumentException> { PngDecoder(Inflate.zlib).decode(huge) }
+        kotlin.test.assertTrue("too large" in e.message.orEmpty(), e.message)
+    }
+
     /** A cone, so a contour tile has many levels. */
     private fun coneTile(z: Int, x: Int, y: Int): IntArray {
         val world = 256.0 * (1L shl z)

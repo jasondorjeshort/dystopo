@@ -68,6 +68,8 @@ class LiveTilesTest {
         assertEquals("live-3dep", LiveTiles.labelFor(listOf("3dep", "geoid18", "egm2008")))
         assertEquals("live-3dep", LiveTiles.labelFor(listOf("copernicus", "3dep-1m")))
         assertEquals("live-copernicus", LiveTiles.labelFor(listOf("copernicus")))
+        // T50: a Swiss tile feathered into Copernicus at the border still says which source carried it.
+        assertEquals("live-swissalti", LiveTiles.labelFor(listOf("swissalti3d", "copernicus", "egm2008")))
         assertEquals("live-nodata", LiveTiles.labelFor(emptyList()))
     }
 

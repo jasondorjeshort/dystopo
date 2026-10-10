@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.png
 
 import java.io.ByteArrayOutputStream
+import java.util.zip.Adler32
 import java.util.zip.Deflater
 import kotlin.math.sin
 import kotlin.random.Random
@@ -57,5 +58,28 @@ class InflateJvmTest {
         assertFailsWith<IllegalArgumentException> { Inflate.zlib(z, data.size - 1) }
         assertFailsWith<IllegalArgumentException> { Inflate.zlib(z.copyOf(z.size / 2), data.size) }
         assertFailsWith<IllegalArgumentException> { Inflate.zlib(byteArrayOf(0x12, 0x34, 0, 0), 4) }
+    }
+
+    @Test
+    fun adler32MatchesJavaUtilZip() {
+        for (data in samples) {
+            val ref = Adler32().apply { update(data) }.value.toInt()
+            kotlin.test.assertEquals(ref, Inflate.adler32(data))
+        }
+    }
+
+    @Test
+    fun corruptionThatKeepsTheSizeFailsTheChecksum() {
+        // A stored (level 0) stream: flipping a payload byte still inflates to the right size, so only the
+        // Adler-32 trailer can catch it.
+        val data = samples[5]
+        val z = deflate(data, 0)
+        val flipped = z.copyOf().also { it[z.size / 2] = (it[z.size / 2].toInt() xor 0x01).toByte() }
+        val e = assertFailsWith<IllegalArgumentException> { Inflate.zlib(flipped, data.size) }
+        kotlin.test.assertTrue("Adler-32" in e.message.orEmpty(), e.message)
+        // A damaged trailer, and a missing one.
+        val badTrailer = z.copyOf().also { it[z.size - 1] = (it[z.size - 1].toInt() xor 0x80).toByte() }
+        assertFailsWith<IllegalArgumentException> { Inflate.zlib(badTrailer, data.size) }
+        assertFailsWith<IllegalArgumentException> { Inflate.zlib(z.copyOf(z.size - 4), data.size) }
     }
 }

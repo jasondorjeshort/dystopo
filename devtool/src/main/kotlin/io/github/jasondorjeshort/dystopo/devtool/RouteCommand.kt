@@ -34,9 +34,7 @@ import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
-import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
-import io.github.jasondorjeshort.dystopo.tiles.ImageDecoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.io.File
@@ -195,10 +193,7 @@ internal object RouteGraphs {
 
     fun reader(file: File): PmtilesReader = PmtilesReader.open(FileRangeSource(file), Gzip.decompressors)
 
-    private val decoder = ImageDecoder { bytes ->
-        val img = ImageIO.read(bytes.inputStream())
-        ArgbImage(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
-    }
+    private val decoder = demDecoder
 
     fun pyramid(dem: File, cacheTiles: Int = 256): DemPyramid {
         val r = reader(dem)

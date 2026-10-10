@@ -75,7 +75,7 @@ data class OsmStats(
 object AwtItalicMeasurer : TextMeasurer {
     private val frc = FontRenderContext(null, true, true)
 
-    fun font(fontPx: Double): Font = Font(Font.SANS_SERIF, Font.BOLD or Font.ITALIC, 1).deriveFont(fontPx.toFloat())
+    fun font(fontPx: Double): Font = RenderFonts.boldItalic(fontPx)
 
     override fun measure(text: String, fontPx: Double): TextSize {
         val bounds = font(fontPx).createGlyphVector(frc, text).visualBounds

@@ -67,6 +67,8 @@ data class BuildReport(
     val totalSeconds: Double,
     /** For an OSM XML input: the conversion to PBF (or its reuse). */
     val xmlConversion: XmlConversion? = null,
+    /** How the ocean polygons were read for this box (outdoors profile; T50): skipped, clipped, or the full file. */
+    val waterPolygons: String? = null,
 )
 
 /**
@@ -165,6 +167,7 @@ object TileBuild {
             stageSecondsError = stages.error,
             totalSeconds = (System.nanoTime() - started) / 1e9,
             xmlConversion = conversion,
+            waterPolygons = setup.waterPolygons,
         )
     }
 

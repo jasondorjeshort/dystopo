@@ -91,7 +91,7 @@ data class MapOptions(
                 listOf("wood", "wetland", "rock", "glacier").forEach { put(it, LANDCOVER) }
                 listOf("huts", "trailheads", "campsites", "shelters", "waterfalls", "viewpoints", "springs", "caves", "outdoor-pois", "parking")
                     .forEach { put(it, POIS) }
-                listOf("park-boundary", "wilderness-boundary", "admin-boundary", "park-names").forEach { put(it, BOUNDARIES) }
+                listOf("wilderness-fill", "park-boundary", "wilderness-boundary", "admin-boundary", "park-names").forEach { put(it, BOUNDARIES) }
             }
 
             /** The group a style layer id belongs to, or null for layers no toggle hides (roads, peaks, places, contours). */

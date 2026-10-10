@@ -35,20 +35,12 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
-      # The goldens were approved on Windows, where Java's SansSerif is Arial: label placement depends on text
-      # widths and the label regions on glyph shapes. Install Arial (Microsoft core fonts) and map SansSerif to it.
-      - name: Arial for the golden images
-        run: |
-          echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | sudo debconf-set-selections
-          sudo apt-get update -q && sudo apt-get install -y -q ttf-mscorefonts-installer
-          mkdir -p ~/.config/fontconfig
-          cp tools/ci/fonts.conf ~/.config/fontconfig/fonts.conf
-          fc-match sans-serif; fc-match 'sans-serif:bold:italic'
-
+      # No font setup: the renderer draws labels with the Noto Sans TTFs bundled in serverlib (T50), so the
+      # goldens match here without Arial or a fontconfig mapping.
       - name: Golden images first (fail fast)
         run: |
           chmod +x gradlew
@@ -101,7 +93,7 @@ jobs:
 
       - name: Upload tour, demo screenshots and reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ci-results
           retention-days: 14

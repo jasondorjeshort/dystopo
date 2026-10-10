@@ -22,6 +22,9 @@ class ServeCommand : CliktCommand(name = "serve") {
             "Also hosts out/ at /out/<file> for pack downloads (byte ranges, ETag, If-Range); add ?kbps=N to a /out/ URL " +
             "to throttle the body to N kilobytes per second, e.g. /out/rainier-dem.pmtiles?kbps=20 to interrupt a download mid-way. " +
             "GET /catalog lists the packs in out/ with sizes and SHA-256 hashes. " +
+            "Map options as on the phone, in the query string of /style.json, / and /phone: hillshade=off|single|multi, " +
+            "hillshadeIntensity=0..1, slope=on, contourInterval=auto|<n>, contourLabels=sparse|normal|dense, night=on, " +
+            "trails|water|landcover|pois|boundaries=off (tiles at /shade/{z}/{x}/{y}.png and /contours/...?interval=<n>). " +
             "With --live: /contours/{z}/{x}/{y}.pbf?units=ft|m and /style.json?units=ft|m (or ?lat=&lon= for the default there: " +
             "feet in the US, metres elsewhere), /live/units?lat=&lon=, /live/sources?bbox=w,s,e,n&dz=&oz= (sources and attribution of a view)."
 

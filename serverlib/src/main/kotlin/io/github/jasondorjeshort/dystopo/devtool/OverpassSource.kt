@@ -190,6 +190,7 @@ class OverpassSource(
         }
 
         fun httpPost(url: String, body: String, timeout: Duration, into: File): Int {
+            Http.beforeNetwork?.invoke(url)
             val req = HttpRequest.newBuilder(URI(url))
                 .header("User-Agent", USER_AGENT)
                 .header("Content-Type", "application/x-www-form-urlencoded")

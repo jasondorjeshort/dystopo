@@ -85,7 +85,10 @@ object Http {
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 
-    /** Called with the URL before every network request in [download] and [range]; `tour --offline-ok` throws there to stay cache-only. */
+    /**
+     * Called with the URL before every network request ([download], [range], [get], Overpass); `tour
+     * --offline-ok` throws there to stay cache-only, and tests use it to count or forbid requests.
+     */
     @Volatile var beforeNetwork: ((String) -> Unit)? = null
 
     private fun request(url: String) = HttpRequest.newBuilder(URI(url))
@@ -164,6 +167,18 @@ object Http {
             tmp.delete()
             return false
         }
+    }
+
+    /**
+     * GET [url] as bytes with [headers], retrying dropped connections up to [attempts] times; the
+     * response is returned whatever its status (callers decide what 204/404 mean).
+     */
+    fun get(url: String, headers: Map<String, String> = emptyMap(), timeout: Duration = Duration.ofSeconds(60), attempts: Int = 3): HttpResponse<ByteArray> {
+        beforeNetwork?.invoke(url)
+        val b = HttpRequest.newBuilder(URI(url)).timeout(timeout)
+        for ((k, v) in headers) b.header(k, v)
+        val req = b.build()
+        return retry(attempts, 500, { it is java.io.IOException }) { client.send(req, HttpResponse.BodyHandlers.ofByteArray()) }
     }
 
     fun range(url: String, offset: Long, length: Int): ByteArray {

@@ -12,28 +12,25 @@ import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
+import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitRegions
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
-import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
-import io.github.jasondorjeshort.dystopo.tiles.ImageDecoder
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTileStats
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.URI
 import java.net.URLDecoder
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
-import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ConcurrentHashMap
@@ -44,7 +41,6 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.GZIPInputStream
 import javax.imageio.ImageIO
-import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -85,7 +81,7 @@ class LiveTiles(
     class LiveDem(val png: ByteArray, val provenance: List<String>)
 
     /**
-     * A tile as served: bytes, where they came from (`pack`, `live-3dep`, `live-copernicus`,
+     * A tile as served: bytes, where they came from (`pack`, `live-3dep`, `live-swissalti`, `live-copernicus`,
      * `live-nodata`, `openfreemap`, `pack+openfreemap`), whether a cache answered, and the registry ids
      * of the data in it ([provenance], what the view's attribution credits).
      */
@@ -197,10 +193,7 @@ class LiveTiles(
     /** Politeness: at most this many OpenFreeMap requests at once. */
     private val ofmPermits = Semaphore(4)
     private val options = ContourTileOptions()
-    private val decoder = ImageDecoder { bytes ->
-        val img = ImageIO.read(bytes.inputStream()) ?: error("unreadable PNG")
-        ArgbImage(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
-    }
+    private val decoder = demDecoder
 
     /** Recently used DEM tiles (pack or live), so a contour tile and its neighbours don't re-read the disk. */
     private val memory = object : LinkedHashMap<TileId, Tile>(256, 0.75f, true) {
@@ -344,10 +337,10 @@ class LiveTiles(
      * produced in parallel first. Intervals and `ele` are in [units] (the viewer's setting); null takes
      * the default for the tile's centre ([UnitRegions]: feet in the US, metres elsewhere).
      */
-    fun contours(z: Int, x: Int, y: Int, units: ContourUnits? = null): Tile? {
+    fun contours(z: Int, x: Int, y: Int, units: ContourUnits? = null, query: Map<String, String> = emptyMap()): Tile? {
         if (!valid(z, x, y)) return null
         val u = units ?: UnitRegions.contourUnitsAt(WebMercator.yToLat(y + 0.5, z), WebMercator.xToLon(x + 0.5, z))
-        val options = if (u == this.options.units) this.options else this.options.copy(units = u)
+        val options = ServeMapOptions.contourOptions(if (u == this.options.units) this.options else this.options.copy(units = u), query) // T50: ?interval=
         val plan = ContourTiles.plan(z, x, y, options)
         val window = intArrayOf(plan.windowX, plan.windowY, plan.windowSize, plan.windowSize)
         val needed = demTilesFor(plan.sampleZoom, window, LIVE_MAX_ZOOM)
@@ -356,6 +349,23 @@ class LiveTiles(
         val sources = fetched.filterNotNull().groupingBy { it.source }.eachCount()
         val source = sources.maxByOrNull { it.value }?.key ?: "none"
         return Tile(tile.bytes, source, fetched.all { it?.cached != false })
+    }
+
+    private val shadeStats = ShadeTileStats()
+
+    /**
+     * T50: the phone's hillshade/slope raster tile z/x/y ([ServeMapOptions.shadePng]) over the pack-then-live DEM,
+     * for the map options in [query]; its DEM tiles are produced in parallel first, as for [contours].
+     */
+    fun shade(z: Int, x: Int, y: Int, query: Map<String, String>): Tile? {
+        if (!valid(z, x, y)) return null
+        val options = ServeMapOptions.shadeOptions(query)
+        val plan = ShadeTiles.plan(z, x, y, LIVE_MAX_ZOOM)
+        val needed = if (plan.sampleZoom < LIVE_MIN_ZOOM) emptyList() else demTilesFor(plan.sampleZoom, intArrayOf(plan.windowX, plan.windowY, plan.windowSize, plan.windowSize), LIVE_MAX_ZOOM)
+        val fetched = needed.map { demAsync(it.z, it.x, it.y) }.map { join(it) }
+        val png = ServeMapOptions.shadePng(pyramid, z, x, y, options, shadeStats)
+        val source = fetched.filterNotNull().groupingBy { it.source }.eachCount().maxByOrNull { it.value }?.key ?: "none"
+        return Tile(png, source, fetched.all { it?.cached != false })
     }
 
     /** Decoded DEM tiles shared by all contour tiles (thread-safe; fetches run outside its lock). */
@@ -489,28 +499,38 @@ class LiveTiles(
 
     // ---- HTTP ----
 
-    private val tileRe = Regex("^/(dem|osm|contours)/(\\d+)/(\\d+)/(\\d+)\\.(png|pbf)$")
+    private val tileRe = Regex("^/(dem|osm|contours|shade)/(\\d+)/(\\d+)/(\\d+)\\.(png|pbf)$")
     private val glyphRe = Regex("^/glyphs/([^/]+)/(\\d+-\\d+)\\.pbf$")
 
     /** The phone style ([MapLibreStyle]) over these routes at [base], per contour unit; a few bases are cached. */
     private val styles = ConcurrentHashMap<Pair<String, ContourUnits>, String>()
 
-    private fun style(base: String, u: ContourUnits, textScale: Double): String {
-        styles[base to u]?.let { return it }
+    /**
+     * The phone style for contour unit [u] and the map options in the query [q] (T50, [ServeMapOptions]): options
+     * needing shade tiles point them at `/shade/` with the same options, a fixed interval rides on the contour URL.
+     * Only the default options are cached.
+     */
+    private fun style(base: String, u: ContourUnits, textScale: Double, q: Map<String, String> = emptyMap()): String {
+        val mapOptions = ServeMapOptions.parse(q, u)
+        val default = mapOptions == MapOptions()
+        if (default) styles[base to u]?.let { return it }
         val json = MapLibreStyle(
             MapLibreSources(
                 demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = LIVE_MIN_ZOOM, demMaxZoom = LIVE_MAX_ZOOM,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?units=${u.symbol}", contourMinZoom = CONTOUR_MIN_ZOOM, contourMaxZoom = LIVE_MAX_ZOOM,
+                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?units=${u.symbol}${ServeMapOptions.contourQuery(mapOptions)}",
+                contourMinZoom = CONTOUR_MIN_ZOOM, contourMaxZoom = LIVE_MAX_ZOOM,
                 osmTiles = "$base/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = OSM_MAX_ZOOM,
                 glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
                 attribution = osmAttributionHtml + " " + demAttributionHtml,
                 sprite = "$base/sprite",
+                shadeTiles = ServeMapOptions.shadeTiles(base, mapOptions), shadeMinZoom = LIVE_MIN_ZOOM, shadeMaxZoom = LIVE_MAX_ZOOM + 2,
             ),
             units = u,
             textScale = textScale,
+            options = mapOptions,
         ).json()
         // Bases come from request headers on the standalone server: keep the cache small whatever they say.
-        if (styles.size < 16) styles[base to u] = json
+        if (default && styles.size < 16) styles[base to u] = json
         return json
     }
 
@@ -521,7 +541,9 @@ class LiveTiles(
      */
     fun handler(glyphDir: File, demoPage: File = File("tools/demo/index.html"), textScale: Double = 1.0, base: (HttpExchange) -> String): HttpHandler = HttpHandler { ex ->
         try {
-            handle(ex, { u -> style(base(ex), u, textScale) }, glyphDir, demoPage)
+            handle(ex, { u, q -> style(base(ex), u, textScale, q) }, glyphDir, demoPage)
+        } catch (e: IllegalArgumentException) {
+            reply(ex, ((e.message ?: e.toString()) + "\n").toByteArray(), "text/plain", status = 400) // T50: a bad map option
         } catch (e: Throwable) {
             errors.incrementAndGet()
             val cause = (e as? CompletionException)?.cause ?: e
@@ -562,7 +584,7 @@ class LiveTiles(
     /** `GET /catalog` (T52): the packs in [outDir] with sizes and content hashes ([PackCatalog]). */
     val catalog: PackCatalog by lazy { PackCatalog(outDir) }
 
-    private fun handle(ex: HttpExchange, style: (ContourUnits) -> String, glyphDir: File, demoPage: File) {
+    private fun handle(ex: HttpExchange, style: (ContourUnits, Map<String, String>) -> String, glyphDir: File, demoPage: File) {
         val path = ex.requestURI.path
         if (SyncRoutes.handle(ex)) return // T44: /sync/* (the always-on sync peer)
         if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
@@ -576,10 +598,11 @@ class LiveTiles(
             val tile = when (kind) {
                 "dem" -> dem(z, x, y)
                 "osm" -> osm(z, x, y)
-                else -> contours(z, x, y, parseUnits(query(ex)["units"]))
+                "shade" -> shade(z, x, y, query(ex))
+                else -> query(ex).let { q -> contours(z, x, y, parseUnits(q["units"]), q) }
             }
             record(kind, TileId(z, x, y), tile, started)
-            val type = if (kind == "dem") "image/png" else "application/x-protobuf"
+            val type = if (kind == "dem" || kind == "shade") "image/png" else "application/x-protobuf"
             ex.responseHeaders.add("X-Dystopo-Source", tile?.source ?: "none")
             reply(ex, tile?.bytes, type)
             return
@@ -596,7 +619,7 @@ class LiveTiles(
                 reply(ex, html?.toByteArray(), "text/html; charset=utf-8")
             }
             "/phone" -> reply(ex, PHONE_PAGE.toByteArray(), "text/html; charset=utf-8")
-            "/style.json" -> reply(ex, style(unitsFor(query(ex))).toByteArray(), "application/json")
+            "/style.json" -> query(ex).let { q -> reply(ex, style(unitsFor(q), q).toByteArray(), "application/json") }
             "/live/units" -> {
                 val u = unitsFor(query(ex))
                 reply(ex, JsonWriter.write(mapOf("units" to u.symbol, "name" to u.name.lowercase())).toByteArray(), "application/json")
@@ -655,6 +678,7 @@ class LiveTiles(
                 "build" to ofmBuild,
             ),
             "errors" to errors.get(),
+            "shadeGeneration" to shadeStats.json(),
             "staleCachePrune" to synchronized(pruned) { pruned.toMap() },
             "inflight" to mapOf("dem" to demInflight.size, "osm" to osmInflight.size),
             "recent" to recent.toList(),
@@ -828,6 +852,7 @@ class LiveTiles(
         /** The status-box label for a live tile's provenance. */
         fun labelFor(provenance: List<String>): String = when {
             provenance.any { it == "3dep" || it == "3dep-1m" } -> "live-3dep"
+            "swissalti3d" in provenance -> "live-swissalti" // T50: swissALTI3D inside `best` (T56)
             "copernicus" in provenance -> "live-copernicus"
             else -> "live-nodata"
         }
@@ -907,12 +932,7 @@ class LiveTiles(
 
         /** GET [url]: the body on 200, null on 204/404, an exception otherwise. */
         fun httpGet(url: String): ByteArray? {
-            val req = HttpRequest.newBuilder(URI(url))
-                .header("User-Agent", "dystopo-devtool/0.1 (+https://github.com/jasondorjeshort/dystopo)")
-                .header("Accept-Encoding", "gzip")
-                .timeout(Duration.ofSeconds(60))
-                .build()
-            val response = Http.retry(3, 500, { it is java.io.IOException }) { Http.client.send(req, HttpResponse.BodyHandlers.ofByteArray()) }
+            val response = Http.get(url, mapOf("User-Agent" to "dystopo-devtool/0.1 (+https://github.com/jasondorjeshort/dystopo)", "Accept-Encoding" to "gzip"))
             return when (response.statusCode()) {
                 200 -> response.body()
                 204, 404 -> null
@@ -936,9 +956,10 @@ class LiveTiles(
 <style>html,body{margin:0;height:100%;background:#f6f1e4}#map{position:absolute;inset:0}</style></head>
 <body><div id="map"></div><script>
 // Contour and peak units: ?units=ft|m, else the default for where the view opens (feet in the US, metres elsewhere).
-const h = location.hash.slice(1).split("/").map(Number), units = new URLSearchParams(location.search).get("units");
-const at = h.length >= 3 && h.every(isFinite) ? "lat=" + h[1] + "&lon=" + h[2] : "lat=46.85&lon=-121.76";
-window.map = new maplibregl.Map({container: "map", style: "/style.json?" + (units ? "units=" + encodeURIComponent(units) : at), center: [-121.76, 46.85], zoom: 11, hash: true});
+// Map options pass through to the style (T50): /phone?slope=on&night=on&contourInterval=100.
+const h = location.hash.slice(1).split("/").map(Number), q = new URLSearchParams(location.search);
+if (!q.get("units")) { q.set("lat", h.length >= 3 && h.every(isFinite) ? h[1] : 46.85); q.set("lon", h.length >= 3 && h.every(isFinite) ? h[2] : -121.76); }
+window.map = new maplibregl.Map({container: "map", style: "/style.json?" + q, center: [-121.76, 46.85], zoom: 11, hash: true});
 </script></body></html>
 """
     }

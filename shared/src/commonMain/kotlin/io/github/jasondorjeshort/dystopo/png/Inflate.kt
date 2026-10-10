@@ -12,8 +12,8 @@ import io.github.jasondorjeshort.dystopo.tiff.Decompressor
  * Huffman lookup table, a 64-bit bit buffer and array copies for non-overlapping matches. It is a
  * [Decompressor] like any other, injected where it wins (Android); the JVM keeps java.util.zip.
  *
- * The zlib Adler-32 checksum is not verified (a corrupt stream almost always breaks the Huffman codes
- * or the size check first); preset dictionaries are rejected.
+ * The zlib Adler-32 trailer is verified, so a corrupt stream that still decodes to the right size (a
+ * flipped literal bit, say) fails instead of producing silently wrong bytes; preset dictionaries are rejected.
  */
 object Inflate {
     /** zlib stream ([input]) to exactly [expectedSize] bytes. */
@@ -25,7 +25,17 @@ object Inflate {
         val flg = input[1].toInt() and 0xFF
         require(cmf and 0x0F == 8 && (cmf shl 8 or flg) % 31 == 0) { "zlib: bad header" }
         require(flg and 0x20 == 0) { "zlib: preset dictionary not supported" }
-        return raw(input, 2, expectedSize)
+        val out = ByteArray(expectedSize)
+        val state = State(input, 2, out)
+        val n = state.run()
+        require(n == expectedSize) { "inflate: got $n bytes, expected $expectedSize" }
+        val end = state.endOfStream()
+        require(end + 4 <= input.size) { "zlib: missing Adler-32 checksum" }
+        var stored = 0
+        for (i in 0 until 4) stored = (stored shl 8) or (input[end + i].toInt() and 0xFF)
+        val actual = adler32(out)
+        require(stored == actual) { "zlib: Adler-32 mismatch (stored ${stored.toUInt().toString(16)}, computed ${actual.toUInt().toString(16)})" }
+        return out
     }
 
     /** Raw DEFLATE data starting at [offset] of [input] to exactly [expectedSize] bytes. */
@@ -34,6 +44,23 @@ object Inflate {
         val n = State(input, offset, out).run()
         require(n == expectedSize) { "inflate: got $n bytes, expected $expectedSize" }
         return out
+    }
+
+    /** Adler-32 (RFC 1950) of [data]; sums are reduced every 5552 bytes, the most that cannot overflow. */
+    fun adler32(data: ByteArray, from: Int = 0, to: Int = data.size): Int {
+        var a = 1L
+        var b = 0L
+        var i = from
+        while (i < to) {
+            val end = minOf(to, i + 5552)
+            while (i < end) {
+                a += data[i++].toLong() and 0xFF
+                b += a
+            }
+            a %= 65521
+            b %= 65521
+        }
+        return ((b shl 16) or a).toInt()
     }
 
     private const val PRIMARY = 10
@@ -159,6 +186,9 @@ object Inflate {
             } while (last == 0)
             return o
         }
+
+        /** Input offset just past the last block, once [run] has returned (the zlib trailer starts here). */
+        fun endOfStream(): Int = pos - (nbits ushr 3)
 
         fun stored() {
             // Drop to a byte boundary, then hand the whole bytes still buffered back to the input.

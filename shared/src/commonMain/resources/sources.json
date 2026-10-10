@@ -385,7 +385,7 @@
       "allowedUses": "Use, embedding and redistribution, including in commercial apps, with the copyright notice and license; the font may not be sold by itself; modified versions may not use the reserved font name.",
       "url": "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
       "updateCadence": "Static; fetched once into the cache by tools/android-push-pack.ps1 and pushed with the packs.",
-      "notes": "MapLibre loads label glyphs as signed-distance-field PBF ranges (0-255 ... 65280-65535) per font stack. The PBFs are generated from the Noto Sans TTFs, so the font's OFL applies to them."
+      "notes": "MapLibre loads label glyphs as signed-distance-field PBF ranges (0-255 ... 65280-65535) per font stack. The PBFs are generated from the Noto Sans TTFs, so the font's OFL applies to them. The devtool PNG renderer bundles Noto Sans Regular and Bold (unhinted TTFs from the notofonts NotoSans-v2.015 release) with the OFL text in serverlib/src/main/resources/fonts/."
     }
   ]
 }

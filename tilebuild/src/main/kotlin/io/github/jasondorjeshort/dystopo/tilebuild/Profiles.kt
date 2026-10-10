@@ -31,9 +31,9 @@ object Profiles {
     const val WATER_POLYGONS_URL = "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip"
     const val NATURAL_EARTH_URL = "https://dev.maptiler.download/geodata/omt/natural_earth_vector.sqlite.zip"
 
-    /** Registry ids an outdoors build reads, without `natural-earth` when that source is skipped. */
-    internal fun outdoorsSourceIds(naturalEarth: Boolean): List<String> =
-        if (naturalEarth) Attribution.OUTDOORS_SOURCE_IDS else Attribution.OUTDOORS_SOURCE_IDS - "natural-earth"
+    /** Registry ids an outdoors build reads, without `natural-earth` or `osm-water-polygons` when that source is skipped. */
+    internal fun outdoorsSourceIds(naturalEarth: Boolean, waterPolygons: Boolean = true): List<String> =
+        Attribution.OUTDOORS_SOURCE_IDS.filter { (naturalEarth || it != "natural-earth") && (waterPolygons || it != "osm-water-polygons") }
 
     class Setup(
         val planetiler: Planetiler,
@@ -41,6 +41,8 @@ object Profiles {
         val label: String,
         val auxiliaryData: List<String>,
         val extraMetadata: Map<String, String>,
+        /** How the ocean polygons were read ([WaterPolygons.Choice.describe]); null for the full file. */
+        val waterPolygons: String? = null,
     )
 
     // addNaturalEarthSource is deprecated in favour of the GeoPackage reader, but the cached aux data is the
@@ -74,17 +76,24 @@ object Profiles {
                 // Natural Earth only feeds z0 to 5 here (below OSM_WATER_MIN_ZOOM). A build starting at z6 or
                 // later skips it: unpacking the 430 MB sqlite was 20 of the 39 s of a small server-side build.
                 val naturalEarthUsed = req.minZoom < OutdoorsProfile.OSM_WATER_MIN_ZOOM
-                val ids = outdoorsSourceIds(naturalEarthUsed) + req.extraSourceIds
+                // T50: a box gets only the ocean polygons that reach it (none inland), not the whole 1.27 GB file.
+                val water = req.bbox?.let { WaterPolygons.forBox(waterPolygons.toFile(), planetilerCache, it) } ?: WaterPolygons.Full
+                val ids = outdoorsSourceIds(naturalEarthUsed, waterPolygons = water !is WaterPolygons.Skip) + req.extraSourceIds
                 val extra = Attribution.extraMetadata(req.input.label, req.bbox, ids, Attribution.OUTDOORS_SCHEMA, kind.cliName)
                 val planetiler = Planetiler.create(arguments)
                     .setProfile(OutdoorsProfile(req.input.label, extra, req.maxZoom))
-                    .addShapefileSource(OutdoorsProfile.WATER_POLYGON_SOURCE, waterPolygons, WATER_POLYGONS_URL)
+                when (water) {
+                    is WaterPolygons.Skip -> Unit
+                    is WaterPolygons.Clipped -> planetiler.addShapefileSource(OutdoorsProfile.WATER_POLYGON_SOURCE, water.shp.toPath())
+                    WaterPolygons.Full -> planetiler.addShapefileSource(OutdoorsProfile.WATER_POLYGON_SOURCE, waterPolygons, WATER_POLYGONS_URL)
+                }
                 if (naturalEarthUsed) planetiler.addNaturalEarthSource(OutdoorsProfile.NATURAL_EARTH_SOURCE, naturalEarth, NATURAL_EARTH_URL)
                 Setup(
                     planetiler,
                     "${OutdoorsSchema.NAME} ${OutdoorsSchema.VERSION}",
-                    listOfNotNull(WATER_POLYGONS_URL, NATURAL_EARTH_URL.takeIf { naturalEarthUsed }),
+                    listOfNotNull(WATER_POLYGONS_URL.takeIf { water !is WaterPolygons.Skip }, NATURAL_EARTH_URL.takeIf { naturalEarthUsed }),
                     extra,
+                    water.describe,
                 )
             }
         }
