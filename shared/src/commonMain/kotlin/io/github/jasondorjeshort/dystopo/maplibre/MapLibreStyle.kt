@@ -43,7 +43,9 @@ data class MapLibreSources(
  *   opacity factors. Cliff `ticks` become a dashed band offset to the right of the line (the OSM
  *   drop side; MapLibre cannot ask the DEM for "downhill").
  * - Symbol `text` templates become `concat` expressions; `{elevation}` prints `ele` (metres in the
- *   tiles) in [units]. Markers are discs (a `circle` layer; MapLibre has no shapes without a sprite
+ *   tiles) in [units], which should match the contour tiles' unit (a setting; its default follows
+ *   [io.github.jasondorjeshort.dystopo.render.UnitRegions]). `{name}` is [LABEL_NAME]: the English or
+ *   Latin name first, and a local name in another script on a second line. Markers are discs (a `circle` layer; MapLibre has no shapes without a sprite
  *   sheet) with the label below; a marker `text` glyph is drawn on the disc.
  * - Label priority: the devtool places symbol layers in list order (first wins); MapLibre places the
  *   topmost layer first, so symbol layers are emitted in reverse. Contour labels are the lowest.
@@ -81,6 +83,29 @@ class MapLibreStyle(
 
         /** The fonts the style uses; the glyph route (and tools/android-push-pack.ps1) must provide each. */
         val FONTS = listOf(FONT_REGULAR, FONT_ITALIC, FONT_MEDIUM)
+
+        /**
+         * The name a label shows. OpenMapTiles tiles (OpenFreeMap, our packs) carry `name` in the local
+         * language plus `name:en` / `name_en` / `name:latin`, and `name:nonlatin` when the local name is
+         * in a non-Latin script. The first line is the English name, else the Latin transliteration,
+         * else the local name; a non-Latin local name follows on a second line, but only when the
+         * renderer can shape that script (`is-supported-script`; MapLibre cannot shape Devanagari, for
+         * example), so the fallback is always readable text and never a row of broken glyphs.
+         */
+        val LABEL_NAME: List<Any?> = listOf(
+            "let", "primary",
+            listOf("coalesce", listOf("get", "name:en"), listOf("get", "name_en"), listOf("get", "name:latin"), listOf("get", "name"), ""),
+            listOf(
+                "case",
+                listOf(
+                    "all", listOf("has", "name:nonlatin"),
+                    listOf("!=", listOf("get", "name:nonlatin"), listOf("var", "primary")),
+                    listOf("is-supported-script", listOf("get", "name:nonlatin")),
+                ),
+                listOf("concat", listOf("var", "primary"), "\n", listOf("get", "name:nonlatin")),
+                listOf("var", "primary"),
+            ),
+        )
 
         /** Clamps a user text scale; NaN or infinite gives 1.0. */
         fun clampTextScale(s: Double): Double = if (s.isNaN() || s.isInfinite()) 1.0 else s.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
@@ -362,7 +387,10 @@ class MapLibreStyle(
             for (m in re.findAll(line)) {
                 if (m.range.first > pos) pieces.add(line.substring(pos, m.range.first))
                 val key = m.groupValues[1]
-                if (key == "elevation") {
+                if (key == "name") {
+                    keys += "name"
+                    pieces.add(LABEL_NAME)
+                } else if (key == "elevation") {
                     keys += "ele"
                     pieces.add(listOf(
                         "concat",

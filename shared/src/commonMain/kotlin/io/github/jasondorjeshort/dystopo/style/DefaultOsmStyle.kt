@@ -35,8 +35,11 @@ package io.github.jasondorjeshort.dystopo.style
  * `wilderness_area`) teal dots, so the two read apart where they overlap.
  *
  * Point markers. This is the one marker table: the layers below implement it, and the browser demo
- * (`tools/demo/index.html`, `MARKERS`) draws the same shapes and colours as canvas icons, scaled for
- * the screen. Size is the marker's pixel size before the text scale; change both places together.
+ * (`tools/demo/index.html`, `MARKERS`) draws the `outdoor_poi` rows with the same shapes and colours
+ * as canvas icons, scaled for the screen (`MarkerTableTest` checks the two agree). Size is the
+ * marker's pixel size before the text scale; change both places together. The rows marked
+ * "renderer" are drawn by the devtool renderer and [io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle]
+ * only: the demo labels peaks as text without a marker and has no OpenMapTiles `poi` layer.
  *
  * | layer / class (`outdoor_poi`)   | shape    | color     | size | from z | not drawn                    |
  * |---------------------------------|----------|-----------|------|--------|------------------------------|
@@ -49,9 +52,9 @@ package io.github.jasondorjeshort.dystopo.style
  * | spring, drinking_water          | circle   | `#1f78c8` | 5.5  | 14     |                              |
  * | cave                            | circle   | `#222222` | 5.5  | 14     |                              |
  * | parking (white `P` inside, no name) | square | `#2b5fa8` | 8  | 14     | subclass street_side         |
- * | peak, volcano, hill (`mountain_peak`) | triangle | `#3b2a1a` | 8 (6 unnamed) | 0 (12 unnamed) |    |
- * | saddle, pass (`mountain_peak`)  | circle   | `#3b2a1a` | 5    | 13     |                              |
- * | OpenMapTiles `poi` outdoor subclasses | circle | `#3d3a36` | 5 | 14     |                              |
+ * | renderer: peak, volcano, hill (`mountain_peak`) | triangle | `#3b2a1a` | 8 (6 unnamed) | 0 (12 unnamed) | |
+ * | renderer: saddle, pass (`mountain_peak`) | circle | `#3b2a1a` | 5 | 13     |                              |
+ * | renderer: OpenMapTiles `poi` subclasses viewpoint, camp_site, shelter, alpine_hut, wilderness_hut, spring, waterfall, drinking_water | circle | `#3d3a36` | 5 | 14 | |
  *
  * Markers carry a paper-colored halo (the label's halo color, 2.5 px). Placement order (collisions)
  * follows the layer order: huts, then trailheads, campsites, shelters, waterfalls, viewpoints,

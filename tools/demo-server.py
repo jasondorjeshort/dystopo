@@ -64,7 +64,25 @@ class RangeHandler(SimpleHTTPRequestHandler):
         pass
 
 
+class DemoServer(ThreadingHTTPServer):
+    """One thread per connection, with room for a busy page.
+
+    The stock listen backlog is 5: when the machine is loaded (a Gradle build alongside), MapLibre's
+    burst of tile and range requests overflows it and Windows refuses the extra connections, which the
+    page reports as failed requests. A deep backlog queues them instead. Daemon threads let Ctrl+C
+    exit with requests in flight, and a client that hangs up mid-response is not an error.
+    """
+
+    request_queue_size = 1024
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
     print(f"serving {os.getcwd()} on http://localhost:{port}/", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", port), RangeHandler).serve_forever()
+    DemoServer(("127.0.0.1", port), RangeHandler).serve_forever()

@@ -107,7 +107,16 @@ class TrackStatsTest {
         assertEquals(0.0, one.ascentM)
         assertEquals(0.0, one.durationS)
         assertNull(one.movingTimeS)
-        assertNull(one.bounds) // a point has no area
+        // A point has no area: its box is padded so callers can still fit a view to it.
+        val b = one.bounds!!
+        assertEquals(1.0, (b.west + b.east) / 2, 1e-12)
+        assertEquals(1.0, (b.south + b.north) / 2, 1e-12)
+        assertEquals(2 * TrackStats.DEGENERATE_PAD_DEG, b.east - b.west, 1e-12)
+        // A track straight north: real north-south extent, padded east-west.
+        val line = TrackStats.of(listOf(listOf(TrackPoint(1.0, 2.0, null, null), TrackPoint(1.5, 2.0, null, null)))).bounds!!
+        assertEquals(1.0, line.south)
+        assertEquals(1.5, line.north)
+        assertTrue(line.west < 2.0 && line.east > 2.0)
         assertEquals(emptyList(), TrackStats.profile(emptyList(), 10))
     }
 

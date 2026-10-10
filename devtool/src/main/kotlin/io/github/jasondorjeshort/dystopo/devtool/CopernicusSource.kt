@@ -36,10 +36,8 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
                 val key = lat to wrapLon(lon.toDouble()).toInt()
                 val name = cellName(key.first, key.second)
                 shifts[key] = key.second.toDouble() - lon
-                cells[key] = try {
+                cells[key] = openCell(cacheDir, name) {
                     RemoteTiff("https://copernicus-dem-30m.s3.amazonaws.com/$name/$name.tif", File(cacheDir, name))
-                } catch (e: IllegalStateException) {
-                    null // no file: open ocean
                 }
             }
         }
@@ -102,6 +100,39 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
     }
 
     companion object {
+        /** Marker paths of cells known to have no file (open ocean), so a live server does not ask again per tile. */
+        private val missing: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+        /** Marker written next to the cell caches for a cell the bucket does not have. */
+        fun missingMarker(cacheDir: File, name: String) = File(cacheDir, "$name.missing")
+
+        /**
+         * Opens cell [name] with [open], or returns null when it has no file. The bucket answers a
+         * missing key with 403 or 404; that answer is remembered in memory and on disk
+         * ([missingMarker]), so open ocean costs one request per cell ever, not one per tile. Other
+         * HTTP statuses and unreadable files read as no data for this call only; network errors
+         * propagate.
+         */
+        fun <T : Any> openCell(cacheDir: File, name: String, open: () -> T): T? {
+            val marker = missingMarker(cacheDir, name)
+            if (marker.path in missing || marker.isFile) {
+                missing += marker.path
+                return null
+            }
+            return try {
+                open()
+            } catch (e: HttpStatusException) {
+                if (e.status == 403 || e.status == 404) {
+                    missing += marker.path
+                    marker.parentFile.mkdirs()
+                    runCatching { marker.writeText("HTTP ${e.status}\n") }
+                }
+                null
+            } catch (e: IllegalStateException) {
+                null // unreadable file: no data for this call, asked again next time
+            }
+        }
+
         /** Longitude in [-180, 180): cells are named and georeferenced in that range. */
         fun wrapLon(lon: Double): Double = lon - 360.0 * floor((lon + 180.0) / 360.0)
     }

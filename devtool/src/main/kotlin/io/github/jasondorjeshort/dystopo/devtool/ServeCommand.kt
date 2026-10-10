@@ -39,7 +39,11 @@ import javax.imageio.ImageIO
  */
 class ServeCommand : CliktCommand(name = "serve") {
     override fun help(context: Context) =
-        "Serve a region pack like the Android app does (style, DEM, OSM, generated contours, glyphs) on 127.0.0.1"
+        "Serve a region pack like the Android app does (style, DEM, OSM, generated contours, glyphs) on 127.0.0.1. " +
+            "Also hosts out/ at /out/<file> for pack downloads (byte ranges, ETag, If-Range); add ?kbps=N to a /out/ URL " +
+            "to throttle the body to N kilobytes per second, e.g. /out/rainier-dem.pmtiles?kbps=20 to interrupt a download mid-way. " +
+            "With --live: /contours/{z}/{x}/{y}.pbf?units=ft|m and /style.json?units=ft|m (or ?lat=&lon= for the default there: " +
+            "feet in the US, metres elsewhere), /live/units?lat=&lon=, /live/sources?bbox=w,s,e,n&dz=&oz= (sources and attribution of a view)."
 
     private val dem by option("--dem", help = "Terrarium DEM PMTiles").default("out/rainier-dem.pmtiles")
     private val osm by option("--osm", help = "OSM vector PMTiles (empty for terrain only)").default("out/rainier-outdoors.pmtiles")

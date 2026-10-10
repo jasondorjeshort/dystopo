@@ -53,11 +53,25 @@ data class TrackStats(
     val overallPaceSPerKm: Double?,
     val avgHeartRate: Double?,
     val maxHeartRate: Double?,
+    /**
+     * Extent of the points; null only when there are none. A single point, or a track running exactly
+     * north-south or east-west, has no area, so its flat side is padded by [DEGENERATE_PAD_DEG] each way.
+     */
     val bounds: BoundingBox?,
 ) {
     companion object {
         /** Mean Earth radius (IUGG), meters. */
         const val EARTH_RADIUS_M = 6_371_008.8
+
+        /** Half-size, in degrees (about 1 m), given to a zero-width or zero-height [bounds]. */
+        const val DEGENERATE_PAD_DEG = 1e-5
+
+        /** A box around [west]..[east] x [south]..[north] that always has an area (see [bounds]). */
+        fun boundsOf(west: Double, south: Double, east: Double, north: Double): BoundingBox {
+            val (w, e) = if (west < east) west to east else (west - DEGENERATE_PAD_DEG) to (east + DEGENERATE_PAD_DEG)
+            val (s, n) = if (south < north) south to north else (south - DEGENERATE_PAD_DEG) to (north + DEGENERATE_PAD_DEG)
+            return BoundingBox(w, s, e, n)
+        }
 
         fun of(track: Track, options: StatsOptions = StatsOptions()): TrackStats =
             of(track.segments.map { it.points }, options)
@@ -144,7 +158,7 @@ data class TrackStats(
                 overallPaceSPerKm = duration?.takeIf { distance >= 1.0 }?.let { it / (distance / 1000.0) },
                 avgHeartRate = if (hrCount > 0) hrSum / hrCount else null,
                 maxHeartRate = if (hrCount > 0) hrMax else null,
-                bounds = if (points > 0 && west < east && south < north) BoundingBox(west, south, east, north) else null,
+                bounds = if (points > 0) boundsOf(west, south, east, north) else null,
             )
         }
 

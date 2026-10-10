@@ -36,6 +36,7 @@
   #panel { position: absolute; top: 12px; left: 12px; background: var(--panel); border-radius: 8px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); max-width: 260px; }
   #panel summary { font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 4px; }
   #panel label { display: block; margin: 4px 0; }
+  #panel label[hidden] { display: none; }
   #panel .hint { color: #6b5f55; font-size: 12px; margin-top: 6px; }
   @media (max-width: 520px) { #panel { max-width: 200px; padding: 6px 8px; } #panel .hint { display: none; } }
   @media (max-width: 520px) { #sources { top: auto; right: auto; bottom: 56px; left: 12px; } }
@@ -49,7 +50,8 @@
 <details id="panel" open>
   <summary>Dystopo: Mount Rainier</summary>
   <label><input type="checkbox" id="hill" checked> Hillshade (from our DEM tiles)</label>
-  <label><input type="checkbox" id="contours" checked> Contours, feet (computed live)</label>
+  <label><input type="checkbox" id="contours" checked> Contours, <span id="contour-units">feet</span> (computed live)</label>
+  <label id="units-row" hidden>Units <select id="unitsel"><option value="">by region</option><option value="ft">feet</option><option value="m">metres</option></select></label>
   <label><input type="checkbox" id="osm" checked> Trails, roads, water, names (OSM)</label>
   <label>OSM archive <select id="osmsel"><option value="outdoors">outdoors profile</option><option value="openmaptiles">OpenMapTiles profile</option></select></label>
   <label>Text size <input type="range" id="text" min="0.8" max="2" step="0.1" value="1.3"></label>
@@ -179,6 +181,27 @@ contourTiles = demSource.contourProtocolUrl({
 } // end pack mode
 if (LIVE) document.getElementById("hint").textContent = "Scroll to zoom, drag to pan. " + "Live: packs in out/ first (" + (LIVE.demPacks.length + LIVE.osmPacks.length) + " open), else DEM from the cloud sources and OSM from OpenFreeMap.";
 
+// Contour and elevation units ("ft" or "m"); contour labels and peak elevations always agree. Pack mode keeps the
+// pack's unit (its contours are generated in feet above). Live mode: ?units=ft|m, else the default where the view
+// opens (GET /live/units: feet in the US, metres elsewhere; shared UnitRegions).
+let UNITS = "ft";
+if (LIVE) {
+  const unitsParam = new URLSearchParams(location.search).get("units");
+  if (unitsParam === "ft" || unitsParam === "m") UNITS = unitsParam;
+  else {
+    const h = location.hash.slice(1).split("/").map(Number);
+    const [lat, lon] = h.length >= 3 && h.every(Number.isFinite) ? [h[1], h[2]] : [46.86, -121.76];
+    try { UNITS = (await (await fetch(base + "/live/units?lat=" + lat + "&lon=" + lon)).json()).units; } catch (e) { /* keep feet */ }
+  }
+}
+document.getElementById("contour-units").textContent = UNITS === "m" ? "metres" : "feet";
+const ELE = UNITS === "m" ? ["round", ["to-number", ["get", "ele"], 0]] : ["round", ["*", ["to-number", ["get", "ele"], 0], 3.28084]];
+// Label names (as MapLibreStyle.LABEL_NAME): English, else Latin transliteration, else the local name; a local name in
+// another script follows on a second line where MapLibre can shape that script (not Devanagari, for example).
+const NAME = ["let", "primary", ["coalesce", ["get", "name:en"], ["get", "name_en"], ["get", "name:latin"], ["get", "name"], ""],
+  ["case", ["all", ["has", "name:nonlatin"], ["!=", ["get", "name:nonlatin"], ["var", "primary"]], ["is-supported-script", ["get", "name:nonlatin"]]],
+    ["concat", ["var", "primary"], "\n", ["get", "name:nonlatin"]], ["var", "primary"]]];
+
 // Outdoors POI markers: the renderer's marker table (DefaultOsmStyle in shared/.../style, see its KDoc), same
 // shapes, colours, relative sizes, first zoom and subclass exclusions. Keep the two in step. Shapes are drawn into
 // canvas icons on demand (no sprite sheet); MARKER_SCALE enlarges them for screen viewing like the text sizes here.
@@ -233,15 +256,16 @@ const map = new maplibregl.Map({
   minZoom: LIVE ? 2 : 7,
   maxZoom: 17,
   hash: true,
+  attributionControl: LIVE ? false : undefined, // live: credits for the sources the view used (creditView)
   style: {
     version: 8,
     glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
     sources: LIVE ? {
       // Live: the serve routes (pack first, then live DEM / server-side contours / OpenFreeMap).
       dem: { type: "raster-dem", tiles: [base + "/dem/{z}/{x}/{y}.png"], tileSize: 256, encoding: "terrarium",
-             minzoom: LIVE.demMinZoom, maxzoom: LIVE.demMaxZoom, attribution: LIVE.demAttribution },
-      contours: { type: "vector", tiles: [base + "/contours/{z}/{x}/{y}.pbf"], minzoom: LIVE.contourMinZoom, maxzoom: LIVE.contourMaxZoom },
-      osm: { type: "vector", tiles: [base + "/osm/{z}/{x}/{y}.pbf"], minzoom: 0, maxzoom: LIVE.osmMaxZoom, attribution: LIVE.osmAttribution },
+             minzoom: LIVE.demMinZoom, maxzoom: LIVE.demMaxZoom }, // attribution: per view, see creditView below
+      contours: { type: "vector", tiles: [base + "/contours/{z}/{x}/{y}.pbf?units=" + UNITS], minzoom: LIVE.contourMinZoom, maxzoom: LIVE.contourMaxZoom },
+      osm: { type: "vector", tiles: [base + "/osm/{z}/{x}/{y}.pbf"], minzoom: 0, maxzoom: LIVE.osmMaxZoom },
     } : {
       // bounds = the generated region (Rainier NP and surroundings). In pmtiles mode MapLibre reads bounds and
       // zooms from the archive header via pmtiles.js.
@@ -296,16 +320,17 @@ const map = new maplibregl.Map({
       { id: "cliffs", type: "line", source: "osm", "source-layer": "natural_line", minzoom: 12, filter: ["==", ["get", "class"], "cliff"],
         paint: { "line-color": "#3a2f28", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.2, 16, 2.4] } },
       { id: "ridges", type: "line", source: "osm", "source-layer": "natural_line", minzoom: 12, filter: ["in", ["get", "class"], ["literal", ["ridge", "arete"]]],
-        paint: { "line-color": "#7b5a3c", "line-opacity": 0.8, "line-width": 1.6, "line-dasharray": [6, 2] } },      { id: "contour-labels", type: "symbol", source: "contours", "source-layer": "contours", filter: ["==", ["get", "level"], 1],
+        paint: { "line-color": "#7b5a3c", "line-opacity": 0.8, "line-width": 1.6, "line-dasharray": [6, 2] } },
+      { id: "contour-labels", type: "symbol", source: "contours", "source-layer": "contours", filter: ["==", ["get", "level"], 1],
         layout: { "symbol-placement": "line", "text-field": ["concat", ["number-format", ["get", "ele"], {}], ""], "text-font": ["Noto Sans Regular"],
                   "text-size": 13, "symbol-spacing": 220, "text-max-angle": 55, "text-padding": 4 },
         paint: { "text-color": "#6b3f12", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
       { id: "trail-names", type: "symbol", source: "osm", "source-layer": "transportation_name", minzoom: 12,
-        layout: { "symbol-placement": "line", "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 13, "symbol-spacing": 400 },
+        layout: { "symbol-placement": "line", "text-field": NAME, "text-font": ["Noto Sans Regular"], "text-size": 13, "symbol-spacing": 400 },
         paint: { "text-color": "#7a2e22", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
       { id: "ridge-names", type: "symbol", source: "osm", "source-layer": "natural_line", minzoom: 12,
         filter: ["all", ["in", ["get", "class"], ["literal", ["ridge", "arete"]]], ["has", "name"]],
-        layout: { "symbol-placement": "line", "text-field": ["get", "name"], "text-font": ["Noto Sans Italic"], "text-size": 13, "symbol-spacing": 500, "text-letter-spacing": 0.15, "text-padding": 6 },
+        layout: { "symbol-placement": "line", "text-field": NAME, "text-font": ["Noto Sans Italic"], "text-size": 13, "symbol-spacing": 500, "text-letter-spacing": 0.15, "text-padding": 6 },
         paint: { "text-color": "#5a3d22", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
       // Outdoors POIs: the renderer's marker shapes and colours (MARKERS above; icons made in styleimagemissing), with
       // the name under the marker from z13 (parking: marker only). As in the renderer, marker and name are one label
@@ -313,18 +338,19 @@ const map = new maplibregl.Map({
       // and markers collide with each other, so dense parking lots thin out.
       { id: "poi-markers", type: "symbol", source: "osm", "source-layer": "outdoor_poi", minzoom: 12, filter: markerFilter,
         layout: { "icon-image": ["concat", "poi-", ["get", "class"]], "icon-padding": 1, "symbol-sort-key": byClass("rank"),
-                  "text-field": ["step", ["zoom"], "", 13, ["case", ["==", ["get", "class"], "parking"], "", ["coalesce", ["get", "name"], ""]]],
+                  "text-field": ["step", ["zoom"], "", 13, ["case", ["==", ["get", "class"], "parking"], "", NAME]],
                   "text-font": ["Noto Sans Regular"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 0.9], "text-max-width": 8,
                   "text-padding": 6, "text-optional": true },
-        paint: { "text-color": "#3b2a1a", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },      { id: "water-names", type: "symbol", source: "osm", "source-layer": "water_name",
-        layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 13 },
+        paint: { "text-color": "#3b2a1a", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
+      { id: "water-names", type: "symbol", source: "osm", "source-layer": "water_name",
+        layout: { "text-field": NAME, "text-font": ["Noto Sans Regular"], "text-size": 13 },
         paint: { "text-color": "#2f6ea6", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
       { id: "peaks", type: "symbol", source: "osm", "source-layer": "mountain_peak", filter: ["!", ["in", ["get", "class"], ["literal", ["ridge", "arete", "cliff"]]]],
-        layout: { "text-field": ["case", ["has", "ele"], ["concat", ["get", "name"], "\n", ["get", "ele"], " m"], ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 14,
+        layout: { "text-field": ["case", ["has", "ele"], ["concat", NAME, "\n", ["to-string", ELE], " " + UNITS], NAME], "text-font": ["Noto Sans Regular"], "text-size": 14,
                   "text-anchor": "top", "text-offset": [0, 0.4], "icon-image": "" },
         paint: { "text-color": "#3b2a1a", "text-halo-color": "#f6f1e4", "text-halo-width": 1.8 } },
       { id: "places", type: "symbol", source: "osm", "source-layer": "place",
-        layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 16 },
+        layout: { "text-field": NAME, "text-font": ["Noto Sans Regular"], "text-size": 16 },
         paint: { "text-color": "#222", "text-halo-color": "#f6f1e4", "text-halo-width": 2 } },
     ],
   },
@@ -356,6 +382,22 @@ if (LIVE) {
   document.querySelector("#panel summary").textContent = "Dystopo: live world";
   document.getElementById("osmsel").parentElement.style.display = "none";
   document.getElementById("live-tools").hidden = false;
+  // Units setting: by region (the default), feet or metres; a change reloads the page with ?units=.
+  const unitSel = document.getElementById("unitsel");
+  document.getElementById("units-row").hidden = false;
+  unitSel.value = new URLSearchParams(location.search).get("units") || "";
+  unitSel.onchange = () => { const u = new URL(location.href); if (unitSel.value) u.searchParams.set("units", unitSel.value); else u.searchParams.delete("units"); location.href = u.href; };
+  // Attribution for exactly what the view shows (the server knows each tile's provenance), conservative until known.
+  let credit = null, creditText = "";
+  const creditView = html => {
+    if (!html || html === creditText) return;
+    if (credit) map.removeControl(credit);
+    credit = new maplibregl.AttributionControl({ compact: phone.matches, customAttribution: html });
+    map.addControl(credit, "bottom-right");
+    creditText = html;
+    window.dystopoCredit = html;
+  };
+  creditView(LIVE.osmAttribution + " " + LIVE.demAttribution);
   const srcBox = document.getElementById("sources");
   srcBox.hidden = false;
   // Which source the tiles of the current view came from (the server records every tile it answered).
@@ -369,6 +411,7 @@ if (LIVE) {
     const fmt = o => Object.entries(o).map(([k, v]) => k + " " + v).join(", ") || "none";
     srcBox.textContent = "DEM z" + r.demZoom + ": " + fmt(r.dem) + "  ·  OSM z" + r.osmZoom + ": " + fmt(r.osm);
     window.dystopoLive = r;
+    if (r.attribution) creditView(r.attribution);
     return r;
   };
   map.on("idle", () => { window.dystopoLiveSources().catch(() => {}); });

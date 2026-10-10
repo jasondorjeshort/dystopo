@@ -3,7 +3,14 @@ package io.github.jasondorjeshort.dystopo.devtool
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.geo.TileId
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.devtool.LiveTiles.Tile
+import io.github.jasondorjeshort.dystopo.mvt.Feature
+import io.github.jasondorjeshort.dystopo.mvt.Geometry
+import io.github.jasondorjeshort.dystopo.mvt.Layer
 import io.github.jasondorjeshort.dystopo.mvt.MvtDecoder
+import io.github.jasondorjeshort.dystopo.mvt.TilePoint
+import io.github.jasondorjeshort.dystopo.mvt.Value
+import io.github.jasondorjeshort.dystopo.mvt.VectorTile
 import io.github.jasondorjeshort.dystopo.pmtiles.ByteSink
 import io.github.jasondorjeshort.dystopo.pmtiles.MemoryTileStaging
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesWriter
@@ -147,6 +154,111 @@ class LiveTilesTest {
         @Suppress("UNCHECKED_CAST")
         val demCounts = sources["dem"] as Map<String, Int>
         assertEquals(mapOf("live-copernicus" to 1, "pack" to 1), demCounts)
+    }
+
+    private fun tileAt(lat: Double, lon: Double, z: Int) =
+        TileId(z, kotlin.math.floor(WebMercator.lonToX(lon, z)).toInt(), kotlin.math.floor(WebMercator.latToY(lat, z)).toInt())
+
+    private fun mvt(vararg layers: String): ByteArray = VectorTile(
+        layers.map { name -> Layer(name, listOf(Feature(1L, mapOf("class" to Value.StringValue(name)), Geometry.Points(listOf(TilePoint(10, 10)))))) },
+    ).encode()
+
+    private fun ofmLive(cache: File, osmPacks: List<File>, tile: ByteArray, fetches: AtomicInteger = AtomicInteger()) = LiveTiles(
+        emptyList(), osmPacks, cacheRoot = cache, threads = 2,
+        generateDem = { error("no DEM in this test") },
+        fetchOfm = { fetches.incrementAndGet(); tile },
+        ofmTileJson = { """{"tiles":["https://example.invalid/planet/b1/{z}/{x}/{y}.pbf"]}""" },
+    )
+
+    @Test
+    fun mergesLayersByName() {
+        val merged = LiveTiles.mergeMvtLayers(mvt("water", "transportation"), mvt("transportation", "outdoor_poi", "natural_line"))
+        val names = MvtDecoder.decode(merged).layers.map { it.name }
+        assertEquals(listOf("water", "transportation", "outdoor_poi", "natural_line"), names)
+        assertEquals(listOf("water", "transportation"), LiveTiles.mvtLayers(mvt("water", "transportation")).map { it.name })
+        // Nothing new: the base tile unchanged.
+        val base = mvt("water")
+        assertContentEquals(base, LiveTiles.mergeMvtLayers(base, mvt("water")))
+    }
+
+    @Test
+    fun packEdgeTilesFallThroughToOpenFreeMap() {
+        val z = 12
+        val inner = TileId(z, 655, 1430)
+        val edge = TileId(z, 656, 1430)
+        // A pack that wholly holds `inner` and only the western half of `edge`.
+        val w = PmtilesWriter(TileType.MVT, staging = MemoryTileStaging())
+        w.addTile(z, inner.x, inner.y, mvt("transportation", "outdoor_poi"))
+        w.addTile(z, edge.x, edge.y, mvt("transportation", "outdoor_poi"))
+        val west = WebMercator.xToLon(inner.x.toDouble(), z)
+        val east = WebMercator.xToLon(edge.x + 0.5, z)
+        val north = WebMercator.yToLat(inner.y.toDouble(), z)
+        val south = WebMercator.yToLat(inner.y + 1.0, z)
+        val file = File(dir, "edge-outdoors.pmtiles")
+        file.outputStream().buffered().use { os ->
+            w.finish(ByteSink { os.write(it) }, "{}", west, south, east, north, centerZoom = z, minZoom = z, maxZoom = z, centerLon = (west + east) / 2, centerLat = (south + north) / 2)
+        }
+        val fetches = AtomicInteger()
+        val live = ofmLive(File(dir, "cache"), listOf(file), mvt("water", "transportation"), fetches)
+
+        val whole = live.osm(inner.z, inner.x, inner.y)!!
+        assertEquals("pack", whole.source)
+        assertEquals(0, fetches.get())
+        assertEquals(listOf("osm", "openmaptiles"), whole.provenance)
+
+        val part = live.osm(edge.z, edge.x, edge.y)!!
+        assertEquals("pack+openfreemap", part.source)
+        assertEquals(1, fetches.get())
+        // OpenFreeMap's base layers (complete across the tile) plus the pack's outdoors-only layer.
+        assertEquals(listOf("water", "transportation", "outdoor_poi"), MvtDecoder.decode(part.bytes).layers.map { it.name })
+        assertEquals(setOf("osm", "openmaptiles", "openfreemap"), part.provenance.toSet())
+    }
+
+    @Test
+    fun attributionCreditsOnlyWhatTheViewUsed() {
+        val cache = File(dir, "cache")
+        val live = LiveTiles(
+            emptyList(), emptyList(), cacheRoot = cache, threads = 2,
+            generateDem = { LiveTiles.LiveDem(slopePng(500f), listOf("copernicus", "egm2008")) },
+            fetchOfm = { mvt("water") },
+            ofmTileJson = { """{"tiles":["https://example.invalid/planet/b1/{z}/{x}/{y}.pbf"]}""" },
+        )
+        // A view in the Alps: z12 DEM and OSM tiles around Mont Blanc.
+        val t = tileAt(45.83, 6.86, 12)
+        live.dem(t.z, t.x, t.y)
+        live.osm(t.z, t.x, t.y)
+        val box = LiveTiles.clampBox(listOf(WebMercator.xToLon(t.x + 0.4, 12), WebMercator.yToLat(t.y + 0.6, 12), WebMercator.xToLon(t.x + 0.6, 12), WebMercator.yToLat(t.y + 0.4, 12)))
+        val r = live.sourcesIn(box, 12, 12)
+        @Suppress("UNCHECKED_CAST")
+        val ids = r["registryIds"] as List<String>
+        assertTrue("copernicus" in ids && "egm2008" in ids && "openfreemap" in ids && "osm" in ids, "$ids")
+        assertFalse(ids.any { it.startsWith("3dep") || it.startsWith("geoid") }, "no US sources in an Alps view: $ids")
+        val html = r["attribution"] as String
+        assertTrue("Copernicus" in html && "OpenStreetMap" in html, html)
+    }
+
+    @Test
+    fun contourUnitsFollowTheSettingOrTheRegion() {
+        assertEquals(io.github.jasondorjeshort.dystopo.render.ContourUnits.METERS, LiveTiles.parseUnits("m"))
+        assertEquals(io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET, LiveTiles.parseUnits("feet"))
+        assertNull(LiveTiles.parseUnits("furlongs"))
+        val live = LiveTiles(emptyList(), emptyList(), cacheRoot = File(dir, "cache"), threads = 2, generateDem = { LiveTiles.LiveDem(slopePng(1000f), listOf("copernicus")) })
+        fun eles(t: Tile) = MvtDecoder.decode(t.bytes).layers.single { it.name == "contours" }.features.map { (it.properties.getValue("ele") as Value.IntValue).value }
+        val alps = tileAt(45.83, 6.86, 13)
+        // Default in the Alps: metres. The plane rises 2 m per pixel, so z13 tiles (z14 spec) have 20 m lines there, 80 ft in feet.
+        val metric = eles(live.contours(alps.z, alps.x, alps.y)!!)
+        assertTrue(metric.isNotEmpty() && metric.all { it % 20 == 0L }, "$metric")
+        val feet = eles(live.contours(alps.z, alps.x, alps.y, io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET)!!)
+        assertTrue(feet.isNotEmpty() && feet.all { it % 80 == 0L }, "$feet")
+        assertTrue(feet.max() > metric.max() * 3, "feet values are about 3.28x metres: $feet vs $metric")
+    }
+
+    @Test
+    fun liveDemLevelIsOnePerZoom() {
+        // Every tile of a zoom shares one reference cell size, whatever its latitude.
+        assertEquals(LiveTiles.referenceCellMeters(12), LiveTiles.referenceCellMeters(12))
+        assertEquals(WebMercator.metersPerPixel(45.0, 12, 256), LiveTiles.referenceCellMeters(12), 1e-9)
+        assertEquals(LiveTiles.referenceCellMeters(11) / 2, LiveTiles.referenceCellMeters(12), 1e-9)
     }
 
     @Test

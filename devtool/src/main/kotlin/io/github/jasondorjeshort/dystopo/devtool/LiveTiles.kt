@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.devtool
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
 import io.github.jasondorjeshort.dystopo.dem.TileWindow
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
@@ -13,6 +14,8 @@ import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitRegions
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
@@ -78,21 +81,55 @@ class LiveTiles(
     /** One rendered live DEM tile: Terrarium PNG bytes plus the registry ids that contributed. */
     class LiveDem(val png: ByteArray, val provenance: List<String>)
 
-    /** A tile as served: bytes, where they came from (`pack`, `live-3dep`, `live-copernicus`, `live-nodata`, `openfreemap`), and whether a cache answered. */
-    class Tile(val bytes: ByteArray, val source: String, val cached: Boolean)
+    /**
+     * A tile as served: bytes, where they came from (`pack`, `live-3dep`, `live-copernicus`,
+     * `live-nodata`, `openfreemap`, `pack+openfreemap`), whether a cache answered, and the registry ids
+     * of the data in it ([provenance], what the view's attribution credits).
+     */
+    class Tile(val bytes: ByteArray, val source: String, val cached: Boolean, val provenance: List<String> = emptyList())
 
     /** A PMTiles pack; tile lookups skip the archive when the tile is outside its header zooms and bounds. */
-    class Pack(val file: File) {
+    class Pack(val file: File, private val fallbackIds: List<String> = emptyList()) {
         val reader: PmtilesReader = PmtilesReader.open(FileRangeSource(file), Gzip.decompressors)
         private val h = reader.header
 
+        /** Registry ids the pack's metadata names (its provenance), else [fallbackIds]. */
+        val registryIds: List<String> by lazy {
+            val named = runCatching { PackAttribution.registryIds(synchronized(this) { reader.metadata() }) }.getOrDefault(emptyList())
+                .filter { it in SourceRegistry.builtIn }
+            named.ifEmpty { fallbackIds }
+        }
+
+        /**
+         * Edge tiles are complete anyway: a pack built from OpenFreeMap tiles (`/build`, provenance
+         * `openfreemap`) stores whole upstream tiles, unlike a `tilebuild` extract clipped to its box.
+         */
+        val wholeTiles: Boolean get() = "openfreemap" in registryIds
+
+        /** This pack's copy of tile z/x/y is complete: inside its bounds, or [wholeTiles]. */
+        fun complete(z: Int, x: Int, y: Int): Boolean = wholeTiles || contains(z, x, y)
+
+        private fun edges(z: Int, x: Int, y: Int) = doubleArrayOf(
+            WebMercator.xToLon(x.toDouble(), z), WebMercator.yToLat(y + 1.0, z),
+            WebMercator.xToLon(x + 1.0, z), WebMercator.yToLat(y.toDouble(), z),
+        )
+
+        /** The tile overlaps the pack's bounds at a zoom the pack has. */
         fun covers(z: Int, x: Int, y: Int): Boolean {
             if (z < h.minZoom || z > h.maxZoom) return false
-            val west = WebMercator.xToLon(x.toDouble(), z)
-            val east = WebMercator.xToLon(x + 1.0, z)
-            val north = WebMercator.yToLat(y.toDouble(), z)
-            val south = WebMercator.yToLat(y + 1.0, z)
+            val (west, south, east, north) = edges(z, x, y).toList()
             return east > h.minLon && west < h.maxLon && north > h.minLat && south < h.maxLat
+        }
+
+        /**
+         * The tile lies wholly inside the pack's bounds, so the pack's copy of it is complete. The
+         * header stores bounds in 1e-7 degrees, so edges within [EDGE_EPS_DEG] count as inside.
+         */
+        fun contains(z: Int, x: Int, y: Int): Boolean {
+            if (z < h.minZoom || z > h.maxZoom) return false
+            val (west, south, east, north) = edges(z, x, y).toList()
+            val e = EDGE_EPS_DEG
+            return west >= h.minLon - e && east <= h.maxLon + e && south >= h.minLat - e && north <= h.maxLat + e
         }
 
         fun tile(z: Int, x: Int, y: Int): ByteArray? = if (!covers(z, x, y)) null else synchronized(this) { reader.tile(z, x, y) }
@@ -106,19 +143,22 @@ class LiveTiles(
     }
 
     // Copy-on-write: a pack built by `/build` (BuildRoutes) joins while tiles are being served.
-    private val dems = CopyOnWriteArrayList(demPacks.map { Pack(it) })
-    private val osms = CopyOnWriteArrayList(osmPacks.map { Pack(it) })
+    private val dems = CopyOnWriteArrayList(demPacks.map { Pack(it, BestSource().registryIds) })
+    private val osms = CopyOnWriteArrayList(osmPacks.map { Pack(it, OSM_PACK_REGISTRY_IDS) })
 
     /** Serves [file] (a DEM or vector PMTiles) from now on, replacing a pack already open from the same path. */
     fun addPack(file: File) {
-        val pack = Pack(file)
-        val list = if (pack.reader.header.tileType == TileType.MVT) osms else dems
+        val probe = Pack(file)
+        val mvt = probe.reader.header.tileType == TileType.MVT
+        val pack = Pack(file, if (mvt) OSM_PACK_REGISTRY_IDS else BestSource().registryIds)
+        val list = if (mvt) osms else dems
         val path = file.canonicalPath
         val at = list.indexOfFirst { it.file.canonicalPath == path }
         if (at >= 0) list[at] = pack else list += pack
         // Tiles remembered from the live path would keep reporting their live source over the new pack.
         synchronized(memory) { memory.clear() }
         sourceOf.clear()
+        provenanceOf.clear()
     }
     private val demCacheDir = File(cacheRoot, "live/$CACHE_VERSION")
     private val pool: ExecutorService = Executors.newFixedThreadPool(threads) { r -> Thread(r, "live-dem").apply { isDaemon = true } }
@@ -140,6 +180,9 @@ class LiveTiles(
 
     /** Where each tile came from, per route (`dem/z/x/y` etc.), for `/live/sources`. */
     private val sourceOf = ConcurrentHashMap<String, String>()
+
+    /** The registry ids in each tile served, per route, for the view's attribution. */
+    private val provenanceOf = ConcurrentHashMap<String, List<String>>()
 
     // ---- stats ----
 
@@ -176,6 +219,7 @@ class LiveTiles(
         val ms = (System.nanoTime() - startedNs) / 1e6
         val source = tile?.source ?: "none"
         sourceOf["$kind/$t"] = source
+        if (tile != null && kind != "contours") provenanceOf["$kind/$t"] = tile.provenance
         synchronized(timings) {
             timings.getOrPut(kind) { LinkedHashMap() }.getOrPut(source) { Timing() }.add(ms, tile?.cached == true)
             recent.addLast(mapOf("kind" to kind, "tile" to t.toString(), "source" to source, "ms" to round1(ms), "cached" to (tile?.cached == true)))
@@ -191,9 +235,9 @@ class LiveTiles(
     fun demAsync(z: Int, x: Int, y: Int): CompletableFuture<Tile?> {
         if (!valid(z, x, y)) return CompletableFuture.completedFuture(null)
         val id = TileId(z, x, y)
-        synchronized(memory) { memory[id] }?.let { return CompletableFuture.completedFuture(Tile(it.bytes, it.source, true)) }
+        synchronized(memory) { memory[id] }?.let { return CompletableFuture.completedFuture(Tile(it.bytes, it.source, true, it.provenance)) }
         for (p in dems) p.tile(z, x, y)?.let { bytes ->
-            val t = Tile(bytes, "pack", false)
+            val t = Tile(bytes, "pack", false, p.registryIds)
             remember(id, t)
             return CompletableFuture.completedFuture(t)
         }
@@ -230,6 +274,7 @@ class LiveTiles(
     private fun remember(id: TileId, t: Tile) {
         synchronized(memory) { memory[id] = t }
         sourceOf.putIfAbsent("dem/$id", t.source)
+        provenanceOf.putIfAbsent("dem/$id", t.provenance)
     }
 
     private fun demFile(id: TileId) = File(demCacheDir, "${id.z}/${id.x}/${id.y}.png")
@@ -238,7 +283,8 @@ class LiveTiles(
         val png = demFile(id)
         if (!png.isFile) return null
         val side = File(png.path.removeSuffix(".png") + ".src")
-        return Tile(png.readBytes(), if (side.isFile) labelFor(readProvenance(id)) else "live", true)
+        val provenance = readProvenance(id)
+        return Tile(png.readBytes(), if (side.isFile) labelFor(provenance) else "live", true, provenance.filter { it in SourceRegistry.builtIn })
     }
 
     private fun readProvenance(id: TileId): List<String> {
@@ -257,16 +303,22 @@ class LiveTiles(
         val side = File(png.path.removeSuffix(".png") + ".src")
         Http.partFile(side).also { it.writeText(dem.provenance.joinToString(",")) }.let { Http.publish(it, side) }
         Http.partFile(png).also { it.writeBytes(dem.png) }.let { Http.publish(it, png) }
-        val t = Tile(dem.png, labelFor(dem.provenance), false)
+        val t = Tile(dem.png, labelFor(dem.provenance), false, dem.provenance)
         remember(id, t)
         return t
     }
 
     // ---- contours ----
 
-    /** Contour tile z/x/y ([ContourTiles.plan]) over the pack-then-live DEM; the DEM tiles it samples are produced in parallel first. */
-    fun contours(z: Int, x: Int, y: Int): Tile? {
+    /**
+     * Contour tile z/x/y ([ContourTiles.plan]) over the pack-then-live DEM; the DEM tiles it samples are
+     * produced in parallel first. Intervals and `ele` are in [units] (the viewer's setting); null takes
+     * the default for the tile's centre ([UnitRegions]: feet in the US, metres elsewhere).
+     */
+    fun contours(z: Int, x: Int, y: Int, units: ContourUnits? = null): Tile? {
         if (!valid(z, x, y)) return null
+        val u = units ?: UnitRegions.contourUnitsAt(WebMercator.yToLat(y + 0.5, z), WebMercator.xToLon(x + 0.5, z))
+        val options = if (u == this.options.units) this.options else this.options.copy(units = u)
         val plan = ContourTiles.plan(z, x, y, options)
         val window = intArrayOf(plan.windowX, plan.windowY, plan.windowSize, plan.windowSize)
         val needed = demTilesFor(plan.sampleZoom, window, LIVE_MAX_ZOOM)
@@ -301,11 +353,23 @@ class LiveTiles(
         return parseOfmTileJson(text)
     }
 
+    /**
+     * OSM tile z/x/y: from a pack whose bounds hold the whole tile; else OpenFreeMap. A pack that covers
+     * only part of the tile (its edge) would draw base layers that stop at the pack boundary, so there
+     * the OpenFreeMap tile is used and the pack's outdoors-only layers (those OpenFreeMap lacks, such as
+     * `outdoor_poi` and `natural_line`) are appended to it ([mergeMvtLayers]); the source is then
+     * `pack+openfreemap`.
+     */
     fun osm(z: Int, x: Int, y: Int): Tile? {
         if (!valid(z, x, y)) return null
-        for (p in osms) p.tile(z, x, y)?.let { return Tile(it, "pack", false) }
-        if (z > OSM_MAX_ZOOM) return null
-        return openFreeMap(z, x, y)
+        for (p in osms) if (p.complete(z, x, y)) p.tile(z, x, y)?.let { return Tile(it, "pack", false, p.registryIds) }
+        val partial = osms.mapNotNull { p -> p.tile(z, x, y)?.let { it to p.registryIds } }
+        if (z > OSM_MAX_ZOOM) return partial.firstOrNull()?.let { (bytes, ids) -> Tile(bytes, "pack", false, ids) }
+        val base = openFreeMap(z, x, y)
+        if (partial.isEmpty()) return base
+        val merged = partial.fold(base.bytes) { acc, (bytes, _) -> mergeMvtLayers(acc, bytes) }
+        val ids = SourceRegistry.builtIn.ordered(base.provenance + partial.flatMap { it.second })
+        return Tile(merged, "pack+openfreemap", base.cached, ids)
     }
 
     /** The OpenFreeMap build id and its TileJSON (`vector_layers` etc.), as cached for the live route. */
@@ -324,7 +388,7 @@ class LiveTiles(
         val (template, build) = ofm
         val id = TileId(z, x, y)
         val file = File(cacheRoot, "openfreemap/$build/$z/$x/$y.pbf")
-        if (file.isFile) return Tile(file.readBytes(), "openfreemap", true)
+        if (file.isFile) return Tile(file.readBytes(), "openfreemap", true, OSM_REGISTRY_IDS)
         val f = osmInflight.computeIfAbsent(id) { key ->
             CompletableFuture.supplyAsync({
                 val url = template.replace("{z}", "$z").replace("{x}", "$x").replace("{y}", "$y")
@@ -336,7 +400,7 @@ class LiveTiles(
                 val bytes = raw?.let { gunzipIfNeeded(it) } ?: ByteArray(0)
                 file.parentFile.mkdirs()
                 Http.partFile(file).also { it.writeBytes(bytes) }.let { Http.publish(it, file) }
-                Tile(bytes, "openfreemap", false)
+                Tile(bytes, "openfreemap", false, OSM_REGISTRY_IDS)
             }, ofmPool).also { fut -> fut.whenComplete { _, _ -> osmInflight.remove(key) } }
         }
         return join(f)
@@ -344,32 +408,53 @@ class LiveTiles(
 
     // ---- what the status box asks ----
 
-    /** Counts of tile sources for the DEM tiles at [demZoom] and OSM tiles at [osmZoom] covering [box]. */
+    /**
+     * Counts of tile sources for the DEM tiles at [demZoom] and OSM tiles at [osmZoom] covering [box],
+     * and the attribution for exactly the data those tiles hold (`attribution`, HTML; `registryIds`):
+     * a view of the Alps credits Copernicus and EGM2008, not 3DEP.
+     */
     fun sourcesIn(box: BoundingBox?, demZoom: Int, osmZoom: Int): Map<String, Any?> {
-        fun count(kind: String, z: Int, lookup: (TileId) -> String): Map<String, Int> {
+        val ids = LinkedHashSet<String>()
+        fun count(kind: String, z: Int, lookup: (TileId) -> Pair<String, List<String>>): Map<String, Int> {
             if (box == null) return emptyMap()
             val tiles = WebMercator.tilesCovering(box, z).take(MAX_STATUS_TILES)
-            return tiles.map { t -> sourceOf["$kind/$t"] ?: lookup(t) }.groupingBy { it }.eachCount().toSortedMap()
+            return tiles.map { t ->
+                val key = "$kind/$t"
+                val known = sourceOf[key]
+                val (source, provenance) = if (known != null) known to (provenanceOf[key] ?: emptyList()) else lookup(t)
+                ids += provenance
+                source
+            }.groupingBy { it }.eachCount().toSortedMap()
         }
         val dz = demZoom.coerceIn(0, LIVE_MAX_ZOOM)
         val oz = osmZoom.coerceIn(0, OSM_MAX_ZOOM)
+        val dem = count("dem", dz) { t ->
+            val pack = dems.firstOrNull { it.has(t.z, t.x, t.y) }
+            when {
+                pack != null -> "pack" to pack.registryIds
+                t.z < LIVE_MIN_ZOOM -> "none" to emptyList()
+                else -> readDemCache(t)?.let { it.source to it.provenance } ?: ("pending" to emptyList())
+            }
+        }
+        val osm = count("osm", oz) { t ->
+            val whole = osms.firstOrNull { it.complete(t.z, t.x, t.y) && it.has(t.z, t.x, t.y) }
+            val part = osms.filter { it.has(t.z, t.x, t.y) }
+            val ofmCached = ofmBuild?.let { File(cacheRoot, "openfreemap/$it/${t.z}/${t.x}/${t.y}.pbf").isFile } == true
+            when {
+                whole != null -> "pack" to whole.registryIds
+                ofmCached && part.isNotEmpty() -> "pack+openfreemap" to OSM_REGISTRY_IDS + part.flatMap { it.registryIds }
+                ofmCached -> "openfreemap" to OSM_REGISTRY_IDS
+                else -> "pending" to emptyList()
+            }
+        }
+        val credited = SourceRegistry.builtIn.ordered(ids.filter { it in SourceRegistry.builtIn })
         return linkedMapOf(
             "demZoom" to dz,
             "osmZoom" to oz,
-            "dem" to count("dem", dz) { t ->
-                when {
-                    dems.any { it.has(t.z, t.x, t.y) } -> "pack"
-                    t.z < LIVE_MIN_ZOOM -> "none"
-                    else -> readDemCache(t)?.source ?: "pending"
-                }
-            },
-            "osm" to count("osm", oz) { t ->
-                when {
-                    osms.any { it.has(t.z, t.x, t.y) } -> "pack"
-                    ofmBuild?.let { File(cacheRoot, "openfreemap/$it/${t.z}/${t.x}/${t.y}.pbf").isFile } == true -> "openfreemap"
-                    else -> "pending"
-                }
-            },
+            "dem" to dem,
+            "osm" to osm,
+            "registryIds" to credited,
+            "attribution" to SourceRegistry.builtIn.attributionHtml(credited),
         )
     }
 
@@ -381,16 +466,20 @@ class LiveTiles(
     /** Starts the live server on 127.0.0.1:[port] and prints one JSON line describing it. */
     fun serve(port: Int, glyphDir: File, demoPage: File = File("tools/demo/index.html"), textScale: Double = 1.0) {
         val base = "http://127.0.0.1:$port"
-        val style = MapLibreStyle(
-            MapLibreSources(
-                demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = LIVE_MIN_ZOOM, demMaxZoom = LIVE_MAX_ZOOM,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf", contourMinZoom = CONTOUR_MIN_ZOOM, contourMaxZoom = LIVE_MAX_ZOOM,
-                osmTiles = "$base/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = OSM_MAX_ZOOM,
-                glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
-                attribution = osmAttributionHtml + " " + demAttributionHtml,
-            ),
-            textScale = textScale,
-        ).json()
+        // One phone style per contour unit: the contour tiles and the peak elevations use the same one.
+        val style = ContourUnits.entries.associateWith { u ->
+            MapLibreStyle(
+                MapLibreSources(
+                    demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = LIVE_MIN_ZOOM, demMaxZoom = LIVE_MAX_ZOOM,
+                    contourTiles = "$base/contours/{z}/{x}/{y}.pbf?units=${u.symbol}", contourMinZoom = CONTOUR_MIN_ZOOM, contourMaxZoom = LIVE_MAX_ZOOM,
+                    osmTiles = "$base/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = OSM_MAX_ZOOM,
+                    glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
+                    attribution = osmAttributionHtml + " " + demAttributionHtml,
+                ),
+                units = u,
+                textScale = textScale,
+            ).json()
+        }
         val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 128)
         server.executor = Executors.newFixedThreadPool(32)
         server.createContext("/") { ex ->
@@ -417,7 +506,7 @@ class LiveTiles(
     /** `/build` jobs: region packs made from these live sources into [outDir], served under `/out/`. */
     val builds: BuildRoutes by lazy { BuildRoutes(this, outDir) }
 
-    private fun handle(ex: HttpExchange, style: String, glyphDir: File, demoPage: File) {
+    private fun handle(ex: HttpExchange, style: Map<ContourUnits, String>, glyphDir: File, demoPage: File) {
         val path = ex.requestURI.path
         if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
@@ -428,7 +517,7 @@ class LiveTiles(
             val tile = when (kind) {
                 "dem" -> dem(z, x, y)
                 "osm" -> osm(z, x, y)
-                else -> contours(z, x, y)
+                else -> contours(z, x, y, parseUnits(query(ex)["units"]))
             }
             record(kind, TileId(z, x, y), tile, started)
             val type = if (kind == "dem") "image/png" else "application/x-protobuf"
@@ -448,7 +537,11 @@ class LiveTiles(
                 reply(ex, html?.toByteArray(), "text/html; charset=utf-8")
             }
             "/phone" -> reply(ex, PHONE_PAGE.toByteArray(), "text/html; charset=utf-8")
-            "/style.json" -> reply(ex, style.toByteArray(), "application/json")
+            "/style.json" -> reply(ex, style.getValue(unitsFor(query(ex))).toByteArray(), "application/json")
+            "/live/units" -> {
+                val u = unitsFor(query(ex))
+                reply(ex, JsonWriter.write(mapOf("units" to u.symbol, "name" to u.name.lowercase())).toByteArray(), "application/json")
+            }
             "/live/info" -> reply(ex, JsonWriter.write(info()).toByteArray(), "application/json")
             "/live/sources" -> {
                 val q = query(ex)
@@ -460,6 +553,14 @@ class LiveTiles(
             "/stats" -> reply(ex, JsonWriter.write(stats()).toByteArray(), "application/json")
             else -> reply(ex, null, "text/plain")
         }
+    }
+
+    /** `units=ft|m` when given, else the default at `lat`/`lon` ([UnitRegions]), else feet (the default view is Rainier). */
+    private fun unitsFor(q: Map<String, String>): ContourUnits {
+        parseUnits(q["units"])?.let { return it }
+        val lat = q["lat"]?.toDoubleOrNull()
+        val lon = q["lon"]?.toDoubleOrNull()
+        return if (lat != null && lon != null && lat.isFinite() && lon.isFinite()) UnitRegions.contourUnitsAt(lat, lon) else ContourUnits.FEET
     }
 
     private val demAttributionHtml: String get() = SourceRegistry.builtIn.attributionHtml(BestSource().registryIds)
@@ -526,12 +627,122 @@ class LiveTiles(
         const val CONTOUR_MIN_ZOOM = 8
         /** OpenFreeMap (like our packs) stops at z14; MapLibre overzooms beyond. */
         const val OSM_MAX_ZOOM = 14
-        /** Bump when the live DEM rendering changes, so old cached tiles are not served. */
-        const val CACHE_VERSION = "best-v1"
+        /** Bump when the live DEM rendering changes, so old cached tiles are not served. v2: one overview level and blend band per zoom. */
+        const val CACHE_VERSION = "best-v2"
         const val OFM_TILEJSON = "https://tiles.openfreemap.org/planet"
         /** Registry ids credited for OpenFreeMap tiles: the host, the schema and the data. */
         val OSM_REGISTRY_IDS = listOf("osm", "openmaptiles", "openfreemap")
+        /** Credited for an OSM pack whose metadata names no provenance (our `tilebuild` packs: OSM data, OpenMapTiles-based schema). */
+        val OSM_PACK_REGISTRY_IDS = listOf("osm", "openmaptiles")
         private const val MAX_STATUS_TILES = 400
+        /** Tolerance for pack bounds against tile edges (PMTiles headers round to 1e-7 degrees). */
+        const val EDGE_EPS_DEG = 1e-6
+
+        /**
+         * The latitude whose ground cell size every live DEM tile of a zoom uses to pick its GeoTIFF
+         * overview level, halo and blend band. A per-tile choice (each tile's own latitude) can put two
+         * neighbouring rows on different overview levels: a resampling seam. One value per zoom, as the
+         * `tiles` export does for its area, removes that; 45° keeps the level within one step of each
+         * tile's own between the equator and 60°.
+         */
+        const val LIVE_REFERENCE_LAT = 45.0
+
+        /** Ground metres per pixel shared by every live DEM tile at [zoom] (see [LIVE_REFERENCE_LAT]). */
+        fun referenceCellMeters(zoom: Int): Double = WebMercator.metersPerPixel(LIVE_REFERENCE_LAT, zoom, 256)
+
+        /** `ft` / `m` (or `feet` / `meters` / `metres`) to a unit; null for anything else. */
+        fun parseUnits(s: String?): ContourUnits? = when (s?.lowercase()) {
+            "ft", "feet" -> ContourUnits.FEET
+            "m", "meters", "metres" -> ContourUnits.METERS
+            else -> null
+        }
+
+        /** One top-level MVT layer: its name and its encoded bytes (field 3: tag, length, message). */
+        class MvtLayerBytes(val name: String, val bytes: ByteArray)
+
+        /**
+         * Splits an MVT tile into its layers without decoding features. A tile is a protobuf message
+         * whose only field is the repeated `layers` (3, length-delimited); each layer's `name` is its
+         * field 1. Unknown top-level fields are skipped.
+         */
+        fun mvtLayers(tile: ByteArray): List<MvtLayerBytes> {
+            val out = ArrayList<MvtLayerBytes>()
+            var i = 0
+            fun varint(): Long {
+                var shift = 0
+                var r = 0L
+                while (true) {
+                    val b = tile[i++].toInt() and 0xff
+                    r = r or ((b and 0x7f).toLong() shl shift)
+                    if (b < 0x80) return r
+                    shift += 7
+                }
+            }
+            while (i < tile.size) {
+                val start = i
+                val key = varint()
+                when ((key and 7).toInt()) {
+                    0 -> varint()
+                    1 -> i += 8
+                    5 -> i += 4
+                    2 -> {
+                        val len = varint().toInt()
+                        val bodyStart = i
+                        i += len
+                        if ((key ushr 3) == 3L) {
+                            out += MvtLayerBytes(layerName(tile, bodyStart, i), tile.copyOfRange(start, i))
+                        }
+                    }
+                    else -> error("bad wire type in MVT at $start")
+                }
+            }
+            return out
+        }
+
+        private fun layerName(tile: ByteArray, from: Int, to: Int): String {
+            var i = from
+            fun varint(): Long {
+                var shift = 0
+                var r = 0L
+                while (true) {
+                    val b = tile[i++].toInt() and 0xff
+                    r = r or ((b and 0x7f).toLong() shl shift)
+                    if (b < 0x80) return r
+                    shift += 7
+                }
+            }
+            while (i < to) {
+                val key = varint()
+                when ((key and 7).toInt()) {
+                    0 -> varint()
+                    1 -> i += 8
+                    5 -> i += 4
+                    2 -> {
+                        val len = varint().toInt()
+                        if ((key ushr 3) == 1L) return tile.decodeToString(i, i + len)
+                        i += len
+                    }
+                    else -> return ""
+                }
+            }
+            return ""
+        }
+
+        /**
+         * [base] with the layers of [extra] whose names [base] does not have appended. Protobuf
+         * repeated fields concatenate, so the result is a valid tile; a layer present in both keeps
+         * only [base]'s copy (never two layers with one name).
+         */
+        fun mergeMvtLayers(base: ByteArray, extra: ByteArray): ByteArray {
+            // Something that does not parse as a tile (truncated, not MVT) adds nothing: [base] as it is.
+            val have = runCatching { mvtLayers(base).map { it.name }.toSet() }.getOrNull() ?: return base
+            val add = (runCatching { mvtLayers(extra) }.getOrNull() ?: return base).filter { it.name !in have }
+            if (add.isEmpty()) return base
+            val out = ByteArrayOutputStream(base.size + add.sumOf { it.bytes.size })
+            out.write(base)
+            for (l in add) out.write(l.bytes)
+            return out.toByteArray()
+        }
 
         /** The status-box label for a live tile's provenance. */
         fun labelFor(provenance: List<String>): String = when {
@@ -597,9 +808,13 @@ class LiveTiles(
             return dem to osm.sortedBy { if (it.name.contains("outdoors")) 0 else 1 }
         }
 
-        /** Renders one DEM tile from the `best` source the way `tiles` does: haloed window, cropped, Terrarium PNG. */
+        /**
+         * Renders one DEM tile from the `best` source the way `tiles` does: haloed window, cropped,
+         * Terrarium PNG. The overview level, halo and blend band come from [referenceCellMeters] for
+         * the zoom, never from the tile's own latitude, so all tiles of a zoom read the same level.
+         */
         fun generateBest(t: TileId): LiveDem {
-            val cell = TileWindow(t, 0).window.cellSizeMeters
+            val cell = referenceCellMeters(t.z)
             val tw = TileWindow(t, TileWindows.haloCells(BestSource.GLOBAL_FEATHER_METERS, cell))
             val result = OverviewLevels.withTarget(cell) { BestSource().fetch(tw.window, cell) }
             val grid = tw.interior(result.grid)
@@ -639,7 +854,10 @@ class LiveTiles(
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
 <style>html,body{margin:0;height:100%;background:#f6f1e4}#map{position:absolute;inset:0}</style></head>
 <body><div id="map"></div><script>
-window.map = new maplibregl.Map({container: "map", style: "/style.json", center: [-121.76, 46.85], zoom: 11, hash: true});
+// Contour and peak units: ?units=ft|m, else the default for where the view opens (feet in the US, metres elsewhere).
+const h = location.hash.slice(1).split("/").map(Number), units = new URLSearchParams(location.search).get("units");
+const at = h.length >= 3 && h.every(isFinite) ? "lat=" + h[1] + "&lon=" + h[2] : "lat=46.85&lon=-121.76";
+window.map = new maplibregl.Map({container: "map", style: "/style.json?" + (units ? "units=" + encodeURIComponent(units) : at), center: [-121.76, 46.85], zoom: 11, hash: true});
 </script></body></html>
 """
     }

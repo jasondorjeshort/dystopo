@@ -19,11 +19,13 @@ import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
 import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
+import io.github.jasondorjeshort.dystopo.gpx.GpxException
 import io.github.jasondorjeshort.dystopo.gpx.GpxFormat
 import io.github.jasondorjeshort.dystopo.gpx.ProfileSample
 import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackDrawing
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.gpx.XmlException
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -142,7 +144,32 @@ class GpxCommand : CliktCommand(name = "gpx") {
         /** Ids are random per run unless seeded; the export round trip check seeds both parses alike. */
         fun load(file: File, seed: Long? = null): Gpx.ParseResult {
             if (!file.isFile) throw UsageError("no such file: ${file.path}")
-            return Gpx.read(file.readText(Charsets.UTF_8), if (seed == null) UuidGenerator() else UuidGenerator(Random(seed)))
+            val text = file.readText(Charsets.UTF_8)
+            try {
+                return Gpx.read(text, if (seed == null) UuidGenerator() else UuidGenerator(Random(seed)))
+            } catch (e: XmlException) {
+                throw UsageError("${file.path} is not well-formed XML: ${e.message}")
+            } catch (e: GpxException) {
+                throw UsageError("${file.path} is not GPX: ${e.message}")
+            }
+        }
+
+        /** The deepest zoom an automatic `gpx render` uses (trail detail; OSM packs stop at 14). */
+        const val MAX_AUTO_ZOOM = 14
+
+        /** Pixel budget for an automatic zoom: about 4000x3000, a few seconds to render. */
+        const val MAX_AUTO_PIXELS = 12_000_000L
+
+        /** Hard limit for an explicit `--zoom`. */
+        const val MAX_PIXELS = 40_000_000L
+
+        /** The deepest zoom up to [maxZoom] whose window over [box] fits in [maxPixels] (at least 1). */
+        fun fitZoom(box: BoundingBox, maxZoom: Int = MAX_AUTO_ZOOM, maxPixels: Long = MAX_AUTO_PIXELS): Int {
+            for (z in maxZoom downTo 1) {
+                val w = MercatorWindow.forBbox(box, z)
+                if (w.width.toLong() * w.height <= maxPixels) return z
+            }
+            return 1
         }
 
         fun round(v: Double, digits: Int = 1): Double {
@@ -267,7 +294,7 @@ class GpxRenderCommand : CliktCommand(name = "render") {
     private val area by option("--area", help = "Named area to render instead of fitting the GPX bounds")
     private val bbox by option("--bbox", help = "west,south,east,north to render instead of fitting the GPX bounds")
     private val margin by option("--margin", help = "Margin around the GPX bounds, as a fraction of their size").double().default(0.12)
-    private val zoom by option("--zoom").int().restrictTo(1..17).default(14)
+    private val zoomOption by option("--zoom", help = "Zoom (default: the deepest up to ${GpxCommand.MAX_AUTO_ZOOM} whose render fits about ${GpxCommand.MAX_AUTO_PIXELS / 1_000_000} Mpx)").int().restrictTo(1..17)
     private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
     private val style by StyleOptions()
     private val arrowSpacing by option("--arrow-spacing", help = "Pixels between direction arrows along tracks").double().default(110.0)
@@ -283,8 +310,9 @@ class GpxRenderCommand : CliktCommand(name = "render") {
                 ?: throw UsageError("${file.path} has no points; pass --area or --bbox")
             null to fit
         }
+        val zoom = zoomOption ?: GpxCommand.fitZoom(box)
         val window = MercatorWindow.forBbox(box, zoom)
-        if (window.width.toLong() * window.height > 40_000_000L) throw UsageError("render would be ${window.width}x${window.height} px; lower --zoom")
+        if (window.width.toLong() * window.height > GpxCommand.MAX_PIXELS) throw UsageError("render would be ${window.width}x${window.height} px; lower --zoom")
         val src = ElevationSource.byId(source)
         val fetched = timings.time("fetch") { src.fetch(window) }
         val grid = fetched.grid

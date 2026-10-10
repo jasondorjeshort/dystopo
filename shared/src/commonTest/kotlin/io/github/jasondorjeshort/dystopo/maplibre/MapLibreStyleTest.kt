@@ -143,6 +143,32 @@ class MapLibreStyleTest {
     }
 
     @Test
+    fun namesPreferEnglishWithTheLocalScriptSecond() {
+        val json = MapLibreStyle(sources).json()
+        val byId = layers(json).associateBy { it["id"] as String }
+        val nameJson = JsonWriter.write(MapLibreStyle.LABEL_NAME)
+        // English, then Latin transliteration, then the local name; the local script only where it can be shaped.
+        assertTrue(nameJson.startsWith("""["let","primary",["coalesce",["get","name:en"],["get","name_en"],["get","name:latin"],["get","name"],""]"""), nameJson)
+        assertTrue("""["is-supported-script",["get","name:nonlatin"]]""" in nameJson)
+        for (id in listOf("places", "peaks", "water-names")) {
+            val field = JsonWriter.write(layout(byId.getValue(id))["text-field"])
+            assertTrue(nameJson in field, "$id uses the label name: $field")
+        }
+        // No layer reads the bare local name any more.
+        assertFalse("""["to-string",["coalesce",["get","name"],""]]""" in json)
+    }
+
+    @Test
+    fun peakElevationsFollowTheUnitSetting() {
+        fun peakField(units: io.github.jasondorjeshort.dystopo.render.ContourUnits) =
+            JsonWriter.write(layout(layers(MapLibreStyle(sources, units = units).json()).single { it["id"] == "peaks" })["text-field"])
+        val feet = peakField(io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET)
+        val metres = peakField(io.github.jasondorjeshort.dystopo.render.ContourUnits.METERS)
+        assertTrue("0.3048" in feet && " ft" in feet, feet)
+        assertTrue(""" m"""" in metres && " ft" !in metres, metres)
+    }
+
+    @Test
     fun jsonWriterEscapesAndFormatsNumbers() {
         assertEquals("""{"a":[1,2.5,null,"x\"\n"],"b":true}""", JsonWriter.write(linkedMapOf("a" to listOf(1, 2.5, Double.NaN, "x\"\n"), "b" to true)))
         assertEquals("3", JsonWriter.write(3.0))
