@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.sync.crypto.ShareCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -54,6 +55,9 @@ object ShareUi {
     /** T57: the address and code fields (a tapped share link or a scanned QR code fills them). */
     var addr by mutableStateOf("")
     var code by mutableStateOf("")
+
+    /** T72: the code typed to join another phone through the server relay. */
+    var relayCode by mutableStateOf("")
 
     /** Where the fields came from: `link` (a tapped `dystopo://share` link), `qr` (the scanner), `scan` (`POST /share/scan`), or null (typed). */
     var prefilledFrom by mutableStateOf<String?>(null)
@@ -133,7 +137,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
             Chip("Close") { close() }
         }
         BasicText(
-            "While this screen is open, a phone on the same network can sync tracks, waypoints and routes with this one. Give it the code.",
+            "While this screen is open, a phone on the same network can sync tracks, waypoints and routes with this one. Give it the code. Farther away: sync via server, below.",
             style = TextStyle(color = Muted, fontSize = 14.sp),
         )
 
@@ -146,7 +150,8 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
             BasicText(status["name"] as? String ?: "This phone", style = TextStyle(color = Muted, fontSize = 13.sp))
             if (listeningNow && shownCode != null) {
                 BasicText("Code", style = TextStyle(color = Muted, fontSize = 13.sp))
-                BasicText(shownCode.chunked(3).joinToString(" "), style = TextStyle(color = Ink, fontSize = 40.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace))
+                BasicText(ShareCode.format(shownCode), style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace))
+                BasicText("The link is encrypted with this code; only a phone that has it can sync.", style = TextStyle(color = Muted, fontSize = 12.sp))
                 BasicText(
                     if (addresses.isEmpty()) "No network address: connect to Wi-Fi" else "Address: " + addresses.joinToString(", ") { "$it:$port" },
                     style = TextStyle(color = Ink, fontSize = 15.sp),
@@ -188,7 +193,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
             )
         }
         Field("Address (host:port)", addr, KeyboardType.Uri) { ShareUi.addr = it; ShareUi.prefilledFrom = null }
-        Field("Code", code, KeyboardType.Number) { ShareUi.code = it.filter(Char::isDigit).take(6) }
+        Field("Code", code, KeyboardType.Ascii) { ShareUi.code = codeInput(it) }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("Scan QR code") { ScanUi.visible = true } // T57: the in-app scanner
             Chip(if (busy) "Syncing..." else "Sync") {
@@ -205,8 +210,78 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
             }
         }
         message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Synced")) Accent else Bad, fontSize = 14.sp)) }
+
+        RelaySection(status)
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/** What the code fields accept while typing: letters, digits, dashes and spaces, uppercased, at most a grouped code's length. */
+private fun codeInput(s: String) = s.uppercase().filter { it.isLetterOrDigit() || it == '-' || it == ' ' }.take(ShareCode.LENGTH + 3)
+
+/**
+ * T72: "Via server": sync with a phone that is not on this network through the server's relay ([RelaySession]).
+ * One phone taps New code and passes the code on (a message, a call); the other types it and taps Join.
+ */
+@Composable
+private fun RelaySection(tick: Any?) {
+    val relay = RelaySession.of(DystopoApp.instance)
+    var relayStatus by remember { mutableStateOf(relay.status()) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(tick) { relayStatus = withContext(Dispatchers.IO) { relay.status() } }
+    fun run(label: String, action: () -> Map<String, Any?>) {
+        if (busy) return
+        busy = true
+        message = null
+        Thread {
+            message = runCatching(action).fold(
+                { r -> (r["lastError"] as? String)?.let { "$label: $it" } },
+                { e -> "$label failed: ${e.message}" },
+            )
+            relayStatus = relay.status()
+            busy = false
+        }.start()
+    }
+
+    BasicText("Sync with a phone anywhere (via server)", style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
+    BasicText(
+        "Both phones need the same server. It only passes on data encrypted with the code, and forgets it after 15 minutes.",
+        style = TextStyle(color = Muted, fontSize = 13.sp),
+    )
+    val active = relayStatus["active"] == true
+    if (active) {
+        Column(Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText("Code for the other phone", style = TextStyle(color = Muted, fontSize = 13.sp))
+            BasicText(relayStatus["codeShown"] as? String ?: "", style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace))
+            BasicText("Server: ${relayStatus["server"]}", style = TextStyle(color = Ink, fontSize = 14.sp))
+            @Suppress("UNCHECKED_CAST") val last = relayStatus["lastResult"] as? Map<String, Any?>
+            val line = when {
+                last != null -> "Last sync: ${(last["merged"] as? Map<*, *>)?.get("applied")} in, ${last["pushed"]} out; received ${relayStatus["received"]} from the other phone"
+                else -> "Waiting for the other phone..."
+            }
+            BasicText(line, style = TextStyle(color = Accent, fontSize = 13.sp))
+            if (relayStatus["polling"] == true) BasicText("Checking the server every 5 s", style = TextStyle(color = Muted, fontSize = 12.sp))
+            (relayStatus["lastError"] as? String)?.let { BasicText(it, style = TextStyle(color = Bad, fontSize = 13.sp)) }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip(if (busy) "Working..." else "New code") { run("Relay") { relay.start(null, null) } }
+        if (active) {
+            Chip("Sync again") { run("Sync") { relay.syncNow() } }
+            Chip("Stop") { run("Stop") { relay.stop(forget = true) } }
+        }
+    }
+    Field("Code from the other phone", ShareUi.relayCode, KeyboardType.Ascii) { ShareUi.relayCode = codeInput(it) }
+    Chip(if (busy) "Working..." else "Join") {
+        val typed = ShareUi.relayCode
+        if (ShareCode.normalize(typed) == null) {
+            message = "The code is ${ShareCode.LENGTH} letters and digits"
+        } else {
+            run("Join") { relay.start(null, typed) }
+        }
+    }
+    message?.let { BasicText(it, style = TextStyle(color = Bad, fontSize = 14.sp)) }
 }
 
 @Composable

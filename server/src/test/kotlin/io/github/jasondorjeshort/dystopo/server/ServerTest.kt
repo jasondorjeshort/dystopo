@@ -67,6 +67,9 @@ class ServerTest {
         assertEquals("https://maps.example.org", closed.allowOrigin("https://maps.example.org"))
         assertNull(closed.allowOrigin("https://evil.example"))
         assertTrue(Gate.isProtected("/build"))
+        assertTrue(!Gate.isProtected("/sync/relay") && !Gate.isProtected("/sync/relay/status") && Gate.isProtected("/sync/pull")) // T72
+        // Only the relay's own paths are open: a lookalike prefix still needs the token.
+        for (p in listOf("/sync/relayanything", "/sync/relay2", "/sync/relays/x", "/sync/relay.json")) assertTrue(Gate.isProtected(p), p)
         assertTrue(Gate.isProtected("/build/b1"))
         assertTrue(Gate.isProtected("/sync/pull"))
         assertFalse(Gate.isProtected("/buildings"))

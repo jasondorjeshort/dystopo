@@ -147,6 +147,13 @@ key with its default.
 | `tilebuildHome` | `null` | A `./gradlew :tilebuild:installDist` install for `profile=outdoors` builds; null: `DYSTOPO_TILEBUILD_HOME` (`/opt/tilebuild` in the Docker image), else `tilebuild/build/install/tilebuild`. Without one, outdoors builds answer 503 and `profile=openmaptiles` builds work. |
 | `extracts` | `[]` | OSM extracts for outdoors packs bigger than Overpass serves (below): `[{"path": "data/washington-261008.osm.pbf", "bbox": [w, s, e, n], "name": "washington"}]`; `bbox` and `name` are optional. |
 | `extractsDir` | `null` | Directory scanned for more `*.osm.pbf` extracts at every build; null: `<cacheDir>/extracts`; `""` turns scanning off. |
+| `relay.enabled` | `true` | The encrypted sync relay at `/sync/relay` (below, The relay); `false` answers 404. |
+| `relay.ttlSeconds` | `900` | A relayed blob is dropped this long after its last write. |
+| `relay.maxBlobBytes` | `16777216` | Largest blob (one phone's whole log, encrypted and gzipped); larger is a 413. |
+| `relay.maxTotalBytes` | `268435456` | Bytes held in memory for all slots; beyond, new blobs get a 507. |
+| `relay.maxSlots` | `10000` | Slots (share codes in use) at once; beyond, 507. |
+| `relay.maxSides` | `4` | Phones per slot. |
+| `relay.requestsPerMinute` | `120` | Relay requests per client address per minute (token bucket; 429 with `Retry-After`). A phone polls every 5 s. |
 
 ## Routes
 
@@ -161,6 +168,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`: the sync peer
   (docs/PLANNING.md, Sync). Token-protected.
+- `POST /sync/relay?slot=&side=[&after=][&forget=1]`, `GET /sync/relay/status`: the encrypted relay
+  between phones (below). Open, without the token.
 - `GET /catalog` (also `/catalog.json`): the pack catalog, below. `POST /catalog/refresh`: rehash every
   file (token-protected).
 - `GET /healthz`: `status` (`ok`, or `stopping` with a 503), `uptimeS`, `packs`, `outDirWritable`,
@@ -298,10 +307,39 @@ and has none, or no server) the trip stays in the browser and the page says so; 
 the server then lists the trip under Routes. The page only pushes: edits made on the phone do not come back to
 the browser.
 
+## The relay
+
+Two phones that are not on the same network sync through the server without the server reading or
+merging anything (T72; `serverlib/.../RelayRoutes.kt`, design and threat model in docs/PLANNING.md,
+Sync, Encryption and Threat model). On the phone: Share, then "Sync with a phone anywhere (via
+server)": one phone taps New code, the other types that 16-character code and taps Join. Both use the
+online server (or the sync peer when it is a URL).
+
+Each phone posts its whole log, encrypted with ChaCha20-Poly1305 under a key derived from the code, to
+`POST /sync/relay?slot=<32 hex>&side=<16 hex>[&after=<seq>]`:
+- `slot` is derived from the code by HKDF, so the server never sees the code; `side` is a random id per
+  phone and session.
+- A non-empty body (a `DSEAL` relay frame; anything else is a 400) replaces this side's blob.
+- The answer is every other side's blob newer than `after` (200, a `DRLY` container) or 204 when there
+  is none; `X-Dystopo-Relay-Ttl` says how long blobs live. `&forget=1` deletes this side's blob.
+- `GET /sync/relay/status`: counts (slots, blobs, bytes, posts, stored, delivered, expired, refusals by
+  reason) and the limits; never a slot or side id.
+
+Blobs live in memory only (a restart forgets them), for `relay.ttlSeconds` after their last write; the
+`relay.*` keys above cap their size, number and the request rate per address (`X-Forwarded-For` counts
+only when the connection comes from loopback or a private address, i.e. a proxy in front). The relay
+is open on purpose: it holds only ciphertext under slots nobody can guess (80-bit codes), and the
+bearer token stays on `/sync/pull|push|status`. The server learns sizes, timing and client addresses,
+nothing else; serve it over HTTPS (above) to hide even the slot ids from the network path.
+
+```
+curl http://localhost:8080/sync/relay/status
+```
+
 ## The token
 
-With `token` (or `DYSTOPO_SERVER_TOKEN`) set, `/build`, `/build/*`, `/sync` and `/sync/*` need
-`Authorization: Bearer <token>`; anything else (tiles, `/out/`, `/catalog`, `/healthz`) stays open. A
+With `token` (or `DYSTOPO_SERVER_TOKEN`) set, `/build`, `/build/*`, `/sync` and `/sync/*` (except the
+relay, `/sync/relay`) need `Authorization: Bearer <token>`; anything else (tiles, `/out/`, `/catalog`, `/healthz`) stays open. A
 missing or wrong token is a 401 with `WWW-Authenticate: Bearer`, logged at `warn`. The comparison is
 constant-time. CORS preflights are answered without the token. `POST /catalog/refresh` needs it too.
 

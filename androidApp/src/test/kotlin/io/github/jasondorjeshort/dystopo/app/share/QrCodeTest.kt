@@ -32,7 +32,10 @@ class QrCodeTest {
     @Test
     fun picksSmallestVersionAndAMask() {
         assertEquals(1, QrCode.encode("123456").version)
-        assertEquals(4, QrCode.encode("x".repeat(QrCode.MAX_BYTES)).version)
+        assertEquals(4, QrCode.encode("x".repeat(62)).version)
+        assertEquals(5, QrCode.encode("x".repeat(63)).version) // T72: versions 5 and 6 for the 16-character code
+        assertEquals(5, QrCode.encode("x".repeat(84)).version)
+        assertEquals(6, QrCode.encode("x".repeat(QrCode.MAX_BYTES)).version)
         val a = QrCode.encode("dystopo://share?addr=192.168.1.23:8841&code=123456")
         val b = QrCode.encode("dystopo://share?addr=192.168.1.23:8841&code=123456")
         assertTrue(a.mask in 0..7)
@@ -44,5 +47,25 @@ class QrCodeTest {
     @Test
     fun refusesTooLong() {
         assertFailsWith<IllegalArgumentException> { QrCode.encode("x".repeat(QrCode.MAX_BYTES + 1)) }
+    }
+
+    /**
+     * T72: versions 5 (two blocks of 43 data codewords, alignment at 30) and 6 (four blocks of 27, alignment at 34)
+     * have no python-qrcode reference in `qr/reference.txt`; every mask decodes back through [QrMatrixDecoder],
+     * written separately from the encoder (its EC table and alignment positions are its own, to version 10).
+     */
+    @Test
+    fun versionsFiveAndSixDecodeBackUnderEveryMask() {
+        for (text in listOf("dystopo://share?addr=192.168.100.200:65535&code=ZZZZZZZZZZZZZZZZ", "y".repeat(84), "z".repeat(QrCode.MAX_BYTES))) {
+            for (mask in 0..7) {
+                val qr = QrCode.encode(text, mask)
+                assertTrue(qr.version in 5..6)
+                val m = Array(qr.size) { y -> BooleanArray(qr.size) { x -> qr[x, y] } }
+                val r = QrMatrixDecoder.decode(m)
+                assertEquals(text, r.text, "version ${qr.version} mask $mask")
+                assertEquals(qr.version, r.version)
+                assertEquals(0, r.correctedErrors)
+            }
+        }
     }
 }

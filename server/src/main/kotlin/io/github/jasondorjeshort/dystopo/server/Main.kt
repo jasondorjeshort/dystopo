@@ -159,6 +159,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         // T67: user replicas (<id>.db) and share links (shares.json) live next to the default replica.
         SyncRoutes.userDir = SyncRoutes.dbOverride!!.absoluteFile.parentFile
         SyncRoutes.publicUrl = config.publicUrl
+        RelayRoutes.configure(config.relay.toRelay()) // T72: the encrypted sync relay
         val (dems, osms) = LiveTiles.findPacks(emptyList(), outDir)
         val tilebuild = config.tilebuildHome?.let { TilebuildProcess(home = File(it)) } ?: TilebuildProcess()
         live = LiveTiles(

@@ -35,7 +35,8 @@ commands, endpoints and the agent workflow are in [CLAUDE.md](../CLAUDE.md); one
    slope bands and cliff ticks are generated from the DEM on whichever side renders.
 5. **User data.** Tracks, waypoints, routes and settings are an append-only operation log with hybrid logical
    clocks; the SQLite tables are a materialised view. Sync is a merge of logs: through a `.dsync` file, the server
-   peer over HTTP (paged), or another phone on the same network behind a 6-digit code. The merge is deterministic
+   peer over HTTP (paged), or another phone, on the same network or through the server's relay, end to end
+   encrypted under a 16-character share code (T72). The merge is deterministic
    and the simulator proves convergence under partitions, reordering, crashes and clock skew.
 
 ## Formats we own
@@ -49,6 +50,7 @@ commands, endpoints and the agent workflow are in [CLAUDE.md](../CLAUDE.md); one
 | Search index `*-search.idx` | `shared/.../search/` | versioned, checksummed, pack fingerprint |
 | Routing graph `*-graph.idx` | `shared/.../routing/` | `DYSG` v2, trail names, both pack fingerprints |
 | Sync bundle `DSYNC` | `shared/.../sync/` | v1 whole, v2 paged; gzip; one exception type on bad input |
+| Encrypted frame `DSEAL`, relay reply `DRLY` | `shared/.../sync/EncryptedBundle.kt`, `sync/crypto/` | ChaCha20-Poly1305 under HKDF(share code, per-frame salt); LAN link and server relay (T72) |
 | Track database | `shared/src/commonMain/sqldelight/` | schema versions frozen under `databases/`, migrations verified by a JVM test |
 | Pack catalog JSON | `serverlib/.../PackCatalog.kt` | stable id, per-file SHA-256, pack hash |
 

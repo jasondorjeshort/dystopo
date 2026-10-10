@@ -21,7 +21,8 @@ import java.net.NetworkInterface
  * Phone-to-phone sync on a local network (T54). While the Share screen is open ([start] .. [stop]):
  * - a second [LocalServer] listens on all interfaces (port [ShareClient.DEFAULT_PORT], else any free
  *   one), separate from the loopback tile server, and answers only what [ShareGate] allows: the T44
- *   sync routes through a [SyncServer] over the app's track store, each guarded by the 6-digit code;
+ *   sync routes through a [SyncServer] over the app's track store, each sealed under the share code (T72:
+ *   ChaCha20-Poly1305, an 80-bit code; [ShareGate]);
  * - [ShareNsd] announces the phone as `_dystopo._tcp` and lists other phones doing the same.
  * [connect] is the other side: check the code, then one pull-merge-push exchange with the peer.
  * T57: both sides use [AppSync.replica] (store calls on the tracking thread) and a connect goes through
@@ -126,7 +127,7 @@ class ShareSession private constructor(private val app: DystopoApp) {
     /** One sync with the phone at [addr] (`host[:port]` or a share link) using [code]. Throws on failure (also kept in [lastConnect]). */
     fun connect(addr: String, code: String?, pageOps: Int = Sync.DEFAULT_PAGE_OPS): Map<String, Any?> {
         val target = ShareClient.parse(addr)
-        val c = code?.trim()?.takeIf { it.isNotEmpty() } ?: target.code ?: throw IllegalArgumentException("pass code=<6 digits>")
+        val c = ShareClient.requireCode(code?.trim()?.takeIf { it.isNotEmpty() } ?: target.code)
         connecting = true
         try {
             val (peer, sample) = ShareClient.hello(target, c)
@@ -136,7 +137,7 @@ class ShareSession private constructor(private val app: DystopoApp) {
                 ClockCheck.of(listOfNotNull(sample), name, System.currentTimeMillis())
             }
             val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target.baseUrl.removePrefix("http://"), "peerName" to peer["name"], "peerDevice" to peer["device"]) +
-                (report - "peer") + mapOf("transport" to "lan")
+                (report - "peer") + mapOf("transport" to "lan", "encrypted" to true)
             lastConnect = json
             return json
         } catch (e: Exception) {

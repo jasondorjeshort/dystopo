@@ -199,9 +199,9 @@ class QrDecoderTest {
 
     @Test
     fun shareLinksParse() {
-        assertEquals("10.0.2.2:8841" to "123456", ShareLink.parse("dystopo://share?addr=10.0.2.2:8841&code=123456"))
-        assertEquals("192.168.1.5:8841" to "000001", ShareLink.parse("dystopo://share?addr=192.168.1.5&code=000001"))
-        assertNull(ShareLink.parse("dystopo://share?addr=10.0.2.2:8841&code=12345"))
+        assertEquals("10.0.2.2:8841" to "7K3MQW2D9XHPT4CA", ShareLink.parse("dystopo://share?addr=10.0.2.2:8841&code=7K3MQW2D9XHPT4CA"))
+        assertEquals("192.168.1.5:8841" to "7K3MQW2D9XHPT4CA", ShareLink.parse("dystopo://share?addr=192.168.1.5&code=7k3m-qw2d-9xhp-t4ca"))
+        assertNull(ShareLink.parse("dystopo://share?addr=10.0.2.2:8841&code=123456")) // T72: a 6-digit code is no longer a share code
         assertNull(ShareLink.parse("dystopo://share?code=123456"))
         assertNull(ShareLink.parse("dystopo://map?lat=1&lon=2"))
         assertNull(ShareLink.parse("http://10.0.2.2:8841/?code=123456"))

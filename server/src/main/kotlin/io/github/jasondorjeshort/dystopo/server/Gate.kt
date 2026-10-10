@@ -181,9 +181,12 @@ class Gate(
             if (java.net.URLDecoder.decode(k, Charsets.UTF_8) == name) java.net.URLDecoder.decode(v, Charsets.UTF_8).takeIf { d -> d.isNotEmpty() } else null
         }
 
-        /** Routes behind a token: pack builds and the sync peer. */
-        fun isProtected(path: String): Boolean =
+        /** Routes behind a token: pack builds and the sync peer (not the T72 relay). */
+        /** T72: the relay's own paths, exactly `/sync/relay` or under `/sync/relay/` (not `/sync/relayanything`). */
+        fun isRelay(path: String): Boolean = path == "/sync/relay" || path.startsWith("/sync/relay/")
+
+        fun isProtected(path: String): Boolean = !isRelay(path) && ( // T72: the relay holds only ciphertext and is open
             path == "/build" || path.startsWith("/build/") || path == "/sync" || path.startsWith("/sync/") ||
-                path == "/catalog/refresh" // T58: rehashes every pack file, so not for anyone
+                path == "/catalog/refresh") // T58: rehashes every pack file, so not for anyone
     }
 }

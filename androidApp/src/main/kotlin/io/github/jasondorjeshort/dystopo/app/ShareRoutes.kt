@@ -15,7 +15,7 @@ import io.github.jasondorjeshort.dystopo.app.share.ShareUi
  * - `GET /share/status`: listening, port, code, addresses, share link, refused codes, sync calls served,
  *   NSD state (announced name, discovering, resolves) and every service discovered (self included),
  *   the last incoming push and the last connect.
- * - `POST /share/connect?addr=<host[:port]|share link>&code=<6 digits>`: one sync with that phone
+ * - `POST /share/connect?addr=<host[:port]|share link>&code=<share code>`: one sync with that phone (T72: 16 characters, the link encrypted)
  *   (code check, then pull, merge, push). JSON as `POST /sync`; a wrong code is a 403 with `wrongCode`.
  * - `GET /share/qr`: the share link and the QR matrix (`rows`, `#` dark) the screen draws.
  * T57:
@@ -52,6 +52,7 @@ object ShareRoutes {
         if (r.path != "/share" && !r.path.startsWith("/share/")) return null
         val session = ShareSession.of(app)
         return try {
+            io.github.jasondorjeshort.dystopo.app.share.ShareRelayRoutes.handle(app, r)?.let { return it } // T72: /share/relay/* (sync via the server relay)
             when (r.method to r.path) {
                 "POST" to "/share/start" -> {
                     app.map.onMain { ShareUi.visible = true } // Compose state: created and written on the main thread

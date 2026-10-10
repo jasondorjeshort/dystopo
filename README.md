@@ -47,7 +47,7 @@ a release will carry can be built from source today (below). Expect rough edges.
   along trails, offline.
 - Map options: hillshade style and strength, slope shading, contour interval and label density, layers, night mode.
 - Sync of tracks, waypoints and settings between devices: through a file, an always-on server, or directly with
-  another phone on the same Wi-Fi (6-digit code or QR), with a deterministic merge.
+  another phone on the same Wi-Fi or anywhere through the server relay (an end-to-end encrypted 16-character code or QR), with a deterministic merge.
 - A 14 MB release APK per CPU type.
 
 **Server and desktop**

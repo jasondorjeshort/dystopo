@@ -10,7 +10,8 @@ import java.net.URI
 /**
  * A minimal HTTP/1.1 client over a plain socket for the phone-to-phone link (T54). The app's network
  * security config allows cleartext only to the loopback server, and a LAN peer is an arbitrary private
- * address, so the share link does not go through `HttpURLConnection`; the 6-digit code is what guards it.
+ * address, so the share link does not go through `HttpURLConnection`. T72: what it carries is encrypted end to end
+ * ([io.github.jasondorjeshort.dystopo.sync.crypto.SealedLink]), so the plain transport no longer matters.
  * One request per connection (`Connection: close`), as the peer's [io.github.jasondorjeshort.dystopo.app.LocalServer] answers.
  */
 object LanHttp {

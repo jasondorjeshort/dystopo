@@ -2,8 +2,8 @@ package io.github.jasondorjeshort.dystopo.app.share
 
 /**
  * A small QR code encoder (T54), pure Kotlin with no dependency: byte mode, error correction level M,
- * versions 1 to 4 (up to 62 bytes), which is enough for a share link such as
- * `dystopo://share?addr=192.168.1.23:8841&code=123456`. Written from ISO/IEC 18004: Reed-Solomon over
+ * versions 1 to 6 (up to 106 bytes; T72 added 5 and 6 for the 16-character code), which is enough for a
+ * share link such as `dystopo://share?addr=192.168.100.200:65535&code=7K3MQW2D9XHPT4CA`. Written from ISO/IEC 18004: Reed-Solomon over
  * GF(256) (polynomial 0x11D), finder, timing and alignment patterns, zigzag data placement, the eight
  * masks scored with the standard penalty rules, and the BCH-coded format information.
  *
@@ -19,22 +19,22 @@ class QrCode private constructor(val version: Int, val mask: Int, private val mo
 
     companion object {
         /** Data codewords, EC codewords per block and blocks at level M, by version (index 0 unused). */
-        private val DATA = intArrayOf(0, 16, 28, 44, 64)
-        private val ECC = intArrayOf(0, 10, 16, 26, 18)
-        private val BLOCKS = intArrayOf(0, 1, 1, 1, 2)
+        private val DATA = intArrayOf(0, 16, 28, 44, 64, 86, 108)
+        private val ECC = intArrayOf(0, 10, 16, 26, 18, 24, 16)
+        private val BLOCKS = intArrayOf(0, 1, 1, 1, 2, 2, 4)
 
         /** The second alignment pattern coordinate (the first is 6, whose patterns overlap the finders). */
-        private val ALIGN = intArrayOf(0, 0, 18, 22, 26)
+        private val ALIGN = intArrayOf(0, 0, 18, 22, 26, 30, 34)
 
-        const val MAX_BYTES = 62
+        const val MAX_BYTES = 106
 
         fun encode(text: String, forcedMask: Int = -1): QrCode = encode(text.encodeToByteArray(), forcedMask)
 
         /** Encodes [data] in the smallest version that holds it; [forcedMask] 0..7 skips the mask choice. */
         fun encode(data: ByteArray, forcedMask: Int = -1): QrCode {
             require(forcedMask in -1..7) { "mask must be 0..7" }
-            val version = (1..4).firstOrNull { 4 + 8 + data.size * 8 <= DATA[it] * 8 }
-                ?: throw IllegalArgumentException("${data.size} bytes do not fit a version 4-M QR code ($MAX_BYTES at most)")
+            val version = (1..6).firstOrNull { 4 + 8 + data.size * 8 <= DATA[it] * 8 }
+                ?: throw IllegalArgumentException("${data.size} bytes do not fit a version 6-M QR code ($MAX_BYTES at most)")
             val codewords = interleave(version, dataCodewords(version, data))
             val base = Matrix(version)
             base.drawFunctionPatterns()
@@ -78,7 +78,7 @@ class QrCode private constructor(val version: Int, val mask: Int, private val mo
         /** Splits into blocks, adds Reed-Solomon codewords, interleaves data then EC codewords. */
         private fun interleave(version: Int, data: IntArray): IntArray {
             val blocks = BLOCKS[version]
-            val per = data.size / blocks // all blocks are the same length at level M for versions 1..4
+            val per = data.size / blocks // all blocks are the same length at level M for versions 1..6
             val divisor = rsDivisor(ECC[version])
             val dataBlocks = (0 until blocks).map { b -> data.copyOfRange(b * per, (b + 1) * per) }
             val eccBlocks = dataBlocks.map { rsRemainder(it, divisor) }

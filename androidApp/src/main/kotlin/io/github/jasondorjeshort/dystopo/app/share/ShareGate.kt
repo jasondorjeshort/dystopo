@@ -2,24 +2,32 @@ package io.github.jasondorjeshort.dystopo.app.share
 
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
+import io.github.jasondorjeshort.dystopo.sync.EncryptedBundle.SealException
+import io.github.jasondorjeshort.dystopo.sync.crypto.SealedLink
+import io.github.jasondorjeshort.dystopo.sync.crypto.ShareCode
 import java.security.SecureRandom
 
 /**
- * What the LAN listener answers (T54), free of Android so it is unit-tested on the JVM. Every request
- * must carry the 6-digit code shown on the Share screen as `code=` in the query; only these routes exist:
- * - `GET /share/hello?code=`: checks the code; JSON with this device's id and name (the connecting
- *   phone calls it first, so a wrong code is reported as such before any sync).
- * - `POST /sync/pull?since=&code=`, `POST /sync/push?code=`, `GET /sync/status?code=`: the T44 sync
- *   peer routes ([sync], a [io.github.jasondorjeshort.dystopo.sync.SyncServer]).
- * Anything else is 404 without looking at the code; a missing or wrong code is 403. After
- * [maxFailures] wrong codes the code is replaced by a new one (the screen shows it), so guessing one of
- * a million codes gets [maxFailures] tries per code shown.
+ * What the LAN listener answers (T54, encrypted since T72), free of Android so it is unit-tested on the JVM.
+ * The only route is `POST /share/sealed`: its body is a [SealedLink] request frame, ChaCha20-Poly1305 under
+ * a key derived from the share code on the screen ([ShareCode], 80 bits) and the frame's random salt, and
+ * the answer is the reply sealed the same way. Inside the frame are the T54 routes:
+ * - `GET /share/hello`: this device's id, name and clock (the connecting phone calls it first, so a wrong
+ *   code is reported as such before any sync).
+ * - `POST /sync/pull?since=`, `POST /sync/push`, `GET /sync/status`: the T44 sync peer routes ([sync], a
+ *   [io.github.jasondorjeshort.dystopo.sync.SyncServer]).
+ * The code itself never crosses the network. A frame that does not open under the code (a wrong code, or
+ * changed bytes) is a 403 and counts as a failure; after [maxFailures] the code is replaced by a new one
+ * (the screen shows it). A frame whose salt was already served is a 409 (a recorded request replayed).
+ * The pre-T72 plain routes (`/share/hello?code=`, `/sync/pull?code=` and the other sync routes) answer 426: an unencrypted client is
+ * refused without looking at anything it sent. Any other path is 404.
  */
 class ShareGate(
     private val hello: () -> Map<String, Any?>,
     private val sync: (Request) -> Response?,
     private val maxFailures: Int = 5,
     private val newCode: () -> String = ::randomCode,
+    private val random: (Int) -> ByteArray = ::randomBytes,
 ) {
     @Volatile var code: String = newCode()
         private set
@@ -31,24 +39,52 @@ class ShareGate(
         private set
     @Volatile var served = 0L
         private set
+    /** T72: requests refused for coming unencrypted (old clients, curl) and replayed frames. */
+    @Volatile var plainRefused = 0L
+        private set
+    @Volatile var replays = 0L
+        private set
 
-    private val routes = setOf("/share/hello", "/sync/pull", "/sync/push", "/sync/status")
+    private val replay = SealedLink.ReplayGuard()
+    private val innerRoutes = setOf("/share/hello", "/sync/pull", "/sync/push", "/sync/status")
 
     fun handle(r: Request): Response {
-        if (r.path !in routes) return Response.json(mapOf("error" to "not found"), 404)
-        if (!check(r.query["code"])) return Response.json(mapOf("error" to "wrong code"), 403)
+        if (r.path in innerRoutes) {
+            plainRefused++
+            return Response.json(mapOf("error" to "this phone takes only encrypted requests (POST $SEALED_PATH); update the app on the other phone"), 426)
+        }
+        if (r.path != SEALED_PATH) return Response.json(mapOf("error" to "not found"), 404)
+        if (r.method != "POST") return Response.json(mapOf("error" to "POST an encrypted request"), 405)
+        val codeNow = code
+        val inner = try {
+            SealedLink.openRequest(codeNow, r.body)
+        } catch (e: SealException) {
+            if (!e.authFailed) return Response.json(mapOf("error" to "not an encrypted request"), 400)
+            failed()
+            return Response.json(mapOf("error" to "wrong code"), 403)
+        }
+        synchronized(replay) {
+            if (!replay.firstUse(r.body)) {
+                replays++
+                return Response.json(mapOf("error" to "replayed request"), 409)
+            }
+        }
         served++
-        if (r.path == "/share/hello") return Response.json(hello() + mapOf("ok" to true))
-        return sync(r) ?: Response.json(mapOf("error" to "not found"), 404)
+        val reply = if (inner.path !in innerRoutes) {
+            Response.json(mapOf("error" to "not found"), 404)
+        } else if (inner.path == "/share/hello") {
+            Response.json(hello() + mapOf("ok" to true))
+        } else {
+            sync(Request(inner.method, inner.path, inner.query, inner.body, loopback = false)) ?: Response.json(mapOf("error" to "not found"), 404)
+        }
+        val sealed = SealedLink.sealResponse(codeNow, r.body, SealedLink.Response(reply.status, reply.contentType, reply.body), random)
+        return Response(200, "application/octet-stream", sealed)
     }
 
     @Synchronized
-    private fun check(given: String?): Boolean {
-        val expected = code
-        if (given != null && constantTimeEquals(given, expected)) return true
+    private fun failed() {
         refused++
         if (++failures >= maxFailures) rotate()
-        return false
     }
 
     /** A new code (also when the screen reopens); the failure count starts again. */
@@ -59,18 +95,19 @@ class ShareGate(
         rotations++
     }
 
-    fun json(): Map<String, Any?> = linkedMapOf("refused" to refused, "failures" to failures, "rotations" to rotations, "served" to served)
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "refused" to refused, "failures" to failures, "rotations" to rotations, "served" to served,
+        "plainRefused" to plainRefused, "replays" to replays, "encrypted" to true,
+    )
 
     companion object {
-        private val random = SecureRandom()
+        const val SEALED_PATH = "/share/sealed"
 
-        fun randomCode(): String = (random.nextInt(1_000_000)).toString().padStart(6, '0')
+        private val secure = SecureRandom()
 
-        fun constantTimeEquals(a: String, b: String): Boolean {
-            if (a.length != b.length) return false
-            var diff = 0
-            for (i in a.indices) diff = diff or (a[i].code xor b[i].code)
-            return diff == 0
-        }
+        fun randomBytes(n: Int): ByteArray = ByteArray(n).also(secure::nextBytes)
+
+        /** A new 80-bit share code ([ShareCode]). */
+        fun randomCode(): String = ShareCode.generate(::randomBytes)
     }
 }

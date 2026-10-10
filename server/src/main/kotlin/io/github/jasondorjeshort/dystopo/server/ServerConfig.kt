@@ -74,7 +74,23 @@ data class ServerConfig(
     val extracts: List<ExtractConfig> = emptyList(),
     /** Directory scanned for more `*.osm.pbf` extracts (rescanned per build); null: `<cacheDir>/extracts`; "" turns scanning off. */
     val extractsDir: String? = null,
+    /** T72: the encrypted sync relay (`/sync/relay`, docs/SERVER.md, The relay). */
+    val relay: RelayConfig = RelayConfig(),
 ) {
+    /** T72: limits of the sync relay; it holds only ciphertext, in memory, for [ttlSeconds] after each write. */
+    @Serializable
+    data class RelayConfig(
+        val enabled: Boolean = true,
+        val ttlSeconds: Int = 900,
+        val maxBlobBytes: Int = 16 shl 20,
+        val maxTotalBytes: Long = 256L shl 20,
+        val maxSlots: Int = 10_000,
+        val maxSides: Int = 4,
+        val requestsPerMinute: Int = 120,
+    ) {
+        fun toRelay() = Relay.Config(enabled, ttlSeconds, maxBlobBytes, maxTotalBytes, maxSlots, maxSides, requestsPerMinute)
+    }
+
     @Serializable
     data class ExtractConfig(
         val path: String,
@@ -133,6 +149,7 @@ data class ServerConfig(
             if (e.path.isBlank()) add("extracts[$i].path must not be empty")
             if (b != null && (b.size != 4 || b[0] >= b[2] || b[1] >= b[3] || b.any { it.isNaN() })) add("extracts[$i].bbox must be [west, south, east, north] with west < east and south < north")
         }
+        if (relay.ttlSeconds < 1 || relay.maxBlobBytes < 1024 || relay.maxTotalBytes < relay.maxBlobBytes || relay.maxSlots < 1 || relay.maxSides < 2 || relay.requestsPerMinute < 1) add("relay limits: ttlSeconds >= 1, maxBlobBytes >= 1024, maxTotalBytes >= maxBlobBytes, maxSlots >= 1, maxSides >= 2, requestsPerMinute >= 1")
         if (corsOrigins.any { it != "*" && !Regex("https?://[^/\\s]+").matches(it) }) add("corsOrigins entries must be \"*\" or an origin like https://maps.example.org (no path)")
     }
 
