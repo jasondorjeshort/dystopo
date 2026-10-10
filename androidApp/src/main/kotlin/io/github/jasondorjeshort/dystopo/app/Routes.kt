@@ -216,7 +216,7 @@ class Routes(private val app: DystopoApp) {
                 "apkBytes" to File(app.applicationInfo.sourceDir).length(),
                 "packBytes" to t.packs.archives.sumOf { it.file.length() },
             ),
-            "server" to mapOf("requests" to app.server.requests.get()),
+            "server" to mapOf("requests" to app.server.requests.get(), "pools" to app.server.poolStats()), // T63: queue waits per pool
             "counters" to mapOf("since" to "app start", "uptimeMs" to SystemClock.elapsedRealtime() - app.startedAt, "tileServiceOpens" to app.tileCounters.serviceOpens.get()), // T57
         )
     }

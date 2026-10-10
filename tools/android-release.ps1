@@ -8,11 +8,13 @@
 #   powershell -ExecutionPolicy Bypass -File tools\android-release.ps1 -Serial emulator-5674 -Apk androidApp\build\outputs\apk\debug\androidApp-debug.apk -Label debug -Runs 3
 #
 # Per view it reports `am start -W` TotalTime/WaitTime, firstContourMs (launch to the first screencap that
-# shows contour-coloured pixels in the map area) and settledMs (contours shown and two captures in a row
+# shows contour-coloured pixels in the map area), firstOsmMs (T63: the first capture showing the OSM layer: water and
+# stream blue, which no DEM or contour layer draws; osmLagMs = firstOsmMs - firstContourMs) and settledMs (contours shown and two captures in a row
 # agree), and saves the settled capture as <Out>\<Label>-<n>.png: look at them. The first view is a cold
 # start (am start -S); the others reuse the running activity (--activity-single-top), which is how a link
 # arrives in practice. -Runs N adds N cold starts at the first view for the timing table (run 1 right after
-# the install has an empty contour cache, later runs a warm one). With -Port the tile server is forwarded
+# the install has an empty contour cache, later runs a warm one; T63: -ColdCache empties the app's cache dir, contour,
+# cliff and shade tiles, with `pm trim-caches` before every cold start, so each run generates its contours). With -Port the tile server is forwarded
 # and probed. T49: every loopback request needs the app's per-launch token, and release builds have no /health
 # to hand it out (by design), so without it the tile routes (/style.json, /dem, /contours) must answer 401 and the
 # debug routes (/health /stats /camera /screenshot /features) 404; the with-token tile check is skipped (the
@@ -32,6 +34,7 @@ param(
     # lat,lon,zoom per view. Default: three views of tools/android-tour.txt (summit, Paradise, Sunrise; Rainier pack).
     [string[]]$Views = @('46.853,-121.760,12', '46.786,-121.736,13.5', '46.914,-121.643,12'),
     [int]$Runs = 0,
+    [switch]$ColdCache,
     [int]$PollMs = 500,
     [int]$StableMs = 3000,
     [int]$TimeoutS = 60,
@@ -94,22 +97,25 @@ public static class DystopoShot {
             bmp.Save(path, ImageFormat.Png);
         }
     }
-    // Returns { contourShare, detailShare, changedShare } over the map area (top 12% and bottom 8% skipped:
+    // Returns { contourShare, detailShare, changedShare, osmShare } over the map area (top 12% and bottom 8% skipped:
     // status bar, search box, attribution, navigation bar), sampling every 3rd pixel in both directions.
     // contour: the style's contour brown #8c5523 at 0.6-0.85 opacity over paper or hillshade (red well above
     // blue, green between). detail: 40+ away from the most common colour (a blank map is 0). changed: differs
-    // from the previous frame by more than 30 (1.0 without one).
+    // from the previous frame by more than 30 (1.0 without one). osm (T63): the OSM layer's water and streams
+    // (#a5cbe9 lakes, #4a8fd0 / #5b9bd5 streams and shores: blue well above red, blue at least green); neither
+    // the hillshade (warm greys) nor the contours (brown) nor the paper draws any blue.
     public static double[] Stats(DystopoFrame a, DystopoFrame b) {
         int[] pa = a.Px, pb = (b != null && b.W == a.W && b.H == a.H) ? b.Px : null;
         int w = a.W, h = a.H, y0 = h * 12 / 100, y1 = h * 92 / 100;
         var hist = new System.Collections.Generic.Dictionary<int, int>();
-        long n = 0, contour = 0, changed = 0;
+        long n = 0, contour = 0, changed = 0, osm = 0;
         for (int y = y0; y < y1; y += 3) for (int x = 0; x < w; x += 3) {
             int p = pa[y * w + x];
             int q = (p >> 4) & 0x0F0F0F;
             int c; hist.TryGetValue(q, out c); hist[q] = c + 1;
             int r = (p >> 16) & 255, g = (p >> 8) & 255, bl = p & 255;
             if (r - bl >= 60 && r - g >= 25 && g > bl) contour++;
+            if (bl - r >= 40 && bl >= g) osm++;
             if (pb != null && Dist(p, pb[y * w + x]) > 30) changed++;
             n++;
         }
@@ -118,7 +124,7 @@ public static class DystopoShot {
         int modeColor = (mode << 4) | 0x080808;
         long detail = 0;
         for (int y = y0; y < y1; y += 3) for (int x = 0; x < w; x += 3) if (Dist(pa[y * w + x], modeColor) > 40) detail++;
-        return new double[] { contour / (double)n, detail / (double)n, pb == null ? 1.0 : changed / (double)n };
+        return new double[] { contour / (double)n, detail / (double)n, pb == null ? 1.0 : changed / (double)n, osm / (double)n };
     }
     static int Dist(int p, int q) {
         return Math.Abs(((p >> 16) & 255) - ((q >> 16) & 255)) + Math.Abs(((p >> 8) & 255) - ((q >> 8) & 255)) + Math.Abs((p & 255) - (q & 255));
@@ -133,6 +139,7 @@ function Start-Am([string[]]$amArgs) {
 }
 
 $contourMin = 0.002   # share of sampled map pixels in contour brown that counts as contours shown
+$osmMin = 0.001       # T63: share of sampled map pixels in water/stream blue that counts as the OSM layer shown
 $stableMax = 0.002    # share of changed pixels below which two captures agree
 # captures must agree for -StableMs to count as settled. 1 s was too short: contours and hillshade can sit
 # on screen for over a second before the OSM layer arrives (seen on a cold start).
@@ -146,19 +153,24 @@ function Open-View([string]$view, [bool]$cold, [string]$name) {
     # Quoted for the device shell: '&' would end the command there.
     $uri = "'dystopo://map?lat=$lat&lon=$lon&z=$z'"
     $amArgs = @('-W', '-a', 'android.intent.action.VIEW', '-d', $uri, '-n', $activity)
-    $baseline = $null
+    $baseline = $null; $osmBaseline = $null; $homeFrame = $null; $timeline = @()
     if ($cold) {
         Adb shell am force-stop $package | Out-Null
+        if ($ColdCache) { Adb shell pm trim-caches 999G | Out-Null }
         Adb shell input keyevent KEYCODE_HOME | Out-Null
         Start-Sleep -Milliseconds 1500
         $homeFrame = [DystopoShot]::Capture($adb, $Serial)
-        if ($homeFrame) { $baseline = [DystopoShot]::Stats($homeFrame, $null)[0] }
+        if ($homeFrame) { $homeStats = [DystopoShot]::Stats($homeFrame, $null); $baseline = $homeStats[0]; $osmBaseline = $homeStats[3] }
     } else { $amArgs = @('--activity-single-top') + $amArgs }
     # The home screen's wallpaper can hold a little contour brown: contours count from three times that.
     $threshold = [math]::Max($contourMin, 3 * $(if ($null -ne $baseline) { $baseline } else { 0 }))
+    # The launcher wallpaper can be very blue (15% of the samples on the API 35 image), so OSM counts only on frames
+    # that are the app's (more than half the samples differ from the home screen), from an absolute share, and only
+    # after an app frame without any blue (the empty map): the launch splash in between is blue too.
+    $osmThreshold = $osmMin; $osmArmed = $false
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $am = Start-Am $amArgs
-    $firstContour = $null; $settled = $null; $stableSince = $null; $moved = $cold
+    $firstContour = $null; $firstOsm = $null; $settled = $null; $stableSince = $null; $moved = $cold
     $prev = $null; $prevT = 0; $i = 0; $stats = $null; $captureMs = 0
     # A capture takes the emulator over a second end to end (mostly the 10 MB transfer), so captures overlap:
     # one starts every -PollMs and they are judged in start order, each stamped with its start time.
@@ -180,6 +192,10 @@ function Open-View([string]$view, [bool]$cold, [string]$name) {
             $stats = [DystopoShot]::Stats($frame, $prev)
             $hasContours = $stats[0] -ge $threshold
             if ($cold -and $null -eq $firstContour -and $hasContours) { $firstContour = $t }
+            $isApp = (-not $homeFrame) -or [DystopoShot]::Stats($frame, $homeFrame)[2] -gt 0.5
+            if ($isApp -and $stats[3] -lt $osmThreshold / 2) { $osmArmed = $true }
+            if ($cold -and $null -eq $firstOsm -and $osmArmed -and $stats[3] -ge $osmThreshold) { $firstOsm = $t }
+            if ($cold) { $timeline += , @($t, [math]::Round($stats[0], 4), [math]::Round($stats[3], 4), [int]$isApp) }
             if ($null -ne $prev -and $stats[2] -gt $stableMax) { $moved = $true; $stableSince = $null }
             elseif ($moved -and $hasContours -and $null -ne $prev) {
                 if ($null -eq $stableSince) { $stableSince = $prevT }
@@ -199,10 +215,15 @@ function Open-View([string]$view, [bool]$cold, [string]$name) {
     if ($viewPid) { $script:pids[$viewPid.Trim()] = $true }
     [ordered]@{
         view = $view; cold = $cold; amTotalMs = $total; amWaitMs = $waitT
-        firstContourMs = $firstContour; settledMs = $settled; captures = $i
+        firstContourMs = $firstContour; firstOsmMs = $firstOsm
+        osmLagMs = if ($null -ne $firstOsm -and $null -ne $firstContour) { $firstOsm - $firstContour } else { $null }
+        settledMs = $settled; captures = $i
         avgCaptureMs = if ($i) { [math]::Round($captureMs / $i) } else { $null }
         homeContourShare = if ($null -ne $baseline) { [math]::Round($baseline, 4) } else { $null }
         contourShare = if ($stats) { [math]::Round($stats[0], 4) } else { $null }
+        osmShare = if ($stats) { [math]::Round($stats[3], 4) } else { $null }
+        homeOsmShare = if ($null -ne $osmBaseline) { [math]::Round($osmBaseline, 4) } else { $null }
+        timeline = $timeline # cold starts: [captureStartMs, contourShare, osmShare, appFrame] per capture
         detailShare = if ($stats) { [math]::Round($stats[1], 4) } else { $null }
         png = $png; ok = ($null -ne $settled -and $null -ne $waitT -and (-not $cold -or $null -ne $firstContour))
     }
@@ -221,7 +242,7 @@ if (-not $Apk) { $Apk = "androidApp\build\outputs\apk\release\androidApp-$abi-re
 $apkPath = Resolve-RepoPath $Apk
 if (-not (Test-Path $apkPath)) { throw "APK not found: $apkPath (build with -Build)" }
 
-$report = [ordered]@{ serial = $Serial; abi = $abi; apk = $Apk; apkBytes = (Get-Item $apkPath).Length; label = $Label }
+$report = [ordered]@{ serial = $Serial; abi = $abi; apk = $Apk; apkBytes = (Get-Item $apkPath).Length; label = $Label; coldCache = [bool]$ColdCache }
 if (-not $NoInstall) {
     # Grant the runtime permissions (-g) so no dialog covers the map. A build signed with another key (debug vs
     # release) cannot update in place: uninstall first, which also drops the pushed packs.
@@ -272,7 +293,16 @@ foreach ($v in $Views) {
 $report.views = $viewResults
 $runResults = @()
 for ($r = 1; $r -le $Runs; $r++) { $runResults += Open-View $Views[0] $true "$Label-run$r" }
-if ($Runs -gt 0) { $report.runs = $runResults }
+if ($Runs -gt 0) {
+    $report.runs = $runResults
+    # T63: medians over the cold-start runs (the host is shared with other emulators, so single runs swing).
+    $med = [ordered]@{}
+    foreach ($k in @('amTotalMs', 'firstContourMs', 'firstOsmMs', 'osmLagMs', 'settledMs')) {
+        $vals = @($runResults | ForEach-Object { $_[$k] } | Where-Object { $null -ne $_ } | Sort-Object)
+        $med[$k] = if ($vals.Count) { $vals[[int][math]::Floor(($vals.Count - 1) / 2)] } else { $null }
+    }
+    $report.runMedians = $med
+}
 
 if ($Port -gt 0) {
     Adb forward "tcp:$Port" 'tcp:8686' | Out-Null

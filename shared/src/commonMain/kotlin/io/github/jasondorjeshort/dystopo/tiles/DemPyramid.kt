@@ -42,9 +42,11 @@ interface ElevationImageDecoder : ImageDecoder {
  * around the edge of a deep level fade to a softer ancestor instead of stopping.
  *
  * Thread-safe: several contour tiles sample one pyramid concurrently. The cache is guarded by this
- * object's monitor, while fetching and decoding run outside it, so two threads that miss the same
- * tile at once may both decode it ([duplicateDecodes] counts that). [fetch] and the decoder must be
- * thread-safe (pack readers serialize their own reads).
+ * object's monitor, while fetching and decoding run outside it. T63: a tile being fetched and decoded
+ * is in an in-flight map, so a second thread that misses the same tile waits for the first one's
+ * result instead of decoding it again ([inFlightWaits] counts those; [duplicateDecodes] should stay 0).
+ * The wait is the in-flight entry's own monitor (`@Synchronized`), so this stays pure Kotlin. [fetch]
+ * and the decoder must be thread-safe (pack readers serialize their own reads).
  *
  * Below [minZoom], windows are box-averaged from [minZoom] (a contour tile of a low zoom samples a
  * coarse grid; see [ContourTiles.plan]).
@@ -73,9 +75,14 @@ class DemPyramid(
     var cacheHits: Long = 0
         private set
 
-    /** Decodes thrown away because another thread decoded the same tile first. */
+    /** Decodes thrown away because another thread decoded the same tile first (0 since T63's in-flight map). */
     @Volatile
     var duplicateDecodes: Long = 0
+        private set
+
+    /** T63: lookups that found the tile being fetched and decoded by another thread and waited for it. */
+    @Volatile
+    var inFlightWaits: Long = 0
         private set
 
     private var fetchNanos = 0L
@@ -85,6 +92,7 @@ class DemPyramid(
     // LinkedHashMap keeps insertion order; re-inserting on a hit makes that order least-recently-used first.
     private val cache = LinkedHashMap<Long, FloatArray>()
     private val missing = HashSet<Long>()
+    private val inFlight = HashMap<Long, Load>()
 
     private fun key(z: Int, x: Int, y: Int): Long = (z.toLong() shl 58) or (x.toLong() shl 29) or y.toLong()
 
@@ -94,21 +102,76 @@ class DemPyramid(
         val n = 1 shl z
         if (x < 0 || y < 0 || x >= n || y >= n) return null
         val k = key(z, x, y)
-        val cached = cached(k)
-        if (cached === MISSING) return null
-        if (cached != null) return cached
-        // Fetch and decode outside the lock, so other threads keep sampling cached tiles meanwhile.
-        val t0 = TimeSource.Monotonic.markNow()
-        val bytes = fetch(z, x, y)
-        if (bytes == null) {
-            rememberMissing(k)
-            return null
+        return when (val found = cachedOrClaim(k, z, x, y)) {
+            is FloatArray -> if (found === MISSING) null else found
+            is Load -> found.get()
+            else -> null
         }
-        val t1 = TimeSource.Monotonic.markNow()
-        val values = decodeElevations(bytes, z, x, y)
-        val t2 = TimeSource.Monotonic.markNow()
-        return store(k, values, (t1 - t0).inWholeNanoseconds, (t2 - t1).inWholeNanoseconds)
     }
+
+    /**
+     * One fetch and decode of a tile (T63). The first thread to call [get] loads it while holding this
+     * object's monitor; a thread that found the same entry in [inFlight] blocks on that monitor and then
+     * returns the result (or rethrows the failure) without decoding again.
+     */
+    private inner class Load(val k: Long, val z: Int, val x: Int, val y: Int) {
+        private var done = false
+        private var result: FloatArray? = null
+        private var failure: Throwable? = null
+
+        @Synchronized
+        fun get(): FloatArray? {
+            if (done) {
+                failure?.let { throw it }
+                return result
+            }
+            try {
+                result = load()
+                return result
+            } catch (e: Throwable) {
+                failure = e
+                throw e
+            } finally {
+                done = true
+                finished(this)
+            }
+        }
+
+        // Fetch and decode outside the pyramid's lock, so other threads keep sampling cached tiles meanwhile.
+        private fun load(): FloatArray? {
+            val t0 = TimeSource.Monotonic.markNow()
+            val bytes = fetch(z, x, y)
+            if (bytes == null) {
+                rememberMissing(k)
+                return null
+            }
+            val t1 = TimeSource.Monotonic.markNow()
+            val values = decodeElevations(bytes, z, x, y)
+            val t2 = TimeSource.Monotonic.markNow()
+            return store(k, values, (t1 - t0).inWholeNanoseconds, (t2 - t1).inWholeNanoseconds)
+        }
+    }
+
+    /** The cached tile for [k], [MISSING], or the in-flight [Load] for it (made here when there is none). */
+    @Synchronized
+    private fun cachedOrClaim(k: Long, z: Int, x: Int, y: Int): Any {
+        cached(k)?.let { return it }
+        inFlight[k]?.let {
+            inFlightWaits++
+            return it
+        }
+        return Load(k, z, x, y).also { inFlight[k] = it }
+    }
+
+    /** Drops a finished load from [inFlight]; its result is in the cache (or [missing]) by then. */
+    @Synchronized
+    private fun finished(load: Load) {
+        if (inFlight[load.k] === load) inFlight.remove(load.k)
+    }
+
+    /** Tiles being fetched and decoded right now. */
+    val loadsInFlight: Int
+        @Synchronized get() = inFlight.size
 
     /**
      * Elevations of one encoded tile: straight from the PNG when the decoder can ([ElevationImageDecoder]),

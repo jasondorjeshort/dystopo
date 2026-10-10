@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
@@ -59,6 +60,17 @@ class HttpError(val status: Int, message: String) : Exception(message)
  * says it is one of MapLibre's (tiles, glyphs, sprites, the style), otherwise on a separate debug pool
  * ([debugThreads] workers: `/health`, `/screenshot`, ...). Each stage has its own bounded queue.
  *
+ * T63: map requests that generate (contours, shade: [isGenerationRequest]) run on their own generation
+ * pool (`genThreads` workers at [genNice] niceness, below the tile pool's [tileNice]), so cheap pack reads
+ * (DEM, OSM, glyphs, sprites, the style) never wait behind a queue of contour tiles: on a cold start the
+ * OSM layer used to land 4 to 5 s after the contours because generation filled the tile pool. With
+ * `genThreads` 0 everything goes to the tile pool as before. A generation request whose client has gone by the time a worker takes it is
+ * dropped unanswered (MapLibre cancels tiles that left the view). One that is already generating is
+ * finished and cached even if the client goes: under load MapLibre also gives up on slow requests and
+ * asks again, and stopping those threw the work away each time (a debug cold start never settled).
+ * Every pool records how long its requests waited in the queue and how long they ran ([poolStats],
+ * `/stats` `server.pools`).
+ *
  * Guards against misbehaving clients (`tools/android-probe.py` exercises each one):
  * - at most [readers] heads are read at once and [maxQueued] connections wait; beyond that a new
  *   connection gets 503 from the accept thread without being read; a full tile or debug queue gets
@@ -80,6 +92,10 @@ class LocalServer(
     private val isMapRequest: (Request) -> Boolean = { true },
     private val handler: (Request) -> Response,
     private val bindAddress: String = "127.0.0.1", // T54: the share listener binds the LAN (0.0.0.0)
+    genThreads: Int = 0, // T63: the generation pool (0: none, generation runs on the tile pool)
+    private val genNice: Int = 0,
+    private val tileNice: Int = 0,
+    private val isGenerationRequest: (Request) -> Boolean = { false },
 ) {
     private val readQueue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val readPool = ThreadPoolExecutor(readers, readers, 30, TimeUnit.SECONDS, readQueue) { r ->
@@ -87,12 +103,38 @@ class LocalServer(
     }
     private val queue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val pool = ThreadPoolExecutor(threads, threads, 30, TimeUnit.SECONDS, queue) { r ->
-        Thread(r, "dystopo-http").apply { isDaemon = true }
+        Thread({
+            if (tileNice != 0) runCatching { Process.setThreadPriority(tileNice) } // T63: pack reads ahead of generation
+            r.run()
+        }, "dystopo-http").apply { isDaemon = true }
     }
     private val debugQueue = ArrayBlockingQueue<Runnable>(16)
     private val debugPool = ThreadPoolExecutor(debugThreads, debugThreads, 30, TimeUnit.SECONDS, debugQueue) { r ->
         Thread(r, "dystopo-http-debug").apply { isDaemon = true }
     }
+    private val genQueue = ArrayBlockingQueue<Runnable>(maxQueued)
+    private val genPool: ThreadPoolExecutor? = if (genThreads <= 0) null else ThreadPoolExecutor(genThreads, genThreads, 30, TimeUnit.SECONDS, genQueue) { r ->
+        Thread({
+            runCatching { Process.setThreadPriority(genNice) } // T63: below the pack reads
+            r.run()
+        }, "dystopo-http-gen").apply { isDaemon = true }
+    }
+
+    /** T63: queue waits and run times per pool. */
+    private val tileStats = PoolStats()
+    private val genStats = PoolStats()
+    private val debugStats = PoolStats()
+
+    /** T63: generation requests dropped because the client had gone before a worker took them. */
+    private val genAbandoned = AtomicLong()
+
+    fun poolStats(): Map<String, Any?> = linkedMapOf(
+        "tile" to tileStats.json() + mapOf("threads" to pool.corePoolSize, "nice" to tileNice, "active" to pool.activeCount, "queued" to queue.size),
+        "generation" to genPool?.let {
+            genStats.json() + mapOf("threads" to it.corePoolSize, "nice" to genNice, "active" to it.activeCount, "queued" to genQueue.size, "abandonedBeforeStart" to genAbandoned.get())
+        },
+        "debug" to debugStats.json() + mapOf("threads" to debugPool.corePoolSize, "active" to debugPool.activeCount, "queued" to debugQueue.size),
+    )
     private var socket: ServerSocket? = null
     val requests = AtomicLong()
 
@@ -112,8 +154,8 @@ class LocalServer(
 
     fun lastDone(kind: String): Long = lastDone[kind] ?: 0L
 
-    /** Connections accepted but not yet read, plus map requests waiting for a tile worker. */
-    val queued: Int get() = readQueue.size + queue.size
+    /** Connections accepted but not yet read, plus map requests waiting for a tile or generation worker. */
+    val queued: Int get() = readQueue.size + queue.size + genQueue.size
 
     fun stats(): Map<String, Any?> = mapOf(
         "requests" to requests.get(),
@@ -124,6 +166,8 @@ class LocalServer(
         "readQueued" to readQueue.size,
         "debugActive" to debugPool.activeCount,
         "debugQueued" to debugQueue.size,
+        "genActive" to (genPool?.activeCount ?: 0), // T63
+        "genQueued" to genQueue.size,
         "inFlight" to inFlight.filterValues { it.get() > 0 }.mapValues { it.value.get() },
         "rejected" to rejected.mapValues { it.value.get() },
     )
@@ -167,6 +211,7 @@ class LocalServer(
         socket?.close()
         readPool.shutdownNow()
         pool.shutdownNow()
+        genPool?.shutdownNow()
         debugPool.shutdownNow()
     }
 
@@ -175,9 +220,27 @@ class LocalServer(
         var handedOff = false
         try {
             val request = read(client) ?: return
-            val target = if (isMapRequest(request)) pool else debugPool
+            val map = isMapRequest(request)
+            val gen = if (map && genPool != null && isGenerationRequest(request)) genPool else null
+            val target = gen ?: if (map) pool else debugPool
+            val stats = if (gen != null) genStats else if (map) tileStats else debugStats
+            val queuedAt = SystemClock.elapsedRealtimeNanos()
             try {
-                target.execute { client.use { respond(it, request) } }
+                target.execute {
+                    val started = SystemClock.elapsedRealtimeNanos()
+                    try {
+                        if (gen != null) {
+                            if (clientGone(client)) {
+                                genAbandoned.incrementAndGet()
+                                runCatching { client.close() }
+                                return@execute
+                            }
+                        }
+                        client.use { respond(it, request) }
+                    } finally {
+                        stats.add(started - queuedAt, SystemClock.elapsedRealtimeNanos() - started)
+                    }
+                }
                 handedOff = true
             } catch (e: RejectedExecutionException) {
                 reject("busy")
@@ -185,6 +248,25 @@ class LocalServer(
             }
         } finally {
             if (!handedOff) runCatching { client.close() }
+        }
+    }
+
+    /**
+     * T63: true when the client has closed its end (or the socket failed): a read with a 1 ms timeout sees the
+     * end of the stream at once, while a client still waiting for its response times out. The request was
+     * read completely before, so nothing of it is consumed here.
+     */
+    private fun clientGone(c: Socket): Boolean {
+        if (c.isClosed) return true
+        return try {
+            c.soTimeout = 1
+            c.getInputStream().read() < 0
+        } catch (_: SocketTimeoutException) {
+            false
+        } catch (_: IOException) {
+            true
+        } finally {
+            runCatching { c.soTimeout = readTimeoutMs }
         }
     }
 
@@ -305,6 +387,54 @@ class LocalServer(
         out.write(header.toByteArray())
         if (!head) out.write(r.body)
         out.flush()
+    }
+
+    /**
+     * T63: queue wait (handed to a pool until a worker starts it) and run time of one pool's requests:
+     * count, average, max, the slowest wait of the last [RECENT] requests, and a wait histogram.
+     */
+    class PoolStats {
+        private var count = 0L
+        private var waitNanos = 0L
+        private var maxWaitNanos = 0L
+        private var runNanos = 0L
+        private var maxRunNanos = 0L
+        private val recentWaits = LongArray(RECENT)
+        private val buckets = LongArray(WAIT_BUCKETS_MS.size + 1)
+
+        @Synchronized
+        fun add(waitNs: Long, runNs: Long) {
+            recentWaits[(count % RECENT).toInt()] = waitNs
+            count++
+            waitNanos += waitNs
+            runNanos += runNs
+            if (waitNs > maxWaitNanos) maxWaitNanos = waitNs
+            if (runNs > maxRunNanos) maxRunNanos = runNs
+            val ms = waitNs / 1_000_000
+            val i = WAIT_BUCKETS_MS.indexOfFirst { ms < it }
+            buckets[if (i < 0) WAIT_BUCKETS_MS.size else i]++
+        }
+
+        @Synchronized
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "requests" to count,
+            "avgWaitMs" to if (count == 0L) null else ms(waitNanos / count),
+            "maxWaitMs" to ms(maxWaitNanos),
+            "recentMaxWaitMs" to ms(recentWaits.take(minOf(count, RECENT.toLong()).toInt()).maxOrNull() ?: 0L),
+            "waitMsHistogram" to linkedMapOf<String, Long>().also { h ->
+                WAIT_BUCKETS_MS.forEachIndexed { i, b -> h["<$b"] = buckets[i] }
+                h[">=${WAIT_BUCKETS_MS.last()}"] = buckets[WAIT_BUCKETS_MS.size]
+            },
+            "avgRunMs" to if (count == 0L) null else ms(runNanos / count),
+            "maxRunMs" to ms(maxRunNanos),
+        )
+
+        private fun ms(ns: Long) = Math.round(ns / 1e5) / 10.0
+
+        companion object {
+            const val RECENT = 32
+            val WAIT_BUCKETS_MS = longArrayOf(10, 50, 200, 1000)
+        }
     }
 
     companion object {

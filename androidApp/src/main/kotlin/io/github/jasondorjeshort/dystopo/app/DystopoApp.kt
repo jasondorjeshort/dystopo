@@ -37,7 +37,7 @@ class DystopoApp : Application() {
         // only in logcat with the token; 8686 then answers like a release build (map routes only, no /health).
         // debugFixedPort=1 keeps everything on 8686 with the /health token bootstrap (pre-T57 behaviour).
         fixedDebugPort = BuildConfig.DEBUG_ENDPOINTS && AppSettings.debugFixedPort
-        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = fixedDebugPort) }) // T33: debug routes get their own pool
+        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = fixedDebugPort) }, genThreads = TileService.GEN_THREADS, genNice = TileService.GEN_NICE, tileNice = TileService.TILE_NICE, isGenerationRequest = { TileService.isGenerationRequest(it.path) }) // T33: debug routes get their own pool; T63: generation too
         try {
             server.start()
         } catch (e: Exception) {

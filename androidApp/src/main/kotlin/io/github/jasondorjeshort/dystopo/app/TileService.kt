@@ -180,8 +180,8 @@ class TileService(
     /** T38: tiles no pack covers come from the configured server ([OnlineTiles]); null when none is set. */
     val online: OnlineTiles? = OnlineService.get().tilesFor(packs, "${ContourCache.VERSION}-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag")
 
-    /** Tiles generating at once; the server pool is larger, so DEM and OSM requests are still served meanwhile. */
-    val contourPermits = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 8)
+    /** Tiles generating at once (T63: also the server's generation pool size, [GEN_THREADS]). */
+    val contourPermits = GEN_THREADS
     private val contourSlots = Semaphore(contourPermits)
     private val contourInFlight = ConcurrentHashMap<String, CompletableFuture<ByteArray?>>()
 
@@ -212,6 +212,10 @@ class TileService(
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
 
+    /** T63: when the map's last contour request finished (System.nanoTime); the warm-up stays paused a little after it. */
+    @Volatile
+    private var lastForegroundDone = 0L
+
     @Volatile
     private var closed = false
 
@@ -236,6 +240,7 @@ class TileService(
             "cachedTileBytes" to ps.sumOf { (_, p) -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 },
             "tilesDecoded" to ps.sumOf { it.second.tilesDecoded },
             "duplicateDecodes" to ps.sumOf { it.second.duplicateDecodes },
+            "inFlightWaits" to ps.sumOf { it.second.inFlightWaits }, // T63: a thread waited for another's decode of the same tile
             "cacheHits" to ps.sumOf { it.second.cacheHits },
             // T42: which decoder, and what decoding costs (fetch is the pack read).
             "decoder" to decoderName,
@@ -419,9 +424,25 @@ class TileService(
         // T41: the best vector archive holding the tile (outdoors profile first, see PackPrecedence).
         for (pack in packs.osmCandidates(z, x, y)) {
             val bytes = pack.tile(z, x, y) ?: continue
-            return ok(osm, "application/x-protobuf", cliffs.orient(z, x, y, bytes, cliffDir(pack, z, x, y)))
+            return ok(osm, "application/x-protobuf", atGenerationPriority { cliffs.orient(z, x, y, bytes, cliffDir(pack, z, x, y)) })
         }
         return TileResult.notFound().also { osm.notFound.incrementAndGet() }
+    }
+
+    /**
+     * T63: runs [block] at the generation pool's niceness ([GEN_NICE]) and restores the thread's own after: cliff
+     * rewriting decodes DEM tiles inside an OSM request on the tile pool, and is generation like the contours.
+     */
+    private inline fun <T> atGenerationPriority(block: () -> T): T {
+        val tid = Process.myTid()
+        val before = runCatching { Process.getThreadPriority(tid) }.getOrNull()
+        if (before == null || before >= GEN_NICE) return block()
+        runCatching { Process.setThreadPriority(GEN_NICE) }
+        try {
+            return block()
+        } finally {
+            runCatching { Process.setThreadPriority(before) }
+        }
     }
 
     /** T41: cliff ticks on the downhill side, from the DEM pack under the tile; T49: cached on disk with the contours. */
@@ -455,6 +476,7 @@ class TileService(
             throw e
         } finally {
             foregroundContours.decrementAndGet()
+            lastForegroundDone = System.nanoTime()
         }
     }
 
@@ -535,6 +557,11 @@ class TileService(
      * warm-up tile is generating pre-empts it (T42): the tile's cancel check sees the request between steps
      * and level groups, the tile is dropped (`preempted` in `/stats`) and retried after the pause. Stops when
      * this service is [close]d. Timings go to [warmupGen], not [contourGen].
+     *
+     * T63: the map's visible tiles come first: the warm-up also stays paused until [WARMUP_QUIET_MS] after the
+     * map's last contour tile, so it does not take a generation slot between two of MapLibre's request bursts.
+     * It does start at once with the service, though: holding it back until the first view had settled made
+     * that view slower (on a cold start it warms the JIT and the DEM decoder while the activity launches).
      */
     private fun startWarmup(): ContourWarmupProgress? {
         if (!AppSettings.warmup) return null // T33: settings switch
@@ -553,7 +580,7 @@ class TileService(
                 val t = plan[i]
                 // Yield to the map: wait while any of its contour tiles is generating.
                 val pauseStart = System.nanoTime()
-                while (foregroundContours.get() > 0 && !closed) Thread.sleep(WARMUP_POLL_MS)
+                while ((foregroundContours.get() > 0 || System.nanoTime() - lastForegroundDone < WARMUP_QUIET_MS * 1_000_000L) && !closed) Thread.sleep(WARMUP_POLL_MS)
                 if (closed) break
                 val paused = System.nanoTime() - pauseStart
                 if (paused > WARMUP_POLL_MS * 500_000L) progress.paused(paused / 1e6)
@@ -660,6 +687,25 @@ class TileService(
             }
             return null
         }
+
+        /** T63: generation requests (contours, shade) run on the server's generation pool, below the tile pool. */
+        fun isGenerationRequest(path: String): Boolean = path.startsWith("/contours/") || path.startsWith("/shade/")
+
+        /** T63: tiles generating at once and the server's generation pool size; one core is left to the map renderer. */
+        val GEN_THREADS = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 8)
+
+        /**
+         * T63: niceness of the generation pool's threads: the default, below the pack reads ([TILE_NICE]) and
+         * above the warm-up (background, 10). Nice 4 was tried: on the loaded emulator (MapLibre plus the release
+         * script's `screencap`) contour tiles then took about three times as long.
+         */
+        const val GEN_NICE = 0
+
+        /** T63: niceness of the server's tile pool (pack reads, glyphs, the style): slightly ahead of generation. */
+        const val TILE_NICE = -2
+
+        /** T63: the warm-up resumes this long after the map's last contour tile. */
+        const val WARMUP_QUIET_MS = 1_000L
 
         /** Lowest pack zooms warmed up: the fitted whole-pack view and the first zoom-in. */
         const val WARMUP_ZOOMS = 2
