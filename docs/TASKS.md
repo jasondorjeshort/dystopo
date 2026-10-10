@@ -316,6 +316,7 @@ Shared rules as in wave 7 (own emulator via `tools\android-emu.ps1` with `-EmuPo
 **Goal:** a GitHub Actions workflow that runs on every push and PR: JDK 21, Gradle cache, `./gradlew check` (JVM modules; the Android module compiles with the SDK the action installs, unit tests only), the golden-image tests, the license check, the world tour against the cached sources (skipped or reduced when the cache is cold: `tour --zooms 9 --offline-ok`), and the browser demo tour with Playwright in pack mode against a small committed-free pack built in the job (`tiles --area rainier --max-zoom 10`). Artifacts: the tour contact sheets and the reports. A badge in the README. Keep the job under 20 minutes; no secrets needed.
 **Owns:** new `.github/workflows/ci.yml`, `tools/ci/**` helper scripts, README badge line, `devtool/.../TourCommand.kt` only for an `--offline-ok` flag.
 **Done when:** the workflow is green on main (link in the PR), and a deliberately broken test on a branch turns it red; `check` green.
+**Status: merged (PR #47).** CI green on the branch; the gradlew exec bit is set on main. Follow-ups: bundle an open font for goldens; the `LiveTiles` direct HTTP call bypasses `Http.beforeNetwork`; action version bumps.
 
 ### Later
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.
