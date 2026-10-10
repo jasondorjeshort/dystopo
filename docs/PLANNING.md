@@ -191,6 +191,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 - Copernicus is a surface model (includes forest canopy): in forest it sits several meters above bare-earth 3DEP (mean −3.7 m best vs Copernicus at the border). Feathering hides that as a gentle ramp, but contours outside the US will run high in forests. Bare-earth global alternatives: FABDEM (CC BY-NC-SA, non-commercial: check against our licensing before use), or national lidar DTMs (Canada HRDEM, Swisstopo, etc.) added as more layers.
 - Bug found by viewing output: pixel-is-point cells (Copernicus) left a 1-px seam at every 1° boundary until sampling read neighbors across cells.
 
+**2026-10-09: T5 merged (PR #1): MVT decoder.** Hand-written protobuf wire parser and Mapbox Vector Tile decoder/encoder in `shared/.../mvt/` (pure Kotlin): points, lines, polygons with holes by winding, every property value type. `devtool mvt dump` summarizes a tile. A real z2 tile from the MapLibre demotiles set (BSD-3; Natural Earth data) is a committed fixture: 147 features, 20.9k vertices, decoded in 16 ms. First task delivered by the parallel-agent workflow (implementation on one agent, verification on a cheaper one).
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
