@@ -1,22 +1,30 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Process
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.options.ShadeService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
+import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
+import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.packs.PackRoleZooms
+import io.github.jasondorjeshort.dystopo.png.Inflate
+import io.github.jasondorjeshort.dystopo.png.TerrariumPngDecoder
+import io.github.jasondorjeshort.dystopo.tiff.Decompressor
 import io.github.jasondorjeshort.dystopo.tiles.BitmapImageDecoder
+import io.github.jasondorjeshort.dystopo.tiles.ContourBuildCancelled
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileStats
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import io.github.jasondorjeshort.dystopo.tiles.ContourWarmupProgress
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
+import io.github.jasondorjeshort.dystopo.tiles.ImageDecoder
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
@@ -27,6 +35,7 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.CRC32
+import java.util.zip.Inflater
 
 /** Counters for one tile source, reported by `/stats`. */
 class SourceCounters {
@@ -167,7 +176,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     private fun pyramid(pack: Pack): DemPyramid = synchronized(pyramids) {
         pyramids.getOrPut(pack) {
             pyramidsMade.incrementAndGet()
-            DemPyramid(pack.header.minZoom, pack.header.maxZoom, BitmapImageDecoder, cacheTiles = 96) { z, x, y -> pack.tile(z, x, y) }
+            DemPyramid(pack.header.minZoom, pack.header.maxZoom, demDecoder(), cacheTiles = 96) { z, x, y -> pack.tile(z, x, y) }
         }
     }
 
@@ -205,8 +214,100 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             "tilesDecoded" to ps.sumOf { it.second.tilesDecoded },
             "duplicateDecodes" to ps.sumOf { it.second.duplicateDecodes },
             "cacheHits" to ps.sumOf { it.second.cacheHits },
+            // T42: which decoder, and what decoding costs (fetch is the pack read).
+            "decoder" to decoderName,
+            "decodeMs" to round1(ps.sumOf { it.second.decodeMs }),
+            "avgDecodeMs" to ps.sumOf { it.second.tilesDecoded }.let { n -> if (n == 0L) null else Math.round(ps.sumOf { it.second.decodeMs } / n * 100) / 100.0 },
+            "maxDecodeMs" to round1(ps.maxOf { it.second.maxDecodeMs }),
+            "fetchMs" to round1(ps.sumOf { it.second.fetchMs }),
+            "decoderFallbacks" to kotlinDecoder.fallbacks + kotlinZipDecoder.fallbacks,
             "packs" to ps.map { (k, p) -> mapOf("pack" to packs.packOf(k), "cachedTiles" to p.cachedTiles, "tilesDecoded" to p.tilesDecoded) },
+            "kotlinPhases" to (if (decoderName == "kotlin-zip") kotlinZipDecoder else kotlinDecoder).phases(),
         )
+    }
+
+    /**
+     * `GET /dem/decode-bench?tiles=16&runs=5&threads=1&zoom=` (T42): decodes [tiles] pack DEM tiles around the
+     * pack centre at [zoom] (default the pack's max) to elevations with every decoder, after one untimed pass
+     * each, on `threads` threads at once (more than one imitates concurrent contour tiles): per decoder the
+     * average, median and max ms per tile, plus the inflate step alone (pure Kotlin and java.util.zip) and
+     * BitmapFactory alone; and whether the decoders agree bit for bit.
+     */
+    fun decodeBench(query: Map<String, String>): Map<String, Any?> {
+        val pack = packs.dem ?: return mapOf("error" to "no DEM pack")
+        val h = pack.header
+        val n = (query["tiles"]?.toIntOrNull() ?: 16).coerceIn(1, 64)
+        val runs = (query["runs"]?.toIntOrNull() ?: 5).coerceIn(1, 50)
+        val threads = (query["threads"]?.toIntOrNull() ?: 1).coerceIn(1, 8)
+        val z = (query["zoom"]?.toIntOrNull() ?: h.maxZoom).coerceIn(h.minZoom, h.maxZoom)
+        val cx = WebMercator.lonToX((h.minLon + h.maxLon) / 2, z).toInt()
+        val cy = WebMercator.latToY((h.minLat + h.maxLat) / 2, z).toInt()
+        val side = Math.ceil(Math.sqrt(n.toDouble())).toInt()
+        val tiles = ArrayList<ByteArray>()
+        for (dy in 0 until side) for (dx in 0 until side) if (tiles.size < n) pack.tile(z, cx + dx - side / 2, cy + dy - side / 2)?.let { tiles += it }
+        if (tiles.isEmpty()) return mapOf("error" to "no tiles at z$z")
+        val ts = 256
+        val rawSize = ts * (ts * 3 + 1)
+        val bitmapOptions = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPremultiplied = false
+            inScaled = false
+        }
+        val variants = linkedMapOf<String, (ByteArray) -> Any>(
+            "bitmap" to { b -> BitmapImageDecoder.decode(b).argb.let { a -> FloatArray(a.size) { Terrarium.elevation(a[it]) } } },
+            "kotlin" to { b -> kotlinDecoder.elevations(b, ts, ts) },
+            "kotlin-zip" to { b -> kotlinZipDecoder.elevations(b, ts, ts) },
+            "inflateKotlinOnly" to { b -> Inflate.zlib(idatOf(b), rawSize) },
+            "inflateZipOnly" to { b -> zipInflate(idatOf(b), rawSize) },
+            "bitmapFactoryOnly" to { b -> BitmapFactory.decodeByteArray(b, 0, b.size, bitmapOptions).also { it.recycle() } },
+        )
+        val report = linkedMapOf<String, Any?>(
+            "zoom" to z, "tiles" to tiles.size, "runs" to runs, "threads" to threads, "avgPngBytes" to tiles.sumOf { it.size } / tiles.size,
+        )
+        val outputs = HashMap<String, List<Any>>()
+        for ((name, f) in variants) {
+            outputs[name] = tiles.map(f) // untimed pass (JIT, caches)
+            val per = java.util.Collections.synchronizedList(ArrayList<Double>())
+            val workers = (0 until threads).map {
+                Thread {
+                    repeat(runs) {
+                        for (b in tiles) {
+                            val t0 = System.nanoTime()
+                            f(b)
+                            per += (System.nanoTime() - t0) / 1e6
+                        }
+                    }
+                }
+            }
+            workers.forEach { it.start() }
+            workers.forEach { it.join() }
+            val sorted = per.sorted()
+            report[name] = mapOf(
+                "avgMs" to Math.round(sorted.average() * 100) / 100.0,
+                "medianMs" to Math.round(sorted[sorted.size / 2] * 100) / 100.0,
+                "maxMs" to round1(sorted.last()),
+            )
+        }
+        val ref = outputs.getValue("bitmap")
+        report["mismatchedTiles"] = listOf("kotlin", "kotlin-zip").associateWith { d ->
+            val o = outputs.getValue(d)
+            ref.indices.count { !(ref[it] as FloatArray).contentEquals(o[it] as FloatArray) }
+        }
+        return report
+    }
+
+    /** The concatenated IDAT data of a PNG (for [decodeBench]'s inflate-only timings). */
+    private fun idatOf(png: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream(png.size)
+        var pos = 8
+        while (pos + 8 <= png.size) {
+            val len = java.nio.ByteBuffer.wrap(png, pos, 4).int
+            val type = String(png, pos + 4, 4, Charsets.US_ASCII)
+            if (type == "IDAT") out.write(png, pos + 8, len)
+            if (type == "IEND") break
+            pos += 12 + len
+        }
+        return out.toByteArray()
     }
 
     /** `/stats` contourGeneration: per-zoom timings, concurrency and the cache identity. */
@@ -330,7 +431,15 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
      * One generation per tile: a second request for the same tile, from the map or the warm-up, waits
      * for the first.
      */
-    private fun contourBytes(pack: Pack, z: Int, x: Int, y: Int, stats: ContourTileStats, onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() }): ByteArray {
+    private fun contourBytes(
+        pack: Pack,
+        z: Int,
+        x: Int,
+        y: Int,
+        stats: ContourTileStats,
+        cancel: (() -> Boolean)? = null,
+        onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() },
+    ): ByteArray {
         val key = ContourCache.key(contourDir(pack), z, x, y)
         contourCache.get(key)?.let {
             onCacheHit()
@@ -344,11 +453,13 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             return try {
                 running.get() ?: ByteArray(0)
             } catch (e: ExecutionException) {
+                // T42: the warm-up gave this tile up for a map request (maybe this one): generate it here.
+                if (e.cause is ContourBuildCancelled) return contourBytes(pack, z, x, y, stats, cancel, onCacheHit)
                 throw e.cause ?: e
             }
         }
         try {
-            val bytes = generateContourTile(p, z, x, y, key, stats)
+            val bytes = generateContourTile(p, z, x, y, key, stats, cancel)
             mine.complete(bytes)
             return bytes
         } catch (e: Throwable) {
@@ -359,16 +470,18 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         }
     }
 
-    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, cacheKey: String?, stats: ContourTileStats): ByteArray {
+    /** [cancel] (T42, the warm-up's): polled between steps; true abandons the tile with [ContourBuildCancelled]. */
+    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, cacheKey: String?, stats: ContourTileStats, cancel: (() -> Boolean)? = null): ByteArray {
         val requested = System.nanoTime()
         contourSlots.acquire()
         val concurrent = stats.begin()
         try {
             val started = System.nanoTime()
             val plan = ContourTiles.plan(z, x, y, contourOptions, p.tileSize)
+            if (cancel != null && cancel()) throw ContourBuildCancelled("contour tile $z/$x/$y cancelled before sampling")
             val grid = ContourTiles.sample(p, plan)
             val sampled = System.nanoTime()
-            val tile = ContourTiles.build(grid, plan, contourOptions)
+            val tile = ContourTiles.build(grid, plan, contourOptions, cancel)
             val done = System.nanoTime()
             if (cacheKey != null) contourCache.put(cacheKey, tile.bytes) // T41: the shared LRU cache (atomic rename inside)
             // Generation time excludes waiting for a slot (reported separately as waitMs).
@@ -386,8 +499,10 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
      * Background warm-up ([ContourTiles.warmupPlan]): one low-priority thread generates the contour tiles of
      * the pack's two lowest zooms, plus the centre tile of each higher zoom, into the disk cache, pausing
      * whenever the map's own contour requests are generating, so the first views after an install, a pack
-     * switch or `/reload` are cached and the JIT and DEM caches are warm. Stops when this service is
-     * [close]d. Timings go to [warmupGen], not [contourGen].
+     * switch or `/reload` are cached and the JIT and DEM caches are warm. A map request that arrives while a
+     * warm-up tile is generating pre-empts it (T42): the tile's cancel check sees the request between steps
+     * and level groups, the tile is dropped (`preempted` in `/stats`) and retried after the pause. Stops when
+     * this service is [close]d. Timings go to [warmupGen], not [contourGen].
      */
     private fun startWarmup(): ContourWarmupProgress? {
         if (!AppSettings.warmup) return null // T33: settings switch
@@ -400,7 +515,10 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         val progress = ContourWarmupProgress(plan.map { it.z }.distinct(), plan.size)
         Thread({
             Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
-            for (t in plan) {
+            val yieldToMap = { foregroundContours.get() > 0 || closed }
+            var i = 0
+            while (i < plan.size) {
+                val t = plan[i]
                 // Yield to the map: wait while any of its contour tiles is generating.
                 val pauseStart = System.nanoTime()
                 while (foregroundContours.get() > 0 && !closed) Thread.sleep(WARMUP_POLL_MS)
@@ -409,12 +527,17 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 if (paused > WARMUP_POLL_MS * 500_000L) progress.paused(paused / 1e6)
                 try {
                     var hit = false
-                    contourBytes(packs.demFor(t.z, t.x, t.y, PackRoleZooms.CONTOUR) ?: warmPack, t.z, t.x, t.y, warmupGen) { hit = true }
+                    contourBytes(packs.demFor(t.z, t.x, t.y, PackRoleZooms.CONTOUR) ?: warmPack, t.z, t.x, t.y, warmupGen, yieldToMap) { hit = true }
                     if (hit) progress.cached() else progress.generated()
+                } catch (e: ContourBuildCancelled) {
+                    if (closed) break
+                    progress.preempted()
+                    continue // the same tile again, after the map's requests
                 } catch (e: Throwable) {
                     if (closed) break
                     progress.failed(e)
                 }
+                i++
             }
             progress.finish(stopped = closed)
         }, "contour-warmup").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
@@ -450,7 +573,62 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         return TileResult(200, type, bytes)
     }
 
-    private companion object {
+    companion object {
+        /**
+         * DEM tile decoder (T42): `kotlin` (default), the shared pure-Kotlin [TerrariumPngDecoder] with the
+         * pure-Kotlin [Inflate], straight to elevations, no Bitmap; `kotlin-zip`, the same decoder with zlib
+         * from java.util.zip (slower on the emulator, see [Inflate]); or `bitmap`, the old
+         * [BitmapImageDecoder] through BitmapFactory, kept for comparison. Not persisted:
+         * `POST /settings?decoder=kotlin|kotlin-zip|bitmap` switches it for this process and reopens the tiles.
+         */
+        @Volatile
+        var decoderName: String = "kotlin"
+            private set
+
+        val DECODERS = listOf("kotlin", "kotlin-zip", "bitmap")
+
+        /** One [Inflater] per thread, reset between tiles (one per tile would churn native memory). */
+        private val inflaters = ThreadLocal.withInitial { Inflater() }
+
+        private val zipInflate: Decompressor = { input, size ->
+            val inflater = inflaters.get()!!
+            inflater.reset()
+            inflater.setInput(input)
+            val out = ByteArray(size)
+            var n = 0
+            while (n < size && !inflater.finished()) {
+                val k = inflater.inflate(out, n, size - n)
+                if (k == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
+                n += k
+            }
+            require(n == size) { "zlib stream ended after $n of $size bytes" }
+            out
+        }
+
+        /** The shared decoder; BitmapFactory takes the PNGs it does not read (palette, grey, 16-bit). */
+        val kotlinDecoder = TerrariumPngDecoder(Inflate.zlib, BitmapImageDecoder)
+
+        /** [kotlinDecoder] with java.util.zip's inflate, for comparison. */
+        val kotlinZipDecoder = TerrariumPngDecoder(zipInflate, BitmapImageDecoder)
+
+        /** The DEM decoder [decoderName] selects, for every [DemPyramid] of the app (pack and online). */
+        fun demDecoder(): ImageDecoder = when (decoderName) {
+            "bitmap" -> BitmapImageDecoder
+            "kotlin-zip" -> kotlinZipDecoder
+            else -> kotlinDecoder
+        }
+
+        /** Sets the decoder from a `/settings` value and reopens the tiles; returns an error message for a bad value. */
+        fun setDecoder(app: DystopoApp, raw: String): String? {
+            val name = raw.trim().lowercase()
+            if (name !in DECODERS) return "decoder must be one of $DECODERS (got $raw)"
+            if (name != decoderName) {
+                decoderName = name
+                app.reload()
+            }
+            return null
+        }
+
         /** Lowest pack zooms warmed up: the fitted whole-pack view and the first zoom-in. */
         const val WARMUP_ZOOMS = 2
         const val WARMUP_MAX_TILES = 256

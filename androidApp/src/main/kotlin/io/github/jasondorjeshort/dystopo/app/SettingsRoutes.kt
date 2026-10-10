@@ -48,6 +48,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             is Parsed.Ok -> p
         }
         params["server"]?.let { OnlineRoutes.setServer(app, it.toString())?.let { e -> return Response.json(mapOf("error" to e), 400) } } // T38
+        params["decoder"]?.let { TileService.setDecoder(app, it.toString())?.let { e -> return Response.json(mapOf("error" to e), 400) } } // T42
         apply(parsed)
         return Response.json(AppSettings.json())
     }
@@ -93,7 +94,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb")
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server") + MapOptions.KEYS + CACHE_KEYS
+        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder") + MapOptions.KEYS + CACHE_KEYS // decoder: T42, TileService.setDecoder
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null

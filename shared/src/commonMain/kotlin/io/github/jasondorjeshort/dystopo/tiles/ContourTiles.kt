@@ -11,6 +11,7 @@ import io.github.jasondorjeshort.dystopo.mvt.MvtEncoder
 import io.github.jasondorjeshort.dystopo.mvt.TilePoint
 import io.github.jasondorjeshort.dystopo.mvt.Value
 import io.github.jasondorjeshort.dystopo.mvt.VectorTile
+import io.github.jasondorjeshort.dystopo.render.ContourLine
 import io.github.jasondorjeshort.dystopo.render.ContourSimplify
 import io.github.jasondorjeshort.dystopo.render.ContourSpec
 import io.github.jasondorjeshort.dystopo.render.ContourStyle
@@ -101,6 +102,9 @@ class ContourTile(
  * pixels per cell, while tracing and sampling cost grow with the cell count.
  */
 object ContourTiles {
+    /** Levels traced between two cancel checks in a cancellable [build]. */
+    const val CANCEL_LEVEL_GROUP = 8
+
     /**
      * The spec zoom of contour tile zoom [z]: [z] plus log2(tileSize / [demTileSize]), the DEM zoom whose
      * pixels are screen pixels, which picks the [ContourStyle] levels.
@@ -180,24 +184,51 @@ object ContourTiles {
      * Builds a contour tile from [grid], the window of [plan] (tile plus halo on every side) sampled at
      * [ContourTilePlan.sampleZoom]; the [ContourStyle] spec of [ContourTilePlan.specZoom] sets the levels.
      * Pure and thread-safe: tiles can be built concurrently.
+     *
+     * [cancel] (T42), when given, is polled between steps and between groups of [CANCEL_LEVEL_GROUP]
+     * levels while tracing; once it returns true the build stops with [ContourBuildCancelled]. The
+     * background warm-up passes one so a map request pre-empts a warm-up tile in progress. Tracing a
+     * group of consecutive levels at a time gives exactly the lines of one call over all of them
+     * (lines are ordered by level first), so the tile is the same either way.
      */
-    fun build(grid: ElevationGrid, plan: ContourTilePlan, options: ContourTileOptions = ContourTileOptions()): ContourTile {
+    fun build(
+        grid: ElevationGrid,
+        plan: ContourTilePlan,
+        options: ContourTileOptions = ContourTileOptions(),
+        cancel: (() -> Boolean)? = null,
+    ): ContourTile {
         val ts = plan.gridTileSize
         val h = plan.halo
         require(grid.width == plan.windowSize && grid.height == plan.windowSize) {
             "grid ${grid.width}x${grid.height} is not a ${ts}px tile with a ${h}px halo"
         }
+        fun checkCancel() {
+            if (cancel != null && cancel()) throw ContourBuildCancelled("contour tile ${plan.z}/${plan.x}/${plan.y} cancelled")
+        }
+        checkCancel()
         val f = plan.cellScale.toDouble()
         val clock = TimeSource.Monotonic
         val t0 = clock.markNow()
         val spec = ContourStyle.resolve(plan.specZoom, options.units, options.interval?.takeIf { plan.z >= options.intervalFromZoom }) // T47
         val levels = spec.levelsMeters(grid.min().toDouble(), grid.max().toDouble())
-        val traced = Contours.trace(grid, levels)
+        val traced = if (cancel == null || levels.size <= CANCEL_LEVEL_GROUP) {
+            Contours.trace(grid, levels)
+        } else {
+            val out = ArrayList<ContourLine>()
+            for (group in levels.sorted().chunked(CANCEL_LEVEL_GROUP)) {
+                checkCancel()
+                out += Contours.trace(grid, group)
+            }
+            out
+        }
+        checkCancel()
         val t1 = clock.markNow()
         // Spacing and piece length are screen pixels; the grid has f screen pixels per cell.
         val cut = Contours.cutSteep(traced, grid, spec, options.minSpacing / f, minPieceLength = 12.0 / f)
+        checkCancel()
         val t2 = clock.markNow()
         val simplified = ContourSimplify.simplifyAll(cut, options.simplify / f)
+        checkCancel()
         val t3 = clock.markNow()
 
         // Grid sample (i, j) is the centre of grid cell (i, j) of the window; the tile starts at cell h.
@@ -239,6 +270,9 @@ object ContourTiles {
         return ContourTile(bytes, spec, features.size, index, points, timings)
     }
 }
+
+/** Thrown by [ContourTiles.build] when its cancel check returns true. */
+class ContourBuildCancelled(message: String) : RuntimeException(message)
 
 /**
  * Contour generation counters for `/stats` (the Android app and `devtool serve` report the same
@@ -345,6 +379,7 @@ class ContourWarmupProgress(val zooms: List<Int>, val planned: Int) {
     private var generated = 0
     private var cached = 0
     private var failed = 0
+    private var preempted = 0
     private var pausedMs = 0.0
     private var lastError: String? = null
 
@@ -364,6 +399,12 @@ class ContourWarmupProgress(val zooms: List<Int>, val planned: Int) {
     fun failed(error: Throwable) {
         failed++
         lastError = error.toString()
+    }
+
+    /** A tile in progress was abandoned for a map request (T42); it is retried after the pause. */
+    @Synchronized
+    fun preempted() {
+        preempted++
     }
 
     @Synchronized
@@ -388,6 +429,7 @@ class ContourWarmupProgress(val zooms: List<Int>, val planned: Int) {
         "generated" to generated,
         "alreadyCached" to cached,
         "failed" to failed,
+        "preempted" to preempted,
         "elapsedMs" to round1(finishedMs ?: elapsedMs()),
         "pausedForMapMs" to round1(pausedMs),
         "lastError" to lastError,

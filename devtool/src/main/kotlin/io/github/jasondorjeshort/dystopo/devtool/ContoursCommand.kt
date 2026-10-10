@@ -5,12 +5,18 @@ import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
+import io.github.jasondorjeshort.dystopo.png.Inflate
+import io.github.jasondorjeshort.dystopo.png.PngDecoder
+import io.github.jasondorjeshort.dystopo.png.TerrariumPngDecoder
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.tiff.Decompressor
 import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTilePlan
@@ -19,9 +25,36 @@ import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import io.github.jasondorjeshort.dystopo.tiles.ImageDecoder
 import java.io.File
 import java.util.zip.CRC32
+import java.util.zip.Inflater
 import javax.imageio.ImageIO
 import kotlin.math.floor
 import kotlin.math.roundToLong
+
+/** ImageIO PNG decoding (the devtool's general-purpose decoder; the fallback for PNGs [PngDecoder] does not read). */
+val imageIoDecoder = ImageDecoder { bytes ->
+    val img = ImageIO.read(bytes.inputStream()) ?: error("unreadable image (${bytes.size} bytes)")
+    ArgbImage(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
+}
+
+/** zlib inflate for [PngDecoder] on the JVM: one [Inflater] per thread, reset between images. */
+object ZlibInflate {
+    private val inflaters = ThreadLocal.withInitial { Inflater() }
+
+    val decompressor: Decompressor = { input, size ->
+        val inflater = inflaters.get()
+        inflater.reset()
+        inflater.setInput(input)
+        val out = ByteArray(size)
+        var n = 0
+        while (n < size && !inflater.finished()) {
+            val k = inflater.inflate(out, n, size - n)
+            if (k == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
+            n += k
+        }
+        require(n == size) { "zlib stream ended after $n of $size bytes" }
+        out
+    }
+}
 
 /** `devtool contours ...`: contour tile tools. */
 class ContoursCommand : CliktCommand(name = "contours") {
@@ -55,16 +88,25 @@ class ContoursBenchCommand : CliktCommand(name = "bench") {
     private val warmup by option("--warmup", help = "untimed sweeps first (JIT warm-up)").int().default(5)
     private val runs by option("--runs", help = "timed sweeps; per tile the best run is reported").int().default(10)
 
-    private class Job(val plan: ContourTilePlan, val grid: ElevationGrid, val sampleMs: Double)
+    private val decoderName by option("--decoder", help = "DEM tile decoder for sampling: kotlin (shared PngDecoder, default) or imageio")
+        .choice("kotlin", "kotlin-inflate", "imageio").default("kotlin")
+    private val decodeRuns by option("--decode-runs", help = "timed decodes per DEM tile and decoder in the decode split (0 skips it)").int().default(20)
+
+    private class Job(val plan: ContourTilePlan, val grid: ElevationGrid, val sampleMs: Double, val decodeMs: Double, val decoded: Long)
 
     override fun run() {
         val reader = PmtilesReader.open(FileRangeSource(File(dem)), Gzip.decompressors)
-        val decoder = ImageDecoder { bytes ->
-            val img = ImageIO.read(bytes.inputStream())
-            ArgbImage(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
+        val decoder = when (decoderName) {
+            "imageio" -> imageIoDecoder
+            "kotlin-inflate" -> TerrariumPngDecoder(Inflate.zlib, imageIoDecoder)
+            else -> TerrariumPngDecoder(ZlibInflate.decompressor, imageIoDecoder)
         }
         val h = reader.header
-        val pyramid = DemPyramid(h.minZoom, h.maxZoom, decoder, cacheTiles = 256) { z, x, y -> reader.tile(z, x, y) }
+        // Every DEM tile the sampling reads, for the decode split.
+        val demTiles = LinkedHashMap<String, ByteArray>()
+        val pyramid = DemPyramid(h.minZoom, h.maxZoom, decoder, cacheTiles = 256) { z, x, y ->
+            reader.tile(z, x, y)?.also { demTiles["$z/$x/$y"] = it }
+        }
         val options = ContourTileOptions()
 
         val jobs = ArrayList<Job>()
@@ -73,12 +115,15 @@ class ContoursBenchCommand : CliktCommand(name = "bench") {
             val x0 = floor(WebMercator.lonToX(lon, z) - (tilesAcross - 1) / 2.0).toInt()
             val y0 = floor(WebMercator.latToY(lat, z) - (tilesAcross - 1) / 2.0).toInt()
             for (dy in 0 until tilesAcross) for (dx in 0 until tilesAcross) {
+                val d0 = pyramid.decodeMs
+                val n0 = pyramid.tilesDecoded
                 val t0 = System.nanoTime()
                 val plan = ContourTiles.plan(z, x0 + dx, y0 + dy, options, pyramid.tileSize)
                 val grid = ContourTiles.sample(pyramid, plan)
-                jobs += Job(plan, grid, (System.nanoTime() - t0) / 1e6)
+                jobs += Job(plan, grid, (System.nanoTime() - t0) / 1e6, pyramid.decodeMs - d0, pyramid.tilesDecoded - n0)
             }
         }
+        val decodeSplit = if (decodeRuns > 0) decodeSplit(demTiles.values.toList()) else null
 
         repeat(warmup) { for (j in jobs) ContourTiles.build(j.grid, j.plan, options) }
 
@@ -123,6 +168,8 @@ class ContoursBenchCommand : CliktCommand(name = "bench") {
                 "minMs" to r1(ms.min()), "avgMs" to r1(ms.average()), "maxMs" to r1(ms.max()),
                 "avgTraceMs" to avgOf(0), "avgCutMs" to avgOf(1), "avgSimplifyMs" to avgOf(2), "avgEncodeMs" to avgOf(3),
                 "avgSampleMs" to r1(idx.sumOf { jobs[it].sampleMs } / idx.size),
+                // The one sampling pass decodes each DEM tile once, cold for the first zooms (JIT not warm yet).
+                "sampleDecodedTiles" to idx.sumOf { jobs[it].decoded }, "sampleDecodeMs" to r1(idx.sumOf { jobs[it].decodeMs }),
                 "lines" to idx.sumOf { lines[it] }, "points" to idx.sumOf { points[it] }, "bytes" to idx.sumOf { bytes[it] },
                 "crc32" to "%08x".format(zoomCrc.getValue(z).value),
             )
@@ -138,10 +185,68 @@ class ContoursBenchCommand : CliktCommand(name = "bench") {
             "sweepMedianMs" to r1(sweeps.sorted()[sweeps.size / 2]),
             "sumOfTileBestMs" to r1(best.sum()),
             "outputCrc32" to "%08x".format(crc.value),
+            "decoder" to decoderName,
+            "demTilesDecoded" to pyramid.tilesDecoded,
+            "demDecodeMs" to r1(pyramid.decodeMs),
+            "demFetchMs" to r1(pyramid.fetchMs),
+            "decode" to decodeSplit,
             "byZoom" to byZoom,
         )
         println(JsonWriter.write(report))
     }
+
+    /**
+     * T42 decode split: every DEM tile the sampling read, decoded to elevations by ImageIO (the old JVM path,
+     * through ARGB) and by the shared Kotlin [PngDecoder]. Per decoder: the first pass over all tiles (cold
+     * for that decoder), then per tile the best and the median of `--decode-runs` decodes after a warm-up;
+     * and whether both decoders produced the same elevations bit for bit.
+     */
+    private fun decodeSplit(bytes: List<ByteArray>): Map<String, Any?> {
+        val kotlin = TerrariumPngDecoder(ZlibInflate.decompressor)
+        val kotlinInflate = TerrariumPngDecoder(Inflate.zlib)
+        val decoders = linkedMapOf<String, (ByteArray) -> FloatArray>(
+            "imageio" to { b -> imageIoDecoder.decode(b).let { img -> FloatArray(img.argb.size) { Terrarium.elevation(img.argb[it]) } } },
+            "kotlin" to { b -> kotlin.elevations(b, 256, 256) },
+            "kotlinInflate" to { b -> kotlinInflate.elevations(b, 256, 256) },
+        )
+        val report = LinkedHashMap<String, Any?>()
+        report["tiles"] = bytes.size
+        report["avgPngBytes"] = if (bytes.isEmpty()) 0 else bytes.sumOf { it.size } / bytes.size
+        if (bytes.isEmpty()) return report
+        val results = HashMap<String, List<FloatArray>>()
+        val medians = HashMap<String, Double>()
+        for ((name, decode) in decoders) {
+            val c0 = System.nanoTime()
+            results[name] = bytes.map(decode)
+            val firstPassMs = (System.nanoTime() - c0) / 1e6
+            repeat(3) { for (b in bytes) decode(b) }
+            val best = DoubleArray(bytes.size)
+            val median = DoubleArray(bytes.size)
+            for ((i, b) in bytes.withIndex()) {
+                val t = DoubleArray(decodeRuns) {
+                    val t0 = System.nanoTime()
+                    decode(b)
+                    (System.nanoTime() - t0) / 1e6
+                }.sorted()
+                best[i] = t.first()
+                median[i] = t[t.size / 2]
+            }
+            medians[name] = median.average()
+            report[name] = linkedMapOf(
+                "firstPassAvgMs" to r3(firstPassMs / bytes.size),
+                "warmBestAvgMs" to r3(best.average()),
+                "warmMedianAvgMs" to r3(median.average()),
+                "warmMedianMaxMs" to r3(median.max()),
+            )
+        }
+        val a = results.getValue("imageio")
+        val b = results.getValue("kotlin")
+        report["mismatchedTiles"] = a.indices.count { i -> !a[i].contentEquals(b[i]) || !a[i].contentEquals(results.getValue("kotlinInflate")[i]) }
+        report["warmSpeedup"] = r1(medians.getValue("imageio") / medians.getValue("kotlin"))
+        return report
+    }
+
+    private fun r3(d: Double) = (d * 1000).roundToLong() / 1000.0
 
     private fun r1(d: Double) = (d * 10).roundToLong() / 10.0
 }

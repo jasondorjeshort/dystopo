@@ -96,6 +96,7 @@ class Routes(private val app: DystopoApp) {
                 Response.json(health())
             }
             "POST" to "/cache/clear" -> Response.json(mapOf("deleted" to app.tiles.clearContourCache()))
+            "GET" to "/dem/decode-bench" -> Response.json(app.tiles.decodeBench(r.query)) // T42: DEM decoders side by side
             else -> Response.notFound()
         }
     }

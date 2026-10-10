@@ -16,7 +16,7 @@ import io.github.jasondorjeshort.dystopo.style.Sprites
 import java.net.URLEncoder
 import java.util.Locale
 import kotlin.math.floor
-import io.github.jasondorjeshort.dystopo.tiles.BitmapImageDecoder
+import io.github.jasondorjeshort.dystopo.app.TileService
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -91,7 +91,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
 
     /** The online half of a tile service over [packs], or null without a server. */
     fun tilesFor(packs: PackSet, contourVersion: String): OnlineTiles? =
-        fetcher?.let { OnlineTiles(packs, it, this, BitmapImageDecoder, contourVersion) }
+        fetcher?.let { OnlineTiles(packs, it, this, TileService.demDecoder(), contourVersion) } // T42: decoder choice
 
     fun prefetch(block: () -> Fetch): CompletableFuture<Fetch> = CompletableFuture.supplyAsync(block, prefetchPool)
 

@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import kotlin.concurrent.Volatile
 import kotlin.jvm.Synchronized
 import kotlin.math.floor
+import kotlin.time.TimeSource
 
 /** A decoded image: [argb] pixels, row-major, [width] x [height]. */
 class ArgbImage(val width: Int, val height: Int, val argb: IntArray) {
@@ -21,6 +22,15 @@ class ArgbImage(val width: Int, val height: Int, val argb: IntArray) {
  */
 fun interface ImageDecoder {
     fun decode(bytes: ByteArray): ArgbImage
+}
+
+/**
+ * An [ImageDecoder] that also decodes a Terrarium tile straight to elevations (metres, row-major,
+ * [width] x [height]), skipping the ARGB array; [DemPyramid] uses that path when its decoder has it
+ * (`png.TerrariumPngDecoder`).
+ */
+interface ElevationImageDecoder : ImageDecoder {
+    fun elevations(bytes: ByteArray, width: Int, height: Int): FloatArray
 }
 
 /**
@@ -68,6 +78,10 @@ class DemPyramid(
     var duplicateDecodes: Long = 0
         private set
 
+    private var fetchNanos = 0L
+    private var decodeNanos = 0L
+    private var maxDecodeNanos = 0L
+
     // LinkedHashMap keeps insertion order; re-inserting on a hit makes that order least-recently-used first.
     private val cache = LinkedHashMap<Long, FloatArray>()
     private val missing = HashSet<Long>()
@@ -84,18 +98,39 @@ class DemPyramid(
         if (cached === MISSING) return null
         if (cached != null) return cached
         // Fetch and decode outside the lock, so other threads keep sampling cached tiles meanwhile.
+        val t0 = TimeSource.Monotonic.markNow()
         val bytes = fetch(z, x, y)
         if (bytes == null) {
             rememberMissing(k)
             return null
         }
+        val t1 = TimeSource.Monotonic.markNow()
+        val values = decodeElevations(bytes, z, x, y)
+        val t2 = TimeSource.Monotonic.markNow()
+        return store(k, values, (t1 - t0).inWholeNanoseconds, (t2 - t1).inWholeNanoseconds)
+    }
+
+    /**
+     * Elevations of one encoded tile: straight from the PNG when the decoder can ([ElevationImageDecoder]),
+     * else through ARGB pixels.
+     */
+    private fun decodeElevations(bytes: ByteArray, z: Int, x: Int, y: Int): FloatArray {
+        if (decoder is ElevationImageDecoder) return decoder.elevations(bytes, tileSize, tileSize)
         val img = decoder.decode(bytes)
         require(img.width == tileSize && img.height == tileSize) {
             "tile $z/$x/$y is ${img.width}x${img.height}, expected ${tileSize}x$tileSize"
         }
-        val values = FloatArray(img.argb.size) { Terrarium.elevation(img.argb[it]) }
-        return store(k, values)
+        return FloatArray(img.argb.size) { Terrarium.elevation(img.argb[it]) }
     }
+
+    /** Total time spent fetching encoded tiles (pack reads) for [tilesDecoded], in milliseconds. */
+    val fetchMs: Double @Synchronized get() = fetchNanos / 1e6
+
+    /** Total time spent decoding tiles to elevations for [tilesDecoded], in milliseconds. */
+    val decodeMs: Double @Synchronized get() = decodeNanos / 1e6
+
+    /** The slowest single decode so far, in milliseconds. */
+    val maxDecodeMs: Double @Synchronized get() = maxDecodeNanos / 1e6
 
     /** The cached tile for [k] (most recently used now), [MISSING] for a known-absent tile, or null. */
     @Synchronized
@@ -120,8 +155,11 @@ class DemPyramid(
 
     /** Caches [values] for [k] and returns them, or the copy another thread stored first. */
     @Synchronized
-    private fun store(k: Long, values: FloatArray): FloatArray {
+    private fun store(k: Long, values: FloatArray, fetchNs: Long, decodeNs: Long): FloatArray {
         tilesDecoded++
+        fetchNanos += fetchNs
+        decodeNanos += decodeNs
+        if (decodeNs > maxDecodeNanos) maxDecodeNanos = decodeNs
         cache[k]?.let {
             duplicateDecodes++
             return it
