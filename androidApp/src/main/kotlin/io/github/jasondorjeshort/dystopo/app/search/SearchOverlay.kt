@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.search
 
+import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -181,8 +183,8 @@ private fun ResultRow(h: SearchHit, first: Boolean, onClick: () -> Unit) {
         val parts = listOfNotNull(
             e.kind.label.replaceFirstChar { it.uppercase() },
             e.alt,
-            e.ele?.let { "$it m" },
-            h.distanceKm?.let { if (it < 10) String.format(Locale.US, "%.1f km", it) else String.format(Locale.US, "%.0f km", it) },
+            e.ele?.let { UnitFormat.elevation(it.toDouble(), AppSettings.units) },
+            h.distanceKm?.let { UnitFormat.distance(it * 1000, AppSettings.units) },
         )
         BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

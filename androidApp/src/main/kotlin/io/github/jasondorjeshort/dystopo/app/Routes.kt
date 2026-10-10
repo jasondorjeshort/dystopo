@@ -19,20 +19,22 @@ import java.io.File
  *   `map.notIdleBecause`, see [MapController.idleBlockers]).
  * - `GET /screenshot`: PNG of the map (MapLibre snapshot). `?mode=window` captures the app's content
  *   area, map plus overlays (see [MapController.windowPng]); `?wait=<ms>` (default 15000) waits for the
- *   map to go idle first; `/health` `map.lastScreenshotIdle` says whether it did.
+ *   map to go idle and then for two snapshots in a row to agree ([MapController.stableSnapshot]);
+ *   `?stable=0` skips the pixel check, `?wait=0` takes the picture at once. `/health`
+ *   `map.lastScreenshotIdle` says whether it settled, `map.lastScreenshot` how (rounds, changed share, ms).
+ * Debug routes run on their own small thread pool, so they answer while tiles are generating ([LocalServer]).
  * - `GET /camera`; `POST /camera` with query parameters or a JSON body: lat, lon, zoom, bearing, tilt.
  * - `GET /stats`: tiles served per source, contour generation timings (min/avg/max and recent tiles),
  *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes.
  * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; the puck shows it and the
  *   device's own location engine stays detached until `POST /location?device=1`. `GET /location`.
- * - `GET /settings`, `POST /settings?textScale=1.5`: user settings ([SettingsRoutes]).
- * - `GET /labels`: rendered features per symbol layer in the view ([LabelRoutes]).
+ * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`: user settings ([SettingsRoutes]).
+ * - `GET /features` (alias `/labels`), `GET /features/text`: what the map drew ([FeatureRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
  */
 class Routes(private val app: DystopoApp) {
     private val tile = Regex("^/(dem|osm|contours)/(-?\\d+)/(-?\\d+)/(-?\\d+)\\.(png|pbf|mvt)$")
     private val settings = SettingsRoutes(app)
-    private val labels = LabelRoutes(app)
     private val glyph = Regex("^/glyphs/([^/]+)/(\\d+-\\d+)\\.pbf$")
 
     init {
@@ -64,7 +66,6 @@ class Routes(private val app: DystopoApp) {
         AttributionRoutes.handle(app, r)?.let { return it }
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
         settings.handle(r)?.let { return it }
-        labels.handle(r)?.let { return it }
         ContourLabelRoutes(app).handle(r)?.let { return it } // T36: GET /contour-labels
         PacksRoutes.handle(app, r)?.let { return it }
         SearchRoutes.handle(app, r)?.let { return it } // T39: /search, /search/status, /search/build, /search/ui, /search/select
@@ -72,7 +73,7 @@ class Routes(private val app: DystopoApp) {
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
-            "GET" to "/features", "GET" to "/features/text" -> FeatureRoutes(app).handle(r)
+            "GET" to "/features", "GET" to "/features/text", "GET" to "/labels" -> FeatureRoutes(app).handle(r)
             "GET" to "/camera" -> Response.json(app.map.camera())
             "POST" to "/camera" -> {
                 val p = params(r)
@@ -98,9 +99,20 @@ class Routes(private val app: DystopoApp) {
 
     private fun screenshot(r: Request): Response {
         val wait = r.query["wait"]?.toLongOrNull() ?: 15_000L
+        val window = r.query["mode"] == "window"
+        if (wait > 0 && r.query["stable"] != "0") {
+            // Default: idle, then two snapshots in a row that agree (MapController.stableSnapshot).
+            val s = app.map.stableSnapshot(wait)
+            lastScreenshotIdle = s.stable // a capture that never settled still returns the PNG; /health tells which it was
+            app.map.lastScreenshot = s.json() + mapOf("mode" to if (window) "window" else "map")
+            val png = if (window) app.map.windowPng() else app.map.pngOf(s.bitmap)
+            s.bitmap.recycle()
+            return Response(200, "image/png", png)
+        }
         val idle = if (wait > 0) app.map.awaitIdle(wait) else app.map.idle
-        val png = if (r.query["mode"] == "window") app.map.windowPng() else app.map.mapSnapshotPng()
-        lastScreenshotIdle = idle // a non-idle capture still returns the PNG; /health tells which it was
+        val png = if (window) app.map.windowPng() else app.map.mapSnapshotPng()
+        lastScreenshotIdle = idle
+        app.map.lastScreenshot = mapOf("idle" to idle, "stable" to null, "mode" to if (window) "window" else "map")
         return Response(200, "image/png", png)
     }
 
@@ -184,5 +196,12 @@ class Routes(private val app: DystopoApp) {
             ),
             "server" to mapOf("requests" to app.server.requests.get()),
         )
+    }
+
+    companion object {
+        private val MAP_PREFIXES = listOf("/dem/", "/osm/", "/contours/", "/glyphs/", "/sprite")
+
+        /** MapLibre's own requests (tiles, glyphs, sprites, the style) run on the tile pool; everything else on the debug pool. */
+        fun isMapRequest(r: Request): Boolean = r.path == "/style.json" || MAP_PREFIXES.any { r.path.startsWith(it) }
     }
 }

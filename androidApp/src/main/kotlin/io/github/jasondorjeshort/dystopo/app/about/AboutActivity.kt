@@ -41,6 +41,7 @@ class AboutActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         current = WeakReference(this)
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true // T33: dark icons on the light page
         val credits = AppCredits.compose()
         setContent { AboutScreen(credits, onBack = { finish() }, open = ::openUrl) }
     }

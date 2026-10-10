@@ -91,12 +91,11 @@ class PackManager private constructor(private val app: DystopoApp) {
         val previous = activeName()
         PackSet.storeActive(roots(), name)
         app.reload()
-        // The contour disk cache is keyed by tile address only (T26 keys it on the DEM pack); drop it so
-        // a different DEM never shows another pack's contours.
-        val cleared = if (previous != name) app.tiles.clearContourCache() else 0
+        // No contour cache clear (T33): the cache directory is keyed on the DEM pack identity (T26), so another
+        // pack never sees these tiles, and clearing here deleted the tiles the new service's warm-up had just made.
         val camera = if (moveCamera) pack.info.bounds?.let { jumpTo(it) } else null
         Log.i(TAG, "activated pack $name (was $previous)")
-        return linkedMapOf("active" to activeName(), "previous" to previous, "contourTilesCleared" to cleared, "camera" to camera, "pack" to pack.json(true))
+        return linkedMapOf("active" to activeName(), "previous" to previous, "camera" to camera, "pack" to pack.json(true))
     }
 
     /** Moves the camera to show [b], if the map is up. Returns the camera, or null. */
@@ -130,7 +129,6 @@ class PackManager private constructor(private val app: DystopoApp) {
         if (wasActive) {
             // Nothing left with this name, so the reload picks the stored pack, the legacy one, or none.
             app.reload()
-            app.tiles.clearContourCache()
             app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h)) }
         }
         files.forEach { archiveCache.remove(it.path) }

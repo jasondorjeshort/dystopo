@@ -1,0 +1,55 @@
+package io.github.jasondorjeshort.dystopo.app
+
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class SettingsRoutesTest {
+    private fun ok(vararg p: Pair<String, Any?>) = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf(*p)))
+    private fun bad(vararg p: Pair<String, Any?>) = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf(*p)))
+
+    @Test
+    fun textScaleOutsideTheRangeIsRefusedNotClamped() {
+        assertEquals(1.6, ok("textScale" to "1.6").textScale)
+        assertEquals(3.0, ok("textScale" to 3).textScale)
+        assertTrue(bad("textScale" to "9").message.contains("between"))
+        bad("textScale" to "0.1")
+        bad("textScale" to "NaN")
+        bad("textScale" to "big")
+    }
+
+    @Test
+    fun unitsParseAndCanBeCleared() {
+        assertEquals(ContourUnits.METERS, ok("units" to "m").units)
+        assertEquals(ContourUnits.METERS, ok("units" to "metres").units)
+        assertEquals(ContourUnits.FEET, ok("units" to "ft").units)
+        val cleared = ok("units" to "unset")
+        assertTrue(cleared.unitsGiven)
+        assertNull(cleared.units)
+        assertFalse(ok("textScale" to "1").unitsGiven)
+        bad("units" to "furlongs")
+    }
+
+    @Test
+    fun warmupSwitchAndUnknownKeys() {
+        assertEquals(false, ok("warmup" to "0").warmup)
+        assertEquals(true, ok("warmup" to true).warmup)
+        bad("warmup" to "maybe")
+        bad("textscale" to "1.2")
+    }
+
+    @Test
+    fun mapRequestsAndDebugRequestsGoToDifferentPools() {
+        fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
+        for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png")) {
+            assertTrue(Routes.isMapRequest(req(p)), p)
+        }
+        for (p in listOf("/health", "/screenshot", "/stats", "/settings", "/features", "/tracks", "/camera")) {
+            assertFalse(Routes.isMapRequest(req(p)), p)
+        }
+    }
+}

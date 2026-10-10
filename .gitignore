@@ -42,3 +42,6 @@ Thumbs.db
 # Agent worktrees created by Claude Code
 .claude/worktrees/
 
+
+# Python
+__pycache__/

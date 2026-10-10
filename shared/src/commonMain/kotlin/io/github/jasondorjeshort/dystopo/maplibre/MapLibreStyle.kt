@@ -93,6 +93,12 @@ class MapLibreStyle(
         const val BASE_TEXT_SCALE = 1.35
         const val MIN_TEXT_SCALE = 0.5
         const val MAX_TEXT_SCALE = 3.0
+        /**
+         * Halo of contour labels, in devtool pixels. The label sits on its own contour line; with a 1.6 px halo
+         * the line showed through the gap after a narrow "1" (Noto Sans has a wide side bearing there), so
+         * "13800" read as "1·3800" on the phone. 2.6 px closes that gap.
+         */
+        const val CONTOUR_LABEL_HALO = 2.6
         const val FONT_REGULAR = "Noto Sans Regular"
         const val FONT_ITALIC = "Noto Sans Italic"
         const val FONT_MEDIUM = "Noto Sans Medium"
@@ -219,7 +225,7 @@ class MapLibreStyle(
             "text-max-angle" to CONTOUR_LABEL_MAX_ANGLE,
             "text-padding" to round1(4 * textScale),
         ),
-        "paint" to mapOf("text-color" to "#6b3f12", "text-halo-color" to paper, "text-halo-width" to round1(1.6 * scale / BASE_TEXT_SCALE)),
+        "paint" to mapOf("text-color" to "#6b3f12", "text-halo-color" to paper, "text-halo-width" to round1(CONTOUR_LABEL_HALO * scale / BASE_TEXT_SCALE)),
     )
 
     /**

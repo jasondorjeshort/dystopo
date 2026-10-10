@@ -23,10 +23,11 @@ class DystopoApp : Application() {
         MapLibre.getInstance(this)
         MapLibre.setConnected(true) // T38: every tile comes from our loopback server; MapLibre's own offline check would stop even those
         AppSettings.load(this)
+        map.onUnitsSeeded = { Thread({ reload() }, "units-reload").start() } // T33: a first fix seeded the units
         tiles = openTiles()
         io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)
-        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, handler = routes::handle)
+        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = routes::handle) // T33: debug routes get their own pool
         try {
             server.start()
         } catch (e: Exception) {
@@ -37,7 +38,12 @@ class DystopoApp : Application() {
     /** Pack roots: internal files dir first (adb push + run-as), then the app-specific external dir. */
     fun packRoots() = listOfNotNull(filesDir, getExternalFilesDir(null))
 
-    private fun openTiles() = TileService(PackSet.open(packRoots()), cacheDir, BuildConfig.SERVER_PORT)
+    private fun openTiles(): TileService {
+        val packs = PackSet.open(packRoots())
+        // T33: the first pack opened seeds the units preference (once; see AppSettings.seedUnits).
+        packs.dem?.header?.let { h -> AppSettings.seedUnits((h.minLat + h.maxLat) / 2, (h.minLon + h.maxLon) / 2, "pack:${packs.name ?: "default"}") }
+        return TileService(packs, cacheDir, BuildConfig.SERVER_PORT)
+    }
 
     /** Reopens the packs (after pushing new ones) and reloads the map style. */
     fun reload() {

@@ -31,6 +31,21 @@ object TrackExport {
         return "$safe-$date-${summary.id.take(8)}.gpx"
     }
 
+    /**
+     * [timed] moved later so its first fix comes [stepMs] after [after] (the time of the last fix the
+     * recorder kept), keeping every interval between fixes; unchanged when it already starts later or
+     * [after] is null. A replay keeps the file's old times, and the recorder drops a fix not newer than
+     * the last one it kept, so a replay into a recording that already holds a fix stamped "now" (started
+     * the same second, or a GPS fix just before) would record nothing after that point (the single-point
+     * replay of T31). Shifting the replay onto the recording's timeline keeps every point.
+     */
+    fun continueAfter(timed: List<Timed>, after: Long?, stepMs: Long = 1000): List<Timed> {
+        val first = timed.firstOrNull()?.fix?.time ?: return timed
+        if (after == null || first > after) return timed
+        val shift = after + stepMs - first
+        return timed.map { it.copy(fix = it.fix.copy(time = it.fix.time + shift)) }
+    }
+
     /** One fix of a replay, due [atMs] after the replay starts. */
     data class Timed(val atMs: Long, val fix: LocationFix)
 

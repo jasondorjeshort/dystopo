@@ -184,6 +184,14 @@ class MapLibreStyleTest {
     }
 
     @Test
+    fun contourLabelHaloHidesTheLineBetweenGlyphs() {
+        // With 1.6 px the contour line showed in the gap after a "1": "13800" read as "1·3800" on the phone.
+        val l = layers(MapLibreStyle(sources).json()).first { it["id"] == "contour-labels" }
+        val halo = ((l["paint"] as Map<*, *>)["text-halo-width"] as Number).toDouble()
+        assertTrue(halo >= 2.4, "contour label halo $halo")
+    }
+
+    @Test
     fun contourLabelsAreDenseFromZ12() {
         val l = layers(MapLibreStyle(sources).json()).first { it["id"] == "contour-labels" }
         val spacing = layout(l)["symbol-spacing"] as List<*>

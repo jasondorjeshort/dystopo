@@ -7,10 +7,14 @@
 # on the debug server) afterwards.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\android-push-pack.ps1 -Dem out\rainier-dem.pmtiles -Osm out\rainier-outdoors.pmtiles
+#
+# A DEM-only pack: -NoOsm (or -Osm none). Not -Osm '': Windows PowerShell drops an empty argument on its way
+# to `powershell -File`, so the script would see -Osm without a value and refuse to start.
 param(
     [string]$Dem = 'out\rainier-dem.pmtiles',
     [string]$Osm = 'out\rainier-outdoors.pmtiles',
     [switch]$NoGlyphs,
+    [switch]$NoOsm,
     [switch]$NoSprites,
     [string]$Package = 'io.github.jasondorjeshort.dystopo',
     [string]$Name = '',
@@ -43,6 +47,8 @@ function Adb {
 }
 
 function Resolve-RepoPath([string]$p) { if ([IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $repoRoot $p } }
+
+if ($NoOsm -or $Osm -in @('none', '-')) { $Osm = '' }
 
 $staging = '/data/local/tmp/dystopo'
 Adb shell "rm -rf $staging && mkdir -p $staging/packs" | Out-Null

@@ -42,9 +42,15 @@ class HttpError(val status: Int, message: String) : Exception(message)
  * (`Connection: close`), GET/POST/HEAD, Content-Length bodies. Enough for MapLibre's tile requests
  * and for `curl` through `adb forward`; nothing here is reachable from the network.
  *
+ * Three stages, so debug requests never queue behind tile work: [readers] threads read and parse
+ * request heads; a parsed request then runs on the tile pool (`threads` workers) when [isMapRequest]
+ * says it is one of MapLibre's (tiles, glyphs, sprites, the style), otherwise on a separate debug pool
+ * ([debugThreads] workers: `/health`, `/screenshot`, ...). Each stage has its own bounded queue.
+ *
  * Guards against misbehaving clients (`tools/android-probe.py` exercises each one):
- * - at most `threads` requests run at once and [maxQueued] connections wait; beyond that a new
- *   connection gets 503 from the accept thread without being read;
+ * - at most [readers] heads are read at once and [maxQueued] connections wait; beyond that a new
+ *   connection gets 503 from the accept thread without being read; a full tile or debug queue gets
+ *   503 from the reader;
  * - the request head (request line and headers) must arrive within [headTimeoutMs] in total and no
  *   single read may stall longer than [readTimeoutMs]: a slow-drip client gets 408 and frees its thread;
  * - lines are capped at [MAX_LINE] bytes (414 for the request line, 431 for a header), at most
@@ -57,11 +63,22 @@ class LocalServer(
     private val maxQueued: Int = 64,
     private val headTimeoutMs: Long = 5_000,
     private val readTimeoutMs: Int = 5_000,
+    private val readers: Int = 4,
+    private val debugThreads: Int = 3,
+    private val isMapRequest: (Request) -> Boolean = { true },
     private val handler: (Request) -> Response,
 ) {
+    private val readQueue = ArrayBlockingQueue<Runnable>(maxQueued)
+    private val readPool = ThreadPoolExecutor(readers, readers, 30, TimeUnit.SECONDS, readQueue) { r ->
+        Thread(r, "dystopo-http-read").apply { isDaemon = true }
+    }
     private val queue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val pool = ThreadPoolExecutor(threads, threads, 30, TimeUnit.SECONDS, queue) { r ->
         Thread(r, "dystopo-http").apply { isDaemon = true }
+    }
+    private val debugQueue = ArrayBlockingQueue<Runnable>(16)
+    private val debugPool = ThreadPoolExecutor(debugThreads, debugThreads, 30, TimeUnit.SECONDS, debugQueue) { r ->
+        Thread(r, "dystopo-http-debug").apply { isDaemon = true }
     }
     private var socket: ServerSocket? = null
     val requests = AtomicLong()
@@ -79,14 +96,18 @@ class LocalServer(
 
     fun lastDone(kind: String): Long = lastDone[kind] ?: 0L
 
-    /** Connections accepted but not yet picked up by a worker thread. */
-    val queued: Int get() = queue.size
+    /** Connections accepted but not yet read, plus map requests waiting for a tile worker. */
+    val queued: Int get() = readQueue.size + queue.size
 
     fun stats(): Map<String, Any?> = mapOf(
         "requests" to requests.get(),
         "active" to pool.activeCount,
         "queued" to queue.size,
         "maxQueued" to maxQueued,
+        "reading" to readPool.activeCount,
+        "readQueued" to readQueue.size,
+        "debugActive" to debugPool.activeCount,
+        "debugQueued" to debugQueue.size,
         "inFlight" to inFlight.filterValues { it.get() > 0 }.mapValues { it.value.get() },
         "rejected" to rejected.mapValues { it.value.get() },
     )
@@ -110,7 +131,7 @@ class LocalServer(
                     continue
                 }
                 try {
-                    pool.execute { serve(client) }
+                    readPool.execute { serve(client) }
                 } catch (e: RejectedExecutionException) {
                     // Queue full: answer from the accept thread without reading the request.
                     reject("busy")
@@ -128,50 +149,72 @@ class LocalServer(
 
     fun stop() {
         socket?.close()
+        readPool.shutdownNow()
         pool.shutdownNow()
+        debugPool.shutdownNow()
     }
 
+    /** Reader stage: parses the head, then hands the connection to the tile pool or the debug pool. */
     private fun serve(client: Socket) {
-        client.use { c ->
-            c.soTimeout = readTimeoutMs
-            val input = BufferedInputStream(c.getInputStream())
-            val out = c.getOutputStream()
-            val request = try {
-                parse(input, SystemClock.elapsedRealtime() + headTimeoutMs) ?: return
-            } catch (e: Exception) {
-                val error = when (e) {
-                    is HttpError -> e
-                    is SocketTimeoutException -> HttpError(408, "request timeout")
-                    else -> HttpError(400, "bad request: ${e.message}")
-                }
-                reject(
-                    when (error.status) {
-                        408 -> "timeout"
-                        413, 414, 431 -> "tooLarge"
-                        else -> "badRequest"
-                    },
-                )
-                runCatching { write(out, Response.text("${error.message}\n", error.status), head = false) }
-                return
-            }
-            requests.incrementAndGet()
-            val kind = request.path.trimStart('/').substringBefore('/')
-            val counter = inFlight.getOrPut(kind) { AtomicInteger() }
-            counter.incrementAndGet()
-            val response = try {
-                handler(request)
-            } catch (e: Exception) {
-                Log.w(TAG, "${request.method} ${request.path} failed", e)
-                Response.json(mapOf("error" to (e.message ?: e.javaClass.simpleName), "type" to e.javaClass.name), 500)
-            } finally {
-                counter.decrementAndGet()
-                lastDone[kind] = SystemClock.elapsedRealtime()
-            }
+        var handedOff = false
+        try {
+            val request = read(client) ?: return
+            val target = if (isMapRequest(request)) pool else debugPool
             try {
-                write(out, response, head = request.method == "HEAD")
-            } catch (_: IOException) {
-                // Client went away (MapLibre cancels requests for tiles that scrolled off screen).
+                target.execute { client.use { respond(it, request) } }
+                handedOff = true
+            } catch (e: RejectedExecutionException) {
+                reject("busy")
+                runCatching { write(client.getOutputStream(), Response.text("busy\n", 503), head = false) }
             }
+        } finally {
+            if (!handedOff) runCatching { client.close() }
+        }
+    }
+
+    /** Reads and parses one request; a bad or slow one is answered with its error and gives null. */
+    private fun read(c: Socket): Request? {
+        c.soTimeout = readTimeoutMs
+        val input = BufferedInputStream(c.getInputStream())
+        return try {
+            parse(input, SystemClock.elapsedRealtime() + headTimeoutMs)
+        } catch (e: Exception) {
+            val error = when (e) {
+                is HttpError -> e
+                is SocketTimeoutException -> HttpError(408, "request timeout")
+                else -> HttpError(400, "bad request: ${e.message}")
+            }
+            reject(
+                when (error.status) {
+                    408 -> "timeout"
+                    413, 414, 431 -> "tooLarge"
+                    else -> "badRequest"
+                },
+            )
+            runCatching { write(c.getOutputStream(), Response.text("${error.message}\n", error.status), head = false) }
+            null
+        }
+    }
+
+    /** Worker stage (tile or debug pool): runs the handler and writes the response. */
+    private fun respond(c: Socket, request: Request) {
+        requests.incrementAndGet()
+        val kind = request.path.trimStart('/').substringBefore('/')
+        val counter = inFlight.getOrPut(kind) { AtomicInteger() }
+        counter.incrementAndGet()
+        val response = try {
+            handler(request)
+        } catch (e: Exception) {
+            Log.w(TAG, "${request.method} ${request.path} failed", e)
+            Response.json(mapOf("error" to (e.message ?: e.javaClass.simpleName), "type" to e.javaClass.name), 500)
+        } finally {
+            counter.decrementAndGet()
+            lastDone[kind] = SystemClock.elapsedRealtime()
+        }
+        try {
+            write(c.getOutputStream(), response, head = request.method == "HEAD")
+        } catch (_: IOException) {
+            // Client went away (MapLibre cancels requests for tiles that scrolled off screen).
         }
     }
 

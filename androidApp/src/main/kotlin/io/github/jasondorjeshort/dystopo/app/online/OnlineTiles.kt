@@ -35,7 +35,7 @@ class OnlineTiles(
     private val decoder: ImageDecoder,
     /** The contour disk-cache version without the pack identity (online contours do not depend on the pack). */
     private val contourVersion: String,
-    private val contourOptions: ContourTileOptions = ContourTileOptions(),
+    private val contourOptions: ContourTileOptions = ContourTileOptions(units = io.github.jasondorjeshort.dystopo.app.AppSettings.units), // T33: units preference
 ) {
     // ---- coverage ----
 

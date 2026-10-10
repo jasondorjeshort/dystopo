@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MapLibre reads tiles, glyphs and the style from the app's own loopback server over plain HTTP. -->
+<!-- MapLibre reads tiles, glyphs and the style from the app's own loopback server over plain HTTP. Debug builds
+     add the emulator's host (10.0.2.2) in src/debug/res/xml/network_security_config.xml. -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>
-        <domain includeSubdomains="false">10.0.2.2</domain><!-- the emulator's host: pack downloads from devtool serve -->
     </domain-config>
 </network-security-config>

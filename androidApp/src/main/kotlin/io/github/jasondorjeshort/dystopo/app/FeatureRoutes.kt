@@ -14,9 +14,11 @@ import kotlin.math.max
 /**
  * Debug routes (debug builds) that say what the map drew, for `tools/android-check.py`:
  *
- * - `GET /features`: how many features each style layer rendered in the current viewport, from MapLibre's
- *   `queryRenderedFeatures`; the device counterpart of the per-layer counts `tools/demo-check.py` reads from
- *   MapLibre GL JS. Symbol layers count placed symbols.
+ * - `GET /features` (also `GET /labels`, the former T25 route merged here): how many features each style layer
+ *   rendered in the current viewport, from MapLibre's `queryRenderedFeatures`; the device counterpart of the
+ *   per-layer counts `tools/demo-check.py` reads from MapLibre GL JS. Symbol layers count placed symbols, and
+ *   `symbolLayers` / `symbolsRendered` sum them up (a symbol layer with zero placed where its source has
+ *   features: glyphs missing, collisions, a bad expression).
  * - `GET /features/text`: whether placed labels actually reached the pixels. Takes a map snapshot, sets
  *   `text-opacity` 0 on every symbol layer, takes a second snapshot, restores the layers, takes a third, and
  *   counts the pixels that differ only in the second (`unstablePixels`: first and third differ, e.g. late tiles). Labels that are placed (non-zero counts above) but change no pixels were not drawn.
@@ -33,9 +35,16 @@ class FeatureRoutes(private val app: DystopoApp) {
         val box = RectF(0f, 0f, view.width.toFloat(), view.height.toFloat())
         val started = System.nanoTime()
         val layers = LinkedHashMap<String, Int>()
-        for (layer in style.layers) layers[layer.id] = map.queryRenderedFeatures(box, layer.id).size
+        val symbols = LinkedHashMap<String, Int>()
+        for (layer in style.layers) {
+            val n = map.queryRenderedFeatures(box, layer.id).size
+            layers[layer.id] = n
+            if (layer is SymbolLayer) symbols[layer.id] = n
+        }
         mapOf(
             "ready" to true, "width" to view.width, "height" to view.height, "layers" to layers,
+            // What T25's /labels reported (that route is now this one): placed symbols per symbol layer.
+            "symbolLayers" to symbols, "symbolsRendered" to symbols.values.sum(), "textScale" to AppSettings.textScale,
             "queryMs" to round1((System.nanoTime() - started) / 1e6),
         )
     }

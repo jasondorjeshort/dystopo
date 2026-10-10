@@ -60,7 +60,11 @@ private val Line = Color(0xFFE2D8C6)
 fun PacksOverlay() {
     Box(Modifier.fillMaxSize()) {
         if (!PacksUi.visible) {
-            Chip("Packs", Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) { PacksUi.visible = true }
+            // T33: the top-right chips in one row (Settings, Packs); track controls sit in the row below (TrackControls).
+            Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Chip("Settings") { io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = !io.github.jasondorjeshort.dystopo.app.SettingsUi.visible }
+                Chip("Packs") { PacksUi.visible = true }
+            }
         } else {
             BackHandler { PacksUi.visible = false }
             PacksScreen(PackManager.get()) { PacksUi.visible = false }

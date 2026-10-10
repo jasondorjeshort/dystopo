@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.tracking
 
+import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -102,7 +104,7 @@ private fun BoxScope.Controls() {
             Panel {
                 BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                 BasicText(
-                    String.format(Locale.US, "%.2f km  %d pts  %s", ui.distanceM / 1000, ui.points, duration(ui.durationS)) +
+                    UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)) +
                         if (ui.paused) "  PAUSED" else "",
                     style = TextStyle(color = if (ui.paused) RecordRed else Ink, fontSize = 13.sp),
                 )
@@ -119,7 +121,7 @@ private fun BoxScope.Controls() {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(ui.tracks, key = { it.id }) { t ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val km = ui.distances[t.id]?.let { String.format(Locale.US, "  %.2f km", it / 1000) } ?: ""
+                            val km = ui.distances[t.id]?.let { "  " + UnitFormat.distance(it, AppSettings.units) } ?: ""
                             BasicText(
                                 (if (t.id == ui.shownId) "● " else "") + t.name + "\n" + t.points + " pts" + km + if (t.recording) "  recording" else "",
                                 style = TextStyle(color = Ink, fontSize = 13.sp),
@@ -189,7 +191,7 @@ private fun WaypointSheet(tracking: Tracking, w: io.github.jasondorjeshort.dysto
         )
         val wp = w.waypoint
         BasicText(
-            String.format(Locale.US, "%.5f, %.5f", wp.lat, wp.lon) + (wp.ele?.let { String.format(Locale.US, "  %.0f m", it) } ?: ""),
+            String.format(Locale.US, "%.5f, %.5f", wp.lat, wp.lon) + (wp.ele?.let { "  " + UnitFormat.elevation(it, AppSettings.units) } ?: ""),
             style = TextStyle(color = Ink, fontSize = 11.sp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -209,10 +211,10 @@ private fun ProfilePanel(tracking: Tracking, p: Tracking.ProfileView) {
         }
         val s = p.stats
         BasicText(
-            String.format(Locale.US, "%.2f km", s.distanceM / 1000) +
-                (s.ascentM?.let { String.format(Locale.US, "  +%.0f m", it) } ?: "") +
-                (s.descentM?.let { String.format(Locale.US, " / -%.0f m", it) } ?: "") +
-                (if (s.minEleM != null && s.maxEleM != null) String.format(Locale.US, "  %.0f to %.0f m", s.minEleM, s.maxEleM) else "") +
+            UnitFormat.distance(s.distanceM, AppSettings.units) +
+                (s.ascentM?.let { "  +" + UnitFormat.elevation(it, AppSettings.units) } ?: "") +
+                (s.descentM?.let { " / -" + UnitFormat.elevation(it, AppSettings.units) } ?: "") +
+                (if (s.minEleM != null && s.maxEleM != null) "  ${UnitFormat.elevationValue(s.minEleM!!, AppSettings.units)} to ${UnitFormat.elevation(s.maxEleM!!, AppSettings.units)}" else "") +
                 (if (s.segments > 1) "  ${s.segments} segments" else ""),
             style = TextStyle(color = Ink, fontSize = 12.sp),
         )
@@ -247,8 +249,8 @@ private fun ProfilePanel(tracking: Tracking, p: Tracking.ProfileView) {
             drawLine(Ink.copy(alpha = 0.3f), Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            BasicText(String.format(Locale.US, "0  |  %.0f m low", lo), style = TextStyle(color = Ink, fontSize = 10.sp))
-            BasicText(String.format(Locale.US, "%.0f m high  |  %.2f km", hi, total / 1000), style = TextStyle(color = Ink, fontSize = 10.sp))
+            BasicText("0  |  " + UnitFormat.elevation(lo.toDouble(), AppSettings.units) + " low", style = TextStyle(color = Ink, fontSize = 10.sp))
+            BasicText(UnitFormat.elevation(hi.toDouble(), AppSettings.units) + " high  |  " + UnitFormat.distance(total.toDouble(), AppSettings.units), style = TextStyle(color = Ink, fontSize = 10.sp))
         }
     }
 }

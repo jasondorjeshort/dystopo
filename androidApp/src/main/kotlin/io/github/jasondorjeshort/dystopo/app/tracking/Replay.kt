@@ -36,18 +36,17 @@ class Replay(private val tracking: Tracking) {
      * Replays keep the file's (old) times, and the recorder drops a fix that is not newer than the
      * last one it kept. So replaying into a track that already holds a newer fix (a GPS or
      * `POST /location` fix stamped "now", e.g. when recording started a moment before the replay)
-     * records nothing after that point: the single-point track seen once in T31. The result then
-     * carries a `warning`; record into a fresh track with `record=` (source `injected`) instead.
+     * would record nothing after that point: the single-point track seen once in T31. So the replay is
+     * moved onto the recording's timeline ([TrackExport.continueAfter], T33): its first fix comes one
+     * second after the last kept one, intervals unchanged; the result reports `shiftedMs`.
      */
     fun start(gpx: String, rate: Double, accuracyM: Double = 5.0): Map<String, Any?> {
         val doc = Gpx.parse(gpx)
-        val timed = TrackExport.replay(doc.tracks, rate, accuracyM)
-        require(timed.isNotEmpty()) { "the GPX has no track points" }
+        val original = TrackExport.replay(doc.tracks, rate, accuracyM)
+        require(original.isNotEmpty()) { "the GPX has no track points" }
         val last = tracking.call { tracking.recorder.lastAcceptedTime }
-        val warning = if (last != null && last >= timed.first().fix.time) {
-            "the recording already holds a fix newer than this replay's first (${timed.first().fix.time} <= $last): " +
-                "the recorder will drop the replayed fixes as out of order; use record=<name> to replay into a fresh track"
-        } else null
+        val timed = TrackExport.continueAfter(original, last)
+        val shiftedMs = timed.first().fix.time - original.first().fix.time
         cancel()
         total = timed.size
         sent = 0
@@ -76,7 +75,7 @@ class Replay(private val tracking: Tracking) {
         }, "dystopo-replay").apply { isDaemon = true }
         thread = t
         t.start()
-        return if (warning == null) json() else json() + mapOf("warning" to warning)
+        return json() + mapOf("shiftedMs" to shiftedMs)
     }
 
     fun cancel() {

@@ -75,11 +75,29 @@ class MapController {
     @Volatile var injectedLocation = false
         private set
 
+    /** MapLibre's `Map::isFullyLoaded` (style, every source and every visible tile loaded), sampled after each frame. */
+    @Volatile var fullyLoaded = false
+        private set
+    @Volatile private var lastFrameAt = 0L
+    @Volatile private var lastNotLoadedAt = 0L
+    @Volatile private var lastRepaintKickAt = 0L
+    @Volatile var repaintKicks = 0L
+        private set
+    @Volatile var idleEvents = 0L
+        private set
+
     /**
-     * Why the map is not idle right now; empty when it is. The map is idle when the style is loaded,
-     * no camera transition runs, no tile request is pending, the last frame was fully rendered, and
-     * all of that has held for [QUIET_MS]. MapLibre's own idle event is not used: on the emulator it
-     * fires rarely while the renderer keeps drawing frames at a few fps.
+     * Why the map is not idle right now; empty when it is. Idle means every visible tile of every source
+     * is loaded and drawn and nothing changes any more:
+     * - the style is loaded, no camera transition runs, no tile request is pending or queued at the server;
+     * - MapLibre's own `isFullyLoaded` is true (`notFullyLoaded`) and the last frame was a full one
+     *   (`frameNotFullyRendered`);
+     * - no frame was drawn in the last [QUIET_MS] unless MapLibre itself declared idle after it
+     *   (`rendering`: symbol fades, hillshade preparation and placement draw extra frames after the
+     *   tiles arrive; a screenshot then would catch labels or hillshade half drawn);
+     * - and all of that has held for [QUIET_MS] (`settling`).
+     * MapLibre's idle event alone is not enough: it can stay unfired for long stretches, so it only
+     * shortens the `rendering` wait. `/screenshot` adds a pixel check on top (see [stableSnapshot]).
      */
     fun idleBlockers(now: Long = SystemClock.elapsedRealtime()): List<String> {
         val reasons = ArrayList<String>()
@@ -88,10 +106,25 @@ class MapController {
         if (animating) reasons += "animating"
         val pending = pendingTiles()
         if (pending > 0) reasons += "pendingTiles"
+        if (!fullyLoaded) reasons += "notFullyLoaded"
         if (!lastFrameFully) reasons += "frameNotFullyRendered"
-        val busyAt = maxOf(lastCameraAt, lastTileAt(), lastPartialFrameAt)
+        if (now - lastFrameAt < QUIET_MS && !mapLibreIdle) reasons += "rendering"
+        val busyAt = maxOf(lastCameraAt, lastTileAt(), lastPartialFrameAt, lastNotLoadedAt)
         if (reasons.isEmpty() && now - busyAt < QUIET_MS) reasons += "settling"
+        if ((!fullyLoaded || !lastFrameFully) && pending == 0 && !animating && now - lastFrameAt > STUCK_MS) kickRepaint(now)
         return reasons
+    }
+
+    /**
+     * The renderer reported a partial frame and then stopped drawing (seen after first launch: a minute of
+     * `frameNotFullyRendered` until the first camera move). Nothing is pending at the server, so ask
+     * MapLibre for one more frame; it re-checks its tiles and reports the frame as full once they are.
+     */
+    private fun kickRepaint(now: Long) {
+        if (now - lastRepaintKickAt < STUCK_MS) return
+        lastRepaintKickAt = now
+        repaintKicks++
+        main.post { map?.triggerRepaint() }
     }
 
     val idle: Boolean get() = idleBlockers().isEmpty()
@@ -104,13 +137,34 @@ class MapController {
             "notIdleBecause" to blockers,
             "pendingTiles" to pendingTiles(),
             "animating" to animating,
+            "fullyLoaded" to fullyLoaded,
             "lastFrameFully" to lastFrameFully,
             "msSinceCamera" to if (lastCameraAt == 0L) null else now - lastCameraAt,
             "msSinceTile" to lastTileAt().takeIf { it > 0 }?.let { now - it },
+            "msSinceFrame" to if (lastFrameAt == 0L) null else now - lastFrameAt,
             "msSincePartialFrame" to if (lastPartialFrameAt == 0L) null else now - lastPartialFrameAt,
             "quietMs" to QUIET_MS,
             "mapLibreIdle" to mapLibreIdle,
+            "mapLibreIdleEvents" to idleEvents,
+            "repaintKicks" to repaintKicks,
+            "lastScreenshot" to lastScreenshot,
         )
+    }
+
+    /** How the last `/screenshot` went: idle reached, pixel-stable, comparison rounds, ms. */
+    @Volatile var lastScreenshot: Map<String, Any?>? = null
+
+    /** MapLibre's `NativeMap.isFullyLoaded` (the interface is package-private, so through reflection); null if unavailable. */
+    private fun nativeFullyLoaded(view: MapView): Boolean? = runCatching {
+        val native = NATIVE_FIELD?.get(view) ?: return null
+        val method = native.javaClass.getMethod("isFullyLoaded").apply { isAccessible = true }
+        method.invoke(native) as Boolean
+    }.getOrNull()
+
+    private fun sampleLoaded(view: MapView, fallback: Boolean) {
+        val loaded = nativeFullyLoaded(view) ?: fallback
+        fullyLoaded = loaded
+        if (!loaded) lastNotLoadedAt = SystemClock.elapsedRealtime()
     }
 
     fun attach(view: MapView, styleJson: () -> String, onStyle: (Style) -> Unit = {}) {
@@ -118,11 +172,15 @@ class MapController {
         view.addOnWillStartRenderingFrameListener { mapLibreIdle = false }
         view.addOnDidFinishRenderingFrameListener { fully, _, _ ->
             framesRendered++
+            lastFrameAt = SystemClock.elapsedRealtime()
             lastFrameFully = fully
-            if (!fully) lastPartialFrameAt = SystemClock.elapsedRealtime()
+            if (!fully) lastPartialFrameAt = lastFrameAt
+            sampleLoaded(view, fully)
         }
         view.addOnDidBecomeIdleListener {
+            idleEvents++
             mapLibreIdle = true
+            sampleLoaded(view, true)
         }
         view.addOnDidFailLoadingMapListener { styleError = it }
         view.getMapAsync { m ->
@@ -141,6 +199,8 @@ class MapController {
         val m = map ?: return
         styleLoaded = false
         styleError = null
+        fullyLoaded = false
+        mapLibreIdle = false
         m.setStyle(Style.Builder().fromJson(json)) { style ->
             styleLoaded = true
             enableLocation(style)
@@ -182,6 +242,8 @@ class MapController {
             val target = LatLng(lat ?: c.target?.latitude ?: 0.0, lon ?: c.target?.longitude ?: 0.0)
             lastCameraAt = SystemClock.elapsedRealtime()
             lastFrameFully = false // until MapLibre renders the new view
+            fullyLoaded = false
+            mapLibreIdle = false
             m.moveCamera(
                 CameraUpdateFactory.newCameraPosition(
                     CameraPosition.Builder().target(target).zoom(zoom ?: c.zoom).bearing(bearing ?: c.bearing).tilt(tilt ?: c.tilt).build(),
@@ -202,6 +264,72 @@ class MapController {
         }
         return idle
     }
+
+    /** The outcome of [stableSnapshot]. */
+    class Stable(val bitmap: Bitmap, val idle: Boolean, val stable: Boolean, val rounds: Int, val changedShare: Double, val ms: Long) {
+        fun json(): Map<String, Any?> = mapOf(
+            "idle" to idle, "stable" to stable, "rounds" to rounds, "changedShare" to round4(changedShare), "ms" to ms,
+        )
+    }
+
+    /**
+     * Waits for [idle], then proves it with pixels: snapshots the map, asks for one more frame, waits for idle
+     * again and snapshots once more, until two snapshots in a row agree (at most [STABLE_SHARE] of the sampled
+     * pixels differ) or [timeoutMs] runs out. Returns the last snapshot. This is what `/screenshot` uses by
+     * default: an idle flag alone once let a half-loaded map through (no hillshade, no labels).
+     */
+    fun stableSnapshot(timeoutMs: Long, snapshotTimeoutMs: Long = 10_000): Stable {
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + timeoutMs
+        var idleNow = awaitIdle(timeoutMs)
+        var previous = mapSnapshot(snapshotTimeoutMs)
+        var rounds = 0
+        var share = 1.0
+        while (true) {
+            rounds++
+            val before = framesRendered
+            onMain { map?.triggerRepaint() }
+            val frameDeadline = SystemClock.elapsedRealtime() + 1_000
+            while (framesRendered == before && SystemClock.elapsedRealtime() < frameDeadline) Thread.sleep(20)
+            Thread.sleep(STABLE_GAP_MS)
+            idleNow = awaitIdle((deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+            val next = mapSnapshot(snapshotTimeoutMs)
+            share = changedShare(previous, next)
+            previous.recycle()
+            previous = next
+            if ((idleNow && share <= STABLE_SHARE) || SystemClock.elapsedRealtime() >= deadline || rounds >= MAX_STABLE_ROUNDS) break
+        }
+        val stable = idleNow && share <= STABLE_SHARE
+        return Stable(previous, idleNow, stable, rounds, share, SystemClock.elapsedRealtime() - started)
+    }
+
+    /** Share of a grid of sampled pixels whose largest channel difference exceeds 32 (antialiasing noise stays below). */
+    private fun changedShare(a: Bitmap, b: Bitmap): Double {
+        if (a.width != b.width || a.height != b.height) return 1.0
+        val step = maxOf(1, minOf(a.width, a.height) / 200)
+        var n = 0
+        var changed = 0
+        var y = 0
+        while (y < a.height) {
+            var x = 0
+            while (x < a.width) {
+                val p = a.getPixel(x, y)
+                val q = b.getPixel(x, y)
+                n++
+                if (p != q && maxOf(
+                        Math.abs(android.graphics.Color.red(p) - android.graphics.Color.red(q)),
+                        Math.abs(android.graphics.Color.green(p) - android.graphics.Color.green(q)),
+                        Math.abs(android.graphics.Color.blue(p) - android.graphics.Color.blue(q)),
+                    ) > 32
+                ) changed++
+                x += step
+            }
+            y += step
+        }
+        return if (n == 0) 0.0 else changed.toDouble() / n
+    }
+
+    fun pngOf(bmp: Bitmap): ByteArray = png(bmp)
 
     /** PNG of the map surface (MapLibre snapshot: the GL content only, no Compose overlay). */
     fun mapSnapshotPng(timeoutMs: Long = 10_000): ByteArray = png(mapSnapshot(timeoutMs))
@@ -305,8 +433,12 @@ class MapController {
         main.post { startDeviceLocation() }
     }
 
+    /** Called (main thread) when a fix seeded the units preference and they changed; set by [DystopoApp]. */
+    @Volatile var onUnitsSeeded: () -> Unit = {}
+
     private fun onFix(loc: Location) {
         lastLocation = loc
+        if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
         if (puck.installed) puck.show(loc)
     }
 
@@ -381,5 +513,21 @@ class MapController {
     companion object {
         /** How long everything must stay settled before the map counts as idle. */
         const val QUIET_MS = 500L
+
+        /** A partial frame with nothing pending and no new frame for this long gets a repaint ([kickRepaint]). */
+        const val STUCK_MS = 2_000L
+
+        /** Pause between the two snapshots of [stableSnapshot] (symbol fades take 300 ms). */
+        const val STABLE_GAP_MS = 350L
+
+        /** Two snapshots agree when at most this share of the sampled pixels differ. */
+        const val STABLE_SHARE = 0.002
+        const val MAX_STABLE_ROUNDS = 8
+
+        private val NATIVE_FIELD = runCatching {
+            MapView::class.java.getDeclaredField("nativeMapView").apply { isAccessible = true }
+        }.getOrNull()
+
+        private fun round4(d: Double) = Math.round(d * 10_000) / 10_000.0
     }
 }

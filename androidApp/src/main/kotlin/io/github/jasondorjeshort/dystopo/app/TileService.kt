@@ -113,7 +113,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     val contourWaits = AtomicLong()
     val demSynthesis = Timing()
 
-    private val contourOptions = ContourTileOptions()
+    private val contourOptions = ContourTileOptions(units = AppSettings.units) // T33: the units preference
 
     /** The DEM pack's identity, part of the contour cache key and of the tile URLs in the style. */
     val demIdentity: String = packs.dem?.file?.let(::packIdentity) ?: "none"
@@ -183,7 +183,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         "cacheVersion" to contourCacheVersion,
         "demPack" to packs.dem?.file?.let { mapOf("bytes" to it.length(), "mtime" to it.lastModified(), "identity" to demIdentity) },
         "staleCacheFilesDeleted" to staleCacheFilesDeleted.get(),
-        "warmup" to (warmup?.json()?.plus("generation" to warmupGen.json()) ?: mapOf("state" to "off")),
+        "warmup" to (warmup?.json()?.plus("generation" to warmupGen.json()) ?: mapOf("state" to "off", "enabled" to AppSettings.warmup)),
     )
 
     fun style(): String {
@@ -202,7 +202,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 demTiles = "$base/dem/{z}/{x}/{y}.png?v=$v",
                 demMinZoom = demLo,
                 demMaxZoom = demHi,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$v",
+                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$v-${contourOptions.units.symbol}", // T33: unit in the URL
                 // Contour tile z has the levels of DEM zoom z+1 (512-px vector tiles), and overzoomed DEM is fine
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
                 contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
@@ -214,6 +214,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 attribution = attribution,
                 sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
             ),
+            units = contourOptions.units, // T33: labels and peak elevations in the contour unit
             textScale = AppSettings.textScale,
         ).json()
     }
@@ -336,6 +337,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
      * [close]d. Timings go to [warmupGen], not [contourGen].
      */
     private fun startWarmup(): ContourWarmupProgress? {
+        if (!AppSettings.warmup) return null // T33: settings switch
         val header = packs.dem?.header ?: return null
         if (pyramid == null || header.minLon >= header.maxLon || header.minLat >= header.maxLat) return null
         val bounds = BoundingBox(header.minLon, header.minLat, header.maxLon, header.maxLat)

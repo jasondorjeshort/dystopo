@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.tracking
 
+import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -61,7 +63,7 @@ class TrackingService : Service() {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE,
         )
-        val text = String.format(Locale.US, "%.2f km, %d points", state.distanceM / 1000, state.points)
+        val text = UnitFormat.distance(state.distanceM, AppSettings.units) + String.format(Locale.US, ", %d points", state.points)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("Recording ${state.activeName ?: "track"}")
