@@ -34,6 +34,13 @@ data class MapLibreSources(
      * icons and labels collide; without one they fall back to circle discs that never collide.
      */
     val sprite: String? = null,
+    /**
+     * T47: hillshade and slope raster tiles generated on the device ([io.github.jasondorjeshort.dystopo.tiles.ShadeTiles],
+     * 256 px PNG), used when [MapOptions.shade] asks for them; null keeps MapLibre's own hillshade only.
+     */
+    val shadeTiles: String? = null,
+    val shadeMinZoom: Int = 0,
+    val shadeMaxZoom: Int = 16,
 )
 
 /**
@@ -79,12 +86,15 @@ class MapLibreStyle(
     private val units: ContourUnits = ContourUnits.FEET,
     textScale: Double = 1.0,
     private val zoomOffset: Double = -1.0,
+    /** T47: the user's map options (layer toggles, hillshade, slope, label density, night); defaults draw the map as before. */
+    private val options: MapOptions = MapOptions(),
 ) {
     /** The user's multiplier after clamping. */
     val textScale: Double = clampTextScale(textScale)
     private val scale = BASE_TEXT_SCALE * this.textScale
-    private val paper = "#f6f1e4"
-    private val contourColor = "#8c5523"
+    private val night = options.night
+    private val paper = hex("#f6f1e4")
+    private val contourColor = hex("#8c5523")
     private val regular = listOf(FONT_REGULAR)
     private val italic = listOf(FONT_ITALIC)
 
@@ -144,19 +154,25 @@ class MapLibreStyle(
         val markers = ArrayList<Map<String, Any?>>() // marker discs, above all lines
         val symbols = ArrayList<Map<String, Any?>>() // labels in the devtool's priority order (first = most important)
         lower += mapOf("id" to "background", "type" to "background", "paint" to mapOf("background-color" to paper))
-        lower += mapOf(
-            "id" to "hillshade", "type" to "hillshade", "source" to "dem",
-            "paint" to mapOf(
-                "hillshade-exaggeration" to 0.55,
-                "hillshade-shadow-color" to "#4a3f36",
-                "hillshade-highlight-color" to "#fffdf7",
-                "hillshade-accent-color" to "#6b5a4d",
-            ),
-        )
+        if (options.nativeHillshade) {
+            lower += mapOf(
+                "id" to "hillshade", "type" to "hillshade", "source" to "dem",
+                "paint" to mapOf(
+                    // Night: dimmed relief, dark shadows and almost no highlight on the dark base.
+                    "hillshade-exaggeration" to if (night) 0.4 else 0.55,
+                    "hillshade-shadow-color" to if (night) "#000000" else "#4a3f36",
+                    "hillshade-highlight-color" to if (night) "#3a3631" else "#fffdf7",
+                    "hillshade-accent-color" to if (night) "#1a1714" else "#6b5a4d",
+                ),
+            )
+        }
+        val shade = shadeLayer()
         var contoursPlaced = false
         for (layer in style.layers) {
+            if (!options.showsLayer(layer.id)) continue
             when (layer) {
                 is StyleLayer.Contours -> {
+                    shade?.let { lower += it } // over the land cover, under contours, water and lines
                     lower += contourLines()
                     contoursPlaced = true
                 }
@@ -167,7 +183,10 @@ class MapLibreStyle(
                 }
             }
         }
-        if (!contoursPlaced) lower += contourLines()
+        if (!contoursPlaced) {
+            shade?.let { lower += it }
+            lower += contourLines()
+        }
         val layers = ArrayList<Map<String, Any?>>()
         layers += lower
         layers += markers
@@ -184,6 +203,12 @@ class MapLibreStyle(
             "type" to "vector", "tiles" to listOf(sources.contourTiles),
             "minzoom" to sources.contourMinZoom, "maxzoom" to sources.contourMaxZoom,
         )
+        if (shade != null) {
+            src["shade"] = mapOf(
+                "type" to "raster", "tiles" to listOf(sources.shadeTiles), "tileSize" to 256,
+                "minzoom" to sources.shadeMinZoom, "maxzoom" to sources.shadeMaxZoom,
+            )
+        }
         if (sources.osmTiles != null) {
             src["osm"] = mapOf(
                 "type" to "vector", "tiles" to listOf(sources.osmTiles),
@@ -194,6 +219,15 @@ class MapLibreStyle(
         doc["sources"] = src
         doc["layers"] = layers
         return doc
+    }
+
+    /** The generated hillshade/slope raster layer, when the options need one and the server provides the tiles. */
+    private fun shadeLayer(): Map<String, Any?>? {
+        if (options.shade == null || sources.shadeTiles == null) return null
+        return mapOf(
+            "id" to "shade", "type" to "raster", "source" to "shade",
+            "paint" to mapOf("raster-fade-duration" to 0, "raster-resampling" to "linear"),
+        )
     }
 
     // ---- contours ----
@@ -225,7 +259,7 @@ class MapLibreStyle(
             "text-max-angle" to CONTOUR_LABEL_MAX_ANGLE,
             "text-padding" to round1(4 * textScale),
         ),
-        "paint" to mapOf("text-color" to "#6b3f12", "text-halo-color" to paper, "text-halo-width" to round1(CONTOUR_LABEL_HALO * scale / BASE_TEXT_SCALE)),
+        "paint" to mapOf("text-color" to hex("#6b3f12"), "text-halo-color" to paper, "text-halo-width" to round1(CONTOUR_LABEL_HALO * scale / BASE_TEXT_SCALE)),
     )
 
     /**
@@ -252,8 +286,11 @@ class MapLibreStyle(
      * than repeating one; the spacing does not grow with the text scale, which only cost labels
      * (1.6 at 192 px: 2 of 16). Below z11 (index lines far apart and long) the spacing opens up again.
      */
-    private fun contourLabelSpacing(): Any? =
-        listOf("interpolate", listOf("linear"), listOf("zoom"), 10, 260, 12, 120)
+    private fun contourLabelSpacing(): Any? {
+        val k = options.contourLabels.spacingFactor // T47: label density
+        if (k == 1.0) return listOf("interpolate", listOf("linear"), listOf("zoom"), 10, 260, 12, 120)
+        return listOf("interpolate", listOf("linear"), listOf("zoom"), 10, round1(260 * k), 12, round1(120 * k))
+    }
 
     // ---- OSM layers ----
 
@@ -338,7 +375,7 @@ class MapLibreStyle(
                 this["paint"] = mapOf(
                     "circle-color" to color(marker.color),
                     "circle-radius" to radius,
-                    "circle-stroke-color" to "#fffdf7",
+                    "circle-stroke-color" to hex("#fffdf7"),
                     "circle-stroke-width" to 1.2,
                 )
             }
@@ -509,12 +546,65 @@ class MapLibreStyle(
     private fun anyHas(keys: List<String>): List<Any?> =
         if (keys.size == 1) listOf("has", keys[0]) else listOf("any") + keys.map { listOf("has", it) }
 
-    private fun color(c: StyleColor): String =
-        if (c.a == 255) "rgb(${c.r},${c.g},${c.b})" else "rgba(${c.r},${c.g},${c.b},${fmt(c.a / 255.0)})"
+    private fun color(c: StyleColor): String {
+        val (r, g, b) = if (night) NightColors.of(c.r, c.g, c.b) else Triple(c.r, c.g, c.b)
+        return if (c.a == 255) "rgb($r,$g,$b)" else "rgba($r,$g,$b,${fmt(c.a / 255.0)})"
+    }
+
+    /** A `#rrggbb` colour, through the night transform when night mode is on. */
+    private fun hex(h: String): String {
+        if (!night) return h
+        val v = h.removePrefix("#").toInt(16)
+        val (r, g, b) = NightColors.of((v shr 16) and 0xFF, (v shr 8) and 0xFF, v and 0xFF)
+        return "rgb($r,$g,$b)"
+    }
 
     private fun round1(d: Double): Double = kotlin.math.round(d * 10) / 10
 
     private fun round3(d: Double): Double = kotlin.math.round(d * 1000) / 1000
 
     private fun fmt(d: Double): String = ((d * 1000).toLong() / 1000.0).toString()
+}
+
+/**
+ * Night mode colours (T47): the lightness of every style colour is turned over and compressed, hue kept and
+ * saturation eased, so the light paper becomes a dark base, dark text becomes light text with dark halos,
+ * and water and forest keep their hues at night brightness.
+ */
+object NightColors {
+    /** Lightness the old white gets: the darkest the base goes. */
+    const val FLOOR = 0.08
+    const val RANGE = 0.78
+
+    fun of(r: Int, g: Int, b: Int): Triple<Int, Int, Int> {
+        val rf = r / 255.0
+        val gf = g / 255.0
+        val bf = b / 255.0
+        val max = maxOf(rf, gf, bf)
+        val min = minOf(rf, gf, bf)
+        val l = (max + min) / 2
+        val d = max - min
+        val s = if (d == 0.0) 0.0 else d / (1 - kotlin.math.abs(2 * l - 1))
+        val h = when {
+            d == 0.0 -> 0.0
+            max == rf -> ((gf - bf) / d).mod(6.0)
+            max == gf -> (bf - rf) / d + 2
+            else -> (rf - gf) / d + 4
+        } * 60
+        val l2 = FLOOR + RANGE * (1 - l)
+        val s2 = (s * 0.75).coerceIn(0.0, 1.0)
+        val c = (1 - kotlin.math.abs(2 * l2 - 1)) * s2
+        val x = c * (1 - kotlin.math.abs((h / 60).mod(2.0) - 1))
+        val m = l2 - c / 2
+        val (r1, g1, b1) = when {
+            h < 60 -> Triple(c, x, 0.0)
+            h < 120 -> Triple(x, c, 0.0)
+            h < 180 -> Triple(0.0, c, x)
+            h < 240 -> Triple(0.0, x, c)
+            h < 300 -> Triple(x, 0.0, c)
+            else -> Triple(c, 0.0, x)
+        }
+        fun ch(v: Double) = kotlin.math.round((v + m) * 255).toInt().coerceIn(0, 255)
+        return Triple(ch(r1), ch(g1), ch(b1))
+    }
 }

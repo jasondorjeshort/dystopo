@@ -46,6 +46,9 @@ data class ContourTileOptions(
     val halfResolutionBelow: Int = 13,
     /** Tiles of a zoom below this trace a grid two DEM zooms coarser than the screen (4 px per cell). */
     val quarterResolutionBelow: Int = 10,
+    /** T47: a fixed contour interval in [units] for tiles of zoom [intervalFromZoom] and up; null keeps the [ContourStyle] table. */
+    val interval: Double? = null,
+    val intervalFromZoom: Int = 0,
 )
 
 /**
@@ -187,7 +190,7 @@ object ContourTiles {
         val f = plan.cellScale.toDouble()
         val clock = TimeSource.Monotonic
         val t0 = clock.markNow()
-        val spec = ContourStyle.forZoom(plan.specZoom, options.units)
+        val spec = ContourStyle.resolve(plan.specZoom, options.units, options.interval?.takeIf { plan.z >= options.intervalFromZoom }) // T47
         val levels = spec.levelsMeters(grid.min().toDouble(), grid.max().toDouble())
         val traced = Contours.trace(grid, levels)
         val t1 = clock.markNow()

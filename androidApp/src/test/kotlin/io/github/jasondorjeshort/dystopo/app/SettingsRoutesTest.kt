@@ -43,12 +43,27 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun mapOptionsAreValidatedAndPassedThrough() {
+        val o = ok("hillshade" to "multi", "slope" to "on", "night" to "1", "trails" to "off", "contourInterval" to "100")
+        assertEquals(mapOf("hillshade" to "multi", "slope" to "on", "night" to "1", "trails" to "off", "contourInterval" to "100"), o.map)
+        assertTrue(ok("textScale" to "1.2").map.isEmpty())
+        assertTrue(bad("hillshade" to "loud").message.contains("hillshade"))
+        bad("hillshadeIntensity" to "2")
+        bad("contourInterval" to "33")
+        // The interval is checked against the units in the same request, else the current ones.
+        bad("contourInterval" to "40", "units" to "m")
+        ok("contourInterval" to "40", "units" to "ft")
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("contourInterval" to "40"), ContourUnits.METERS))
+        assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("contourInterval" to "50"), ContourUnits.METERS))
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
-        for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png")) {
+        for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {
             assertTrue(Routes.isMapRequest(req(p)), p)
         }
-        for (p in listOf("/health", "/screenshot", "/stats", "/settings", "/features", "/tracks", "/camera")) {
+        for (p in listOf("/health", "/screenshot", "/stats", "/settings", "/features", "/tracks", "/camera", "/shade")) {
             assertFalse(Routes.isMapRequest(req(p)), p)
         }
     }

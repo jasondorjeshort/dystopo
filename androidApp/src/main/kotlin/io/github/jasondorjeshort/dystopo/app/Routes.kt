@@ -39,7 +39,7 @@ class Routes(private val app: DystopoApp) {
 
     init {
         // The map's idle check counts the tile requests the server is still working on or has queued.
-        val tileKinds = listOf("dem", "osm", "contours", "glyphs")
+        val tileKinds = listOf("dem", "osm", "contours", "glyphs", "shade") // T47: shade
         app.map.pendingTiles = { tileKinds.sumOf { app.server.inFlight(it) } + app.server.queued }
         app.map.lastTileAt = { tileKinds.maxOf { app.server.lastDone(it) } }
     }
@@ -61,6 +61,7 @@ class Routes(private val app: DystopoApp) {
             val res = app.tiles.glyph(m.groupValues[1], m.groupValues[2])
             return Response(res.status, res.contentType, res.body)
         }
+        ShadeRoutes.handle(app, r)?.let { return it } // T47: /shade/{z}/{x}/{y}.png, GET /shade
         if (r.path == "/style.json") return Response(200, "application/json", app.tiles.style().toByteArray())
         if (!BuildConfig.DEBUG_ENDPOINTS) return Response.notFound()
         AttributionRoutes.handle(app, r)?.let { return it }
@@ -176,6 +177,7 @@ class Routes(private val app: DystopoApp) {
                 "glyphs" to t.glyphs.json(),
             ),
             "contourGeneration" to t.contourJson(),
+            "shadeGeneration" to t.shade.json(), // T47
             "contourDiskCache" to mapOf("tiles" to cached.size, "bytes" to cached.sumOf { it.length() }),
             "demDecodeCache" to t.pyramidJson(),
             "memory" to mapOf(
@@ -199,7 +201,7 @@ class Routes(private val app: DystopoApp) {
     }
 
     companion object {
-        private val MAP_PREFIXES = listOf("/dem/", "/osm/", "/contours/", "/glyphs/", "/sprite")
+        private val MAP_PREFIXES = listOf("/dem/", "/osm/", "/contours/", "/glyphs/", "/sprite", "/shade/") // T47: /shade/
 
         /** MapLibre's own requests (tiles, glyphs, sprites, the style) run on the tile pool; everything else on the debug pool. */
         fun isMapRequest(r: Request): Boolean = r.path == "/style.json" || MAP_PREFIXES.any { r.path.startsWith(it) }

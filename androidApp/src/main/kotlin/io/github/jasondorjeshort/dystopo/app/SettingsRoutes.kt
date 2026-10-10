@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
+import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 
@@ -13,6 +14,11 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `warmup` is `1`/`0` (`true`/`false`). Unknown keys and bad values are a 400 and change nothing.
  *   A text scale change reloads the style; a units or warm-up change reopens the tile service (contour
  *   tiles are generated per unit, cached per unit). `server` (T38) sets the online-mode server.
+ *   T47 map options ([MapOptions.KEYS]): `hillshade=off|single|multi`, `hillshadeIntensity=0..1`, `slope=on|off`,
+ *   `contourInterval=auto|<one of contourIntervalChoices, in the units>`, `contourLabels=sparse|normal|dense`,
+ *   `trails`, `water`, `landcover`, `pois`, `boundaries` and `night` `=on|off`. A contour interval change
+ *   reopens the tile service (contour tiles are cached per interval); every other option rebuilds the style
+ *   (hillshade and slope switch to generated `/shade` tiles, cached per option set).
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]).
  */
 class SettingsRoutes(private val app: DystopoApp) {
@@ -35,7 +41,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         val params = HashMap<String, Any?>(r.query)
         val body = r.bodyText.trim()
         if (body.startsWith("{")) params.putAll(MiniJson.parseObject(body))
-        val parsed = when (val p = parse(params)) {
+        val parsed = when (val p = parse(params, AppSettings.units)) {
             is Parsed.Error -> return Response.json(mapOf("error" to p.message), 400)
             is Parsed.Ok -> p
         }
@@ -49,28 +55,43 @@ class SettingsRoutes(private val app: DystopoApp) {
         val styleBefore = AppSettings.textScale
         val unitsBefore = AppSettings.units
         val warmupBefore = AppSettings.warmup
+        val mapBefore = AppSettings.mapOptions
         parsed.textScale?.let { AppSettings.setTextScale(it) }
         if (parsed.unitsGiven) AppSettings.setUnits(parsed.units)
         parsed.warmup?.let { AppSettings.setWarmup(it) }
-        if (AppSettings.units != unitsBefore || AppSettings.warmup != warmupBefore) {
+        // T47: map options; a fixed interval the new units do not offer goes back to auto.
+        var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
+        map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
+        if (map != mapBefore) AppSettings.setMapOptions(map)
+        if (AppSettings.units != unitsBefore || AppSettings.warmup != warmupBefore || map.contourInterval != mapBefore.contourInterval) {
             app.reload() // new tile service: contour units, warm-up; reloads the style too
-        } else if (AppSettings.textScale != styleBefore) {
+        } else if (AppSettings.textScale != styleBefore || map != mapBefore) {
             val style = app.tiles.style()
             app.map.onMain { app.map.loadStyle(style) }
         }
     }
 
     sealed class Parsed {
-        class Ok(val textScale: Double?, val unitsGiven: Boolean, val units: ContourUnits?, val warmup: Boolean?) : Parsed()
+        class Ok(
+            val textScale: Double?,
+            val unitsGiven: Boolean,
+            val units: ContourUnits?,
+            val warmup: Boolean?,
+            /** T47: validated map option parameters ([MapOptions.KEYS]), applied over the current options. */
+            val map: Map<String, Any?> = emptyMap(),
+        ) : Parsed()
         class Error(val message: String) : Parsed()
     }
 
     companion object {
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server")
+        val KEYS = setOf("textScale", "units", "warmup", "server") + MapOptions.KEYS
 
-        /** Validates a settings request without applying it (pure, unit-tested). */
-        fun parse(params: Map<String, Any?>): Parsed {
+        /**
+         * Validates a settings request without applying it (pure, unit-tested). A contour interval is checked
+         * against the units the request sets, else [currentUnits].
+         */
+        fun parse(params: Map<String, Any?>, currentUnits: ContourUnits = ContourUnits.FEET): Parsed {
             val unknown = params.keys - KEYS
             if (unknown.isNotEmpty()) return Parsed.Error("unknown settings: ${unknown.sorted()}")
             var textScale: Double? = null
@@ -100,7 +121,15 @@ class SettingsRoutes(private val app: DystopoApp) {
                     else -> return Parsed.Error("warmup must be 1 or 0 (got $raw)")
                 }
             }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup)
+            val map = params.filterKeys { it in MapOptions.KEYS }
+            if (map.isNotEmpty()) {
+                try {
+                    MapOptions.parse(map, MapOptions(), units ?: currentUnits)
+                } catch (e: IllegalArgumentException) {
+                    return Parsed.Error(e.message ?: "bad map option")
+                }
+            }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map)
         }
     }
 }

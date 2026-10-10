@@ -3,11 +3,13 @@ package io.github.jasondorjeshort.dystopo.app
 import android.graphics.Bitmap
 import android.os.Process
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.options.ShadeService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
+import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.tiles.BitmapImageDecoder
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileStats
@@ -113,13 +115,17 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     val contourWaits = AtomicLong()
     val demSynthesis = Timing()
 
-    private val contourOptions = ContourTileOptions(units = AppSettings.units) // T33: the units preference
+    private val contourOptions = ContourTileOptions(
+        units = AppSettings.units, // T33: the units preference
+        interval = AppSettings.mapOptions.contourInterval, intervalFromZoom = MapOptions.FIXED_INTERVAL_FROM_ZOOM, // T47: fixed interval
+    )
+    private val intervalTag = contourOptions.interval?.let { "-i" + MapOptions.fmt(it) } ?: "" // T47
 
     /** The DEM pack's identity, part of the contour cache key and of the tile URLs in the style. */
     val demIdentity: String = packs.dem?.file?.let(::packIdentity) ?: "none"
 
     /** Cache version: bump the `v` when contour generation changes what it writes. */
-    val contourCacheVersion = "v2-${contourOptions.units.symbol}-${contourOptions.tileSize}-$demIdentity"
+    val contourCacheVersion = "v2-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag-$demIdentity"
     private val contourRoot = File(cacheDir, "contours")
     private val contourCache = File(contourRoot, contourCacheVersion).apply { mkdirs() }
 
@@ -139,6 +145,9 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     private val pyramid: DemPyramid? = packs.dem?.let { pack ->
         DemPyramid(pack.header.minZoom, pack.header.maxZoom, BitmapImageDecoder, cacheTiles = 96) { z, x, y -> pack.tile(z, x, y) }
     }
+
+    /** T47: hillshade and slope raster tiles from the DEM for the map options ([ShadeService]). */
+    val shade = ShadeService(cacheDir, demIdentity, pyramid, online, contourPermits)
 
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
@@ -202,7 +211,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 demTiles = "$base/dem/{z}/{x}/{y}.png?v=$v",
                 demMinZoom = demLo,
                 demMaxZoom = demHi,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$v-${contourOptions.units.symbol}", // T33: unit in the URL
+                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$v-${contourOptions.units.symbol}$intervalTag", // T33: unit in the URL
                 // Contour tile z has the levels of DEM zoom z+1 (512-px vector tiles), and overzoomed DEM is fine
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
                 contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
@@ -213,9 +222,13 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }, // T38: refetch after offline
                 attribution = attribution,
                 sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
+                shadeTiles = "$base/shade/{z}/{x}/{y}.png?v=${shade.urlVersion()}", // T47
+                shadeMinZoom = demLo,
+                shadeMaxZoom = demHi + 2,
             ),
             units = contourOptions.units, // T33: labels and peak elevations in the contour unit
             textScale = AppSettings.textScale,
+            options = AppSettings.mapOptions, // T47
         ).json()
     }
 
@@ -241,6 +254,9 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         demSynthesis.add((System.nanoTime() - started) / 1e6, mapOf("tile" to "$z/$x/$y"))
         return ok(dem, "image/png", png)
     }
+
+    /** T47: a hillshade/slope tile; the pack's where its DEM covers the tile, else the online DEM's. */
+    fun shadeTile(z: Int, x: Int, y: Int): TileResult = shade.tile(z, x, y, packCovers = online?.packCoversDem(z, x, y) ?: true)
 
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
         online?.takeUnless { it.packCoversOsm(z, x, y) }?.let { return it.osmTile(z, x, y) } // T38: online fallback

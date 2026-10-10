@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
+import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitPreference
 import java.util.Locale
@@ -19,6 +20,8 @@ import java.util.Locale
  *   changed only by the user. Contour tiles, the style, track stats, the profile and search results all
  *   follow [units].
  * - [warmup]: background contour warm-up after install, pack switch or reload (T35), on by default.
+ * - [mapOptions] (T47): hillshade, slope, contour interval and labels, layer toggles, night; one
+ *   preference per [MapOptions.KEYS] entry (`map.<key>`), in the spelling `GET /settings` reports.
  */
 object AppSettings {
     private const val PREFS = "dystopo-settings"
@@ -30,6 +33,7 @@ object AppSettings {
     private const val KEY_UNITS = "units"
     private const val KEY_UNITS_SOURCE = "unitsSource"
     private const val KEY_WARMUP = "warmup"
+    private const val MAP_PREFIX = "map." // T47
 
     @Volatile private var prefs: SharedPreferences? = null
 
@@ -41,6 +45,10 @@ object AppSettings {
         private set
 
     @Volatile var warmup: Boolean = true
+        private set
+
+    /** T47: the map options; [MapOptions] defaults until the user changes them. */
+    @Volatile var mapOptions: MapOptions = MapOptions()
         private set
 
     /** The units everything shows: the preference, or (unset, nothing to seed from yet) the device locale's habit. */
@@ -59,6 +67,7 @@ object AppSettings {
             p.getString(KEY_UNITS_SOURCE, null),
         )
         warmup = p.getBoolean(KEY_WARMUP, true)
+        mapOptions = loadMapOptions(p)
         server = p.getString(KEY_SERVER, null) ?: defaultServer()
     }
 
@@ -124,6 +133,25 @@ object AppSettings {
         }?.apply()
     }
 
+    /** Stored map options; a value that no longer parses (say an interval of the other unit system) falls back to its default. */
+    private fun loadMapOptions(p: SharedPreferences): MapOptions {
+        var o = MapOptions()
+        for (key in MapOptions.KEYS) {
+            val raw = p.getString(MAP_PREFIX + key, null) ?: continue
+            o = runCatching { MapOptions.parse(mapOf(key to raw), o, units) }.getOrDefault(o)
+        }
+        return o
+    }
+
+    /** Sets and persists the map options (validated by the caller, see [SettingsRoutes]). */
+    fun setMapOptions(o: MapOptions) {
+        mapOptions = o
+        prefs?.edit()?.apply {
+            val json = o.json(units)
+            for (key in MapOptions.KEYS) putString(MAP_PREFIX + key, json[key].toString())
+        }?.apply()
+    }
+
     fun setWarmup(on: Boolean) {
         warmup = on
         prefs?.edit()?.putBoolean(KEY_WARMUP, on)?.apply()
@@ -138,5 +166,5 @@ object AppSettings {
         "unitsSet" to (unitPreference.units != null),
         "unitsSource" to (unitPreference.source ?: "locale default (not set yet)"),
         "warmup" to warmup,
-    )
+    ) + mapOptions.json(units) // T47
 }
