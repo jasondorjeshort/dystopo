@@ -66,6 +66,7 @@ class Routes(private val app: DystopoApp) {
         settings.handle(r)?.let { return it }
         labels.handle(r)?.let { return it }
         PacksRoutes.handle(app, r)?.let { return it }
+        SearchRoutes.handle(app, r)?.let { return it } // T39: /search, /search/status, /search/build, /search/ui, /search/select
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
