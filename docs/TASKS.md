@@ -147,6 +147,7 @@ Every task is done only when:
 **Goal:** find a public area in Washington or Colorado where a USGS 1 m lidar project ends (use the TNM API product footprints) so the lidar → 10 m seam is exercised on real data; add it to `areas.json` with a tag; render it at z13 and z14 with `--slope-overlay`, run `tiles --verify` over it, and judge the seam in the images (no step, no kink in hillshade or contours; the feather band should be invisible). If the seam is visible, diagnose (datum? feather width? overview mismatch?) and record precisely; fix only if small.
 **Owns:** `areas.json` (one or two entries), `TourCommand.kt` only if a seam-specific check is cheap to add.
 **Done when:** the PR shows the area, the images at the seam (described), verify results, and either "seam invisible" or a precise diagnosis.
+**Status: merged (PR #17).** Seam invisible. The `--verify` false positive at haloed window edges is being fixed in T19. Idea not implemented: a tour check sampling gradient magnitude along the lidar coverage boundary vs 100 m either side (needs a lidar-aware tour source).
 ### Later
 - T10 Android shell (needs the SDK install approved).
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.
