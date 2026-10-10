@@ -38,6 +38,12 @@ Browser demo (MapLibre over our DEM tiles and OSM PMTiles): generation commands 
 
 `devtool` runs with the repo root as working directory. Downloads are cached in `cache/` (or `$DYSTOPO_CACHE`), output goes to `out/`. Both are gitignored. **View output PNGs** to check rendering; several bugs so far were only visible in the image.
 
+## Debug before you push
+The implementer debugs the change; the reviewer confirms. Before opening a PR:
+1. `./gradlew check` green (unit tests, goldens, license check).
+2. Exercise the change end to end with the real tooling: render the affected areas at the zooms that matter and look at the PNGs; run `tiles --verify` for anything touching tiles; run `tools/demo-check.py` for anything touching the viewer; run `tilebuild` for anything touching the profile. Fix what you find, then re-run.
+3. The PR body lists exactly what was run and what was seen. A verifier agent then repeats the key runs; "the reviewer will catch it" is not a plan.
+
 ## Working in parallel (several agents at once)
 - The main checkout is `C:\Users\Dorje\Documents\src\android-app` (the folder name is historical; the project is Dystopo). While other agents are active, nobody commits to `main` directly.
 - One task from `docs/TASKS.md` per agent. From the main checkout: `git worktree add ..\dystopo-wt\<task-id> -b task/<task-id>` and work only in that worktree. Stay inside the files the task owns.

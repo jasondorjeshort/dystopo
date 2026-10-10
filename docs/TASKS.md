@@ -104,6 +104,16 @@ Every task is done only when:
 **Owns:** new `tilebuild/.../OutdoorsProfile.kt` and tests, `--profile openmaptiles|outdoors` option in `tilebuild/.../Main.kt`/`TileBuild.kt`, `tilebuild/PROFILE.md`.
 **Done when:** `--extract liechtenstein --profile outdoors` builds; `--extract north-america/us/washington --area rainier --profile outdoors` builds and `mvt dump` on a z13 tile shows trails with `sac_scale`/`surface` and the Wonderland Trail named; size compared with the OpenMapTiles output; ODbL attribution intact.
 
+### T17. World tour: global sanity of the elevation pipeline
+**Goal:** a `devtool tour` command that renders a list of public areas around the world at several zooms and checks each result for plausibility, so one run tells us whether the sources, datums, compositing and rendering behave everywhere: southern hemisphere (UTM south, Copernicus S/E cell naming), east longitudes, the equator, 0° longitude, the antimeridian (a bbox crossing 180°), high latitudes (Svalbard, 78°N; Copernicus covers to 90°), below-sea-level land (Dead Sea, Death Valley), flat coastal land (Dutch polders: sea at 0, no NaN on land), open ocean (expected NaN handling), the highest mountains (Everest, Aconcagua, Denali, Kilimanjaro), Alaska and Hawaii (3DEP outside GEOID18: unconverted cells must be reported, not silently wrong), 1° cell corners, and the Rainier/Mont Blanc/Glacier-Waterton/Bonneville areas already in `areas.json`. Each area gets `expectedElevation: [min, max]` in `areas.json` (public knowledge: e.g. Everest region 4000–8849 m). The command renders each area at two or three zooms, records min/max/NaN fraction/provenance/timings, flags anything outside the expected range or with unexpected NaN, writes `out/tour/summary.json` and a contact sheet PNG of thumbnails, and exits non-zero on failures. Fix bugs it finds if they're small (e.g. a naming bug for southern cells); otherwise record them precisely in the PR for follow-up.
+**Owns:** new `devtool/.../TourCommand.kt`, one line in `Main.kt`, `areas.json` additions (public places only), small source fixes it uncovers (call each out).
+**Done when:** `tour --zooms 9,12` runs over 15–20 areas and the PR shows the summary table, the contact sheet viewed and described, and the list of findings; `check` green.
+
+### T18. Browser demo tour
+**Goal:** drive the viewer across the generated Rainier region the way a user would: ~12 views at z9–15 (valley floors, the summit, park edges, the region boundary, the z12→z13 coverage edge), each checked with `tools/demo-check.py` for errors, missing layers and missing tiles, screenshots viewed and judged (labels readable and not overlapping, contours continuous across tiles, no blank areas inside coverage, trails and water present where expected). Add a `--views` option to `demo-check.py` to run a list in one browser session and summarize. Fix small viewer issues (`tools/demo/index.html`) in the same PR; list anything bigger.
+**Owns:** `tools/demo-check.py`, `tools/demo/index.html`.
+**Done when:** the PR shows the per-view table and what was seen; `demo-check.py` exits 0 on every view inside coverage.
+
 ### Later
 - T10 Android shell (needs the SDK install approved).
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.
