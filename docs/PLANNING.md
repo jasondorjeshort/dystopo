@@ -235,6 +235,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T24 merged (PR #23): tracks, waypoints and GPX.** The first phase-2 piece, in `shared` so every platform shares it: waypoint/track/route model with UUID ids, GPX 1.1 import and export on a hand-written XML reader (extensions preserved byte for byte, Garmin heart rate and cadence read), stats with documented rules (3 m turning-point hysteresis for ascent, 0.3 m/s moving threshold), and `devtool gpx info|render|export`. The render draws a track with direction arrows, waypoints and a route over the terrain and OSM layers with an elevation profile strip. The fixture is a hand-written Skyline Trail loop (public trail geometry rounded to 10 m, invented times), never a recording.
 
+**2026-10-09: T23 merged (PR #22): leftover sweep.** Nine recorded follow-ups closed. Notable: one marker table now drives both the renderer and the browser demo, enforced by a test that parses the demo page; cliff ticks are decided per segment from a bilinearly sampled DEM; Mount Rainier Wilderness is a wilderness again in the outdoors profile (OSM tags it `protect_class=1a` plus wilderness tags); no more NaN in tile reports over open ocean. 270 tests, both tours green.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
