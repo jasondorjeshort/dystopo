@@ -267,7 +267,7 @@ const MARKERS = {
 const MARKER_EXCLUDED_SUBCLASSES = ["camp_pitch", "picnic_shelter", "gazebo", "street_side"];
 const MARKER_SCALE = 1.4, MARKER_RATIO = 2, MARKER_HALO = "#f6f1e4";
 // Sprites.ICON_SCALE and Sprites.iconName: sheet icons are SPRITE_ICON_SCALE logical px per marker px.
-const SPRITE_ICON_SCALE = 2;
+const SPRITE_ICON_SCALE = 4;
 const iconName = m => "marker-" + m.shape + "-" + m.color.slice(1) + "-" + m.size + (m.text ? "-" + m.text : "");
 const markerByIcon = Object.fromEntries(Object.values(MARKERS).map(m => [iconName(m), m]));
 // The sheet: live mode always (serve makes it); pack mode when out/sprite.png exists (a 404 there is harmless).
@@ -406,7 +406,9 @@ const map = new maplibregl.Map({
         layout: { "text-field": NAME, "text-font": ["Noto Sans Regular"], "text-size": 13 },
         paint: { "text-color": "#2f6ea6", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
       { id: "peaks", type: "symbol", source: "osm", "source-layer": "mountain_peak", filter: ["!", ["in", ["get", "class"], ["literal", ["ridge", "arete", "cliff"]]]],
-        layout: { "text-field": ["case", ["has", "ele"], ["concat", NAME, "\n", ["to-string", ELE], " " + UNITS], NAME], "text-font": ["Noto Sans Regular"], "text-size": 14,
+        // Highest first (T70): without a sort key Mont Blanc de Courmayeur took the spot before Mont Blanc at z12.
+        layout: { "symbol-sort-key": ["-", 0, ["coalesce", ["to-number", ["get", "ele"]], 0]],
+                  "text-field": ["case", ["has", "ele"], ["concat", NAME, "\n", ["to-string", ELE], " " + UNITS], NAME], "text-font": ["Noto Sans Regular"], "text-size": 14,
                   "text-anchor": "top", "text-offset": [0, 0.4], "icon-image": "" },
         paint: { "text-color": "#3b2a1a", "text-halo-color": "#f6f1e4", "text-halo-width": 1.8 } },
       { id: "places", type: "symbol", source: "osm", "source-layer": "place",

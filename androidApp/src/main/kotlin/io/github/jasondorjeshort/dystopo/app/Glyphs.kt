@@ -13,10 +13,11 @@ import java.io.File
  */
 object Glyphs {
     /**
-     * The glyph ranges the style's text needs (Basic Latin, Latin-1, Latin Extended-A/B, general punctuation),
-     * as tools/android-push-pack.ps1 pushes them; T41 fetches the same ones from the server with a pack download.
+     * The glyph ranges the style's text needs, as tools/android-push-pack.ps1 pushes them; T41 fetches the same
+     * ones from the server with a pack download. T70: the list lives with the style (the local-script second
+     * name line needs Greek, Cyrillic, Hebrew, Arabic and more; see [MapLibreStyle.GLYPH_RANGES]).
      */
-    val RANGES = listOf("0-255", "256-511", "8192-8447")
+    val RANGES = io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle.GLYPH_RANGES
 
     fun styleUrl(glyphDir: File?, httpBase: String): String =
         if (glyphDir != null && glyphDir.isDirectory) "file://${glyphDir.absolutePath}/{fontstack}/{range}.pbf"

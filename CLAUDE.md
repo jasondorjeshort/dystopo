@@ -17,6 +17,7 @@ Open-source, offline-first topographic maps. System map and where each topic is 
 - Commands print one JSON object to stdout (agents parse it) and write PNGs to `out/`. Add counters and timings to reports rather than printing logs.
 - Tests in `shared/src/commonTest` must run offline and fast. Network-dependent checks are devtool commands, not tests.
 - Rendering changes are guarded by golden images (`devtool/src/test/resources/goldens/`, synthetic terrain only). If `check` fails there and the change is intended: `./gradlew updateGoldens`, look at the new PNGs, commit them with the change. Those goldens are the one place PNGs belong in the repo.
+- The PNG renderer and the phone style must agree: `StyleParityTest` (devtool tests) renders the Lake Cliff golden and evaluates the generated MapLibre style against every feature of the same archive (filters, zooms, paint, text, icons, sort keys, draw order, label priority); a new difference fails it until it is fixed or added to its explained list with the reason (report in `devtool/build/reports/style-parity.txt`).
 
 ## Commands
 JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot` first.
@@ -28,6 +29,7 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ./gradlew :devtool:run --args="render --area rainier --source 3dep"   # sources: best (default; global, EGM2008), copernicus (global 30 m),
                                                                       #   3dep (US 10 m), 3dep-1m (US lidar, NaN = magenta), 3dep-best, swissalti3d (CH 2 m), kartverket (NO 1 m), bev (AT 1 m), hrdem (CA 1/2 m), linz (NZ 1 m), terrarium (legacy)
 ./gradlew :devtool:run --args="compare --area rainier --zoom 14"      # sources side by side + diff stats
+DYSTOPO_3DEP_DESTRIPE=1 ./gradlew :devtool:run --args="render --area rainier --source 3dep"   # T70 Destripe on the 3DEP 1/3" grid (off by default; destripe* counters)
 ./gradlew :devtool:run --args="mvt dump --file tile.mvt"  # summarize a Mapbox Vector Tile (--gzip, --layer, --samples)
 ./gradlew :devtool:run --args="pmtiles info --file x.pmtiles"   # PMTiles header, metadata, per-zoom counts (--url for remote, --tile z/x/y)
 ./gradlew :devtool:run --args="tiles --area rainier --min-zoom 8 --max-zoom 13 --verify --preview-zoom 13"   # Terrarium XYZ tiles -> out/rainier-best/

@@ -71,13 +71,15 @@ foreach ($pack in @(@{ Src = $Dem; Name = $demName }, @{ Src = $Osm; Name = $osm
 
 if (-not $NoGlyphs) {
     # MapLibre loads label glyphs as PBF ranges. These three fonts and ranges cover the style's text
-    # (Basic Latin, Latin-1, Latin Extended-A/B, general punctuation); other ranges get an empty response.
+    # (Latin, Greek, Cyrillic, Armenian, Hebrew, Arabic, Thai, Georgian, general punctuation; the second
+    # name line in the local script needs them); other ranges get an empty response. The range list must
+    # equal MapLibreStyle.GLYPH_RANGES (GlyphRangesTest checks).
     # The font list must equal MapLibreStyle.FONTS (GlyphFontsTest checks). The app points MapLibre at
     # files/glyphs with a file:// URL (Glyphs.kt), so a missing range is simply skipped.
     $cacheRoot = if ($env:DYSTOPO_CACHE) { $env:DYSTOPO_CACHE } else { Join-Path $repoRoot 'cache' }
     $glyphDir = Join-Path $cacheRoot 'glyphs'
     $fonts = @('Noto Sans Regular', 'Noto Sans Italic', 'Noto Sans Medium')
-    $ranges = @('0-255', '256-511', '8192-8447')
+    $ranges = @('0-255', '256-511', '512-767', '768-1023', '1024-1279', '1280-1535', '1536-1791', '1792-2047', '3584-3839', '4096-4351', '7680-7935', '8192-8447')
     foreach ($font in $fonts) {
         $dir = Join-Path $glyphDir $font
         New-Item -ItemType Directory -Force $dir | Out-Null

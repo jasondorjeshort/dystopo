@@ -17,10 +17,12 @@ import kotlin.math.ceil
  * Sizes: an icon is [ICON_SCALE] logical pixels per marker-size pixel (plus the paper halo), so the
  * MapLibre style draws it with `icon-size` = its own text scale / [ICON_SCALE] and the bitmap is
  * scaled down, not up, for text scales up to [ICON_SCALE] / 1.35 (the 2x sheet stays sharp on phones).
+ * T70: 4.0 (was 2.0, which blurred icons from text scale 1.5 up), so icons stay sharp to about 3.0, the
+ * largest text scale the settings allow.
  */
 object Sprites {
     /** Logical sprite pixels per marker-size pixel. */
-    const val ICON_SCALE = 2.0
+    const val ICON_SCALE = 4.0
 
     /** Halo stroke width in marker pixels, as the devtool renderer's marker halo. */
     const val HALO = 2.5

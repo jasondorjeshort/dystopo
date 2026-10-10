@@ -116,31 +116,80 @@ class MapLibreStyle(
         /** Largest bend (degrees) a contour label may follow; contours wiggle more than roads. */
         const val CONTOUR_LABEL_MAX_ANGLE = 65
 
+        /** The angle limit above text scale 1.0, where labels are longer and straight runs rarer. */
+        const val CONTOUR_LABEL_MAX_ANGLE_LARGE = 75
+
         /** The fonts the style uses; the glyph route (and tools/android-push-pack.ps1) must provide each. */
         val FONTS = listOf(FONT_REGULAR, FONT_ITALIC, FONT_MEDIUM)
 
         /**
          * The name a label shows. OpenMapTiles tiles (OpenFreeMap, our packs) carry `name` in the local
          * language plus `name:en` / `name_en` / `name:latin`, and `name:nonlatin` when the local name is
-         * in a non-Latin script. The first line is the English name, else the Latin transliteration,
-         * else the local name; a non-Latin local name follows on a second line, but only when the
-         * renderer can shape that script (`is-supported-script`; MapLibre cannot shape Devanagari, for
-         * example), so the fallback is always readable text and never a row of broken glyphs.
+         * in a non-Latin script; outdoors-profile packs (tilebuild) carry only `name` and `name_en`. The
+         * first line is the English name, else the Latin transliteration, else the local name. The local
+         * name in another script follows on a second line: `name:nonlatin`, else `name` itself when it
+         * starts with a non-Latin letter ([NON_LATIN_NAME]; outdoors packs), and only when it differs from
+         * the first line and the renderer can shape the script (`is-supported-script`; MapLibre cannot
+         * shape Devanagari, for example), so the fallback is always readable text and never a row of
+         * broken glyphs. The glyphs come from [GLYPH_RANGES] (Greek, Cyrillic, Armenian, Hebrew, Arabic,
+         * Thai, Georgian); MapLibre Native draws CJK and Hangul with the device font.
          */
         val LABEL_NAME: List<Any?> = listOf(
-            "let", "primary",
-            listOf("coalesce", listOf("get", "name:en"), listOf("get", "name_en"), listOf("get", "name:latin"), listOf("get", "name"), ""),
+            "let",
+            "primary", listOf("coalesce", listOf("get", "name:en"), listOf("get", "name_en"), listOf("get", "name:latin"), listOf("get", "name"), ""),
+            "local", listOf(
+                "coalesce", listOf("get", "name:nonlatin"),
+                listOf("case", NON_LATIN_NAME, listOf("to-string", listOf("get", "name")), ""),
+            ),
             listOf(
                 "case",
                 listOf(
-                    "all", listOf("has", "name:nonlatin"),
-                    listOf("!=", listOf("get", "name:nonlatin"), listOf("var", "primary")),
-                    listOf("is-supported-script", listOf("get", "name:nonlatin")),
+                    "all",
+                    listOf("!=", listOf("var", "local"), ""),
+                    listOf("!=", listOf("var", "local"), listOf("var", "primary")),
+                    listOf("is-supported-script", listOf("var", "local")),
                 ),
-                listOf("concat", listOf("var", "primary"), "\n", listOf("get", "name:nonlatin")),
+                listOf("concat", listOf("var", "primary"), "\n", listOf("var", "local")),
                 listOf("var", "primary"),
             ),
         )
+
+        /**
+         * True when the feature's `name` starts with a letter outside the Latin blocks: at or above U+0370
+         * (Greek and every later script) but not in Latin Extended Additional (U+1E00..U+1EFF, Vietnamese).
+         * String comparison in MapLibre is by code point, so this reads the first character only.
+         */
+        private val NON_LATIN_NAME: List<Any?>
+            get() = listOf(
+                "all", listOf("has", "name"),
+                listOf(">=", listOf("to-string", listOf("get", "name")), "\u0370"),
+                listOf(
+                    "any",
+                    listOf("<", listOf("to-string", listOf("get", "name")), "\u1e00"),
+                    listOf(">=", listOf("to-string", listOf("get", "name")), "\u1f00"),
+                ),
+            )
+
+        /**
+         * Glyph PBF ranges the phone ships (tools/android-push-pack.ps1, `Glyphs.RANGES`, the server
+         * fetch after a pack download): Latin (0-511, 7680-7935), combining marks and Greek (768-1023),
+         * Cyrillic, Armenian and Hebrew, Arabic, Thai, Georgian, general punctuation. A missing range
+         * draws nothing, so the second name line ([LABEL_NAME]) is only as good as this list.
+         */
+        val GLYPH_RANGES = listOf(
+            "0-255", "256-511", "512-767", "768-1023", "1024-1279", "1280-1535", "1536-1791", "1792-2047",
+            "3584-3839", "4096-4351", "7680-7935", "8192-8447",
+        )
+
+        /**
+         * How contour label text grows with the user's text scale: the square root below 1, the fourth
+         * root above. A line label must fit a stretch of contour that bends less than the angle limit, so
+         * every pixel of length costs labels: measured over Rainier at text scale 2.0 (MapLibre GL JS,
+         * 412x915), the square root (21 px) labelled 3 of 8 index lines at z12.5, the fourth root (17.7 px)
+         * with closer spacing and a wider angle 6 to 7 of 8. Fewer, larger labels rather than none.
+         */
+        fun contourGrowth(textScale: Double): Double =
+            if (textScale <= 1.0) kotlin.math.sqrt(textScale) else kotlin.math.sqrt(kotlin.math.sqrt(textScale))
 
         /** Clamps a user text scale; NaN or infinite gives 1.0. */
         fun clampTextScale(s: Double): Double = if (s.isNaN() || s.isInfinite()) 1.0 else s.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
@@ -256,21 +305,22 @@ class MapLibreStyle(
             "text-font" to regular,
             "text-size" to 11.0 * contourTextScale,
             "symbol-spacing" to contourLabelSpacing(),
-            "text-max-angle" to CONTOUR_LABEL_MAX_ANGLE,
-            "text-padding" to round1(4 * textScale),
+            "text-max-angle" to if (textScale > 1.0) CONTOUR_LABEL_MAX_ANGLE_LARGE else CONTOUR_LABEL_MAX_ANGLE,
+            // Above 1.0 the padding stops growing: larger contour numbers already need longer straight runs.
+            "text-padding" to if (textScale > 1.0) 3.0 else round1(4 * textScale),
         ),
         "paint" to mapOf("text-color" to hex("#6b3f12"), "text-halo-color" to paper, "text-halo-width" to round1(CONTOUR_LABEL_HALO * scale / BASE_TEXT_SCALE)),
     )
 
     /**
-     * Contour labels grow with the square root of the user's text scale, not linearly: a line label
+     * Contour labels grow with the square root of the user's text scale (the fourth root above 1.0, [contourGrowth]), not linearly: a line label
      * must fit a stretch of line that bends less than [CONTOUR_LABEL_MAX_ANGLE], and contours bend a
      * lot, so every extra pixel of label length costs labels. Measured in a 412x915 phone viewport
      * (MapLibre GL JS over `devtool serve`, z13 on Rainier's south flank, 16 index lines in view):
      * 14.9 px labels (text scale 1.0) labelled 11, 18 px 7 and 24 px 5, other layers hidden or not.
      * Elevation numbers are short and secondary; names keep the full scale.
      */
-    private val contourTextScale = BASE_TEXT_SCALE * kotlin.math.sqrt(textScale)
+    private val contourTextScale = BASE_TEXT_SCALE * contourGrowth(textScale)
 
     /**
      * Contour label spacing (screen px between labels on one line) by MapLibre zoom.
@@ -284,12 +334,24 @@ class MapLibreStyle(
      * the angle limit) or zigzag across glaciers. Collision (padding, which grows with the text scale;
      * lowest priority) keeps neighbours from stacking, so the closer spacing labels more lines rather
      * than repeating one; the spacing does not grow with the text scale, which only cost labels
-     * (1.6 at 192 px: 2 of 16). Below z11 (index lines far apart and long) the spacing opens up again.
+     * (1.6 at 192 px: 2 of 16), and above 1.0 it shrinks with it (T70, see [contourGrowth]). Below z11
+     * (index lines far apart and long) the spacing opens up again.
      */
     private fun contourLabelSpacing(): Any? {
-        val k = options.contourLabels.spacingFactor // T47: label density
-        if (k == 1.0) return listOf("interpolate", listOf("linear"), listOf("zoom"), 10, 260, 12, 120)
-        return listOf("interpolate", listOf("linear"), listOf("zoom"), 10, round1(260 * k), 12, round1(120 * k))
+        val d = options.contourLabels.spacingFactor // T47: label density
+        if (textScale > 1.0) {
+            // T70: above text scale 1.0 the anchors come closer up to z13.5 (collision keeps labels apart, so
+            // this labels more lines rather than repeating one): 130/60 px at 2.0. From z13.5 to z15 the
+            // spacing opens up again to 120 px times the scale, or long parallel contours near a summit
+            // carried a label every 140 px at z15.
+            val k = d / textScale
+            return listOf(
+                "interpolate", listOf("linear"), listOf("zoom"),
+                10, round1(260 * k), 12, round1(120 * k), 13.5, round1(120 * k), 15, round1(120 * d * textScale),
+            )
+        }
+        if (d == 1.0) return listOf("interpolate", listOf("linear"), listOf("zoom"), 10, 260, 12, 120)
+        return listOf("interpolate", listOf("linear"), listOf("zoom"), 10, round1(260 * d), 12, round1(120 * d))
     }
 
     // ---- OSM layers ----

@@ -321,8 +321,10 @@ object TextTemplate {
     /**
      * The name a label shows for `{name}`, as the phone style's `LABEL_NAME` picks it: English
      * (`name:en`, `name_en`), else the Latin transliteration (`name:latin`), else the local `name`.
-     * The phone adds a non-Latin local name on a second line where MapLibre can shape the script; the
-     * PNG renderer does not (its fonts would draw boxes for many scripts).
+     * The phone adds the local name in another script on a second line (`name:nonlatin`, or a `name`
+     * starting outside the Latin blocks, where MapLibre can shape it); the PNG renderer does not (its
+     * fonts would draw boxes for many scripts). The goldens are Latin-only, so StyleParityTest sees no
+     * difference there.
      */
     fun name(props: Map<String, io.github.jasondorjeshort.dystopo.mvt.Value>): String? =
         NAME_KEYS.firstNotNullOfOrNull { k -> props[k]?.asText()?.trim()?.takeIf { it.isNotEmpty() } }

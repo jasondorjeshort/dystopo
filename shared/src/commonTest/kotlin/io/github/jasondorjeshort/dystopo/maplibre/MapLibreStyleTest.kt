@@ -124,8 +124,8 @@ class MapLibreStyleTest {
             if (l["type"] == "symbol") {
                 val s0 = maxNumber(layout(l)["text-size"])
                 val s1 = maxNumber(layout(big.getValue(id))["text-size"])
-                // Contour numbers grow with the square root (longer labels fit fewer bent contours).
-                val k = if (id == "contour-labels") kotlin.math.sqrt(1.6) else 1.6
+                // Contour numbers grow with the fourth root above 1.0 (longer labels fit fewer bent contours).
+                val k = if (id == "contour-labels") kotlin.math.sqrt(kotlin.math.sqrt(1.6)) else 1.6
                 assertEquals(s0 * k, s1, 1e-6, "$id text-size")
                 // Never overlap names: only marker glyphs (drawn on their own disc) may ignore collisions.
                 if (!id.endsWith("-glyph")) assertTrue(layout(l)["text-allow-overlap"] != true, "$id overlaps")
@@ -134,9 +134,9 @@ class MapLibreStyleTest {
                 assertEquals(maxNumber(paint(l)["circle-radius"]) * 1.6, maxNumber(paint(big.getValue(id))["circle-radius"]), 1e-6, "$id radius")
             }
         }
-        // Larger labels get more room: padding grows, and name spacing along lines. Contour label spacing
-        // stays (a wider one only cost labels; collision padding keeps them apart).
-        for (id in listOf("contour-labels", "road-names")) {
+        // Larger labels get more room: padding grows, and name spacing along lines. Contour labels are
+        // the exception (contourLabelsStayDenseAtLargeTextScales).
+        for (id in listOf("road-names", "peaks", "places")) {
             assertTrue(maxNumber(layout(big.getValue(id))["text-padding"]) > maxNumber(layout(base.getValue(id))["text-padding"]), "$id padding")
         }
         assertTrue(maxNumber(layout(big.getValue("road-names"))["symbol-spacing"]) > maxNumber(layout(base.getValue("road-names"))["symbol-spacing"]))
@@ -203,6 +203,54 @@ class MapLibreStyleTest {
     }
 
     @Test
+    fun contourLabelsStayDenseAtLargeTextScales() {
+        fun lay(s: Double) = layout(layers(MapLibreStyle(sources, textScale = s).json()).first { it["id"] == "contour-labels" })
+        val one = lay(1.0)
+        val two = lay(2.0)
+        // At 1.0 nothing changed: 120 px from MapLibre z12, padding 4, angle 65.
+        assertEquals(120.0, ((one["symbol-spacing"] as List<*>).last() as Number).toDouble())
+        assertEquals(4.0, (one["text-padding"] as Number).toDouble())
+        // At 2.0: fourth-root size, closer anchors, a wider angle and fixed padding, so fewer, larger labels rather than none.
+        val sp = (two["symbol-spacing"] as List<*>).drop(3).chunked(2).associate { (z, v) -> (z as Number).toDouble() to (v as Number).toDouble() }
+        assertEquals(60.0, sp.getValue(12.0))
+        assertEquals(60.0, sp.getValue(13.5))
+        assertEquals(240.0, sp.getValue(15.0), "opens up again at high zoom")
+        assertEquals(3.0, (two["text-padding"] as Number).toDouble())
+        assertEquals(MapLibreStyle.CONTOUR_LABEL_MAX_ANGLE_LARGE.toDouble(), (two["text-max-angle"] as Number).toDouble())
+        assertEquals(maxNumber(one["text-size"]) * kotlin.math.sqrt(kotlin.math.sqrt(2.0)), maxNumber(two["text-size"]), 1e-9)
+        // Below 1.0 the square root, as before.
+        assertEquals(maxNumber(one["text-size"]) * kotlin.math.sqrt(0.5), maxNumber(lay(0.5)["text-size"]), 1e-9)
+    }
+
+    @Test
+    fun peaksAndPlacesWinOverPoisAndContourLabelsComeLast() {
+        // MapLibre places the topmost symbol layer first; within a layer the sort key decides.
+        for (src in listOf(sources, spriteSources)) for (scale in listOf(1.0, 1.6, 2.0)) {
+            val ls = layers(MapLibreStyle(src, textScale = scale).json())
+            val symbols = ls.filter { it["type"] == "symbol" }.map { it["id"] as String }
+            val first = symbols.asReversed() // placement order
+            assertEquals("contour-labels", first.last(), "contour labels place last")
+            val pois = listOf("huts", "trailheads", "campsites", "shelters", "waterfalls", "viewpoints", "springs", "caves", "outdoor-pois", "parking")
+            for (winner in listOf("places", "peaks")) for (poi in pois) {
+                if (poi in first) assertTrue(first.indexOf(winner) < first.indexOf(poi), "$winner before $poi at $scale")
+            }
+            val byId = ls.associateBy { it["id"] as String }
+            assertEquals("""["-",0,["coalesce",["to-number",["get","ele"]],0]]""", JsonWriter.write(layout(byId.getValue("peaks"))["symbol-sort-key"]))
+            assertEquals("""["coalesce",["to-number",["get","rank"]],99]""", JsonWriter.write(layout(byId.getValue("places"))["symbol-sort-key"]))
+        }
+    }
+
+    @Test
+    fun glyphRangesCoverTheLocalScripts() {
+        val r = MapLibreStyle.GLYPH_RANGES.map { it.split("-").map(String::toInt) }
+        // Basic Latin, Greek, Cyrillic, Hebrew, Arabic, Thai, Georgian, Vietnamese, punctuation.
+        for (cp in listOf(0x41, 0x3B1, 0x416, 0x5D0, 0x627, 0xE01, 0x10D0, 0x1EA0, 0x2013)) {
+            assertTrue(r.any { (a, b) -> cp in a..b }, "U+${cp.toString(16)} has a glyph range")
+        }
+        for ((a, b) in r) assertEquals(255, b - a, "ranges are MapLibre's 256-codepoint blocks")
+    }
+
+    @Test
     fun cliffTicksGrowWithZoom() {
         val ticks = layers(MapLibreStyle(sources).json()).first { it["id"] == "cliff-ticks" }
         val width = paint(ticks)["line-width"] as List<*>
@@ -227,7 +275,9 @@ class MapLibreStyleTest {
         val nameJson = JsonWriter.write(MapLibreStyle.LABEL_NAME)
         // English, then Latin transliteration, then the local name; the local script only where it can be shaped.
         assertTrue(nameJson.startsWith("""["let","primary",["coalesce",["get","name:en"],["get","name_en"],["get","name:latin"],["get","name"],""]"""), nameJson)
-        assertTrue("""["is-supported-script",["get","name:nonlatin"]]""" in nameJson)
+        assertTrue("""["is-supported-script",["var","local"]]""" in nameJson)
+        // The local line: name:nonlatin, else a name starting outside the Latin blocks (outdoors packs have no name:nonlatin).
+        assertTrue(""""local",["coalesce",["get","name:nonlatin"],["case",["all",["has","name"]""" in nameJson, nameJson)
         for (id in listOf("places", "peaks", "water-names")) {
             val field = JsonWriter.write(layout(byId.getValue(id))["text-field"])
             assertTrue(nameJson in field, "$id uses the label name: $field")
