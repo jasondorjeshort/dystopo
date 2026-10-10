@@ -43,6 +43,9 @@ data class GoldenCase(
 ) {
     val name: String get() = "${terrain.name}-z$zoom"
     val fileName: String get() = "$name.png"
+
+    /** Approved label list next to the image (see [Goldens.formatLabels]). */
+    val labelsFileName: String get() = "$name.labels.txt"
     val cellSizeMeters: Double get() = WebMercator.metersPerPixel(45.0, zoom)
 
     fun grid(): ElevationGrid = terrain.grid(sizePx, sizePx, cellSizeMeters, centerX, centerY)
@@ -82,6 +85,66 @@ object Goldens {
         val labels = ContourLayer.build(grid, case.zoom, style, Timings()).labels
         return GoldenRender(image, stats, labels)
     }
+
+    /** A label as recorded in a golden's `.labels.txt`: text, center in pixels, angle in degrees. */
+    data class RecordedLabel(val text: String, val x: Double, val y: Double, val angleDeg: Double) {
+        override fun toString() = "\"$text\" at (${fmt(x)}, ${fmt(y)}) ${fmt(angleDeg)}°"
+    }
+
+    /**
+     * The approved labels of a golden as text, one per line: `text x y angleDeg`, sorted by
+     * position. The image comparison is loose inside label boxes (fonts differ by machine), and
+     * those boxes come from the render under test, so an extra label, or one with the wrong
+     * number, would otherwise pass; this list pins count, text and placement exactly.
+     */
+    fun formatLabels(labels: List<ContourLabel>): String =
+        "# text x y angleDeg; written by ./gradlew updateGoldens\n" +
+            record(labels).joinToString("") { "${it.text} ${fmt(it.x)} ${fmt(it.y)} ${fmt(it.angleDeg)}\n" }
+
+    fun parseLabels(text: String): List<RecordedLabel> = text.lines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .map { line ->
+            val f = line.split(Regex("\\s+"))
+            require(f.size == 4) { "bad label line '$line'" }
+            RecordedLabel(f[0], f[1].toDouble(), f[2].toDouble(), f[3].toDouble())
+        }
+
+    fun record(labels: List<ContourLabel>): List<RecordedLabel> = labels
+        .map { RecordedLabel(it.text, round1(it.x), round1(it.y), round1(Math.toDegrees(it.angle))) }
+        .sortedWith(compareBy({ it.y }, { it.x }, { it.text }))
+
+    /**
+     * Differences between approved and actual labels: every approved label needs an actual one
+     * with the same text within [maxOffsetPx] and [maxAngleDeg], and nothing may be left over.
+     * Empty when they match.
+     */
+    fun compareLabels(
+        expected: List<RecordedLabel>,
+        actual: List<RecordedLabel>,
+        maxOffsetPx: Double = 2.0,
+        maxAngleDeg: Double = 2.0,
+    ): List<String> {
+        val unmatched = actual.toMutableList()
+        val problems = ArrayList<String>()
+        for (e in expected) {
+            val hit = unmatched.firstOrNull {
+                it.text == e.text && kotlin.math.hypot(it.x - e.x, it.y - e.y) <= maxOffsetPx && abs(it.angleDeg - e.angleDeg) <= maxAngleDeg
+            }
+            if (hit != null) {
+                unmatched.remove(hit)
+                continue
+            }
+            val near = unmatched.minByOrNull { kotlin.math.hypot(it.x - e.x, it.y - e.y) }
+            problems += "missing $e" + (near?.let { "; nearest actual $it" } ?: "")
+        }
+        for (a in unmatched) problems += "unexpected $a"
+        if (expected.size != actual.size) problems.add(0, "label count ${actual.size}, approved ${expected.size}")
+        return problems
+    }
+
+    private fun round1(x: Double) = Math.round(x * 10) / 10.0
+    private fun fmt(x: Double) = round1(x).toString()
 
     /**
      * Pixels covered by labels and their halos, grown by [marginPx]. Text is where machines differ

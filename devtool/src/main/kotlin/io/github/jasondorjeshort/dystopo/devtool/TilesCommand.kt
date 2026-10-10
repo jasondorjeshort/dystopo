@@ -58,6 +58,8 @@ data class ZoomReport(
     val halo: Int,
     val windowPx: Int,
     val cellSizeMeters: Double,
+    /** Ground size every tile of this zoom picks source overview levels for (the finest tile's cell size). */
+    val overviewTargetMeters: Double,
     val featherCells: Double,
     val noDataCells: Long,
     val elevationMinMeters: Double,
@@ -253,8 +255,11 @@ class TilesCommand : CliktCommand(name = "tiles") {
         // One cell size per zoom so every tile's blend band (and halo) is the same; see TileWindows.
         val cellSize = TileWindows.referenceCellSizeMeters(box, z, tileSize)
         val plan = TileWindows.forBbox(box, z, feather, tileSize)
+        // One overview target per zoom, so no two tiles of this export read different GeoTIFF levels.
+        val overviewMeters = overviewTargetMeters(plan)
         val fetch: (MercatorWindow) -> ElevationSource.Result =
-            if (src is FeatheredSource) { w -> src.fetch(w, cellSize) } else { w -> src.fetch(w) }
+            if (src is FeatheredSource) { w -> OverviewLevels.withTarget(overviewMeters) { src.fetch(w, cellSize) } }
+            else { w -> OverviewLevels.withTarget(overviewMeters) { src.fetch(w) } }
 
         val tasks = plan.map { tw -> Callable { renderTile(tw, fetch, outDir) } }
         val results = try {
@@ -283,6 +288,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
             halo = plan.firstOrNull()?.halo ?: 0,
             windowPx = plan.firstOrNull()?.window?.width ?: 0,
             cellSizeMeters = round2(cellSize),
+            overviewTargetMeters = round2(overviewMeters),
             featherCells = round2(feather / cellSize),
             noDataCells = results.sumOf { it.noDataCells },
             elevationMinMeters = written.minOfOrNull { it.min }?.toDouble() ?: Double.NaN,
@@ -419,4 +425,15 @@ class TilesCommand : CliktCommand(name = "tiles") {
     }
 
     private fun round2(x: Double) = Math.round(x * 100) / 100.0
+
+    companion object {
+        /**
+         * The overview target for a whole zoom level of an export: the smallest cell size among its
+         * tile windows (the one nearest the pole). Per-window choice would let tiles at different
+         * latitudes straddle an overview threshold and read different levels, a resampling seam;
+         * taking the finest means no tile reads coarser data than it can show.
+         */
+        fun overviewTargetMeters(plan: List<TileWindow>): Double =
+            plan.minOfOrNull { it.window.cellSizeMeters } ?: 1.0
+    }
 }

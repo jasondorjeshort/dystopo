@@ -8,7 +8,9 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
+import com.github.ajalt.clikt.parameters.types.restrictTo
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.dem.Smooth
 import java.awt.image.BufferedImage
 
 /** Map style options shared by render and compare. */
@@ -26,6 +28,8 @@ class StyleOptions : OptionGroup("Style") {
         .choice("hillshade", "multi", "none").default("hillshade")
     val slopeOverlay by option("--slope-overlay", help = "Tint slopes of 27 degrees and steeper in CalTopo-style bands").flag()
     val slopeOpacity by option("--slope-opacity", help = "Opacity of the slope-band tint, 0..1").double().default(0.5)
+    val smoothDem by option("--smooth-dem", help = "Smooth the elevation grid with a (2r+1)x(2r+1) Gaussian before hillshade and slope only (contours stay raw); 1 or 2 tames striping, 0 disables")
+        .int().restrictTo(0..Smooth.MAX_RADIUS).default(0)
     val noContours by option("--no-contours").flag()
 }
 

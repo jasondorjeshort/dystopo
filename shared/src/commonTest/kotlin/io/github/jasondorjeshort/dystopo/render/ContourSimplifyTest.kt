@@ -89,6 +89,23 @@ class ContourSimplifyTest {
     }
 
     @Test
+    fun simplifyAllDropsRingsThatCollapseBelowThreePoints() {
+        // A thin sliver ring: every point is within 0.5 px of the chord from the start back to the
+        // far end, so Douglas-Peucker keeps two points, a doubled-back segment.
+        val sliver = ContourLine(10.0, doubleArrayOf(0.0, 0.0, 5.0, 0.2, 10.0, 0.0, 5.0, -0.2), closed = true)
+        assertEquals(2, ContourSimplify.simplify(sliver.points, true, 0.5).size / 2)
+        // A small but real ring survives with at least three points.
+        val ring = ContourLine(20.0, circle(12, 4.0), closed = true)
+        // The same two points as an open line are a valid segment and are kept.
+        val open = ContourLine(30.0, doubleArrayOf(0.0, 0.0, 5.0, 0.2, 10.0, 0.0), closed = false)
+
+        val out = ContourSimplify.simplifyAll(listOf(sliver, ring, open), 0.5)
+        assertEquals(listOf(20.0, 30.0), out.map { it.level })
+        assertTrue(out[0].pointCount >= 3)
+        assertEquals(2, out[1].pointCount)
+    }
+
+    @Test
     fun chaikinSmoothingRoundsCornersAndKeepsEndPoints() {
         val pts = doubleArrayOf(0.0, 0.0, 10.0, 0.0, 10.0, 10.0)
         val out = ContourSimplify.smooth(pts, closed = false, iterations = 1)

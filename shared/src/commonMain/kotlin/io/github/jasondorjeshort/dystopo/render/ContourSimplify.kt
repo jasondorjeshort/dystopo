@@ -7,11 +7,16 @@ import kotlin.math.sqrt
  * caller draws in (pixels for the renderer); tolerances are in the same unit.
  */
 object ContourSimplify {
-    /** Simplifies every line with [simplify]. Lines that collapse below two points are dropped. */
+    /**
+     * Simplifies every line with [simplify]. Open lines that collapse below two points are dropped,
+     * and so are closed rings that collapse below three: a two-point "ring" is a doubled-back
+     * segment, not a contour, and would draw as a stray dash.
+     */
     fun simplifyAll(lines: List<ContourLine>, tolerance: Double): List<ContourLine> =
         lines.mapNotNull { line ->
             val pts = simplify(line.points, line.closed, tolerance)
-            if (pts.size < 4) null else ContourLine(line.level, pts, line.closed)
+            val minPoints = if (line.closed) 3 else 2
+            if (pts.size < 2 * minPoints) null else ContourLine(line.level, pts, line.closed)
         }
 
     /**

@@ -1,0 +1,2 @@
+# text x y angleDeg; written by ./gradlew updateGoldens
+2000 178.2 113.0 74.4

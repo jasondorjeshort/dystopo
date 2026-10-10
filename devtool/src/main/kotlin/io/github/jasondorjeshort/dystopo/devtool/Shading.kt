@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.dem.Smooth
+import io.github.jasondorjeshort.dystopo.render.Gradient
 import io.github.jasondorjeshort.dystopo.render.Hillshade
 import io.github.jasondorjeshort.dystopo.render.Slope
 import kotlinx.serialization.Serializable
@@ -12,6 +14,8 @@ data class ShadingStats(
     val mode: String,
     val slopeOverlay: Boolean,
     val slopeOpacity: Double? = null,
+    /** Radius of the smoothing applied to the grid before hillshade and slope (`--smooth-dem`); null when off. */
+    val smoothDemRadius: Int? = null,
     /** Fraction of cells with data in each slope band (band label -> fraction); only with the overlay. */
     val slopeBandFractions: Map<String, Double>? = null,
 )
@@ -29,13 +33,27 @@ object Shading {
 
     /** Returns RGB pixels, row-major like [grid], and stats for the report. */
     fun render(grid: ElevationGrid, style: StyleOptions, timings: Timings, prefix: String = ""): Pair<IntArray, ShadingStats> {
+        val wantShade = style.shading != "none"
+        // Optional light smoothing for shading only; contours are traced elsewhere, on the raw grid.
+        val surface = if (style.smoothDem > 0 && (wantShade || style.slopeOverlay)) {
+            timings.time("${prefix}smoothDem") { Smooth.gaussian(grid, style.smoothDem) }
+        } else grid
+        // With both layers on, take the Horn gradient once and derive both from it.
+        val gradient = if (wantShade && style.slopeOverlay) timings.time("${prefix}gradient") { Gradient.of(surface) } else null
         val shade = when (style.shading) {
-            "hillshade" -> timings.time("${prefix}hillshade") { Hillshade.compute(grid, zFactor = style.zFactor) }
-            "multi" -> timings.time("${prefix}hillshade") { Hillshade.multidirectional(grid, zFactor = style.zFactor) }
+            "hillshade" -> timings.time("${prefix}hillshade") {
+                if (gradient != null) Hillshade.compute(gradient, zFactor = style.zFactor) else Hillshade.compute(surface, zFactor = style.zFactor)
+            }
+            "multi" -> timings.time("${prefix}hillshade") {
+                if (gradient != null) Hillshade.multidirectional(gradient, zFactor = style.zFactor)
+                else Hillshade.multidirectional(surface, zFactor = style.zFactor)
+            }
             else -> null
         }
         // Slope is always the true angle (no z-factor): the bands mean real degrees.
-        val slope = if (style.slopeOverlay) timings.time("${prefix}slope") { Slope.compute(grid) } else null
+        val slope = if (style.slopeOverlay) {
+            timings.time("${prefix}slope") { if (gradient != null) Slope.compute(gradient) else Slope.compute(surface) }
+        } else null
         val opacity = style.slopeOpacity.coerceIn(0.0, 1.0)
 
         val pixels = timings.time("${prefix}shading") { compose(grid, shade, slope, opacity) }
@@ -43,6 +61,7 @@ object Shading {
             mode = style.shading,
             slopeOverlay = slope != null,
             slopeOpacity = if (slope != null) opacity else null,
+            smoothDemRadius = if (surface !== grid) style.smoothDem else null,
             slopeBandFractions = slope?.let { s ->
                 val fractions = Slope.bandFractions(s)
                 Slope.bands.withIndex().associate { (k, band) -> band.label to (fractions[k] * 10000).roundToInt() / 10000.0 }

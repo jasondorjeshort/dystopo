@@ -50,12 +50,22 @@ class GoldenImageTest {
         }
         val mask = Goldens.labelMask(render.labels, actual.width, actual.height)
         val diff = ImageDiff(expected, actual, mask, pixelThreshold)
-        if (diff.outside.within(strict) && diff.inside.within(labels)) return null
+        val labelProblems = checkLabels(case, render)
+        if (diff.outside.within(strict) && diff.inside.within(labels) && labelProblems.isEmpty()) return null
         val written = writeOut(case, actual, diff)
         return "  ${case.name}:\n" +
             "    outside labels: ${diff.outside.describe(strict)}\n" +
             "    label regions:  ${diff.inside.describe(labels)}\n" +
+            labelProblems.joinToString("") { "    label: $it\n" } +
             "    $written"
+    }
+
+    /** The placed labels against the approved `.labels.txt`: count, text and position (see [Goldens.formatLabels]). */
+    private fun checkLabels(case: GoldenCase, render: GoldenRender): List<String> {
+        val stream = javaClass.getResourceAsStream("/goldens/${case.labelsFileName}")
+            ?: return listOf("no approved label list goldens/${case.labelsFileName}")
+        val expected = Goldens.parseLabels(stream.use { it.readBytes().decodeToString() })
+        return Goldens.compareLabels(expected, Goldens.record(render.labels))
     }
 
     private fun writeOut(case: GoldenCase, actual: java.awt.image.BufferedImage, diff: ImageDiff?): String {

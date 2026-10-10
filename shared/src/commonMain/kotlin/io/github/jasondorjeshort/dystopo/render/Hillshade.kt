@@ -30,11 +30,25 @@ object Hillshade {
     ): FloatArray {
         val light = Light(azimuthDeg, altitudeDeg)
         val out = FloatArray(grid.width * grid.height)
-        hornGradient(grid, zFactor) { i, dzdx, dzdy ->
-            out[i] = light.shade(dzdx, dzdy, 1.0 / sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)).toFloat()
-        }
+        hornGradient(grid, zFactor) { i, dzdx, dzdy -> out[i] = single(light, dzdx, dzdy) }
         return out
     }
+
+    /** [compute] from a gradient already taken (see [Gradient]), so slope can reuse it. */
+    fun compute(
+        gradient: Gradient,
+        azimuthDeg: Double = 315.0,
+        altitudeDeg: Double = 45.0,
+        zFactor: Double = 1.0,
+    ): FloatArray {
+        val light = Light(azimuthDeg, altitudeDeg)
+        val out = FloatArray(gradient.width * gradient.height)
+        gradient.forEach(zFactor) { i, dzdx, dzdy -> out[i] = single(light, dzdx, dzdy) }
+        return out
+    }
+
+    private fun single(light: Light, dzdx: Double, dzdy: Double): Float =
+        light.shade(dzdx, dzdy, 1.0 / sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)).toFloat()
 
     /**
      * Multidirectional hillshade: a blend of lights from [multiAzimuths] (south-west through north),
@@ -55,27 +69,43 @@ object Hillshade {
         altitudeDeg: Double = 45.0,
         zFactor: Double = 1.0,
     ): FloatArray {
-        val lights = multiAzimuths.indices.map { Light(multiAzimuths[it], altitudeDeg, multiBias[it]) }
+        val lights = multiLights(altitudeDeg)
         val out = FloatArray(grid.width * grid.height)
-        hornGradient(grid, zFactor) { i, dzdx, dzdy ->
-            val invNorm = 1.0 / sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)
-            val g = sqrt(dzdx * dzdx + dzdy * dzdy)
-            var sum = 0.0
-            var weights = 0.0
-            for (light in lights) {
-                // sin² of the angle between the light's horizontal direction and the aspect.
-                // The downhill unit vector is -(dzdx, dzdy)/g; its cross product with the light's
-                // unit (east, north) direction is that sine. Flat ground: equal weights.
-                val w = light.bias + if (g == 0.0) 1.0 else {
-                    val s = (-dzdx * light.uy + dzdy * light.ux) / g
-                    s * s
-                }
-                sum += w * light.shade(dzdx, dzdy, invNorm)
-                weights += w
-            }
-            out[i] = if (weights > 0.0) (sum / weights).toFloat() else Float.NaN
-        }
+        hornGradient(grid, zFactor) { i, dzdx, dzdy -> out[i] = multi(lights, dzdx, dzdy) }
         return out
+    }
+
+    /** [multidirectional] from a gradient already taken (see [Gradient]), so slope can reuse it. */
+    fun multidirectional(
+        gradient: Gradient,
+        altitudeDeg: Double = 45.0,
+        zFactor: Double = 1.0,
+    ): FloatArray {
+        val lights = multiLights(altitudeDeg)
+        val out = FloatArray(gradient.width * gradient.height)
+        gradient.forEach(zFactor) { i, dzdx, dzdy -> out[i] = multi(lights, dzdx, dzdy) }
+        return out
+    }
+
+    private fun multiLights(altitudeDeg: Double) = multiAzimuths.indices.map { Light(multiAzimuths[it], altitudeDeg, multiBias[it]) }
+
+    private fun multi(lights: List<Light>, dzdx: Double, dzdy: Double): Float {
+        val invNorm = 1.0 / sqrt(dzdx * dzdx + dzdy * dzdy + 1.0)
+        val g = sqrt(dzdx * dzdx + dzdy * dzdy)
+        var sum = 0.0
+        var weights = 0.0
+        for (light in lights) {
+            // sin² of the angle between the light's horizontal direction and the aspect.
+            // The downhill unit vector is -(dzdx, dzdy)/g; its cross product with the light's
+            // unit (east, north) direction is that sine. Flat ground: equal weights.
+            val w = light.bias + if (g == 0.0) 1.0 else {
+                val s = (-dzdx * light.uy + dzdy * light.ux) / g
+                s * s
+            }
+            sum += w * light.shade(dzdx, dzdy, invNorm)
+            weights += w
+        }
+        return if (weights > 0.0) (sum / weights).toFloat() else Float.NaN
     }
 
     private class Light(azimuthDeg: Double, altitudeDeg: Double, val bias: Double = 0.0) {

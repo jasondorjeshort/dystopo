@@ -77,8 +77,8 @@ class ContourLabelsTest {
 
     @Test
     fun labelsNeverOverlapEachOtherOrLeaveTheImage() {
-        // Many parallel index lines close together: only some can carry labels at the same x.
-        val lines = (0 until 20).map { k -> line(indexLevel, false, 601) { i -> i.toDouble() to (100.0 + k * 3) } }
+        // Parallel index lines a little more than a label apart: neighbours compete for the same x.
+        val lines = (0 until 10).map { k -> line(indexLevel, false, 601) { i -> i.toDouble() to (100.0 + k * 20) } }
         val labels = ContourLabels.place(lines, spec, measurer, params, 600, 300)
         assertTrue(labels.isNotEmpty())
         for (l in labels) for (c in l.corners(params.padding).toList().chunked(2)) {
@@ -86,6 +86,36 @@ class ContourLabelsTest {
         }
         for (i in labels.indices) for (j in i + 1 until labels.size) {
             assertTrue(!ContourLabels.boxesOverlap(labels[i].corners(), labels[j].corners()), "labels $i and $j overlap")
+        }
+    }
+
+    @Test
+    fun mergedBandOfIndexContoursGetsNoStackedLabels() {
+        // A cliff: three index contours squeezed into one band, plus a lone index line elsewhere.
+        val band = listOf(200, 400, 600).mapIndexed { k, ft ->
+            line(ft * 0.3048, false, 1001) { i -> i.toDouble() to (300.0 + 3 * k) }
+        }
+        val lone = line(800 * 0.3048, false, 1001) { i -> i.toDouble() to 500.0 }
+        val labels = ContourLabels.place(band + lone, spec, measurer, params, 1000, 600)
+        assertTrue(labels.isNotEmpty())
+        assertTrue(labels.all { it.text == "800" }, "labels on the band: ${labels.filter { it.text != "800" }.map { it.text }}")
+        // With the check off, the band is labeled (the old, stacked behaviour).
+        val unchecked = ContourLabels.place(band + lone, spec, measurer, LabelParams(lineClearance = -1.0), 1000, 600)
+        assertTrue(unchecked.any { it.text != "800" })
+    }
+
+    @Test
+    fun labelsStayOffOtherIndexLinesThatCrossThem() {
+        val horizontal = line(indexLevel, false, 1001) { i -> i.toDouble() to 300.0 }
+        val vertical = line(2 * indexLevel, false, 601) { i -> 500.0 to i.toDouble() }
+        val labels = ContourLabels.place(listOf(horizontal, vertical), spec, measurer, params, 1000, 600)
+        assertTrue(labels.isNotEmpty())
+        for (l in labels) {
+            // No label box (plus clearance) may contain the crossing line.
+            val halfW = l.width / 2 + params.lineClearance
+            val halfH = l.height / 2 + params.lineClearance
+            if (l.text == "200") assertTrue(abs(l.x - 500.0) > halfW, "label at ${l.x} sits on the vertical line")
+            else assertTrue(abs(l.y - 300.0) > halfW || abs(l.x - 500.0) > halfH, "label at ${l.x},${l.y} sits on the horizontal line")
         }
     }
 

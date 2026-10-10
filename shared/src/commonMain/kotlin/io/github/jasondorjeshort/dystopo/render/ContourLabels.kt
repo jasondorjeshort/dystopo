@@ -4,6 +4,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -51,6 +52,12 @@ data class LabelParams(
     val padding: Double = 4.0,
     /** Step along the line between candidate positions, in text heights. */
     val stepHeights: Double = 1.0,
+    /**
+     * A label is rejected if another index contour passes within this distance of its ink box.
+     * Along cliffs several index contours merge into one band; without this every line in the band
+     * would get its own label, stacked on the others' lines. Negative disables the check.
+     */
+    val lineClearance: Double = 2.0,
 ) {
     val fontPx: Double get() = baseFontPx * textScale
 }
@@ -60,8 +67,9 @@ object ContourLabels {
     /**
      * Picks label positions on [lines] that are index contours per [spec]. Each line gets about
      * one label per [LabelParams.repeatDistance] of length, placed on the straightest stretch of
-     * that section that fits inside the [width]x[height] image and does not overlap an earlier
-     * label. Longer lines are handled first so they win the collisions.
+     * that section that fits inside the [width]x[height] image, does not overlap an earlier
+     * label, and is not crossed by another index contour (see [LabelParams.lineClearance]).
+     * Longer lines are handled first so they win the collisions.
      */
     fun place(
         lines: List<ContourLine>,
@@ -76,10 +84,13 @@ object ContourLabels {
         val boxes = ArrayList<DoubleArray>()
         val sizes = HashMap<String, TextSize>()
         val index = lines.filter { spec.isIndex(it.level) }.sortedByDescending { it.pointCount }
-        for (line in index) {
+        val segments = if (params.lineClearance >= 0) SegmentIndex(index, cellSize = 32.0) else null
+        for ((lineId, line) in index.withIndex()) {
             val text = spec.label(line.level)
             val size = sizes.getOrPut(text) { measurer.measure(text, fontPx) }
-            for (label in placeOnLine(line, text, size, fontPx, params, width, height, boxes)) {
+            val crossed: (ContourLabel) -> Boolean =
+                if (segments == null) { _ -> false } else { label -> segments.crossesBox(label, params.lineClearance, skipLine = lineId) }
+            for (label in placeOnLine(line, text, size, fontPx, params, width, height, boxes, crossed)) {
                 placed += label
                 boxes += label.corners(params.padding)
             }
@@ -96,6 +107,7 @@ object ContourLabels {
         width: Int,
         height: Int,
         boxes: MutableList<DoubleArray>,
+        crossedByOtherLine: (ContourLabel) -> Boolean,
     ): List<ContourLabel> {
         val pts = line.points
         val n = line.pointCount
@@ -127,7 +139,9 @@ object ContourLabels {
                 val candidate = candidate(pts, n, cum, s, s + labelLen, text, line.level, size, fontPx, params, maxDev)
                 if (candidate != null) {
                     val (label, score) = candidate
-                    if (score < bestScore && insideImage(label, params.padding, width, height) && !collides(label, params.padding, boxes)) {
+                    if (score < bestScore && insideImage(label, params.padding, width, height) &&
+                        !collides(label, params.padding, boxes) && !crossedByOtherLine(label)
+                    ) {
                         best = label
                         bestScore = score
                     }
@@ -254,6 +268,102 @@ object ContourLabels {
     private fun maxX(c: DoubleArray) = maxOf(maxOf(c[0], c[2]), maxOf(c[4], c[6]))
     private fun minY(c: DoubleArray) = minOf(minOf(c[1], c[3]), minOf(c[5], c[7]))
     private fun maxY(c: DoubleArray) = maxOf(maxOf(c[1], c[3]), maxOf(c[5], c[7]))
+}
+
+/**
+ * The segments of a set of lines bucketed on a square grid of [cellSize], for asking whether any
+ * line other than a given one passes through a label's box.
+ */
+internal class SegmentIndex(lines: List<ContourLine>, private val cellSize: Double) {
+    private val buckets = HashMap<Long, MutableList<Int>>()
+    private val lineOf: IntArray
+    private val coords: DoubleArray
+
+    init {
+        val count = lines.sumOf { if (it.pointCount < 2) 0 else if (it.closed) it.pointCount else it.pointCount - 1 }
+        lineOf = IntArray(count)
+        coords = DoubleArray(4 * count)
+        var k = 0
+        for ((id, line) in lines.withIndex()) {
+            val n = line.pointCount
+            if (n < 2) continue
+            val p = line.points
+            for (s in 0 until (if (line.closed) n else n - 1)) {
+                val t = (s + 1) % n
+                val x0 = p[2 * s]
+                val y0 = p[2 * s + 1]
+                val x1 = p[2 * t]
+                val y1 = p[2 * t + 1]
+                lineOf[k] = id
+                coords[4 * k] = x0
+                coords[4 * k + 1] = y0
+                coords[4 * k + 2] = x1
+                coords[4 * k + 3] = y1
+                val seg = k
+                forCells(minOf(x0, x1), minOf(y0, y1), maxOf(x0, x1), maxOf(y0, y1)) { buckets.getOrPut(it) { ArrayList() } += seg }
+                k++
+            }
+        }
+    }
+
+    private inline fun forCells(x0: Double, y0: Double, x1: Double, y1: Double, block: (Long) -> Unit) {
+        val cx0 = floor(x0 / cellSize).toLong()
+        val cx1 = floor(x1 / cellSize).toLong()
+        val cy0 = floor(y0 / cellSize).toLong()
+        val cy1 = floor(y1 / cellSize).toLong()
+        for (cy in cy0..cy1) for (cx in cx0..cx1) block((cy shl 32) xor (cx and 0xFFFFFFFFL))
+    }
+
+    /** True if a segment of any line except [skipLine] comes within [margin] of [label]'s ink box. */
+    fun crossesBox(label: ContourLabel, margin: Double, skipLine: Int): Boolean {
+        val hw = label.width / 2 + margin
+        val hh = label.height / 2 + margin
+        val c = cos(label.angle)
+        val s = sin(label.angle)
+        val reach = hypot(hw, hh)
+        val cx0 = floor((label.x - reach) / cellSize).toLong()
+        val cx1 = floor((label.x + reach) / cellSize).toLong()
+        val cy0 = floor((label.y - reach) / cellSize).toLong()
+        val cy1 = floor((label.y + reach) / cellSize).toLong()
+        for (cy in cy0..cy1) for (cx in cx0..cx1) {
+            val list = buckets[(cy shl 32) xor (cx and 0xFFFFFFFFL)] ?: continue
+            for (k in list) {
+                if (lineOf[k] == skipLine) continue
+                // Into the label's frame: the box is drawn rotated by +angle about its center.
+                val ax = coords[4 * k] - label.x
+                val ay = coords[4 * k + 1] - label.y
+                val bx = coords[4 * k + 2] - label.x
+                val by = coords[4 * k + 3] - label.y
+                if (segmentHitsRect(ax * c + ay * s, -ax * s + ay * c, bx * c + by * s, -bx * s + by * c, hw, hh)) return true
+            }
+        }
+        return false
+    }
+
+    /** Liang-Barsky clipping: does segment (u0,v0)-(u1,v1) touch the rectangle |u| <= hw, |v| <= hh? */
+    private fun segmentHitsRect(u0: Double, v0: Double, u1: Double, v1: Double, hw: Double, hh: Double): Boolean {
+        var t0 = 0.0
+        var t1 = 1.0
+        val du = u1 - u0
+        val dv = v1 - v0
+        val p = doubleArrayOf(-du, du, -dv, dv)
+        val q = doubleArrayOf(u0 + hw, hw - u0, v0 + hh, hh - v0)
+        for (i in 0 until 4) {
+            if (p[i] == 0.0) {
+                if (q[i] < 0) return false
+            } else {
+                val r = q[i] / p[i]
+                if (p[i] < 0) {
+                    if (r > t1) return false
+                    if (r > t0) t0 = r
+                } else {
+                    if (r < t0) return false
+                    if (r < t1) t1 = r
+                }
+            }
+        }
+        return true
+    }
 }
 
 /** Corners of a [w]x[h] box centered at ([cx],[cy]) rotated by [angle], interleaved x,y. */

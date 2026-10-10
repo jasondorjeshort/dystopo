@@ -43,6 +43,39 @@ internal inline fun hornGradient(grid: ElevationGrid, zFactor: Double = 1.0, blo
 
 internal fun orCenter(v: Float, center: Float): Double = if (v.isNaN()) center.toDouble() else v.toDouble()
 
+/**
+ * The Horn gradient of a whole grid at z-factor 1, kept so hillshade and slope can share one pass
+ * over the grid when a map shows both. Same values [hornGradient] would hand out, cell for cell;
+ * NaN where the grid has no data.
+ */
+class Gradient(val width: Int, val height: Int, val dzdx: DoubleArray, val dzdy: DoubleArray) {
+    init {
+        require(dzdx.size == width * height && dzdy.size == width * height) { "gradient arrays must be ${width}x$height" }
+    }
+
+    /** Calls [block] per cell like [hornGradient], with both components scaled by [zFactor]. */
+    internal inline fun forEach(zFactor: Double = 1.0, block: (index: Int, dzdx: Double, dzdy: Double) -> Unit) {
+        if (zFactor == 1.0) {
+            for (i in dzdx.indices) block(i, dzdx[i], dzdy[i])
+        } else {
+            for (i in dzdx.indices) block(i, dzdx[i] * zFactor, dzdy[i] * zFactor)
+        }
+    }
+
+    companion object {
+        fun of(grid: ElevationGrid): Gradient {
+            val n = grid.width * grid.height
+            val gx = DoubleArray(n)
+            val gy = DoubleArray(n)
+            hornGradient(grid) { i, dzdx, dzdy ->
+                gx[i] = dzdx
+                gy[i] = dzdy
+            }
+            return Gradient(grid.width, grid.height, gx, gy)
+        }
+    }
+}
+
 /** One slope-angle band of the overlay: cells with [minDeg] <= slope < [maxDeg] get [rgb]. */
 data class SlopeBand(val label: String, val minDeg: Double, val maxDeg: Double, val rgb: Int)
 
@@ -93,6 +126,13 @@ object Slope {
     fun compute(grid: ElevationGrid): FloatArray {
         val out = FloatArray(grid.width * grid.height)
         hornGradient(grid) { i, dzdx, dzdy -> out[i] = degrees(dzdx, dzdy).toFloat() }
+        return out
+    }
+
+    /** [compute] from a gradient already taken (see [Gradient]); identical results. */
+    fun compute(gradient: Gradient): FloatArray {
+        val out = FloatArray(gradient.width * gradient.height)
+        gradient.forEach { i, dzdx, dzdy -> out[i] = degrees(dzdx, dzdy).toFloat() }
         return out
     }
 

@@ -43,7 +43,7 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
                 }
             }
         }
-        val level = cells.values.filterNotNull().firstOrNull()?.levelFor(window.cellSizeMeters, 111_320.0) ?: 0
+        val level = cells.values.filterNotNull().firstOrNull()?.levelFor(OverviewLevels.targetMeters(window), 111_320.0) ?: 0
         for ((key, cell) in cells) {
             val shift = shifts.getValue(key)
             cell?.prefetch(level, lons.first() + shift, lats.last(), lons.last() + shift, lats.first())

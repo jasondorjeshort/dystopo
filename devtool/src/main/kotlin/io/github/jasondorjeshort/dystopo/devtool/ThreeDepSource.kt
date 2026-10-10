@@ -46,7 +46,7 @@ class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : Elevat
             }
         }
         val present = cells.values.filterNotNull()
-        val level = present.firstOrNull()?.levelFor(window.cellSizeMeters, 111_320.0) ?: 0
+        val level = present.firstOrNull()?.levelFor(OverviewLevels.targetMeters(window), 111_320.0) ?: 0
         for (cell in present) cell.prefetch(level, lons.first(), lats.last(), lons.last(), lats.first())
 
         val values = FloatArray(window.width * window.height)

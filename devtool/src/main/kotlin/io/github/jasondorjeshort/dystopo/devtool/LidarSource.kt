@@ -10,6 +10,7 @@ import java.io.File
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import kotlin.math.floor
 
 /**
  * USGS 3DEP 1 m lidar DEMs. Coverage is patchy and comes from separate survey projects, each
@@ -25,7 +26,15 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
     override val registryIds = listOf("3dep-1m") + Geoids.REGISTRY_IDS
 
     @Serializable
-    private data class TnmItem(val title: String = "", val downloadURL: String = "", val publicationDate: String = "")
+    private data class TnmBox(val minX: Double, val minY: Double, val maxX: Double, val maxY: Double)
+
+    @Serializable
+    private data class TnmItem(
+        val title: String = "",
+        val downloadURL: String = "",
+        val publicationDate: String = "",
+        val boundingBox: TnmBox? = null,
+    )
 
     @Serializable
     private data class TnmResponse(val total: Int = 0, val items: List<TnmItem> = emptyList())
@@ -35,43 +44,79 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
     /** Per-project grids (NaN outside coverage), oldest first, plus counters. */
     data class Layers(val grids: List<ElevationGrid>, val counters: Map<String, Long>)
 
-    private val json = Json { ignoreUnknownKeys = true }
+    /** What [index] did for one window, for the report. */
+    private class IndexStats(val cells: Int, val queries: Int, val ms: Long)
 
-    private fun index(window: MercatorWindow): List<TnmItem> {
+    /**
+     * Lidar tiles whose footprint overlaps [window]. The TNM API is asked once per 1° cell rather
+     * than per window: every tile of an export (and every zoom) shares the same few queries, on disk
+     * and in memory. Items carry their bounding box, so the window's own list is a cheap filter.
+     */
+    private fun index(window: MercatorWindow): Pair<List<TnmItem>, IndexStats> {
+        val started = System.nanoTime()
         val w = window.lonAt(0)
         val e = window.lonAt(window.width - 1)
         val n = window.latAt(0)
         val s = window.latAt(window.height - 1)
-        val bbox = String.format(Locale.ROOT, "%.5f,%.5f,%.5f,%.5f", w, s, e, n)
-        val dataset = URLEncoder.encode("Digital Elevation Model (DEM) 1 meter", StandardCharsets.UTF_8)
-        // Pages of 200; wide windows (zoomed-out tiles) list more than that.
-        val items = ArrayList<TnmItem>()
-        var offset = 0
-        while (true) {
-            // The cache file is keyed by a hash so the bbox itself isn't spelled out in file names.
-            val cache = File(cacheDir, "index/${bbox.hashCode().toUInt()}${if (offset == 0) "" else "-$offset"}.json")
-            val text = if (cache.exists()) cache.readText() else {
-                val url = "https://tnmaccess.nationalmap.gov/api/v1/products?bbox=$bbox&datasets=$dataset&prodFormats=GeoTIFF&max=200&offset=$offset"
-                Http.download(url, cache)
-                cache.readText()
-            }
-            val response = json.decodeFromString<TnmResponse>(text)
-            items += response.items
-            if (response.items.isEmpty() || items.size >= response.total) return items
-            offset = items.size
+        val cells = ArrayList<Pair<Int, Int>>()
+        for (lat in floor(s).toInt()..floor(n).toInt()) for (lon in floor(w).toInt()..floor(e).toInt()) cells += lat to lon
+        val queries = java.util.concurrent.atomic.AtomicInteger()
+        val perCell = cells.mapOnIo { (lat, lon) ->
+            cellIndex.computeIfAbsent(cellKey(cacheDir, lat, lon)) { lazy { loadCell(lat, lon, queries) } }.value
         }
+        // A tile straddling a cell edge is listed by both cells; keep the first.
+        val seen = HashSet<String>()
+        val items = perCell.flatten().filter { item ->
+            val b = item.boundingBox
+            val overlaps = b == null || (b.maxX >= w && b.minX <= e && b.maxY >= s && b.minY <= n)
+            overlaps && seen.add(item.downloadURL)
+        }
+        return items to IndexStats(cells.size, queries.get(), (System.nanoTime() - started) / 1_000_000)
     }
 
-    private fun projects(window: MercatorWindow): List<Project> {
+    /** Every lidar tile listed for the 1° cell with south-west corner ([lat], [lon]), all pages. */
+    private fun loadCell(lat: Int, lon: Int, queries: java.util.concurrent.atomic.AtomicInteger): List<TnmItem> {
+        // Keyed by a hash so the location isn't spelled out in file names.
+        val key = String.format(Locale.ROOT, "%d,%d", lat, lon)
+        val cache = File(cacheDir, "index/cell-${key.hashCode().toUInt()}.json")
+        if (cache.exists()) return json.decodeFromString<TnmResponse>(cache.readText()).items
+        val bbox = String.format(Locale.ROOT, "%d,%d,%d,%d", lon, lat, lon + 1, lat + 1)
+        val dataset = URLEncoder.encode("Digital Elevation Model (DEM) 1 meter", StandardCharsets.UTF_8)
+        fun page(offset: Int): TnmResponse {
+            val url = "https://tnmaccess.nationalmap.gov/api/v1/products?bbox=$bbox&datasets=$dataset&prodFormats=GeoTIFF&max=$PAGE&offset=$offset"
+            // Unique per thread: other processes sharing the cache may be fetching the same cell.
+            val tmp = File(cacheDir, "index/cell-${key.hashCode().toUInt()}-$offset.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.page")
+            Http.download(url, tmp)
+            queries.incrementAndGet()
+            return json.decodeFromString<TnmResponse>(tmp.readText()).also { tmp.delete() }
+        }
+        // The first page says how many there are; fetch the rest in parallel.
+        val first = page(0)
+        val rest = (PAGE until first.total step PAGE).toList().parallelStream().map { page(it) }.toList()
+        val items = first.items + rest.flatMap { it.items }
+        check(items.size >= first.total || rest.any { it.items.isEmpty() }) { "TNM index for a cell came back short: ${items.size} of ${first.total}" }
+        // Keep only what we use; the full API records are mostly long descriptions.
+        val slim = TnmResponse(first.total, items.map { TnmItem(it.title, it.downloadURL, it.publicationDate, it.boundingBox) })
+        cache.parentFile.mkdirs()
+        val part = File(cacheDir, "index/cell-${key.hashCode().toUInt()}.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.part")
+        part.writeText(json.encodeToString(TnmResponse.serializer(), slim))
+        java.nio.file.Files.move(part.toPath(), cache.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        return slim.items
+    }
+
+    private fun projects(items: List<TnmItem>): List<Project> {
         val projectPattern = Regex("/Projects/([^/]+)/")
         val yearPattern = Regex("_(\\d{4})(_|$)")
-        return index(window)
-            .filter { it.downloadURL.endsWith(".tif") }
-            .groupBy { projectPattern.find(it.downloadURL)?.groupValues?.get(1) ?: "unknown" }
+        val tifs = items.filter { it.downloadURL.endsWith(".tif") }
+        fun projectOf(item: TnmItem) = projectPattern.find(item.downloadURL)?.groupValues?.get(1) ?: "unknown"
+        // Open every tile's header at once, across projects: cold, this is one range request each.
+        val opened = tifs.mapOnIo { item ->
+            item.downloadURL to RemoteTiff(item.downloadURL, File(cacheDir, "${projectOf(item)}/${item.downloadURL.substringAfterLast('/').removeSuffix(".tif")}"))
+        }.toMap()
+        return tifs
+            .groupBy { projectOf(it) }
             .map { (name, items) ->
-                val tiles = items.parallelStream().map { item ->
-                    RemoteTiff(item.downloadURL, File(cacheDir, "$name/${item.downloadURL.substringAfterLast('/').removeSuffix(".tif")}"))
-                }.toList()
+                val tiles = items.map { opened.getValue(it.downloadURL) }
                 Project(
                     name = name,
                     year = yearPattern.find(name)?.groupValues?.get(1)?.toInt() ?: 0,
@@ -83,7 +128,12 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
     }
 
     fun layers(window: MercatorWindow): Layers {
-        val projects = projects(window)
+        // Read on this thread: the export's override is thread-local (see OverviewLevels).
+        val targetMeters = OverviewLevels.targetMeters(window)
+        val (items, indexStats) = index(window)
+        val openStarted = System.nanoTime()
+        val projects = projects(items)
+        val openMs = (System.nanoTime() - openStarted) / 1_000_000
         val lons = DoubleArray(window.width) { window.lonAt(it) }
         val lats = DoubleArray(window.height) { window.latAt(it) }
 
@@ -100,30 +150,41 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
             xs to ys
         }
 
+        // Find which part of each tile the window needs and read it, all tiles in parallel: cold,
+        // each tile costs a few range requests, and one at a time that dominated low-zoom renders.
+        val readStarted = System.nanoTime()
+        val levels = projects.flatMap { it.tiles }.mapOnIo { tile ->
+            val (xs, ys) = projected.getValue(zoneOf(tile))
+            val level = tile.levelFor(targetMeters, 1.0)
+            val e = tile.tiff.extent
+            var minX = Double.POSITIVE_INFINITY
+            var minY = Double.POSITIVE_INFINITY
+            var maxX = Double.NEGATIVE_INFINITY
+            var maxY = Double.NEGATIVE_INFINITY
+            for (k in xs.indices) {
+                val x = xs[k]
+                val y = ys[k]
+                if (x < e[0] || x >= e[2] || y <= e[1] || y > e[3]) continue
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+            }
+            if (minX > maxX) return@mapOnIo tile to -1 // tile listed by the API but outside the window
+            tile.prefetch(level, minX, minY, maxX, maxY)
+            tile to level
+        }.toMap()
+        val readMs = (System.nanoTime() - readStarted) / 1_000_000
+
         val grids = ArrayList<ElevationGrid>()
         var tilesUsed = 0L
         for (project in projects) {
             val values = FloatArray(window.width * window.height) { Float.NaN }
             for (tile in project.tiles) {
+                val level = levels.getValue(tile)
+                if (level < 0) continue
                 val (xs, ys) = projected.getValue(zoneOf(tile))
-                val level = tile.levelFor(window.cellSizeMeters, 1.0)
-                val e = tile.tiff.extent
-                var minX = Double.POSITIVE_INFINITY
-                var minY = Double.POSITIVE_INFINITY
-                var maxX = Double.NEGATIVE_INFINITY
-                var maxY = Double.NEGATIVE_INFINITY
-                for (k in xs.indices) {
-                    val x = xs[k]
-                    val y = ys[k]
-                    if (x < e[0] || x >= e[2] || y <= e[1] || y > e[3]) continue
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-                if (minX > maxX) continue // tile listed by the API but outside the window
                 tilesUsed++
-                tile.prefetch(level, minX, minY, maxX, maxY)
                 for (k in xs.indices) {
                     if (!values[k].isNaN() || !tile.contains(xs[k], ys[k])) continue
                     values[k] = tile.sample(level, xs[k], ys[k])
@@ -145,6 +206,11 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
         counters["lidarTilesUsed"] = tilesUsed
         counters["tilesDecoded"] = projects.sumOf { p -> p.tiles.sumOf { it.tilesDecoded } }.toLong()
         counters["rangeRequests"] = projects.sumOf { p -> p.tiles.sumOf { it.source.fetches } }
+        counters["indexCells"] = indexStats.cells.toLong()
+        counters["indexQueries"] = indexStats.queries.toLong()
+        counters["indexMs"] = indexStats.ms
+        counters["openMs"] = openMs
+        counters["readMs"] = readMs
         // Project names can identify a place, so report coverage per project index only.
         grids.forEachIndexed { i, g -> counters["project${i}CoveragePermille"] = (Composite.coverage(g) * 1000).toLong() }
         return Layers(grids, counters)
@@ -167,6 +233,36 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
     companion object {
         /** Width of the blend band at coverage edges. */
         const val FEATHER_METERS = 60.0
+
+        /** TNM API page size. */
+        private const val PAGE = 200
+
+        /** Per-process TNM index, one entry per (cache dir, 1° cell); lazy so each cell is queried once. */
+        private val cellIndex = java.util.concurrent.ConcurrentHashMap<String, Lazy<List<TnmItem>>>()
+
+        private fun cellKey(cacheDir: File, lat: Int, lon: Int) = "${cacheDir.path}|$lat|$lon"
+
+        private val json = Json { ignoreUnknownKeys = true }
+
+        /**
+         * Threads for lidar I/O fan-out (index cells, tile headers, tile reads). Not the common
+         * fork-join pool: these tasks block on HTTP and start parallel streams of their own (tile
+         * prefetch, index pages), and blocking nested inside that pool runs it out of
+         * compensation threads. Tasks here never wait on other tasks here, so it can't deadlock.
+         */
+        private val ioPool = java.util.concurrent.Executors.newFixedThreadPool(16) { r ->
+            Thread(r, "lidar-io").apply { isDaemon = true }
+        }
+
+        /** [map] with each element run on [ioPool]; rethrows the first failure. */
+        private fun <T, R> List<T>.mapOnIo(f: (T) -> R): List<R> =
+            map { ioPool.submit(java.util.concurrent.Callable { f(it) }) }.map {
+                try {
+                    it.get()
+                } catch (e: java.util.concurrent.ExecutionException) {
+                    throw e.cause ?: e
+                }
+            }
 
         /** Blend band in cells for grids whose cells are [cellSizeMeters] on the ground. */
         fun featherCells(cellSizeMeters: Double) = FEATHER_METERS / cellSizeMeters
