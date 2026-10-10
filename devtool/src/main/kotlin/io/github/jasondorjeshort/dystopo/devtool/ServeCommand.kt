@@ -14,6 +14,7 @@ import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
+import io.github.jasondorjeshort.dystopo.tiles.ContourTileStats
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import io.github.jasondorjeshort.dystopo.tiles.ImageDecoder
@@ -65,6 +66,7 @@ class ServeCommand : CliktCommand(name = "serve") {
         ).json()
         val timings = ArrayList<Double>()
         val sampleTimings = ArrayList<Double>()
+        val contourStats = ContourTileStats()
         val tileRe = Regex("^/(dem|osm|contours)/(\\d+)/(\\d+)/(\\d+)\\.(png|pbf)$")
         val glyphRe = Regex("^/glyphs/([^/]+)/(\\d+-\\d+)\\.pbf$")
         val centerLat = (h.minLat + h.maxLat) / 2
@@ -82,9 +84,9 @@ class ServeCommand : CliktCommand(name = "serve") {
                         "osm" -> reply(ex, osmReader?.let { r -> synchronized(lock) { r.tile(z, x, y) } }, "application/x-protobuf")
                         "dem" -> {
                             val stored = synchronized(lock) { demReader.tile(z, x, y) }
-                            val bytes = stored ?: synchronized(pyramid) {
+                            val bytes = stored ?: (
                                 if (!pyramid.covers(z, x * 256, y * 256, 256, 256)) null else pyramid.window(z, x * 256, y * 256, 256, 256)
-                            }?.takeIf { g -> !g.values.all { it.isNaN() } }?.let { g ->
+                                )?.takeIf { g -> !g.values.all { it.isNaN() } }?.let { g ->
                                 val img = BufferedImage(256, 256, BufferedImage.TYPE_INT_RGB)
                                 img.setRGB(0, 0, 256, 256, TileWindows.encodeTerrarium(g), 0, 256)
                                 ByteArrayOutputStream().also { ImageIO.write(img, "png", it) }.toByteArray()
@@ -92,12 +94,14 @@ class ServeCommand : CliktCommand(name = "serve") {
                             reply(ex, bytes, "image/png")
                         }
                         else -> {
+                            // The pyramid is thread-safe: tiles generate concurrently, up to the pool's 4 threads.
                             val started = System.nanoTime()
-                            val dz = ContourTiles.demZoom(z, options)
-                            val w = ContourTiles.windowFor(x, y, options)
-                            val grid = synchronized(pyramid) { pyramid.window(dz, w[0], w[1], w[2], w[3]) }
+                            val concurrent = contourStats.begin()
+                            val plan = ContourTiles.plan(z, x, y, options)
+                            val grid = ContourTiles.sample(pyramid, plan)
                             val sampled = System.nanoTime()
-                            val tile = ContourTiles.build(grid, dz, options)
+                            val tile = ContourTiles.build(grid, plan, options)
+                            contourStats.end(plan, tile, (System.nanoTime() - started) / 1e6, (sampled - started) / 1e6, concurrent)
                             synchronized(timings) {
                                 timings += (System.nanoTime() - started) / 1e6
                                 sampleTimings += (sampled - started) / 1e6
@@ -123,6 +127,7 @@ class ServeCommand : CliktCommand(name = "serve") {
                                 "minMs" to t.minOrNull(), "avgMs" to t.average().takeIf { t.isNotEmpty() }, "maxMs" to t.maxOrNull(),
                                 "sampleAvgMs" to s.average().takeIf { s.isNotEmpty() },
                                 "demTilesDecoded" to pyramid.tilesDecoded,
+                                "contourGeneration" to contourStats.json(),
                             ),
                         )
                         reply(ex, json.toByteArray(), "application/json")

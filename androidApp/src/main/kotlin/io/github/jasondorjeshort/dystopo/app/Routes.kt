@@ -139,7 +139,7 @@ class Routes(private val app: DystopoApp) {
                 "contours" to t.contours.json() + mapOf("diskCacheHits" to t.contourCacheHits.get()),
                 "glyphs" to t.glyphs.json(),
             ),
-            "contourGeneration" to t.contourGen.json(),
+            "contourGeneration" to t.contourJson(),
             "contourDiskCache" to mapOf("tiles" to cached.size, "bytes" to cached.sumOf { it.length() }),
             "demDecodeCache" to t.pyramidJson(),
             "memory" to mapOf(

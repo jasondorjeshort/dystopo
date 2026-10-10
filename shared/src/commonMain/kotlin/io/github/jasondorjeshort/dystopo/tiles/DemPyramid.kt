@@ -3,6 +3,8 @@ package io.github.jasondorjeshort.dystopo.tiles
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import kotlin.concurrent.Volatile
+import kotlin.jvm.Synchronized
 import kotlin.math.floor
 
 /** A decoded image: [argb] pixels, row-major, [width] x [height]. */
@@ -29,7 +31,13 @@ fun interface ImageDecoder {
  * (overzoom), so contour tiles can be generated for every zoom a viewer asks for and the tiles
  * around the edge of a deep level fade to a softer ancestor instead of stopping.
  *
- * Not thread-safe: callers serialize access (the readers behind [fetch] usually aren't either).
+ * Thread-safe: several contour tiles sample one pyramid concurrently. The cache is guarded by this
+ * object's monitor, while fetching and decoding run outside it, so two threads that miss the same
+ * tile at once may both decode it ([duplicateDecodes] counts that). [fetch] and the decoder must be
+ * thread-safe (pack readers serialize their own reads).
+ *
+ * Below [minZoom], windows are box-averaged from [minZoom] (a contour tile of a low zoom samples a
+ * coarse grid; see [ContourTiles.plan]).
  */
 class DemPyramid(
     val minZoom: Int,
@@ -46,13 +54,19 @@ class DemPyramid(
     }
 
     /** Tiles fetched and decoded (cache misses that found a tile). */
+    @Volatile
     var tilesDecoded: Long = 0
         private set
 
     /** Lookups that found a decoded tile, or a known-missing one, in the cache. */
+    @Volatile
     var cacheHits: Long = 0
         private set
 
+    /** Decodes thrown away because another thread decoded the same tile first. */
+    @Volatile
+    var duplicateDecodes: Long = 0
+        private set
 
     // LinkedHashMap keeps insertion order; re-inserting on a hit makes that order least-recently-used first.
     private val cache = LinkedHashMap<Long, FloatArray>()
@@ -66,19 +80,13 @@ class DemPyramid(
         val n = 1 shl z
         if (x < 0 || y < 0 || x >= n || y >= n) return null
         val k = key(z, x, y)
-        cache.remove(k)?.let {
-            cache[k] = it
-            cacheHits++
-            return it
-        }
-        if (k in missing) {
-            cacheHits++
-            return null
-        }
+        val cached = cached(k)
+        if (cached === MISSING) return null
+        if (cached != null) return cached
+        // Fetch and decode outside the lock, so other threads keep sampling cached tiles meanwhile.
         val bytes = fetch(z, x, y)
         if (bytes == null) {
-            if (missing.size > 4096) missing.clear()
-            missing += k
+            rememberMissing(k)
             return null
         }
         val img = decoder.decode(bytes)
@@ -86,14 +94,46 @@ class DemPyramid(
             "tile $z/$x/$y is ${img.width}x${img.height}, expected ${tileSize}x$tileSize"
         }
         val values = FloatArray(img.argb.size) { Terrarium.elevation(img.argb[it]) }
+        return store(k, values)
+    }
+
+    /** The cached tile for [k] (most recently used now), [MISSING] for a known-absent tile, or null. */
+    @Synchronized
+    private fun cached(k: Long): FloatArray? {
+        cache.remove(k)?.let {
+            cache[k] = it
+            cacheHits++
+            return it
+        }
+        if (k in missing) {
+            cacheHits++
+            return MISSING
+        }
+        return null
+    }
+
+    @Synchronized
+    private fun rememberMissing(k: Long) {
+        if (missing.size > 4096) missing.clear()
+        missing += k
+    }
+
+    /** Caches [values] for [k] and returns them, or the copy another thread stored first. */
+    @Synchronized
+    private fun store(k: Long, values: FloatArray): FloatArray {
         tilesDecoded++
+        cache[k]?.let {
+            duplicateDecodes++
+            return it
+        }
         cache[k] = values
         if (cache.size > cacheTiles) cache.remove(cache.keys.first())
         return values
     }
 
     /** Number of decoded tiles currently held. */
-    val cachedTiles: Int get() = cache.size
+    val cachedTiles: Int
+        @Synchronized get() = cache.size
 
     /** Elevation of global pixel ([px], [py]) at zoom [z] from that zoom's tile only; NaN if absent. */
     private fun exact(z: Int, px: Int, py: Int, lookup: Lookup): Float {
@@ -148,18 +188,26 @@ class DemPyramid(
 
     /**
      * An elevation grid for the global pixel window ([x0], [y0], [width] x [height]) at zoom [z].
-     * Cells nobody covers are NaN. Below [minZoom] everything is NaN (no downsampling).
+     * Cells nobody covers are NaN. Below [minZoom], each cell is the mean of the 2^k x 2^k cells of
+     * [minZoom] under it (NaN cells ignored), k = [minZoom] - [z].
      */
     fun window(z: Int, x0: Int, y0: Int, width: Int, height: Int): ElevationGrid {
         val values = FloatArray(width * height)
         if (!covers(z, x0, y0, width, height)) {
             values.fill(Float.NaN)
+        } else if (z < minZoom) {
+            downsample(z, x0, y0, width, height, values)
         } else {
+            values.fill(Float.NaN)
             // One lookup table per window: each tile goes through the LRU cache once, not once per pixel.
             val lookup = Lookup()
-            for (j in 0 until height) {
-                val py = y0 + j
-                for (i in 0 until width) values[j * width + i] = elevation(z, x0 + i, py, lookup)
+            // The same answer as elevation() for every pixel, a level at a time: rows of the tiles this zoom
+            // has are copied, then each ancestor zoom (deepest first) fills the cells still NaN bilinearly.
+            if (z in minZoom..maxZoom) copyExact(z, x0, y0, width, height, values, lookup)
+            var az = minOf(z - 1, maxZoom)
+            while (az >= minZoom && values.any { it.isNaN() }) {
+                fillFromAncestor(z, az, x0, y0, width, height, values, lookup)
+                az--
             }
         }
         val worldPx = (tileSize.toLong() shl z).toDouble()
@@ -168,11 +216,115 @@ class DemPyramid(
         return ElevationGrid(width, height, cell, values)
     }
 
+    /** Copies the window's pixels from the tiles zoom [z] has (absent tiles leave their cells untouched). */
+    private fun copyExact(z: Int, x0: Int, y0: Int, width: Int, height: Int, values: FloatArray, lookup: Lookup) {
+        val ts = tileSize
+        val worldPx = ts.toLong() shl z
+        val cx0 = maxOf(x0.toLong(), 0L).toInt()
+        val cy0 = maxOf(y0.toLong(), 0L).toInt()
+        val cx1 = minOf(x0.toLong() + width, worldPx).toInt() // exclusive
+        val cy1 = minOf(y0.toLong() + height, worldPx).toInt()
+        if (cx0 >= cx1 || cy0 >= cy1) return
+        for (ty in floorDiv(cy0, ts)..floorDiv(cy1 - 1, ts)) {
+            for (tx in floorDiv(cx0, ts)..floorDiv(cx1 - 1, ts)) {
+                val t = lookup.get(z, tx, ty) ?: continue
+                val px0 = maxOf(cx0, tx * ts)
+                val px1 = minOf(cx1, (tx + 1) * ts)
+                val py0 = maxOf(cy0, ty * ts)
+                val py1 = minOf(cy1, (ty + 1) * ts)
+                for (py in py0 until py1) {
+                    val src = (py - ty * ts) * ts - tx * ts
+                    t.copyInto(values, (py - y0) * width + (px0 - x0), src + px0, src + px1)
+                }
+            }
+        }
+    }
+
+    /**
+     * Fills the NaN cells of a window at zoom [z] by bilinear sampling of ancestor zoom [az], exactly as
+     * [bilinear] does per pixel, from one copied block of [az] pixels; cells whose four samples are not
+     * all present stay NaN.
+     */
+    private fun fillFromAncestor(z: Int, az: Int, x0: Int, y0: Int, width: Int, height: Int, values: FloatArray, lookup: Lookup) {
+        val scale = (1L shl (z - az)).toDouble()
+        val maxPx = ((tileSize.toLong() shl az) - 1).toDouble()
+        val maxI = maxPx.toInt()
+        // Per column and row: the left/top ancestor pixel, its neighbour, and the weight (as in bilinear()).
+        fun axis(origin: Int, n: Int): Triple<IntArray, IntArray, FloatArray> {
+            val lo = IntArray(n)
+            val hi = IntArray(n)
+            val f = FloatArray(n)
+            for (i in 0 until n) {
+                val c = ((origin + i + 0.5) / scale - 0.5).coerceIn(0.0, maxPx)
+                val a = floor(c).toInt()
+                lo[i] = a
+                hi[i] = minOf(a + 1, maxI)
+                f[i] = (c - a).toFloat()
+            }
+            return Triple(lo, hi, f)
+        }
+        val (xa, xb, fxs) = axis(x0, width)
+        val (ya, yb, fys) = axis(y0, height)
+        val bx0 = xa.min()
+        val by0 = ya.min()
+        val bw = xb.max() - bx0 + 1
+        val bh = yb.max() - by0 + 1
+        val block = FloatArray(bw * bh)
+        block.fill(Float.NaN)
+        copyExact(az, bx0, by0, bw, bh, block, lookup)
+        for (j in 0 until height) {
+            val ra = (ya[j] - by0) * bw - bx0
+            val rb = (yb[j] - by0) * bw - bx0
+            val fy = fys[j]
+            for (i in 0 until width) {
+                val idx = j * width + i
+                if (!values[idx].isNaN()) continue
+                val a = block[ra + xa[i]]
+                val b = block[ra + xb[i]]
+                val c = block[rb + xa[i]]
+                val d = block[rb + xb[i]]
+                if (a.isNaN() || b.isNaN() || c.isNaN() || d.isNaN()) continue
+                val fx = fxs[i]
+                values[idx] = (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+            }
+        }
+    }
+
+    /** Box-averages the window at [z] < [minZoom] from the [minZoom] window under it. */
+    private fun downsample(z: Int, x0: Int, y0: Int, width: Int, height: Int, values: FloatArray) {
+        val k = minZoom - z
+        val f = 1 shl k
+        val fw = width shl k
+        val fine = window(minZoom, x0 shl k, y0 shl k, fw, height shl k).values
+        for (j in 0 until height) {
+            for (i in 0 until width) {
+                var sum = 0.0
+                var n = 0
+                for (dj in 0 until f) {
+                    val row = (j * f + dj) * fw + i * f
+                    for (di in 0 until f) {
+                        val v = fine[row + di]
+                        if (!v.isNaN()) {
+                            sum += v
+                            n++
+                        }
+                    }
+                }
+                values[j * width + i] = if (n == 0) Float.NaN else (sum / n).toFloat()
+            }
+        }
+    }
+
     /**
      * True when some tile of the pack, at [z] or an ancestor zoom, overlaps the window: a cheap test
      * (a few tile lookups) that saves the per-pixel ancestor search for windows outside the pack.
+     * Below [minZoom] the test runs on the [minZoom] window under it.
      */
     fun covers(z: Int, x0: Int, y0: Int, width: Int, height: Int): Boolean {
+        if (z < minZoom) {
+            val k = minZoom - z
+            return covers(minZoom, x0 shl k, y0 shl k, width shl k, height shl k)
+        }
         var az = minOf(z, maxZoom)
         while (az >= minZoom) {
             val shift = z - az
@@ -205,6 +357,9 @@ class DemPyramid(
     }
 
     private companion object {
+        /** Cache marker for a tile the pack does not have. */
+        val MISSING = FloatArray(0)
+
         fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -((-a + b - 1) / b)
         fun floorMod(a: Int, b: Int): Int = a - floorDiv(a, b) * b
     }

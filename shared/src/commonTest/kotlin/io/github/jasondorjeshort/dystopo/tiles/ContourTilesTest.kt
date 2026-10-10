@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.tiles
 
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.mvt.Geometry
+import io.github.jasondorjeshort.dystopo.mvt.TilePoint
 import io.github.jasondorjeshort.dystopo.mvt.VectorTile
 import io.github.jasondorjeshort.dystopo.render.ContourStyle
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -134,17 +135,141 @@ class ContourTilesTest {
     fun maplibreSizedTilesTraceTheNextDemZoom() {
         val dem = pyramid(8, 14)
         val options = ContourTileOptions() // 512 px, MapLibre's vector tile size
-        assertEquals(13, ContourTiles.demZoom(12, options))
-        val (tx, ty) = peakTile(13)
-        // Contour tile 12/(tx/2)/(ty/2) covers DEM z13 tiles tx..tx+1: same levels as the z13 spec.
-        val tile = ContourTiles.generate(dem, 12, tx / 2, ty / 2, options)
-        assertEquals(ContourStyle.forZoom(13, ContourUnits.FEET), tile.spec)
+        assertEquals(14, ContourTiles.demZoom(13, options))
+        val (tx, ty) = peakTile(14)
+        // Contour tile 13/(tx/2)/(ty/2) covers DEM z14 tiles tx..tx+1: same levels as the z14 spec, full resolution.
+        val tile = ContourTiles.generate(dem, 13, tx / 2, ty / 2, options)
+        assertEquals(ContourStyle.forZoom(14, ContourUnits.FEET), tile.spec)
         val layer = VectorTile.decode(tile.bytes).layer("contours")!!
         assertTrue(layer.features.isNotEmpty())
         // 8 units per DEM pixel; the 4 px halo reaches 32 units past the edge.
         for (f in layer.features) for (p in (f.geometry as Geometry.Lines).lines.single()) {
             assertTrue(p.x in -40..4136 && p.y in -40..4136, "point $p")
         }
+    }
+
+    @Test
+    fun demZoomPerTileZoom() {
+        val options = ContourTileOptions() // 512 px tiles
+        // tile zoom -> (spec zoom, sampled DEM zoom, grid cells across the tile)
+        val expected = mapOf(
+            6 to Triple(7, 5, 128), 7 to Triple(8, 6, 128), 8 to Triple(9, 7, 128), 9 to Triple(10, 8, 128),
+            10 to Triple(11, 10, 256), 11 to Triple(12, 11, 256), 12 to Triple(13, 12, 256),
+            13 to Triple(14, 14, 512), 14 to Triple(15, 15, 512), 15 to Triple(16, 16, 512), 16 to Triple(17, 17, 512),
+        )
+        for ((z, e) in expected) {
+            val plan = ContourTiles.plan(z, 3, 5, options)
+            assertEquals(e, Triple(plan.specZoom, plan.sampleZoom, plan.gridTileSize), "tile zoom $z")
+            assertEquals(e.third + 2 * options.halo, plan.windowSize)
+            // The window is the tile in sampled-zoom pixels, plus the halo.
+            assertEquals(3 * e.third - options.halo, plan.windowX)
+            assertEquals(5 * e.third - options.halo, plan.windowY)
+            // The sampled DEM is never finer than one cell per screen pixel, and at most 4 screen pixels per cell.
+            assertTrue(plan.cellScale in 1..4)
+        }
+        // 256-px tiles (the devtool convention) trace their own zoom at full resolution from z13 on.
+        val p256 = ContourTiles.plan(13, 0, 0, ContourTileOptions(tileSize = 256))
+        assertEquals(13, p256.specZoom)
+        assertEquals(13, p256.sampleZoom)
+        // The thresholds are options: everything at full resolution when both are 0.
+        val full = ContourTileOptions(halfResolutionBelow = 0, quarterResolutionBelow = 0)
+        assertEquals(9, ContourTiles.plan(8, 0, 0, full).sampleZoom)
+    }
+
+    @Test
+    fun coarseGridKeepsTheLevelsAndShapeOfFullResolution() {
+        val dem = pyramid(8, 14)
+        val (tx, ty) = peakTile(13)
+        val full = ContourTileOptions(halfResolutionBelow = 0, quarterResolutionBelow = 0)
+        val coarse = ContourTileOptions()
+        assertEquals(1, ContourTiles.plan(12, tx / 2, ty / 2, coarse).reduction)
+        val a = VectorTile.decode(ContourTiles.generate(dem, 12, tx / 2, ty / 2, full).bytes).layer("contours")!!
+        val b = VectorTile.decode(ContourTiles.generate(dem, 12, tx / 2, ty / 2, coarse).bytes).layer("contours")!!
+        val levelsA = a.features.map { it.properties.getValue("ele").asDouble() }.toSet()
+        val levelsB = b.features.map { it.properties.getValue("ele").asDouble() }.toSet()
+        assertEquals(levelsA, levelsB)
+        // Each coarse vertex lies on (within 2 screen px = 16 units of) the full-resolution line of its level.
+        for (f in b.features) {
+            val ele = f.properties.getValue("ele").asDouble()
+            val ref = a.features.filter { it.properties.getValue("ele").asDouble() == ele }
+                .map { (it.geometry as Geometry.Lines).lines.single() }
+            // Inside the tile only: the coarse halo reaches further than the full-resolution one.
+            for (p in (f.geometry as Geometry.Lines).lines.single().filter { it.x in 0..4096 && it.y in 0..4096 }) {
+                val d = ref.minOf { line -> line.zipWithNext().minOf { (u, v) -> segmentDistance(p, u, v) } }
+                assertTrue(d < 16.0, "coarse point $p of $ele is $d units from the full-resolution line")
+            }
+        }
+    }
+
+    private fun segmentDistance(p: TilePoint, a: TilePoint, b: TilePoint): Double {
+        val dx = (b.x - a.x).toDouble()
+        val dy = (b.y - a.y).toDouble()
+        val len2 = dx * dx + dy * dy
+        val t = if (len2 == 0.0) 0.0 else (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).coerceIn(0.0, 1.0)
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+
+    @Test
+    fun windowFastPathMatchesPerPixelSampling() {
+        val (tx, ty) = peakTile(12)
+        // z12 has a checkerboard of tiles around the peak; the rest falls back to z11.
+        val dem = pyramid(10, 12) { z, x, y -> z < 12 || (x + y) % 2 == 0 }
+        val x0 = tx * 256 - 70
+        val y0 = ty * 256 - 30
+        val w = 300
+        val h = 290
+        val grid = dem.window(12, x0, y0, w, h)
+        for (j in 0 until h step 7) for (i in 0 until w step 3) {
+            assertEquals(dem.elevation(12, x0 + i, y0 + j), grid[i, j], "pixel $i,$j")
+        }
+        // Past the pack (overzoom) and at the world's edge, too.
+        for ((z, ox, oy) in listOf(Triple(14, tx * 1024 - 300, ty * 1024 + 17), Triple(13, -5, -7))) {
+            val g = dem.window(z, ox, oy, 260, 250)
+            for (j in 0 until 250 step 3) for (i in 0 until 260 step 5) {
+                assertEquals(dem.elevation(z, ox + i, oy + j), g[i, j], "z$z pixel $i,$j")
+            }
+        }
+    }
+
+    @Test
+    fun windowsBelowTheLowestZoomAreBoxAverages() {
+        val (tx, ty) = peakTile(10)
+        val dem = pyramid(10, 12)
+        val coarse = dem.window(8, (tx / 4) * 256 + 20, (ty / 4) * 256 + 30, 40, 30)
+        val fine = dem.window(10, ((tx / 4) * 256 + 20) * 4, ((ty / 4) * 256 + 30) * 4, 160, 120)
+        for ((i, j) in listOf(0 to 0, 39 to 29, 17 to 11)) {
+            var sum = 0.0
+            for (dj in 0 until 4) for (di in 0 until 4) sum += fine[i * 4 + di, j * 4 + dj]
+            assertTrue(abs(coarse[i, j] - sum / 16) < 1e-3, "cell $i,$j: ${coarse[i, j]} vs ${sum / 16}")
+        }
+        assertTrue(dem.covers(8, (tx / 4) * 256, (ty / 4) * 256, 10, 10))
+        // A z7 contour tile over the peak samples DEM z6, two zooms below the pack, and still has lines.
+        val tile = ContourTiles.generate(dem, 7, tx shr 3, ty shr 3)
+        assertEquals(6, ContourTiles.plan(7, 0, 0).sampleZoom)
+        assertTrue(tile.lines > 0)
+    }
+
+    @Test
+    fun statsReportPerZoomAndConcurrency() {
+        val dem = pyramid(8, 14)
+        val stats = ContourTileStats()
+        val (tx, ty) = peakTile(13)
+        assertEquals(1, stats.begin())
+        assertEquals(2, stats.begin())
+        val plan = ContourTiles.plan(12, tx / 2, ty / 2)
+        val tile = ContourTiles.build(ContourTiles.sample(dem, plan), plan)
+        stats.end(plan, tile, 120.0, 20.0, 2)
+        stats.end(plan, tile, 80.0, 10.0, 1)
+        val json = stats.json()
+        assertEquals(2L, json["count"])
+        assertEquals(2, json["maxConcurrent"])
+        assertEquals(0, json["inFlight"])
+        @Suppress("UNCHECKED_CAST")
+        val z12 = (json["byZoom"] as Map<String, Map<String, Any?>>).getValue("12")
+        assertEquals(80.0, z12["minMs"])
+        assertEquals(100.0, z12["avgMs"])
+        assertEquals(120.0, z12["maxMs"])
+        assertEquals(15.0, z12["avgSampleMs"])
     }
 
     @Test
