@@ -587,6 +587,7 @@ class LiveTiles(
     private fun handle(ex: HttpExchange, style: (ContourUnits, Map<String, String>) -> String, glyphDir: File, demoPage: File) {
         val path = ex.requestURI.path
         if (SyncRoutes.handle(ex)) return // T44: /sync/* (the always-on sync peer)
+        if (RouteRoutes.handle(ex, this, demoPage)) return // T68: /route* (route planning in the browser), /trips.js
         if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
         catalog.route(path, ex.requestMethod)?.let { (status, body) -> return reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))

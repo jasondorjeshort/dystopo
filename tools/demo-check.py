@@ -35,6 +35,7 @@ fail on errors.
 """
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -130,6 +131,81 @@ LAYERS_JS = """() => { const out = {}; for (const l of map.getStyle().layers) {
      const n = map.queryRenderedFeatures({layers: [l.id]}).length; out[l.id] = n; } return out; }"""
 
 
+def check_route(page, spec, shot, timeout):
+    """T68: drive the trip editor (tools/demo/trips.js, live mode) with the real mouse. `spec` is
+    `lat,lon;lat,lon[;lat,lon]`: click the start and the end with "Plan route" on, wait for the route, click the
+    middle of the route to add a via point, drag that point's marker to the third place (default: 300 m east of
+    where it was), check the route was rerouted, export GPX, "Save as trip" (into the browser replica and on to the
+    server's sync peer), and screenshot `shot`. Returns a report with `ok`."""
+    pts = [tuple(float(v) for v in p.split(",")) for p in spec.split(";") if p.strip()]
+    out = {"ok": False, "spec": spec, "screenshot": shot, "steps": []}
+    step = lambda name, **kw: out["steps"].append({"step": name, **kw})
+    try:
+        page.wait_for_function("() => window.dystopoTrips", timeout=timeout * 1000)
+        a, b = pts[0], pts[1]
+        page.evaluate("""([a, b]) => map.fitBounds([[Math.min(a[1], b[1]), Math.min(a[0], b[0])], [Math.max(a[1], b[1]), Math.max(a[0], b[0])]],
+                         { padding: { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
+        page.wait_for_timeout(800)
+        page.click("#trip-plan")
+        box = page.evaluate("() => { const r = map.getCanvas().getBoundingClientRect(); return [r.left, r.top]; }")
+        px = lambda p: [v + o for v, o in zip(page.evaluate("p => { const q = map.project([p[1], p[0]]); return [q.x, q.y]; }", list(p)), box)]
+        t0 = time.time()
+        for p in (a, b):
+            page.mouse.click(*px(p))
+            page.wait_for_timeout(150)
+        s = page.evaluate("() => window.dystopoTrips.idle()")
+        r = s["route"]
+        if not r:
+            raise RuntimeError("no route after two clicks: " + str(s.get("error")))
+        step("plan", seconds=round(time.time() - t0, 2), pack=r["pack"], legs=r["legs"], notes=r["notes"], summary=r["summary"])
+        out["planned"] = r["summary"]
+        # Add a via point on the route (a click on the line inserts it into that leg), then drag its marker.
+        page.mouse.click(*px(r["middle"]))
+        s = page.evaluate("() => window.dystopoTrips.idle()")
+        via = s["route"]["via"]
+        k = 1 if len(via) == 3 else len(via) - 1
+        step("add via", via=len(via), index=k, distanceM=s["route"]["summary"]["distanceM"])
+        target = pts[2] if len(pts) > 2 else (via[k][0], via[k][1] + 300 / (111195 * math.cos(math.radians(via[k][0]))))
+        before = s["route"]
+        el = page.locator(f".trip-via[data-index='{k}']")
+        bb = el.bounding_box()
+        page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+        page.mouse.down()
+        end = px(target)
+        page.mouse.move(end[0], end[1], steps=12)
+        page.mouse.up()
+        page.wait_for_timeout(200)
+        s = page.evaluate("() => window.dystopoTrips.idle()")
+        after = s["route"]
+        moved = math.dist(before["via"][k], after["via"][k]) * 111195
+        rerouted = after["path"] != before["path"] and moved > 50
+        step("drag via", movedM=round(moved), legs=after["legs"], notes=after["notes"], distanceM=after["summary"]["distanceM"], rerouted=rerouted)
+        out["dragged"] = after["summary"]
+        gpx = page.evaluate("() => window.dystopoTrips.gpx(false)")
+        gpx_ok = gpx.startswith("<?xml") and "<rte>" in gpx and gpx.count("<rtept") >= after["summary"]["points"]
+        step("gpx", bytes=len(gpx), rtept=gpx.count("<rtept"), ok=gpx_ok)
+        page.fill("#trip-name", "demo-check trip")
+        page.click("#trip-save")
+        page.wait_for_function("() => { const s = window.dystopoTrips.state(); return s.saved && s.lastPush; }", timeout=timeout * 1000)
+        s = page.evaluate("() => window.dystopoTrips.state()")
+        rep = page.evaluate("() => window.dystopoTrips.replica()")
+        push = s["lastPush"]
+        step("save", id=s["id"], replica=rep, push=push)
+        out.update(tripId=s["id"], push=push, listed=page.locator("#trip-list li").count())
+        page.wait_for_timeout(500)
+        page.screenshot(path=shot)
+        layers = page.evaluate("() => ({ line: map.queryRenderedFeatures({ layers: ['trip-line', 'trip-straight'] }).length, markers: document.querySelectorAll('.trip-via').length })")
+        step("drawn", **layers)
+        out["ok"] = bool(r["legs"]) and len(via) >= 3 and rerouted and gpx_ok and push.get("ok") and layers["line"] > 0 and layers["markers"] == len(after["via"])
+    except Exception as e:  # report, do not crash the tour
+        out["error"] = str(e)[:500]
+        try:
+            page.screenshot(path=shot)
+        except Exception:
+            pass
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8765/tools/demo/")
@@ -141,6 +217,7 @@ def main() -> int:
     ap.add_argument("--height", type=int, default=900)
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--channel", default="chrome", help="playwright browser channel; use '' for bundled chromium")
+    ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
 
     views = read_views(args)
@@ -258,6 +335,10 @@ def main() -> int:
                     ok = ok and not report["missingRequired"]
             report["ok"] = ok
             reports.append(dict(report))
+        if args.route:
+            route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout)
+            errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
+            reports[-1].update(route=route, ok=reports[-1]["ok"] and route["ok"] and not errors)
         browser.close()
 
     if tour:

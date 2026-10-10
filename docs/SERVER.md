@@ -260,6 +260,44 @@ can read and write its log, so on a server reachable from the internet set a tok
 needs `Authorization: Bearer <token>` (the phone sends the token from its sync settings,
 `POST /sync/settings?token=`; `devtool sync with --token`).
 
+## Route planning (T68)
+
+The browser map plans routes on the server with the phone's shared code (`RouteRoutes.kt`: T45's router, T60's
+route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each pack in
+`outDir` with a vector archive gets a trail graph on first use, written next to it as
+`<vector archive>-graph.idx` (the phone's and `devtool route`'s file name, e.g. `rainier-outdoors-graph.idx`;
+reused while both archives are unchanged; the Rainier graph builds in about 1.5 s). The routes are open (no
+token): they read packs and write nothing but the graph files.
+
+- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike][&pack=<name>][&snap=m]` (or
+  `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
+  metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
+  elevation every 25 m, from the packs or else the live `best` source). The pack is `pack=` (a catalog id), else
+  the first pack holding both ends, else the start; outside every pack the route is straight (`notes: ["no_graph"]`).
+- `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
+  `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
+  `show`. Only the legs next to a moved, added or removed point are rerouted.
+- Both answer `pack`, `mode`, `path` (the encoded route: the `path` field value a trip stores in the sync log),
+  `via`, `legs` (`kind` trail/straight/fixed, `coordinates` as `[lon, lat, ele]`), `summary` (distance, ascent,
+  descent, hike-model time, `straightM`, a 100-sample profile), `notes` (why a leg is straight), `graph`
+  (`built`, `loaded` or `cached`) and `ms`. Bad input is a 400 with `error`.
+- `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
+  what the phone exports for the same trip.
+- `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one
+  device, HLC-stamped) as a gzipped sync bundle, for `POST /sync/push` or a `.dsync` file.
+- `GET /route/packs` (packs and graph state), `GET /route/status` (request counts, builds, timings), and
+  `GET /trips.js`, the page's editor script (`tools/demo/trips.js` next to the served page).
+
+**Save as trip.** The page keeps its trips in its own sync replica in the browser (localStorage
+`dystopo.trips`: a device id, a hybrid logical clock, and the same put + `path` + `waypoints` operations the
+phone's store writes). Saving appends operations there, then sends the whole log through `/route/bundle` to
+`POST /sync/push`, with the page's Token field as the bearer token when it is set; so on a server with
+per-user tokens the trip lands in that user's replica. Where the push is refused (a server that wants a token
+and has none, or no server) the trip stays in the browser and the page says so; "Send to server" retries and
+".dsync" saves the same bundle as a file a phone can sync with (`POST /sync?with=<file>`). A phone that syncs with
+the server then lists the trip under Routes. The page only pushes: edits made on the phone do not come back to
+the browser.
+
 ## The token
 
 With `token` (or `DYSTOPO_SERVER_TOKEN`) set, `/build`, `/build/*`, `/sync` and `/sync/*` need
