@@ -87,7 +87,7 @@ Polygon, point, z6-14. Protected areas: polygons (no name, so they merge) plus o
 
 | Attribute | Meaning |
 |---|---|
-| `class` | national_park, wilderness (protect_class 1b), nature_reserve, protected_area |
+| `class` | national_park, wilderness (protect_class 1b, or protected_area/protection_title naming wilderness), nature_reserve, protected_area |
 | `protect_class` | OSM `protect_class` (IUCN-like: 1a, 1b, 2, ..., 6, 97-99) when tagged |
 | `name` | OSM `name` (label points only) |
 | `name_en` | OSM `name:en`, when it differs from `name` (label points only) |

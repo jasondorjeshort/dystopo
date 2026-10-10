@@ -43,7 +43,10 @@ data class VerifyStats(
     val overlapCells: Long,
     /** Cells where one tile's halo render differs (in any bit) from the neighbour's own render. */
     val mismatchCells: Long,
+    /** Largest |A - B| over mismatches where both sides have data (finite, so the report stays valid JSON). */
     val maxMismatchMeters: Double,
+    /** Mismatches where exactly one side is no-data (NaN); counted here instead of an infinite max. */
+    val nanMismatchCells: Long = 0,
     /**
      * Overlap cells not compared because they lie within the blend band of A's haloed window edge
      * (see `verifySeams`): there A's feather can't see no-data just outside its window.
@@ -52,6 +55,12 @@ data class VerifyStats(
     /** [GridDigest] of every written tile decoded back from its PNG; equal across XYZ and PMTiles exports of the same tiles. */
     val gridDigest: String? = null,
 )
+
+/** Smallest finite value as a Double, or null when there is none (no tiles written, or all NaN). */
+internal fun finiteMinOrNull(values: List<Float>): Double? = values.filter { it.isFinite() }.minOrNull()?.toDouble()
+
+/** Largest finite value as a Double, or null when there is none. */
+internal fun finiteMaxOrNull(values: List<Float>): Double? = values.filter { it.isFinite() }.maxOrNull()?.toDouble()
 
 @Serializable
 data class ZoomReport(
@@ -67,8 +76,9 @@ data class ZoomReport(
     val overviewTargetMeters: Double,
     val featherCells: Double,
     val noDataCells: Long,
-    val elevationMinMeters: Double,
-    val elevationMaxMeters: Double,
+    /** Null when no tile of this zoom was written (all no-data), so the report never carries NaN. */
+    val elevationMinMeters: Double?,
+    val elevationMaxMeters: Double?,
     val timeMs: Long,
     /** Summed over tiles (so across threads); larger than timeMs when tiles run in parallel. */
     val fetchMsTotal: Long,
@@ -296,8 +306,8 @@ class TilesCommand : CliktCommand(name = "tiles") {
             overviewTargetMeters = round2(overviewMeters),
             featherCells = round2(feather / cellSize),
             noDataCells = results.sumOf { it.noDataCells },
-            elevationMinMeters = written.minOfOrNull { it.min }?.toDouble() ?: Double.NaN,
-            elevationMaxMeters = written.maxOfOrNull { it.max }?.toDouble() ?: Double.NaN,
+            elevationMinMeters = finiteMinOrNull(written.map { it.min }),
+            elevationMaxMeters = finiteMaxOrNull(written.map { it.max }),
             timeMs = (System.nanoTime() - started) / 1_000_000,
             fetchMsTotal = results.sumOf { it.fetchMs },
             encodeMsTotal = results.sumOf { it.encodeMs },
@@ -374,6 +384,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         var overlap = 0L
         var mismatches = 0L
         var maxDiff = 0f
+        var nanMismatches = 0L
         var edgeSkipped = 0L
         for (a in plan) {
             val ga = byTile.getValue(a.tile).haloed ?: continue
@@ -400,7 +411,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
                     overlap++
                     if (va.toBits() != vb.toBits()) {
                         mismatches++
-                        if (!va.isNaN() && !vb.isNaN()) maxDiff = maxOf(maxDiff, abs(va - vb)) else maxDiff = Float.POSITIVE_INFINITY
+                        if (!va.isNaN() && !vb.isNaN()) maxDiff = maxOf(maxDiff, abs(va - vb)) else nanMismatches++
                     }
                 }
             }
@@ -412,6 +423,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
             overlapCells = overlap,
             mismatchCells = mismatches,
             maxMismatchMeters = maxDiff.toDouble(),
+            nanMismatchCells = nanMismatches,
             edgeSkippedCells = edgeSkipped,
         )
     }

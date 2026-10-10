@@ -178,6 +178,46 @@ class PmtilesExtractTest {
         }
     }
 
+    /**
+     * A hand-laid archive that does not deduplicate: z1 tile 0 at offset 0, and tiles 1..3 sharing a
+     * second copy of the same bytes at offset 4. Not something our writer produces, but valid PMTiles.
+     */
+    private fun duplicateContentArchive(): MemoryArchive {
+        val blob = byteArrayOf(1, 2, 3, 4)
+        val root = Directory.encode(listOf(Entry(1, 0, 4, 1), Entry(2, 4, 4, 3)))
+        val metadata = "{}".encodeToByteArray()
+        val rootOffset = PmtilesHeader.SIZE.toLong()
+        val metaOffset = rootOffset + root.size
+        val dataOffset = metaOffset + metadata.size
+        val header = PmtilesHeader(
+            rootDirectoryOffset = rootOffset, rootDirectoryLength = root.size.toLong(),
+            metadataOffset = metaOffset, metadataLength = metadata.size.toLong(),
+            leafDirectoriesOffset = dataOffset, leafDirectoriesLength = 0,
+            tileDataOffset = dataOffset, tileDataLength = 8,
+            addressedTiles = 4, tileEntries = 2, tileContents = 2, clustered = true,
+            internalCompression = Compression.NONE, tileCompression = Compression.NONE, tileType = TileType.PNG,
+            minZoom = 1, maxZoom = 1, minLon = -180.0, minLat = -85.0, maxLon = 180.0, maxLat = 85.0,
+            centerZoom = 1, centerLon = 0.0, centerLat = 0.0,
+        )
+        return MemoryArchive().apply {
+            write(header.encode()); write(root); write(metadata); write(blob); write(blob.copyOf())
+        }
+    }
+
+    @Test
+    fun identicalContentAtTwoOffsetsIsReadOncePerOffset() {
+        val input = duplicateContentArchive()
+        val out = MemoryArchive()
+        val result = PmtilesExtract.extract(input, BoundingBox(-179.0, -80.0, 179.0, 80.0), out)
+        assertEquals(4, result.tilesKept)
+        // Offset 0 once, offset 4 once; the reuses of offset 4 come from staging, not the source.
+        assertEquals(2, result.tileReads)
+        assertEquals(8L, result.tileBytesRead)
+        val reader = PmtilesReader.open(out)
+        assertEquals(1L, reader.header.tileContents, "the writer stores the content once")
+        for (y in 0..1) for (x in 0..1) assertContentEquals(byteArrayOf(1, 2, 3, 4), reader.tile(1, x, y))
+    }
+
     @Test
     fun extractReplacesMetadataAndKeepsInternalCompression() {
         val toyCompress: Compress = { input -> ByteArray(input.size + 1) { i -> if (i == 0) 0x5A else (input[i - 1].toInt() xor 0x55).toByte() } }

@@ -64,7 +64,7 @@ object OutdoorsSchema {
             "park", "polygon, point", 6, 14,
             "Protected areas: polygons (no name, so they merge) plus one named label point per area, placed when the area is about 64 px across.",
             mapOf(
-                "class" to "national_park, wilderness (protect_class 1b), nature_reserve, protected_area",
+                "class" to "national_park, wilderness (protect_class 1b, or protected_area/protection_title naming wilderness), nature_reserve, protected_area",
                 "protect_class" to "OSM `protect_class` (IUCN-like: 1a, 1b, 2, ..., 6, 97-99) when tagged",
                 "name" to "$NAME_ATTR (label points only)",
                 "name_en" to "$NAME_EN_ATTR (label points only)",

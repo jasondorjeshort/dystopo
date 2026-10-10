@@ -20,13 +20,35 @@ class ProjGeoid(url: String, cacheDir: File) : GeoidModel {
         return null
     }
 
+    /**
+     * Reads the grid blocks under the box ahead of sampling. A box that only partly overlaps the grid
+     * (straddling its longitude edge, or crossing the grid's wrap seam) is clamped to the overlapping
+     * pieces rather than skipped.
+     */
     fun prefetch(west: Double, south: Double, east: Double, north: Double) {
-        val w = wrap(west) ?: return
-        val e = wrap(east) ?: return
-        val s = maxOf(south, grid.tiff.extent[1])
-        val n = minOf(north, grid.tiff.extent[3])
+        val e = grid.tiff.extent
+        val s = maxOf(south, e[1])
+        val n = minOf(north, e[3])
         if (s > n) return
-        grid.prefetch(0, minOf(w, e), s, maxOf(w, e), n)
+        for ((w0, e0) in overlapRanges(west, east, e[0], e[2])) grid.prefetch(0, w0, s, e0, n)
+    }
+
+    companion object {
+        /**
+         * The pieces of longitude range [west, east] (east >= west, east possibly past 180) that fall
+         * inside a grid spanning [gridWest, gridEast], each in the grid's own longitude frame. Tries the
+         * range shifted by -360, 0 and +360, so 0..360 grids and antimeridian boxes both work.
+         */
+        fun overlapRanges(west: Double, east: Double, gridWest: Double, gridEast: Double): List<Pair<Double, Double>> {
+            val out = ArrayList<Pair<Double, Double>>()
+            val unwrappedEast = if (east < west) east + 360 else east
+            for (shift in doubleArrayOf(-360.0, 0.0, 360.0)) {
+                val w = maxOf(west + shift, gridWest)
+                val e = minOf(unwrappedEast + shift, gridEast)
+                if (w <= e) out += w to e
+            }
+            return out
+        }
     }
 
     /** NaN outside the grid. */

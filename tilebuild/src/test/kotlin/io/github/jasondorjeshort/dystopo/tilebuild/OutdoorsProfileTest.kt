@@ -185,6 +185,22 @@ class OutdoorsProfileTest {
         val reserve = process(area(mapOf("leisure" to "nature_reserve")))
         assertEquals("nature_reserve", reserve.layer("park").getAttrsAtZoom(14)["class"])
 
+        // Mount Rainier Wilderness as tagged in OSM: IUCN 1a, but a designated Wilderness Area.
+        val rainierWilderness = process(area(mapOf(
+            "boundary" to "protected_area", "leisure" to "nature_reserve", "protect_class" to "1a",
+            "protected_area" to "wilderness_preserve", "protection_title" to "Wilderness Area", "name" to "Mount Rainier Wilderness",
+        )))
+        assertEquals(setOf("wilderness"), rainierWilderness.filter { it.layer == "park" }.map { it.getAttrsAtZoom(14)["class"] }.toSet())
+        assertEquals("1a", rainierWilderness.first { it.layer == "park" && it.isPolygon }.getAttrsAtZoom(14)["protect_class"])
+        // Either hint alone is enough.
+        val titled = process(area(mapOf("boundary" to "protected_area", "protect_class" to "1a", "protection_title" to "wilderness area")))
+        assertEquals("wilderness", titled.layer("park").getAttrsAtZoom(14)["class"])
+        val preserve = process(area(mapOf("boundary" to "protected_area", "protected_area" to "wilderness_preserve")))
+        assertEquals("wilderness", preserve.layer("park").getAttrsAtZoom(14)["class"])
+        // A strict nature reserve (1a) without a wilderness designation stays a protected area.
+        val strict = process(area(mapOf("boundary" to "protected_area", "protect_class" to "1a", "protection_title" to "Research Natural Area")))
+        assertEquals("protected_area", strict.layer("park").getAttrsAtZoom(14)["class"])
+
         // Administrative areas never become polygons; their ways are drawn from the relation instead.
         assertTrue(process(area(mapOf("boundary" to "administrative", "admin_level" to "4", "name" to "Washington"))).isEmpty())
     }
@@ -258,11 +274,11 @@ class OutdoorsProfileTest {
             peak(40.0, 40.0, 4300, null), peak(50.0, 50.0, 1000, "E"), peak(200.0, 200.0, 500, "F"),
         )
         val z14 = profile.postProcessLayerFeatures("mountain_peak", 14, items)
-        assertEquals(listOf(4, 2, 3, 1, 5, 6), z14.map { it.attrs()["rank"] })
+        assertEquals(listOf(4, 2, 3, 1, 5, 6), z14.map { it.tags()["rank"] })
 
         val z11 = profile.postProcessLayerFeatures("mountain_peak", 11, items)
         // Named peaks win over the higher unnamed one; then by ele. The lone peak in its own cell stays.
-        assertEquals(setOf("B", "C", "F"), z11.map { it.attrs()["name"] }.toSet())
+        assertEquals(setOf("B", "C", "F"), z11.map { it.tags()["name"] }.toSet())
     }
 
     @Test

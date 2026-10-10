@@ -67,9 +67,9 @@ data class OsmStats(
     val labelsPlaced: Int,
     /** Contour labels removed because an OSM label took their place. */
     val contourLabelsDropped: Int,
-    /** Lines with downhill ticks drawn on their left because the DEM says that side is lower (against the OSM way direction). */
+    /** Line segments with downhill ticks drawn on their left because the DEM says that side is lower (against the OSM way direction). */
     val ticksFlipped: Int = 0,
-    /** Lines with downhill ticks where the DEM could not tell the sides apart (ticks on the right, the OSM convention). */
+    /** Line segments where the DEM could not tell the sides apart; they took their whole line's side (else the right, the OSM convention). */
     val ticksUndecided: Int = 0,
     val layers: Map<String, OsmLayerStats>,
 )
@@ -111,7 +111,7 @@ class OsmLayer private constructor(
     private val textScale: Double,
     private val baseStats: OsmStats,
     private val placer: LabelPlacer,
-    /** Elevation at an image pixel position (nearest cell), NaN outside; for downhill tick sides. */
+    /** Elevation at an image pixel position (bilinear), NaN outside; for downhill tick sides. */
     private val elevation: (Double, Double) -> Float,
 ) {
     private val drawMs = LinkedHashMap<String, Double>()
@@ -193,10 +193,7 @@ class OsmLayer private constructor(
                 contourLabelsDropped = 0,
                 layers = layerStats,
             )
-            val sample = { x: Double, y: Double ->
-                if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) Float.NaN else grid[x.toInt(), y.toInt()]
-            }
-            return OsmLayer(scene, labels, style.textScale, stats, placer, sample)
+            return OsmLayer(scene, labels, style.textScale, stats, placer, LineTicks.bilinear(grid.width, grid.height) { i, j -> grid[i, j] })
         }
     }
 
@@ -278,7 +275,7 @@ class OsmLayer private constructor(
         drawMs[layer.style.id] = (System.nanoTime() - start) / 1e6
     }
 
-    /** Tick hatching on each line; [TickSide.DOWNHILL] asks the DEM which side is lower, per line. */
+    /** Tick hatching on each line; [TickSide.DOWNHILL] asks the DEM which side is lower, per segment. */
     private fun drawTicks(g2: Graphics2D, layer: SceneLayer.Line, t: Ticks, zoom: Double) {
         val length = t.length.at(zoom)
         val spacing = t.spacing.at(zoom)
@@ -286,16 +283,17 @@ class OsmLayer private constructor(
         for (line in layer.lines) {
             // Raw cliff ways zig-zag at the pixel scale; ticks follow a lightly simplified copy.
             val simple = ContourSimplify.simplify(line, false, 0.75)
-            val right = when (t.side) {
-                TickSide.RIGHT -> true
-                TickSide.LEFT -> false
+            val segs = when (t.side) {
+                TickSide.RIGHT -> LineTicks.ticks(simple, spacing, length, right = true)
+                TickSide.LEFT -> LineTicks.ticks(simple, spacing, length, right = false)
                 TickSide.DOWNHILL -> {
-                    val r = LineTicks.rightIsDownhill(simple, length + 2.0, elevation)
-                    if (r == false) ticksFlipped++ else if (r == null) ticksUndecided++
-                    r ?: true
+                    val d = LineTicks.downhillTicks(simple, spacing, length, length + 2.0, elevation)
+                    ticksFlipped += d.segmentsLeft
+                    ticksUndecided += d.segmentsUndecided
+                    d.ticks
                 }
             }
-            for (seg in LineTicks.ticks(simple, spacing, length, right)) {
+            for (seg in segs) {
                 ticks.moveTo(seg[0], seg[1])
                 ticks.lineTo(seg[2], seg[3])
             }

@@ -30,7 +30,7 @@ data class TourAreaDef(
     val description: String = "",
     /** Public-knowledge [lowest, highest] ground elevation inside the bbox, meters. */
     val expectedElevation: List<Double>? = null,
-    /** "world" (in the default tour), "expectOcean" (NaN allowed), "expectUnconverted" (3DEP outside GEOID18). */
+    /** "world" (in the default tour), "expectOcean" (NaN allowed). */
     val tags: List<String> = emptyList(),
 )
 
@@ -58,7 +58,7 @@ data class TourEntry(
     val minAt: List<Double>?,
     val maxAt: List<Double>?,
     val nanFraction: Double,
-    /** Sum of every `*datumUnconvertedCells` counter (3DEP/lidar cells outside GEOID18, left NaN for the fallback). */
+    /** Sum of every `*datumUnconvertedCells` counter (3DEP/lidar cells no NGS geoid grid covers, left NaN for the fallback; expected 0 everywhere). */
     val datumUnconvertedCells: Long,
     val sourceCounters: Map<String, Long>,
     val provenance: List<String>,
@@ -156,12 +156,8 @@ class TourCommand : CliktCommand(name = "tour") {
             if (!ocean) {
                 result += TourCheck("nanFraction", nanFraction <= MAX_NAN_FRACTION, "NaN fraction ${"%.4f".format(nanFraction)} (max $MAX_NAN_FRACTION)")
             }
-            val expectUnconverted = "expectUnconverted" in def.tags
-            result += if (expectUnconverted) {
-                TourCheck("datum", unconverted > 0, "$unconverted unconverted cells (expected > 0: 3DEP outside GEOID18 must be reported)")
-            } else {
-                TourCheck("datum", unconverted == 0L, "$unconverted unconverted cells")
-            }
+            // Since T21 every 3DEP window either has a geoid grid (GEOID18, GEOID12B) or skips 3DEP, so any unconverted cell is a bug.
+            result += TourCheck("datum", unconverted == 0L, "$unconverted unconverted cells")
             return result
         }
 

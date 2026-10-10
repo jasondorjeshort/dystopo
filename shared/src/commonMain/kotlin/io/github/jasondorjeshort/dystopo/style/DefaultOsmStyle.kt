@@ -34,11 +34,28 @@ package io.github.jasondorjeshort.dystopo.style
  * Park boundaries are green dashes; wilderness areas (outdoors class `wilderness`, OpenMapTiles
  * `wilderness_area`) teal dots, so the two read apart where they overlap.
  *
- * Point markers (outdoors `outdoor_poi`; the browser demo mirrors these): hut brown house, shelter
- * light-brown house, campsite green triangle, trailhead red square, parking blue square with a
- * white P (marker only), waterfall blue diamond, spring and drinking water small blue circle,
- * viewpoint orange star, cave small black circle. Peaks are dark brown triangles, saddles circles.
- * Toilets, picnic sites, guideposts and individual camp pitches are not drawn.
+ * Point markers. This is the one marker table: the layers below implement it, and the browser demo
+ * (`tools/demo/index.html`, `MARKERS`) draws the same shapes and colours as canvas icons, scaled for
+ * the screen. Size is the marker's pixel size before the text scale; change both places together.
+ *
+ * | layer / class (`outdoor_poi`)   | shape    | color     | size | from z | not drawn                    |
+ * |---------------------------------|----------|-----------|------|--------|------------------------------|
+ * | hut                             | house    | `#6b3a1a` | 9    | 12     |                              |
+ * | trailhead                       | square   | `#b0281c` | 7.5  | 13     |                              |
+ * | campsite                        | triangle | `#2e7d32` | 8    | 13     | subclass camp_pitch          |
+ * | shelter                         | house    | `#a0703c` | 7.5  | 13     | subclass picnic_shelter, gazebo |
+ * | waterfall                       | diamond  | `#1f78c8` | 7    | 13     |                              |
+ * | viewpoint                       | star     | `#c25e00` | 8    | 14     |                              |
+ * | spring, drinking_water          | circle   | `#1f78c8` | 5.5  | 14     |                              |
+ * | cave                            | circle   | `#222222` | 5.5  | 14     |                              |
+ * | parking (white `P` inside, no name) | square | `#2b5fa8` | 8  | 14     | subclass street_side         |
+ * | peak, volcano, hill (`mountain_peak`) | triangle | `#3b2a1a` | 8 (6 unnamed) | 0 (12 unnamed) |    |
+ * | saddle, pass (`mountain_peak`)  | circle   | `#3b2a1a` | 5    | 13     |                              |
+ * | OpenMapTiles `poi` outdoor subclasses | circle | `#3d3a36` | 5 | 14     |                              |
+ *
+ * Markers carry a paper-colored halo (the label's halo color, 2.5 px). Placement order (collisions)
+ * follows the layer order: huts, then trailheads, campsites, shelters, waterfalls, viewpoints,
+ * springs, caves, and parking last. Toilets, picnic sites and guideposts are not drawn.
  *
  * Labels draw last, sized for a phone at the default text scale, with paper-colored halos like the
  * contour labels; places and peaks claim space first, then huts, water, the main POIs, trail and

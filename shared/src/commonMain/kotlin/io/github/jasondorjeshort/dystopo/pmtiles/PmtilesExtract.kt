@@ -154,10 +154,13 @@ object PmtilesExtract {
                         tileReads++
                         tileBytes += b.size
                         recording.lastAppend = -1L
+                        recording.lastRead = -1L
                         writer.addTile(id, b)
                         // No append means the content matched an earlier blob at another offset (an input that
-                        // doesn't deduplicate); then a reuse of this offset reads the source again.
-                        if (recording.lastAppend >= 0) staged[e.offset] = recording.lastAppend
+                        // doesn't deduplicate). The writer confirms a match by reading the candidate back and
+                        // stops at the first equal one, so its last staging read is where these bytes live.
+                        val stagedAt = if (recording.lastAppend >= 0) recording.lastAppend else recording.lastRead
+                        if (stagedAt >= 0) staged[e.offset] = stagedAt
                     }
                     val z = TileIds.zoomOf(id)
                     byZoom[z] = (byZoom[z] ?: 0) + 1
@@ -199,11 +202,12 @@ object PmtilesExtract {
     }
 }
 
-/** Passes through to [inner], remembering where the last [append] landed. */
+/** Passes through to [inner], remembering where the last [append] landed and the last [read] came from. */
 private class RecordingStaging(private val inner: TileStaging) : TileStaging {
     var lastAppend = -1L
+    var lastRead = -1L
 
     override fun append(bytes: ByteArray): Long = inner.append(bytes).also { lastAppend = it }
 
-    override fun read(position: Long, length: Int): ByteArray = inner.read(position, length)
+    override fun read(position: Long, length: Int): ByteArray = inner.read(position, length).also { lastRead = position }
 }

@@ -386,10 +386,13 @@ class OutdoorsProfile(
 
     private fun park(f: SourceFeature, features: FeatureCollector) {
         val protectClass = f.getString("protect_class")
+        val protectedArea = f.hasTag("boundary", "protected_area")
+        val reserve = f.hasTag("leisure", "nature_reserve")
         val cls = when {
             f.hasTag("boundary", "national_park") -> "national_park"
-            f.hasTag("boundary", "protected_area") -> if (protectClass == "1b") "wilderness" else "protected_area"
-            f.hasTag("leisure", "nature_reserve") -> "nature_reserve"
+            (protectedArea || reserve) && isWilderness(f, protectClass) -> "wilderness"
+            protectedArea -> "protected_area"
+            reserve -> "nature_reserve"
             else -> return
         }
         val poly = features.polygon("park").setAttr("class", cls).setMinZoom(6).setMinPixelSize(2.0).setPixelTolerance(0.5)
@@ -403,6 +406,16 @@ class OutdoorsProfile(
             f.getString("operator")?.let { label.setAttr("operator", it) }
         }
     }
+
+    /**
+     * A designated wilderness: IUCN 1b, or a protected area whose designation says so whatever its
+     * IUCN class. US Wilderness Areas are often tagged 1a (Mount Rainier Wilderness:
+     * `protect_class=1a`, `protected_area=wilderness_preserve`, `protection_title=Wilderness Area`).
+     */
+    private fun isWilderness(f: SourceFeature, protectClass: String?): Boolean =
+        protectClass == "1b" ||
+            f.getString("protected_area")?.contains("wilderness", ignoreCase = true) == true ||
+            f.getString("protection_title")?.contains("wilderness", ignoreCase = true) == true
 
     // ---- points ----
 
@@ -522,7 +535,7 @@ class OutdoorsProfile(
             return if (zoom < LABEL_THIN_BELOW_ZOOM) thinPoints(ranked, PEAK_CELL_PX, PEAKS_PER_CELL) { peakScore(it) } else ranked
         }
         if (layer == "place" && zoom < LABEL_THIN_BELOW_ZOOM) {
-            return thinPoints(items, PLACE_CELL_PX, PLACES_PER_CELL) { -(PLACE_ORDER[it.attrs()["class"]] ?: 99).toDouble() }
+            return thinPoints(items, PLACE_CELL_PX, PLACES_PER_CELL) { -(PLACE_ORDER[it.tags()["class"]] ?: 99).toDouble() }
         }
         if (zoom >= maxZoom) return items
         return when (layer) {
@@ -536,17 +549,17 @@ class OutdoorsProfile(
     }
 
     private fun peakScore(f: VectorTile.Feature): Double {
-        val ele = (f.attrs()["ele"] as? Number)?.toDouble() ?: -1000.0
-        val namedBonus = if (f.attrs()["name"] != null) 10_000.0 else 0.0
-        val classBonus = if (f.attrs()["class"] in setOf("peak", "volcano")) 20_000.0 else 0.0
+        val ele = (f.tags()["ele"] as? Number)?.toDouble() ?: -1000.0
+        val namedBonus = if (f.tags()["name"] != null) 10_000.0 else 0.0
+        val classBonus = if (f.tags()["class"] in setOf("peak", "volcano")) 20_000.0 else 0.0
         return classBonus + namedBonus + ele
     }
 
     /** `rank` 1 for the highest feature of each class in the tile, by `ele` (unknown last). */
     private fun rankPeaks(items: List<VectorTile.Feature>): List<VectorTile.Feature> {
         val ranks = IntArray(items.size)
-        for (group in items.indices.groupBy { items[it].attrs()["class"] }.values) {
-            group.sortedByDescending { (items[it].attrs()["ele"] as? Number)?.toDouble() ?: Double.NEGATIVE_INFINITY }
+        for (group in items.indices.groupBy { items[it].tags()["class"] }.values) {
+            group.sortedByDescending { (items[it].tags()["ele"] as? Number)?.toDouble() ?: Double.NEGATIVE_INFINITY }
                 .forEachIndexed { rank, index -> ranks[index] = rank + 1 }
         }
         return items.mapIndexed { i, feat -> feat.copyWithExtraAttrs(mapOf("rank" to ranks[i])) }

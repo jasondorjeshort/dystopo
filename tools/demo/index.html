@@ -149,6 +149,53 @@ demSource.manager.getTile = async (url, abortController) => {
 const fetchDem0 = demSource.manager.fetchDem.bind(demSource.manager);
 demSource.manager.fetchDem = (...a) => fetchDem0(...a).catch(e => { if (/Bad response: 404/.test(e.message)) return undefined; throw e; });
 
+// Outdoors POI markers: the renderer's marker table (DefaultOsmStyle in shared/.../style, see its KDoc), same
+// shapes, colours, relative sizes, first zoom and subclass exclusions. Keep the two in step. Shapes are drawn into
+// canvas icons on demand (no sprite sheet); MARKER_SCALE enlarges them for screen viewing like the text sizes here.
+const MARKERS = {
+  hut:            { shape: "house",    size: 9,   color: "#6b3a1a", minzoom: 12, rank: 1 },
+  trailhead:      { shape: "square",   size: 7.5, color: "#b0281c", minzoom: 13, rank: 2 },
+  campsite:       { shape: "triangle", size: 8,   color: "#2e7d32", minzoom: 13, rank: 3 },
+  shelter:        { shape: "house",    size: 7.5, color: "#a0703c", minzoom: 13, rank: 4 },
+  waterfall:      { shape: "diamond",  size: 7,   color: "#1f78c8", minzoom: 13, rank: 5 },
+  viewpoint:      { shape: "star",     size: 8,   color: "#c25e00", minzoom: 14, rank: 6 },
+  spring:         { shape: "circle",   size: 5.5, color: "#1f78c8", minzoom: 14, rank: 7 },
+  drinking_water: { shape: "circle",   size: 5.5, color: "#1f78c8", minzoom: 14, rank: 7 },
+  cave:           { shape: "circle",   size: 5.5, color: "#222222", minzoom: 14, rank: 8 },
+  parking:        { shape: "square",   size: 8,   color: "#2b5fa8", minzoom: 14, rank: 9, text: "P" },
+};
+const MARKER_EXCLUDED_SUBCLASSES = ["camp_pitch", "picnic_shelter", "gazebo", "street_side"];
+const MARKER_SCALE = 1.4, MARKER_RATIO = 2, MARKER_HALO = "#f6f1e4";
+// Outline of a marker of radius r centred at (cx, cy): the same vertices as OsmLayer.markerShape in devtool.
+function markerPath(g, shape, cx, cy, r) {
+  g.beginPath();
+  const poly = pts => { pts.forEach(([x, y], i) => i ? g.lineTo(cx + x * r, cy + y * r) : g.moveTo(cx + x * r, cy + y * r)); g.closePath(); };
+  if (shape === "circle") g.arc(cx, cy, r, 0, 2 * Math.PI);
+  else if (shape === "square") g.rect(cx - r * 0.9, cy - r * 0.9, 1.8 * r, 1.8 * r);
+  else if (shape === "triangle") poly([[0, -1.1], [1, 0.8], [-1, 0.8]]);
+  else if (shape === "diamond") poly([[0, -1.15], [0.9, 0], [0, 1.15], [-0.9, 0]]);
+  else if (shape === "house") poly([[0, -1.1], [1, -0.1], [0.75, -0.1], [0.75, 0.9], [-0.75, 0.9], [-0.75, -0.1], [-1, -0.1]]);
+  else if (shape === "star") poly(Array.from({ length: 10 }, (_, k) => { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? 0.5 : 1.2; return [rr * Math.cos(a), rr * Math.sin(a)]; }));
+}
+function markerImage(m) {
+  const px = m.size * MARKER_SCALE * MARKER_RATIO, r = px / 2, halo = 2.5 * MARKER_RATIO;
+  const side = Math.ceil(px * 1.3 + 2 * halo), c = side / 2;
+  const canvas = new OffscreenCanvas(side, side), g = canvas.getContext("2d");
+  markerPath(g, m.shape, c, c, r);
+  g.lineJoin = "round"; g.lineWidth = halo; g.strokeStyle = MARKER_HALO; g.stroke();
+  g.fillStyle = m.color; g.fill();
+  if (m.text) {
+    g.fillStyle = "#ffffff"; g.font = `bold ${Math.round(px * 0.8)}px system-ui, sans-serif`;
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(m.text, c, c + px * 0.04);
+  }
+  return { width: side, height: side, data: new Uint8Array(g.getImageData(0, 0, side, side).data.buffer) };
+}
+const markerClasses = Object.keys(MARKERS);
+const byClass = key => ["match", ["get", "class"], ...markerClasses.flatMap(k => [k, MARKERS[k][key]]), 99];
+// Features that get a marker: a class in the table, at or past its first zoom, not an excluded subclass.
+const markerFilter = ["all", ["in", ["get", "class"], ["literal", markerClasses]], [">=", ["zoom"], byClass("minzoom")],
+  ["!", ["in", ["coalesce", ["get", "subclass"], ""], ["literal", MARKER_EXCLUDED_SUBCLASSES]]]];
+
 const contourTiles = demSource.contourProtocolUrl({
   multiplier: 3.28084,
   thresholds: { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
@@ -185,7 +232,7 @@ const map = new maplibregl.Map({
         paint: { "fill-color": "#cfe0bf", "fill-opacity": 0.35 } },
       { id: "park", type: "line", source: "osm", "source-layer": "park", filter: ["!=", ["get", "class"], "wilderness"],
         paint: { "line-color": "#4b8a3a", "line-width": 1.5, "line-dasharray": [4, 2] } },
-      // Wilderness (outdoors archive: protect_class 1b) is a distinct, darker green dash-dot.
+      // Wilderness (outdoors archive class wilderness: protect_class 1b or a wilderness designation) is a distinct, darker green dash-dot.
       { id: "wilderness", type: "line", source: "osm", "source-layer": "park", filter: ["==", ["get", "class"], "wilderness"],
         paint: { "line-color": "#2d5e2a", "line-width": 2, "line-dasharray": [6, 2, 1, 2] } },
       { id: "waterway", type: "line", source: "osm", "source-layer": "waterway", paint: { "line-color": "#5b9bd5", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.6, 15, 2] } },
@@ -232,18 +279,15 @@ const map = new maplibregl.Map({
         filter: ["all", ["in", ["get", "class"], ["literal", ["ridge", "arete"]]], ["has", "name"]],
         layout: { "symbol-placement": "line", "text-field": ["get", "name"], "text-font": ["Noto Sans Italic"], "text-size": 13, "symbol-spacing": 500, "text-letter-spacing": 0.15, "text-padding": 6 },
         paint: { "text-color": "#5a3d22", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
-      // Outdoors POIs: a coloured disc with a one-letter glyph (no sprite sheet needed), then the name from z13.
-      { id: "poi-markers", type: "circle", source: "osm", "source-layer": "outdoor_poi", minzoom: 11,
-        filter: ["all", ["!=", ["get", "subclass"], "camp_pitch"], ["any", ["in", ["get", "class"], ["literal", ["trailhead", "campsite", "shelter", "hut", "spring", "waterfall", "viewpoint", "parking", "cave", "drinking_water"]]], [">=", ["zoom"], 15]]],
-        paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 15, 8], "circle-stroke-color": "#fffdf7", "circle-stroke-width": 1.2,
-                 "circle-color": ["match", ["get", "class"], "trailhead", "#b8341f", "campsite", "#2e7d32", ["shelter", "hut"], "#6d4c41", ["spring", "waterfall", "drinking_water"], "#1e78c2",
-                                  "viewpoint", "#8e24aa", "parking", "#455a64", "cave", "#37474f", "#757575"] } },
-      { id: "poi-glyphs", type: "symbol", source: "osm", "source-layer": "outdoor_poi", minzoom: 12, filter: ["!=", ["get", "subclass"], "camp_pitch"],
-        layout: { "text-field": ["match", ["get", "class"], "trailhead", "T", "campsite", "C", "shelter", "S", "hut", "H", "spring", "o", "waterfall", "W", "viewpoint", "V", "parking", "P", "cave", "c", "drinking_water", "w", ""],
-                  "text-font": ["Noto Sans Medium"], "text-size": ["interpolate", ["linear"], ["zoom"], 12, 8, 15, 12], "text-allow-overlap": true },
-        paint: { "text-color": "#ffffff" } },
-      { id: "poi-names", type: "symbol", source: "osm", "source-layer": "outdoor_poi", minzoom: 13, filter: ["has", "name"],
-        layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 0.9], "text-max-width": 8, "text-padding": 6 },
+      // Outdoors POIs: the renderer's marker shapes and colours (MARKERS above; icons made in styleimagemissing), with
+      // the name under the marker from z13 (parking: marker only). As in the renderer, marker and name are one label
+      // whose text is optional, so a name that doesn't fit never costs the marker; higher-ranked classes place first
+      // and markers collide with each other, so dense parking lots thin out.
+      { id: "poi-markers", type: "symbol", source: "osm", "source-layer": "outdoor_poi", minzoom: 12, filter: markerFilter,
+        layout: { "icon-image": ["concat", "poi-", ["get", "class"]], "icon-padding": 1, "symbol-sort-key": byClass("rank"),
+                  "text-field": ["step", ["zoom"], "", 13, ["case", ["==", ["get", "class"], "parking"], "", ["coalesce", ["get", "name"], ""]]],
+                  "text-font": ["Noto Sans Regular"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 0.9], "text-max-width": 8,
+                  "text-padding": 6, "text-optional": true },
         paint: { "text-color": "#3b2a1a", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },      { id: "water-names", type: "symbol", source: "osm", "source-layer": "water_name",
         layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 13 },
         paint: { "text-color": "#2f6ea6", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
@@ -258,11 +302,15 @@ const map = new maplibregl.Map({
   },
 });
 window.map = map; // for tools/demo-check.py
+map.on("styleimagemissing", e => {
+  const m = e.id.startsWith("poi-") && MARKERS[e.id.slice(4)];
+  if (m && !map.hasImage(e.id)) map.addImage(e.id, markerImage(m), { pixelRatio: MARKER_RATIO });
+});
 map.addControl(new maplibregl.NavigationControl(), "top-right");
 map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
 
-const textLayers = ["contour-labels", "trail-names", "ridge-names", "poi-names", "water-names", "peaks", "places"];
-const baseSizes = { "contour-labels": 13, "trail-names": 13, "ridge-names": 13, "poi-names": 12, "water-names": 13, "peaks": 14, "places": 16 };
+const textLayers = ["contour-labels", "trail-names", "ridge-names", "poi-markers", "water-names", "peaks", "places"];
+const baseSizes = { "contour-labels": 13, "trail-names": 13, "ridge-names": 13, "poi-markers": 12, "water-names": 13, "peaks": 14, "places": 16 };
 function applyTextScale(k) { for (const id of textLayers) map.setLayoutProperty(id, "text-size", Math.round(baseSizes[id] * k)); }
 function toggle(ids, on) { for (const id of ids) map.setLayoutProperty(id, "visibility", on ? "visible" : "none"); }
 map.on("load", () => {
@@ -272,7 +320,7 @@ map.on("load", () => {
   sel.onchange = () => { const u = new URL(location.href); u.searchParams.set("osm", sel.value); location.href = u.href; };
   document.getElementById("hill").onchange = e => toggle(["hillshade"], e.target.checked);
   document.getElementById("contours").onchange = e => toggle(["contour-minor", "contour-index", "contour-labels"], e.target.checked);
-  document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "poi-glyphs", "poi-names", "trail-names", "water-names", "peaks", "places"], e.target.checked);
+  document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "trail-names", "water-names", "peaks", "places"], e.target.checked);
 });
 const status = document.getElementById("status");
 map.on("move", () => { const c = map.getCenter(); status.textContent = `z ${map.getZoom().toFixed(1)}  ${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`; });
