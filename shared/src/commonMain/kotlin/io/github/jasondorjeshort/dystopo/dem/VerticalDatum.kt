@@ -12,7 +12,12 @@ enum class VerticalDatum {
     /** Global geoid model; used by Copernicus DEM. The internal datum. */
     EGM2008,
 
-    /** North American Vertical Datum of 1988; used by USGS 3DEP (via GEOID18 on NAD83(2011)). */
+    /**
+     * North American Vertical Datum of 1988 and its US siblings; used by USGS 3DEP. Realized
+     * through an NGS hybrid geoid chosen by location (see [Datums.HYBRID_GEOIDS]): GEOID18 in
+     * CONUS (NAVD88) and Puerto Rico / USVI (PRVD02, VIVD09), GEOID12B in Alaska (NAVD88) and
+     * Hawaii (the USGG2012-based local datum).
+     */
     NAVD88,
 }
 
@@ -21,32 +26,103 @@ fun interface GeoidModel {
     fun undulation(lat: Double, lon: Double): Double
 }
 
+/** NAD83 realizations a hybrid geoid can be referenced to. Their origins differ by ~10 cm. */
+enum class Nad83Frame {
+    /** NAD83(2011): CONUS, Alaska, Puerto Rico and the US Virgin Islands. */
+    NAD83_2011,
+
+    /** NAD83(PA11): Pacific plate (Hawaii, American Samoa). */
+    NAD83_PA11,
+}
+
+/**
+ * An NGS hybrid geoid grid: US vertical datum height + undulation = NAD83 ellipsoid height.
+ * Bounds are the grid's extent in degrees; [east] may exceed 180 for grids that cross the
+ * antimeridian (Alaska), and longitudes are matched modulo 360.
+ */
+data class HybridGeoid(
+    /** Registry id in sources.json; credited when the grid converts any cell. */
+    val registryId: String,
+    /** File name on the PROJ CDN (https://cdn.proj.org/). */
+    val file: String,
+    val west: Double,
+    val south: Double,
+    val east: Double,
+    val north: Double,
+    val frame: Nad83Frame,
+) {
+    private fun lonInside(lon: Double): Boolean =
+        doubleArrayOf(lon, lon + 360, lon - 360).any { it in west..east }
+
+    fun covers(lat: Double, lon: Double): Boolean = lat in south..north && lonInside(lon)
+
+    /** True if the box overlaps the grid. [boxEast] < [boxWest] means the box crosses the antimeridian. */
+    fun intersects(boxWest: Double, boxSouth: Double, boxEast: Double, boxNorth: Double): Boolean {
+        if (boxNorth < south || boxSouth > north) return false
+        val e = if (boxEast < boxWest) boxEast + 360 else boxEast
+        for (shift in doubleArrayOf(0.0, 360.0, -360.0)) {
+            if (e + shift >= west && boxWest + shift <= east) return true
+        }
+        return false
+    }
+}
+
 object Datums {
-    // ITRF2008 -> NAD83(2011) translation, meters (Pearson & Snay 2013). WGS84 (G1762+) matches
-    // ITRF2008 to a few cm, far below DEM accuracy.
-    private const val TX = 0.99343
-    private const val TY = -1.90331
-    private const val TZ = -0.52655
+    // ITRF2008 -> NAD83(2011) translation, meters (Pearson & Snay 2013; EPSG:7807). WGS84 (G1762+)
+    // matches ITRF2008 to a few cm, far below DEM accuracy.
+    private val T_2011 = doubleArrayOf(0.99343, -1.90331, -0.52655)
+
+    // ITRF2008 -> NAD83(PA11) translation, meters (Pearson & Snay 2013; EPSG:7808).
+    private val T_PA11 = doubleArrayOf(0.9080, -2.0161, -0.5653)
 
     /**
-     * Ellipsoid height difference h(WGS84) - h(NAD83(2011)) at a location. NAD83's origin is
-     * ~2.2 m from Earth's center, so the same point has different ellipsoid heights in the two
-     * frames. Uses the translation only: the transformation's rotations move points sideways,
-     * and its scale changes heights by ~1 cm.
+     * NGS hybrid geoids by location, first match wins. GEOID18 supersedes GEOID12B in CONUS and
+     * Puerto Rico / USVI; NGS says to keep using GEOID12B in Alaska and Hawaii. Extents are the
+     * PROJ-data grids' (https://cdn.proj.org/files.geojson).
      */
-    fun wgs84MinusNad83Height(lat: Double, lon: Double): Double {
+    val HYBRID_GEOIDS: List<HybridGeoid> = listOf(
+        HybridGeoid("geoid18", "us_noaa_g2018u0.tif", -130.0, 24.0, -60.0, 58.0, Nad83Frame.NAD83_2011),
+        HybridGeoid("geoid18-prvi", "us_noaa_g2018p0.tif", -69.0, 15.0, -64.0, 21.0, Nad83Frame.NAD83_2011),
+        HybridGeoid("geoid12b-alaska", "us_noaa_g2012ba0.tif", 172.0, 49.0, 234.0, 72.0, Nad83Frame.NAD83_2011),
+        HybridGeoid("geoid12b-hawaii", "us_noaa_g2012bh0.tif", -161.0, 18.0, -154.0, 24.0, Nad83Frame.NAD83_PA11),
+    )
+
+    /** The hybrid geoid to use at a location, or null where no US grid covers it. */
+    fun hybridGeoidFor(lat: Double, lon: Double): HybridGeoid? = HYBRID_GEOIDS.firstOrNull { it.covers(lat, lon) }
+
+    /** Hybrid geoids overlapping a box (see [HybridGeoid.intersects]); empty means US heights there can't be converted. */
+    fun hybridGeoidsIntersecting(west: Double, south: Double, east: Double, north: Double): List<HybridGeoid> =
+        HYBRID_GEOIDS.filter { it.intersects(west, south, east, north) }
+
+    /**
+     * Ellipsoid height difference h(WGS84) - h(NAD83) at a location. NAD83's origin is ~2.2 m
+     * from Earth's center, so the same point has different ellipsoid heights in the two frames.
+     * Uses the translation only: the transformation's rotations move points sideways, and its
+     * scale changes heights by ~1 cm.
+     */
+    fun wgs84MinusNad83Height(lat: Double, lon: Double, frame: Nad83Frame = Nad83Frame.NAD83_2011): Double {
+        val t = when (frame) {
+            Nad83Frame.NAD83_2011 -> T_2011
+            Nad83Frame.NAD83_PA11 -> T_PA11
+        }
         val phi = lat * PI / 180
         val lambda = lon * PI / 180
         val ux = cos(phi) * cos(lambda)
         val uy = cos(phi) * sin(lambda)
         val uz = sin(phi)
-        return -(TX * ux + TY * uy + TZ * uz)
+        return -(t[0] * ux + t[1] * uy + t[2] * uz)
     }
 
     /**
-     * Meters to add to a NAVD88 height to get an EGM2008 height:
-     * NAVD88 + GEOID18 = NAD83 ellipsoid height -> WGS84 ellipsoid height -> minus EGM2008 geoid.
+     * Meters to add to a US vertical datum height to get an EGM2008 height:
+     * height + hybrid geoid = NAD83 ellipsoid height -> WGS84 ellipsoid height -> minus EGM2008 geoid.
+     * [hybrid] is the location's hybrid geoid model, referenced to [frame].
      */
-    fun navd88ToEgm2008(lat: Double, lon: Double, geoid18: GeoidModel, egm2008: GeoidModel): Double =
-        geoid18.undulation(lat, lon) + wgs84MinusNad83Height(lat, lon) - egm2008.undulation(lat, lon)
+    fun navd88ToEgm2008(
+        lat: Double,
+        lon: Double,
+        hybrid: GeoidModel,
+        egm2008: GeoidModel,
+        frame: Nad83Frame = Nad83Frame.NAD83_2011,
+    ): Double = hybrid.undulation(lat, lon) + wgs84MinusNad83Height(lat, lon, frame) - egm2008.undulation(lat, lon)
 }

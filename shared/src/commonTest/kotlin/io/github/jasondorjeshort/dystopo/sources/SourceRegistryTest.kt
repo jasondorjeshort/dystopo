@@ -14,7 +14,7 @@ class SourceRegistryTest {
     @Test
     fun builtInRegistryListsEverySourceWeUse() {
         for (id in listOf(
-            "copernicus", "3dep", "3dep-1m", "terrarium", "geoid18", "egm2008",
+            "copernicus", "3dep", "3dep-1m", "terrarium", "geoid18", "geoid18-prvi", "geoid12b-alaska", "geoid12b-hawaii", "egm2008",
             "osm", "osm-water-polygons", "osm-lake-centerlines", "natural-earth", "openmaptiles",
         )) {
             val s = assertNotNull(registry[id], "missing $id")

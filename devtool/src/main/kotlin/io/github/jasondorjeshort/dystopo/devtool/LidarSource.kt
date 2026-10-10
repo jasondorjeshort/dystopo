@@ -41,8 +41,8 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
 
     private class Project(val name: String, val year: Int, val published: String, val tiles: List<RemoteTiff>)
 
-    /** Per-project grids (NaN outside coverage), oldest first, plus counters. */
-    data class Layers(val grids: List<ElevationGrid>, val counters: Map<String, Long>)
+    /** Per-project grids (NaN outside coverage), oldest first, plus counters and the geoid grids that converted them. */
+    data class Layers(val grids: List<ElevationGrid>, val counters: Map<String, Long>, val geoidIds: List<String> = emptyList())
 
     /** What [index] did for one window, for the report. */
     private class IndexStats(val cells: Int, val queries: Int, val ms: Long)
@@ -128,6 +128,8 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
     }
 
     fun layers(window: MercatorWindow): Layers {
+        // No geoid grid covers the window: its NAVD88 heights would be discarded, so don't query or download.
+        if (!Geoids.covers(window)) return Layers(emptyList(), mapOf("datumUncovered" to 1L))
         // Read on this thread: the export's override is thread-local (see OverviewLevels).
         val targetMeters = OverviewLevels.targetMeters(window)
         val (items, indexStats) = index(window)
@@ -195,10 +197,8 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
 
         // USGS lidar DEMs are NAVD88; convert to the internal EGM2008 datum.
         var unconverted = 0L
-        if (grids.isNotEmpty()) {
-            val offsets = Geoids.navd88ToEgm2008(window)
-            for (g in grids) unconverted += Geoids.apply(g.values, offsets).second
-        }
+        val offsets = if (grids.isEmpty()) null else Geoids.navd88ToEgm2008(window)
+        if (offsets != null) for (g in grids) unconverted += Geoids.apply(g.values, offsets).second
 
         val counters = LinkedHashMap<String, Long>()
         counters["datumUnconvertedCells"] = unconverted
@@ -213,7 +213,7 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
         counters["readMs"] = readMs
         // Project names can identify a place, so report coverage per project index only.
         grids.forEachIndexed { i, g -> counters["project${i}CoveragePermille"] = (Composite.coverage(g) * 1000).toLong() }
-        return Layers(grids, counters)
+        return Layers(grids, counters, offsets?.registryIds.orEmpty())
     }
 
     private fun zoneOf(tile: RemoteTiff): Pair<Int, Boolean> {
@@ -227,7 +227,7 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
             window.width, window.height, window.cellSizeMeters, FloatArray(window.width * window.height) { Float.NaN },
         )
         val counters = layers.counters + ("coveragePermille" to (Composite.coverage(merged) * 1000).toLong())
-        return ElevationSource.Result(merged, counters, ElevationSource.provenanceIfData(merged, registryIds))
+        return ElevationSource.Result(merged, counters, ElevationSource.provenanceIfData(merged, listOf("3dep-1m") + layers.geoidIds))
     }
 
     companion object {
@@ -287,7 +287,7 @@ class ThreeDepBestSource : FeatheredSource {
         lidar.counters.forEach { (k, v) -> counters["lidar.$k"] = v }
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
         // Provenance: lidar if any project has data; the 10 m base if it shows through a gap in lidar cover.
-        val lidarIds = if (lidar.grids.any { g -> g.values.any { !it.isNaN() } }) LidarSource().registryIds else emptyList()
+        val lidarIds = if (lidar.grids.any { g -> g.values.any { !it.isNaN() } }) listOf("3dep-1m") + lidar.geoidIds else emptyList()
         val baseShows = base.grid.values.indices.any { k -> lidar.grids.all { it.values[k].isNaN() } }
         return ElevationSource.Result(
             merged, counters, ElevationSource.mergeProvenance(if (baseShows) base.provenance else emptyList(), lidarIds),

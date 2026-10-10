@@ -41,7 +41,7 @@
       "allowedUses": "Unrestricted. USGS asks that it be credited as the source.",
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/current/{cell}/USGS_13_{cell}.tif",
       "updateCadence": "Rolling: cells are refreshed in 'current' as new lidar is incorporated, several times a year.",
-      "notes": "1x1 degree Cloud-Optimized GeoTIFFs named by their north-west corner, NAD83 geographic. Converted NAVD88 -> EGM2008 with geoid18 and egm2008 (so only where GEOID18 covers, for now)."
+      "notes": "1x1 degree Cloud-Optimized GeoTIFFs named by their north-west corner, NAD83 geographic. Converted to EGM2008 with the hybrid geoid covering each cell (geoid18 in CONUS, geoid18-prvi in Puerto Rico / USVI, geoid12b-alaska, geoid12b-hawaii) and egm2008; not fetched where no hybrid geoid covers."
     },
     {
       "id": "3dep-1m",
@@ -61,7 +61,7 @@
       "allowedUses": "Unrestricted. USGS asks that it be credited as the source.",
       "url": "https://tnmaccess.nationalmap.gov/api/v1/products?bbox={west},{south},{east},{north}&datasets=Digital%20Elevation%20Model%20(DEM)%201%20meter&prodFormats=GeoTIFF",
       "updateCadence": "Continuous: new lidar projects are published as surveys are processed.",
-      "notes": "10x10 km tiles in NAD83 / UTM, grouped by survey project; newer surveys are composited on top. Bare earth. Converted NAVD88 -> EGM2008 with geoid18 and egm2008."
+      "notes": "10x10 km tiles in NAD83 / UTM, grouped by survey project; newer surveys are composited on top. Bare earth. Converted to EGM2008 with the hybrid geoid covering each cell (geoid18, geoid18-prvi, geoid12b-alaska, geoid12b-hawaii) and egm2008."
     },
     {
       "id": "terrarium",
@@ -90,7 +90,7 @@
       "kind": "geoid",
       "provider": "NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project",
       "coverage": {
-        "summary": "Conterminous US, Puerto Rico and the US Virgin Islands.",
+        "summary": "Conterminous US (this grid; Puerto Rico and the US Virgin Islands are geoid18-prvi).",
         "bbox": [-130, 24, -60, 58]
       },
       "resolution": "1 arc-minute grid",
@@ -104,6 +104,68 @@
       "url": "https://cdn.proj.org/us_noaa_g2018u0.tif",
       "updateCadence": "Static; to be superseded by GEOID2022 when NGS releases the modernized NSRS (NAPGD2022).",
       "notes": "Used with egm2008 to convert NAVD88 heights (USGS DEMs) to EGM2008."
+    },
+    {
+      "id": "geoid18-prvi",
+      "name": "NGS GEOID18 (Puerto Rico and US Virgin Islands)",
+      "kind": "geoid",
+      "provider": "NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Puerto Rico and the US Virgin Islands.",
+        "bbox": [-69, 15, -64, 21]
+      },
+      "resolution": "1 arc-minute grid",
+      "verticalDatum": "PRVD02 / VIVD09 relative to the NAD83(2011) ellipsoid",
+      "license": "LicenseRef-US-Government-Public-Domain",
+      "licenseName": "Public domain (US federal government work)",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "attribution": "Geoid: NGS GEOID18, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
+      "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID18/\" target=\"_blank\">NGS GEOID18</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Unrestricted.",
+      "url": "https://cdn.proj.org/us_noaa_g2018p0.tif",
+      "updateCadence": "Static; to be superseded by GEOID2022 when NGS releases the modernized NSRS (NAPGD2022).",
+      "notes": "Supersedes GEOID12B (us_noaa_g2012bp0) in Puerto Rico and the US Virgin Islands. Used with egm2008 to convert PRVD02 / VIVD09 heights (USGS DEMs) to EGM2008."
+    },
+    {
+      "id": "geoid12b-alaska",
+      "name": "NGS GEOID12B (Alaska)",
+      "kind": "geoid",
+      "provider": "NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Alaska: 49-72 N, 172 E eastward across the antimeridian to 126 W (so no bbox here)."
+      },
+      "resolution": "1 arc-minute grid",
+      "verticalDatum": "NAVD88 relative to the NAD83(2011) ellipsoid",
+      "license": "LicenseRef-US-Government-Public-Domain",
+      "licenseName": "Public domain (US federal government work)",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "attribution": "Geoid: NGS GEOID12B, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
+      "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID12B/\" target=\"_blank\">NGS GEOID12B</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Unrestricted.",
+      "url": "https://cdn.proj.org/us_noaa_g2012ba0.tif",
+      "updateCadence": "Static; GEOID18 does not cover Alaska, so NGS keeps GEOID12B there until GEOID2022.",
+      "notes": "Used with egm2008 to convert Alaska NAVD88 heights (USGS DEMs) to EGM2008."
+    },
+    {
+      "id": "geoid12b-hawaii",
+      "name": "NGS GEOID12B (Hawaii)",
+      "kind": "geoid",
+      "provider": "NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Hawaiian Islands.",
+        "bbox": [-161, 18, -154, 24]
+      },
+      "resolution": "1 arc-minute grid",
+      "verticalDatum": "USGG2012-based local datum (offset 50-60 cm from some local tidal bench marks) relative to the NAD83(PA11) ellipsoid",
+      "license": "LicenseRef-US-Government-Public-Domain",
+      "licenseName": "Public domain (US federal government work)",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "attribution": "Geoid: NGS GEOID12B, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
+      "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID12B/\" target=\"_blank\">NGS GEOID12B</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Unrestricted.",
+      "url": "https://cdn.proj.org/us_noaa_g2012bh0.tif",
+      "updateCadence": "Static; GEOID18 does not cover Hawaii, so NGS keeps GEOID12B there until GEOID2022.",
+      "notes": "Referenced to NAD83(PA11), not NAD83(2011); the ellipsoid shift to WGS84 uses the PA11 translation. Used with egm2008 to convert Hawaii heights (USGS DEMs) to EGM2008."
     },
     {
       "id": "egm2008",

@@ -2,12 +2,14 @@ package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.dem.Datums
 import io.github.jasondorjeshort.dystopo.dem.GeoidModel
+import io.github.jasondorjeshort.dystopo.dem.HybridGeoid
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import java.io.File
 
 /**
  * A geoid grid from the PROJ data CDN (public-domain grids converted to Cloud-Optimized GeoTIFF),
- * read with range requests. Longitudes are wrapped to whatever range the grid uses (GEOID18 uses 0..360).
+ * read with range requests. Longitudes are wrapped to whatever range the grid uses (GEOID18 uses
+ * 0..360; the Alaska grid runs 172..234).
  */
 class ProjGeoid(url: String, cacheDir: File) : GeoidModel {
     private val grid = RemoteTiff(url, cacheDir)
@@ -21,7 +23,10 @@ class ProjGeoid(url: String, cacheDir: File) : GeoidModel {
     fun prefetch(west: Double, south: Double, east: Double, north: Double) {
         val w = wrap(west) ?: return
         val e = wrap(east) ?: return
-        grid.prefetch(0, minOf(w, e), south, maxOf(w, e), north)
+        val s = maxOf(south, grid.tiff.extent[1])
+        val n = minOf(north, grid.tiff.extent[3])
+        if (s > n) return
+        grid.prefetch(0, minOf(w, e), s, maxOf(w, e), n)
     }
 
     /** NaN outside the grid. */
@@ -32,39 +37,68 @@ class ProjGeoid(url: String, cacheDir: File) : GeoidModel {
 }
 
 object Geoids {
-    /** NGS GEOID18 (CONUS): NAVD88 relative to the NAD83(2011) ellipsoid. */
-    val geoid18 by lazy { ProjGeoid("https://cdn.proj.org/us_noaa_g2018u0.tif", Caches.dir("geoids/us_noaa_g2018u0")) }
-
     /** NGA EGM2008, 2.5' grid, relative to the WGS84 ellipsoid. */
     val egm2008 by lazy { ProjGeoid("https://cdn.proj.org/us_nga_egm08_25.tif", Caches.dir("geoids/us_nga_egm08_25")) }
 
-    /** Registry ids of the geoids used for NAVD88 -> EGM2008 conversion; their credit comes from the registry. */
-    val REGISTRY_IDS = listOf("geoid18", "egm2008")
+    private val hybrids = HashMap<String, ProjGeoid>()
 
-    private val offsetCache = HashMap<MercatorWindow, FloatArray>()
+    /** The PROJ CDN grid for [geoid], opened on first use. */
+    @Synchronized
+    fun grid(geoid: HybridGeoid): ProjGeoid = hybrids.getOrPut(geoid.registryId) {
+        ProjGeoid("https://cdn.proj.org/${geoid.file}", Caches.dir("geoids/${geoid.file.removeSuffix(".tif")}"))
+    }
 
     /**
-     * Per-pixel meters to add to NAVD88 heights to get EGM2008 heights. Geoids vary over
-     * kilometers, so offsets are computed on a coarse lattice and interpolated. NaN where
-     * GEOID18 has no coverage (outside CONUS). Memoized per window.
+     * Registry ids of every geoid that can take part in the US -> EGM2008 conversion (a source's full
+     * credit). Results credit only the grids a window actually used ([Offsets.registryIds]).
+     */
+    val REGISTRY_IDS = Datums.HYBRID_GEOIDS.map { it.registryId } + "egm2008"
+
+    /** Per-cell meters to add (NaN where no grid covers); [registryIds] are the geoids that produced them. */
+    class Offsets(val values: FloatArray, val registryIds: List<String>)
+
+    private val offsetCache = HashMap<MercatorWindow, Offsets>()
+
+    /**
+     * True if some hybrid geoid overlaps [window]. Where none does, US heights can't be put in the
+     * common datum, so the USGS sources skip fetching them and report `datumUncovered`.
+     */
+    fun covers(window: MercatorWindow): Boolean = Datums.hybridGeoidsIntersecting(
+        window.lonAt(0), window.latAt(window.height - 1), window.lonAt(window.width - 1), window.latAt(0),
+    ).isNotEmpty()
+
+    /**
+     * Per-pixel meters to add to NAVD88 (and sibling US datum) heights to get EGM2008 heights. Geoids
+     * vary over kilometers, so offsets are computed on a coarse lattice and interpolated. Each lattice
+     * point uses the hybrid geoid that covers it ([Datums.hybridGeoidFor] order); NaN where none does.
+     * Memoized per window.
      */
     @Synchronized
-    fun navd88ToEgm2008(window: MercatorWindow): FloatArray = offsetCache.getOrPut(window) { computeOffsets(window, 16) }
+    fun navd88ToEgm2008(window: MercatorWindow): Offsets = offsetCache.getOrPut(window) { computeOffsets(window, 16) }
 
-    private fun computeOffsets(window: MercatorWindow, step: Int): FloatArray {
-        geoid18.prefetch(window.lonAt(0), window.latAt(window.height - 1), window.lonAt(window.width - 1), window.latAt(0))
-        egm2008.prefetch(window.lonAt(0), window.latAt(window.height - 1), window.lonAt(window.width - 1), window.latAt(0))
+    private fun computeOffsets(window: MercatorWindow, step: Int): Offsets {
         val lw = (window.width - 1) / step + 2
         val lh = (window.height - 1) / step + 2
+        // The last lattice column/row may lie just past the window edge; lonAt/latAt extrapolate.
+        // Keeping every lattice point on a multiple of `step` from the window origin means windows
+        // whose origins are 16-aligned (tile exports) sample identical points, so a cell's offset
+        // doesn't depend on which window computed it.
+        val west = window.lonAt(0)
+        val east = window.lonAt((lw - 1) * step)
+        val south = window.latAt((lh - 1) * step)
+        val north = window.latAt(0)
+        val candidates = Datums.hybridGeoidsIntersecting(west, south, east, north)
+        for (g in candidates) grid(g).prefetch(west, south, east, north)
+        if (candidates.isNotEmpty()) egm2008.prefetch(west, south, east, north)
+        val used = LinkedHashSet<String>()
         val lattice = DoubleArray(lw * lh)
         for (b in 0 until lh) for (a in 0 until lw) {
-            // The last lattice column/row may lie just past the window edge; lonAt/latAt extrapolate.
-            // Keeping every lattice point on a multiple of `step` from the window origin means windows
-            // whose origins are 16-aligned (tile exports) sample identical points, so a cell's offset
-            // doesn't depend on which window computed it.
             val lat = window.latAt(b * step)
             val lon = window.lonAt(a * step)
-            lattice[b * lw + a] = Datums.navd88ToEgm2008(lat, lon, geoid18, egm2008)
+            val geoid = candidates.firstOrNull { it.covers(lat, lon) }
+            val v = if (geoid == null) Double.NaN else Datums.navd88ToEgm2008(lat, lon, grid(geoid), egm2008, geoid.frame)
+            if (geoid != null && !v.isNaN()) used += geoid.registryId
+            lattice[b * lw + a] = v
         }
         val out = FloatArray(window.width * window.height)
         for (j in 0 until window.height) {
@@ -80,17 +114,17 @@ object Geoids {
                 out[j * window.width + i] = ((v00 * (1 - fx) + v10 * fx) * (1 - fy) + (v01 * (1 - fx) + v11 * fx) * fy).toFloat()
             }
         }
-        return out
+        return Offsets(out, if (used.isEmpty()) emptyList() else used.toList() + "egm2008")
     }
 
     /** Adds [offsets] to [values] in place; returns the mean offset applied (meters) and cells left unconverted. */
-    fun apply(values: FloatArray, offsets: FloatArray): Pair<Double, Long> {
+    fun apply(values: FloatArray, offsets: Offsets): Pair<Double, Long> {
         var sum = 0.0
         var n = 0L
         var unconverted = 0L
         for (k in values.indices) {
             if (values[k].isNaN()) continue
-            val o = offsets[k]
+            val o = offsets.values[k]
             if (o.isNaN()) {
                 values[k] = Float.NaN // can't place this cell in the common datum; let a fallback fill it
                 unconverted++

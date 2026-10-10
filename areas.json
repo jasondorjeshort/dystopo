@@ -38,15 +38,27 @@
     },
     "denali": {
       "bbox": [-151.15, 62.99, -150.85, 63.13],
-      "description": "Denali, Alaska, USA. 3DEP exists here but GEOID18 does not: unconverted cells must be reported and filled by Copernicus.",
+      "description": "Denali, Alaska, USA. 3DEP converted to EGM2008 through GEOID12B (Alaska).",
       "expectedElevation": [1000, 6190],
-      "tags": ["world", "expectUnconverted"]
+      "tags": ["world"]
     },
     "mauna-kea": {
       "bbox": [-155.55, 19.75, -155.39, 19.89],
-      "description": "Mauna Kea summit, Hawaii, USA. 3DEP outside GEOID18, like Alaska.",
+      "description": "Mauna Kea summit, Hawaii, USA. 3DEP converted to EGM2008 through GEOID12B (Hawaii, NAD83(PA11)).",
       "expectedElevation": [1700, 4207],
-      "tags": ["world", "expectUnconverted"]
+      "tags": ["world"]
+    },
+    "north-slope": {
+      "bbox": [-149.40, 69.90, -149.00, 70.00],
+      "description": "Arctic coastal plain tundra, North Slope, Alaska, USA. Flat and treeless, for checking the GEOID12B (Alaska) conversion of 3DEP against Copernicus (forested flats like the Tanana Flats carry a canopy bias in Copernicus).",
+      "expectedElevation": [30, 90],
+      "tags": ["world"]
+    },
+    "kona-lava-plain": {
+      "bbox": [-156.045, 19.74, -156.015, 19.77],
+      "description": "Bare Hualalai lava flows around the Kona airport, Hawaii, USA. Gently sloping and treeless, for checking the GEOID12B (Hawaii) conversion of 3DEP against Copernicus (the vegetated Hilo plain carries a canopy bias).",
+      "expectedElevation": [0, 130],
+      "tags": ["world"]
     },
     "kilimanjaro": {
       "bbox": [37.27, -3.14, 37.44, -3.00],

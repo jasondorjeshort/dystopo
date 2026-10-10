@@ -10,7 +10,9 @@ import kotlin.math.floor
  * GeoTIFFs (NAD83 geographic, NAVD88 meters). Only the internal tiles covering the window are
  * fetched, via HTTP range requests, and cached under [cacheDir]. Cells with no file are NaN.
  *
- * Heights are converted from NAVD88 to EGM2008 (see [Geoids]); cells outside GEOID18 coverage are NaN.
+ * Heights are converted from NAVD88 (or the local US datum) to EGM2008 with the hybrid geoid that
+ * covers each cell (see [Geoids]); cells no grid covers are NaN, and a window no grid touches isn't
+ * fetched at all (`datumUncovered`).
  * Resampled to Web Mercator with bilinear interpolation. NAD83 vs WGS84 differs horizontally by
  * ~1 m, well under a pixel, and is ignored.
  */
@@ -30,6 +32,11 @@ class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : Elevat
         "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/current/$cell/USGS_13_$cell.tif"
 
     override fun fetch(window: MercatorWindow): ElevationSource.Result {
+        if (!Geoids.covers(window)) {
+            // No geoid grid to put these heights in the common datum: don't download what we'd discard.
+            val grid = ElevationGrid(window.width, window.height, window.cellSizeMeters, FloatArray(window.width * window.height) { Float.NaN })
+            return ElevationSource.Result(grid, mapOf("datumUncovered" to 1L, "noDataCells" to grid.values.size.toLong()), emptyList())
+        }
         val lons = DoubleArray(window.width) { window.lonAt(it) }
         val lats = DoubleArray(window.height) { window.latAt(it) }
 
@@ -56,8 +63,8 @@ class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : Elevat
                 values[j * window.width + i] = cell?.sample(level, lons[i], lats[j]) ?: Float.NaN
             }
         }
-        val (meanOffset, unconverted) = if (present.isEmpty()) 0.0 to 0L
-        else Geoids.apply(values, Geoids.navd88ToEgm2008(window))
+        val offsets = if (present.isEmpty()) null else Geoids.navd88ToEgm2008(window)
+        val (meanOffset, unconverted) = if (offsets == null) 0.0 to 0L else Geoids.apply(values, offsets)
 
         val counters = mapOf(
             "cells" to cells.size.toLong(),
@@ -70,6 +77,7 @@ class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : Elevat
             "noDataCells" to values.count { it.isNaN() }.toLong(),
         )
         val grid = ElevationGrid(window.width, window.height, window.cellSizeMeters, values)
-        return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, registryIds))
+        // Credit only the geoid grids this window used.
+        return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, listOf("3dep") + offsets?.registryIds.orEmpty()))
     }
 }
