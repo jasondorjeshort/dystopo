@@ -381,6 +381,7 @@ class BuildRoutes(
             job.phase = "publish"
             val published = listOfNotNull(demTmp to demOut, osmTmp.takeIf { it.isFile }?.let { it to osmOut })
             for ((tmp, out) in published) {
+                PackCatalog.sidecar(out).delete() // T58: the old file's hash must not outlive it
                 Files.move(tmp.toPath(), out.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
                 job.files += describe(out)
                 live.addPack(out)

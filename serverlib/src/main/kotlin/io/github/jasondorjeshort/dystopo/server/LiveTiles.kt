@@ -588,7 +588,7 @@ class LiveTiles(
         val path = ex.requestURI.path
         if (SyncRoutes.handle(ex)) return // T44: /sync/* (the always-on sync peer)
         if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
-        if (path == "/catalog" || path == "/catalog.json") return reply(ex, JsonWriter.write(catalog.json()).toByteArray(), "application/json")
+        catalog.route(path, ex.requestMethod)?.let { (status, body) -> return reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
         SpriteSheets.route(path, outDir)?.let { (bytes, type) -> return reply(ex, bytes, type) }
         tileRe.matchEntire(path)?.let { m ->

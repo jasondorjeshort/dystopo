@@ -85,6 +85,7 @@
     <label>OSM from <select id="packsource"><option value="auto">auto: a server extract, else Overpass</option><option value="extract">an extract on the server</option><option value="overpass">Overpass (small boxes)</option></select></label>
     <button id="packsources" type="button">What would it use?</button>
     <label><input type="checkbox" id="packreplace"> replace a pack of that name</label>
+    <label title="The server's bearer token, when it has one (kept in this browser only)">Token <input id="packtoken" type="password" size="12" autocomplete="off" placeholder="none"></label>
     <button id="buildpack" type="button">Build pack here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
     <pre id="buildcmd" hidden></pre>
   </div>
@@ -569,6 +570,19 @@ if (LIVE) {
   // serves the view from them at once (the source box then says pack). window.dystopoBuild has the last job.
   const pre = document.getElementById("buildcmd"), cancelBtn = document.getElementById("buildcancel");
   let buildTimer = null, buildId = null;
+  // T58: the server's bearer token for /build. ?token= sets it (then leaves the address bar so it is not
+  // bookmarked or shared), the Token field changes it, localStorage (dystopo.token) keeps it for this browser.
+  const TOKEN_KEY = "dystopo.token", tokenInput = document.getElementById("packtoken");
+  const readToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return tokenInput.value; } };
+  const writeToken = v => { try { if (v) localStorage.setItem(TOKEN_KEY, v); else localStorage.removeItem(TOKEN_KEY); } catch (e) { /* private mode: the field only */ } };
+  {
+    const u = new URL(location.href), t = u.searchParams.get("token");
+    if (t !== null) { writeToken(t.trim()); u.searchParams.delete("token"); history.replaceState(history.state, "", u); }
+  }
+  tokenInput.value = readToken();
+  tokenInput.onchange = () => writeToken(tokenInput.value.trim());
+  const authed = (opts = {}) => { const t = tokenInput.value.trim(); return t ? { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + t } } : opts; };
+  window.dystopoToken = () => tokenInput.value.trim() ? "set" : "none";
   const show = text => { pre.textContent = text; pre.hidden = false; };
   const describe = j => {
     if (j.error && !j.id) return "refused: " + j.error;
@@ -583,7 +597,7 @@ if (LIVE) {
     return lines.join("\n");
   };
   const poll = async () => {
-    const j = await (await fetch(base + "/build/" + buildId)).json();
+    const j = await (await fetch(base + "/build/" + buildId, authed())).json();
     window.dystopoBuild = j;
     show(describe(j));
     if (j.status === "queued" || j.status === "running") { buildTimer = setTimeout(poll, 1000); return; }
@@ -596,7 +610,7 @@ if (LIVE) {
   };
   // T64: GET /build/sources says which OSM source an outdoors build of the view would use (extract, Overpass or the OpenFreeMap fallback).
   document.getElementById("packsources").onclick = async () => {
-    const r = await (await fetch(base + "/build/sources?bbox=" + viewBbox())).json();
+    const r = await (await fetch(base + "/build/sources?bbox=" + viewBbox(), authed())).json();
     window.dystopoBuildSources = r;
     if (r.error) { show("refused: " + r.error); return; }
     const o = r.outdoors, lines = ["outdoors build of this view (" + r.areaSqDeg.toFixed(3) + " sq deg): " + o.source + (o.extract ? " " + o.extract.name + " (data of " + String(o.extract.date).slice(0, 10) + ")" : "") + " -> " + o.profile];
@@ -612,15 +626,16 @@ if (LIVE) {
     const q = new URLSearchParams({ name, bbox, minZoom: document.getElementById("packmin").value, maxZoom: document.getElementById("packmax").value, profile: document.getElementById("packprofile").value, source: document.getElementById("packsource").value });
     if (document.getElementById("packreplace").checked) q.set("overwrite", "1");
     clearTimeout(buildTimer);
-    const r = await fetch(base + "/build?" + q, { method: "POST" });
+    const r = await fetch(base + "/build?" + q, authed({ method: "POST" }));
     const j = await r.json();
     window.dystopoBuild = j;
+    if (r.status === 401) { show("refused: the server needs its token (Token field, or open the page with ?token=...)" + (j.error ? "\n" + j.error : "")); return; }
     if (!r.ok) { show(describe(j)); return; }
     buildId = j.id; cancelBtn.hidden = false;
     show(describe(j));
     buildTimer = setTimeout(poll, 500);
   };
-  cancelBtn.onclick = async () => { if (buildId) await fetch(base + "/build/" + buildId, { method: "DELETE" }); };
+  cancelBtn.onclick = async () => { if (buildId) await fetch(base + "/build/" + buildId, authed({ method: "DELETE" })); };
 }
 map.on("error", e => { if (e.error && !/404|Not Found/.test(e.error.message || "")) console.warn(e.error); });
 </script>

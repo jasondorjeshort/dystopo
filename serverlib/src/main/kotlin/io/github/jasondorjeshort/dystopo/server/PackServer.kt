@@ -88,6 +88,7 @@ class PackServer(
                 // Static host for out/ (pack downloads in the app; ranges, ?kbps= throttle): see ServeStatic.
                 if (path.startsWith("/out/")) return@createContext ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
                 SpriteSheets.route(path)?.let { (bytes, type) -> return@createContext reply(ex, bytes, type) }
+                catalog.route(path, ex.requestMethod)?.let { (status, body) -> return@createContext reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
                 val q = ServeMapOptions.query(ex.requestURI.rawQuery)
                 ServeMapOptions.shadeRe.matchEntire(path)?.let { m ->
                     val (z, x, y) = m.destructured
@@ -136,7 +137,6 @@ class PackServer(
                 when (path) {
                     "/style.json" -> reply(ex, style(q).toByteArray(), "application/json")
                     "/attribution" -> reply(ex, JsonWriter.write(PackAttribution.compose(listOfNotNull(osmReader?.let { PackMetadata("osm", osm!!.name, synchronized(lock) { it.metadata() }) }, PackMetadata("dem", dem.name, synchronized(lock) { demReader.metadata() })), if (glyphDir.isDirectory) listOf(PackAttribution.GLYPH_FONT_ID) else emptyList()).json()).toByteArray(), "application/json")
-                    "/catalog", "/catalog.json" -> reply(ex, JsonWriter.write(catalog.json()).toByteArray(), "application/json")
                     "/stats" -> {
                         val t = synchronized(timings) { timings.toList() }
                         val s = synchronized(timings) { sampleTimings.toList() }

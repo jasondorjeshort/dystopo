@@ -184,6 +184,8 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         "cacheDirWritable" to cacheDir.canWrite(),
         "glyphs" to MapLibreStyle.FONTS.count { File(glyphDir, "$it/0-255.pbf").isFile },
         "errors" to live.stats()["errors"],
+        // T58: the startup hash pass (cold, warming, ready); /catalog hashes on demand until it is ready.
+        "catalog" to live.catalog.warmState(),
     )
 
     /** Stops accepting requests, lets those in flight finish (up to the grace period), cancels builds. */

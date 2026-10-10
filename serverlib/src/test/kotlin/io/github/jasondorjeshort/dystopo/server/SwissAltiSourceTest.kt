@@ -37,6 +37,20 @@ class SwissAltiSourceTest {
     }
 
     @Test
+    fun exportsReadTheHalfMetreProductOnlyBelowOneMetre() {
+        // z16 at the Matterhorn: about 1.66 m cells. A view reads 0.5 m there, an export the 2 m product.
+        val z16 = MercatorWindow.forBbox(BoundingBox(7.65, 45.97, 7.67, 45.98), 16).cellSizeMeters
+        val z17 = MercatorWindow.forBbox(BoundingBox(7.65, 45.97, 7.67, 45.98), 17).cellSizeMeters
+        assertTrue(z16 < SwissAltiSource.fineBelowMeters(bulk = false))
+        assertFalse(z16 < SwissAltiSource.fineBelowMeters(bulk = true))
+        assertTrue(z17 < SwissAltiSource.fineBelowMeters(bulk = true))
+        assertFalse(OverviewLevels.bulk())
+        assertTrue(OverviewLevels.withTarget(1.6, bulk = true) { OverviewLevels.bulk() })
+        assertFalse(OverviewLevels.withTarget(1.6) { OverviewLevels.bulk() })
+        assertFalse(OverviewLevels.bulk())
+    }
+
+    @Test
     fun coverageGateAndIndexCells() {
         assertTrue(SwissAltiSource.intersectsCoverage(7.62, 45.95, 7.70, 46.00)) // Matterhorn
         assertFalse(SwissAltiSource.intersectsCoverage(-121.86, 46.78, -121.66, 46.93)) // Rainier

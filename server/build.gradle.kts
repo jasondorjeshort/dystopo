@@ -29,8 +29,8 @@ distributions {
         contents {
             from(rootProject.file("tools/demo/index.html")) { into("web") }
             from(layout.projectDirectory.file("server.example.json")) { into("config") }
-            // `docker build server/build/install/server` uses the distribution as its context.
-            from(layout.projectDirectory.file("Dockerfile"))
+            // The image (server/Dockerfile, T58) builds from the repository root in two stages, so the
+            // distribution no longer carries the Dockerfile.
         }
     }
 }

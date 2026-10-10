@@ -26,16 +26,20 @@ To share the download cache with a checkout, point `cacheDir` at it (or run from
 `cache/` and `out/` are the defaults).
 
 The distribution is `bin/` (start scripts), `lib/` (jars: our modules, Kotlin stdlib,
-kotlinx-serialization, SQLDelight, sqlite-jdbc; all Apache-2.0), `web/index.html`, `config/server.example.json`
-(every key with its default) and the `Dockerfile`.
+kotlinx-serialization, SQLDelight, sqlite-jdbc; all Apache-2.0), `web/index.html` and `config/server.example.json`
+(every key with its default). `profile=outdoors` builds also need a tilebuild install
+(`./gradlew :tilebuild:installDist`; `tilebuildHome` below).
 
 ## Docker
 
-The image is built from the installed distribution (no build tools in the image):
+The image builds from the repository root in two stages (T58): a JDK stage runs
+`./gradlew :server:installDist :tilebuild:installDist`, and the runtime stage copies the server to
+`/opt/dystopo` and tilebuild to `/opt/tilebuild` (`DYSTOPO_TILEBUILD_HOME`), so `profile=outdoors` builds
+work in the container. `server/Dockerfile.dockerignore` keeps `cache/`, `out/` and build outputs out of the
+context (BuildKit, the default builder, reads it).
 
 ```
-./gradlew :server:installDist
-docker build -t dystopo-server server/build/install/server
+docker build -f server/Dockerfile -t dystopo-server .
 docker run -d --name dystopo -p 8080:8080 \
   -v dystopo-cache:/data/cache -v dystopo-out:/data/out \
   -e DYSTOPO_SERVER_TOKEN=change-me \
@@ -54,6 +58,13 @@ docker run -d --name dystopo -p 8080:8080 \
   shutdown (below). Give it at least `shutdownGraceSeconds` (`docker stop -t 15`).
 - `JAVA_OPTS` (default `-XX:MaxRAMPercentage=75`) and `SERVER_OPTS` pass JVM options.
 - Healthcheck for an orchestrator: `GET /healthz` (200 while serving, 503 while shutting down).
+- tilebuild runs as a subprocess with its own heap (`DYSTOPO_TILEBUILD_HEAP`, default 3g), so give the
+  container room for both (`JAVA_OPTS` defaults to `-XX:MaxRAMPercentage=60` for the server). Its first
+  outdoors build downloads Planetiler's aux data (about 1.45 GB: water polygons, Natural Earth, Wikidata
+  names) into the cache volume. tilebuild carries LGPL build tooling (GeoTools); the image ships those jars
+  unmodified and separate, and they are never on the server's classpath.
+- CI builds and starts the image on every push (the `image` job: `/healthz`, the token, `/catalog`,
+  tilebuild available).
 
 Packs built elsewhere (`tilebuild`, `devtool tiles --pmtiles`) go into the out volume as
 `<name>-dem.pmtiles` plus `<name>-outdoors.pmtiles`; the server picks up new files at startup, and packs
@@ -133,7 +144,7 @@ key with its default.
 | `overpass.url` | `https://overpass-api.de/api/interpreter` | Overpass endpoint for `profile=outdoors` builds. |
 | `overpass.maxAreaSqDeg` | `0.05` | Largest box sent to Overpass (square degrees); larger is a 413 (or OpenFreeMap with `fallback=1`). |
 | `overpass.timeoutSeconds` | `90` | Overpass query timeout (10..900). |
-| `tilebuildHome` | `null` | A `./gradlew :tilebuild:installDist` install for `profile=outdoors` builds; null: `DYSTOPO_TILEBUILD_HOME`, else `tilebuild/build/install/tilebuild`. Not in the Docker image (tilebuild carries LGPL build tooling and stays a separate program); without it outdoors builds answer 503 and `profile=openmaptiles` builds work. |
+| `tilebuildHome` | `null` | A `./gradlew :tilebuild:installDist` install for `profile=outdoors` builds; null: `DYSTOPO_TILEBUILD_HOME` (`/opt/tilebuild` in the Docker image), else `tilebuild/build/install/tilebuild`. Without one, outdoors builds answer 503 and `profile=openmaptiles` builds work. |
 | `extracts` | `[]` | OSM extracts for outdoors packs bigger than Overpass serves (below): `[{"path": "data/washington-261008.osm.pbf", "bbox": [w, s, e, n], "name": "washington"}]`; `bbox` and `name` are optional. |
 | `extractsDir` | `null` | Directory scanned for more `*.osm.pbf` extracts at every build; null: `<cacheDir>/extracts`; `""` turns scanning off. |
 
@@ -150,9 +161,11 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`: the sync peer
   (docs/PLANNING.md, Sync). Token-protected.
-- `GET /catalog` (also `/catalog.json`): the pack catalog, below.
+- `GET /catalog` (also `/catalog.json`): the pack catalog, below. `POST /catalog/refresh`: rehash every
+  file (token-protected).
 - `GET /healthz`: `status` (`ok`, or `stopping` with a 503), `uptimeS`, `packs`, `outDirWritable`,
-  `cacheDirWritable`, `glyphs` (fonts present), `errors` (tile route exceptions so far).
+  `cacheDirWritable`, `glyphs` (fonts present), `errors` (tile route exceptions so far), `catalog` (the
+  startup hash pass: `state` `cold`, `warming` or `ready`, `files`, `hashed`, `hashesComputed`, `ms`).
 
 ## Outdoors packs: extracts, Overpass, fallback
 
@@ -197,8 +210,11 @@ auxiliary data in the cache the first time (any tilebuild run downloads it); the
 ## The catalog
 
 `GET /catalog` lists every pack in `outDir` a client can download: a `<name>-dem.pmtiles` plus its
-optional `<name>-outdoors.pmtiles` (or `-osm`). Files being written (`*.building`) and vector archives
-without a DEM are not listed.
+optional `<name>-outdoors.pmtiles` (or `-osm`). Files being written (`*.building`) are not listed. Every
+other `.pmtiles` file (a vector archive without its DEM, an `-osm` archive next to an `-outdoors` one, a
+tilebuild output such as `liechtenstein.pmtiles`) is a single-file pack: `id` and `name` are the file name
+without `.pmtiles`, `"single": true`, and its one file's role comes from the tile type (`mvt` is
+`outdoors`, anything else `dem`). The phone lists only packs with a DEM, so it skips vector-only entries.
 
 ```
 {"version": 1, "generatedAt": "2026-10-10T09:41:43Z", "packs": [
@@ -223,12 +239,17 @@ without a DEM are not listed.
 - `provenance`, `attribution`, `license`: from the archives' metadata through the source registry.
 - `sha256` per file: SHA-256 of the whole file, computed once and cached next to it as
   `<file>.sha256` in `sha256sum` format (so `sha256sum -c rainier-dem.pmtiles.sha256` checks a download).
-  A sidecar older than its file is recomputed, so a rebuilt pack gets a new hash. Hashes are computed in
-  the background at startup (about 1 s per 200 MB), so the first `/catalog` is fast.
+  The sidecar carries its file's modification time; one whose time differs from the file's is stale and
+  recomputed, and `/build` deletes the sidecars of the files it replaces, so a rebuilt pack gets a new
+  hash. Bytes changed in place under the same size and time (disk corruption, a hand edit that restores
+  the time) are found only by `POST /catalog/refresh`, which rehashes every file ignoring the sidecars and
+  answers the catalog plus `refresh` (`files`, `changed`: the files whose hash differed, `ms`). Hashes are
+  computed in the background at startup (about 1 s per 200 MB; progress in `/healthz` `catalog`), so the
+  first `/catalog` is fast.
 - `contentHash`: `sha256:` + SHA-256 of the lines `<role>:<file sha256>\n` (dem first). A client compares
   it with the one it installed to offer an update; it verifies each file against `sha256` after download.
 
-`devtool serve` (both modes) answers `/catalog` too.
+`devtool serve` (both modes) answers `/catalog` and `/catalog/refresh` too (no token there).
 
 ## The sync peer
 
@@ -236,16 +257,21 @@ The server is the always-on peer of the sync protocol (docs/PLANNING.md, Sync): 
 file (`syncDb`, default `out/sync/peer.db`), created on the first sync request. A phone syncs with
 `POST /sync?with=https://maps.example.org` (or the `peer` setting). Every replica that can reach the server
 can read and write its log, so on a server reachable from the internet set a token: with one, `/sync/*`
-needs `Authorization: Bearer <token>` (the phone's sync client has to send it; until it does, keep an open
-sync peer on a private network or a VPN).
+needs `Authorization: Bearer <token>` (the phone sends the token from its sync settings,
+`POST /sync/settings?token=`; `devtool sync with --token`).
 
 ## The token
 
 With `token` (or `DYSTOPO_SERVER_TOKEN`) set, `/build`, `/build/*`, `/sync` and `/sync/*` need
 `Authorization: Bearer <token>`; anything else (tiles, `/out/`, `/catalog`, `/healthz`) stays open. A
 missing or wrong token is a 401 with `WWW-Authenticate: Bearer`, logged at `warn`. The comparison is
-constant-time. CORS preflights are answered without the token. The browser page's "Build pack here"
-button sends no token, so on a server with a token it gets the 401; build with curl or the phone instead:
+constant-time. CORS preflights are answered without the token. `POST /catalog/refresh` needs it too.
+
+The browser page sends the token with "Build pack here" (and its progress polls and cancel) when it has
+one: open it once as `https://maps.example.org/?token=<token>` (the page stores it in the browser's
+localStorage as `dystopo.token` and removes it from the address bar) or type it in the Token field next to
+the button; an empty field sends none. Without it the build answers 401 and the page says so. The phone's
+sync client sends the token from its sync settings (`POST /sync/settings?token=`). With curl:
 
 ```
 curl -X POST -H "Authorization: Bearer $TOKEN" "https://maps.example.org/build?name=paradise&bbox=-121.76,46.77,-121.70,46.80&minZoom=8&maxZoom=14"

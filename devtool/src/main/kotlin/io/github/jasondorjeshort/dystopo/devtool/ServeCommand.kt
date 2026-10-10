@@ -23,7 +23,8 @@ class ServeCommand : CliktCommand(name = "serve") {
         "Serve a region pack like the Android app does (style, DEM, OSM, generated contours, glyphs) on 127.0.0.1. " +
             "Also hosts out/ at /out/<file> for pack downloads (byte ranges, ETag, If-Range); add ?kbps=N to a /out/ URL " +
             "to throttle the body to N kilobytes per second, e.g. /out/rainier-dem.pmtiles?kbps=20 to interrupt a download mid-way. " +
-            "GET /catalog lists the packs in out/ with sizes and SHA-256 hashes. " +
+            "GET /catalog lists the packs in out/ with sizes and SHA-256 hashes (single archives as single-file packs); " +
+            "POST /catalog/refresh rehashes every file, ignoring the .sha256 sidecars, and lists those that changed. " +
             "Map options as on the phone, in the query string of /style.json, / and /phone: hillshade=off|single|multi, " +
             "hillshadeIntensity=0..1, slope=on, contourInterval=auto|<n>, contourLabels=sparse|normal|dense, night=on, " +
             "trails|water|landcover|pois|boundaries=off (tiles at /shade/{z}/{x}/{y}.png and /contours/...?interval=<n>). " +

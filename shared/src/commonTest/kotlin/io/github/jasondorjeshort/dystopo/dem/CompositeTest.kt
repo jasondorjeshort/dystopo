@@ -27,6 +27,21 @@ class CompositeTest {
     }
 
     @Test
+    fun rampStartsHalfACellIn() {
+        // The coverage edge is half a cell outside the outermost covered cell: that cell's weight is
+        // smoothstep(0.5 / feather), and full weight is reached at feather + 0.5 cells from no data.
+        val out = Composite.over(top, fallback, featherCells = 10.0)
+        val s = { w: Double -> w * w * (3 - 2 * w) }
+        assertEquals(100 * s(0.05), out[10, 2].toDouble(), 1e-3)
+        assertEquals(100 * s(0.95), out[19, 2].toDouble(), 1e-3)
+        assertEquals(100f, out[20, 2])
+        // The step from the last fallback cell is a quarter of the old ramp's (which started at 0).
+        assertTrue(out[10, 2] < 0.3 * 100 * s(0.1))
+        // A band under one cell still gives the outermost covered cell the full top value.
+        assertEquals(100f, Composite.over(top, fallback, featherCells = 0.4)[10, 2])
+    }
+
+    @Test
     fun noFeatherIsAHardCut() {
         val out = Composite.over(top, fallback, featherCells = 0.0)
         assertEquals(0f, out[9, 0])

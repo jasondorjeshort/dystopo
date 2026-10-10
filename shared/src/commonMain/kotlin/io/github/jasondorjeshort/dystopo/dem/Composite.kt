@@ -21,8 +21,12 @@ object Composite {
                 t.isNaN() -> f
                 f.isNaN() || featherCells <= 0 -> t
                 else -> {
-                    // Weight ramps from 0 at the coverage edge to 1 at featherCells inside it.
-                    val w = (dist[i] / featherCells).coerceIn(0.0, 1.0).toFloat()
+                    // Weight ramps from 0 at the coverage edge to 1 at featherCells inside it. The edge
+                    // lies half a cell outside the outermost covered cell's centre (distance 1 to the
+                    // first no-data cell), so the ramp starts at 0.5 (T58): that cell then gets
+                    // smoothstep(0.5 / featherCells), a quarter of the old smoothstep(1 / featherCells)
+                    // when the band is several cells wide, and the step to the fallback shrinks with it.
+                    val w = ((dist[i] - 0.5) / featherCells).coerceIn(0.0, 1.0).toFloat()
                     // Smoothstep avoids a slope discontinuity at either end of the band.
                     val s = w * w * (3 - 2 * w)
                     f + (t - f) * s

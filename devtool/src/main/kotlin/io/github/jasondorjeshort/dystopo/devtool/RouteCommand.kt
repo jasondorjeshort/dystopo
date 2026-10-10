@@ -47,7 +47,8 @@ import kotlin.math.cos
 /**
  * Offline route planning over a pack's trail network (T45):
  * - `route --pack out/rainier-outdoors.pmtiles --from 46.7865,-121.7365 --to 46.8025,-121.7290 [--mode hike|bike]
- *   [--osm out/rainier-outdoors.pmtiles] [--gpx out/route.gpx]`: opens `<pack>-graph.idx` next to the pack
+ *   [--osm out/rainier-outdoors.pmtiles] [--gpx out/route.gpx]`: opens `<archive>-graph.idx` next to the pack
+ *   (the archive's whole file name, T49: `rainier-outdoors-graph.idx`)
  *   (building it first when missing or stale), plans the route, renders it over the DEM pack's terrain
  *   with an elevation profile (`out/route-<pack>.png`) and prints the route as JSON. Exit 1 when no route.
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters.
@@ -62,7 +63,7 @@ class RouteCommand : CliktCommand(name = "route") {
     override val invokeWithoutSubcommand = true
 
     override fun help(context: Context) =
-        "Plan a route along the trails of a vector pack (graph built on demand next to the pack), render it and print JSON; `route build` (re)builds the graph."
+        "Plan a route along the trails of a vector pack (graph built on demand next to it as <archive name>-graph.idx, e.g. out/rainier-outdoors-graph.idx), render it and print JSON; `route build` (re)builds the graph."
 
     private val pack by option("--pack", help = "Vector PMTiles pack (outdoors or OpenMapTiles schema)").file(mustExist = true, canBeDir = false)
     private val dem by option("--dem", help = "DEM pack for elevation and the render (default: <name>-dem.pmtiles next to --pack)").file(mustExist = true, canBeDir = false)
@@ -71,7 +72,7 @@ class RouteCommand : CliktCommand(name = "route") {
     private val mode by option("--mode", help = "hike (default) or bike").choice("hike", "bike").default("hike")
     private val snap by option("--snap", help = "How far (m) a point may be from the nearest trail or road").double().default(Router.DEFAULT_SNAP_M)
     private val name by option("--name", help = "Route name").default("Route")
-    private val graphFile by option("--graph", help = "Graph file (default: <pack name>-graph.idx next to the pack)").file()
+    private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
     private val gpx by option("--gpx", help = "Write the route as GPX here").file()
     private val noRender by option("--no-render", help = "Skip the PNG").flag()
     private val zoomOption by option("--zoom", help = "Render zoom (default: the deepest up to 15 that fits about 12 Mpx)").int().restrictTo(8..16)
@@ -167,7 +168,7 @@ class RouteBuildCommand : CliktCommand(name = "build") {
 
     private val pack by option("--pack", help = "Vector PMTiles pack").file(mustExist = true, canBeDir = false).required()
     private val dem by option("--dem", help = "DEM pack (default: <name>-dem.pmtiles next to --pack; none: no elevation)").file(mustExist = true, canBeDir = false)
-    private val out by option("--out", help = "Graph file (default: <pack name>-graph.idx next to the pack)").file()
+    private val out by option("--out", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
 
     override fun run() {
         val (graph, info) = RouteGraphs.build(pack, dem ?: RouteGraphs.defaultDem(pack), out ?: RouteGraphs.defaultFile(pack))

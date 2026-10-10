@@ -137,6 +137,7 @@ class Gate(
     companion object {
         /** Routes behind the token: pack builds and the sync peer. */
         fun isProtected(path: String): Boolean =
-            path == "/build" || path.startsWith("/build/") || path == "/sync" || path.startsWith("/sync/")
+            path == "/build" || path.startsWith("/build/") || path == "/sync" || path.startsWith("/sync/") ||
+                path == "/catalog/refresh" // T58: rehashes every pack file, so not for anyone
     }
 }

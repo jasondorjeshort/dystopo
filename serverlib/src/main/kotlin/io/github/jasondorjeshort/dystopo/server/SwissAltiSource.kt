@@ -56,7 +56,7 @@ class SwissAltiSource(private val cacheDir: File = Caches.dir("swissalti3d")) : 
         // Read on this thread: tile exports override it per thread (see OverviewLevels).
         val targetMeters = OverviewLevels.targetMeters(window)
         if (!useful(window)) return nanResult(window, mapOf("skippedCoarse" to 1L))
-        val fine = targetMeters < FINE_BELOW_METERS
+        val fine = targetMeters < fineBelowMeters(OverviewLevels.bulk())
 
         val indexStarted = System.nanoTime()
         val queries = AtomicInteger()
@@ -279,6 +279,15 @@ class SwissAltiSource(private val cacheDir: File = Caches.dir("swissalti3d")) : 
 
         /** Output cells finer than this read the 0.5 m product (z16 and up in Switzerland). */
         const val FINE_BELOW_METERS = 2.0
+
+        /**
+         * The same cutoff inside a pack export ([OverviewLevels.bulk], T58): 0.5 m reads cost about 50
+         * range requests per z17 tile, so an export reads them only below 1 m cells (z17 and up at
+         * Swiss latitudes) and z16 exports (about 1.7 m cells) read the 2 m product.
+         */
+        const val FINE_BELOW_METERS_BULK = 1.0
+
+        fun fineBelowMeters(bulk: Boolean) = if (bulk) FINE_BELOW_METERS_BULK else FINE_BELOW_METERS
 
         /** Simultaneous requests to data.geo.admin.ch. */
         const val MAX_PARALLEL = 4

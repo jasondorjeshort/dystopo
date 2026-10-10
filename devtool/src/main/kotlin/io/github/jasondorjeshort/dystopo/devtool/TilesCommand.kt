@@ -256,8 +256,8 @@ class TilesCommand : CliktCommand(name = "tiles") {
         // One overview target per zoom, so no two tiles of this export read different GeoTIFF levels.
         val overviewMeters = overviewTargetMeters(plan)
         val fetch: (MercatorWindow) -> ElevationSource.Result =
-            if (src is FeatheredSource) { w -> OverviewLevels.withTarget(overviewMeters) { src.fetch(w, cellSize) } }
-            else { w -> OverviewLevels.withTarget(overviewMeters) { src.fetch(w) } }
+            if (src is FeatheredSource) { w -> OverviewLevels.withTarget(overviewMeters, bulk = true) { src.fetch(w, cellSize) } }
+            else { w -> OverviewLevels.withTarget(overviewMeters, bulk = true) { src.fetch(w) } }
 
         val tasks = plan.map { tw -> Callable { renderTile(tw, fetch, outDir) } }
         val results = try {

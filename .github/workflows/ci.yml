@@ -106,3 +106,38 @@ jobs:
             build/reports/
             */build/reports/
             devtool/build/golden-diffs/
+
+  image:
+    # T58: the server image (server/Dockerfile: a Gradle build stage, then the JRE with the server and
+    # tilebuild). Built and started here because the development machine has no Docker.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the image
+        run: docker build -f server/Dockerfile -t dystopo-server .
+
+      - name: Run it; check /healthz, the token, /catalog and tilebuild
+        run: |
+          docker run -d --name dystopo -p 8080:8080 -e DYSTOPO_SERVER_TOKEN=ci-token dystopo-server
+          for i in $(seq 1 60); do curl -fsS localhost:8080/healthz > /dev/null 2>&1 && break; sleep 1; done
+          curl -fsS localhost:8080/healthz | tee /tmp/healthz.json; echo
+          curl -fsS localhost:8080/catalog | tee /tmp/catalog.json; echo
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST 'localhost:8080/build?name=x&bbox=1,1,1.01,1.01')" = 401
+          curl -fsS -H 'Authorization: Bearer ci-token' localhost:8080/build | tee /tmp/build.json; echo
+          python3 - <<'PY'
+          import json
+          h = json.load(open("/tmp/healthz.json"))
+          assert h["status"] == "ok" and h["outDirWritable"] and h["cacheDirWritable"], h
+          assert "catalog" in h, h
+          c = json.load(open("/tmp/catalog.json"))
+          assert c["packs"] == [], c
+          t = json.load(open("/tmp/build.json"))["limits"]["tilebuild"]
+          assert t["available"], t
+          print("image ok: healthz", h["catalog"], "tilebuild", t["how"])
+          PY
+          docker exec dystopo /opt/tilebuild/bin/tilebuild --help > /dev/null
+          docker stop -t 15 dystopo
+          docker logs dystopo 2>&1 | tail -5

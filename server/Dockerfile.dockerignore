@@ -1,0 +1,15 @@
+# Build context excludes for server/Dockerfile (BuildKit reads <Dockerfile>.dockerignore next to it).
+# Only the sources and the Gradle wrapper are needed; caches, packs and build outputs stay out.
+.git
+.gradle
+.claude
+.idea
+**/build
+cache
+out
+androidApp
+local.properties
+devtool.local.json
+tools/release.keystore
+tools/release.properties
+**/*.pmtiles

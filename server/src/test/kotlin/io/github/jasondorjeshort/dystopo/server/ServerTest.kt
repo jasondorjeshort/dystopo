@@ -71,6 +71,7 @@ class ServerTest {
         assertTrue(Gate.isProtected("/sync/pull"))
         assertFalse(Gate.isProtected("/buildings"))
         assertFalse(Gate.isProtected("/catalog"))
+        assertTrue(Gate.isProtected("/catalog/refresh"))
     }
 
     @Test
@@ -118,6 +119,11 @@ class ServerTest {
         val health = call("GET", "/healthz")
         assertEquals(200, health.statusCode())
         assertEquals("ok", MiniJson.parseObject(health.body())["status"])
+        // T58: /healthz reports the startup hash pass; it ends ready with the one pack file hashed.
+        server!!.live.catalog.let { c -> repeat(100) { if (c.warmState()["state"] != "ready") Thread.sleep(50) } }
+        val warm = MiniJson.parseObject(call("GET", "/healthz").body())["catalog"] as Map<*, *>
+        assertEquals("ready", warm["state"])
+        assertEquals(1, (warm["files"] as Number).toInt())
 
         val catalog = MiniJson.parseObject(call("GET", "/catalog").body())
         val pack = (catalog["packs"] as List<*>).single() as Map<*, *>
@@ -132,6 +138,11 @@ class ServerTest {
         // Past the gate: the build route itself answers (400: no name).
         assertEquals(400, call("POST", "/build", mapOf("Authorization" to "Bearer s3cret")).statusCode())
         assertEquals(200, call("GET", "/build", mapOf("Authorization" to "Bearer s3cret")).statusCode())
+        // T58: the catalog refresh (a full rehash) is behind the token too.
+        assertEquals(401, call("POST", "/catalog/refresh").statusCode())
+        val refreshed = call("POST", "/catalog/refresh", mapOf("Authorization" to "Bearer s3cret"))
+        assertEquals(200, refreshed.statusCode())
+        assertEquals(1, ((MiniJson.parseObject(refreshed.body())["refresh"] as Map<*, *>)["files"] as Number).toInt())
 
         // CORS by allowlist: an allowed origin is echoed, another gets no header.
         val allowed = call("GET", "/catalog", mapOf("Origin" to "https://maps.example.org"))
