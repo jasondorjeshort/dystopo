@@ -1,6 +1,9 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RoutePath
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
+import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
@@ -107,14 +110,36 @@ object Materializer {
         return WaypointView(last.trackId, w, puts.first().hlc, live.last().hlc)
     }
 
-    fun route(id: String, ops: Collection<Op>): Route? {
+    /** The route as GPX sees it: [routePlan] with its path's points as route points. */
+    fun route(id: String, ops: Collection<Op>): Route? = routePlan(id, ops)?.toRoute()
+
+    /**
+     * The fields a route put writes (T60): its GPX fields, and `path` and `waypoints` reset to null (a
+     * put replaces every field; the put's own points stand for the path until a `path` write follows).
+     */
+    fun routePutFields(put: PutRoute): Map<String, String?> = put.route.let {
+        mapOf(
+            "name" to it.name, "description" to it.description, "comment" to it.comment, "type" to it.type, "extensions" to it.extensions,
+            "path" to null, "waypoints" to null,
+        )
+    }
+
+    /**
+     * A planned route (T60): GPX fields, `path` and `waypoints` last writer wins like any field. The
+     * path is the newest live `path` write when it decodes, else the newest put's points as one fixed
+     * leg ([RoutePath.fixed]); a value that does not decode (a newer format) counts as absent, the same
+     * way on every replica.
+     */
+    fun routePlan(id: String, ops: Collection<Op>): RoutePlan? {
         val live = live(ops)
         val last = live.lastOrNull { it.body is PutRoute }?.body as PutRoute? ?: return null
-        val f = lww(EntityKind.ROUTE, live) { b ->
-            (b as? PutRoute)?.route?.let { mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "type" to it.type, "extensions" to it.extensions) }
-        }!!
-        return last.route.copy(id = id, name = f["name"] ?: "", description = f["description"], comment = f["comment"], type = f["type"], extensions = f["extensions"])
+        val f = lww(EntityKind.ROUTE, live) { b -> (b as? PutRoute)?.let(::routePutFields) }!!
+        val path = RoutePath.decodeOrNull(f["path"]) ?: RoutePath.fixed(last.route.points, modeOf(last.route.type))
+        val waypoints = RouteWaypoints.decodeOrNull(f["waypoints"]) ?: emptyList()
+        return RoutePlan(id, f["name"] ?: "", path, waypoints, f["description"], f["comment"], f["type"], f["extensions"])
     }
+
+    private fun modeOf(type: String?): String = if (type?.lowercase() == "bike") "bike" else "hike"
 
     fun setting(ops: Collection<Op>): String? {
         val live = live(ops)
@@ -131,12 +156,12 @@ object Materializer {
 data class SyncSnapshot(
     val tracks: List<TrackView>,
     val waypoints: List<WaypointView>,
-    val routes: List<Route>,
+    val routes: List<RoutePlan>,
     val settings: Map<String, String>,
 ) {
     companion object {
         /** A snapshot with the bookkeeping HLCs ([TrackView.lastHlc], [WaypointView.lastHlc]) cleared, so equal states compare equal. */
-        fun of(tracks: List<TrackView>, waypoints: List<WaypointView>, routes: List<Route>, settings: Map<String, String>): SyncSnapshot {
+        fun of(tracks: List<TrackView>, waypoints: List<WaypointView>, routes: List<RoutePlan>, settings: Map<String, String>): SyncSnapshot {
             val none = Hlc.zero("")
             return SyncSnapshot(
                 tracks.map { it.copy(lastHlc = none) }.sortedBy { it.id },

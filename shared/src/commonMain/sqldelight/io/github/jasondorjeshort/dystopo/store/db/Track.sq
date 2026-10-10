@@ -2,7 +2,7 @@
 -- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
 -- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
 --
--- This file is the CURRENT schema (version 3). Changing it needs a migration: see 1.sqm, 2.sqm and the
+-- This file is the CURRENT schema (version 4). Changing it needs a migration: see 1.sqm, 2.sqm, 3.sqm and the
 -- "Track database migrations" paragraph in CLAUDE.md. New columns go at the END of a table, in the
 -- order the migration adds them.
 --
@@ -97,6 +97,32 @@ CREATE TABLE sync_op (
 CREATE INDEX sync_op_entity ON sync_op(kind, entity, hlc);
 CREATE INDEX sync_op_device ON sync_op(device, hlc);
 CREATE INDEX sync_op_digest ON sync_op(entity, digest);
+
+-- Version 4 (T60): planned routes, a materialised view of their operations like track. path and
+-- waypoints are the encoded field values (model/RoutePlan.kt); created_hlc (the first live put) orders
+-- the list; the summary numbers (RouteSummary) are computed when the row is written.
+CREATE TABLE route (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    comment TEXT,
+    type TEXT,
+    extensions TEXT,
+    path TEXT NOT NULL,
+    waypoints TEXT NOT NULL,
+    created_hlc TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    distance_m REAL NOT NULL,
+    ascent_m REAL,
+    descent_m REAL,
+    time_s REAL NOT NULL,
+    via_count INTEGER NOT NULL,
+    waypoint_count INTEGER NOT NULL,
+    straight_m REAL NOT NULL,
+    mode TEXT NOT NULL
+);
+
+CREATE INDEX route_order ON route(created_hlc, id);
 
 -- For every device, the newest of its operations this replica holds (the version vector).
 CREATE TABLE sync_vector (
@@ -282,3 +308,22 @@ SELECT value FROM sync_meta WHERE key = ?;
 
 putMeta:
 INSERT OR REPLACE INTO sync_meta(key, value) VALUES (?, ?);
+
+-- ---- Routes (T60) ----
+
+upsertRoute:
+INSERT OR REPLACE INTO route(id, name, description, comment, type, extensions, path, waypoints, created_hlc, updated_at,
+    distance_m, ascent_m, descent_m, time_s, via_count, waypoint_count, straight_m, mode)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteRouteRow:
+DELETE FROM route WHERE id = ?;
+
+selectRoute:
+SELECT * FROM route WHERE id = ?;
+
+selectRoutes:
+SELECT * FROM route ORDER BY created_hlc, id;
+
+routeIdsInLog:
+SELECT DISTINCT entity FROM sync_op WHERE kind = 3;

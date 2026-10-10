@@ -179,6 +179,68 @@ class TrackDbMigrationTest {
         }
     }
 
+    /**
+     * T60: a version-3 database whose log holds routes (a pre-T60 put and a planned route with a path
+     * and waypoints) gets its route table filled from the log once on the first open, and the rows equal
+     * what the log materialises.
+     */
+    @Test
+    fun versionThreeRoutesAreMaterialised() {
+        val dir = Files.createTempDirectory("dystopo-upgrade3").toFile()
+        val dev = "00000000-0000-4000-8000-0000000000dd"
+        val r1 = "00000000-0000-4000-8000-0000000000a1"
+        val r2 = "00000000-0000-4000-8000-0000000000a2"
+        try {
+            val f = frozen(3, dir)
+            val path = io.github.jasondorjeshort.dystopo.model.RouteEditor(null).create(listOf(46.7865 to -121.7365, 46.8025 to -121.7290))
+            val wps = listOf(io.github.jasondorjeshort.dystopo.model.Waypoint("00000000-0000-4000-8000-0000000000f9", "Panorama", 46.8025, -121.729, 2058.0))
+            val bodies = listOf(
+                io.github.jasondorjeshort.dystopo.sync.PutRoute(io.github.jasondorjeshort.dystopo.model.Route(r1, "Old route", listOf(io.github.jasondorjeshort.dystopo.model.RoutePoint(46.79, -121.73), io.github.jasondorjeshort.dystopo.model.RoutePoint(46.80, -121.72, 1900.0)))),
+                io.github.jasondorjeshort.dystopo.sync.PutRoute(io.github.jasondorjeshort.dystopo.model.Route(r2, "Planned", emptyList(), type = "hike")),
+                io.github.jasondorjeshort.dystopo.sync.SetField(io.github.jasondorjeshort.dystopo.sync.EntityKind.ROUTE, r2, "path", path.encode()),
+                io.github.jasondorjeshort.dystopo.sync.SetField(io.github.jasondorjeshort.dystopo.sync.EntityKind.ROUTE, r2, "waypoints", io.github.jasondorjeshort.dystopo.model.RouteWaypoints.encode(wps)),
+            )
+            val ops = bodies.mapIndexed { i, b -> io.github.jasondorjeshort.dystopo.sync.Op(io.github.jasondorjeshort.dystopo.sync.Hlc(1_700_000_000_000L + i, 0, dev), b) }
+            DriverManager.getConnection(url(f)).use { c ->
+                c.prepareStatement("INSERT INTO sync_op(hlc, device, type, kind, entity, parent, digest, body) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)").use { st ->
+                    for (op in ops) {
+                        st.setString(1, op.hlc.text); st.setString(2, dev); st.setLong(3, op.body.type.toLong()); st.setLong(4, op.body.kind.code.toLong())
+                        st.setString(5, op.body.id); st.setBytes(6, io.github.jasondorjeshort.dystopo.sync.OpCodec.encode(op))
+                        st.executeUpdate()
+                    }
+                }
+                c.createStatement().use { st ->
+                    st.executeUpdate("INSERT INTO sync_vector VALUES ('$dev', '${ops.last().hlc.text}')")
+                    st.executeUpdate("INSERT INTO sync_meta VALUES ('device', '$dev')")
+                    st.executeUpdate("INSERT INTO sync_meta VALUES ('log', '1')")
+                    st.executeUpdate("PRAGMA user_version = 3")
+                }
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d)
+                assertEquals(2, store.routesMaterialized)
+                assertEquals(listOf(r1, r2), store.routePlans().map { it.id })
+                assertEquals(store.snapshotFromLog(), store.snapshot())
+                val planned = store.routePlan(r2)!!
+                assertEquals(path, planned.path)
+                assertEquals(wps, planned.waypoints)
+                assertEquals(listOf("Old route", "Planned"), store.routeList().map { it.name })
+                assertEquals(1, store.routePlan(r1)!!.path.legs.size)
+                // Edits after the upgrade go through the table too.
+                assertTrue(store.setRoutePath(r1, io.github.jasondorjeshort.dystopo.model.RouteEditor(null).moveVia(store.routePlan(r1)!!.path, 0, 46.785, -121.735), 1_700_000_001_000L))
+                assertEquals(store.snapshotFromLog(), store.snapshot())
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val again = SqlTrackStore(d)
+                assertEquals(0, again.routesMaterialized, "filled once")
+                assertEquals(2, again.routeList().size)
+            }
+            assertEquals(schemaOf(fresh(dir)), schemaOf(f))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     /** What the app does on first open after an update: a version-1 file with a track, opened with the current schema. */
     @Test
     fun versionOneDataSurvivesTheUpgrade() {

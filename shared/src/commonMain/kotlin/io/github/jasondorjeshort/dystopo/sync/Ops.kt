@@ -13,7 +13,8 @@ enum class EntityKind(val code: Int) {
         get() = when (this) {
             TRACK -> setOf("name", "description", "comment", "source", "type", "extensions")
             WAYPOINT -> setOf("name", "description", "comment", "symbol", "type", "extensions")
-            ROUTE -> setOf("name", "description", "comment", "type", "extensions")
+            // T60: `path` (RoutePath.encode) and `waypoints` (RouteWaypoints.encode) are the route's shape and waypoints.
+            ROUTE -> setOf("name", "description", "comment", "type", "extensions", "path", "waypoints")
             SETTING -> setOf("value")
         }
 

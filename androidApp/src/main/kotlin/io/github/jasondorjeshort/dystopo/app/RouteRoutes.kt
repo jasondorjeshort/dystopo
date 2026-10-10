@@ -26,6 +26,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
+        io.github.jasondorjeshort.dystopo.app.trips.TripRoutes.handle(app, r)?.let { return it } // T60: /routes (trips)
         if (r.path != "/route" && !r.path.startsWith("/route/")) return null
         return when (r.method to r.path) {
             "POST" to "/route" -> {

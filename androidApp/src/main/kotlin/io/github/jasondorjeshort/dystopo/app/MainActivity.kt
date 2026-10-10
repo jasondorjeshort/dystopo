@@ -140,6 +140,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
         io.github.jasondorjeshort.dystopo.app.tracking.TrackControls() // T31: record/stop, tracks list, track overlay
         io.github.jasondorjeshort.dystopo.app.routing.RouteControls() // T45: long-press route planning, route overlay and card
+        io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
         if (message != null) {
             BasicText(
                 message,

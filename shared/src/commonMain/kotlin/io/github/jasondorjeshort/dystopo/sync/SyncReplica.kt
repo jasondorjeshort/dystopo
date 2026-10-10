@@ -1,6 +1,11 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RoutePath
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
+import io.github.jasondorjeshort.dystopo.model.RouteSummary
+import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
+import io.github.jasondorjeshort.dystopo.model.Waypoint
 import io.github.jasondorjeshort.dystopo.store.TrackStore
 
 /**
@@ -108,15 +113,37 @@ data class CompactResult(val tombstonesDropped: Int, val opsDropped: Int)
 
 /** A [TrackStore] that is a materialised view of an operation log, with the other synced user data. */
 interface SyncStore : TrackStore, SyncReplica {
-    /** Creates or replaces a planned route. */
+    /** Creates or replaces a planned route (its points become one fixed leg; see [RoutePlan]). */
     fun putRoute(route: Route, now: Long)
+
+    /**
+     * T60: stores a planned route: a put with its GPX fields, then its `path` and `waypoints` fields, in
+     * one transaction. Replaces a route with the same id (a re-import).
+     */
+    fun putRoutePlan(plan: RoutePlan, now: Long)
 
     fun deleteRoute(id: String, now: Long): Boolean
 
-    fun route(id: String): Route?
+    /** The route as GPX sees it (its path's points as route points). */
+    fun route(id: String): Route? = routePlan(id)?.toRoute()
 
-    /** All routes, by id. */
-    fun routes(): List<Route>
+    /** All routes, oldest first. */
+    fun routes(): List<Route> = routePlans().map { it.toRoute() }
+
+    /** T60: the planned route with its path and waypoints, or null. */
+    fun routePlan(id: String): RoutePlan?
+
+    /** T60: all planned routes, oldest first. */
+    fun routePlans(): List<RoutePlan>
+
+    /** T60: the Routes list: every route with its summary numbers, oldest first. */
+    fun routeList(): List<RouteListItem> = routePlans().map { RouteListItem.of(it, 0L) }
+
+    /** T60: replaces the route's path (one field write); false if the route does not exist. */
+    fun setRoutePath(id: String, path: RoutePath, now: Long): Boolean = setField(EntityKind.ROUTE, id, "path", path.quantized().encode(), now)
+
+    /** T60: replaces the route's waypoints (one field write); false if the route does not exist. */
+    fun setRouteWaypoints(id: String, waypoints: List<Waypoint>, now: Long): Boolean = setField(EntityKind.ROUTE, id, "waypoints", RouteWaypoints.encode(waypoints), now)
 
     /** Sets a synced setting; null removes it. */
     fun setSetting(key: String, value: String?, now: Long)
@@ -245,7 +272,7 @@ object Conflicts {
     fun fields(body: OpBody): Map<String, String?>? = when (body) {
         is PutTrack -> mapOf("name" to body.name, "description" to body.description, "comment" to body.comment, "source" to body.source, "type" to body.trackType, "extensions" to body.extensions)
         is PutWaypoint -> body.waypoint.let { mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "symbol" to it.symbol, "type" to it.type, "extensions" to it.extensions) }
-        is PutRoute -> body.route.let { mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "type" to it.type, "extensions" to it.extensions) }
+        is PutRoute -> Materializer.routePutFields(body)
         is PutSetting -> mapOf("value" to body.value)
         is SetField -> if (body.field in body.kind.fields) mapOf(body.field to body.value) else null
         is AppendPoints, is Delete -> null
@@ -274,5 +301,34 @@ object Conflicts {
             }
         }
         return out
+    }
+}
+
+/** T60: one row of the Routes list: a route's name and summary numbers (no geometry). */
+data class RouteListItem(
+    val id: String,
+    val name: String,
+    val mode: String,
+    val distanceM: Double,
+    val ascentM: Double?,
+    val descentM: Double?,
+    val timeS: Double,
+    val viaPoints: Int,
+    val waypoints: Int,
+    val straightM: Double,
+    /** Epoch ms of the last change this replica saw (local bookkeeping, not synced; 0 when unknown). */
+    val updatedAt: Long,
+) {
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "id" to id, "name" to name, "mode" to mode, "distanceM" to RouteSummary.r1(distanceM), "ascentM" to ascentM?.let(RouteSummary::r1),
+        "descentM" to descentM?.let(RouteSummary::r1), "timeS" to kotlin.math.round(timeS).toLong(), "time" to RouteSummary.hm(timeS),
+        "viaPoints" to viaPoints, "waypoints" to waypoints, "straightM" to RouteSummary.r1(straightM), "updatedAt" to updatedAt,
+    )
+
+    companion object {
+        fun of(plan: RoutePlan, updatedAt: Long): RouteListItem {
+            val s = RouteSummary.of(plan, samples = 0)
+            return RouteListItem(plan.id, plan.name, s.mode, s.distanceM, s.ascentM, s.descentM, s.timeS, s.viaPoints, plan.waypoints.size, s.straightM, updatedAt)
+        }
     }
 }

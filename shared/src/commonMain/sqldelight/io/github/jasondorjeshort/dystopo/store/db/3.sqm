@@ -1,0 +1,26 @@
+-- Version 3 -> 4 (T60): planned routes get a materialised table, like tracks. Until now routes lived
+-- only in the operation log and were materialised on every read; SqlTrackStore fills this table from
+-- the log on the first open after this migration (sync_meta `routes` is absent until it has).
+
+CREATE TABLE route (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    comment TEXT,
+    type TEXT,
+    extensions TEXT,
+    path TEXT NOT NULL,
+    waypoints TEXT NOT NULL,
+    created_hlc TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    distance_m REAL NOT NULL,
+    ascent_m REAL,
+    descent_m REAL,
+    time_s REAL NOT NULL,
+    via_count INTEGER NOT NULL,
+    waypoint_count INTEGER NOT NULL,
+    straight_m REAL NOT NULL,
+    mode TEXT NOT NULL
+);
+
+CREATE INDEX route_order ON route(created_hlc, id);

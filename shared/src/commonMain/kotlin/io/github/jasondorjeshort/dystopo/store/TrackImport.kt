@@ -13,7 +13,8 @@ import io.github.jasondorjeshort.dystopo.model.Waypoint
  * - Created at: the metadata time for a one-track file, else the track's first point time, else now.
  * - Waypoints of a one-track file belong to that track (that is how [TrackExport] writes them);
  *   in any other file they are stored free-standing. A waypoint whose id is already stored is skipped.
- * - Routes are not stored yet (counted in [Result.routesIgnored]); empty segments are dropped.
+ * - Routes are not stored here (counted in [Result.routesIgnored]; [RouteImport] stores them, T60);
+ *   empty segments are dropped.
  */
 object TrackImport {
     data class Result(

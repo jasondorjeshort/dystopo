@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
@@ -83,6 +84,9 @@ class SyncSimulator(
 
     private val rnd = Random(config.seed)
     private val ids = UuidGenerator(Random(config.seed xor 0x5eed))
+
+    /** T60: route paths are edited without a trail graph (straight legs), deterministically. */
+    private val editor = io.github.jasondorjeshort.dystopo.model.RouteEditor(null)
     private val epoch = 1_700_000_000_000L
     private var time = 0L
 
@@ -359,11 +363,40 @@ class SyncSimulator(
                 if (p.recording == target.id) p.recording = null
                 count("deleteTrack")
             }
-            r < 920 -> {
+            r < 885 -> {
+                // A pre-T60 route put (its points become one fixed leg).
                 val existing = pick(s.routes())
                 val id = if (existing != null && rnd.nextBoolean()) existing.id else ids.next()
                 s.putRoute(Route(id, "Route ${rnd.nextInt(50)}", List(2 + rnd.nextInt(5)) { RoutePoint(46.8 + it * 0.01, -121.7, null, null, "rp$it") }), t)
                 count("putRoute")
+            }
+            r < 897 -> {
+                // T60: a planned route (via points, straight legs: the simulator has no trail graph) with waypoints.
+                val existing = pick(s.routePlans())
+                val id = if (existing != null && rnd.nextInt(4) == 0) existing.id else ids.next()
+                val path = editor.create(List(2 + rnd.nextInt(3)) { 46.78 + rnd.nextDouble() * 0.05 to -121.78 + rnd.nextDouble() * 0.05 })
+                val wps = List(rnd.nextInt(3)) { Waypoint(ids.next(), "Stop ${rnd.nextInt(100)}", 46.8 + rnd.nextDouble() * 0.02, -121.75, 1700.0 + rnd.nextInt(500)) }
+                s.putRoutePlan(RoutePlan(id, "Trip ${rnd.nextInt(50)}", path, wps, type = path.mode), t)
+                count("planRoute")
+            }
+            r < 909 -> {
+                // T60: a via point dragged (racing on the first routes), or one added or removed.
+                val plan = s.routePlans().take(2).let { pick(it) } ?: return localChange0(p)
+                val path = plan.path
+                val next = when {
+                    path.via.size > 2 && rnd.nextInt(4) == 0 -> editor.removeVia(path, rnd.nextInt(path.via.size))
+                    rnd.nextInt(3) == 0 -> editor.addVia(path, 46.78 + rnd.nextDouble() * 0.05, -121.78 + rnd.nextDouble() * 0.05).first
+                    path.via.isEmpty() -> return localChange0(p)
+                    else -> editor.moveVia(path, rnd.nextInt(path.via.size), 46.78 + rnd.nextDouble() * 0.05, -121.78 + rnd.nextDouble() * 0.05)
+                }
+                s.setRoutePath(plan.id, next, t)
+                count("editRoute")
+            }
+            r < 920 -> {
+                // T60: a waypoint added to a route (concurrent adds: last writer wins on the list).
+                val plan = pick(s.routePlans()) ?: return localChange0(p)
+                s.setRouteWaypoints(plan.id, plan.waypoints + Waypoint(ids.next(), "Camp ${rnd.nextInt(100)}", 46.81, -121.74 + rnd.nextDouble() * 0.01), t)
+                count("routeWaypoint")
             }
             r < 940 -> {
                 val route = pick(s.routes()) ?: return localChange0(p)

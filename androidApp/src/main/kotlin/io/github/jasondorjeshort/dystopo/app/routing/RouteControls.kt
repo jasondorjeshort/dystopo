@@ -141,6 +141,7 @@ fun RouteControls() {
                 if (phase == "route") {
                     Action("Save") { Thread { RouteSession.save() }.start() }
                     Action("GPX") { Thread { RouteSession.exportGpx() }.start() }
+                    Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
                 }
                 Action("Clear") { RouteSession.clear() }
             }

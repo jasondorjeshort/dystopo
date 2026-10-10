@@ -1,0 +1,260 @@
+package io.github.jasondorjeshort.dystopo.app.trips
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.gpx.ProfileSample
+import io.github.jasondorjeshort.dystopo.model.RouteSummary
+import io.github.jasondorjeshort.dystopo.model.WaypointAt
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import io.github.jasondorjeshort.dystopo.sync.RouteListItem
+import kotlinx.coroutines.delay
+
+private val Ink = Color(0xFF2B2420)
+private val Paper = Color(0xF2FFFCF5)
+private val Link = Color(0xFF2C7BB6)
+private val Violet = Color(0xFF7B3294)
+private val Flag = Color(0xFFC79A00)
+
+/**
+ * Trips UI (T60), drawn over the map by one line in MainActivity: a "Routes" chip (third row of the
+ * top-right chips), the Routes list (name, distance, climb, time by the hike model, a small profile),
+ * and, while a route is open, the trip card at the bottom: totals, the elevation profile with waypoint
+ * markers, and the editor's tools (drag the numbered via points on the map; Via adds a via point where
+ * you tap, Waypoint adds a waypoint; Hike/Bike reroutes; the via chips remove one).
+ */
+@Composable
+fun TripControls() {
+    val app = DystopoApp.instance
+    val mapView = app.map.mapView
+    DisposableEffect(mapView) {
+        mapView?.let { Trips.overlay.bind(it) }
+        onDispose { Trips.overlay.unbind() }
+    }
+    // The list and the open route follow the store (syncs, other screens) while either is shown.
+    val watching = Trips.listOpen || Trips.editing != null
+    LaunchedEffect(watching) {
+        while (watching) {
+            Trips.background { Trips.refresh() }
+            delay(3000)
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        if (Trips.listOpen) {
+            BackHandler { Trips.listOpen = false }
+            RoutesList()
+            return@Box
+        }
+        if (Trips.editing == null) {
+            Chip("Routes", Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 8.dp, top = 112.dp)) {
+                Trips.listOpen = true
+                Trips.background { Trips.refresh() }
+            }
+        } else {
+            BackHandler { Trips.close() }
+            TripCard(Modifier.align(Alignment.BottomCenter))
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.RoutesList() {
+    // A sheet over the lower part of the map, clear of the search box and the top-right chips.
+    Column(
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.7f)
+            .background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).navigationBarsPadding().padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            BasicText("Routes", style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Action("Close") { Trips.listOpen = false }
+            }
+        }
+        BasicText(
+            "Plan a route with a long-press start and end, then Keep it; or POST /routes. Routes sync with your other devices.",
+            style = TextStyle(color = Ink, fontSize = 12.sp),
+        )
+        val items = Trips.list
+        if (items.isEmpty()) BasicText("No routes yet.", style = TextStyle(color = Ink, fontSize = 14.sp))
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (r in items) RouteRow(r)
+        }
+    }
+}
+
+@Composable
+private fun RouteRow(r: RouteListItem) {
+    val u = AppSettings.units
+    Row(
+        Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Trips.background { Trips.open(r.id) } }.padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            BasicText(r.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(
+                UnitFormat.distance(r.distanceM, u) + (r.ascentM?.let { " · +" + UnitFormat.elevation(it, u) } ?: "") + " · " + RouteSummary.hm(r.timeS) + " " + r.mode,
+                style = TextStyle(color = Ink, fontSize = 13.sp),
+            )
+            BasicText(
+                "${r.viaPoints} via points · ${r.waypoints} waypoints" + if (r.straightM > 0) " · " + UnitFormat.distance(r.straightM, u) + " off trail" else "",
+                style = TextStyle(color = Ink.copy(alpha = 0.7f), fontSize = 11.sp),
+            )
+        }
+        Trips.listProfiles[r.id]?.let { Profile(it, emptyList(), Modifier.width(96.dp).height(36.dp), thin = true) }
+    }
+}
+
+@Composable
+private fun TripCard(modifier: Modifier) {
+    val p = Trips.editing ?: return
+    val s = Trips.summary ?: return
+    val u = AppSettings.units
+    val b = AttributionInsets.bottom
+    Column(
+        modifier.let { m -> if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp) }
+            .widthIn(max = 440.dp).background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            BasicText(p.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Action("Done") { Trips.close() }
+        }
+        BasicText(
+            UnitFormat.distance(s.distanceM, u) + (s.ascentM?.let { " · +" + UnitFormat.elevation(it, u) + " −" + UnitFormat.elevation(s.descentM ?: 0.0, u) } ?: "") +
+                " · " + RouteSummary.hm(s.timeS) + " " + s.mode,
+            style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold),
+        )
+        if (s.straightM > 0) BasicText(UnitFormat.distance(s.straightM, u) + " off trail (dashed)", style = TextStyle(color = Ink, fontSize = 12.sp))
+        Profile(s.profile, s.waypoints, Modifier.fillMaxWidth().height(84.dp))
+        if (s.waypoints.isNotEmpty()) {
+            BasicText(
+                s.waypoints.sortedBy { it.alongM }.joinToString("  ") { "⚑ ${it.name} " + UnitFormat.distance(it.alongM, u) },
+                style = TextStyle(color = Ink, fontSize = 11.sp), maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Trips.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
+                Toggle(label, Trips.tool == t) { Trips.tool = t }
+            }
+            for (m in listOf("hike", "bike")) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (p.path.via.size > 2) {
+                BasicText("Remove via:", style = TextStyle(color = Ink, fontSize = 12.sp))
+                for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }
+            }
+            Action("GPX") { Trips.background { Trips.export(p.id) } }
+            Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }
+        }
+    }
+}
+
+/** An elevation profile with waypoint markers (flags at their distance along the route). */
+@Composable
+private fun Profile(samples: List<ProfileSample>, marks: List<WaypointAt>, modifier: Modifier, thin: Boolean = false) {
+    val eles = samples.mapNotNull { it.eleM }
+    if (eles.size < 2) {
+        if (!thin) BasicText("No elevation along this route", style = TextStyle(color = Ink, fontSize = 12.sp))
+        return
+    }
+    val lo = eles.min()
+    val hi = eles.max()
+    val total = samples.last().distanceM.takeIf { it > 0 } ?: 1.0
+    Column {
+        Canvas(modifier) {
+            val span = (hi - lo).takeIf { it > 1.0 } ?: 1.0
+            fun x(d: Double) = (d / total * size.width).toFloat()
+            fun y(e: Double) = (size.height - (e - lo) / span * (size.height * 0.85) - size.height * 0.05).toFloat()
+            val line = Path()
+            val area = Path()
+            var started = false
+            for (smp in samples) {
+                val e = smp.eleM ?: continue
+                if (!started) { line.moveTo(x(smp.distanceM), y(e)); area.moveTo(x(smp.distanceM), size.height); started = true } else line.lineTo(x(smp.distanceM), y(e))
+                area.lineTo(x(smp.distanceM), y(e))
+            }
+            area.lineTo(x(samples.last().distanceM), size.height)
+            area.close()
+            drawPath(area, Violet.copy(alpha = 0.16f))
+            drawPath(line, Violet, style = Stroke(width = (if (thin) 1.5 else 2.5).dp.toPx()))
+            for (m in marks) {
+                val mx = x(m.alongM)
+                drawLine(Flag, Offset(mx, 0f), Offset(mx, size.height), strokeWidth = 2.dp.toPx())
+                m.eleM?.let { drawCircle(Flag, 4.dp.toPx(), Offset(mx, y(it))) }
+            }
+            drawLine(Ink.copy(alpha = 0.3f), Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
+        }
+        if (!thin) {
+            val u = AppSettings.units
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                BasicText(UnitFormat.elevation(lo, u) + " low", style = TextStyle(color = Ink, fontSize = 10.sp))
+                BasicText(UnitFormat.elevation(hi, u) + " high  |  " + UnitFormat.distance(total, u), style = TextStyle(color = Ink, fontSize = 10.sp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun Chip(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    BasicText(
+        text,
+        style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+        modifier = modifier.background(Violet, RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+private fun Toggle(text: String, on: Boolean, onClick: () -> Unit) {
+    BasicText(
+        text,
+        style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+        modifier = Modifier.background(if (on) Ink else Color.Transparent, RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 9.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
+    BasicText(
+        text,
+        style = TextStyle(color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+        modifier = Modifier.clickable(onClick = onClick).padding(vertical = 4.dp),
+    )
+}

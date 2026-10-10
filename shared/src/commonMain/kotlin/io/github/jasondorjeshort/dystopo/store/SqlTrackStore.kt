@@ -4,6 +4,9 @@ import app.cash.sqldelight.db.SqlDriver
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RoutePath
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
+import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
@@ -27,6 +30,7 @@ import io.github.jasondorjeshort.dystopo.sync.Op
 import io.github.jasondorjeshort.dystopo.sync.OpBody
 import io.github.jasondorjeshort.dystopo.sync.OpCodec
 import io.github.jasondorjeshort.dystopo.sync.PutRoute
+import io.github.jasondorjeshort.dystopo.sync.RouteListItem
 import io.github.jasondorjeshort.dystopo.sync.PutSetting
 import io.github.jasondorjeshort.dystopo.sync.PutTrack
 import io.github.jasondorjeshort.dystopo.sync.PutWaypoint
@@ -111,9 +115,20 @@ class SqlTrackStore(
                 seeded = seedLog()
                 q.putMeta("log", "1")
             }
+            // T60 (schema 4): the route table is filled from the log once, after the migration created it.
+            if (q.getMeta("routes").executeAsOneOrNull() == null) {
+                var n = 0
+                for (id in q.routeIdsInLog().executeAsList()) { rebuildRoute(id); n++ }
+                routesMaterialized = n
+                q.putMeta("routes", "1")
+            }
         }
         seededFromTables = seeded
     }
+
+    /** T60: routes written to the route table from the log on this open (after the schema-4 migration); 0 otherwise. */
+    var routesMaterialized = 0
+        private set
 
     // ---- log ----
 
@@ -421,13 +436,14 @@ class SqlTrackStore(
             val trackOf: String? = when (kind) {
                 EntityKind.TRACK -> if (q.selectTrack(id).executeAsOneOrNull() == null) return@transaction else id
                 EntityKind.WAYPOINT -> (waypoint(id) ?: return@transaction).trackId
-                EntityKind.ROUTE -> { route(id) ?: return@transaction; null }
+                EntityKind.ROUTE -> { q.selectRoute(id).executeAsOneOrNull() ?: return@transaction; null }
                 EntityKind.SETTING -> { if (id !in settings()) return@transaction; null }
             }
             emit(SetField(kind, id, field, value), now)
             when (kind) {
                 EntityKind.TRACK -> rebuildTrack(id, fieldsOnly = true)
                 EntityKind.WAYPOINT -> rebuildWaypoint(id)
+                EntityKind.ROUTE -> rebuildRoute(id)
                 else -> Unit
             }
             trackOf?.let { q.touchTrack(now, it) }
@@ -437,26 +453,68 @@ class SqlTrackStore(
     }
 
     override fun putRoute(route: Route, now: Long) {
-        q.transaction { emit(PutRoute(route), now) }
+        q.transaction {
+            emit(PutRoute(route), now)
+            rebuildRoute(route.id)
+        }
     }
 
     override fun deleteRoute(id: String, now: Long): Boolean {
         var ok = false
         q.transaction {
-            if (route(id) == null) return@transaction
+            if (q.selectRoute(id).executeAsOneOrNull() == null) return@transaction
             emit(Delete(EntityKind.ROUTE, id), now)
+            rebuildRoute(id)
             ok = true
         }
         return ok
     }
 
-    override fun route(id: String): Route? = Materializer.route(id, opsOf(EntityKind.ROUTE, id))
+    override fun putRoutePlan(plan: RoutePlan, now: Long) {
+        q.transaction {
+            emit(PutRoute(Route(plan.id, plan.name, emptyList(), plan.description, plan.comment, plan.type, plan.extensions)), now)
+            emit(SetField(EntityKind.ROUTE, plan.id, "path", plan.path.quantized().encode()), now)
+            emit(SetField(EntityKind.ROUTE, plan.id, "waypoints", RouteWaypoints.encode(plan.waypoints)), now)
+            rebuildRoute(plan.id)
+            check(q.selectRoute(plan.id).executeAsOneOrNull() != null) { "route ${plan.id} stays hidden by a delete stamped more than 30 days ahead of this device's clock" }
+        }
+    }
+
+    /** T60: rewrites the route's row from the log (or removes it), with its summary numbers. */
+    private fun rebuildRoute(id: String) {
+        val ops = opsOf(EntityKind.ROUTE, id)
+        val plan = Materializer.routePlan(id, ops)
+        if (plan == null) {
+            q.deleteRouteRow(id)
+            return
+        }
+        val live = Materializer.live(ops)
+        val s = RouteListItem.of(plan, live.last().hlc.wall)
+        q.upsertRoute(
+            id, plan.name, plan.description, plan.comment, plan.type, plan.extensions, plan.path.encode(), RouteWaypoints.encode(plan.waypoints),
+            live.first { it.body is PutRoute }.hlc.text, s.updatedAt, s.distanceM, s.ascentM, s.descentM, s.timeS,
+            s.viaPoints.toLong(), s.waypoints.toLong(), s.straightM, s.mode,
+        )
+    }
+
+    private fun planOf(r: io.github.jasondorjeshort.dystopo.store.db.Route): RoutePlan = RoutePlan(
+        r.id, r.name, RoutePath.decode(r.path), RouteWaypoints.decode(r.waypoints), r.description, r.comment, r.type, r.extensions,
+    )
+
+    override fun routePlan(id: String): RoutePlan? = q.selectRoute(id).executeAsOneOrNull()?.let(::planOf)
+
+    override fun routePlans(): List<RoutePlan> = q.selectRoutes().executeAsList().map(::planOf)
+
+    override fun routeList(): List<RouteListItem> = q.selectRoutes().executeAsList().map { r ->
+        RouteListItem(r.id, r.name, r.mode, r.distance_m, r.ascent_m, r.descent_m, r.time_s, r.via_count.toInt(), r.waypoint_count.toInt(), r.straight_m, r.updated_at)
+    }
+
+    /** The routes as the log says they are (every route rematerialised): equal to [routePlans] when the table is faithful. */
+    private fun routePlansFromLog(): List<RoutePlan> = ofKind(EntityKind.ROUTE) { id, ops -> Materializer.routePlan(id, ops) }.map { it.second }
 
     private fun <T : Any> ofKind(kind: EntityKind, f: (String, List<Op>) -> T?): List<Pair<String, T>> =
         q.opsOfKind(kind.code.toLong()).executeAsList().groupBy({ it.entity }, { OpCodec.decode(it.body) })
             .mapNotNull { (id, ops) -> f(id, ops)?.let { id to it } }.sortedBy { it.first }
-
-    override fun routes(): List<Route> = ofKind(EntityKind.ROUTE) { id, ops -> Materializer.route(id, ops) }.map { it.second }
 
     override fun setSetting(key: String, value: String?, now: Long) {
         q.transaction {
@@ -544,7 +602,8 @@ class SqlTrackStore(
                 when (key.first) {
                     EntityKind.TRACK -> rebuildTrack(key.second, fieldsOnly)
                     EntityKind.WAYPOINT -> rebuildWaypoint(key.second)
-                    else -> Unit // routes and settings are materialised on read
+                    EntityKind.ROUTE -> rebuildRoute(key.second) // T60
+                    else -> Unit // settings are materialised on read
                 }
             }
         }
@@ -562,7 +621,7 @@ class SqlTrackStore(
                 w.created_hlc?.let(Hlc::parse) ?: Hlc.zero(""), Hlc.zero(""),
             )
         }
-        return SyncSnapshot.of(tracks, waypoints, routes(), settings())
+        return SyncSnapshot.of(tracks, waypoints, routePlans(), settings())
     }
 
     /**
@@ -574,7 +633,7 @@ class SqlTrackStore(
         val trackIds = tracks.map { it.id }.toSet()
         val waypoints = ofKind(EntityKind.WAYPOINT) { id, ops -> Materializer.waypoint(id, ops) }.map { it.second }
             .filter { it.trackId == null || it.trackId in trackIds }
-        return SyncSnapshot.of(tracks, waypoints, routes(), settings())
+        return SyncSnapshot.of(tracks, waypoints, routePlansFromLog(), settings())
     }
 
     override fun compact(now: Long, retentionMs: Long): CompactResult {

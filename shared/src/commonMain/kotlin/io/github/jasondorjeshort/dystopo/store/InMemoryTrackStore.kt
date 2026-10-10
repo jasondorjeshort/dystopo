@@ -2,6 +2,9 @@ package io.github.jasondorjeshort.dystopo.store
 
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
+import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
+import io.github.jasondorjeshort.dystopo.sync.RouteListItem
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.Uuid
@@ -78,7 +81,9 @@ class InMemoryTrackStore(
     private val digests = HashMap<String, HashSet<Pair<Int, String>>>()
     private val local = HashMap<String, Local>()
     private val waypointViews = LinkedHashMap<String, WaypointView>()
-    private val routeViews = LinkedHashMap<String, Route>()
+    private val routeViews = LinkedHashMap<String, RoutePlan>()
+    /** T60: list order (first live put) and last change of each route. */
+    private val routeMeta = HashMap<String, Pair<Hlc, Long>>()
     private val settingValues = LinkedHashMap<String, String>()
 
     override var statsComputed = 0L
@@ -142,7 +147,11 @@ class InMemoryTrackStore(
                 }
             }
             EntityKind.WAYPOINT -> Materializer.waypoint(key.id, list)?.let { waypointViews[key.id] = it } ?: waypointViews.remove(key.id)
-            EntityKind.ROUTE -> Materializer.route(key.id, list)?.let { routeViews[key.id] = it } ?: routeViews.remove(key.id)
+            EntityKind.ROUTE -> Materializer.routePlan(key.id, list)?.let { plan ->
+                routeViews[key.id] = plan
+                val live = Materializer.live(list)
+                routeMeta[key.id] = live.first { it.body is PutRoute }.hlc to live.last().hlc.wall
+            } ?: run { routeViews.remove(key.id); routeMeta.remove(key.id) }
             EntityKind.SETTING -> Materializer.setting(list)?.let { settingValues[key.id] = it } ?: settingValues.remove(key.id)
         }
     }
@@ -331,9 +340,18 @@ class InMemoryTrackStore(
         return true
     }
 
-    override fun route(id: String): Route? = routeViews[id]
+    override fun putRoutePlan(plan: RoutePlan, now: Long) {
+        emit(PutRoute(Route(plan.id, plan.name, emptyList(), plan.description, plan.comment, plan.type, plan.extensions)), now)
+        emit(SetField(EntityKind.ROUTE, plan.id, "path", plan.path.quantized().encode()), now)
+        emit(SetField(EntityKind.ROUTE, plan.id, "waypoints", RouteWaypoints.encode(plan.waypoints)), now)
+        rematerialize(Key(EntityKind.ROUTE, plan.id))
+    }
 
-    override fun routes(): List<Route> = routeViews.values.sortedBy { it.id }
+    override fun routePlan(id: String): RoutePlan? = routeViews[id]
+
+    override fun routePlans(): List<RoutePlan> = routeViews.values.sortedWith(compareBy({ routeMeta[it.id]?.first }, { it.id }))
+
+    override fun routeList(): List<RouteListItem> = routePlans().map { RouteListItem.of(it, routeMeta[it.id]?.second ?: 0L) }
 
     override fun setSetting(key: String, value: String?, now: Long) {
         if (value == null) {
@@ -407,7 +425,7 @@ class InMemoryTrackStore(
         byEntity.keys.sortedWith(compareBy({ it.kind.code }, { it.id })).forEach { rematerialize(it) }
     }
 
-    override fun snapshot(): SyncSnapshot = SyncSnapshot.of(tracks.values.toList(), waypointViews.values.filter { visible(it) }, routes(), settings())
+    override fun snapshot(): SyncSnapshot = SyncSnapshot.of(tracks.values.toList(), waypointViews.values.filter { visible(it) }, routePlans(), settings())
 
     override fun compact(now: Long, retentionMs: Long): CompactResult {
         val horizon = now - retentionMs
