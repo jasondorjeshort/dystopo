@@ -2,7 +2,7 @@
 
 Open-source, offline-first topographic maps and backcountry navigation. Android first, with a server, desktop, and iOS planned.
 
-**Status (October 2026): phase 0, desktop exploration.** The elevation pipeline works: a Kotlin Multiplatform core reads USGS 3DEP (10 m and 1 m lidar) and Copernicus GLO-30 (global 30 m) directly from their public cloud files, converts everything to one vertical datum, blends sources seamlessly, and renders hillshade and contours. There is no app yet; everything runs from a command-line devtool. Next: the OpenStreetMap base layer (trails, roads, water, names), then the Android shell.
+**Status (October 2026): phase 0b, desktop pipeline complete.** A Kotlin Multiplatform core reads USGS 3DEP (10 m and 1 m lidar) and Copernicus GLO-30 (global 30 m) directly from their public cloud files, converts everything to one vertical datum, blends sources seamlessly, and renders hillshade, slope shading and labelled contours. An OpenStreetMap build tool (Planetiler, with an outdoors profile) produces our own vector archives, and the renderer draws trails, water, peaks and names over the terrain from a declarative style. Region packs are PMTiles (DEM and vectors) that any PMTiles-aware tool can open; a browser demo (MapLibre) views them live. There is no phone app yet; the Android shell is next. A world tour of 22 public landmarks and a 14-view browser tour run as sanity sweeps.
 
 - Design, decisions, and findings: [docs/PLANNING.md](docs/PLANNING.md)
 - Work breakdown for parallel development: [docs/TASKS.md](docs/TASKS.md)
