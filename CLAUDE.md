@@ -15,6 +15,7 @@ Open-source, offline-first topographic maps. Design, decisions, and findings: `d
 - Coverage edges between sources are feathered with `Composite.over`; never hard-cut.
 - Commands print one JSON object to stdout (agents parse it) and write PNGs to `out/`. Add counters and timings to reports rather than printing logs.
 - Tests in `shared/src/commonTest` must run offline and fast. Network-dependent checks are devtool commands, not tests.
+- Rendering changes are guarded by golden images (`devtool/src/test/resources/goldens/`, synthetic terrain only). If `check` fails there and the change is intended: `./gradlew updateGoldens`, look at the new PNGs, commit them with the change. Those goldens are the one place PNGs belong in the repo.
 
 ## Commands
 JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot` first.
@@ -30,6 +31,7 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ./gradlew :devtool:run --args="pmtiles info --file x.pmtiles"   # PMTiles header, metadata, per-zoom counts (--url for remote, --tile z/x/y)
 ./gradlew :devtool:run --args="tiles --area rainier --min-zoom 8 --max-zoom 13 --verify --preview-zoom 13"   # Terrarium XYZ tiles -> out/rainier-best/
 ./gradlew :devtool:run --args="render --area rainier --shading multi --slope-overlay"   # shading hillshade|multi|none; CalTopo-style slope bands
+./gradlew :devtool:run --args="sources --ids best"        # data source registry; composed attribution for a source
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```
 Browser demo (MapLibre over our DEM tiles and OSM PMTiles): generation commands are at the top of `tools/demo/index.html`; then `python -I tools/demo-server.py 8765` and open http://localhost:8765/tools/demo/. **Agents check it headlessly** with `python -I tools/demo-check.py --view <z/lat/lon> --out out/check.png` (Playwright + Chrome): exit 0 means the map went idle with no console errors, page exceptions, or failed requests; the JSON lists rendered feature counts per layer and the screenshot path, so you can see what a user would see. A zero count on a layer that should have features is a bug, not a style choice.
@@ -52,5 +54,5 @@ Browser demo (MapLibre over our DEM tiles and OSM PMTiles): generation commands 
   - **Never bypass with `--no-verify`.** If the check fires, fix the content.
 - **Every feature must be agent-testable:** unit tests in `shared`, plus a devtool command (later: debug server endpoint) that triggers it and reports results as JSON or PNG.
 - **Dependencies must be permissively licensed** (MIT, BSD, Apache-2.0, EPL/EDL). No GPL or AGPL dependencies anywhere; they'd block relicensing. LGPL is tolerated only in build-side tooling modules (`tilebuild`), never in `shared`, `devtool`, or app modules. `./gradlew check` enforces this (`licenseCheck`; config in `gradle/licenses/`, reports in `<module>/build/reports/licenses/`). An artifact whose POM has no license needs a line in `gradle/licenses/artifact-overrides.txt` with its real license. Don't copy code from other projects.
-- **Data sources need license and attribution recorded** (see `docs/PLANNING.md` › Licensing). Any output built from a source carries its attribution.
+- **Data sources need license and attribution recorded** in `shared/src/commonMain/resources/sources.json` (the registry; see `docs/PLANNING.md` › Licensing). A new source gets a registry entry first; devtool sources declare `registryIds` and set `provenance` on results so reports and tile metadata credit exactly what contributed.
 - Commit as you go with descriptive messages. Don't amend pushed commits. Solo work goes straight to `main`; parallel work goes through branches and PRs (above).

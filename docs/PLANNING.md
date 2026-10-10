@@ -205,6 +205,10 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T7 merged (PR #8): dependency license check.** `./gradlew check` now fails on any GPL/AGPL dependency in any module, on LGPL outside `tilebuild`, and on artifacts whose POM chain has no license (unless listed in `gradle/licenses/artifact-overrides.txt`). Current state: shared 2 artifacts, devtool 24, tilebuild 135 (10 LGPL, tolerated). Policy choice recorded: multiple licenses in a POM are treated as alternatives (best wins), which is what lets dual-licensed JNA/jffi pass; the report lists every license so cumulative cases can be found by hand.
 
+**2026-10-09: T8 merged (PR #7): golden-image tests.** Six synthetic-terrain renders (cone, ridge and saddle, flat lake with shoreline, 80° cliff band, rolling ground) go through the full pipeline in `./gradlew check` and are compared against committed PNGs with a strict tolerance outside label boxes and a loose one inside. A 15° change to the light azimuth fails all six with diff images. Caveat recorded: label glyphs depend on the machine's fonts, so goldens are tied to this Windows/JDK 21 setup until CI exists. Found while making them: on a merged index-contour band along a cliff, labels stack (cosmetic; follow-up).
+
+**2026-10-09: T9 merged (PR #9): data source registry.** Licensing hard rule 4 is now code: `sources.json` in `shared` lists every source with license, attribution (plain and HTML), vertical datum, coverage and cadence; the registry validates on load. Reports carry provenance, i.e. only the sources that actually contributed (Rainier z13: 3DEP + GEOID18 + EGM2008, no Copernicus, because US coverage is complete there; at the Glacier/Waterton border all five), tile packs get registry attribution in their metadata, and tilebuild credits come from the same place. Wave 2 complete: nine of ten tasks merged; only the Android shell (T10) remains in wave 1's list.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
