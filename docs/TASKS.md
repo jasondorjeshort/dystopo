@@ -21,6 +21,7 @@ Every task is done only when:
 **Goal:** (1) Slope angle per cell (degrees) in `shared`. (2) CalTopo-style slope-angle shading bands (27–29, 30–31, 32–34, 35–45, 46–50, 51–59, 60+ degrees) as a translucent overlay. (3) Multidirectional hillshade (blend of several azimuths) as an option; keep single-azimuth as default. (4) `--shading hillshade|multi|slope|none` and `--slope-overlay` options.
 **Owns:** `shared/.../render/Hillshade.kt`, new `shared/.../render/Slope.kt` and tests; a new `devtool/.../Shading.kt` that produces the base pixel array. `MapRenderer.kt` should call it in one place; the contour-drawing code there belongs to T1.
 **Done when:** unit tests on planes of known slope; PNGs for `rainier` and `mont-blanc` with each shading mode; report lists the fraction of cells in each slope band.
+**Status: merged (PR #6).** Options as shipped: `--shading hillshade|multi|none`, `--slope-overlay`, `--slope-opacity` (a slope-only map is `--shading none --slope-overlay`). Follow-ups: light DEM smoothing before slope/hillshade to stop band striping on noisy glaciers; compute the Horn gradient once when both slope and hillshade are on.
 
 ### T3. PMTiles v3 in `shared`
 **Goal:** a pure-Kotlin PMTiles v3 reader and writer: header, root and leaf directories (varint encoding, run-length and delta fields), Hilbert tile IDs ↔ z/x/y, metadata JSON, compression via an injected decompressor/compressor (like `GeoTiff`'s `Decompressor`), reader over `ByteRangeSource`.

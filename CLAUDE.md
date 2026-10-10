@@ -29,6 +29,7 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ./gradlew :devtool:run --args="mvt dump --file tile.mvt"  # summarize a Mapbox Vector Tile (--gzip, --layer, --samples)
 ./gradlew :devtool:run --args="pmtiles info --file x.pmtiles"   # PMTiles header, metadata, per-zoom counts (--url for remote, --tile z/x/y)
 ./gradlew :devtool:run --args="tiles --area rainier --min-zoom 8 --max-zoom 13 --verify --preview-zoom 13"   # Terrarium XYZ tiles -> out/rainier-best/
+./gradlew :devtool:run --args="render --area rainier --shading multi --slope-overlay"   # shading hillshade|multi|none; CalTopo-style slope bands
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```
 Browser demo (MapLibre over our DEM tiles and OSM PMTiles): generation commands are at the top of `tools/demo/index.html`; then `python -I tools/demo-server.py 8765` and open http://localhost:8765/tools/demo/. **Agents check it headlessly** with `python -I tools/demo-check.py --view <z/lat/lon> --out out/check.png` (Playwright + Chrome): exit 0 means the map went idle with no console errors, page exceptions, or failed requests; the JSON lists rendered feature counts per layer and the screenshot path, so you can see what a user would see. A zero count on a layer that should have features is a bug, not a style choice.
