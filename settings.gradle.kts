@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 include(":shared")
 include(":devtool")
+include(":tilebuild")

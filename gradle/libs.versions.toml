@@ -2,10 +2,17 @@
 kotlin = "2.2.0"
 clikt = "5.0.3"
 kotlinx-serialization = "1.9.0"
+# Planetiler (Apache-2.0) and the OpenMapTiles profile (BSD-3-Clause code, CC-BY 4.0 schema design).
+# The profile is not on Maven Central: it is pulled from JitPack and pins the planetiler-core version
+# it was compiled against, so keep these two in step (profile v3.16 -> planetiler 0.9.3).
+planetiler = "0.9.3"
+planetiler-openmaptiles = "v3.16"
 
 [libraries]
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+planetiler-core = { module = "com.onthegomap.planetiler:planetiler-core", version.ref = "planetiler" }
+planetiler-openmaptiles = { module = "com.github.openmaptiles:planetiler-openmaptiles", version.ref = "planetiler-openmaptiles" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
