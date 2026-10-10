@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T79: First run on a real phone (#73)
 - T71: One-command sweeps (#72)
 - T66: Desktop and server leftover sweep 5 (#70)
 - T72: Sync over the internet: TLS, discovery and a public peer (#71)
