@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T61: Navigation mode (#61)
 - T58: Desktop and server leftover sweep 4 (#62)
 - T60: Trips: routes as first-class items (#60)
 - T64: Outdoors profile for phone-built regions and larger server packs (#59)
