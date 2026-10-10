@@ -24,7 +24,10 @@ import java.util.Properties
  * All calls are serialised on one lock: the store is not thread-safe and a merge is one transaction.
  */
 object SyncRoutes {
-    private val dbFile: File get() = File(System.getenv("DYSTOPO_SYNC_DB")?.takeIf { it.isNotBlank() } ?: "out/sync/peer.db")
+    /** The standalone server's configured replica file (T52); set before the first sync request. */
+    @Volatile var dbOverride: File? = null
+
+    private val dbFile: File get() = dbOverride ?: File(System.getenv("DYSTOPO_SYNC_DB")?.takeIf { it.isNotBlank() } ?: "out/sync/peer.db")
 
     private val store: SqlTrackStore by lazy {
         dbFile.absoluteFile.parentFile.mkdirs()

@@ -8,7 +8,8 @@ import java.io.File
  * parallel agents don't each re-download the same elevation data.
  */
 object Caches {
-    val root: File = File(System.getenv("DYSTOPO_CACHE")?.takeIf { it.isNotBlank() } ?: "cache")
+    /** The standalone server sets this from its config file at startup, before any source is made (T52). */
+    @Volatile var root: File =File(System.getenv("DYSTOPO_CACHE")?.takeIf { it.isNotBlank() } ?: "cache")
 
     fun dir(name: String): File = File(root, name)
 }

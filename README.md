@@ -19,5 +19,8 @@ Requires JDK 21 and Git.
 ./gradlew :devtool:run --args="compare --area glacier-waterton --sources copernicus,best"
 ```
 
+## Running a server
+The phone browses the world online and syncs through a Dystopo server: `./gradlew :server:installDist`, then `server/build/install/server/bin/server` (or the Docker image built from that directory) serves live hillshade, contours and base map anywhere, builds and hosts region packs, lists them in a catalog with content hashes, and acts as the always-on sync peer. Configuration, Docker, TLS behind a reverse proxy and limits: [docs/SERVER.md](docs/SERVER.md).
+
 ## License
 Code: GPLv3 (see [LICENSE](LICENSE)); other modules may use AGPLv3/LGPLv3 later. Map data keeps its sources' licenses (OSM: ODbL; USGS: public domain; Copernicus: attribution required). See [docs/PLANNING.md › Licensing](docs/PLANNING.md#licensing).

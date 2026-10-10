@@ -10,6 +10,8 @@ kotlin {
 
 dependencies {
     implementation(project(":shared"))
+    // T52: server routes, live tiles, builds and the elevation sources, shared with the standalone server.
+    implementation(project(":serverlib"))
     implementation(libs.clikt)
     implementation(libs.kotlinx.serialization.json)
     // T44: the server peer stores its replica of the sync log in a SQLite file (SqlTrackStore over JDBC;

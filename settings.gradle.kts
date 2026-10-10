@@ -28,7 +28,9 @@ dependencyResolutionManagement {
 }
 
 include(":shared")
+include(":serverlib") // T52: server routes, live tiles, builds, elevation sources (devtool serve + server)
 include(":devtool")
+include(":server") // T52: the standalone, deployable server (config file, JSON logs, catalog, Dockerfile)
 include(":tilebuild")
 
 // Android (T10): the app module and shared's android target exist only when an Android SDK is installed

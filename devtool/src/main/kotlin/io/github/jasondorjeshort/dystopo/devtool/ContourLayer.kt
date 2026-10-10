@@ -46,18 +46,6 @@ data class ContourStats(
     }
 }
 
-/** Measures text with the same font the renderer draws with. */
-object AwtTextMeasurer : TextMeasurer {
-    private val frc = FontRenderContext(null, true, true)
-
-    fun font(fontPx: Double): Font = Font(Font.SANS_SERIF, Font.BOLD, 1).deriveFont(fontPx.toFloat())
-
-    override fun measure(text: String, fontPx: Double): TextSize {
-        val bounds = font(fontPx).createGlyphVector(frc, text).visualBounds
-        return TextSize(bounds.width, bounds.height)
-    }
-}
-
 /** Contour lines and labels for one grid, ready to draw. */
 class ContourLayer(val spec: ContourSpec, val lines: List<ContourLine>, val labels: List<ContourLabel>, val stats: ContourStats) {
     companion object {

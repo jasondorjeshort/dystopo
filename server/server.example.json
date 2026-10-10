@@ -1,0 +1,30 @@
+{
+  "bind": "0.0.0.0",
+  "port": 8080,
+  "publicUrl": null,
+  "cacheDir": "cache",
+  "outDir": "out",
+  "glyphsDir": null,
+  "fetchGlyphs": true,
+  "glyphsUrl": "https://protomaps.github.io/basemaps-assets/fonts/",
+  "webPage": null,
+  "syncDb": null,
+  "corsOrigins": ["*"],
+  "token": null,
+  "threads": 32,
+  "liveThreads": null,
+  "shutdownGraceSeconds": 10,
+  "logRequests": true,
+  "build": {
+    "maxTiles": 20000,
+    "maxSpanDegrees": 3.0,
+    "concurrent": 1,
+    "queue": 4
+  },
+  "overpass": {
+    "url": "https://overpass-api.de/api/interpreter",
+    "maxAreaSqDeg": 0.05,
+    "timeoutSeconds": 90
+  },
+  "tilebuildHome": null
+}

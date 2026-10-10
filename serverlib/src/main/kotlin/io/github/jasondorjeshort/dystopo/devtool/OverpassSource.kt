@@ -177,7 +177,7 @@ class OverpassSource(
         }
 
         /** Overpass reports a timeout or memory exhaustion as `<remark> runtime error: ...</remark>` in a 200 answer, at the end. */
-        internal fun errorRemark(file: File): String? {
+        fun errorRemark(file: File): String? {
             val len = file.length()
             val tail = java.io.RandomAccessFile(file, "r").use { raf ->
                 val n = minOf(len, 4096L).toInt()

@@ -145,7 +145,7 @@ class BuildRoutes(
             }
             return linkedMapOf(
                 "id" to id, "name" to name, "status" to status.label, "phase" to phase,
-                "bbox" to TilesCommand.geoJsonBounds(box), "minZoom" to minZoom, "maxZoom" to maxZoom,
+                "bbox" to TileSets.geoJsonBounds(box), "minZoom" to minZoom, "maxZoom" to maxZoom,
                 "percent" to if (total == 0) 100.0 else Math.round(1000.0 * done / total) / 10.0,
                 "dem" to dem.json(demZooms), "osm" to osm.json(osmZooms),
                 "elapsedMs" to elapsed, "timings" to timings.toSortedMap(),
@@ -273,6 +273,15 @@ class BuildRoutes(
         return true
     }
 
+    /** Cancels every queued or running job and waits up to [waitMs] for them to stop (graceful shutdown, T52). */
+    fun cancelAll(waitMs: Long): Int {
+        val active = synchronized(jobs) { jobs.values.filter { it.active } }
+        active.forEach { cancel(it) }
+        val until = System.currentTimeMillis() + waitMs
+        while (active.any { it.active } && System.currentTimeMillis() < until) Thread.sleep(50)
+        return active.size
+    }
+
     // ---- the build ----
 
     private fun run(job: Job) {
@@ -345,10 +354,10 @@ class BuildRoutes(
             job.demProvenance = ids
             val registry = SourceRegistry.builtIn
             val meta = TileSetMetadata(
-                name = "${job.name}-dem", tileSize = 256, bounds = TilesCommand.geoJsonBounds(job.box),
+                name = "${job.name}-dem", tileSize = 256, bounds = TileSets.geoJsonBounds(job.box),
                 minzoom = writtenZooms.first(), maxzoom = writtenZooms.last(), source = "best",
                 attribution = registry.attribution(ids), attributionHtml = registry.attributionHtml(ids), provenance = ids,
-                license = TilesCommand.licenseExpression(ids, registry),
+                license = TileSets.licenseExpression(ids, registry),
             )
             // The header's zooms are the ones that have tiles (a viewer asks nothing outside them).
             w.finish(meta, job.box, writtenZooms.first(), writtenZooms.last())
@@ -382,7 +391,7 @@ class BuildRoutes(
             job.osmProvenance = ids
             val meta = OsmPackMetadata(
                 name = "${job.name}-outdoors",
-                bounds = TilesCommand.geoJsonBounds(job.box),
+                bounds = TileSets.geoJsonBounds(job.box),
                 minZoom = zooms.first, maxZoom = zooms.last,
                 vectorLayers = OsmPackWriter.vectorLayers(tileJson),
                 attribution = registry.attribution(ids), attributionHtml = registry.attributionHtml(ids),

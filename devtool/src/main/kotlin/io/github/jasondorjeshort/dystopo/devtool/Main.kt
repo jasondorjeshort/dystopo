@@ -9,9 +9,6 @@ import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.io.PrintStream
 
-/** Pretty JSON for reports printed to stdout. Reports are meant to be read by agents and scripts. */
-val reportJson = Json { prettyPrint = true; encodeDefaults = true }
-
 class Devtool : CliktCommand(name = "devtool") {
     override fun help(context: Context) =
         "Developer tool for Dystopo: runs shared-core features from the command line and prints JSON reports."

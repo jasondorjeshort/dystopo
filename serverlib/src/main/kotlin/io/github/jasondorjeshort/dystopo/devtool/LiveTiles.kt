@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
 import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
 import io.github.jasondorjeshort.dystopo.dem.TileWindow
@@ -77,6 +78,8 @@ class LiveTiles(
     private val fetchOfm: (String) -> ByteArray? = ::httpGet,
     /** The OpenFreeMap TileJSON text (names the current planet build); read lazily, cached on disk for a day. */
     private val ofmTileJson: () -> String = { httpGet(OFM_TILEJSON)?.let { gunzipIfNeeded(it).decodeToString() } ?: error("no TileJSON at $OFM_TILEJSON") },
+    /** Makes the `/build` routes; the standalone server passes its configured limits and Overpass endpoint (T52). */
+    private val makeBuilds: (LiveTiles) -> BuildRoutes = { BuildRoutes(it, it.outDir) },
 ) {
     /** One rendered live DEM tile: Terrarium PNG bytes plus the registry ids that contributed. */
     class LiveDem(val png: ByteArray, val provenance: List<String>)
@@ -489,35 +492,49 @@ class LiveTiles(
     private val tileRe = Regex("^/(dem|osm|contours)/(\\d+)/(\\d+)/(\\d+)\\.(png|pbf)$")
     private val glyphRe = Regex("^/glyphs/([^/]+)/(\\d+-\\d+)\\.pbf$")
 
+    /** The phone style ([MapLibreStyle]) over these routes at [base], per contour unit; a few bases are cached. */
+    private val styles = ConcurrentHashMap<Pair<String, ContourUnits>, String>()
+
+    private fun style(base: String, u: ContourUnits, textScale: Double): String {
+        styles[base to u]?.let { return it }
+        val json = MapLibreStyle(
+            MapLibreSources(
+                demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = LIVE_MIN_ZOOM, demMaxZoom = LIVE_MAX_ZOOM,
+                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?units=${u.symbol}", contourMinZoom = CONTOUR_MIN_ZOOM, contourMaxZoom = LIVE_MAX_ZOOM,
+                osmTiles = "$base/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = OSM_MAX_ZOOM,
+                glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
+                attribution = osmAttributionHtml + " " + demAttributionHtml,
+                sprite = "$base/sprite",
+            ),
+            units = u,
+            textScale = textScale,
+        ).json()
+        // Bases come from request headers on the standalone server: keep the cache small whatever they say.
+        if (styles.size < 16) styles[base to u] = json
+        return json
+    }
+
+    /**
+     * The live routes as one handler. [base] gives the absolute URL prefix the phone style's tile URLs
+     * use for a request: fixed for `devtool serve` (`http://127.0.0.1:<port>`), from the configured public
+     * URL or the request's `Host` / `X-Forwarded-*` headers on the standalone server ([requestBase]).
+     */
+    fun handler(glyphDir: File, demoPage: File = File("tools/demo/index.html"), textScale: Double = 1.0, base: (HttpExchange) -> String): HttpHandler = HttpHandler { ex ->
+        try {
+            handle(ex, { u -> style(base(ex), u, textScale) }, glyphDir, demoPage)
+        } catch (e: Throwable) {
+            errors.incrementAndGet()
+            val cause = (e as? CompletionException)?.cause ?: e
+            reply(ex, (cause.toString() + "\n").toByteArray(), "text/plain", status = 500)
+        }
+    }
+
     /** Starts the live server on 127.0.0.1:[port] and prints one JSON line describing it. */
     fun serve(port: Int, glyphDir: File, demoPage: File = File("tools/demo/index.html"), textScale: Double = 1.0) {
         val base = "http://127.0.0.1:$port"
-        // One phone style per contour unit: the contour tiles and the peak elevations use the same one.
-        val style = ContourUnits.entries.associateWith { u ->
-            MapLibreStyle(
-                MapLibreSources(
-                    demTiles = "$base/dem/{z}/{x}/{y}.png", demMinZoom = LIVE_MIN_ZOOM, demMaxZoom = LIVE_MAX_ZOOM,
-                    contourTiles = "$base/contours/{z}/{x}/{y}.pbf?units=${u.symbol}", contourMinZoom = CONTOUR_MIN_ZOOM, contourMaxZoom = LIVE_MAX_ZOOM,
-                    osmTiles = "$base/osm/{z}/{x}/{y}.pbf", osmMinZoom = 0, osmMaxZoom = OSM_MAX_ZOOM,
-                    glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
-                    attribution = osmAttributionHtml + " " + demAttributionHtml,
-                    sprite = "$base/sprite",
-                ),
-                units = u,
-                textScale = textScale,
-            ).json()
-        }
         val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 128)
         server.executor = Executors.newFixedThreadPool(32)
-        server.createContext("/") { ex ->
-            try {
-                handle(ex, style, glyphDir, demoPage)
-            } catch (e: Throwable) {
-                errors.incrementAndGet()
-                val cause = (e as? CompletionException)?.cause ?: e
-                reply(ex, (cause.toString() + "\n").toByteArray(), "text/plain", status = 500)
-            }
-        }
+        server.createContext("/", handler(glyphDir, demoPage, textScale) { base })
         server.start()
         val stale = pruneStaleDemCaches() // only once the port is ours: a second server that fails to bind touches nothing
         println(
@@ -533,12 +550,23 @@ class LiveTiles(
     }
 
     /** `/build` jobs: region packs made from these live sources into [outDir], served under `/out/`. */
-    val builds: BuildRoutes by lazy { BuildRoutes(this, outDir) }
+    private val buildsLazy = lazy { makeBuilds(this) }
+    val builds: BuildRoutes by buildsLazy
 
-    private fun handle(ex: HttpExchange, style: Map<ContourUnits, String>, glyphDir: File, demoPage: File) {
+    /**
+     * For a graceful shutdown: cancels queued and running builds (their partial files are deleted) and
+     * waits up to [waitMs] for them to stop. Returns the number of jobs cancelled.
+     */
+    fun cancelBuilds(waitMs: Long): Int = if (buildsLazy.isInitialized()) builds.cancelAll(waitMs) else 0
+
+    /** `GET /catalog` (T52): the packs in [outDir] with sizes and content hashes ([PackCatalog]). */
+    val catalog: PackCatalog by lazy { PackCatalog(outDir) }
+
+    private fun handle(ex: HttpExchange, style: (ContourUnits) -> String, glyphDir: File, demoPage: File) {
         val path = ex.requestURI.path
         if (SyncRoutes.handle(ex)) return // T44: /sync/* (the always-on sync peer)
         if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
+        if (path == "/catalog" || path == "/catalog.json") return reply(ex, JsonWriter.write(catalog.json()).toByteArray(), "application/json")
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
         SpriteSheets.route(path, outDir)?.let { (bytes, type) -> return reply(ex, bytes, type) }
         tileRe.matchEntire(path)?.let { m ->
@@ -568,7 +596,7 @@ class LiveTiles(
                 reply(ex, html?.toByteArray(), "text/html; charset=utf-8")
             }
             "/phone" -> reply(ex, PHONE_PAGE.toByteArray(), "text/html; charset=utf-8")
-            "/style.json" -> reply(ex, style.getValue(unitsFor(query(ex))).toByteArray(), "application/json")
+            "/style.json" -> reply(ex, style(unitsFor(query(ex))).toByteArray(), "application/json")
             "/live/units" -> {
                 val u = unitsFor(query(ex))
                 reply(ex, JsonWriter.write(mapOf("units" to u.symbol, "name" to u.name.lowercase())).toByteArray(), "application/json")
@@ -687,6 +715,21 @@ class LiveTiles(
 
         /** Ground metres per pixel shared by every live DEM tile at [zoom] (see [LIVE_REFERENCE_LAT]). */
         fun referenceCellMeters(zoom: Int): Double = WebMercator.metersPerPixel(LIVE_REFERENCE_LAT, zoom, 256)
+
+        /**
+         * The URL prefix a client used to reach this server: `X-Forwarded-Proto` and `X-Forwarded-Host`
+         * (set by a reverse proxy), else `Host`, else [fallback]. Header values that are not a plain
+         * host[:port] are ignored, so a forged header cannot inject markup or paths into the style.
+         */
+        fun requestBase(ex: HttpExchange, fallback: String): String {
+            val h = ex.requestHeaders
+            val host = (h.getFirst("X-Forwarded-Host")?.substringBefore(',')?.trim() ?: h.getFirst("Host")?.trim())
+                ?.takeIf { HOST_PORT.matches(it) } ?: return fallback
+            val proto = h.getFirst("X-Forwarded-Proto")?.substringBefore(',')?.trim()?.lowercase()?.takeIf { it == "http" || it == "https" } ?: "http"
+            return "$proto://$host"
+        }
+
+        private val HOST_PORT = Regex("[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?|\\[[0-9A-Fa-f:.]{2,45}](:[0-9]{1,5})?")
 
         /** `ft` / `m` (or `feet` / `meters` / `metres`) to a unit; null for anything else. */
         fun parseUnits(s: String?): ContourUnits? = when (s?.lowercase()) {

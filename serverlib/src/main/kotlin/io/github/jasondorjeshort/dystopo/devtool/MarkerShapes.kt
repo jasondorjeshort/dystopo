@@ -15,7 +15,7 @@ import java.awt.geom.Rectangle2D
  * so the phone's icons are the renderer's shapes by construction. The browser demo's canvas fallback
  * (`markerPath` in tools/demo/index.html) uses the same vertices.
  */
-internal object MarkerShapes {
+object MarkerShapes {
     /** Outline of a marker of radius [r] centred at ([cx], [cy]). */
     fun shape(shape: MarkerShape, cx: Double, cy: Double, r: Double): java.awt.Shape = when (shape) {
         MarkerShape.CIRCLE -> Ellipse2D.Double(cx - r, cy - r, 2 * r, 2 * r)
