@@ -237,6 +237,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T23 merged (PR #22): leftover sweep.** Nine recorded follow-ups closed. Notable: one marker table now drives both the renderer and the browser demo, enforced by a test that parses the demo page; cliff ticks are decided per segment from a bilinearly sampled DEM; Mount Rainier Wilderness is a wilderness again in the outdoors profile (OSM tags it `protect_class=1a` plus wilderness tags); no more NaN in tile reports over open ocean. 270 tests, both tours green.
 
+**2026-10-09: T10 merged (PR #24): Android shell.** Phase 1 starts. `androidApp` (Compose + MapLibre Native, min SDK 26) shows a region pack: hillshade from the DEM PMTiles, the outdoors vector PMTiles, and contour tiles generated on the device from the DEM pack by the shared `Contours` + MVT encoder, cached on disk. MapLibre cannot read PMTiles, so a loopback-only HTTP server (port 8686) serves `/dem`, `/osm`, `/contours`, `/glyphs` and `/style.json`; the style is translated from the devtool's `DefaultOsmStyle` by `MapLibreStyle`. Debug endpoints (`/health`, `/screenshot`, `/camera`, `/stats`, `/location`, `/reload`, `/cache/clear`) exist in debug builds only. `shared` gains an `android` target that is only wired when an SDK is present, so SDK-less machines still build; `devtool serve` runs the same routes on the JVM so the phone style can be checked with `demo-check.py` without a device. Verified: 808 JVM tests, lint and license check green (91 Android runtime artifacts, all permissive); debug APK 55.9 MB (MapLibre native libs 9 to 13 MB per ABI, uncompressed); JVM stand-in contour tiles 95 / 183 / 308 ms (min / avg / max) at z13. Android SDK installed under `C:\Users\Dorje\Android\sdk` by `tools/android-sdk.ps1`; the emulator needed Windows Hypervisor Platform, which is now enabled (`emulator -accel-check` passes). On-device numbers follow once the first emulator run is recorded. Follow-ups: the contour disk cache is keyed by unit, tile size and z/x/y only, so a replaced DEM pack serves stale contours until `/cache/clear`; the glyph font licence (Noto Sans, OFL 1.1) is only in a script comment, not in `sources.json`; the loopback server has a 4-thread pool with an unbounded queue and no slow-connection guard; contour labels are sparse on the phone.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
@@ -316,8 +318,8 @@ The project will be fully open source. Code and map content may need different l
 |---|---|---|
 | Language | Kotlin (Java libraries where useful, JVM targets only) | Decided |
 | Code sharing | Kotlin Multiplatform | Decided; in use (JVM target now, Android and iOS targets added later) |
-| Android UI | Jetpack Compose (Compose Multiplatform later?) | Proposed |
-| Map renderer | MapLibre Native | Proposed |
+| Android UI | Jetpack Compose (Compose Multiplatform later?) | In use (T10) |
+| Map renderer | MapLibre Native 11 (Android); MapLibre GL JS in the browser demo | In use (T10) |
 | Local DB | SQLDelight (SQLite) | Proposed |
 | Sync | Op log + HLC, pluggable transport | Proposed; evaluate libraries first |
 | Server | Ktor (Kotlin, JVM) | Proposed |
@@ -325,12 +327,12 @@ The project will be fully open source. Code and map content may need different l
 | Routing | BRouter or GraphHopper | Future |
 | Build | Gradle 8.14 (Kotlin DSL), JDK 21, Kotlin 2.2 | Decided |
 | Package ID | `io.github.jasondorjeshort.dystopo` | Decided (GitHub namespace) |
-| Min SDK | _TBD_ (proposal: 26) | Open |
+| Min SDK | 26 | Decided (T10) |
 
 ## Dev environment setup
 - [x] Git, GitHub CLI (`gh`), repo at https://github.com/jasondorjeshort/dystopo (private until there's something to show)
 - [x] JDK 21 (Temurin), Gradle wrapper
-- [ ] Android SDK command-line tools + headless emulator (task T10; Android Studio is optional)
+- [x] Android SDK command-line tools + headless emulator under `C:\Users\Dorje\Android\sdk` (`tools/android-sdk.ps1`, `tools/android-emu.ps1`; Windows Hypervisor Platform enabled)
 - [ ] Physical device with USB debugging
 
 ## Open questions
