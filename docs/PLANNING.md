@@ -209,6 +209,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T9 merged (PR #9): data source registry.** Licensing hard rule 4 is now code: `sources.json` in `shared` lists every source with license, attribution (plain and HTML), vertical datum, coverage and cadence; the registry validates on load. Reports carry provenance, i.e. only the sources that actually contributed (Rainier z13: 3DEP + GEOID18 + EGM2008, no Copernicus, because US coverage is complete there; at the Glacier/Waterton border all five), tile packs get registry attribution in their metadata, and tilebuild credits come from the same place. Wave 2 complete: nine of ten tasks merged; only the Android shell (T10) remains in wave 1's list.
 
+**2026-10-09: T11b merged (PR #10): hardening sweep.** Corrupt PMTiles archives now fail fast with a reason instead of allocating or looping (11 fixtures built by patching real writer output); tilebuild leaves no temp dirs; the license policy no longer lets "GPL ISC"-style strings through and reports multi-license choices; the registry carries the Copernicus licence document, honest 3DEP datum wording, SPDX expressions, and provenance is mandatory on every result with data.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
