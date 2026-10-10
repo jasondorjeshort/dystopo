@@ -27,6 +27,40 @@ enum class VerticalDatum {
      * -0.2 to +0.5 m, growing with height, so the matching grid is used rather than a constant.
      */
     LN02,
+
+    /**
+     * Norwegian national heights NN2000 (EPSG:5941), used by Kartverket's national DTM. Realized
+     * through Kartverket's HREF2018B height reference surface ([Datums.NORWAY_GEOID]).
+     */
+    NN2000,
+
+    /**
+     * EVRF2000 Austria heights (EPSG:9274, orthometric), used by BEV's ALS DTM from the 2022 edition
+     * on (the 2021 edition was in GHA, Gebrauchshoehen Adria, EPSG:5778). Realized through BEV's
+     * ETRS89 geoid for Austria ([Datums.AUSTRIA_GEOID]).
+     */
+    EVRF2000_AUSTRIA,
+}
+
+/**
+ * A national geoid or height reference surface grid on the PROJ CDN, of the kind
+ * national height + grid value = ETRS89 ellipsoidal height (PROJ's
+ * VERTICAL_OFFSET_GEOGRAPHIC_TO_VERTICAL grids). ETRS89 is taken as WGS84, a few centimetres
+ * vertically. Bounds are the grid's extent in degrees.
+ */
+data class NationalGeoid(
+    val datum: VerticalDatum,
+    /** Registry id in sources.json. */
+    val registryId: String,
+    /** File name on the PROJ CDN. */
+    val file: String,
+    val west: Double,
+    val south: Double,
+    val east: Double,
+    val north: Double,
+) {
+    fun intersects(boxWest: Double, boxSouth: Double, boxEast: Double, boxNorth: Double): Boolean =
+        boxEast >= west && boxWest <= east && boxNorth >= south && boxSouth <= north
 }
 
 /**
@@ -167,4 +201,25 @@ object Datums {
      */
     fun swissToEgm2008(lat: Double, lon: Double, chgeo: GeoidModel, egm2008: GeoidModel): Double =
         chgeo.undulation(lat, lon) - egm2008.undulation(lat, lon)
+
+    /**
+     * Kartverket HREF2018B (NN2000 -> ETRS89 ellipsoidal heights), CC BY 4.0 via PROJ-data. The
+     * newer HREF2025A realizes NN2000:2025; the DTM's heights are NN2000 as published, and the two
+     * surfaces differ by centimetres, so the long-standing 2018B grid is used.
+     */
+    val NORWAY_GEOID = NationalGeoid(VerticalDatum.NN2000, "href2018b", "no_kv_HREF2018B_NN2000_EUREF89.tif", 4.0, 57.8, 32.0, 72.0)
+
+    /**
+     * BEV GEOID_GRS80_Oesterreich (ETRS89 -> EVRF2000 Austria heights; EPSG:9276), CC BY 4.0 via
+     * PROJ-data. Covers 9.5-17.25 E, 46.325-49.075 N: Austria with a few kilometres of margin.
+     */
+    val AUSTRIA_GEOID = NationalGeoid(VerticalDatum.EVRF2000_AUSTRIA, "bev-geoid", "at_bev_GEOID_GRS80_Oesterreich.tif", 9.5, 46.325, 17.25, 49.075)
+
+    /**
+     * Meters to add to a national height to get an EGM2008 height, for a [NationalGeoid] grid:
+     * height + national undulation = ETRS89 ellipsoidal height (= WGS84 to a few cm), minus the
+     * EGM2008 undulation. Same form as [swissToEgm2008].
+     */
+    fun nationalToEgm2008(lat: Double, lon: Double, national: GeoidModel, egm2008: GeoidModel): Double =
+        national.undulation(lat, lon) - egm2008.undulation(lat, lon)
 }

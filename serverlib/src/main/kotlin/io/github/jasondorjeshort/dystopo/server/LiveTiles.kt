@@ -853,6 +853,8 @@ class LiveTiles(
         fun labelFor(provenance: List<String>): String = when {
             provenance.any { it == "3dep" || it == "3dep-1m" } -> "live-3dep"
             "swissalti3d" in provenance -> "live-swissalti" // T50: swissALTI3D inside `best` (T56)
+            "kartverket-dtm" in provenance -> "live-kartverket" // T59
+            "bev-als-dtm" in provenance -> "live-bev" // T59
             "copernicus" in provenance -> "live-copernicus"
             else -> "live-nodata"
         }

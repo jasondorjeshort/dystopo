@@ -170,4 +170,69 @@ class GeoTiffTest {
         val bytes = ByteArray(bits.length / 8) { bits.substring(it * 8, it * 8 + 8).toInt(2).toByte() }
         assertEquals("ABABABA", Lzw.decode(bytes, 7).decodeToString())
     }
+
+    /**
+     * BigTIFF (magic 43): a 4x2 image in 2x2 tiles with one 2x1 overview IFD, 8-byte offsets (LONG8
+     * tile offsets), 20-byte entries, the georeference out of line and the GeoKeys inline-free.
+     */
+    private fun buildBigTiff(): ByteArray {
+        val t = TiffBuilder()
+        fun u64(b: TiffBuilder, v: Long) { b.u32(v and 0xFFFFFFFFL); b.u32(v ushr 32) }
+        // Layout: header (16) | data blobs | IFD 0 | IFD 1.
+        val blobs = TiffBuilder()
+        var cursor = 16L
+        fun place(bytes: ByteArray): Long { val at = cursor; blobs.bytes(bytes); cursor += bytes.size; return at }
+        val main = listOf(floatArrayOf(1f, 2f, 5f, 6f), floatArrayOf(3f, 4f, 7f, 8f))
+        val mainAt = main.map { place(floatBytesLE(it)) }
+        val ovAt = place(floatBytesLE(floatArrayOf(3.5f, 5.5f, 0f, 0f)))
+        val mainOffsets = place(TiffBuilder().apply { mainAt.forEach { u64(this, it) } }.toByteArray())
+        val mainCounts = place(TiffBuilder().apply { repeat(2) { u64(this, 16) } }.toByteArray())
+        val scaleAt = place(TiffBuilder().apply { f64(10.0); f64(10.0); f64(0.0) }.toByteArray())
+        val tieAt = place(TiffBuilder().apply { f64(0.0); f64(0.0); f64(0.0); f64(4_500_000.0); f64(2_700_000.0); f64(0.0) }.toByteArray())
+        val keysAt = place(TiffBuilder().apply { listOf(1, 1, 0, 2, 1025, 0, 1, 1, 3072, 0, 1, 3035).forEach { u16(it) } }.toByteArray())
+
+        class E(val tag: Int, val type: Int, val count: Long, val value: Long)
+        fun ifd(entries: List<E>, at: Long, next: Long): ByteArray = TiffBuilder().apply {
+            u64(this, entries.size.toLong())
+            for (e in entries.sortedBy { it.tag }) {
+                u16(e.tag); u16(e.type); u64(this, e.count)
+                if (e.type == 3 && e.count == 1L) { u16(e.value.toInt()); u16(0); u32(0) } else u64(this, e.value)
+            }
+            u64(this, next)
+        }.toByteArray().also { check(at >= 0) }
+        fun common(w: Long, h: Long) = listOf(
+            E(256, 3, 1, w), E(257, 3, 1, h), E(258, 3, 1, 32), E(259, 3, 1, 1), E(277, 3, 1, 1),
+            E(322, 3, 1, 2), E(323, 3, 1, 2), E(339, 3, 1, 3),
+        )
+        val ifd0Entries = common(4, 2) + listOf(
+            E(324, 16, 2, mainOffsets), E(325, 16, 2, mainCounts),
+            E(33550, 12, 3, scaleAt), E(33922, 12, 6, tieAt), E(34735, 3, 12, keysAt),
+        )
+        // Overview: one tile; its single offset and count fit inline (LONG8, 8 bytes).
+        val ifd1Entries = common(2, 1) + listOf(E(254, 4, 1, 1), E(324, 16, 1, ovAt), E(325, 16, 1, 16))
+        val ifd0At = cursor
+        val ifd0Size = 8 + ifd0Entries.size * 20 + 8
+        val ifd1At = ifd0At + ifd0Size
+        t.bytes("II".encodeToByteArray()); t.u16(43); t.u16(8); t.u16(0); u64(t, ifd0At)
+        t.bytes(blobs.toByteArray())
+        t.bytes(ifd(ifd0Entries, ifd0At, ifd1At))
+        t.bytes(ifd(ifd1Entries, ifd1At, 0))
+        return t.toByteArray()
+    }
+
+    @Test
+    fun readsBigTiffWithOverviews() {
+        val tiff = GeoTiff.open(source(buildBigTiff()))
+        assertEquals(4, tiff.width)
+        assertEquals(2, tiff.height)
+        assertEquals(3035, tiff.epsg)
+        assertEquals(listOf(1f, 2f, 5f, 6f), tiff.readTile(0, 0).toList())
+        assertEquals(listOf(3f, 4f, 7f, 8f), tiff.readTile(1, 0).toList())
+        assertEquals(4_500_005.0, tiff.xOf(0.0), 1e-9)
+        assertEquals(1, tiff.overviews.size)
+        val ov = tiff.overviews.single()
+        assertEquals(2, ov.width)
+        assertEquals(20.0, ov.pixelScaleX, 1e-12)
+        assertEquals(listOf(3.5f, 5.5f), ov.readTile(0, 0).toList().take(2))
+    }
 }

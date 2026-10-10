@@ -85,6 +85,48 @@
       "notes": "Bare-earth DTM. Found through the swisstopo STAC API (cached per 0.1 degree cell); each item is one 1x1 km tile with Cloud-Optimized GeoTIFF assets (2 m: 500x500 px, 128 px LZW tiles, one 4 m overview; 0.5 m: 2000x2000 px with 1, 2 and 4 m overviews), no-data -9999. Reprojected from LV95 with the rigorous swisstopo formulas (mm-level against the published REFRAME points). Heights converted LN02 -> EGM2008 with chgeo2004 (ETRS89 taken as WGS84, a few cm) and egm2008; the conversion error is that of the two geoid models, a few cm for CHGeo2004 plus EGM2008's own decimetre-level error in the Alps. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
     },
     {
+      "id": "kartverket-dtm",
+      "name": "Kartverket national detailed height model (DTM)",
+      "kind": "dem",
+      "provider": "Kartverket (Norwegian Mapping Authority)",
+      "coverage": {
+        "summary": "Mainland Norway, plus a strip of smoother, coarser data reaching 10 km or more into Sweden along the land border (seen at Storlien); sea and everything beyond the strip are 0 in the service and treated as no data, so Copernicus fills there.",
+        "bbox": [4.0, 57.8, 31.5, 71.5]
+      },
+      "resolution": "1 m (national lidar and image matching; read through the WCS at 1 to 16 m)",
+      "verticalDatum": "NN2000 (EPSG:5941) on ETRS89 / UTM 33N (EPSG:25833)",
+      "license": "CC-BY-4.0",
+      "licenseName": "Creative Commons Attribution 4.0 International",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "Elevation: national detailed height model (DTM) © Kartverket (CC BY 4.0).",
+      "attributionHtml": "Elevation: <a href=\"https://hoydedata.no/\" target=\"_blank\">national detailed height model</a> (DTM) &copy; Kartverket (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>).",
+      "allowedUses": "Free use, adaptation and redistribution, including commercial, with attribution to Kartverket.",
+      "url": "https://wcs.geonorge.no/skwms1/wcs.hoyde-dtm-nhm-25833?service=WCS&request=GetCoverage&version=1.0.0&coverage=nhm_dtm_topo_25833&format=GeoTIFF&crs=EPSG:25833&bbox={minx},{miny},{maxx},{maxy}&width=256&height=256",
+      "updateCadence": "Continuous: new lidar blocks replace older data as they are processed.",
+      "notes": "Bare-earth DTM (nhm_dtm_topo_25833). There are no range-readable COGs: the open download (hoydedata.no) is zipped project blocks, so the source asks the WCS (an ArcGIS image service) for fixed 256x256 px blocks on a UTM 33 grid at 1, 2, 4, 8 or 16 m (nearest neighbour), about 260 kB each, and caches every block on disk; at most 4 requests in flight. Heights converted NN2000 -> EGM2008 with href2018b (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up in Norway)."
+    },
+    {
+      "id": "bev-als-dtm",
+      "name": "BEV ALS DTM Austria (Hoehenraster 1 m)",
+      "kind": "dem",
+      "provider": "Bundesamt fuer Eich- und Vermessungswesen (BEV), with the Austrian federal states (geoland.at)",
+      "coverage": {
+        "summary": "Austria, in 55 tiles of 50x50 km on the EPSG:3035 grid; cells outside Austria are no data, so coverage follows the border exactly (seen at the Weisskugel on the Italian border).",
+        "bbox": [9.53, 46.37, 17.17, 49.02]
+      },
+      "resolution": "1 m (airborne laser scanning), with internal overviews to 2, 4, 8, 16, 32 m and coarser",
+      "verticalDatum": "EVRF2000 Austria (EPSG:9274, orthometric) on ETRS89 / LAEA Europe (EPSG:3035); the 2021 edition alone was in GHA (EPSG:5778)",
+      "license": "CC-BY-4.0",
+      "licenseName": "Creative Commons Attribution 4.0 International",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "Elevation: ALS DTM © BEV, Austrian federal and state geodata providers (CC BY 4.0).",
+      "attributionHtml": "Elevation: <a href=\"https://www.bev.gv.at/Services/Produkte/Digitales-Gelaendehoehenmodell/ALS-Hoehenraster.html\" target=\"_blank\">ALS DTM</a> &copy; BEV, Austrian federal and state geodata providers (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>).",
+      "allowedUses": "Free use, adaptation and redistribution, including commercial, with attribution to BEV.",
+      "url": "https://data.bev.gv.at/download/ALS/DTM/20250915/ALS_DTM_CRS3035RES50000mN{north}E{east}.tif",
+      "updateCadence": "Yearly editions (Stichtag 15 September), each a full set of 55 tiles; the source pins one edition.",
+      "notes": "Bare-earth DTM from the BEV INSPIRE download service (ATOM feed of series eae5f98d-d605-4783-8292-8b913d163cac). Each tile is a Cloud-Optimized BigTIFF of about 7.7 GB (50001x50001 float32, 512 px LZW tiles with the floating-point predictor, overviews), read with range requests only for the blocks a window needs. Reprojected from EPSG:3035 with LambertAzimuthalEqualArea (EPSG guidance-note formulas). Heights converted EVRF2000 Austria -> EGM2008 with bev-geoid (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
+    },
+    {
       "id": "terrarium",
       "name": "Mapzen Terrain Tiles (Terrarium, legacy)",
       "kind": "dem",
@@ -208,6 +250,48 @@
       "url": "https://cdn.proj.org/ch_swisstopo_chgeo2004_ETRS89_LN02.tif",
       "updateCadence": "Static.",
       "notes": "ch_swisstopo_chgeo2004_ETRS89_LN02.tif converts LN02 heights (swissALTI3D), ch_swisstopo_chgeo2004_ETRS89_LHN95.tif LHN95 heights; used with egm2008 to put Swiss heights in EGM2008. Striped (not tiled) GeoTIFFs of about 300 kB, read whole."
+    },
+    {
+      "id": "href2018b",
+      "name": "Kartverket HREF2018B height reference surface (NN2000)",
+      "kind": "geoid",
+      "provider": "Kartverket; grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Norway with a margin.",
+        "bbox": [4.0, 57.8, 32.0, 72.0]
+      },
+      "resolution": "0.04 x 0.02 degree grid (2.4 x 1.2 arc-minutes)",
+      "verticalDatum": "NN2000 (EPSG:5941) relative to the ETRS89 ellipsoid",
+      "license": "CC-BY-4.0",
+      "licenseName": "Creative Commons Attribution 4.0 International",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/no_kv/no_kv_README.txt",
+      "attribution": "Height reference: HREF2018B © Kartverket (CC BY 4.0), via PROJ-data.",
+      "attributionHtml": "Height reference: HREF2018B &copy; Kartverket (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Free use with attribution.",
+      "url": "https://cdn.proj.org/no_kv_HREF2018B_NN2000_EUREF89.tif",
+      "updateCadence": "Static (HREF2025A realizes NN2000:2025; not used).",
+      "notes": "NN2000 height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put Kartverket heights in EGM2008."
+    },
+    {
+      "id": "bev-geoid",
+      "name": "BEV geoid for Austria (ETRS89 to EVRF2000 Austria)",
+      "kind": "geoid",
+      "provider": "Bundesamt fuer Eich- und Vermessungswesen (BEV); grid converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Austria with a margin.",
+        "bbox": [9.5, 46.325, 17.25, 49.075]
+      },
+      "resolution": "2.5 x 1.5 arc-minute grid",
+      "verticalDatum": "EVRF2000 Austria (EPSG:9274) relative to the ETRS89 ellipsoid",
+      "license": "CC-BY-4.0",
+      "licenseName": "Creative Commons Attribution 4.0 International",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/at_bev/at_bev_README.txt",
+      "attribution": "Geoid: GEOID_GRS80_Oesterreich © BEV (CC BY 4.0), via PROJ-data.",
+      "attributionHtml": "Geoid: GEOID_GRS80_Oesterreich &copy; BEV (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Free use with attribution.",
+      "url": "https://cdn.proj.org/at_bev_GEOID_GRS80_Oesterreich.tif",
+      "updateCadence": "Static.",
+      "notes": "EPSG:9276. EVRF2000 Austria height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put BEV ALS DTM heights in EGM2008. The GHA grid (at_bev_GV_Hoehengrid_plus_Geoid_V2.tif) would serve the 2021 edition, which is not used."
     },
     {
       "id": "egm2008",

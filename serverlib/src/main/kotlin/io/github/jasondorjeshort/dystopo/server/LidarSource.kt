@@ -352,19 +352,27 @@ class BestSource : FeatheredSource {
     }
 
     override val id = "best"
-    override val registryIds = listOf("copernicus", "3dep", "3dep-1m", "swissalti3d", "chgeo2004") + Geoids.REGISTRY_IDS
+    override val registryIds = listOf("copernicus", "3dep", "3dep-1m", "swissalti3d", "kartverket-dtm", "bev-als-dtm", "chgeo2004", "href2018b", "bev-geoid") +
+        Geoids.REGISTRY_IDS
 
     override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val global = CopernicusSource().fetch(window)
-        // Regional layers never overlap (Switzerland, US), so each feathers into Copernicus on its own.
+        // Regional layers barely overlap (Switzerland, Austria, Norway, US), so each feathers into what is below it;
+        // where Swiss and Austrian data both reach past the border, Austria's goes on top.
         val swiss = SwissAltiSource().fetch(window)
+        val austria = AustriaSource().fetch(window)
+        val norway = NorwaySource().fetch(window)
         val us = ThreeDepBestSource().fetch(window, featherCellSizeMeters)
         val feather = GLOBAL_FEATHER_METERS / featherCellSizeMeters
         val withSwiss = Composite.over(swiss.grid, global.grid, feather)
-        val merged = Composite.over(us.grid, withSwiss, feather)
+        val withAustria = Composite.over(austria.grid, withSwiss, feather)
+        val withNorway = Composite.over(norway.grid, withAustria, feather)
+        val merged = Composite.over(us.grid, withNorway, feather)
         val counters = LinkedHashMap<String, Long>()
         global.counters.forEach { (k, v) -> counters["copernicus.$k"] = v }
         swiss.counters.forEach { (k, v) -> counters["swissalti3d.$k"] = v }
+        austria.counters.forEach { (k, v) -> counters["bev.$k"] = v }
+        norway.counters.forEach { (k, v) -> counters["kartverket.$k"] = v }
         us.counters.forEach { (k, v) -> counters["3dep.$k"] = v }
         counters["usCoveragePermille"] = (Composite.coverage(us.grid) * 1000).toLong()
         counters["swissCoveragePermille"] = (Composite.coverage(swiss.grid) * 1000).toLong()
@@ -372,13 +380,27 @@ class BestSource : FeatheredSource {
             counters["swissSeamStepCm"] = Math.round(feathered * 100)
             counters["swissSeamHardCutStepCm"] = Math.round(hard * 100)
         }
+        counters["austriaCoveragePermille"] = (Composite.coverage(austria.grid) * 1000).toLong()
+        SwissAltiSource.seamSteps(austria.grid, withSwiss, withAustria)?.let { (feathered, hard) ->
+            counters["austriaSeamStepCm"] = Math.round(feathered * 100)
+            counters["austriaSeamHardCutStepCm"] = Math.round(hard * 100)
+        }
+        counters["norwayCoveragePermille"] = (Composite.coverage(norway.grid) * 1000).toLong()
+        SwissAltiSource.seamSteps(norway.grid, withAustria, withNorway)?.let { (feathered, hard) ->
+            counters["norwaySeamStepCm"] = Math.round(feathered * 100)
+            counters["norwaySeamHardCutStepCm"] = Math.round(hard * 100)
+        }
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
         // Each layer counts only if it shows: the regional layers have data (they're NaN elsewhere), and
         // Copernicus is visible wherever both have holes (Composite.over leaves full cover untouched).
-        val globalShows = us.grid.values.indices.any { us.grid.values[it].isNaN() && swiss.grid.values[it].isNaN() }
+        val globalShows = us.grid.values.indices.any {
+            us.grid.values[it].isNaN() && swiss.grid.values[it].isNaN() && austria.grid.values[it].isNaN() && norway.grid.values[it].isNaN()
+        }
         return ElevationSource.Result(
             merged, counters,
-            ElevationSource.mergeProvenance(if (globalShows) global.provenance else emptyList(), swiss.provenance, us.provenance),
+            ElevationSource.mergeProvenance(
+                if (globalShows) global.provenance else emptyList(), swiss.provenance, austria.provenance, norway.provenance, us.provenance,
+            ),
         )
     }
 }

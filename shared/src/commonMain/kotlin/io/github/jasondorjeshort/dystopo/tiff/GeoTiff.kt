@@ -14,7 +14,7 @@ typealias Decompressor = (input: ByteArray, expectedSize: Int) -> ByteArray
  * are read as tiles one strip tall and the full image wide. Reads only the header up front; tiles are fetched
  * on demand through [ByteRangeSource], so remote files work without downloading them whole.
  *
- * Supported: little/big-endian classic TIFF; compression none (1) and LZW (5) built in, others
+ * Supported: little/big-endian classic TIFF and BigTIFF (e.g. Austria's 7.7 GB ALS DTM tiles); compression none (1) and LZW (5) built in, others
  * via [Decompressor]s (e.g. deflate on the JVM); predictors none (1), horizontal (2) and
  * floating point (3); internal overviews (reduced-resolution IFDs), exposed as [overviews].
  */
@@ -120,27 +120,36 @@ class GeoTiff private constructor(
                 else -> throw IllegalArgumentException("not a TIFF file")
             }
             val magic = u16(head, 2, le)
-            if (magic == 43) throw UnsupportedOperationException("BigTIFF not supported")
-            require(magic == 42) { "not a TIFF file (magic $magic)" }
+            require(magic == 42 || magic == 43) { "not a TIFF file (magic $magic)" }
+            // BigTIFF: 8-byte offsets and counts, 20-byte IFD entries with 8 bytes of inline value.
+            val big = magic == 43
+            if (big) require(u16(head, 4, le) == 8 && u16(head, 6, le) == 0) { "unsupported BigTIFF offset size" }
+            val entrySize = if (big) 20 else 12
+            val inlineSize = if (big) 8 else 4
+            val countSize = if (big) 8 else 2
+            fun offsetAt(b: ByteArray, p: Int): Long = if (big) u64(b, p, le) else u32(b, p, le)
 
             fun bytesAt(offset: Long, length: Int): ByteArray =
                 if (offset + length <= head.size) head.copyOfRange(offset.toInt(), offset.toInt() + length)
                 else source.read(offset, length)
 
             fun readIfd(offset: Long): Ifd {
-                val count = u16(bytesAt(offset, 2), 0, le)
-                val ifdBytes = bytesAt(offset + 2, count * 12 + 4)
+                val count = if (big) u64(bytesAt(offset, 8), 0, le).toInt() else u16(bytesAt(offset, 2), 0, le)
+                require(count in 1..4096) { "implausible TIFF IFD entry count $count" }
+                val ifdBytes = bytesAt(offset + countSize, count * entrySize + inlineSize)
                 val tags = HashMap<Int, Entry>()
                 for (i in 0 until count) {
-                    val p = i * 12
-                    tags[u16(ifdBytes, p, le)] =
-                        Entry(u16(ifdBytes, p + 2, le), u32(ifdBytes, p + 4, le).toInt(), ifdBytes.copyOfRange(p + 8, p + 12))
+                    val p = i * entrySize
+                    val n = if (big) u64(ifdBytes, p + 4, le) else u32(ifdBytes, p + 4, le)
+                    require(n in 0..Int.MAX_VALUE.toLong()) { "TIFF tag count $n too large" }
+                    val valueAt = p + entrySize - inlineSize
+                    tags[u16(ifdBytes, p, le)] = Entry(u16(ifdBytes, p + 2, le), n.toInt(), ifdBytes.copyOfRange(valueAt, valueAt + inlineSize))
                 }
 
                 fun raw(tag: Int): Pair<Entry, ByteArray>? {
                     val e = tags[tag] ?: return null
                     val size = typeSize(e.type) * e.count
-                    val data = if (size <= 4) e.inline else bytesAt(u32(e.inline, 0, le), size)
+                    val data = if (size <= inlineSize) e.inline else bytesAt(offsetAt(e.inline, 0), size)
                     return e to data
                 }
 
@@ -183,11 +192,11 @@ class GeoTiff private constructor(
                     tileByteCounts = numbers(if (tiled) 325 else 279)!!.map { it.toLong() }.toLongArray(),
                     numbers = ::numbers,
                     ascii = { tag -> raw(tag)?.second?.decodeToString()?.trimEnd('\u0000')?.trim() },
-                    next = u32(ifdBytes, count * 12, le),
+                    next = offsetAt(ifdBytes, count * entrySize),
                 )
             }
 
-            val main = readIfd(u32(head, 4, le))
+            val main = readIfd(if (big) u64(head, 8, le) else u32(head, 4, le))
             val scale = main.numbers(33550) ?: throw IllegalArgumentException("missing ModelPixelScale")
             val tie = main.numbers(33922) ?: throw IllegalArgumentException("missing ModelTiepoint")
             // Tiepoint: raster (i, j) maps to model (x, y).
@@ -270,7 +279,7 @@ class GeoTiff private constructor(
             1, 2, 6, 7 -> 1
             3, 8 -> 2
             4, 9, 11 -> 4
-            5, 10, 12, 16 -> 8
+            5, 10, 12, 16, 17, 18 -> 8
             else -> 1
         }
 

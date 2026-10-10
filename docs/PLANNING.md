@@ -420,8 +420,11 @@ The project will be fully open source. Code and map content may need different l
 | USGS 3DEP / NED, SRTM | Public domain | No restrictions |
 | Copernicus GLO-30 DEM | Free, attribution required | Fine for generated contours/hillshade |
 | swisstopo swissALTI3D (and the CHGeo2004 geoid) | swisstopo OGD terms: free use incl. commercial, source required (CHGeo2004 grid: CC0) | Fine for generated contours/hillshade; credit swisstopo wherever Swiss data shows (registry ids `swissalti3d`, `chgeo2004`) |
+| Kartverket national DTM (and the HREF2018B height reference grid) | CC BY 4.0 | Fine for generated contours/hillshade; credit Kartverket wherever Norwegian data shows (registry ids `kartverket-dtm`, `href2018b`) |
+| BEV ALS DTM Austria (and BEV's ETRS89 geoid grid) | CC BY 4.0 | Fine for generated contours/hillshade; credit BEV wherever Austrian data shows (registry ids `bev-als-dtm`, `bev-geoid`) |
 | User-added third-party sources | Per provider | Many forbid caching or redistribution; user-added sources stay on the user's device and are never republished |
 
+- **How the national 1 m sources are read (T59).** Norway: Kartverket publishes no range-readable COGs (hoydedata.no hands out zipped project blocks), but its WCS (`wcs.geonorge.no/skwms1/wcs.hoyde-dtm-nhm-25833`, coverage `nhm_dtm_topo_25833`, an ArcGIS image service) cuts any box at any resolution, so `NorwaySource` asks for fixed 256 px blocks on a UTM 33 grid at 1 to 16 m and caches each block forever; 0 is the service's fill (sea, and beyond a strip of coarser data that reaches 10 km or more into Sweden). Austria: BEV's ALS DTM tiles (`data.bev.gv.at/download/ALS/DTM/<edition>/`) are 7.7 GB Cloud-Optimized BigTIFFs on 50 km EPSG:3035 squares (not EPSG:3416 Austria Lambert), range-readable with overviews, so no whole-tile download is needed; heights are EVRF2000 Austria (EPSG:9274) from the 2022 edition on, GHA only in 2021. A whole-tile fallback was not needed for either.
 - The likely result: **ODbL for vector tiles** (forced by OSM), and **CC BY-SA 4.0** (the share-alike, GPL-like content license) or CC BY 4.0 for raster tiles and non-OSM layers.
 - Each tile set records its sources and attribution in its metadata, and the app shows attribution for every visible layer.
 

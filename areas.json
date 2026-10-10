@@ -150,6 +150,18 @@
       "expectedElevation": [1000, 4158],
       "tags": ["world"]
     },
+    "galdhopiggen": {
+      "bbox": [8.26, 61.61, 8.37, 61.66],
+      "description": "Galdhoepiggen (2469 m, summit 61.6364N 8.3125E), Jotunheimen, Norway: Styggebreen and Svellnosbreen glaciers, Juvasshytta and the upper Visdalen and Leirdalen sides. All Kartverket DTM.",
+      "expectedElevation": [1200, 2469],
+      "tags": ["world"]
+    },
+    "grossglockner": {
+      "bbox": [12.65, 47.05, 12.74, 47.10],
+      "description": "Grossglockner (3798 m, summit 47.0742N 12.6947E), Hohe Tauern, Austria: the Pasterze glacier, Glocknerwand and the head of the Koednitz valley. All BEV ALS DTM.",
+      "expectedElevation": [2000, 3798],
+      "tags": ["world"]
+    },
     "rainier-lidar-edge": {
       "bbox": [-121.90, 46.71, -121.78, 46.80],
       "description": "Southwest Mount Rainier National Park, WA, USA: Longmire, Tahoma Creek and the Nisqually valley. USGS 1 m lidar (WA_CentralWildfire_D22) ends along a roughly east-west line at about 46.768N; north of it only 3DEP 10 m exists. Forested valleys, cliffs and moraines on both sides of the edge.",

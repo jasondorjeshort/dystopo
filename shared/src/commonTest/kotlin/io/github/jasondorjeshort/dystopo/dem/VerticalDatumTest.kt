@@ -90,6 +90,24 @@ class VerticalDatumTest {
     }
 
     @Test
+    fun norwayAndAustriaGoThroughTheirNationalGridsThenEgm2008() {
+        val national = GeoidModel { _, _ -> 41.0 }
+        val egm2008 = GeoidModel { _, _ -> 40.3 }
+        assertEquals(0.7, Datums.nationalToEgm2008(61.64, 8.31, national, egm2008), 1e-12)
+        for (g in listOf(Datums.NORWAY_GEOID, Datums.AUSTRIA_GEOID)) {
+            val entry = SourceRegistry.builtIn[g.registryId] ?: error("${g.registryId} not in sources.json")
+            assertEquals(SourceKind.GEOID, entry.kind)
+            assertEquals("https://cdn.proj.org/${g.file}", entry.url)
+        }
+        assertEquals(VerticalDatum.NN2000, Datums.NORWAY_GEOID.datum)
+        assertEquals(VerticalDatum.EVRF2000_AUSTRIA, Datums.AUSTRIA_GEOID.datum)
+        // Galdhoepiggen and Grossglockner are inside their grids; Rainier is in neither.
+        assertTrue(Datums.NORWAY_GEOID.intersects(8.30, 61.63, 8.33, 61.65))
+        assertTrue(Datums.AUSTRIA_GEOID.intersects(12.68, 47.06, 12.71, 47.09))
+        assertFalse(Datums.AUSTRIA_GEOID.intersects(-121.86, 46.78, -121.66, 46.93))
+    }
+
+    @Test
     fun pa11ShiftDiffersFromNad83Of2011ByAboutTenCentimetersInHawaii() {
         val a = Datums.wgs84MinusNad83Height(19.82, -155.47, Nad83Frame.NAD83_2011)
         val b = Datums.wgs84MinusNad83Height(19.82, -155.47, Nad83Frame.NAD83_PA11)
