@@ -65,6 +65,7 @@ class Routes(private val app: DystopoApp) {
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
         settings.handle(r)?.let { return it }
         labels.handle(r)?.let { return it }
+        PacksRoutes.handle(app, r)?.let { return it }
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

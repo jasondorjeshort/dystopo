@@ -131,5 +131,6 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
             )
         }
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
+        io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen
     }
 }

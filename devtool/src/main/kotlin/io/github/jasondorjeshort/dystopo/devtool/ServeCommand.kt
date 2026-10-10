@@ -84,6 +84,8 @@ class ServeCommand : CliktCommand(name = "serve") {
         server.createContext("/") { ex ->
             try {
                 val path = ex.requestURI.path
+                // Static host for out/ (pack downloads in the app; ranges, ?kbps= throttle): see ServeStatic.
+                if (path.startsWith("/out/")) return@createContext ServeStatic.serve(ex, File("out"), path.removePrefix("/out/"))
                 tileRe.matchEntire(path)?.let { m ->
                     val (kind, zs, xs, ys) = m.destructured
                     val z = zs.toInt(); val x = xs.toInt(); val y = ys.toInt()

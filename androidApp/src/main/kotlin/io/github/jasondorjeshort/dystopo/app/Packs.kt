@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.packs.PackFileSet
+import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.pmtiles.Compression
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.tiff.ByteRangeSource
@@ -55,21 +57,49 @@ class Pack(val name: String, val file: File) : AutoCloseable {
 }
 
 /**
- * The region pack the app shows: a Terrarium DEM archive and an optional OSM vector archive, found in
- * the app's files dir (`files/packs/dem.pmtiles`, `files/packs/osm.pmtiles`; tools/android-push-pack.ps1
- * puts them there) or the app-specific external files dir (same layout), plus glyph PBFs in
- * `files/glyphs/<fontstack>/<range>.pbf`.
+ * The region pack the app shows: a Terrarium DEM archive and an optional OSM vector archive, plus glyph
+ * PBFs in `files/glyphs/<fontstack>/<range>.pbf`. Packs live in `packs/` under the app's files dir or
+ * the app-specific external files dir, named `<name>-dem.pmtiles` and `<name>-outdoors.pmtiles`
+ * ([PackNames]); the unnamed pair `dem.pmtiles` + `osm.pmtiles` that tools/android-push-pack.ps1 pushes
+ * is the pack `default`. The active pack's name is stored in `files/packs/active`
+ * ([io.github.jasondorjeshort.dystopo.app.packs.PackManager] changes it); without one, `default` or the
+ * first pack by name is shown.
  */
-class PackSet(val dem: Pack?, val osm: Pack?, val glyphDir: File?) {
+class PackSet(val dem: Pack?, val osm: Pack?, val glyphDir: File?, val name: String? = null) {
     companion object {
+        const val PACKS_DIR = "packs"
+        const val ACTIVE_FILE = "active"
+
+        /** Every pack in [roots] (`<root>/packs/`), the first root winning when a file name repeats. */
+        fun catalog(roots: List<File>): List<PackFiles> {
+            val files = LinkedHashMap<String, File>()
+            for (root in roots) {
+                File(root, PACKS_DIR).listFiles()?.filter { it.isFile }?.forEach { f -> if (f.name !in files) files[f.name] = f }
+            }
+            return PackNames.group(files.keys).map { set -> PackFiles(set.name, set.dem?.let(files::get), set.vector?.let(files::get)) }
+        }
+
+        fun storedActive(roots: List<File>): String? =
+            roots.firstOrNull()?.let { File(it, "$PACKS_DIR/$ACTIVE_FILE") }?.takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
+
+        fun storeActive(roots: List<File>, name: String) {
+            val f = File(roots.first(), "$PACKS_DIR/$ACTIVE_FILE")
+            f.parentFile?.mkdirs()
+            f.writeText(name + "\n")
+        }
+
         fun open(roots: List<File>): PackSet {
-            fun find(name: String): File? = roots.map { File(it, "packs/$name") }.firstOrNull { it.isFile }
+            val packs = catalog(roots)
+            val active = PackNames.chooseActive(packs.map { PackFileSet(it.name, it.dem?.name, it.vector?.name) }, storedActive(roots))
             val glyphs = roots.map { File(it, "glyphs") }.firstOrNull { it.isDirectory }
-            return PackSet(
-                dem = find("dem.pmtiles")?.let { Pack("dem", it) },
-                osm = find("osm.pmtiles")?.let { Pack("osm", it) },
-                glyphDir = glyphs,
-            )
+            val set = packs.firstOrNull { it.name == active } ?: return PackSet(null, null, glyphs)
+            fun open(file: File?, label: String) = file?.let { f -> runCatching { Pack(label, f) }.getOrNull() }
+            return PackSet(dem = open(set.dem, "dem"), osm = open(set.vector, "osm"), glyphDir = glyphs, name = active)
         }
     }
+}
+
+/** A pack's files on disk (either may be missing). */
+class PackFiles(val name: String, val dem: File?, val vector: File?) {
+    val files: List<File> get() = listOfNotNull(dem, vector)
 }

@@ -23,6 +23,7 @@ class DystopoApp : Application() {
         MapLibre.getInstance(this)
         AppSettings.load(this)
         tiles = openTiles()
+        io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)
         server = LocalServer(BuildConfig.SERVER_PORT, threads = 4, handler = routes::handle)
         try {
