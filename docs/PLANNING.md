@@ -203,6 +203,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T2 merged (PR #6): slope-angle shading and multidirectional hillshade.** Slope angle/aspect per cell in `shared`; CalTopo-style bands (27–29 yellow through 60+ blue) as a translucent overlay (`--slope-overlay`), and `--shading multi` blending four light directions with a north-west bias so faces turned away from the light keep their ribs and couloirs. Rainier z13: 17% of cells in the 35–45° band, 1.4% over 60°; Mont Blanc 25% and 1.9%. Slope costs ~100 ms for a 1.5 Mpx area. Known: the Terrarium-era striping on Rainier's upper east-side glaciers flips bands at the 27–35° edges; DEM smoothing before slope/hillshade is the fix (follow-up).
 
+**2026-10-09: T7 merged (PR #8): dependency license check.** `./gradlew check` now fails on any GPL/AGPL dependency in any module, on LGPL outside `tilebuild`, and on artifacts whose POM chain has no license (unless listed in `gradle/licenses/artifact-overrides.txt`). Current state: shared 2 artifacts, devtool 24, tilebuild 135 (10 LGPL, tolerated). Policy choice recorded: multiple licenses in a POM are treated as alternatives (best wins), which is what lets dual-licensed JNA/jffi pass; the report lists every license so cumulative cases can be found by hand.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
