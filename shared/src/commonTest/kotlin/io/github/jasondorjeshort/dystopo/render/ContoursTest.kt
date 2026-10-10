@@ -18,6 +18,9 @@ class ContoursTest {
         assertEquals(listOf(10.0, 20.0, 30.0), Contours.levels(0.0, 40.0, 10.0))
         assertEquals(listOf(10.0, 20.0), Contours.levels(5.0, 25.0, 10.0))
         assertEquals(emptyList(), Contours.levels(1.0, 9.0, 10.0))
+        // An all-NaN grid (open ocean) has min = +inf, max = -inf: no levels, not an overflowed range.
+        val empty = ElevationGrid(3, 3, 1.0, FloatArray(9) { Float.NaN })
+        assertEquals(emptyList(), Contours.levels(empty.min().toDouble(), empty.max().toDouble(), 10.0))
     }
 
     @Test

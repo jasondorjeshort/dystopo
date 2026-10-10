@@ -19,7 +19,7 @@ data class AreasFile(val areas: Map<String, AreaDef> = emptyMap())
 data class NamedArea(val name: String, val bbox: List<Double>, val description: String, val local: Boolean) {
     fun boundingBox(): BoundingBox {
         require(bbox.size == 4) { "area '$name': bbox must be [west, south, east, north]" }
-        return BoundingBox(bbox[0], bbox[1], bbox[2], bbox[3])
+        return BoundingBox.unwrapped(bbox[0], bbox[1], bbox[2], bbox[3]) // west > east crosses the antimeridian
     }
 }
 
@@ -66,7 +66,7 @@ object Areas {
         bboxText != null -> {
             val parts = bboxText.split(",").map { it.trim().toDoubleOrNull() }
             if (parts.size != 4 || parts.any { it == null }) throw UsageError("--bbox must be west,south,east,north")
-            null to BoundingBox(parts[0]!!, parts[1]!!, parts[2]!!, parts[3]!!)
+            null to BoundingBox.unwrapped(parts[0]!!, parts[1]!!, parts[2]!!, parts[3]!!)
         }
         else -> throw UsageError("one of --area or --bbox is required")
     }

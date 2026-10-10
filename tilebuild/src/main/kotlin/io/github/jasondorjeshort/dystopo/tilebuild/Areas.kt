@@ -28,7 +28,7 @@ object Areas {
             val file = File(root, fileName)
             if (!file.isFile) continue
             for ((name, def) in json.decodeFromString<AreasFile>(file.readText()).areas) {
-                result[name] = validate(def.bbox, "area '$name'")
+                result[name] = def.bbox.toDoubleArray() // validated on use: one odd area must not break the rest
             }
         }
         return result
@@ -40,10 +40,11 @@ object Areas {
      * names of personal areas.
      */
     fun bbox(name: String, root: File = File(".")): DoubleArray {
-        return load(root)[name] ?: throw UsageError(
+        val box = load(root)[name] ?: throw UsageError(
             "unknown area '$name'; public areas: ${loadFiles(root, PUBLIC_FILE).keys.joinToString()} " +
                 "(personal areas from $LOCAL_FILE also work but are not listed)"
         )
+        return validate(box.toList(), "area '$name'")
     }
 
     /** Parses `west,south,east,north`. */

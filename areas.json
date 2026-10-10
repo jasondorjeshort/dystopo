@@ -2,19 +2,135 @@
   "areas": {
     "rainier": {
       "bbox": [-121.86, 46.78, -121.66, 46.93],
-      "description": "Mount Rainier, WA, USA. Glaciated stratovolcano; US high-resolution elevation coverage."
+      "description": "Mount Rainier, WA, USA. Glaciated stratovolcano; US high-resolution elevation coverage.",
+      "expectedElevation": [500, 4392],
+      "tags": ["world"]
     },
     "mont-blanc": {
       "bbox": [6.78, 45.80, 6.95, 45.93],
-      "description": "Mont Blanc massif and the Chamonix valley, France/Italy. Non-US coverage."
+      "description": "Mont Blanc massif and the Chamonix valley, France/Italy. Non-US coverage.",
+      "expectedElevation": [950, 4809],
+      "tags": ["world"]
     },
     "bonneville": {
       "bbox": [-113.95, 40.70, -113.80, 40.80],
-      "description": "Bonneville Salt Flats, UT, USA. Flat and bare, for checking vertical datum offsets between sources."
+      "description": "Bonneville Salt Flats, UT, USA. Flat and bare (about 1283 m), for checking vertical datum offsets between sources; a small hill rises in the north-west corner.",
+      "expectedElevation": [1280, 1430],
+      "tags": ["world"]
     },
     "glacier-waterton": {
       "bbox": [-114.05, 48.92, -113.80, 49.08],
-      "description": "US-Canada border between Glacier and Waterton Lakes national parks. Tests the US 3DEP -> global Copernicus seam."
+      "description": "US-Canada border between Glacier and Waterton Lakes national parks. Tests the US 3DEP -> global Copernicus seam.",
+      "expectedElevation": [1270, 3190],
+      "tags": ["world"]
+    },
+    "everest": {
+      "bbox": [86.85, 27.92, 86.99, 28.03],
+      "description": "Mount Everest, Lhotse and the Khumbu glacier, Nepal/China. Highest terrain; east longitudes.",
+      "expectedElevation": [4200, 8849],
+      "tags": ["world"]
+    },
+    "aconcagua": {
+      "bbox": [-70.09, -32.72, -69.94, -32.59],
+      "description": "Aconcagua, Argentina. Highest peak of the southern and western hemispheres.",
+      "expectedElevation": [2800, 6961],
+      "tags": ["world"]
+    },
+    "denali": {
+      "bbox": [-151.15, 62.99, -150.85, 63.13],
+      "description": "Denali, Alaska, USA. 3DEP exists here but GEOID18 does not: unconverted cells must be reported and filled by Copernicus.",
+      "expectedElevation": [1000, 6190],
+      "tags": ["world", "expectUnconverted"]
+    },
+    "mauna-kea": {
+      "bbox": [-155.55, 19.75, -155.39, 19.89],
+      "description": "Mauna Kea summit, Hawaii, USA. 3DEP outside GEOID18, like Alaska.",
+      "expectedElevation": [1700, 4207],
+      "tags": ["world", "expectUnconverted"]
+    },
+    "kilimanjaro": {
+      "bbox": [37.27, -3.14, 37.44, -3.00],
+      "description": "Kibo summit of Kilimanjaro, Tanzania. Southern hemisphere just below the equator, east longitude.",
+      "expectedElevation": [1800, 5895],
+      "tags": ["world"]
+    },
+    "svalbard": {
+      "bbox": [15.30, 78.12, 15.90, 78.27],
+      "description": "Longyearbyen and Adventfjorden, Svalbard, Norway (78N). High latitude; Copernicus cells are narrower in longitude here.",
+      "expectedElevation": [0, 1100],
+      "tags": ["world"]
+    },
+    "fiordland": {
+      "bbox": [167.80, -44.72, 167.98, -44.58],
+      "description": "Milford Sound and Mitre Peak, Fiordland, New Zealand. Southern hemisphere, east longitude, fjord at sea level. Copernicus has a pit to about -75 m at the head of the sound (a surface-model artifact by the steep shore), so the lower bound allows it.",
+      "expectedElevation": [-80, 2750],
+      "tags": ["world"]
+    },
+    "taveuni": {
+      "bbox": [179.88, -16.92, -179.88, -16.76],
+      "description": "Taveuni, Fiji: the 180th meridian crosses the island. bbox west > east means the box crosses the antimeridian.",
+      "expectedElevation": [0, 1241],
+      "tags": ["world"]
+    },
+    "dead-sea": {
+      "bbox": [35.33, 31.40, 35.48, 31.52],
+      "description": "Dead Sea shore at Ein Gedi, Israel/West Bank, and the Judean Desert escarpment. Lowest land on Earth (about -430 m).",
+      "expectedElevation": [-440, 600],
+      "tags": ["world"]
+    },
+    "death-valley": {
+      "bbox": [-116.86, 36.17, -116.70, 36.30],
+      "description": "Badwater Basin and the Black Mountains, Death Valley, CA, USA. Below sea level inside CONUS (3DEP + GEOID18).",
+      "expectedElevation": [-86, 1700],
+      "tags": ["world"]
+    },
+    "flevoland": {
+      "bbox": [5.35, 52.45, 5.60, 52.58],
+      "description": "Lelystad and the Flevoland polders, Netherlands. Flat reclaimed land a few meters below sea level, next to the Markermeer. expectedElevation is the ground; trees and buildings in the surface model stay within the tolerance.",
+      "expectedElevation": [-6, 5],
+      "tags": ["world"]
+    },
+    "greenwich": {
+      "bbox": [-0.08, 51.44, 0.07, 51.52],
+      "description": "Greenwich, London, UK: the prime meridian. Surface model includes the Canary Wharf towers.",
+      "expectedElevation": [-5, 250],
+      "tags": ["world"]
+    },
+    "mount-kenya": {
+      "bbox": [37.25, -0.20, 37.37, 0.02],
+      "description": "Mount Kenya, Kenya. The box crosses the equator.",
+      "expectedElevation": [1800, 5199],
+      "tags": ["world"]
+    },
+    "grand-canyon": {
+      "bbox": [-112.20, 36.03, -112.03, 36.15],
+      "description": "Grand Canyon around Phantom Ranch, AZ, USA. 1.5 km of relief from the Colorado River to the rims.",
+      "expectedElevation": [700, 2500],
+      "tags": ["world"]
+    },
+    "table-mountain": {
+      "bbox": [18.36, -34.00, 18.48, -33.90],
+      "description": "Table Mountain and central Cape Town, South Africa, down to Table Bay.",
+      "expectedElevation": [0, 1090],
+      "tags": ["world"]
+    },
+    "torres-del-paine": {
+      "bbox": [-73.18, -51.06, -72.98, -50.93],
+      "description": "Paine Grande and the Cuernos del Paine, Chile. Patagonia: southern and western hemispheres.",
+      "expectedElevation": [0, 2900],
+      "tags": ["world"]
+    },
+    "cell-corner-46n8e": {
+      "bbox": [7.92, 45.94, 8.08, 46.06],
+      "description": "Saas valley and Macugnaga, Switzerland/Italy, east of Monte Rosa. Straddles the 46N 8E corner of four Copernicus 1-degree cells. Lowest ground is Valle Anzasca near Ceppo Morelli (about 700 m).",
+      "expectedElevation": [650, 3700],
+      "tags": ["world"]
+    },
+    "pacific": {
+      "bbox": [-140.08, 9.92, -139.92, 10.08],
+      "description": "Open ocean in the central Pacific, 10N 140W. No elevation files at all: the whole grid should be NaN.",
+      "expectedElevation": [-5, 5],
+      "tags": ["world", "expectOcean"]
     }
   }
 }

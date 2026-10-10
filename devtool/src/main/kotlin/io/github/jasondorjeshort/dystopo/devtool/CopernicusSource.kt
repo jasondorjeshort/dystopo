@@ -27,11 +27,16 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
         val lons = DoubleArray(window.width) { window.lonAt(it) }
         val lats = DoubleArray(window.height) { window.latAt(it) }
 
+        // Windows crossing the antimeridian run past 180 (see BoundingBox.unwrapped); cells are keyed
+        // by wrapped longitude, and each cell prefetches the window's range shifted into its own.
         val cells = HashMap<Pair<Int, Int>, RemoteTiff?>()
+        val shifts = HashMap<Pair<Int, Int>, Double>()
         for (lat in floor(lats.last()).toInt()..floor(lats.first()).toInt()) {
             for (lon in floor(lons.first()).toInt()..floor(lons.last()).toInt()) {
-                val name = cellName(lat, lon)
-                cells[lat to lon] = try {
+                val key = lat to wrapLon(lon.toDouble()).toInt()
+                val name = cellName(key.first, key.second)
+                shifts[key] = key.second.toDouble() - lon
+                cells[key] = try {
                     RemoteTiff("https://copernicus-dem-30m.s3.amazonaws.com/$name/$name.tif", File(cacheDir, name))
                 } catch (e: IllegalStateException) {
                     null // no file: open ocean
@@ -39,12 +44,15 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
             }
         }
         val level = cells.values.filterNotNull().firstOrNull()?.levelFor(window.cellSizeMeters, 111_320.0) ?: 0
-        for (cell in cells.values) cell?.prefetch(level, lons.first(), lats.last(), lons.last(), lats.first())
+        for ((key, cell) in cells) {
+            val shift = shifts.getValue(key)
+            cell?.prefetch(level, lons.first() + shift, lats.last(), lons.last() + shift, lats.first())
+        }
 
         val values = FloatArray(window.width * window.height)
         for (j in 0 until window.height) {
             for (i in 0 until window.width) {
-                values[j * window.width + i] = sampleAcrossCells(cells, level, lats[j], lons[i])
+                values[j * window.width + i] = sampleAcrossCells(cells, level, lats[j], wrapLon(lons[i]))
             }
         }
         val counters = mapOf(
@@ -66,7 +74,7 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
      * floating-point error in pixel-center coordinates.
      */
     private fun cellKey(lat: Double, lon: Double): Pair<Int, Int> =
-        (ceil(lat - 1e-9).toInt() - 1) to floor(lon + 1e-9).toInt()
+        (ceil(lat - 1e-9).toInt() - 1) to floor(wrapLon(lon) + 1e-9).toInt()
 
     /**
      * Bilinear sample that reads neighbors from adjacent cells when the four surrounding pixels
@@ -88,8 +96,13 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
             val plon = l.xOf(c.toDouble())
             val other = cells[cellKey(plat, plon)] ?: return cell.at(level, c, r)
             val ol = other.level(level)
-            return other.at(level, Math.round(ol.colOf(plon)).toInt(), Math.round(ol.rowOf(plat)).toInt())
+            return other.at(level, Math.round(ol.colOf(wrapLon(plon))).toInt(), Math.round(ol.rowOf(plat)).toInt())
         }
         return (v(c0, r0) * (1 - fx) + v(c0 + 1, r0) * fx) * (1 - fy) + (v(c0, r0 + 1) * (1 - fx) + v(c0 + 1, r0 + 1) * fx) * fy
+    }
+
+    companion object {
+        /** Longitude in [-180, 180): cells are named and georeferenced in that range. */
+        fun wrapLon(lon: Double): Double = lon - 360.0 * floor((lon + 180.0) / 360.0)
     }
 }

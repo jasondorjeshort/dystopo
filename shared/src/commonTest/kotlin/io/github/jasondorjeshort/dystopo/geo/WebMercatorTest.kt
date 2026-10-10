@@ -36,4 +36,22 @@ class WebMercatorTest {
         // A tiny box inside one tile.
         assertEquals(1, WebMercator.tilesCovering(BoundingBox(6.86, 45.83, 6.861, 45.831), 12).size)
     }
+
+    @Test
+    fun antimeridianBoxIsUnwrapped() {
+        val box = BoundingBox.unwrapped(179.8, -17.0, -179.8, -16.8)
+        assertEquals(179.8, box.west, 1e-12)
+        assertEquals(180.2, box.east, 1e-9)
+        assertEquals(180.0, box.centerLon, 1e-9)
+        // An ordinary box is untouched.
+        assertEquals(BoundingBox(6.0, 45.0, 7.0, 46.0), BoundingBox.unwrapped(6.0, 45.0, 7.0, 46.0))
+        // The window is one continuous strip whose pixel longitudes run past 180.
+        val window = MercatorWindow.forBbox(box, 10)
+        assertEquals(true, window.lonAt(0) < 180.0)
+        assertEquals(true, window.lonAt(window.width - 1) > 180.0)
+        // Tiles continue from the last column into column 0 on the other side.
+        assertEquals(listOf(TileId(8, 255, 140), TileId(8, 0, 140)), WebMercator.tilesCovering(box, 8))
+        // A box ending exactly at 180 stays in the last column.
+        assertEquals(listOf(TileId(8, 255, 140)), WebMercator.tilesCovering(BoundingBox(179.8, -17.0, 180.0, -16.8), 8))
+    }
 }

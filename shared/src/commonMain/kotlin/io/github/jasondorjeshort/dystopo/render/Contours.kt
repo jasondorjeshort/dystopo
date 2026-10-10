@@ -15,9 +15,13 @@ class ContourLine(val level: Double, val points: DoubleArray, val closed: Boolea
 
 /** Contour extraction with marching squares. */
 object Contours {
-    /** Multiples of [interval] strictly inside the elevation range [min]..[max]. */
+    /**
+     * Multiples of [interval] strictly inside the elevation range [min]..[max]. Empty for a grid with
+     * no data, whose min/max are +/-infinity (without this the Long range overflowed to "everything").
+     */
     fun levels(min: Double, max: Double, interval: Double): List<Double> {
         require(interval > 0) { "interval must be positive" }
+        if (!min.isFinite() || !max.isFinite() || min > max) return emptyList()
         val first = floor(min / interval).toLong() + 1
         val last = ceil(max / interval).toLong() - 1
         return (first..last).map { it * interval }
