@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T69: Canada and New Zealand elevation (#67)
 - T67: Users on the server and trip sharing (#66)
 - T68: Route planning in the browser (#65)
 - T63: Cold start and tile scheduling (#64)
