@@ -27,6 +27,7 @@
   #panel h1 { font-size: 15px; margin: 0 0 6px; }
   #panel label { display: block; margin: 4px 0; }
   #panel .hint { color: #6b5f55; font-size: 12px; margin-top: 6px; }
+  @media (max-width: 520px) { #panel { max-width: 200px; padding: 6px 8px; } #panel .hint, #panel h1 { display: none; } }
   #status { position: absolute; bottom: 30px; left: 12px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 </style>
 </head>
@@ -64,22 +65,78 @@ const demSource = new mlcontour.DemSource({
   url: demMode === "pmtiles" ? "pmtiles://" + demArchiveUrl + "/{z}/{x}/{y}" : demXyzUrl,
   encoding: "terrarium",
   maxzoom: 14,
-  worker: demMode !== "pmtiles",
+  worker: false, // main thread: getTile below must be replaceable, and a worker cannot read the PMTiles archive
 });
-if (demMode === "pmtiles") {
-  demSource.manager.getTile = async (url, abortController) => {
-    const [z, x, y] = url.match(/(\d+)\/(\d+)\/(\d+)$/).slice(1).map(Number);
-    const tile = await demArchive.getZxy(z, x, y, abortController.signal);
-    // Same wording as a missing XYZ tile, so the map's error filter treats both alike.
-    if (!tile) throw new Error(`404 Not Found: DEM tile ${z}/${x}/${y} is not in the archive`);
-    return { data: new Blob([tile.data], { type: "image/png" }) };
-  };
-}
 demSource.setupMaplibre(maplibregl);
+
+// The z13-14 tiles exist only over the core box and z8-12 only over the region, but contours need all eight
+// neighbours of a tile and hillshade needs the tile itself. Where a tile is missing (404), synthesize it from
+// the nearest ancestor that exists: crop and bilinearly upsample the elevations, re-encode as Terrarium PNG.
+// That gives overzoomed (soft) shading and contours past the z13 edge instead of a hard cut, and keeps the
+// outermost tiles of the region from losing their contours. Outside every ancestor the tile stays missing.
+const MIN_ANCESTOR_Z = 8;
+async function fetchOk(url, abortController) {
+  const r = await fetch(url, { signal: abortController.signal });
+  return r.ok ? r : null;
+}
+async function decodeTerrarium(blob) {
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+  const c = new OffscreenCanvas(bmp.width, bmp.height);
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0);
+  const px = g.getImageData(0, 0, bmp.width, bmp.height).data;
+  const e = new Float32Array(bmp.width * bmp.height);
+  for (let i = 0; i < e.length; i++) e[i] = px[4 * i] * 256 + px[4 * i + 1] + px[4 * i + 2] / 256 - 32768;
+  return { w: bmp.width, h: bmp.height, e };
+}
+async function overzoomedTile(z, x, y, abortController) {
+  for (let pz = Math.min(z - 1, 12); pz >= MIN_ANCESTOR_Z; pz--) {
+    const d = z - pz, px = x >> d, py = y >> d;
+    const r = await demBlob(pz, px, py, abortController);
+    if (!r) continue;
+    const t = await decodeTerrarium(r.data);
+    const n = 1 << d, S = 256, sub = t.w / n; // source pixels per child tile edge
+    const ox = (x - (px << d)) * sub, oy = (y - (py << d)) * sub;
+    const out = new OffscreenCanvas(S, S), og = out.getContext("2d");
+    const img = og.createImageData(S, S);
+    for (let j = 0; j < S; j++) {
+      const sy = Math.min(t.h - 1, Math.max(0, oy + (j + 0.5) * sub / S - 0.5)), y0 = Math.floor(sy), y1 = Math.min(t.h - 1, y0 + 1), fy = sy - y0;
+      for (let i = 0; i < S; i++) {
+        const sx = Math.min(t.w - 1, Math.max(0, ox + (i + 0.5) * sub / S - 0.5)), x0 = Math.floor(sx), x1 = Math.min(t.w - 1, x0 + 1), fx = sx - x0;
+        const v = (t.e[y0 * t.w + x0] * (1 - fx) + t.e[y0 * t.w + x1] * fx) * (1 - fy) + (t.e[y1 * t.w + x0] * (1 - fx) + t.e[y1 * t.w + x1] * fx) * fy + 32768;
+        const k = 4 * (j * S + i), iv = Math.floor(v);
+        img.data[k] = iv >> 8; img.data[k + 1] = iv & 255; img.data[k + 2] = Math.floor((v - iv) * 256); img.data[k + 3] = 255;
+      }
+    }
+    og.putImageData(img, 0, 0);
+    return { data: await out.convertToBlob({ type: "image/png" }) };
+  }
+  return null;
+}
+// One tile from the DEM store: the PMTiles archive (default) or the XYZ directory (?dem=xyz). Null if absent.
+async function demBlob(z, x, y, abortController) {
+  if (demMode === "pmtiles") {
+    const tile = await demArchive.getZxy(z, x, y, abortController.signal);
+    return tile ? { data: new Blob([tile.data], { type: "image/png" }) } : null;
+  }
+  const r = await fetchOk(demXyzUrl.replace("{z}", z).replace("{x}", x).replace("{y}", y), abortController);
+  return r ? { data: await r.blob(), expires: r.headers.get("expires") || undefined, cacheControl: r.headers.get("cache-control") || undefined } : null;
+}
+demSource.manager.getTile = async (url, abortController) => {
+  const [z, x, y] = url.match(/(\d+)\/(\d+)\/(\d+)(?:\.png)?$/).slice(1).map(Number);
+  const t = (await demBlob(z, x, y, abortController)) || (await overzoomedTile(z, x, y, abortController));
+  if (t) return t;
+  // Same wording as a missing XYZ tile, so the map's error filter treats both alike.
+  throw new Error(`Bad response: 404 Not Found: DEM tile ${z}/${x}/${y}`);
+};
+// A contour tile also needs its 8 neighbours; a neighbour that is missing everywhere (the edge of the generated
+// region) is treated as no data instead of failing the whole tile.
+const fetchDem0 = demSource.manager.fetchDem.bind(demSource.manager);
+demSource.manager.fetchDem = (...a) => fetchDem0(...a).catch(e => { if (/Bad response: 404/.test(e.message)) return undefined; throw e; });
 
 const contourTiles = demSource.contourProtocolUrl({
   multiplier: 3.28084,
-  thresholds: { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [40, 200], 14: [40, 200], 15: [20, 100] },
+  thresholds: { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
   elevationKey: "ele",
   levelKey: "level",
   contourLayer: "contours",
@@ -128,7 +185,7 @@ const map = new maplibregl.Map({
         paint: { "line-color": "#c0392b", "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1, 15, 2.5], "line-dasharray": [2, 1.2] } },
       { id: "contour-labels", type: "symbol", source: "contours", "source-layer": "contours", filter: ["==", ["get", "level"], 1],
         layout: { "symbol-placement": "line", "text-field": ["concat", ["number-format", ["get", "ele"], {}], ""], "text-font": ["Noto Sans Regular"],
-                  "text-size": 13, "symbol-spacing": 300, "text-max-angle": 25 },
+                  "text-size": 13, "symbol-spacing": 220, "text-max-angle": 55, "text-padding": 4 },
         paint: { "text-color": "#6b3f12", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
       { id: "trail-names", type: "symbol", source: "osm", "source-layer": "transportation_name", minzoom: 12,
         layout: { "symbol-placement": "line", "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 13, "symbol-spacing": 400 },

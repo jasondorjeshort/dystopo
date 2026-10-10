@@ -1,0 +1,17 @@
+# Dystopo demo tour: public Mount Rainier views. Run:
+#   python -I tools/demo-check.py --url http://localhost:8765/tools/demo/ --views-file tools/demo-tour.txt --out out/tour.png
+# z/lat/lon:label
+9/46.85/-121.72:region-z9
+10/46.85/-121.72:region-z10
+12/46.75/-121.81:longmire
+12/46.97/-121.90:carbon-river
+12/46.90/-121.55:white-river
+13/46.853/-121.760:summit-z13
+15/46.853/-121.760:summit-z15
+14/46.786/-121.736:paradise-z14
+12/46.914/-121.643:sunrise
+11/46.85/-121.98:park-west
+11/46.85/-122.03:region-edge
+13/46.85/-121.86:core-edge-z13
+12/46.85/-121.86:core-edge-z12
+11/46.85/-122.30:outside
