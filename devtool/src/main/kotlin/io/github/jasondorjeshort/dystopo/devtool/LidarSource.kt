@@ -22,7 +22,7 @@ import java.util.Locale
  */
 class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : FeatheredSource {
     override val id = "3dep-1m"
-    override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar DEM, public domain."
+    override val registryIds = listOf("3dep-1m") + Geoids.REGISTRY_IDS
 
     @Serializable
     private data class TnmItem(val title: String = "", val downloadURL: String = "", val publicationDate: String = "")
@@ -161,7 +161,7 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
             window.width, window.height, window.cellSizeMeters, FloatArray(window.width * window.height) { Float.NaN },
         )
         val counters = layers.counters + ("coveragePermille" to (Composite.coverage(merged) * 1000).toLong())
-        return ElevationSource.Result(merged, counters)
+        return ElevationSource.Result(merged, counters, ElevationSource.provenanceIfData(merged, registryIds))
     }
 
     companion object {
@@ -180,8 +180,7 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
 /** Best available USGS elevation: 1 m lidar where it exists, feathered into the 10 m DEM elsewhere. */
 class ThreeDepBestSource : FeatheredSource {
     override val id = "3dep-best"
-    override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar and 1/3 arc-second DEMs, public domain. " +
-        Geoids.ATTRIBUTION
+    override val registryIds = listOf("3dep", "3dep-1m") + Geoids.REGISTRY_IDS
 
     override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val base = ThreeDepSource().fetch(window)
@@ -191,7 +190,12 @@ class ThreeDepBestSource : FeatheredSource {
         base.counters.forEach { (k, v) -> counters["base.$k"] = v }
         lidar.counters.forEach { (k, v) -> counters["lidar.$k"] = v }
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
-        return ElevationSource.Result(merged, counters)
+        // Provenance: lidar if any project has data; the 10 m base if it shows through a gap in lidar cover.
+        val lidarIds = if (lidar.grids.any { g -> g.values.any { !it.isNaN() } }) LidarSource().registryIds else emptyList()
+        val baseShows = base.grid.values.indices.any { k -> lidar.grids.all { it.values[k].isNaN() } }
+        return ElevationSource.Result(
+            merged, counters, ElevationSource.mergeProvenance(if (baseShows) base.provenance else emptyList(), lidarIds),
+        )
     }
 }
 
@@ -206,7 +210,7 @@ class BestSource : FeatheredSource {
     }
 
     override val id = "best"
-    override val attribution = CopernicusSource().attribution + " " + ThreeDepBestSource().attribution
+    override val registryIds = listOf("copernicus", "3dep", "3dep-1m") + Geoids.REGISTRY_IDS
 
     override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val global = CopernicusSource().fetch(window)
@@ -217,6 +221,12 @@ class BestSource : FeatheredSource {
         us.counters.forEach { (k, v) -> counters["3dep.$k"] = v }
         counters["usCoveragePermille"] = (Composite.coverage(us.grid) * 1000).toLong()
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
-        return ElevationSource.Result(merged, counters)
+        // Each layer counts only if it shows: the US layers have data (they're NaN outside the US), and
+        // Copernicus is visible wherever the US layers have holes (Composite.over leaves full US cover untouched).
+        val globalShows = us.grid.values.any { it.isNaN() }
+        return ElevationSource.Result(
+            merged, counters,
+            ElevationSource.mergeProvenance(if (globalShows) global.provenance else emptyList(), us.provenance),
+        )
     }
 }

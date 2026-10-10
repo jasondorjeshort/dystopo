@@ -23,6 +23,8 @@ application {
 // Run from the repo root so areas.json, devtool.local.json, cache/ and out/ resolve there.
 tasks.named<JavaExec>("run") {
     workingDir = rootDir
+    // Reports contain "©" (attribution); keep stdout UTF-8 regardless of the Windows console code page.
+    jvmArgs("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
 }
 
 // Golden-image tests (src/test/kotlin/.../GoldenImageTest.kt). Text rendering must not depend on a display.

@@ -14,9 +14,7 @@ import kotlin.math.floor
  */
 class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) : ElevationSource {
     override val id = "copernicus"
-    override val attribution = "Elevation: Copernicus DEM GLO-30, produced using Copernicus WorldDEM-30 " +
-        "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS " +
-        "by the European Union and ESA; all rights reserved."
+    override val registryIds = listOf("copernicus")
 
     /** Cells are named by their south-west corner. */
     private fun cellName(lat: Int, lon: Int): String {
@@ -57,7 +55,8 @@ class CopernicusSource(private val cacheDir: File = Caches.dir("copernicus30")) 
             "rangeRequests" to cells.values.sumOf { it?.source?.fetches ?: 0L },
             "noDataCells" to values.count { it.isNaN() }.toLong(),
         )
-        return ElevationSource.Result(ElevationGrid(window.width, window.height, window.cellSizeMeters, values), counters)
+        val grid = ElevationGrid(window.width, window.height, window.cellSizeMeters, values)
+        return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, registryIds))
     }
 
     /**

@@ -30,6 +30,7 @@ repositories {
 }
 
 dependencies {
+    implementation(project(":shared"))
     implementation(libs.clikt)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.planetiler.core)

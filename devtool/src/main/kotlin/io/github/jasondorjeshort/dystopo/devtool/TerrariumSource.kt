@@ -22,9 +22,7 @@ class TerrariumSource(private val cacheDir: File = Caches.dir("terrarium")) : El
     }
 
     override val id = "terrarium"
-    override val attribution = "Elevation: Mapzen Terrain Tiles (AWS Open Data), from SRTM, USGS 3DEP/NED, " +
-        "GMTED2010, ETOPO1 and national datasets. " +
-        "https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
+    override val registryIds = listOf("terrarium")
 
     private fun cacheFile(tile: TileId) = File(cacheDir, "${tile.z}/${tile.x}/${tile.y}.png")
 
@@ -60,6 +58,9 @@ class TerrariumSource(private val cacheDir: File = Caches.dir("terrarium")) : El
         }
         val full = ElevationGrid(fullW, fullH, window.cellSizeMeters, values)
         val grid = full.crop(window.x0 - tx0 * TILE_SIZE, window.y0 - ty0 * TILE_SIZE, window.width, window.height)
-        return ElevationSource.Result(grid, mapOf("tiles" to tiles.size.toLong(), "tilesDownloaded" to downloaded.get()))
+        return ElevationSource.Result(
+            grid, mapOf("tiles" to tiles.size.toLong(), "tilesDownloaded" to downloaded.get()),
+            ElevationSource.provenanceIfData(grid, registryIds),
+        )
     }
 }

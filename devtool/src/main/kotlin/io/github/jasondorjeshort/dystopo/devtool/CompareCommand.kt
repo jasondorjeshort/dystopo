@@ -27,6 +27,8 @@ data class SourceSummary(
     val elevationMaxMeters: Double,
     val counters: Map<String, Long>,
     val contours: ContourStats,
+    /** Data source registry ids that contributed (see `devtool sources`). */
+    val provenance: List<String>,
     val attribution: String,
 )
 
@@ -80,7 +82,8 @@ class CompareCommand : AreaCommand("compare") {
             grids += fetched.grid
             panels += image
             summaries += SourceSummary(
-                id, fetched.grid.min().toDouble(), fetched.grid.max().toDouble(), fetched.counters, contours, src.attribution,
+                id, fetched.grid.min().toDouble(), fetched.grid.max().toDouble(), fetched.counters, contours,
+                fetched.provenance, fetched.attribution(src),
             )
         }
 

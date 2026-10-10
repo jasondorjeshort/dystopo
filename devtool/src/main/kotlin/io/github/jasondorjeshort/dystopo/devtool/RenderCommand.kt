@@ -31,6 +31,8 @@ data class RenderReport(
     val contours: ContourStats,
     val shading: ShadingStats,
     val timingsMs: Map<String, Long>,
+    /** Data source registry ids that contributed (see `devtool sources`). */
+    val provenance: List<String>,
     val attribution: String,
 )
 
@@ -74,7 +76,8 @@ class RenderCommand : AreaCommand("render") {
             contours = contours,
             shading = shading,
             timingsMs = timings.ms,
-            attribution = src.attribution,
+            provenance = fetched.provenance,
+            attribution = fetched.attribution(src),
         )
         echo(reportJson.encodeToString(report))
     }

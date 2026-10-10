@@ -18,6 +18,7 @@ import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.TileId
+import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.awt.image.BufferedImage
@@ -82,6 +83,8 @@ data class TilesReport(
     val totalBytes: Long,
     val totalTimeMs: Long,
     val preview: String? = null,
+    /** Data source registry ids that contributed to any written tile (see `devtool sources`). */
+    val provenance: List<String>,
     val attribution: String,
 )
 
@@ -99,7 +102,10 @@ data class TileSetMetadata(
     val verticalDatum: String = "EGM2008",
     val noDataMeters: Double = 0.0,
     val source: String,
+    /** Composed from the data source registry for [provenance]. */
     val attribution: String,
+    val attributionHtml: String,
+    val provenance: List<String>,
 )
 
 class TilesCommand : CliktCommand(name = "tiles") {
@@ -131,6 +137,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         val encodeMs: Long,
         val counters: Map<String, Long>,
         val decodeError: Float,
+        val provenance: List<String>,
     )
 
     override fun run() {
@@ -145,18 +152,25 @@ class TilesCommand : CliktCommand(name = "tiles") {
         val started = System.nanoTime()
         val pool = Executors.newFixedThreadPool(threads)
         val zooms = ArrayList<ZoomReport>()
+        val provenanceSeen = HashSet<String>()
         try {
-            for (z in minZoom..maxZoom) zooms += exportZoom(z, box, src, feather, outDir, tileSize, pool)
+            for (z in minZoom..maxZoom) zooms += exportZoom(z, box, src, feather, outDir, tileSize, pool, provenanceSeen)
         } finally {
             pool.shutdown()
         }
+        val provenance = ElevationSource.mergeProvenance(provenanceSeen.toList())
+        // Credit what went into the written tiles; if nothing was written, credit the whole source.
+        val creditIds = provenance.ifEmpty { src.registryIds }
 
         outDir.mkdirs()
         File(outDir, "metadata.json").writeText(
             reportJson.encodeToString(
                 TileSetMetadata(
                     name = outDir.name, tileSize = tileSize, bounds = listOf(box.west, box.south, box.east, box.north),
-                    minzoom = minZoom, maxzoom = maxZoom, source = source, attribution = src.attribution,
+                    minzoom = minZoom, maxzoom = maxZoom, source = source,
+                    attribution = SourceRegistry.builtIn.attribution(creditIds),
+                    attributionHtml = SourceRegistry.builtIn.attributionHtml(creditIds),
+                    provenance = provenance,
                 ),
             ),
         )
@@ -181,7 +195,8 @@ class TilesCommand : CliktCommand(name = "tiles") {
             totalBytes = zooms.sumOf { it.bytes },
             totalTimeMs = (System.nanoTime() - started) / 1_000_000,
             preview = preview,
-            attribution = src.attribution,
+            provenance = provenance,
+            attribution = SourceRegistry.builtIn.attribution(creditIds),
         )
         echo(reportJson.encodeToString(report))
     }
@@ -195,7 +210,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
 
     private fun exportZoom(
         z: Int, box: BoundingBox, src: ElevationSource, feather: Double, outDir: File, tileSize: Int,
-        pool: ExecutorService,
+        pool: ExecutorService, provenanceSeen: MutableSet<String>,
     ): ZoomReport {
         val started = System.nanoTime()
         // One cell size per zoom so every tile's blend band (and halo) is the same; see TileWindows.
@@ -214,6 +229,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         val counterSums = LinkedHashMap<String, Long>()
         for (r in results) for ((k, v) in r.counters) counterSums[k] = (counterSums[k] ?: 0L) + v
         val written = results.filter { !it.skipped }
+        written.forEach { provenanceSeen += it.provenance }
         val verifyStats = if (verify) verifySeams(plan, results) else null
 
         return ZoomReport(
@@ -245,7 +261,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         val noData = grid.values.count { it.isNaN() }.toLong()
         if (noData == grid.values.size.toLong()) {
             return TileResult(tw.tile, if (verify) fetched.grid else null, true, 0, noData, Float.NaN, Float.NaN,
-                (t1 - t0) / 1_000_000, 0, fetched.counters, 0f)
+                (t1 - t0) / 1_000_000, 0, fetched.counters, 0f, fetched.provenance)
         }
 
         val bytes = encodePng(TileWindows.encodeTerrarium(grid), grid.width, grid.height)
@@ -264,7 +280,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         }
         return TileResult(
             tw.tile, if (verify) fetched.grid else null, false, bytes.size, noData, grid.min(), grid.max(),
-            (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, fetched.counters, decodeError,
+            (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, fetched.counters, decodeError, fetched.provenance,
         )
     }
 

@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
+import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import io.github.jasondorjeshort.dystopo.tiff.ByteRangeSource
 import java.io.File
 import java.net.URI
@@ -15,10 +16,22 @@ import java.time.Duration
 /** Something that can fill a Web Mercator window with elevations (meters, NAVD88/EGM-ish orthometric heights). */
 interface ElevationSource {
     val id: String
-    val attribution: String
 
-    /** [counters] carries source-specific numbers for the JSON report (tiles fetched, nodata cells...). */
-    data class Result(val grid: ElevationGrid, val counters: Map<String, Long>)
+    /** Data source registry ids (`sources.json`) this source can draw on, including geoids used for datum conversion. */
+    val registryIds: List<String>
+
+    /** Credit for everything this source can draw on, composed from the registry. */
+    val attribution: String get() = SourceRegistry.builtIn.attribution(registryIds)
+
+    /**
+     * [counters] carries source-specific numbers for the JSON report (tiles fetched, nodata cells...).
+     * [provenance] lists the registry ids that actually contributed data to [grid], in registry order.
+     */
+    data class Result(val grid: ElevationGrid, val counters: Map<String, Long>, val provenance: List<String> = emptyList()) {
+        /** Credit for what contributed; falls back to [source]'s full credit when nothing did. */
+        fun attribution(source: ElevationSource): String =
+            if (provenance.isEmpty()) source.attribution else SourceRegistry.builtIn.attribution(provenance)
+    }
 
     fun fetch(window: MercatorWindow): Result
 
@@ -34,6 +47,13 @@ interface ElevationSource {
             "3dep-best" -> ThreeDepBestSource()
             else -> throw IllegalArgumentException("unknown source '$id'; known: ${ids.joinToString()}")
         }
+
+        /** [ids] if [grid] has any data, else nothing: provenance for a single-dataset source. */
+        fun provenanceIfData(grid: ElevationGrid, ids: List<String>): List<String> =
+            if (grid.values.any { !it.isNaN() }) ids else emptyList()
+
+        /** Union of provenance lists, deduplicated in registry order. */
+        fun mergeProvenance(vararg lists: List<String>): List<String> = SourceRegistry.builtIn.ordered(lists.flatMap { it })
     }
 }
 

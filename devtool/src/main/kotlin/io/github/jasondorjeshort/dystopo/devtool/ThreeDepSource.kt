@@ -16,8 +16,7 @@ import kotlin.math.floor
  */
 class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : ElevationSource {
     override val id = "3dep"
-    override val attribution = "Elevation: USGS 3D Elevation Program (3DEP) 1/3 arc-second DEM, public domain. " +
-        Geoids.ATTRIBUTION
+    override val registryIds = listOf("3dep") + Geoids.REGISTRY_IDS
 
     /** USGS names cells by their north-west corner: n47w122 covers 46..47°N, 121..122°W. Null outside the NW hemisphere. */
     private fun cellName(lat: Double, lon: Double): String? {
@@ -70,6 +69,7 @@ class ThreeDepSource(private val cacheDir: File = Caches.dir("3dep13")) : Elevat
             "datumUnconvertedCells" to unconverted,
             "noDataCells" to values.count { it.isNaN() }.toLong(),
         )
-        return ElevationSource.Result(ElevationGrid(window.width, window.height, window.cellSizeMeters, values), counters)
+        val grid = ElevationGrid(window.width, window.height, window.cellSizeMeters, values)
+        return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, registryIds))
     }
 }

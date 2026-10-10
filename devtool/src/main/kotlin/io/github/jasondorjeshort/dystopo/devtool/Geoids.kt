@@ -38,7 +38,8 @@ object Geoids {
     /** NGA EGM2008, 2.5' grid, relative to the WGS84 ellipsoid. */
     val egm2008 by lazy { ProjGeoid("https://cdn.proj.org/us_nga_egm08_25.tif", Caches.dir("geoids/us_nga_egm08_25")) }
 
-    const val ATTRIBUTION = "Geoid models: NGS GEOID18 and NGA EGM2008 (public domain), via PROJ data."
+    /** Registry ids of the geoids used for NAVD88 -> EGM2008 conversion; their credit comes from the registry. */
+    val REGISTRY_IDS = listOf("geoid18", "egm2008")
 
     private val offsetCache = HashMap<MercatorWindow, FloatArray>()
 
