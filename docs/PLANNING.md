@@ -335,6 +335,9 @@ The project will be fully open source. Code and map content may need different l
 - The likely result: **ODbL for vector tiles** (forced by OSM), and **CC BY-SA 4.0** (the share-alike, GPL-like content license) or CC BY 4.0 for raster tiles and non-OSM layers.
 - Each tile set records its sources and attribution in its metadata, and the app shows attribution for every visible layer.
 
+## Units (decided 2026-10-10)
+Feet versus metres is a **user preference, not a geographic rule**. Region only seeds the default: the browser demo picks feet inside the US and metres elsewhere the first time the page is opened and then keeps whatever the user chose (persisted); the phone seeds its default once from the home area if known (first pack opened, or first GPS fix) and never changes it on its own. Travelling keeps your units. Everything that shows an elevation or distance (contour labels and intervals, peak elevations, track stats, profiles, search results) follows the one setting. T34 shipped the by-region default; T33 (phone) and the viewer follow-up make it a persisted preference.
+
 ## Tech stack
 | Area | Choice | Status |
 |---|---|---|
