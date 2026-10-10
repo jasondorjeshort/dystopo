@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.groups.provideDelegate
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
@@ -66,6 +67,8 @@ data class TourEntry(
     val error: String?,
     val checks: List<TourCheck>,
     val pass: Boolean,
+    /** `--offline-ok` and the area's data is not all in the cache: not rendered, not counted as a failure. */
+    val skipped: Boolean = false,
 )
 
 @Serializable
@@ -77,6 +80,10 @@ data class TourSummary(
     val renders: Int,
     val passed: Int,
     val failed: List<String>,
+    /** True when run with `--offline-ok` (cache only, no network). */
+    val offlineOk: Boolean = false,
+    /** `area-zN` renders skipped by `--offline-ok` because their data was not cached. */
+    val skipped: List<String> = emptyList(),
     val contactSheet: String,
     val totalMs: Long,
     val entries: List<TourEntry>,
@@ -97,7 +104,14 @@ class TourCommand : CliktCommand(name = "tour") {
     private val zooms by option("--zooms", help = "Comma-separated zooms").default("9,12")
     private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
     private val out by option("--out", help = "Output directory").file().default(File("out/tour"))
+    private val offlineOk by option(
+        "--offline-ok",
+        help = "Cache only: never touch the network; an area whose data is not all in the cache is skipped (reported, not a failure). For CI with a cold cache.",
+    ).flag()
     private val style by StyleOptions()
+
+    /** Thrown by the [Http.beforeNetwork] hook under `--offline-ok`: the render needed [url], which is not cached. */
+    class OfflineCacheMiss(val url: String) : java.io.IOException("not in the cache (--offline-ok): $url")
 
     companion object {
         /**
@@ -162,6 +176,17 @@ class TourCommand : CliktCommand(name = "tour") {
         }
 
         private fun fmt(v: Double) = v.roundToLong().toString()
+
+        /** The [OfflineCacheMiss] in [e]'s cause chain (sources may wrap it), or null. */
+        fun offlineMiss(e: Throwable?): OfflineCacheMiss? {
+            var t = e
+            val seen = HashSet<Throwable>()
+            while (t != null && seen.add(t)) {
+                if (t is OfflineCacheMiss) return t
+                t = t.cause
+            }
+            return null
+        }
     }
 
     override fun run() {
@@ -176,6 +201,7 @@ class TourCommand : CliktCommand(name = "tour") {
         }
         if (names.isEmpty()) throw UsageError("no areas selected")
         out.mkdirs()
+        if (offlineOk) Http.beforeNetwork = { url -> throw OfflineCacheMiss(url) }
 
         val start = System.nanoTime()
         val entries = ArrayList<TourEntry>()
@@ -193,9 +219,11 @@ class TourCommand : CliktCommand(name = "tour") {
             zooms = zoomList,
             toleranceMeters = TOLERANCE_METERS,
             maxNanFraction = MAX_NAN_FRACTION,
-            renders = entries.size,
-            passed = entries.count { it.pass },
+            renders = entries.count { !it.skipped },
+            passed = entries.count { it.pass && !it.skipped },
             failed = entries.filter { !it.pass }.map { "${it.area}-z${it.zoom}" },
+            offlineOk = offlineOk,
+            skipped = entries.filter { it.skipped }.map { "${it.area}-z${it.zoom}" },
             contactSheet = sheet.path,
             totalMs = (System.nanoTime() - start) / 1_000_000,
             entries = entries,
@@ -212,6 +240,7 @@ class TourCommand : CliktCommand(name = "tour") {
         var fetched: ElevationSource.Result? = null
         var image: BufferedImage? = null
         var outFile: File? = null
+        var miss: OfflineCacheMiss? = null
         val error = try {
             val box = boundingBox(def.bbox)
             window = MercatorWindow.forBbox(box, zoom)
@@ -222,7 +251,18 @@ class TourCommand : CliktCommand(name = "tour") {
             timings.time("writePng") { ImageIO.write(image, "png", outFile) }
             null
         } catch (e: Exception) {
+            miss = offlineMiss(e)
             "${e::class.simpleName}: ${e.message}"
+        }
+        if (miss != null) {
+            val entry = TourEntry(
+                area = name, zoom = zoom, bbox = def.bbox, tags = def.tags, expectedElevation = def.expectedElevation,
+                output = null, widthPx = window?.width ?: 0, heightPx = window?.height ?: 0, cellSizeMeters = 0.0,
+                elevationMinMeters = null, elevationMaxMeters = null, minAt = null, maxAt = null, nanFraction = 1.0,
+                datumUnconvertedCells = 0, sourceCounters = emptyMap(), provenance = emptyList(), timingsMs = timings.ms,
+                error = null, checks = listOf(TourCheck("cached", true, "skipped: ${miss.message}")), pass = true, skipped = true,
+            )
+            return entry to null
         }
         val grid = fetched?.grid
         val min = grid?.min()?.toDouble()?.takeIf { it.isFinite() }
@@ -288,19 +328,23 @@ class TourCommand : CliktCommand(name = "tour") {
                 val h = (img.height * scale).toInt().coerceAtLeast(1)
                 g.drawImage(img, x + (THUMB - w) / 2, y + (THUMB - h) / 2, w, h, null)
             } else {
-                g.color = Color(90, 20, 20)
+                g.color = if (entry.skipped) Color(70, 70, 70) else Color(90, 20, 20)
                 g.fillRect(x, y, THUMB, THUMB)
                 g.color = Color.WHITE
-                g.drawString("no image", x + 8, y + 20)
+                g.drawString(if (entry.skipped) "not cached" else "no image", x + 8, y + 20)
             }
-            g.color = if (entry.pass) Color(40, 160, 60) else Color(210, 40, 40)
+            g.color = when {
+                entry.skipped -> Color(120, 120, 120)
+                entry.pass -> Color(40, 160, 60)
+                else -> Color(210, 40, 40)
+            }
             g.stroke = BasicStroke(3f)
             g.drawRect(x, y, THUMB, THUMB)
             g.fillRect(x, y + THUMB + 2, 44, 14)
             g.color = Color.WHITE
-            g.drawString(if (entry.pass) "PASS" else "FAIL", x + 6, y + THUMB + 14)
+            g.drawString(if (entry.skipped) "SKIP" else if (entry.pass) "PASS" else "FAIL", x + 6, y + THUMB + 14)
             g.drawString("${entry.area} z${entry.zoom}", x + 50, y + THUMB + 14)
-            val range = if (entry.elevationMinMeters == null) "no data" else "${entry.elevationMinMeters!!.roundToLong()}..${entry.elevationMaxMeters!!.roundToLong()} m"
+            val range = if (entry.skipped) "skipped (offline)" else if (entry.elevationMinMeters == null) "no data" else "${entry.elevationMinMeters!!.roundToLong()}..${entry.elevationMaxMeters!!.roundToLong()} m"
             val failed = entry.checks.filter { !it.pass }.joinToString(",") { it.name }
             g.color = Color(200, 200, 200)
             g.drawString(if (failed.isEmpty()) range else "$range  [$failed]", x, y + THUMB + 30)

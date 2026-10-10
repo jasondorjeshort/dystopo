@@ -1,0 +1,116 @@
+# Continuous integration (T48). One lean Ubuntu job: Gradle check (JVM tests, goldens, license check,
+# Android unit tests and lint), a tiny Rainier pack built from the network, the world tour cache-only
+# (--offline-ok: areas whose data the job did not download are skipped), and the browser demo checked
+# headlessly in pack mode. Artifacts: tour contact sheet, demo screenshots, Gradle reports.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Same-repo PRs are already covered by the push run on their branch (its status shows on the PR);
+    # run pull_request events only for forks, so a PR does not cost two runs.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DYSTOPO_CACHE: ${{ github.workspace }}/cache
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      # The goldens were approved on Windows, where Java's SansSerif is Arial: label placement depends on text
+      # widths and the label regions on glyph shapes. Install Arial (Microsoft core fonts) and map SansSerif to it.
+      - name: Arial for the golden images
+        run: |
+          echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | sudo debconf-set-selections
+          sudo apt-get update -q && sudo apt-get install -y -q ttf-mscorefonts-installer
+          mkdir -p ~/.config/fontconfig
+          cp tools/ci/fonts.conf ~/.config/fontconfig/fonts.conf
+          fc-match sans-serif; fc-match 'sans-serif:bold:italic'
+
+      - name: Golden images first (fail fast)
+        run: |
+          chmod +x gradlew
+          ./gradlew :devtool:test --tests '*GoldenImageTest*'
+
+      - name: Gradle check
+        # gradlew is committed without the executable bit (the repo is developed on Windows).
+        run: |
+          chmod +x gradlew
+          ./gradlew check --continue
+
+      - name: Install devtool
+        run: ./gradlew :devtool:installDist
+
+      - name: Build a tiny Rainier pack (DEM z8-10 from 3DEP/Copernicus, OSM from OpenFreeMap)
+        timeout-minutes: 8
+        run: bash tools/ci/demo-pack.sh 10
+
+      - name: World tour z9, cache only
+        run: |
+          mkdir -p out/tour
+          set +e
+          devtool/build/install/devtool/bin/devtool tour --zooms 9 --offline-ok > out/tour/stdout.json
+          STATUS=$?
+          python3 -c 'import json; d = json.load(open("out/tour/summary.json")); print({k: d[k] for k in ("renders", "passed", "failed", "skipped", "totalMs")})' || cat out/tour/stdout.json
+          exit $STATUS
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Browser demo check (pack mode, two views)
+        run: |
+          mkdir -p out/ci-demo
+          python -I tools/demo-server.py 8765 > out/ci-demo/server.log 2>&1 &
+          SERVER=$!
+          sleep 2
+          set +e
+          python -I tools/demo-check.py --channel "" --url "http://localhost:8765/tools/demo/?osm=openmaptiles" \
+            --views "9/46.85/-121.76:z9" "11/46.853/-121.76:z11" --out out/ci-demo/demo.png > out/ci-demo/report.json
+          STATUS=$?
+          kill $SERVER
+          cat out/ci-demo/report.json
+          exit $STATUS
+
+      - name: Upload tour, demo screenshots and reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: ci-results
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            out/tour/
+            out/ci-demo/
+            out/ci-*.json
+            out/ci-serve.log
+            build/reports/
+            */build/reports/
+            devtool/build/golden-diffs/

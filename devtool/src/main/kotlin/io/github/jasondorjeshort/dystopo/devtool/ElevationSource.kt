@@ -84,6 +84,9 @@ object Http {
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 
+    /** Called with the URL before every network request in [download] and [range]; `tour --offline-ok` throws there to stay cache-only. */
+    @Volatile var beforeNetwork: ((String) -> Unit)? = null
+
     private fun request(url: String) = HttpRequest.newBuilder(URI(url))
         .header("User-Agent", "dystopo-devtool/0.1")
         .timeout(Duration.ofSeconds(120))
@@ -116,6 +119,7 @@ object Http {
 
     /** Downloads [url] to [file] atomically. */
     fun download(url: String, file: File) {
+        beforeNetwork?.invoke(url)
         file.parentFile.mkdirs()
         val tmp = partFile(file)
         val response = withRetry { client.send(request(url).build(), HttpResponse.BodyHandlers.ofFile(tmp.toPath())) }
@@ -137,6 +141,19 @@ object Http {
      * other fail with FileAlreadyExistsException). Returns false when the existing file was kept.
      */
     fun publish(tmp: File, file: File): Boolean {
+        // A hard link is created atomically or not at all. Files.move without REPLACE_EXISTING checks and
+        // renames in two steps on Linux, so two racing movers could both "win" there (found by CI, T48).
+        try {
+            Files.createLink(file.toPath(), tmp.toPath())
+            tmp.delete()
+            return true
+        } catch (e: java.nio.file.FileAlreadyExistsException) {
+            tmp.delete()
+            return false
+        } catch (e: Exception) {
+            if (e !is UnsupportedOperationException && e !is java.nio.file.FileSystemException) throw e
+            // No hard links on this file system: move, as before.
+        }
         try {
             Files.move(tmp.toPath(), file.toPath())
             return true
@@ -149,6 +166,7 @@ object Http {
     }
 
     fun range(url: String, offset: Long, length: Int): ByteArray {
+        beforeNetwork?.invoke(url)
         val req = request(url).header("Range", "bytes=$offset-${offset + length - 1}").build()
         val response = withRetry { client.send(req, HttpResponse.BodyHandlers.ofByteArray()) }
         if (response.statusCode() != 206 && response.statusCode() != 200) throw HttpStatusException(response.statusCode(), url)
