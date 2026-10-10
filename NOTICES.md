@@ -13,11 +13,11 @@ LGPL libraries (each stays a separate, replaceable jar).
 
 ## Software libraries
 
-234 artifacts from the runtime classpaths of 6 modules, grouped by the licence under which we use them.
+249 artifacts from the runtime classpaths of 6 modules, grouped by the licence under which we use them.
 
 | Licence | Artifacts |
 |---|---|
-| Apache-2.0 | 177 |
+| Apache-2.0 | 191 |
 | MIT | 17 |
 | BSD-3-Clause | 11 |
 | Lesser General Public License (LGPL) | 9 |
@@ -25,6 +25,7 @@ LGPL libraries (each stays a separate, replaceable jar).
 | EPL-1.0 | 3 |
 | BSD | 2 |
 | 0BSD | 1 |
+| Apache-2.0 OR BSD | 1 |
 | CC-BY-2.5 | 1 |
 | EPL-2.0 OR BSD-3-Clause | 1 |
 | EPL-2.0 OR GPL-2.0-with-classpath-exception | 1 |
@@ -45,9 +46,15 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `androidx.annotation:annotation-experimental:1.4.1` (androidApp)
 - `androidx.annotation:annotation-jvm:1.9.1` (androidApp)
 - `androidx.annotation:annotation:1.9.1` (androidApp)
+- `androidx.appcompat:appcompat-resources:1.1.0` (androidApp)
+- `androidx.appcompat:appcompat:1.1.0` (androidApp)
 - `androidx.arch.core:core-common:2.2.0` (androidApp)
 - `androidx.arch.core:core-runtime:2.2.0` (androidApp)
 - `androidx.autofill:autofill:1.0.0` (androidApp)
+- `androidx.camera:camera-camera2:1.4.2` (androidApp)
+- `androidx.camera:camera-lifecycle:1.4.2` (androidApp)
+- `androidx.camera:camera-video:1.4.2` (androidApp)
+- `androidx.camera:camera-view:1.4.2` (androidApp)
 - `androidx.collection:collection-jvm:1.5.0` (androidApp)
 - `androidx.collection:collection-ktx:1.5.0` (androidApp)
 - `androidx.collection:collection:1.5.0` (androidApp)
@@ -76,13 +83,17 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `androidx.compose.ui:ui-util:1.8.2` (androidApp)
 - `androidx.compose.ui:ui:1.8.2` (androidApp)
 - `androidx.compose:compose-bom:2025.05.01` (androidApp)
+- `androidx.concurrent:concurrent-futures-ktx:1.1.0` (androidApp)
 - `androidx.concurrent:concurrent-futures:1.1.0` (androidApp)
 - `androidx.core:core-ktx:1.13.1` (androidApp)
 - `androidx.core:core-viewtree:1.0.0` (androidApp)
 - `androidx.core:core:1.13.1` (androidApp)
+- `androidx.cursoradapter:cursoradapter:1.0.0` (androidApp)
 - `androidx.customview:customview-poolingcontainer:1.0.0` (androidApp)
 - `androidx.customview:customview:1.0.0` (androidApp)
+- `androidx.drawerlayout:drawerlayout:1.0.0` (androidApp)
 - `androidx.emoji2:emoji2:1.4.0` (androidApp)
+- `androidx.exifinterface:exifinterface:1.3.2` (androidApp)
 - `androidx.fragment:fragment:1.8.2` (androidApp)
 - `androidx.graphics:graphics-path:1.0.1` (androidApp)
 - `androidx.interpolator:interpolator:1.0.0` (androidApp)
@@ -111,7 +122,10 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `androidx.sqlite:sqlite-framework:2.5.1` (androidApp)
 - `androidx.sqlite:sqlite:2.5.1` (androidApp)
 - `androidx.startup:startup-runtime:1.1.1` (androidApp)
-- `androidx.tracing:tracing:1.0.0` (androidApp)
+- `androidx.tracing:tracing-ktx:1.2.0` (androidApp)
+- `androidx.tracing:tracing:1.2.0` (androidApp)
+- `androidx.vectordrawable:vectordrawable-animated:1.1.0` (androidApp)
+- `androidx.vectordrawable:vectordrawable:1.1.0` (androidApp)
 - `androidx.versionedparcelable:versionedparcelable:1.1.1` (androidApp)
 - `androidx.viewpager:viewpager:1.0.0` (androidApp)
 - `app.cash.sqldelight:android-driver:2.1.0` (androidApp)
@@ -147,6 +161,7 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `com.github.jnr:jffi:1.3.14` (tilebuild; declares: Apache-2.0, GNU Lesser General Public License version 3)
 - `com.github.jnr:jnr-a64asm:1.0.0` (tilebuild)
 - `com.github.jnr:jnr-ffi:2.2.18` (tilebuild)
+- `com.google.auto.value:auto-value-annotations:1.6.3` (androidApp)
 - `com.google.code.gson:gson:2.10.1` (androidApp)
 - `com.google.errorprone:error_prone_annotations:2.41.0` (tilebuild)
 - `com.google.guava:failureaccess:1.0.3` (tilebuild)
@@ -296,6 +311,10 @@ Licence text: https://opensource.org/license/0bsd
 
 - `org.tukaani:xz:1.10` (tilebuild)
 
+### Apache-2.0 OR BSD
+
+- `androidx.camera:camera-core:1.4.2` (androidApp; declares: Apache-2.0, BSD)
+
 ### CC-BY-2.5
 
 - `net.jcip:jcip-annotations:1.0` (tilebuild)
@@ -359,12 +378,16 @@ their metadata, and the app and the web pages show the attribution below for wha
 | USGS 3DEP 1/3 arc-second DEM | dem | U.S. Geological Survey, 3D Elevation Program (The National Map) | [Public domain (US federal government work)](https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits) | Elevation: USGS 3D Elevation Program (3DEP) 1/3 arc-second DEM, courtesy of the U.S. Geological Survey (public domain). |
 | USGS 3DEP 1 m lidar DEM | dem | U.S. Geological Survey, 3D Elevation Program (The National Map) | [Public domain (US federal government work)](https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits) | Elevation: USGS 3D Elevation Program (3DEP) 1 m lidar DEM, courtesy of the U.S. Geological Survey (public domain). |
 | swisstopo swissALTI3D | dem | Federal Office of Topography swisstopo | [Terms of use for free geodata and geoservices (OGD) from swisstopo, 26 August 2022: free use for all purposes, including commercial, with the source indicated](https://www.swisstopo.admin.ch/en/conditions-geodata) | Elevation: swissALTI3D © swisstopo (Federal Office of Topography swisstopo). |
+| Kartverket national detailed height model (DTM) | dem | Kartverket (Norwegian Mapping Authority) | [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/) | Elevation: national detailed height model (DTM) © Kartverket (CC BY 4.0). |
+| BEV ALS DTM Austria (Hoehenraster 1 m) | dem | Bundesamt fuer Eich- und Vermessungswesen (BEV), with the Austrian federal states (geoland.at) | [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/) | Elevation: ALS DTM © BEV, Austrian federal and state geodata providers (CC BY 4.0). |
 | Mapzen Terrain Tiles (Terrarium, legacy) | dem | Mapzen / Tilezen joerd, hosted on AWS Open Data | [Mixed open licenses of the underlying datasets (public domain, CC BY 4.0, OGL and others)](https://github.com/tilezen/joerd/blob/master/docs/attribution.md) | Elevation: Mapzen Terrain Tiles. ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and funded under National Science Foundation awards 1043681, 1559691, and 1542736; Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017; Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM) Österreich; Canada terrain data contains information licensed under the Open Government Licence – Canada; Europe terrain data produced using Copernicus data and information funded by the European Union - EU-DEM layers; Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration; Mexico terrain data source: INEGI, Continental relief, 2016; New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information New Zealand and the New Zealand Government (All rights reserved); Norway terrain data © Kartverket; United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved; United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey. |
 | NGS GEOID18 | geoid | NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project | [Public domain (US federal government work)](https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt) | Geoid: NGS GEOID18, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data. |
 | NGS GEOID18 (Puerto Rico and US Virgin Islands) | geoid | NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project | [Public domain (US federal government work)](https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt) | Geoid: NGS GEOID18, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data. |
 | NGS GEOID12B (Alaska) | geoid | NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project | [Public domain (US federal government work)](https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt) | Geoid: NGS GEOID12B, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data. |
 | NGS GEOID12B (Hawaii) | geoid | NOAA National Geodetic Survey; grid converted to GeoTIFF by the PROJ-data project | [Public domain (US federal government work)](https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt) | Geoid: NGS GEOID12B, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data. |
 | swisstopo CHGeo2004 geoid (LN02 and LHN95 grids) | geoid | Federal Office of Topography swisstopo; grids converted to GeoTIFF by the PROJ-data project | [Creative Commons CC0 1.0 Universal](https://github.com/OSGeo/PROJ-data/blob/master/ch_swisstopo/ch_swisstopo_README.txt) | Geoid: CHGeo2004 © swisstopo (CC0), via PROJ-data. |
+| Kartverket HREF2018B height reference surface (NN2000) | geoid | Kartverket; grid converted to GeoTIFF by the PROJ-data project | [Creative Commons Attribution 4.0 International](https://github.com/OSGeo/PROJ-data/blob/master/no_kv/no_kv_README.txt) | Height reference: HREF2018B © Kartverket (CC BY 4.0), via PROJ-data. |
+| BEV geoid for Austria (ETRS89 to EVRF2000 Austria) | geoid | Bundesamt fuer Eich- und Vermessungswesen (BEV); grid converted to GeoTIFF by the PROJ-data project | [Creative Commons Attribution 4.0 International](https://github.com/OSGeo/PROJ-data/blob/master/at_bev/at_bev_README.txt) | Geoid: GEOID_GRS80_Oesterreich © BEV (CC BY 4.0), via PROJ-data. |
 | NGA EGM2008 geoid (2.5 arc-minute grid) | geoid | U.S. National Geospatial-Intelligence Agency; grid built with GeographicLib and converted by the PROJ-data project | [Public domain (US federal government work)](https://github.com/OSGeo/PROJ-data/blob/master/us_nga/us_nga_README.txt) | Geoid: EGM2008, courtesy of the U.S. National Geospatial-Intelligence Agency (public domain), via PROJ-data. |
 | OpenStreetMap | osm | OpenStreetMap contributors (OpenStreetMap Foundation); regional extracts from Geofabrik | [ODbL 1.0](https://www.openstreetmap.org/copyright) | © OpenStreetMap contributors (ODbL 1.0) |
 | OpenFreeMap planet vector tiles | osm | OpenFreeMap (openfreemap.org), public instance at tiles.openfreemap.org; built from OpenStreetMap with the OpenMapTiles schema | [ODbL 1.0 (the OpenStreetMap data); OpenMapTiles schema CC-BY 4.0](https://openfreemap.org/) | Tiles: OpenFreeMap |
