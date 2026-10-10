@@ -1,5 +1,6 @@
 # Copies a region pack onto the device or emulator for the debug app: the DEM PMTiles and the OSM vector
-# PMTiles go to the app's files dir as files/packs/dem.pmtiles and files/packs/osm.pmtiles, and the label
+# PMTiles go to the app's files dir as files/packs/dem.pmtiles and files/packs/osm.pmtiles (with -Name rainier:
+# files/packs/rainier-dem.pmtiles and rainier-outdoors.pmtiles, a named pack), and the label
 # glyphs (Noto Sans PBF ranges for MapLibre, SIL OFL 1.1 fonts, fetched once into the cache) to
 # files/glyphs/. Uses `run-as`, so it needs the debug build installed. Restart the app (or POST /reload
 # on the debug server) afterwards.
@@ -10,6 +11,7 @@ param(
     [string]$Osm = 'out\rainier-outdoors.pmtiles',
     [switch]$NoGlyphs,
     [string]$Package = 'io.github.jasondorjeshort.dystopo',
+    [string]$Name = '',
     [string]$Serial = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -17,7 +19,19 @@ $ProgressPreference = 'SilentlyContinue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
-$adbArgs = if ($Serial) { @('-s', $Serial) } else { @() }
+# Always target one device explicitly: -Serial, else ANDROID_SERIAL, else the only device adb lists.
+# With several devices and neither set, stop rather than push to whichever adb picks.
+if (-not $Serial) { $Serial = $env:ANDROID_SERIAL }
+if (-not $Serial) {
+    $ErrorActionPreference = 'Continue'
+    $devices = @(& $adb devices 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^(\S+)\s+device\s*$' } | ForEach-Object { ($_ -split '\s+')[0] })
+    $ErrorActionPreference = 'Stop'
+    if ($devices.Count -eq 1) { $Serial = $devices[0] }
+    elseif ($devices.Count -eq 0) { throw 'no device connected (adb devices)' }
+    else { throw "several devices connected ($($devices -join ', ')); pass -Serial or set ANDROID_SERIAL" }
+}
+Write-Host "device: $Serial"
+$adbArgs = @('-s', $Serial)
 
 function Adb {
     $ErrorActionPreference = 'Continue'
@@ -32,7 +46,12 @@ $staging = '/data/local/tmp/dystopo'
 Adb shell "rm -rf $staging && mkdir -p $staging/packs" | Out-Null
 Adb shell "run-as $Package mkdir -p files/packs" | Out-Null
 
-foreach ($pack in @(@{ Src = $Dem; Name = 'dem.pmtiles' }, @{ Src = $Osm; Name = 'osm.pmtiles' })) {
+# -Name pushes a named pack (T29): files/packs/<name>-dem.pmtiles and <name>-outdoors.pmtiles. Without it the
+# unnamed pair dem.pmtiles / osm.pmtiles is written (the app treats it as pack `default`).
+if ($Name -and $Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { throw "-Name must be letters, digits, '.', '_' or '-' (got '$Name')" }
+$demName = if ($Name) { "$Name-dem.pmtiles" } else { 'dem.pmtiles' }
+$osmName = if ($Name) { "$Name-outdoors.pmtiles" } else { 'osm.pmtiles' }
+foreach ($pack in @(@{ Src = $Dem; Name = $demName }, @{ Src = $Osm; Name = $osmName })) {
     if (-not $pack.Src) { continue }
     $src = Resolve-RepoPath $pack.Src
     if (-not (Test-Path $src)) { throw "pack not found: $src" }

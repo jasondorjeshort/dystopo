@@ -70,6 +70,7 @@ class Routes(private val app: DystopoApp) {
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
+            "GET" to "/features", "GET" to "/features/text" -> FeatureRoutes(app).handle(r)
             "GET" to "/camera" -> Response.json(app.map.camera())
             "POST" to "/camera" -> {
                 val p = params(r)

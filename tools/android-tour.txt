@@ -1,0 +1,15 @@
+# Dystopo device tour: public Mount Rainier views for the Android app. Boot an emulator and run:
+#   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Build
+#   python -I tools/android-check.py --port 8686 --views-file tools/android-tour.txt
+# z/lat/lon:label[|req=dem+osm+contours]   (default: every source whose pack covers the view centre and zoom)
+# Each view needs tiles no earlier view loaded (different place or zoom), so the per-view tile counts mean something.
+8/46.85/-121.72:region-z8
+10/46.90/-121.80:region-z10
+11/46.75/-121.81:longmire-z11
+12/46.853/-121.760:summit-z12
+12/46.914/-121.643:sunrise-z12
+13/46.97/-121.90:carbon-river-z13
+13.5/46.786/-121.736:paradise-z13.5
+14/46.9317/-121.8619:mowich-lake-z14
+15/46.835/-121.700:cliffs-z15
+16/46.7686/-121.7295:reflection-lakes-z16
