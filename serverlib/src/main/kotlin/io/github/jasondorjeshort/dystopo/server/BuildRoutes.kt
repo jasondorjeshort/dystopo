@@ -48,6 +48,15 @@ import kotlin.math.floor
  *   is a 413 (with `fallback=1` it is built from OpenFreeMap instead, with a warning in the job); when
  *   Overpass refuses at build time (429, 504, a timeout, no network) the job falls back to OpenFreeMap
  *   and says so in `warnings`.
+ * - Larger outdoors packs come from a regional OSM extract on the server's disk (T64, [Extracts]: the
+ *   config's `extracts` list plus every `.osm.pbf` in `<cache>/extracts/`, e.g. Geofabrik's Washington file).
+ *   With `profile=outdoors` the vector source is chosen per box ([planOsm]): a configured extract that
+ *   holds the whole box (tilebuild runs Planetiler on it with `--bbox`, so whole-park boxes get the
+ *   outdoors layers), else Overpass when the box is under its area cap, else OpenFreeMap with
+ *   `fallback=1` (413 without). `source=auto|extract|overpass` forces one (default `auto`). The job says
+ *   which in `osmSource` and, for an extract, `provenance.osmExtract` (name, file, date of the data).
+ * - `GET /build/sources?bbox=w,s,e,n`: what a `profile=outdoors` build of the box would use, with every
+ *   extract and whether it covers the box, the Overpass cap, and whether tilebuild is installed.
  * - `GET /build/{id}`: status (queued, running, done, failed, cancelled), phase, per-pack tile counts,
  *   timings, the finished files' `/out/` URLs, provenance. `GET /build`: every job plus the limits.
  * - `DELETE /build/{id}` or `POST /build/{id}/cancel`: stops the job; no new tile is requested after
@@ -71,6 +80,8 @@ class BuildRoutes(
     val overpass: OverpassSource = OverpassSource(),
     /** Runs tilebuild's outdoors profile on an Overpass extract; [TilebuildProcess] by default. */
     private val tilebuild: OutdoorsTileBuilder = TilebuildProcess(),
+    /** Regional OSM extracts for outdoors packs larger than Overpass serves (T64); none by default (`devtool serve` and the server scan `<cache>/extracts`). */
+    val extracts: Extracts = Extracts(dir = null),
     val maxTiles: Int = env("DYSTOPO_BUILD_MAX_TILES")?.toIntOrNull() ?: 20_000,
     val maxSpanDegrees: Double = env("DYSTOPO_BUILD_MAX_SPAN_DEG")?.toDoubleOrNull() ?: 3.0,
     val concurrentBuilds: Int = env("DYSTOPO_BUILD_CONCURRENT")?.toIntOrNull()?.coerceAtLeast(1) ?: 1,
@@ -114,6 +125,10 @@ class BuildRoutes(
         @Volatile var osmProfile: String = profile
         val warnings = java.util.concurrent.CopyOnWriteArrayList<String>()
         @Volatile var overpassInfo: Map<String, Any?>? = null
+        /** Where the vector data comes from: [SOURCE_EXTRACT], [SOURCE_OVERPASS] or [SOURCE_OPENFREEMAP]. */
+        @Volatile var osmSource: String = if (profile == PROFILE_OUTDOORS) SOURCE_OVERPASS else SOURCE_OPENFREEMAP
+        /** The extract an outdoors pack is built from (T64), when [osmSource] is [SOURCE_EXTRACT]. */
+        @Volatile var extract: OsmExtract? = null
         @Volatile var tilebuildInfo: Map<String, Any?>? = null
         /** The last log line of a running tilebuild, as a progress hint. */
         @Volatile var detail: String? = null
@@ -150,8 +165,8 @@ class BuildRoutes(
                 "dem" to dem.json(demZooms), "osm" to osm.json(osmZooms),
                 "elapsedMs" to elapsed, "timings" to timings.toSortedMap(),
                 "files" to files.toList(),
-                "provenance" to mapOf("dem" to demProvenance, "osm" to osmProvenance),
-                "profile" to profile, "osmProfile" to osmProfile, "detail" to detail,
+                "provenance" to linkedMapOf("dem" to demProvenance, "osm" to osmProvenance, "osmExtract" to extract?.let { extractProvenance(it) }),
+                "profile" to profile, "osmProfile" to osmProfile, "osmSource" to osmSource, "detail" to detail,
                 "overpass" to overpassInfo, "tilebuild" to tilebuildInfo,
                 "warnings" to warnings.toList(),
                 "error" to error,
@@ -171,7 +186,9 @@ class BuildRoutes(
         "maxTiles" to maxTiles, "maxSpanDegrees" to maxSpanDegrees, "concurrentBuilds" to concurrentBuilds, "maxQueued" to maxQueued,
         "demZooms" to listOf(LiveTiles.LIVE_MIN_ZOOM, LiveTiles.LIVE_MAX_ZOOM), "osmMaxZoom" to LiveTiles.OSM_MAX_ZOOM,
         "profiles" to listOf(PROFILE_OPENMAPTILES, PROFILE_OUTDOORS),
+        "sources" to listOf(SOURCE_AUTO, SOURCE_EXTRACT, SOURCE_OVERPASS),
         "overpass" to overpass.describe(),
+        "extracts" to extracts.describe(),
         "tilebuild" to linkedMapOf("available" to (tilebuild.unavailable() == null), "unavailable" to tilebuild.unavailable(), "how" to tilebuild.describe()),
     )
 
@@ -215,20 +232,12 @@ class BuildRoutes(
             throw Refused(400, "profile must be $PROFILE_OPENMAPTILES (OpenFreeMap tiles) or $PROFILE_OUTDOORS (Overpass + tilebuild), got '$profile'")
         }
         val fallback = params["fallback"].let { it == "1" || it == "true" }
-        val warnings = ArrayList<String>()
-        var osmProfile = profile
-        if (profile == PROFILE_OUTDOORS) {
-            try {
-                boxes.forEach { overpass.checkArea(it) }
-                tilebuild.unavailable()?.let { throw Refused(503, "the outdoors profile needs tilebuild: $it") }
-            } catch (e: OverpassSource.TooBig) {
-                if (!fallback) {
-                    throw Refused(413, "${e.message}. Pick a smaller box (zoom in), use profile=$PROFILE_OPENMAPTILES, or add fallback=1 to build this box from OpenFreeMap without the outdoors layers")
-                }
-                warnings += "outdoors profile not built: ${e.message}; built from OpenFreeMap (OpenMapTiles schema) instead"
-                osmProfile = PROFILE_OPENMAPTILES
-            }
+        val source = params["source"]?.trim()?.lowercase()?.ifEmpty { null } ?: SOURCE_AUTO
+        if (source !in setOf(SOURCE_AUTO, SOURCE_EXTRACT, SOURCE_OVERPASS)) {
+            throw Refused(400, "source must be $SOURCE_AUTO, $SOURCE_EXTRACT or $SOURCE_OVERPASS (got '$source')")
         }
+        if (profile == PROFILE_OUTDOORS) tilebuild.unavailable()?.let { throw Refused(503, "the outdoors profile needs tilebuild: $it") }
+        val plans = boxes.map { box -> if (profile == PROFILE_OUTDOORS) planOsm(box, source, fallback) else OsmPlan(SOURCE_OPENFREEMAP, null, null) }
         val demZooms = maxOf(minZoom, LiveTiles.LIVE_MIN_ZOOM)..maxZoom
         val osmZooms = (minZoom..minOf(maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
         fun tilesUpTo(z: Int) = boxes.sumOf { box ->
@@ -252,7 +261,15 @@ class BuildRoutes(
             }
             val active = jobs.values.count { it.active }
             if (active + parts.size > concurrentBuilds + maxQueued) throw Refused(429, "$active builds are queued or running (limit ${concurrentBuilds + maxQueued}); try again later")
-            val made = parts.map { (partName, box) -> Job("b${nextId.getAndIncrement()}", partName, box, minZoom, maxZoom, demZooms, osmZooms, overwrite, profile).also { it.osmProfile = osmProfile; it.warnings += warnings } }
+            val made = parts.mapIndexed { i, (partName, box) ->
+                val plan = plans[i]
+                Job("b${nextId.getAndIncrement()}", partName, box, minZoom, maxZoom, demZooms, osmZooms, overwrite, profile).also {
+                    it.osmSource = plan.source
+                    it.extract = plan.extract
+                    it.osmProfile = if (plan.source == SOURCE_OPENFREEMAP) PROFILE_OPENMAPTILES else PROFILE_OUTDOORS
+                    plan.warning?.let { w -> it.warnings += w }
+                }
+            }
             if (made.size == 2) {
                 made[0].antimeridian = mapOf("part" to "east", "other" to made[1].id)
                 made[1].antimeridian = mapOf("part" to "west", "other" to made[0].id)
@@ -263,6 +280,67 @@ class BuildRoutes(
             }
             return made.first()
         }
+    }
+
+    /** The vector source chosen for one box: [source] and, for [SOURCE_EXTRACT], the [extract]; [warning] after a fallback. */
+    class OsmPlan(val source: String, val extract: OsmExtract?, val warning: String?)
+
+    /**
+     * Picks the vector source of a `profile=outdoors` build of [box] (T64): with [requested] `auto`, a
+     * configured extract holding the whole box (the smallest), else Overpass under its area cap; `extract`
+     * or `overpass` force one. When the choice cannot serve the box, OpenFreeMap with [fallback] (and a
+     * warning), else a 413 that names the ways out.
+     */
+    fun planOsm(box: BoundingBox, requested: String, fallback: Boolean): OsmPlan {
+        val extract = if (requested == SOURCE_OVERPASS) null else extracts.covering(box)
+        if (extract != null) return OsmPlan(SOURCE_EXTRACT, extract, null)
+        val why = if (requested == SOURCE_EXTRACT) {
+            "no configured OSM extract covers the box (${extractSummary()})"
+        } else {
+            try {
+                overpass.checkArea(box)
+                return OsmPlan(SOURCE_OVERPASS, null, null)
+            } catch (e: OverpassSource.TooBig) {
+                if (requested == SOURCE_OVERPASS) e.message!! else "${e.message}, and no configured OSM extract covers it (${extractSummary()})"
+            }
+        }
+        if (!fallback) {
+            throw Refused(413, "$why. Pick a smaller box (zoom in), add an extract that covers it (docs/SERVER.md, extracts), use profile=$PROFILE_OPENMAPTILES, or add fallback=1 to build this box from OpenFreeMap without the outdoors layers")
+        }
+        return OsmPlan(SOURCE_OPENFREEMAP, null, "outdoors profile not built: $why; built from OpenFreeMap (OpenMapTiles schema) instead")
+    }
+
+    private fun extractSummary(): String = extracts.all().let { all ->
+        if (all.isEmpty()) "none configured" else all.joinToString(", ") { "${it.name} ${TileSets.geoJsonBounds(it.bbox).joinToString(",") { d -> fmt(d) }}" }
+    }
+
+    /** `GET /build/sources?bbox=`: what a `profile=outdoors` build of the box would use, and why. */
+    fun sources(params: Map<String, String>): Map<String, Any?> {
+        val b = params["bbox"]?.split(',')?.map { it.trim().toDoubleOrNull() }
+        if (b == null || b.size != 4 || b.any { it == null }) throw Refused(400, "bbox must be west,south,east,north in degrees")
+        val (w, s, e, n) = b.map { it!! }
+        if (w >= e || s >= n) throw Refused(400, "bbox $w,$s,$e,$n is not a box (west < east, south < north; ask for each side of the antimeridian separately)")
+        val box = BoundingBox(w, s, e, n)
+        val all = extracts.all()
+        val area = OverpassSource.areaSqDeg(box)
+        val plan = planOsm(box, SOURCE_AUTO, fallback = true)
+        val tb = tilebuild.unavailable()
+        val outdoors = tb == null && plan.source != SOURCE_OPENFREEMAP
+        return linkedMapOf(
+            "bbox" to listOf(w, s, e, n),
+            "areaSqDeg" to area,
+            "outdoors" to linkedMapOf(
+                "source" to if (tb != null) SOURCE_OPENFREEMAP else plan.source,
+                "profile" to if (outdoors) PROFILE_OUTDOORS else PROFILE_OPENMAPTILES,
+                "extract" to plan.extract?.json(),
+                "needsFallback" to !outdoors,
+                "why" to (tb?.let { "tilebuild is not installed: $it" } ?: plan.warning),
+            ),
+            "extracts" to all.map { it.json() + ("covers" to it.covers(box)) },
+            "extractProblems" to extracts.problems,
+            "overpass" to linkedMapOf("underCap" to (area <= overpass.maxAreaSqDeg), "maxAreaSqDeg" to overpass.maxAreaSqDeg, "endpoint" to overpass.endpoint),
+            "tilebuild" to linkedMapOf("available" to (tb == null), "unavailable" to tb),
+        )
     }
 
     /** Asks [job] to stop; a queued job never starts. Returns false when it had already finished. */
@@ -409,6 +487,7 @@ class BuildRoutes(
      */
     private fun buildOutdoors(job: Job, out: File) {
         val zooms = job.osmZooms ?: return
+        job.extract?.let { return buildFromExtract(job, out, it, zooms) }
         job.phase = "osm-overpass"
         val started = System.nanoTime()
         val extract = try {
@@ -416,6 +495,7 @@ class BuildRoutes(
         } catch (e: OverpassSource.Refused) {
             job.warnings += "Overpass refused or failed (${e.message}); the vector pack was built from OpenFreeMap (OpenMapTiles schema, no outdoors layers) instead"
             job.osmProfile = PROFILE_OPENMAPTILES
+            job.osmSource = SOURCE_OPENFREEMAP
             job.overpassInfo = linkedMapOf("status" to e.status, "error" to e.message, "requests" to overpass.fetches)
             return buildOsm(job, out)
         }
@@ -426,7 +506,26 @@ class BuildRoutes(
         job.timings["overpassMs"] = (System.nanoTime() - started) / 1_000_000
         if (job.cancelled) throw CancelledBuild()
 
-        job.phase = "osm-tilebuild"
+        runTilebuild(job, out, extract.file, zooms, listOf(OVERPASS_ID), started)
+        // "cached" = built from a cached Overpass answer (no network), "fetched" = from a fresh one.
+        if (extract.cached) job.osm.cached.set(job.osm.total)
+    }
+
+    /**
+     * The vector pack with the outdoors profile from a regional extract (T64): tilebuild runs Planetiler on
+     * the whole `.osm.pbf` with the job's box as bounds. No network; the extract's name and data date go into
+     * the job's provenance (`osmExtract`).
+     */
+    private fun buildFromExtract(job: Job, out: File, extract: OsmExtract, zooms: IntRange) {
+        if (!extract.file.isFile) error("OSM extract ${extract.file} disappeared")
+        runTilebuild(job, out, extract.file, zooms, emptyList(), System.nanoTime())
+        job.osm.cached.set(job.osm.total)
+    }
+
+    /** tilebuild on [osm] (Overpass XML or an extract's PBF) into [out], then the job's counts and provenance from the archive. */
+    private fun runTilebuild(job: Job, out: File, osm: File, zooms: IntRange, sourceIds: List<String>, started: Long) {
+        if (job.cancelled) throw CancelledBuild()
+        job.phase = if (job.extract != null) "osm-extract" else "osm-tilebuild"
         val tbStarted = System.nanoTime()
         // tilebuild picks the output format from the extension, so it writes `<name>-outdoors.pmtiles` in a
         // staging directory; the result is then moved onto the job's `.building` file.
@@ -434,7 +533,7 @@ class BuildRoutes(
         val staged = File(stagingDir, out.name.removeSuffix(".building"))
         try {
             val report = tilebuild.build(
-                extract.file, staged, job.box, zooms, listOf(OVERPASS_ID),
+                osm, staged, job.box, zooms, sourceIds,
                 cancelled = { job.cancelled },
                 log = { line -> job.detail = line.take(200) },
             )
@@ -458,8 +557,6 @@ class BuildRoutes(
         val written = reader.header.addressedTiles.toInt()
         job.osm.written.set(written)
         job.osm.done.set(job.osm.total)
-        // "cached" = built from a cached Overpass answer (no network), "fetched" = from a fresh one.
-        if (extract.cached) job.osm.cached.set(job.osm.total)
         job.osm.empty.set((job.osm.total - written).coerceAtLeast(0))
         if (meta["dystopo:profile"] != PROFILE_OUTDOORS) error("tilebuild wrote ${out.name} with dystopo:profile=${meta["dystopo:profile"]}, expected $PROFILE_OUTDOORS")
     }
@@ -507,6 +604,7 @@ class BuildRoutes(
                 method == "OPTIONS" -> reply(ex, 204, null)
                 parts.isEmpty() && method == "POST" -> reply(ex, 202, submit(query(ex)).json())
                 parts.isEmpty() && method == "GET" -> reply(ex, 200, linkedMapOf("jobs" to synchronized(jobs) { jobs.values.toList() }.map { it.json() }, "limits" to limits()))
+                parts == listOf("sources") && method == "GET" -> reply(ex, 200, sources(query(ex)))
                 parts.isEmpty() -> throw Refused(405, "use POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom= or GET /build")
                 else -> {
                     val job = job(parts[0]) ?: throw Refused(404, "no build job '${parts[0]}'")
@@ -550,6 +648,17 @@ class BuildRoutes(
         const val PROFILE_OPENMAPTILES = OsmPackWriter.PROFILE_OPENMAPTILES
         const val PROFILE_OUTDOORS = "outdoors"
 
+        /** `source=` values and the job's `osmSource`. */
+        const val SOURCE_AUTO = "auto"
+        const val SOURCE_EXTRACT = "extract"
+        const val SOURCE_OVERPASS = "overpass"
+        const val SOURCE_OPENFREEMAP = "openfreemap"
+
+        /** The job's `provenance.osmExtract`: which extract (registry id `osm`, ODbL) and the date of its data. */
+        fun extractProvenance(e: OsmExtract): Map<String, Any?> = linkedMapOf(
+            "id" to "osm", "name" to e.name, "file" to e.file.name, "date" to e.date, "dateSource" to e.dateSource,
+        )
+
         /** Registry id credited for an extract fetched from the Overpass API. */
         const val OVERPASS_ID = "overpass"
 
@@ -577,7 +686,7 @@ class BuildRoutes(
     }
 }
 
-/** Builds an outdoors-profile vector pack from an OSM XML extract (the tilebuild step of `profile=outdoors`). */
+/** Builds an outdoors-profile vector pack from OSM data (the tilebuild step of `profile=outdoors`): an Overpass XML answer or an extract's `.osm.pbf`. */
 interface OutdoorsTileBuilder {
     /** Null when [build] can run; otherwise why not, with the fix. */
     fun unavailable(): String?
@@ -586,7 +695,7 @@ interface OutdoorsTileBuilder {
     fun describe(): String
 
     /**
-     * Writes [out] (a `.pmtiles` path) from [osmXml] clipped to [box] at [zooms], crediting [sourceIds] on
+     * Writes [out] (a `.pmtiles` path) from [osmXml] (`.osm` XML or `.osm.pbf`) clipped to [box] at [zooms], crediting [sourceIds] on
      * top of the profile's own sources. Stops early when [cancelled] turns true. Returns tilebuild's JSON
      * report; throws with the reason on failure.
      */

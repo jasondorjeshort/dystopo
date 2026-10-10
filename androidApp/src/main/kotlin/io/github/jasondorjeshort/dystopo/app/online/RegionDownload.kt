@@ -22,6 +22,12 @@ import kotlin.math.floor
  * [PackDownloader] (one call) with activation, so the region shows from the pack, offline, once it is
  * on the device. One job at a time; [json] is the progress the map overlay and `GET /online/download` show.
  *
+ * The vector half asks for the outdoors profile (T64: `profile=outdoors&fallback=1`): the server builds it
+ * from a regional extract that covers the box, else from Overpass for a small box, else falls back to
+ * OpenFreeMap's OpenMapTiles tiles. [json] and the overlay say which profile and source the pack got
+ * (`osmProfile`, `osmSource`, `osmExtract`). A server that cannot build outdoors packs at all (no tilebuild,
+ * HTTP 503, or an old server that refuses the parameter) is asked again for the plain profile.
+ *
  * Phases ([state]): `idle`, `building` (server), `downloading` (device), `done`, `failed`, `cancelled`.
  * A name the server already built is downloaded without building again; a pack already on the device is
  * just activated.
@@ -43,6 +49,9 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
     @Volatile private var builtAt = 0L
     @Volatile private var finishedAt = 0L
     @Volatile private var note: String? = null
+    /** The vector profile asked for: [PROFILE_OUTDOORS] (default) or `openmaptiles`. */
+    @Volatile var profile: String = PROFILE_OUTDOORS
+        private set
 
     val running: Boolean get() = state == "building" || state == "downloading"
 
@@ -51,7 +60,9 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
      * box fits [TILE_LIMIT] tiles), named from the box unless [name] is given.
      */
     @Synchronized
-    fun start(box: PackBounds, minZoom: Int?, maxZoom: Int?, name: String?): Map<String, Any?> {
+    fun start(box: PackBounds, minZoom: Int?, maxZoom: Int?, name: String?, profile: String? = null): Map<String, Any?> {
+        val wanted = profile?.trim()?.lowercase()?.ifEmpty { null } ?: PROFILE_OUTDOORS
+        require(wanted == PROFILE_OUTDOORS || wanted == PROFILE_OPENMAPTILES) { "profile must be $PROFILE_OUTDOORS or $PROFILE_OPENMAPTILES (got '$profile')" }
         check(!running) { "a region download is already running (${this.name}); DELETE /online/download first" }
         val server = service.fetcher?.server ?: throw IllegalArgumentException("no server set: POST /settings?server=http://host:port")
         require(box.maxLon > box.minLon && box.maxLat > box.minLat) { "empty box" }
@@ -73,6 +84,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         error = null
         note = null
         cancelled = false
+        this.profile = wanted
         startedAt = System.currentTimeMillis()
         builtAt = 0L
         finishedAt = 0L
@@ -131,8 +143,15 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
 
     private fun buildOnServer(server: String, packName: String, box: PackBounds, z: IntRange) {
         val bbox = listOf(box.minLon, box.minLat, box.maxLon, box.maxLat).joinToString(",") { String.format(Locale.ROOT, "%.5f", it) }
-        val query = "name=${enc(packName)}&bbox=${enc(bbox)}&minZoom=${z.first}&maxZoom=${z.last}"
-        val (status, body) = http("POST", "$server/build?$query")
+        val base = "name=${enc(packName)}&bbox=${enc(bbox)}&minZoom=${z.first}&maxZoom=${z.last}"
+        var (status, body) = http("POST", "$server/build?$base" + if (profile == PROFILE_OUTDOORS) "&profile=$PROFILE_OUTDOORS&fallback=1" else "")
+        if (profile == PROFILE_OUTDOORS && (status == 503 || (status == 400 && "profile" in body["error"]?.toString().orEmpty()))) {
+            // The server cannot build outdoors packs (no tilebuild, or too old to know the profile): ask for the plain one.
+            note = "server cannot build the outdoors profile (${body["error"]}); built OpenMapTiles"
+            val retry = http("POST", "$server/build?$base")
+            status = retry.first
+            body = retry.second
+        }
         var id: String? = null
         when (status) {
             202, 200 -> id = body["id"]?.toString()
@@ -194,6 +213,12 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             "state" to state, "name" to name, "error" to error, "note" to note,
             "bbox" to bounds?.let { listOf(it.minLon, it.minLat, it.maxLon, it.maxLat) },
             "zooms" to zooms?.let { listOf(it.first, it.last) },
+            "profile" to profile,
+            "osmProfile" to b?.get("osmProfile"),
+            "osmSource" to b?.get("osmSource"),
+            "osmExtract" to (b?.get("provenance") as? Map<*, *>)?.get("osmExtract"),
+            "packLabel" to packLabel(b),
+            "warnings" to b?.get("warnings"),
             "build" to (b?.let { mapOf("id" to it["id"], "status" to it["status"], "phase" to it["phase"], "percent" to it["percent"], "elapsedMs" to it["elapsedMs"], "dem" to it["dem"], "osm" to it["osm"], "files" to it["files"]) }
                 ?: buildId?.let { mapOf("id" to it) }),
             "download" to job?.json(),
@@ -214,7 +239,27 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
     }
 
     companion object {
+        const val PROFILE_OUTDOORS = "outdoors"
+        const val PROFILE_OPENMAPTILES = "openmaptiles"
         const val DEFAULT_MIN_ZOOM = 8
+
+        /**
+         * What the overlay says about the vector half of a server build job ([build] is its JSON): `outdoors,
+         * washington extract 2026-10-08`, `outdoors, Overpass`, or `OpenMapTiles (fallback)`; null before the
+         * server has said.
+         */
+        fun packLabel(build: Map<String, Any?>?): String? {
+            val p = build?.get("osmProfile")?.toString() ?: return null
+            val extract = (build["provenance"] as? Map<*, *>)?.get("osmExtract") as? Map<*, *>
+            return when {
+                p == PROFILE_OUTDOORS && build["osmSource"] == "extract" && extract != null ->
+                    "outdoors, ${extract["name"]} extract" + (extract["date"]?.toString()?.take(10)?.let { " $it" } ?: "")
+                p == PROFILE_OUTDOORS && build["osmSource"] == "overpass" -> "outdoors, Overpass"
+                p == PROFILE_OUTDOORS -> "outdoors"
+                build["profile"] == PROFILE_OUTDOORS -> "OpenMapTiles (outdoors not available here)"
+                else -> "OpenMapTiles"
+            }
+        }
         const val DEFAULT_MAX_ZOOM = 14
         /** The server's per-job default (`DYSTOPO_BUILD_MAX_TILES`), DEM and OSM tiles together. */
         const val TILE_LIMIT = 20_000

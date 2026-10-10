@@ -81,7 +81,9 @@
   <div id="live-tools" hidden>
     <label>Pack name <input id="packname" size="14" placeholder="from the view"></label>
     <label>Zooms <input id="packmin" type="number" min="0" max="15" value="8" style="width:3.2em"> to <input id="packmax" type="number" min="6" max="15" value="13" style="width:3.2em"></label>
-    <label>Vector <select id="packprofile"><option value="outdoors">outdoors profile (Overpass + tilebuild, small boxes)</option><option value="openmaptiles">OpenMapTiles (OpenFreeMap tiles)</option></select></label>
+    <label>Vector <select id="packprofile"><option value="outdoors">outdoors profile (tilebuild)</option><option value="openmaptiles">OpenMapTiles (OpenFreeMap tiles)</option></select></label>
+    <label>OSM from <select id="packsource"><option value="auto">auto: a server extract, else Overpass</option><option value="extract">an extract on the server</option><option value="overpass">Overpass (small boxes)</option></select></label>
+    <button id="packsources" type="button">What would it use?</button>
     <label><input type="checkbox" id="packreplace"> replace a pack of that name</label>
     <button id="buildpack" type="button">Build pack here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
     <pre id="buildcmd" hidden></pre>
@@ -572,7 +574,9 @@ if (LIVE) {
     if (j.error && !j.id) return "refused: " + j.error;
     const part = (k, o) => o.zooms ? k + " z" + o.zooms[0] + "-" + o.zooms[1] + " " + o.done + "/" + o.total + " (" + o.cached + " cached, " + o.written + " written)" : k + " none";
     const lines = [j.name + " " + j.status + " " + j.percent + "%  " + (j.elapsedMs / 1000).toFixed(1) + " s", part("DEM", j.dem), part("OSM", j.osm)];
-    if (j.osmProfile) lines.push("vector profile " + j.osmProfile + (j.status === "running" && j.phase ? ", phase " + j.phase : "") + (j.detail ? ": " + j.detail : ""));
+    const ex = j.provenance && j.provenance.osmExtract;
+    const from = j.osmSource ? " from " + j.osmSource + (ex ? " " + ex.name + " (data of " + String(ex.date).slice(0, 10) + ")" : "") : "";
+    if (j.osmProfile) lines.push("vector profile " + j.osmProfile + from + (j.status === "running" && j.phase ? ", phase " + j.phase : "") + (j.detail ? ": " + j.detail : ""));
     for (const w of j.warnings || []) lines.push("warning: " + w);
     if (j.status === "done") for (const f of j.files) lines.push(f.url + "  " + (f.bytes / 1048576).toFixed(1) + " MB, " + f.tiles + " tiles z" + f.minZoom + "-" + f.maxZoom);
     if (j.error) lines.push("error: " + j.error);
@@ -586,12 +590,26 @@ if (LIVE) {
     cancelBtn.hidden = true;
     if (j.status === "done") window.dystopoLiveSources().catch(() => {});
   };
+  const viewBbox = () => {
+    const b = map.getBounds(), r3 = (v, up) => (up ? Math.ceil(v * 1000) : Math.floor(v * 1000)) / 1000;
+    return [r3(Math.max(-180, b.getWest())), r3(Math.max(-85, b.getSouth())), r3(Math.min(180, b.getEast()), true), r3(Math.min(85, b.getNorth()), true)].join(",");
+  };
+  // T64: GET /build/sources says which OSM source an outdoors build of the view would use (extract, Overpass or the OpenFreeMap fallback).
+  document.getElementById("packsources").onclick = async () => {
+    const r = await (await fetch(base + "/build/sources?bbox=" + viewBbox())).json();
+    window.dystopoBuildSources = r;
+    if (r.error) { show("refused: " + r.error); return; }
+    const o = r.outdoors, lines = ["outdoors build of this view (" + r.areaSqDeg.toFixed(3) + " sq deg): " + o.source + (o.extract ? " " + o.extract.name + " (data of " + String(o.extract.date).slice(0, 10) + ")" : "") + " -> " + o.profile];
+    if (o.why) lines.push(o.why);
+    for (const e of r.extracts) lines.push("extract " + e.name + " " + (e.bytes / 1048576).toFixed(0) + " MB, " + String(e.date).slice(0, 10) + (e.covers ? ", covers the view" : ", does not cover the view"));
+    lines.push("Overpass: " + (r.overpass.underCap ? "under" : "over") + " its " + r.overpass.maxAreaSqDeg + " sq deg cap");
+    show(lines.join("\n"));
+  };
   document.getElementById("buildpack").onclick = async () => {
-    const b = map.getBounds(), c = map.getCenter(), r3 = (v, up) => (up ? Math.ceil(v * 1000) : Math.floor(v * 1000)) / 1000;
-    const bbox = [r3(Math.max(-180, b.getWest())), r3(Math.max(-85, b.getSouth())), r3(Math.min(180, b.getEast()), true), r3(Math.min(85, b.getNorth()), true)].join(",");
+    const c = map.getCenter(), bbox = viewBbox();
     const auto = (c.lat >= 0 ? "n" : "s") + Math.abs(c.lat).toFixed(2) + (c.lng >= 0 ? "e" : "w") + Math.abs(c.lng).toFixed(2);
     const name = document.getElementById("packname").value.trim() || auto;
-    const q = new URLSearchParams({ name, bbox, minZoom: document.getElementById("packmin").value, maxZoom: document.getElementById("packmax").value, profile: document.getElementById("packprofile").value });
+    const q = new URLSearchParams({ name, bbox, minZoom: document.getElementById("packmin").value, maxZoom: document.getElementById("packmax").value, profile: document.getElementById("packprofile").value, source: document.getElementById("packsource").value });
     if (document.getElementById("packreplace").checked) q.set("overwrite", "1");
     clearTimeout(buildTimer);
     const r = await fetch(base + "/build?" + q, { method: "POST" });

@@ -55,7 +55,23 @@ data class ServerConfig(
     val overpass: OverpassConfig = OverpassConfig(),
     /** tilebuild install for `profile=outdoors` builds (`./gradlew :tilebuild:installDist`); null: `DYSTOPO_TILEBUILD_HOME` or `tilebuild/build/install/tilebuild`. */
     val tilebuildHome: String? = null,
+    /**
+     * Regional OSM extracts (`.osm.pbf`, e.g. from Geofabrik) for `profile=outdoors` builds larger than
+     * Overpass serves (T64). Each: `path`, optional `bbox` `[w, s, e, n]` and `name` (else read from the
+     * PBF header or a sidecar JSON and the file name).
+     */
+    val extracts: List<ExtractConfig> = emptyList(),
+    /** Directory scanned for more `*.osm.pbf` extracts (rescanned per build); null: `<cacheDir>/extracts`; "" turns scanning off. */
+    val extractsDir: String? = null,
 ) {
+    @Serializable
+    data class ExtractConfig(
+        val path: String,
+        /** west, south, east, north; null: from a sidecar JSON or the PBF header. */
+        val bbox: List<Double>? = null,
+        val name: String? = null,
+    )
+
     @Serializable
     data class BuildConfig(
         /** DEM and OSM tiles per job. */
@@ -88,6 +104,11 @@ data class ServerConfig(
         if (shutdownGraceSeconds < 0) add("shutdownGraceSeconds must be >= 0")
         if (build.maxTiles < 1 || build.maxSpanDegrees <= 0 || build.concurrent < 1 || build.queue < 0) add("build limits must be positive (queue may be 0)")
         publicUrl?.let { if (!Regex("https?://[^/\\s]+(/[^\\s]*)?").matches(it)) add("publicUrl must be an absolute http(s) URL (got $it)") }
+        extracts.forEachIndexed { i, e ->
+            val b = e.bbox
+            if (e.path.isBlank()) add("extracts[$i].path must not be empty")
+            if (b != null && (b.size != 4 || b[0] >= b[2] || b[1] >= b[3] || b.any { it.isNaN() })) add("extracts[$i].bbox must be [west, south, east, north] with west < east and south < north")
+        }
         if (corsOrigins.any { it != "*" && !Regex("https?://[^/\\s]+").matches(it) }) add("corsOrigins entries must be \"*\" or an origin like https://maps.example.org (no path)")
     }
 

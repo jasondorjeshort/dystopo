@@ -96,7 +96,9 @@ fun OnlineOverlay() {
                 ui.running -> {
                     val pct = (d["percent"] as? Number)?.toDouble() ?: 0.0
                     val phase = if (d["state"] == "building") "Building on server" else "Downloading"
-                    Small(String.format(Locale.US, "%s %s: %.0f%%", phase, d["name"], pct)) { message = null; thread { service.region.cancel() } }
+                    // T64: which vector profile the server is making (outdoors from an extract or Overpass, or the fallback).
+                    val kind = d["packLabel"]?.let { " ($it)" } ?: ""
+                    Small(String.format(Locale.US, "%s %s%s: %.0f%%", phase, d["name"], kind, pct)) { message = null; thread { service.region.cancel() } }
                 }
                 ui.state == "online" && ui.view != null && ui.view.source != OnlineTiles.PACK -> {
                     Button("Download this region") {
@@ -114,7 +116,7 @@ fun OnlineOverlay() {
                 }
             }
             when (d["state"]) {
-                "done" -> if (ui.view?.source == OnlineTiles.PACK) Small("Saved as pack ${d["name"]}") {}
+                "done" -> if (ui.view?.source == OnlineTiles.PACK) Small("Saved as pack ${d["name"]}" + (d["packLabel"]?.let { " · $it" } ?: "")) {}
                 "failed" -> Small("Download failed: ${d["error"]}", Red) {}
             }
             message?.let { Small(it, Red) { message = null } }

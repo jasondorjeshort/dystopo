@@ -7,6 +7,8 @@ import io.github.jasondorjeshort.dystopo.server.LiveTiles
 import io.github.jasondorjeshort.dystopo.server.OverpassSource
 import io.github.jasondorjeshort.dystopo.server.SyncRoutes
 import io.github.jasondorjeshort.dystopo.server.TilebuildProcess
+import io.github.jasondorjeshort.dystopo.server.Extracts
+import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import kotlinx.serialization.SerializationException
@@ -129,6 +131,10 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
                     tilebuild = tilebuild,
                     maxTiles = config.build.maxTiles, maxSpanDegrees = config.build.maxSpanDegrees,
                     concurrentBuilds = config.build.concurrent, maxQueued = config.build.queue,
+                    extracts = Extracts(
+                        config.extracts.map { e -> Extracts.Configured(File(e.path), e.bbox?.let { BoundingBox(it[0], it[1], it[2], it[3]) }, e.name) },
+                        when (config.extractsDir) { null -> File(cacheDir, Extracts.DIR_NAME); "" -> null; else -> File(config.extractsDir) },
+                    ),
                 )
             },
         )

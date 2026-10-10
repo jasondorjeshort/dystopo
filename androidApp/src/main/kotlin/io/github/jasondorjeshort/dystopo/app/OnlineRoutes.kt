@@ -9,7 +9,7 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  * - `GET /online`: server, state (online / offline / unknown / none), the view and its source (pack,
  *   online, cached, none), fetcher counters (requests, cache hits, fetches, not found, errors, negative
  *   cache, backoff), the disk cache (entries, bytes, cap, evictions), contours made online, the download job.
- * - `POST /online/download[?bbox=w,s,e,n][&zooms=8-13][&name=]`: "Download this region" for the box
+ * - `POST /online/download[?bbox=w,s,e,n][&zooms=8-13][&name=][&profile=outdoors|openmaptiles]`: "Download this region" for the box
  *   (default: the visible map) through the server's `/build` and the pack downloader. `GET /online/download`:
  *   progress. `DELETE /online/download`: cancel.
  * - `POST /online/retry`: forget the backoff and recent failures; `POST /online/cache/clear`: empty the tile cache.
@@ -50,7 +50,7 @@ object OnlineRoutes {
             require(parts.size == 2 && parts[0] <= parts[1]) { "zooms must be like 8-13" }
             parts[0] to parts[1]
         }
-        return s.region.start(box, zooms?.first, zooms?.second, r.query["name"]?.takeIf { it.isNotBlank() })
+        return s.region.start(box, zooms?.first, zooms?.second, r.query["name"]?.takeIf { it.isNotBlank() }, r.query["profile"]) // T64: profile=outdoors (default) or openmaptiles
     }
 
     /**

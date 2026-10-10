@@ -26,5 +26,7 @@
     "maxAreaSqDeg": 0.05,
     "timeoutSeconds": 90
   },
-  "tilebuildHome": null
+  "tilebuildHome": null,
+  "extracts": [],
+  "extractsDir": null
 }

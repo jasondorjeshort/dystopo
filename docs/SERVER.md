@@ -134,6 +134,8 @@ key with its default.
 | `overpass.maxAreaSqDeg` | `0.05` | Largest box sent to Overpass (square degrees); larger is a 413 (or OpenFreeMap with `fallback=1`). |
 | `overpass.timeoutSeconds` | `90` | Overpass query timeout (10..900). |
 | `tilebuildHome` | `null` | A `./gradlew :tilebuild:installDist` install for `profile=outdoors` builds; null: `DYSTOPO_TILEBUILD_HOME`, else `tilebuild/build/install/tilebuild`. Not in the Docker image (tilebuild carries LGPL build tooling and stays a separate program); without it outdoors builds answer 503 and `profile=openmaptiles` builds work. |
+| `extracts` | `[]` | OSM extracts for outdoors packs bigger than Overpass serves (below): `[{"path": "data/washington-261008.osm.pbf", "bbox": [w, s, e, n], "name": "washington"}]`; `bbox` and `name` are optional. |
+| `extractsDir` | `null` | Directory scanned for more `*.osm.pbf` extracts at every build; null: `<cacheDir>/extracts`; `""` turns scanning off. |
 
 ## Routes
 
@@ -144,13 +146,53 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 - `/dem/{z}/{x}/{y}.png`, `/contours/{z}/{x}/{y}.pbf?units=`, `/osm/{z}/{x}/{y}.pbf`: packs first, else
   live (`X-Dystopo-Source` says which). `/glyphs/{fontstack}/{range}.pbf`, `/sprite*.json|png`.
 - `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
-- `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&overwrite=1]`, `GET /build`,
-  `GET|DELETE /build/{id}` (`BuildRoutes.kt`). Token-protected.
+- `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
+  `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`: the sync peer
   (docs/PLANNING.md, Sync). Token-protected.
 - `GET /catalog` (also `/catalog.json`): the pack catalog, below.
 - `GET /healthz`: `status` (`ok`, or `stopping` with a 503), `uptimeS`, `packs`, `outDirWritable`,
   `cacheDirWritable`, `glyphs` (fonts present), `errors` (tile route exceptions so far).
+
+## Outdoors packs: extracts, Overpass, fallback
+
+`profile=outdoors` builds the vector pack with tilebuild's outdoors profile (wilderness, cliffs with
+ticks, alpine routes, huts). The OSM data for it comes from, in order (`source=auto`, the default):
+
+1. **A regional extract** on the server's disk that holds the whole box: the smallest of the configured
+   `extracts` and the `*.osm.pbf` files in `extractsDir` (`<cacheDir>/extracts` by default, rescanned per
+   build, so dropping a file in is enough). tilebuild runs Planetiler on the whole file with the box as
+   bounds. No network and no area cap beyond `build.maxSpanDegrees` and `build.maxTiles`: this is how
+   whole-park packs get the outdoors layers. A Mount Rainier National Park box (-122.05,46.6,-121.4,47.1,
+   z8 to z14) from the Washington file (364 MB) builds its vector pack in about 20 s (Planetiler passes 1
+   and 2 read the whole state); the DEM half takes longer than that when its tiles are not cached.
+2. **Overpass** for a box under `overpass.maxAreaSqDeg` (one request per box, cached).
+3. **OpenFreeMap** (OpenMapTiles schema, no outdoors layers) with `fallback=1` and a warning in the job;
+   without it the request is a 413 that says why.
+
+`source=extract` or `source=overpass` forces one. The job says what it used: `osmSource` (`extract`,
+`overpass`, `openfreemap`), `osmProfile`, and for an extract `provenance.osmExtract` (`name`, `file`,
+`date` of the data). The archive itself carries `dystopo:extract` (the file's base name) and Planetiler's
+`planetiler:osm:osmosisreplicationtime`. `GET /build/sources?bbox=w,s,e,n` answers what an outdoors
+build of the box would use (`outdoors.source`, `profile`, `extract`, `why`), every extract with
+`covers`, the Overpass cap and whether tilebuild is installed; `GET /build` lists the extracts under
+`limits.extracts` with any file that could not be used (`problems`).
+
+Getting an extract (Geofabrik, ODbL, rebuilt daily; the redirect names the file after its date):
+
+```
+mkdir -p cache/extracts
+curl -L -o cache/extracts/washington-261008.osm.pbf https://download.geofabrik.de/north-america/us/washington-latest.osm.pbf
+```
+
+The extract's bbox and date come from a sidecar JSON next to it (`washington-261008.json`:
+`{"name": "washington", "bbox": [w, s, e, n], "date": "2026-10-08"}`, every key optional), else from the
+PBF header (Geofabrik files carry the region's bounding box and the replication timestamp), else the
+date is the file's modification time. The name is the file name without `-latest` or a date suffix. The
+bbox is the region polygon's bounding box, so a box near the region's edge can count as covered while the
+data beyond the border is missing; give such extracts a tighter `bbox`. Planetiler needs its 1.45 GB of
+auxiliary data in the cache the first time (any tilebuild run downloads it); the default heap
+(`DYSTOPO_TILEBUILD_HEAP`, 3g) was enough for the Washington file.
 
 ## The catalog
 

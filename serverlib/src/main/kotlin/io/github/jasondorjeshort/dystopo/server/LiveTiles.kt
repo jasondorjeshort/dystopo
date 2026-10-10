@@ -75,7 +75,7 @@ class LiveTiles(
     /** The OpenFreeMap TileJSON text (names the current planet build); read lazily, cached on disk for a day. */
     private val ofmTileJson: () -> String = { httpGet(OFM_TILEJSON)?.let { gunzipIfNeeded(it).decodeToString() } ?: error("no TileJSON at $OFM_TILEJSON") },
     /** Makes the `/build` routes; the standalone server passes its configured limits and Overpass endpoint (T52). */
-    private val makeBuilds: (LiveTiles) -> BuildRoutes = { BuildRoutes(it, it.outDir) },
+    private val makeBuilds: (LiveTiles) -> BuildRoutes = { BuildRoutes(it, it.outDir, extracts = Extracts(dir = File(cacheRoot, Extracts.DIR_NAME))) }, // T64: extracts in <cache>/extracts
 ) {
     /** One rendered live DEM tile: Terrarium PNG bytes plus the registry ids that contributed. */
     class LiveDem(val png: ByteArray, val provenance: List<String>)
