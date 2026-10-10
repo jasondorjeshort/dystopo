@@ -9,6 +9,12 @@ Every task is done only when:
 
 "Owns" lists the files a task may change freely. Touching anything else should be a few lines at most and called out in the PR. Two tasks that both need `MapRenderer.kt` are told below which part is theirs.
 
+## Owner actions pending (as of 2026-10-10)
+- **Before making the repo public:** decide about the edit history of PR #45 (an implementer's description named a private place; it was scrubbed, but GitHub keeps PR-description edit history visible to anyone with read access; recreating the repository from the git history would drop all PR text). Run the privacy scan once more at that time: `git log -p --all | java tools/PrivacyCheck.java scan`, plus the PR-text scan described in `CLAUDE.md`.
+- **Before the first release tag:** add the four `RELEASE_*` secrets (keystore base64, store password, key alias, key password) so the release workflow signs with the real key; otherwise it ships debug-signed and says so.
+- **Machine notes:** AVDs live under `E:\dystopo-avd` (set `ANDROID_AVD_HOME`); the SDK under `C:\Users\Dorje\Android\sdk`; the shared download cache is `DYSTOPO_CACHE=C:\Users\Dorje\Documents\src\android-app\cache`.
+- **Usage budget:** stop launching new agent work above about 75% of either the 5-hour or the weekly budget (`~/.claude/usage.json`, written by the status line).
+
 ## Wave 1 (independent)
 
 ### T1. Contour readability
