@@ -478,6 +478,13 @@ Shared rules as in wave 10. Debug routes on the phone live on a random port anno
 **Owns:** `shared/.../sync/crypto/**` (+ tests), a new `shared/.../sync/EncryptedBundle.kt` (framing; T65 owns the rest of `shared/.../sync/`), a new `serverlib/.../RelayRoutes.kt` (one registration line in `LiveTiles.kt`), the relay block of the `server/` config (T67 owns the users block), `androidApp/.../share/**`, the Sync section of PLANNING, the relay section of SERVER.md.
 **Done when:** two emulators on different "networks" (no adb forward between them; only the server reachable) exchange a track through the relay with identical GPX; the server's stored blob does not decrypt without the code (a test); the LAN link refuses an unencrypted client; crypto test vectors pass; `check` green.
 
+## Wave 12 (draft; opens after wave 11's sweeps)
+
+### T73. Drive mode: to the trailhead and between trailheads
+**Goal:** a third routing mode, `drive`, scoped to what packs cover (getting to and between trailheads inside a pack), stated plainly in the app as not a road navigator. The outdoors profile carries `oneway` (including `-1` and roundabouts) and motor access (`motor_vehicle`, `motorcar`, `access`, with `private` and `no` excluded and `destination` allowed as a last leg) on `transportation` lines from z12; the graph gains directed edges and a per-class speed cost (`maxspeed` where tagged, else class defaults) and includes motorways and trunks for drive only; hike and bike are unchanged (a golden route test proves it); the trip editors on phone and browser offer the mode; GPX export marks the mode; the pack format version bumps and the phone refuses drive mode on packs built before it with a clear message. Out of scope, written in the docs: turn restrictions, long-distance routing across packs, traffic.
+**Owns:** `tilebuild/.../OutdoorsProfile.kt` (+ PROFILE.md), `shared/.../routing/**`, `androidApp/.../routes/**` (mode chip), `tools/demo/trips.js` (mode option), `serverlib/.../RouteRoutes.kt` (mode parameter), tests, the Routing section of PLANNING.
+**Done when:** a route from Paradise to the Sunrise visitor centre drives the park road and refuses the trail; a one-way loop test and a private-road test pass; hike and bike goldens unchanged; device tour 10/10; `check` green.
+
 ### Later
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.
 - A real lidar coverage edge in a public area, to verify the lidar → 10 m seam.
