@@ -15,6 +15,9 @@ class DystopoApp : Application() {
     lateinit var server: LocalServer
         private set
     val map = MapController()
+
+    /** T49: every loopback request must carry this per-launch token ([LoopbackToken]). */
+    val token = LoopbackToken()
     val startedAt = SystemClock.elapsedRealtime()
 
     override fun onCreate() {
@@ -43,12 +46,12 @@ class DystopoApp : Application() {
         // T33: the first pack opened seeds the units preference (once; see AppSettings.seedUnits).
         packs.dem?.header?.let { h -> AppSettings.seedUnits((h.minLat + h.maxLat) / 2, (h.minLon + h.maxLon) / 2, "pack:${packs.name ?: "default"}") }
         collectContourGarbage()
-        return TileService(packs, cacheDir, BuildConfig.SERVER_PORT)
+        return TileService(packs, cacheDir, BuildConfig.SERVER_PORT, token)
     }
 
-    /** T41: contour caches of every DEM file on the device stay (switches, restarts); only orphans go (background). */
+    /** T41: contour (and T49 cliff) caches of every pack file on the device stay (switches, restarts); only orphans go (background). */
     fun collectContourGarbage() {
-        val identities = PackSet.catalog(packRoots()).mapNotNull { it.dem }.map(::packIdentity).toSet()
+        val identities = PackSet.catalog(packRoots()).flatMap { it.files }.map(::packIdentity).toSet()
         ContourCache.collectGarbage(this, identities)
     }
 

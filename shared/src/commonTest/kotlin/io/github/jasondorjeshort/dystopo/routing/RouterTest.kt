@@ -185,8 +185,11 @@ class RouterTest {
 
     @Test
     fun fileNameSitsNextToThePack() {
-        assertEquals("rainier-graph.idx", RoutingGraph.fileNameFor("rainier-outdoors.pmtiles"))
-        assertEquals("rainier-graph.idx", RoutingGraph.fileNameFor("rainier-osm.pmtiles"))
+        // T49: one graph per vector archive, so two archives of one pack never share a file.
+        assertEquals("rainier-outdoors-graph.idx", RoutingGraph.fileNameFor("rainier-outdoors.pmtiles"))
+        assertEquals("rainier-osm-graph.idx", RoutingGraph.fileNameFor("rainier-osm.pmtiles"))
+        assertEquals("osm-graph.idx", RoutingGraph.fileNameFor("osm.pmtiles"))
+        assertEquals("rainier-graph.idx", RoutingGraph.legacyFileNameFor("rainier-outdoors.pmtiles"))
     }
 
     // ---- From a vector archive ----

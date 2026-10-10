@@ -15,7 +15,10 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `GET /route/status`: the graph for the active pack (status, build progress, timings, size).
  * - `POST /route/build`: rebuild the graph (progress in `/route/status` and `/packs`).
  * - `POST /route/longpress?lat=&lon=`: what a long-press on the map does (start, then end).
- * - `POST /route/mode?mode=hike|bike`: switch mode and plan again.
+ * - `POST /route/mode?mode=hike|bike`: switch mode and plan again; T49: answers after the new route is
+ *   planned and shown (the card state, plus `route` like `GET /route`).
+ * Route results list the named trails they follow (`via`, T49); `GET /route` has the last camera fit
+ * (`ui.lastFit`) and where the bottom panels sit (`ui.layout`: route card, track panels, `overlap`).
  * - `POST /route/save[?name=]`: save the current route as GPX in `files/routes/`.
  * - `GET /route/saved`: saved routes. `GET /route/gpx`: the current route as GPX.
  * - `POST /route/export`: write the current route's GPX to `files/exports/`.
@@ -53,8 +56,9 @@ object RouteRoutes {
             }
             "POST" to "/route/mode" -> {
                 val mode = TravelMode.of(r.query["mode"]) ?: return bad("mode must be hike or bike")
-                RouteSession.changeMode(mode)
-                Response.json(RouteSession.json())
+                RouteSession.changeMode(mode, wait = true)
+                app.map.onMain { } // T49: the UI updates posted by the plan have run
+                Response.json(current(app, r.query["profile"] == "1"))
             }
             "POST" to "/route/save" -> {
                 val f = RouteSession.save(r.query["name"]) ?: return Response.json(mapOf("error" to "no route"), 404)

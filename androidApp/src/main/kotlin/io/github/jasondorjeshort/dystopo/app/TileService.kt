@@ -120,7 +120,7 @@ fun packIdentity(file: File): String {
  * directory of the shared [ContourCache] (kept across switches, one LRU cap). Cliff lines in vector tiles
  * are turned so the ground falls to their right ([CliffSides]), the side the style draws ticks on.
  */
-class TileService(val packs: PackSet, private val cacheDir: File, private val port: Int) {
+class TileService(val packs: PackSet, private val cacheDir: File, private val port: Int, private val token: LoopbackToken) {
     val dem = SourceCounters()
     val demSynthesized = AtomicLong()
     val osm = SourceCounters()
@@ -184,7 +184,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     private val pyramid: DemPyramid? get() = packs.dem?.let(::pyramid)
 
     /** T47: hillshade and slope raster tiles from the DEM for the map options ([ShadeService]). */
-    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let(::pyramid) }, online, contourPermits) // T41: the pack under each tile
+    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits) // T41: the pack under each tile; T49: its identity
 
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
@@ -337,22 +337,22 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         return MapLibreStyle(
             MapLibreSources(
                 // The pack identity in the URL keeps MapLibre's own tile cache from serving a replaced pack's tiles.
-                demTiles = "$base/dem/{z}/{x}/{y}.png?v=$v",
+                demTiles = token.url("$base/dem/{z}/{x}/{y}.png?v=$v"), // T49: every URL carries the loopback token
                 demMinZoom = demLo,
                 demMaxZoom = demHi,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$v-${contourOptions.units.symbol}$intervalTag", // T33: unit in the URL
+                contourTiles = token.url("$base/contours/{z}/{x}/{y}.pbf?v=$v-${contourOptions.units.symbol}$intervalTag"), // T33: unit in the URL
                 // Contour tile z has the levels of DEM zoom z+1 (512-px vector tiles), and overzoomed DEM is fine
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
                 contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
                 contourMaxZoom = demHi + 1,
                 // `c1`: cliff lines turned downhill-right (T41), so tiles cached before that are not reused.
-                osmTiles = if (osmPacks.isNotEmpty() || o != null) "$base/osm/{z}/{x}/{y}.pbf?v=$v-c1" else null,
+                osmTiles = if (osmPacks.isNotEmpty() || o != null) token.url("$base/osm/{z}/{x}/{y}.pbf?v=$v-c1") else null,
                 osmMinZoom = if (o == null) osmLo else 0,
                 osmMaxZoom = if (o == null) osmHi ?: 14 else maxOf(osmHi ?: 0, OnlineTiles.OSM_MAX_ZOOM),
-                glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }, // T38: refetch after offline
+                glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }.let { if (it.startsWith("http")) token.url(it) else it }, // T38: refetch after offline
                 attribution = attribution,
                 sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
-                shadeTiles = "$base/shade/{z}/{x}/{y}.png?v=${shade.urlVersion()}", // T47
+                shadeTiles = token.url("$base/shade/{z}/{x}/{y}.png?v=${shade.urlVersion()}"), // T47
                 shadeMinZoom = demLo,
                 shadeMaxZoom = demHi + 2,
             ),
@@ -396,13 +396,22 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         // T41: the best vector archive holding the tile (outdoors profile first, see PackPrecedence).
         for (pack in packs.osmCandidates(z, x, y)) {
             val bytes = pack.tile(z, x, y) ?: continue
-            return ok(osm, "application/x-protobuf", cliffs.orient(z, x, y, bytes))
+            return ok(osm, "application/x-protobuf", cliffs.orient(z, x, y, bytes, cliffDir(pack, z, x, y)))
         }
         return TileResult.notFound().also { osm.notFound.incrementAndGet() }
     }
 
-    /** T41: cliff ticks on the downhill side, from the DEM pack under the tile. */
-    val cliffs = CliffTiles(this::cliffPyramid)
+    /** T41: cliff ticks on the downhill side, from the DEM pack under the tile; T49: cached on disk with the contours. */
+    val cliffs = CliffTiles(this::cliffPyramid) { contourCache }
+
+    /** T49: each vector archive's identity, part of its cliff cache directory. */
+    private val osmIdentities: Map<Pack, String> = packs.osmPacks.associateWith { packIdentity(it.file) }
+
+    /** The cliff cache directory of vector tile z/x/y from [osmPack]; null without a DEM pack there. */
+    private fun cliffDir(osmPack: Pack, z: Int, x: Int, y: Int): String? {
+        val demPack = packs.demFor(z, x, y) ?: return null
+        return ContourCache.cliffDir(osmIdentities[osmPack] ?: return null, identities[demPack] ?: return null)
+    }
 
     /** The pyramid of the DEM pack that answers DEM tile z/x/y, for [cliffs]; null outside every pack. */
     private fun cliffPyramid(z: Int, x: Int, y: Int): DemPyramid? = packs.demFor(z, x, y)?.let(::pyramid)

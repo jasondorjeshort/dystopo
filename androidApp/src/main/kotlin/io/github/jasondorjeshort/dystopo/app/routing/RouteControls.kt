@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,11 +23,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import kotlinx.coroutines.delay
 
@@ -34,6 +41,40 @@ private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xEEFFFCF5)
 private val Link = Color(0xFF2C7BB6)
 private val Orange = Color(0xFFE66101)
+
+/**
+ * T49: where the bottom panels sit, measured from the window bottom, so they stack instead of overlapping:
+ * the credit line ([AttributionInsets]), the route card above it, the track profile and waypoint panels
+ * ([io.github.jasondorjeshort.dystopo.app.tracking.TrackControls]) above the card. Zero when not shown.
+ */
+object BottomPanels {
+    /** Top edge of the route card. */
+    var routeCardTop by mutableStateOf(0.dp)
+
+    /** Bottom edge of the track panels column (reported by TrackControls). */
+    var trackPanelsBottom by mutableStateOf(0.dp)
+
+    /** Top edge of the track panels column. */
+    var trackPanelsTop by mutableStateOf(0.dp)
+
+    /** What the track panels must clear: the route card when it is shown, else the credit line. */
+    val trackPanelsFloor: Dp get() = maxOf(routeCardTop, AttributionInsets.bottom)
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "creditTopDp" to AttributionInsets.bottom.value, "routeCardTopDp" to routeCardTop.value,
+        "trackPanelsBottomDp" to trackPanelsBottom.value, "trackPanelsTopDp" to trackPanelsTop.value,
+        // The panels overlap the card when their bottom edge is below the card's top edge (and both show).
+        "overlap" to (routeCardTop > 0.dp && trackPanelsTop > trackPanelsBottom && trackPanelsBottom < routeCardTop),
+    )
+}
+
+/** Distance of [c]'s top (or bottom) edge from the bottom of the window. */
+fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Density, top: Boolean = true): Dp {
+    var r = c
+    while (true) r = r.parentLayoutCoordinates ?: break
+    val y = c.positionInRoot().y + if (top) 0f else c.size.height.toFloat()
+    return with(density) { (r.size.height - y).toDp() }
+}
 
 /**
  * The route card (T45): binds [RouteSession.overlay] to the map (long-press start, long-press end),
@@ -50,11 +91,20 @@ fun RouteControls() {
         onDispose { RouteSession.overlay.unbind() }
     }
     val phase = RouteSession.phase
-    if (phase == "idle") return
+    if (phase == "idle") {
+        SideEffect { if (BottomPanels.routeCardTop != 0.dp) BottomPanels.routeCardTop = 0.dp }
+        return
+    }
+    val density = LocalDensity.current
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
+            // T49: above the credit line (its measured top); the track panels stack above this card.
+            Modifier.align(Alignment.BottomCenter).let { m ->
+                val b = AttributionInsets.bottom
+                if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
+            }
                 .widthIn(max = 420.dp)
+                .onGloballyPositioned { c -> fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it } }
                 .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -68,6 +118,13 @@ fun RouteControls() {
             BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
             if (plan != null && phase == "route") {
                 BasicText(RouteSession.summary(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                // T49: the trails it follows, by name.
+                if (plan.via.isNotEmpty()) {
+                    BasicText(
+                        "via " + plan.via.take(4).joinToString(", ") { it.first } + if (plan.via.size > 4) ", ..." else "",
+                        style = TextStyle(color = Ink, fontSize = 13.sp), maxLines = 2,
+                    )
+                }
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }

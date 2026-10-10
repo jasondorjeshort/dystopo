@@ -75,8 +75,10 @@ class RainierRoutingTest {
     private fun graph(): RoutingGraph {
         val path = WayAttrs(WayClass.PATH, Surface.UNPAVED, sac = 1)
         fun l(pts: List<Pair<Double, Double>>, a: WayAttrs = path) = WayLine.of(a, *pts.toTypedArray())
+        fun named(n: String) = path.copy(name = n) // T49: trail names
         val lines = listOf(
-            l(skylineWest), l(upperSkyline), l(lowerSkyline), l(goldenGate), l(altaVista), l(sunrise),
+            l(skylineWest, named("Skyline Trail")), l(upperSkyline, named("Skyline Trail")), l(lowerSkyline, named("Skyline Trail")),
+            l(goldenGate, named("Golden Gate Trail")), l(altaVista, named("Alta Vista Trail")), l(sunrise),
             l(road, WayAttrs(WayClass.SECONDARY, Surface.PAVED)), l(trailheadSpur, WayAttrs(WayClass.FOOTWAY, Surface.PAVED)),
         )
         return RoutingGraphBuilder(cone).build(lines, GraphSource("paradise", "fixture", "idw", 14, 0))
@@ -100,6 +102,14 @@ class RainierRoutingTest {
         assertTrue(nearM(46.7960 to -121.7262, p.route.points) > 300, "not via Golden Gate")
         assertTrue(WayClass.SECONDARY !in p.metersByClass, "not along the road: ${p.metersByClass}")
         assertTrue(p.metersByClass.getValue(WayClass.PATH) > 0.95 * p.distanceM)
+        // T49: the result names the trail, in the JSON and the description, and the names survive the graph file.
+        assertEquals(listOf("Skyline Trail"), p.via.map { it.first }, "via ${p.via}")
+        assertTrue(p.via.single().second > 0.9 * p.distanceM)
+        assertTrue("via Skyline Trail" in p.route.description!!, p.route.description)
+        assertEquals(listOf("Skyline Trail"), (p.json()["via"] as List<*>).map { (it as Map<*, *>)["name"] })
+        val decoded = RoutingGraph.decode(g.encode())
+        assertEquals(g, decoded)
+        assertEquals(setOf("Skyline Trail", "Golden Gate Trail", "Alta Vista Trail"), decoded.names.toSet())
         // Net climb as the cone says (the trail climbs past Panorama Point and drops back to it); Naismith
         // gives distance/5 km/h + climb/600 m/h.
         val net = cone.elevation(p.route.points.last().lat, p.route.points.last().lon) - cone.elevation(p.route.points.first().lat, p.route.points.first().lon)
@@ -131,6 +141,7 @@ class RainierRoutingTest {
         val r = Router(graph()).route(46.7989, -121.7227, 46.7914, -121.7325)
         assertIs<RouteResult.Found>(r)
         assertEquals(length(goldenGate), r.plan.distanceM, 5.0)
+        assertEquals(listOf("Golden Gate Trail"), r.plan.via.map { it.first }) // T49
     }
 
     @Test

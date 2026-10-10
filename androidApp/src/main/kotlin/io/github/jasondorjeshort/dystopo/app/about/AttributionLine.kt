@@ -41,7 +41,8 @@ object AttributionInsets {
 fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    val credits = runCatching { AppCredits.compose(DystopoApp.instance) }.getOrNull()
+    val view = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds // T49: recompose when the view moves
+    val credits = runCatching { AppCredits.compose(DystopoApp.instance, view) }.getOrNull()
     val text = credits?.takeIf { it.packs.isNotEmpty() }?.compact ?: HtmlText.toPlain(fallback)
     BasicText(
         text,

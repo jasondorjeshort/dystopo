@@ -194,6 +194,7 @@ class MapController {
                 animating = false
                 lastCameraAt = SystemClock.elapsedRealtime()
                 runCatching { onCameraIdle() } // T41: online mode retries negative-cached tiles, refreshes its credits
+                runCatching { MapViewport.update(m) } // T49: the credit line covers the packs in view
             }
             loadStyle(styleJson(), onStyle)
         }

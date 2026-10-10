@@ -273,6 +273,9 @@ class RoutingGraphBuilder(
             return nodeOf[v]
         }
         val eFrom = IntList(); val eTo = IntList(); val eCls = IntList(); val eAttrs = IntList(); val eFlags = IntList()
+        val eName = IntList() // T49: 0 = unnamed, else 1 + index into names
+        val names = ArrayList<String>()
+        val nameIds = HashMap<String, Int>()
         val geomStart = IntList(); geomStart.add(0)
         val geomVerts = IntList()
         val seen = HashSet<String>()
@@ -298,6 +301,7 @@ class RoutingGraphBuilder(
                     } else if (!(from == v && mid.isEmpty())) {
                         eFrom.add(node(from)); eTo.add(node(v))
                         eCls.add(a.cls.code); eAttrs.add(a.packed); eFlags.add(a.flags)
+                        eName.add(a.name?.let { nm -> nameIds.getOrPut(nm) { names += nm; names.size } } ?: 0)
                         for (m in mid) geomVerts.add(m)
                         geomStart.add(geomVerts.size)
                     }
@@ -392,7 +396,7 @@ class RoutingGraphBuilder(
         val graph = RoutingGraph(
             source, nodeLon, nodeLat, nodeEle, eFrom.toArray(), eTo.toArray(), len, asc, desc,
             ByteArray(m) { eCls[it].toByte() }, ByteArray(m) { eAttrs[it].toByte() }, ByteArray(m) { eFlags[it].toByte() },
-            gs, gLon, gLat, gEle,
+            gs, gLon, gLat, gEle, eName.toArray(), names,
         )
         stats = GraphBuildStats(
             zoom = acc.z, tiles = tiles, tileErrors = errors, features = features, lines = acc.xs.size,

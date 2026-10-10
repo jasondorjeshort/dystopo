@@ -36,6 +36,10 @@ Before the tour (unless --no-restart) the app is force-stopped and relaunched th
 MapLibre's tile caches and the glyph cache start empty, and the contour disk cache is cleared (unless
 --keep-cache) so contour timings measure generation, not disk reads.
 
+Every request carries the app's per-launch loopback token (T49): read from GET /health without a token
+(debug builds answer only {"token": ...}) and again after a 401; setup.token in the summary also records that a
+request without the token got 401.
+
 Device selection: --port is the host port forwarded to the app (tools/android-emu.ps1 -Port). With
 --serial (or ANDROID_SERIAL) the script checks that `adb forward --list` maps that port to that serial
 and refuses to run otherwise, so a tour can never drive another emulator; without either it reports
@@ -100,17 +104,46 @@ def read_views(args):
 # HTTP and adb
 
 class Server:
+    """The app's debug server. Every request carries the app's per-launch loopback token (T49): it is read
+    from GET /health without a token (debug builds answer only {"token": ...} then) and read again after a
+    401, since a relaunched app has a new one."""
+
     def __init__(self, port):
         self.base = f"http://127.0.0.1:{port}"
+        self.token = None
+
+    def fetch_token(self, timeout=10.0):
+        with urllib.request.urlopen(self.base + "/health", timeout=timeout) as r:
+            self.token = json.loads(r.read().decode("utf-8"))["token"]
+        return self.token
+
+    def _open(self, path, method="GET", timeout=30.0):
+        for attempt in (0, 1):
+            if self.token is None:
+                self.fetch_token(min(timeout, 10.0))
+            req = urllib.request.Request(self.base + path, method=method, data=b"" if method == "POST" else None,
+                                         headers={"X-Dystopo-Token": self.token})
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return r.read()
+            except urllib.error.HTTPError as e:
+                if e.code != 401 or attempt:
+                    raise
+                self.token = None  # the app was relaunched: fetch its new token and retry once
 
     def get(self, path, timeout=30.0):
-        with urllib.request.urlopen(self.base + path, timeout=timeout) as r:
-            return r.read()
+        return self._open(path, timeout=timeout)
 
     def json(self, path, method="GET", timeout=30.0):
-        req = urllib.request.Request(self.base + path, method=method, data=b"" if method == "POST" else None)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return json.loads(self._open(path, method, timeout).decode("utf-8"))
+
+    def status_without_token(self, path, timeout=10.0):
+        """HTTP status of a request with no token (expected: 401)."""
+        try:
+            with urllib.request.urlopen(self.base + path, timeout=timeout) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
 
 
 def adb_path():
@@ -485,6 +518,7 @@ def main():
             _, since = adb(exe, serial, "shell", "date '+%m-%d %H:%M:%S.000'", timeout=30)
             since = since.strip()
         health = server.json("/health")
+        summary["setup"]["token"] = {"sent": True, "noTokenStatsStatus": server.status_without_token("/stats")}  # T49: expect 401
         summary["app"] = health.get("app")
         summary["packs"] = {k: (v if not isinstance(v, dict) else {kk: v[kk] for kk in ("file", "minZoom", "maxZoom", "bounds", "bytes")})
                             for k, v in health.get("packs", {}).items()}

@@ -17,7 +17,7 @@ import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
-import io.github.jasondorjeshort.dystopo.tiles.BitmapImageDecoder
+import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Offline route planning for the active pack (T45). The trail graph lives next to the pack's vector
- * archive as `<name>-graph.idx`; [ensure] loads it in the background, or builds it from the vector
+ * archive as `<archive name>-graph.idx` (T49: e.g. `rainier-outdoors-graph.idx`); [ensure] loads it in the background, or builds it from the vector
  * archive (elevation from the DEM archive) when it is missing, unreadable or stale (either archive's
  * fingerprint changed), with progress in [json] (`GET /packs` under `routing`, `GET /route/status`).
  * Nothing is built until the first use: the first long-press on the map or `POST /route`.
@@ -45,6 +45,8 @@ object RoutePlanner {
         @Volatile var rebuildReason: String? = null
         @Volatile var graph: RoutingGraph? = null
         @Volatile var demTilesDecoded: Long? = null
+        @Volatile var demDecodeMs: Double? = null
+        @Volatile var demDecoder: String? = null
         val finished = CountDownLatch(1)
 
         fun matches(name: String?, f: File?) = name == pack && f != null && f.path == vector.path && f.length() == vectorBytes && f.lastModified() == vectorMtime
@@ -52,7 +54,7 @@ object RoutePlanner {
         fun json(): Map<String, Any?> = linkedMapOf(
             "pack" to pack, "status" to status, "file" to file.path, "bytes" to file.takeIf { it.isFile }?.length(),
             "progress" to if (total > 0) linkedMapOf("tiles" to done, "of" to total, "percent" to done * 100 / total) else null,
-            "buildMs" to buildMs, "loadMs" to loadMs, "demTilesDecoded" to demTilesDecoded, "rebuildReason" to rebuildReason, "error" to error,
+            "buildMs" to buildMs, "loadMs" to loadMs, "demTilesDecoded" to demTilesDecoded, "demDecodeMs" to demDecodeMs, "demDecoder" to demDecoder, "rebuildReason" to rebuildReason, "error" to error,
             "nodes" to graph?.nodeCount, "edges" to graph?.edgeCount, "networks" to graph?.componentLengthM?.size,
         )
     }
@@ -109,7 +111,8 @@ object RoutePlanner {
                     // Its own small DEM cache: the builder samples in tile order, so each tile is decoded about once.
                     val pyramid = demReader?.let { r ->
                         val lock = Any()
-                        DemPyramid(r.header.minZoom, r.header.maxZoom, BitmapImageDecoder, cacheTiles = 32) { z, x, y -> synchronized(lock) { r.tile(z, x, y) } }
+                        // T49: the app's DEM decoder (the shared pure-Kotlin one by default), not BitmapFactory.
+                        DemPyramid(r.header.minZoom, r.header.maxZoom, TileService.demDecoder(), cacheTiles = 32) { z, x, y -> synchronized(lock) { r.tile(z, x, y) } }
                     }
                     val builder = RoutingGraphBuilder(pyramid?.let { DemElevation(it) }, demFingerprint) { d, n -> s.done = d; s.total = n }
                         .withClock { SystemClock.elapsedRealtime() }
@@ -121,6 +124,8 @@ object RoutePlanner {
                     g.adjStart; g.component; g.nearest(0.0, 0.0, 1.0)
                     s.buildMs = SystemClock.elapsedRealtime() - t0
                     s.demTilesDecoded = pyramid?.tilesDecoded
+                    s.demDecodeMs = pyramid?.decodeMs?.let { Math.round(it * 10) / 10.0 }
+                    s.demDecoder = TileService.decoderName
                     s.graph = g
                     s.status = "ready"
                     Log.i(TAG, "built ${s.file.name}: ${g.nodeCount} nodes, ${g.edgeCount} edges, ${bytes.size} bytes in ${s.buildMs} ms (${builder.stats?.timingsMs})")
@@ -160,6 +165,21 @@ object RoutePlanner {
         val vector = app.tiles.packs.osm?.file ?: return null
         val f = File(vector.absoluteFile.parentFile, RoutingGraph.fileNameFor(vector.name))
         return linkedMapOf("pack" to (app.tiles.packs.name ?: "default"), "status" to "idle", "file" to f.path, "bytes" to f.takeIf { it.isFile }?.length())
+    }
+
+    /**
+     * T49: the graph files of a vector archive, for deleting a pack: the current name and the pre-T49 one
+     * (`<pack>-graph.idx`), whichever exist.
+     */
+    fun graphFiles(vector: File): List<File> {
+        val dir = vector.absoluteFile.parentFile
+        return listOf(RoutingGraph.fileNameFor(vector.name), RoutingGraph.legacyFileNameFor(vector.name)).distinct().map { File(dir, it) }.filter { it.isFile }
+    }
+
+    /** T49: drops the loaded graph of pack [name] (being deleted). */
+    @Synchronized
+    fun forget(name: String) {
+        if (current?.pack == name) current = null
     }
 
     // ---- Saved routes ----

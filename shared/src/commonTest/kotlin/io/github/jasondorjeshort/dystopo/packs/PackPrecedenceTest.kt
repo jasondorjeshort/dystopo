@@ -67,11 +67,13 @@ class PackPrecedenceTest {
     }
 
     @Test
-    fun deeperThenPrimaryThenSmallerThenName() {
-        val a = PackCoverage("a", 8, 13, rainier)
+    fun primaryThenDeeperThenSmallerThenName() {
+        // T49: the pack the user chose outranks a deeper pack of the same profile.
+        val a = PackCoverage("a", 8, 13, rainier, primary = true)
         val b = PackCoverage("b", 8, 14, rainier)
-        val c = PackCoverage("c", 8, 14, rainier, primary = true)
         val d = PackCoverage("d", 8, 14, paradise)
-        assertEquals(listOf("c", "d", "b", "a"), PackPrecedence.sort(listOf(a, b, c, d)) { it }.map { it.pack })
+        val e = PackCoverage("e", 8, 13, rainier)
+        val f = PackCoverage("f", 8, 14, rainier)
+        assertEquals(listOf("a", "d", "b", "f", "e"), PackPrecedence.sort(listOf(e, f, b, a, d)) { it }.map { it.pack })
     }
 }

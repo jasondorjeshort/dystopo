@@ -44,7 +44,15 @@ class Routes(private val app: DystopoApp) {
         app.map.lastTileAt = { tileKinds.maxOf { app.server.lastDone(it) } }
     }
 
-    fun handle(r: Request): Response {
+    /** T49: the per-launch token gates every route ([LoopbackToken]); `t` is stripped before routing. */
+    fun handle(raw: Request): Response {
+        // Release builds have no debug routes: 404 for those with or without a token; tile routes need the token.
+        if (!BuildConfig.DEBUG_ENDPOINTS && !isMapRequest(raw)) return Response.notFound()
+        val (r, answer) = app.token.admit(raw, BuildConfig.DEBUG_ENDPOINTS)
+        return answer ?: route(r!!)
+    }
+
+    private fun route(r: Request): Response {
         tile.matchEntire(r.path)?.let { m ->
             val (kind, zs, xs, ys) = m.destructured
             val (zxy, error) = RequestChecks.tile(zs, xs, ys)
@@ -154,7 +162,7 @@ class Routes(private val app: DystopoApp) {
         return mapOf(
             "ok" to true,
             "app" to mapOf("version" to BuildConfig.VERSION_NAME, "debug" to BuildConfig.DEBUG, "sdk" to Build.VERSION.SDK_INT, "device" to Build.MODEL),
-            "server" to mapOf("port" to BuildConfig.SERVER_PORT) + app.server.stats(),
+            "server" to mapOf("port" to BuildConfig.SERVER_PORT, "tokenRefused" to app.token.refused.get()) + app.server.stats(), // T49
             "uptimeMs" to SystemClock.elapsedRealtime() - app.startedAt,
             "packs" to mapOf("dem" to packJson(t.packs.dem), "osm" to packJson(t.packs.osm), "glyphs" to t.packs.glyphDir?.path, "primary" to t.packs.name, "inUse" to t.packs.json()), // T41: every pack on the map
             "map" to mapOf(

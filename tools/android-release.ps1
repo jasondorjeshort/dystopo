@@ -13,7 +13,10 @@
 # start (am start -S); the others reuse the running activity (--activity-single-top), which is how a link
 # arrives in practice. -Runs N adds N cold starts at the first view for the timing table (run 1 right after
 # the install has an empty contour cache, later runs a warm one). With -Port the tile server is forwarded
-# and probed: /style.json and a /dem tile must answer 200, /health /stats /camera /screenshot 404 in release.
+# and probed. T49: every loopback request needs the app's per-launch token, and release builds have no /health
+# to hand it out (by design), so without it the tile routes (/style.json, /dem, /contours) must answer 401 and the
+# debug routes (/health /stats /camera /screenshot /features) 404; the with-token tile check is skipped (the
+# deep-link views above already show the tiles are served to the app's own map). probeOk says whether it held.
 # Ends with a logcat check (crash buffer and the app's errors) and prints one JSON object.
 param(
     [Parameter(Mandatory = $true)] [string]$Serial,
@@ -280,18 +283,26 @@ if ($Port -gt 0) {
     $latR = [double]$lat * [math]::PI / 180
     $ty = [math]::Floor((1 - [math]::Log([math]::Tan($latR) + 1 / [math]::Cos($latR)) / [math]::PI) / 2 * $nTiles)
     $probe = [ordered]@{}
-    foreach ($path in @('/style.json', "/dem/$zt/$tx/$ty.png", "/contours/12/$([math]::Floor($tx * 4))/$([math]::Floor($ty * 4)).pbf", '/health', '/stats', '/camera', '/screenshot', '/features')) {
+    $expect = [ordered]@{}
+    $tiles = @('/style.json', "/dem/$zt/$tx/$ty.png", "/contours/12/$([math]::Floor($tx * 4))/$([math]::Floor($ty * 4)).pbf")
+    $debug = @('/health', '/stats', '/camera', '/screenshot', '/features')
+    foreach ($path in $tiles + $debug) {
+        $expect[$path] = if ($tiles -contains $path) { 401 } else { 404 }
         try { $probe[$path] = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 "http://127.0.0.1:$Port$path").StatusCode }
         catch { $probe[$path] = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { "$($_.Exception.Message)" } }
     }
     $report.probe = $probe
+    $report.probeExpected = $expect
+    $report.probeOk = @($expect.Keys | Where-Object { $probe[$_] -ne $expect[$_] }).Count -eq 0
+    $report.probeNote = 'no token sent: release has no /health token bootstrap (T49), so tile routes must answer 401 and debug routes 404; the with-token tile check is skipped'
+    Write-Host "probe: $($report.probeNote)"
 }
 
 # Crash-free: nothing in the crash buffer, and the app's own error lines.
 $crash = @(Adb logcat -d -b crash | Where-Object { $_ -match $package })
 $errors = @(Adb logcat -d '*:E' | Where-Object { $f = ($_ -split '\s+'); $f.Count -gt 3 -and $script:pids.ContainsKey($f[2]) })
 $report.logcat = [ordered]@{ crashLines = $crash.Count; appErrorLines = $errors.Count; appErrors = @($errors | Select-Object -First 20); pids = @($script:pids.Keys) }
-$report.ok = (@($viewResults + $runResults | Where-Object { -not $_.ok }).Count -eq 0) -and $crash.Count -eq 0
+$report.ok = (@($viewResults + $runResults | Where-Object { -not $_.ok }).Count -eq 0) -and $crash.Count -eq 0 -and ($Port -le 0 -or $report.probeOk)
 $json = $report | ConvertTo-Json -Depth 6
 Set-Content -Encoding utf8 (Join-Path $outDir "$Label-summary.json") $json
 $json

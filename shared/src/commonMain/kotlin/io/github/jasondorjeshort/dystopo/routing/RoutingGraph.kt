@@ -41,18 +41,20 @@ data class EdgeSnap(
 
 /**
  * A routable network: nodes are junctions and line ends, edges the lines between them with their
- * intermediate vertices, length, class, surface and the ascent and descent from `from` to `to`.
+ * intermediate vertices, length, class, surface, name (T49) and the ascent and descent from `from` to `to`.
  * Coordinates are stored as integer microdegrees (about 0.1 m), elevations in metres (NaN: no DEM)
  * rounded to decimetres, lengths, ascents and descents to decimetres, so a decoded graph is equal to
  * the one that was encoded. Pure Kotlin; the file format ([encode]/[decode]) is ours:
  *
  * ```
- * "DYSG" u8 version(=1)
+ * "DYSG" u8 version(=2; 1 is read too, without names)
  * str sourceFile, str fingerprint, str demFingerprint, u8 zoom, u64 builtAtMs
  * varint nodeCount, nodes: zz dLonE6, zz dLatE6, ele        (deltas from the previous node)
  * varint edgeCount, edges: varint from, varint to, u8 class, u8 surface|sac<<2, u8 flags,
  *                          varint lengthDm, varint ascentDm, varint descentDm,
  *                          varint pointCount, points: zz dLonE6, zz dLatE6, ele   (deltas from the from node, then the previous point)
+ * varint nameCount, names: str                              (version 2: way names, T49)
+ * edges: varint name                                        (0 unnamed, else 1 + index into names)
  * u32 FNV-1a of every byte before it
  * ```
  * `ele` is a varint: 0 for no elevation, else zigzag(decimetres - previous decimetres) + 1. Strings
@@ -79,13 +81,20 @@ class RoutingGraph(
     val geomLon: IntArray,
     val geomLat: IntArray,
     val geomEle: FloatArray,
+    /** T49: edge e's way name is names[edgeName[e] - 1]; 0 for none. */
+    val edgeName: IntArray = IntArray(edgeFrom.size),
+    val names: List<String> = emptyList(),
 ) {
     val nodeCount: Int get() = nodeLon.size
     val edgeCount: Int get() = edgeFrom.size
 
     init {
         require(geomStart.size == edgeCount + 1) { "geomStart must have edgeCount + 1 entries" }
+        require(edgeName.size == edgeCount) { "edgeName must have edgeCount entries" }
     }
+
+    /** The way name of edge [e] (T49), or null. */
+    fun name(e: Int): String? = edgeName[e].takeIf { it > 0 }?.let { names[it - 1] }
 
     fun wayClass(e: Int): WayClass = WayClass.ofCode(edgeClass[e].toInt()) ?: WayClass.PATH
     fun surface(e: Int): Surface = WayAttrs.surfaceOf(edgeAttrs[e].toInt())
@@ -242,6 +251,9 @@ class RoutingGraph(
                 ele = w.ele(geomEle[g], ele)
             }
         }
+        w.varint(names.size.toLong())
+        for (s in names) w.str(s)
+        for (e in 0 until edgeCount) w.varint(edgeName[e].toLong())
         val body = w.toByteArray()
         val out = ByteWriter(body.size + 4)
         out.bytes(body)
@@ -255,21 +267,25 @@ class RoutingGraph(
         edgeLength.contentEquals(other.edgeLength) && edgeAscent.contentEquals(other.edgeAscent) && edgeDescent.contentEquals(other.edgeDescent) &&
         edgeClass.contentEquals(other.edgeClass) && edgeAttrs.contentEquals(other.edgeAttrs) && edgeFlags.contentEquals(other.edgeFlags) &&
         geomStart.contentEquals(other.geomStart) && geomLon.contentEquals(other.geomLon) && geomLat.contentEquals(other.geomLat) &&
-        sameFloats(geomEle, other.geomEle)
+        sameFloats(geomEle, other.geomEle) && edgeName.contentEquals(other.edgeName) && names == other.names
 
     override fun hashCode(): Int = source.hashCode() * 31 + nodeCount * 17 + edgeCount
 
     companion object {
         private val MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x47) // "DYSG"
-        const val VERSION = 1
+        const val VERSION = 2
         const val SUFFIX = "-graph.idx"
         const val E6 = 1e6
 
-        /** The graph file that sits next to a pack's vector archive: `<pack name>-graph.idx`. */
-        fun fileNameFor(vectorFileName: String): String {
-            val pack = PackNames.parse(vectorFileName)?.pack ?: vectorFileName.substringBeforeLast('.')
-            return pack + SUFFIX
-        }
+        /**
+         * The graph file that sits next to a vector archive: `<archive name>-graph.idx` (T49: the whole archive
+         * name, so `rainier-osm` and `rainier-outdoors` keep their own graphs instead of overwriting one).
+         */
+        fun fileNameFor(vectorFileName: String): String = vectorFileName.substringBeforeLast('.') + SUFFIX
+
+        /** The name before T49, `<pack name>-graph.idx`; only for removing such files. */
+        fun legacyFileNameFor(vectorFileName: String): String =
+            (PackNames.parse(vectorFileName)?.pack ?: vectorFileName.substringBeforeLast('.')) + SUFFIX
 
         /** Rounds metres to the decimetres the file keeps (NaN stays NaN). */
         fun quantizeEle(m: Double): Float = if (m.isNaN()) Float.NaN else ((m * 10).roundToLong() / 10.0).toFloat()
@@ -283,7 +299,7 @@ class RoutingGraph(
             val r = ByteReader(bytes.copyOfRange(0, bytes.size - 4), 4)
             try {
                 val version = r.u8()
-                require(version == VERSION) { "routing graph version $version, expected $VERSION" }
+                require(version == VERSION || version == 1) { "routing graph version $version, expected $VERSION" }
                 val source = GraphSource(r.str(), r.str(), r.str(), r.u8(), r.u64())
                 val n = r.count()
                 val nodeLon = IntArray(n)
@@ -332,10 +348,17 @@ class RoutingGraph(
                     }
                     geomStart[e + 1] = gLon.size
                 }
+                // T49: way names (version 2).
+                val names = ArrayList<String>()
+                val edgeName = IntArray(m)
+                if (version >= 2) {
+                    repeat(r.count()) { names += r.str() }
+                    for (e in 0 until m) edgeName[e] = r.count().also { require(it <= names.size) { "edge name out of range" } }
+                }
                 // Decimetre values were written from floats rounded to decimetres; divide the same way the builder rounds.
                 return RoutingGraph(
                     source, nodeLon, nodeLat, nodeEle.requantize(), from, to, len.requantizeLen(), asc.requantizeLen(), desc.requantizeLen(),
-                    cls, attrs, flags, geomStart, gLon.toArray(), gLat.toArray(), gEle.toArray().requantize(),
+                    cls, attrs, flags, geomStart, gLon.toArray(), gLat.toArray(), gEle.toArray().requantize(), edgeName, names,
                 )
             } catch (e: IllegalStateException) {
                 throw IllegalArgumentException("corrupt routing graph: ${e.message}", e)

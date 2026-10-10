@@ -310,7 +310,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
             val all = withDefaults(ids)
             val (elevation, map) = all.partition(::isElevation)
             val out = ArrayList<PackMetadata>()
-            if (demServed > 0) out += PackMetadata("online-dem", server, mapOf("name" to "Online elevation", "provenance" to elevation))
+            // T49: the elevation credit carries the registry texts (Copernicus, 3DEP), like a DEM pack's own attribution.
+            val demCredit = elevation.mapNotNull { SourceRegistry.builtIn[it]?.attribution }.joinToString(" ")
+            if (demServed > 0) out += PackMetadata("online-dem", server, mapOf("name" to "Online elevation", "provenance" to elevation, "attribution" to demCredit))
             if (osmServed > 0) {
                 val credit = osmAttributionHtml ?: "&copy; OpenStreetMap contributors"
                 out += PackMetadata("online-osm", server, mapOf("name" to "Online map", "provenance" to map, "attribution" to credit))

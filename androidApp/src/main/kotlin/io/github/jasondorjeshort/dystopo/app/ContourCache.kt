@@ -36,9 +36,31 @@ object ContourCache {
 
     fun key(dir: String, z: Int, x: Int, y: Int) = "$dir/$z/$x/$y.pbf"
 
-    /** Whether a directory named [name] can still be used: this version, and a pack identity in [identities]. */
+    /** T49: first part of the shade tile directories ([io.github.jasondorjeshort.dystopo.app.options.ShadeService]). */
+    const val SHADE_VERSION = "shade1"
+
+    /** T49: the directory of shade tiles for option set [optionsKey] over the DEM archive [demIdentity]. */
+    fun shadeDir(optionsKey: String, demIdentity: String) = "$SHADE_VERSION-${optionsKey.replace(Regex("[^A-Za-z0-9]"), "_")}-$demIdentity"
+
+    fun shadeKey(dir: String, z: Int, x: Int, y: Int) = "$dir/$z/$x/$y.png"
+
+    /** T49: bump when [CliffTiles] changes what it writes; first part of the cliff directories. */
+    const val CLIFF_VERSION = "cliffs1"
+
+    /**
+     * T49: the directory of vector tiles with their cliffs turned downhill ([CliffTiles]), cached in the same
+     * LRU as the contours: per vector archive and the DEM archive the sides were decided from.
+     */
+    fun cliffDir(vectorIdentity: String, demIdentity: String) = "$CLIFF_VERSION-$vectorIdentity-$demIdentity"
+
+    /**
+     * Whether a directory named [name] can still be used: this version, and a pack identity in [identities];
+     * a cliff directory ([cliffDir]) needs both its vector and its DEM archive in [identities].
+     */
     fun keeps(name: String, identities: Set<String>): Boolean {
         val parts = name.split('-')
+        if (parts[0] == CLIFF_VERSION) return parts.size == 3 && parts[1] in identities && parts[2] in identities
+        if (parts[0] == SHADE_VERSION) return parts.size == 3 && parts[2] in identities
         return parts.size >= 4 && parts[0] == VERSION && parts.last() in identities
     }
 
@@ -56,7 +78,7 @@ object ContourCache {
         return n
     }
 
-    /** [collectGarbage] for the app's cache on a background thread; [identities] are the DEM files on the device. */
+    /** [collectGarbage] for the app's cache on a background thread; [identities] are the DEM and vector files on the device. */
     fun collectGarbage(app: DystopoApp, identities: Set<String>) {
         Thread({
             staleFilesDeleted.addAndGet(collectGarbage(root(app), get(app), identities).toLong())

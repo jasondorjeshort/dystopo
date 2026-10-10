@@ -4,6 +4,10 @@
 #   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Build
 #   curl http://localhost:8686/health        curl -o out\phone.png http://localhost:8686/screenshot
 #
+# Every request needs the app's per-launch loopback token (T49): `curl localhost:8686/health` without it
+# answers {"token": "..."}; send it as `-H "X-Dystopo-Token: <token>"` or `?t=<token>`. The run ends by
+# printing the current one (it changes whenever the app restarts).
+#
 # Several emulators side by side: give each its own AVD, console port and host port. The serial is
 # emulator-<EmuPort>; every adb call in this script (and android-push-pack.ps1) uses it, and the run ends
 # by printing it for ANDROID_SERIAL:
@@ -311,21 +315,24 @@ Adb shell am start -W -n $activity | Out-Null
 
 $url = "http://localhost:$Port"
 $deadline = (Get-Date).AddMinutes(5)
+$token = $null
 while ($true) {
     try {
-        $health = Invoke-RestMethod -TimeoutSec 10 "$url/health"
+        # T49: /health without the token gives the token; with it, the full health report.
+        if (-not $token) { $token = (Invoke-RestMethod -TimeoutSec 10 "$url/health").token }
+        $health = Invoke-RestMethod -TimeoutSec 10 -Headers @{ 'X-Dystopo-Token' = $token } "$url/health"
         if ($health.map.styleLoaded) { break }
-    } catch { }
+    } catch { $token = $null }
     if ((Get-Date) -gt $deadline) { Write-Warning 'app did not report a loaded style within 5 minutes'; break }
     Start-Sleep -Seconds 3
 }
 $stopArgs = if ($NoEmulator) { '' } else { "-Avd $Avd -EmuPort $($script:serial -replace 'emulator-', '') -Port $Port" + $(if ($AvdHome) { " -AvdHome $env:ANDROID_AVD_HOME" } else { '' }) + " -Stop [-Delete]" }
 Write-Host ''
 Write-Host "ANDROID_SERIAL=$script:serial"
-Write-Host "Dystopo debug server: $url"
-Write-Host "  curl $url/health"
-Write-Host "  curl $url/stats"
-Write-Host "  curl -X POST `"$url/camera?lat=46.853&lon=-121.76&zoom=12`""
-Write-Host "  curl -o out\phone.png $url/screenshot"
+Write-Host "Dystopo debug server: $url (token $token; GET /health without it prints the current one)"
+Write-Host "  curl -H `"X-Dystopo-Token: $token`" $url/health"
+Write-Host "  curl `"$url/stats?t=$token`""
+Write-Host "  curl -X POST `"$url/camera?lat=46.853&lon=-121.76&zoom=12&t=$token`""
+Write-Host "  curl -o out\phone.png `"$url/screenshot?t=$token`""
 Write-Host "  python -I tools\android-check.py --port $Port --serial $script:serial --views-file tools\android-tour.txt"
 if ($stopArgs) { Write-Host "  powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 $stopArgs" }

@@ -34,7 +34,7 @@ data class PackCoverage(
     val maxZoom: Int,
     val bounds: PackBounds,
     val profile: VectorProfile = VectorProfile.UNKNOWN,
-    /** The pack the user chose last (`POST /packs/activate`): a tie-breaker only. */
+    /** The pack the user chose last (`POST /packs/activate`): first within a profile (T49). */
     val primary: Boolean = false,
     /** The archive stores whole upstream tiles even at its edges (built from OpenFreeMap), so an edge tile is complete. */
     val wholeTiles: Boolean = false,
@@ -43,7 +43,8 @@ data class PackCoverage(
 /**
  * Several packs on the map at once (T41): every usable pack is consulted, tile by tile, in a fixed
  * order. Vector archives rank by profile first (outdoors over plain OpenMapTiles, T37), then the
- * deeper archive, then the user's primary pack, then the smaller (more specific) box, then the name.
+ * user's primary pack (T49: the pack the user chose wins over a deeper one of the same profile), then
+ * the deeper archive, then the smaller (more specific) box, then the name.
  * For one tile the first archive in that order that holds the whole tile wins; when none does (a tile
  * on a pack edge), the first that overlaps it, so an edge tile clipped to a small pack loses to a
  * larger pack that has all of it.
@@ -73,8 +74,8 @@ object PackPrecedence {
 
     val ORDER: Comparator<PackCoverage> = compareBy<PackCoverage>(
         { it.profile.rank },
+        { if (it.primary) 0 else 1 }, // T49: ahead of depth
         { -it.maxZoom },
-        { if (it.primary) 0 else 1 },
         { area(it.bounds) },
         { it.pack },
     )

@@ -105,4 +105,22 @@ class PackAttributionTest {
         val first = (j["sources"] as List<Map<String, Any?>>).first()
         for (k in listOf("id", "name", "kind", "provider", "license", "licenseName", "licenseUrl", "attribution", "url", "usedBy")) assertTrue(k in first, k)
     }
+
+    @Test
+    fun repeatedNoticesAppearOnce() {
+        // T49: the Rainier pack (tilebuild) and a server-built pack both credit OSM and OpenMapTiles.
+        val a = "\u00a9 OpenStreetMap contributors (ODbL 1.0) \u00a9 OpenMapTiles"
+        val b = "\u00a9 OpenStreetMap contributors (ODbL 1.0) OpenFreeMap \u00a9 OpenMapTiles"
+        assertEquals(listOf(b), PackAttribution.mergeCredits(listOf(a, b)))
+        assertEquals(listOf(b), PackAttribution.mergeCredits(listOf(b, a)))
+        assertEquals(listOf(a, "Other credit"), PackAttribution.mergeCredits(listOf(a, a, "Other credit")))
+        val c = PackAttribution.compose(
+            listOf(
+                PackMetadata("osm", "rainier-outdoors.pmtiles", mapOf("attribution" to a, "dystopo:provenance" to "osm,openmaptiles")),
+                PackMetadata("osm", "montblanc-outdoors.pmtiles", mapOf("attribution" to b, "dystopo:provenance" to "osm,openfreemap,openmaptiles")),
+            ),
+        )
+        assertEquals(1, Regex("OpenStreetMap").findAll(c.compact).count(), c.compact)
+        assertEquals(1, Regex("OpenMapTiles").findAll(c.compact).count(), c.compact)
+    }
 }

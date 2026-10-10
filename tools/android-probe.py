@@ -10,6 +10,10 @@ Prints one JSON object: per probe the HTTP status seen (or the connection outcom
 statuses, and whether the server was alive afterwards. Exit 0 when every probe got an expected answer
 and the server survived; 1 when the server died (or never answered); 2 when it survived but some
 probe got an unexpected answer. Python 3 standard library only.
+
+The app requires its per-launch loopback token on every request (T49): the script reads it from
+GET /health without a token (debug builds answer only {"token": ...}) and sends it as an
+X-Dystopo-Token header on every probe, except the no-token and wrong-token probes, which expect 401.
 """
 import argparse
 import json
@@ -66,8 +70,41 @@ def raw(host, port, payload, timeout=15.0, chunks=None, delay=0.0):
         return recv_status(sock, timeout)
 
 
-def get(path):
-    return f"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".encode()
+TOKEN = ""
+
+
+def auth():
+    """The token header line (empty before the token is known)."""
+    return f"X-Dystopo-Token: {TOKEN}\r\n".encode() if TOKEN else b""
+
+
+def get(path, token=True):
+    head = f"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n".encode()
+    return head + (auth() if token else b"") + b"\r\n"
+
+
+def read_token(host, port):
+    """GET /health without a token: the app answers {"token": ...} to loopback callers (debug builds)."""
+    try:
+        sock = socket.create_connection((host, port), timeout=5)
+    except OSError:
+        return None
+    with sock:
+        sock.settimeout(10)
+        sock.sendall(get("/health", token=False))
+        data = b""
+        try:
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        except OSError:
+            pass
+    try:
+        return json.loads(data.split(b"\r\n\r\n", 1)[1].decode("utf-8")).get("token")
+    except (IndexError, ValueError, AttributeError):
+        return None
 
 
 def health(host, port):
@@ -83,8 +120,10 @@ def main():
     a = ap.parse_args()
     host, port = a.host, a.port
 
-    if not health(host, port):
-        print(json.dumps({"ok": False, "serverAlive": False, "error": f"/health did not answer on {host}:{port} before probing"}))
+    global TOKEN
+    TOKEN = read_token(host, port) or ""
+    if not TOKEN or not health(host, port):
+        print(json.dumps({"ok": False, "serverAlive": False, "error": f"/health did not answer on {host}:{port} before probing (token read: {bool(TOKEN)})"}))
         return 1
 
     big = "9" * 40
@@ -108,7 +147,16 @@ def main():
         ("bad-percent-encoding", lambda: raw(host, port, get("/dem/%zz/1/1.png")), {400}),
         ("empty-connection", lambda: raw(host, port, b"", timeout=10), {"closed", 408}),
         ("unknown-route", lambda: raw(host, port, get("/nope")), {404}),
-        ("location-missing-lat", lambda: raw(host, port, b"POST /location HTTP/1.1\r\nContent-Length: 0\r\n\r\n"), {400}),
+        ("location-missing-lat", lambda: raw(host, port, b"POST /location HTTP/1.1\r\n" + auth() + b"Content-Length: 0\r\n\r\n"), {400}),
+        # T49: the loopback token. Without it (or with a wrong one) every route is 401; /health without it is the bootstrap.
+        ("no-token-tile", lambda: raw(host, port, get("/dem/10/165/357.png", token=False)), {401}),
+        ("no-token-style", lambda: raw(host, port, get("/style.json", token=False)), {401}),
+        ("no-token-stats", lambda: raw(host, port, get("/stats", token=False)), {401}),
+        ("no-token-camera-post", lambda: raw(host, port, b"POST /camera?lat=0&lon=0 HTTP/1.1\r\nContent-Length: 0\r\n\r\n"), {401}),
+        ("wrong-token-query", lambda: raw(host, port, get("/contours/10/165/357.pbf?t=0000", token=False)), {401}),
+        ("wrong-token-header", lambda: raw(host, port, b"GET /stats HTTP/1.1\r\nX-Dystopo-Token: " + (TOKEN + "x").encode() + b"\r\n\r\n"), {401}),
+        ("token-query-ok", lambda: raw(host, port, get(f"/dem/10/165/357.png?t={TOKEN}", token=False)), {200, 404}),
+        ("health-no-token-bootstrap", lambda: raw(host, port, get("/health", token=False)), {200}),
     ]
     if not a.quick:
         probes += [

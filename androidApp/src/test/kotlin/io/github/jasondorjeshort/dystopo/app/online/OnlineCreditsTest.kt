@@ -17,6 +17,8 @@ class OnlineCreditsTest {
         val credits = OnlineService.creditsFor(server, listOf("copernicus"), demServed = 12, osmServed = 9, osmAttributionHtml = null)
         assertEquals(listOf("online-dem", "online-osm"), credits.map { it.role })
         assertEquals(listOf("copernicus"), credits[0].metadata["provenance"])
+        // T49: the online elevation credit carries the registry's Copernicus text.
+        assertTrue((credits[0].metadata["attribution"] as String).contains("Copernicus"), "${credits[0].metadata}")
         assertEquals(listOf("osm", "openfreemap", "openmaptiles"), credits[1].metadata["provenance"])
         // And the composer credits both kinds.
         val composed = PackAttribution.compose(credits)

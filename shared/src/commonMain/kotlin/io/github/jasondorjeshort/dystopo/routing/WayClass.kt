@@ -63,7 +63,9 @@ enum class Surface(val code: Int, val label: String) {
 /**
  * What the router knows about one line: class, surface, OSM `sac_scale` (0 none, 1 hiking ..
  * 6 difficult_alpine_hiking; outdoors profile only), flags ([PRIVATE], [INFORMAL], [POOR_VISIBILITY]),
- * and whether it is a bridge or tunnel (no junctions are made where it crosses other lines).
+ * whether it is a bridge or tunnel (no junctions are made where it crosses other lines), and (T49) its
+ * name: OSM `name`, else the first `route_name` (the outdoors profile has both on tracks and trails
+ * from z13; plain OpenMapTiles keeps names in `transportation_name`, so its lines have none).
  */
 data class WayAttrs(
     val cls: WayClass,
@@ -71,6 +73,7 @@ data class WayAttrs(
     val sac: Int = 0,
     val flags: Int = 0,
     val brunnel: Boolean = false,
+    val name: String? = null,
 ) {
     /** Surface and sac scale in one byte, as stored in the graph. */
     val packed: Int get() = surface.code or (sac.coerceIn(0, 7) shl 2)
@@ -98,7 +101,8 @@ data class WayAttrs(
             if (s("trail_visibility") in setOf("bad", "horrible", "no")) flags = flags or POOR_VISIBILITY
             val sac = s("sac_scale")?.let { SAC_SCALES.indexOf(it) + 1 } ?: 0
             val brunnel = s("brunnel") == "bridge" || s("brunnel") == "tunnel"
-            return WayAttrs(cls, Surface.of(s("surface")), sac, flags, brunnel)
+            val name = s("name")?.trim()?.ifEmpty { null } ?: s("route_name")?.substringBefore(';')?.trim()?.ifEmpty { null }
+            return WayAttrs(cls, Surface.of(s("surface")), sac, flags, brunnel, name)
         }
     }
 }

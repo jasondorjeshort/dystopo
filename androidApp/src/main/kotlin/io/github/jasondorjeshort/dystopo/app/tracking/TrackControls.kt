@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +80,8 @@ private fun BoxScope.Controls() {
     }
     val ui = tracking.ui
     var listOpen by remember { mutableStateOf(false) }
+    // T49: the track chips fold into one chip, so they cover as little of the map (and its peak labels) as the Packs button.
+    var barOpen by remember { mutableStateOf(false) }
     var importOpen by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) Thread { importUri(tracking, uri) }.start()
@@ -91,16 +94,22 @@ private fun BoxScope.Controls() {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (ui.recording) {
-                Chip("Waypoint") { tracking.post { tracking.recorder.waypoint(null); tracking.refreshUi(); tracking.refreshOverlay(true) } }
-                Chip(if (ui.paused) "Resume" else "Pause") { Thread { if (tracking.ui.paused) tracking.resume() else tracking.pause() }.start() }
-            }
-            Chip("Tracks") { listOpen = !listOpen }
-            Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
-                Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
+            if (!barOpen) {
+                // Folded: one chip; while recording it shows the live distance in red.
+                Chip(if (ui.recording) "\u25CF " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
+            } else {
+                if (ui.recording) {
+                    Chip("Waypoint") { tracking.post { tracking.recorder.waypoint(null); tracking.refreshUi(); tracking.refreshOverlay(true) } }
+                    Chip(if (ui.paused) "Resume" else "Pause") { Thread { if (tracking.ui.paused) tracking.resume() else tracking.pause() }.start() }
+                }
+                Chip("Tracks") { listOpen = !listOpen }
+                Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
+                    Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
+                }
+                Chip("\u00D7") { barOpen = false; listOpen = false }
             }
         }
-        if (ui.recording) {
+        if (barOpen && ui.recording) {
             Panel {
                 BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                 BasicText(
@@ -110,7 +119,7 @@ private fun BoxScope.Controls() {
                 )
             }
         }
-        if (listOpen) {
+        if (barOpen && listOpen) {
             Panel(Modifier.widthIn(max = 300.dp).heightIn(max = 380.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Action("Import") { importOpen = !importOpen }
@@ -143,8 +152,14 @@ private fun BoxScope.Controls() {
     Column(
         // T41: above the credit line (its measured top), so the profile panel never covers it.
         Modifier.align(Alignment.BottomCenter).let { m ->
-            val b = io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom
+            val b = io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsFloor // T49: above the route card too
             if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
+        }.let { m -> // T49: report where the panels are (GET /route layout)
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            m.onGloballyPositioned { c ->
+                io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsBottom = io.github.jasondorjeshort.dystopo.app.routing.fromWindowBottom(c, density, top = false)
+                io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsTop = io.github.jasondorjeshort.dystopo.app.routing.fromWindowBottom(c, density)
+            }
         },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

@@ -12,7 +12,9 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -44,6 +46,10 @@ object RouteSession {
     @Volatile var lastFile: File? = null
         private set
     @Volatile var longPresses = 0
+        private set
+
+    /** T49: the camera fits each new route; the last fit (bounds and padding) for `GET /route`. */
+    @Volatile var lastFit: Map<String, Any?>? = null
         private set
 
     private val main = Handler(Looper.getMainLooper())
@@ -95,6 +101,7 @@ object RouteSession {
                 failure = null
                 ui { phase = "route"; plan = result.plan; message = null }
                 overlay.show(result.plan.route.points, null, null)
+                ui { fitCamera(result.plan) } // T49: show the whole route
             }
             is RouteResult.Failed -> {
                 failure = result
@@ -105,14 +112,40 @@ object RouteSession {
         return result
     }
 
-    /** Plans the current start and end again in [travel] mode. */
-    fun changeMode(travel: TravelMode) {
+    /**
+     * Plans the current start and end again in [travel] mode: in the background, or with [wait] (T49, the
+     * debug route) on the calling thread, so the answer already holds the new route.
+     */
+    fun changeMode(travel: TravelMode, wait: Boolean = false) {
         val s = start
         val e = end
         ui { mode = travel }
         if (s != null && e != null && phase != "planning") {
-            worker.execute { runCatching { plan(s.latitude, s.longitude, e.latitude, e.longitude, travel, plan?.route?.name ?: "Route", WAIT_MS) } }
+            val replan = { runCatching { plan(s.latitude, s.longitude, e.latitude, e.longitude, travel, plan?.route?.name ?: "Route", WAIT_MS) } }
+            if (wait) replan() else worker.execute { replan() }
         }
+    }
+
+    /**
+     * T49: moves the camera so the whole route shows, clear of the route card at the bottom (its last
+     * measured top, at least [CARD_MIN_DP]) and the search box at the top. Main thread.
+     */
+    private fun fitCamera(p: PlannedRoute) {
+        val m = DystopoApp.instance.map.map ?: return
+        val pts = p.route.points
+        if (pts.size < 2) return
+        val b = LatLngBounds.Builder().apply { for (pt in pts) include(LatLng(pt.lat, pt.lon)) }.build()
+        val d = DystopoApp.instance.resources.displayMetrics.density
+        val bottomDp = maxOf(BottomPanels.routeCardTop.value, CARD_MIN_DP) + 16
+        val pad = intArrayOf((40 * d).toInt(), (96 * d).toInt(), (40 * d).toInt(), (bottomDp * d).toInt())
+        // Degenerate (all points the same): just centre on it.
+        val update = if (b.latitudeSpan < 1e-6 && b.longitudeSpan < 1e-6) CameraUpdateFactory.newLatLng(b.center)
+        else CameraUpdateFactory.newLatLngBounds(b, pad[0], pad[1], pad[2], pad[3])
+        m.animateCamera(update, FIT_MS)
+        lastFit = linkedMapOf(
+            "bounds" to listOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
+            "paddingPx" to pad.toList(), "routeId" to p.route.id,
+        )
     }
 
     fun clear() {
@@ -157,8 +190,14 @@ object RouteSession {
         "start" to start?.let { listOf(it.latitude, it.longitude) }, "end" to end?.let { listOf(it.latitude, it.longitude) },
         "longPresses" to longPresses, "overlayFeatures" to overlay.features, "overlayInstalled" to overlay.installedOnStyle,
         "summary" to plan?.let { summary(it) }, "lastFile" to lastFile?.path,
+        "via" to plan?.via?.map { it.first }, // T49: trail names
+        "lastFit" to lastFit, "layout" to BottomPanels.json(), // T49
     )
 
     /** How long a long-press waits for the graph to be built on first use. */
     const val WAIT_MS = 120_000L
+
+    /** T49: camera fit animation, and the card height assumed before it has been measured. */
+    const val FIT_MS = 600
+    const val CARD_MIN_DP = 150f
 }

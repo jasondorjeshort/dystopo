@@ -21,9 +21,21 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-/** A parsed HTTP request: method, path (decoded), query parameters, body. */
-class Request(val method: String, val path: String, val query: Map<String, String>, val body: ByteArray) {
+/**
+ * A parsed HTTP request: method, path (decoded), query parameters, body; [headers] with lower-case
+ * names and [loopback] (the peer address is a loopback one) since T49.
+ */
+class Request(
+    val method: String,
+    val path: String,
+    val query: Map<String, String>,
+    val body: ByteArray,
+    val headers: Map<String, String> = emptyMap(),
+    val loopback: Boolean = true,
+) {
     val bodyText: String get() = body.decodeToString()
+
+    fun copy(query: Map<String, String> = this.query) = Request(method, path, query, body, headers, loopback)
 }
 
 class Response(val status: Int, val contentType: String, val body: ByteArray) {
@@ -181,7 +193,7 @@ class LocalServer(
         c.soTimeout = readTimeoutMs
         val input = BufferedInputStream(c.getInputStream())
         return try {
-            parse(input, SystemClock.elapsedRealtime() + headTimeoutMs)
+            parse(input, SystemClock.elapsedRealtime() + headTimeoutMs, c.inetAddress?.isLoopbackAddress == true)
         } catch (e: Exception) {
             val error = when (e) {
                 is HttpError -> e
@@ -223,7 +235,7 @@ class LocalServer(
     }
 
     /** Parses one request; its head must be complete before [deadline] (elapsedRealtime ms). */
-    private fun parse(input: InputStream, deadline: Long): Request? {
+    private fun parse(input: InputStream, deadline: Long, loopback: Boolean): Request? {
         val requestLine = readLine(input, deadline, 414) ?: return null
         val parts = requestLine.split(" ")
         if (parts.size != 3 || !parts[2].startsWith("HTTP/") || parts[0].isEmpty() || !parts[0].all { it in 'A'..'Z' } ||
@@ -259,7 +271,7 @@ class LocalServer(
                 val e = it.indexOf('=')
                 if (e < 0) URLDecoder.decode(it, "UTF-8") to "" else URLDecoder.decode(it.substring(0, e), "UTF-8") to URLDecoder.decode(it.substring(e + 1), "UTF-8")
             }
-            return Request(parts[0], path, query, body)
+            return Request(parts[0], path, query, body, headers, loopback)
         } catch (e: IllegalArgumentException) {
             throw HttpError(400, "bad URL encoding")
         }
@@ -280,7 +292,7 @@ class LocalServer(
 
     private fun write(out: OutputStream, r: Response, head: Boolean) {
         val reason = when (r.status) {
-            200 -> "OK"; 204 -> "No Content"; 400 -> "Bad Request"; 404 -> "Not Found"; 405 -> "Method Not Allowed"
+            200 -> "OK"; 204 -> "No Content"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 404 -> "Not Found"; 405 -> "Method Not Allowed"
             408 -> "Request Timeout"; 413 -> "Payload Too Large"; 414 -> "URI Too Long"
             431 -> "Request Header Fields Too Large"; 500 -> "Internal Server Error"; 503 -> "Service Unavailable"
             else -> "Error"

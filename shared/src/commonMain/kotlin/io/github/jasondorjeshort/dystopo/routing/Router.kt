@@ -144,6 +144,11 @@ data class PlannedRoute(
     /** Nodes A* settled. */
     val expanded: Int,
     val metersByClass: Map<WayClass, Double>,
+    /**
+     * T49: the named ways along the route in travel order, consecutive edges of one name merged, with the
+     * metres on each (stretches under [Router.MIN_VIA_M] left out): the trails a route follows.
+     */
+    val via: List<Pair<String, Double>> = emptyList(),
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -152,6 +157,7 @@ data class PlannedRoute(
         "points" to route.points.size, "edges" to edges, "expanded" to expanded, "cost" to r1(cost),
         "start" to snapJson(start), "end" to snapJson(end),
         "metersByClass" to metersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) },
+        "via" to via.map { (n, m) -> linkedMapOf("name" to n, "distanceM" to r1(m)) }, // T49: trail names
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
     )
 
@@ -301,7 +307,11 @@ class Router(val graph: RoutingGraph) {
         var ascent = 0.0
         var descent = 0.0
         val byClass = LinkedHashMap<WayClass, Double>()
+        val runs = ArrayList<Pair<String?, Double>>() // T49: consecutive stretches by way name
         for (st in steps) {
+            val nm = g.name(st.e)
+            val metres = g.edgeLength[st.e] * abs(st.f1 - st.f0)
+            if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else runs += nm to metres
             val part = abs(st.f1 - st.f0)
             val fwd = st.f1 > st.f0
             ascent += (if (fwd) g.edgeAscent[st.e] else g.edgeDescent[st.e]) * part
@@ -319,12 +329,15 @@ class Router(val graph: RoutingGraph) {
         val distance = TrackStats.of(track).distanceM
         val hasEle = pts.any { it.ele != null }
         val time = model.timeS(distance, if (hasEle) ascent else 0.0)
+        val via = runs.filter { it.first != null && it.second >= MIN_VIA_M }.map { it.first!! to it.second }
+            .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
         val desc = "${km(distance)} km" + (if (hasEle) ", +${ascent.roundToLong()} m / -${descent.roundToLong()} m" else "") +
-            ", about ${PlannedRoute.hm(time)} (${model.mode.label}; planned offline by Dystopo)"
+            ", about ${PlannedRoute.hm(time)}" + (if (via.isNotEmpty()) " via " + via.take(3).joinToString(", ") { it.first } else "") +
+            " (${model.mode.label}; planned offline by Dystopo)"
         val route = Route(ids.next(), name, pts, description = desc, type = model.mode.label)
         return PlannedRoute(
             route, model.mode, distance, if (hasEle) ascent else null, if (hasEle) descent else null, time,
-            TrackStats.profile(track, PROFILE_SAMPLES), cost, steps.size, s, t, expanded, byClass,
+            TrackStats.profile(track, PROFILE_SAMPLES), cost, steps.size, s, t, expanded, byClass, via,
         )
     }
 
@@ -413,6 +426,8 @@ class Router(val graph: RoutingGraph) {
         /** How far an off-network failure looks for the nearest line, to say how far it is. */
         const val FAR_SEARCH_M = 10_000.0
         const val PROFILE_SAMPLES = 100
+        /** T49: named stretches shorter than this are left out of [PlannedRoute.via] (a crossing, a junction stub). */
+        const val MIN_VIA_M = 30.0
         private const val E6 = 1e6
 
         fun km(m: Double) = (m / 100).roundToLong() / 10.0

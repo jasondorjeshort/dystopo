@@ -141,15 +141,39 @@ object PackAttribution {
     private fun compactLine(packs: List<PackCredit>, sources: List<CreditedSource>): String {
         val kinds = sources.associate { it.source.id to it.source.kind }
         val elevation = setOf(SourceKind.DEM, SourceKind.GEOID)
-        val parts = ArrayList<String>()
+        val texts = ArrayList<String>()
         for (p in packs) {
             // A pack credited only with elevation sources (DEM + geoids) is summarised as "Elevation: ...".
             if (p.registryIds.isNotEmpty() && p.registryIds.all { kinds[it] in elevation }) continue
-            if (p.attribution.isNotEmpty()) parts += p.attribution
+            if (p.attribution.isNotEmpty()) texts += p.attribution
         }
+        // T49: several vector packs (or a pack and the server) repeat the same notices; each once.
+        val parts = ArrayList(mergeCredits(texts))
         val dems = sources.filter { it.source.kind == SourceKind.DEM }.map { it.source }
         if (dems.isNotEmpty()) parts += "Elevation: " + dems.map { shortName(it) }.distinct().joinToString(", ")
         return (parts.distinct() + "Sources").joinToString(" · ")
+    }
+
+    /**
+     * T49: the credit notices of several texts, each once: a text is split before every `©`, and a piece
+     * that extends another (`© OpenStreetMap contributors (ODbL 1.0) OpenFreeMap` over `© OpenStreetMap
+     * contributors (ODbL 1.0)`) replaces it. A text's pieces stay together in its order.
+     */
+    fun mergeCredits(texts: List<String>): List<String> {
+        val out = ArrayList<MutableList<String>>()
+        val seen = ArrayList<Pair<Int, Int>>() // (text index in out, piece index) of every kept piece
+        fun pieceAt(at: Pair<Int, Int>) = out[at.first][at.second]
+        for (t in texts) {
+            val mine = ArrayList<String>()
+            for (p in t.split(Regex("(?=\u00a9)")).map { it.trim() }.filter { it.isNotEmpty() }) {
+                val i = seen.indexOfFirst { pieceAt(it).startsWith(p) || p.startsWith(pieceAt(it)) }
+                if (i < 0) mine += p else if (p.length > pieceAt(seen[i]).length) out[seen[i].first][seen[i].second] = p
+            }
+            if (mine.isEmpty()) continue
+            out += mine
+            mine.indices.forEach { seen += (out.size - 1) to it }
+        }
+        return out.map { it.joinToString(" ") }
     }
 
     /** First word of the source name: `USGS`, `Copernicus`, `Mapzen`. */

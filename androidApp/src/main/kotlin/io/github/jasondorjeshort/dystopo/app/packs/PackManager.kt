@@ -147,9 +147,11 @@ class PackManager private constructor(private val app: DystopoApp) {
         if (wasInUse) app.reload(skip = setOf(name))
         // T41: the search index next to the vector archive goes too (T39 left it behind).
         val index = pack?.vector?.let { v -> File(v.absoluteFile.parentFile, SearchIndex.fileNameFor(v.name)) }
-        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile })).filter { it.delete() }.map { it.name }
+        val graphs = pack?.vector?.let(io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner::graphFiles).orEmpty() // T49: its routing graph too
+        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile }) + graphs).filter { it.delete() }.map { it.name }
         PlaceSearch.forget(name)
         catalogClient.forget(name) // T53: its recorded content hashes
+        io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(name) // T49
         // T41: and its contour tiles (no DEM file on the device has that identity any more).
         app.collectContourGarbage()
         if (wasActive) app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h)) }
