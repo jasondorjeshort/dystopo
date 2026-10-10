@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T71: One-command sweeps (#72)
 - T66: Desktop and server leftover sweep 5 (#70)
 - T72: Sync over the internet: TLS, discovery and a public peer (#71)
 - T65: Android leftover sweep 5 (#69)
