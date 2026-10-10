@@ -23,10 +23,14 @@ import java.io.File
  * - `GET /stats`: tiles served per source, contour generation timings (min/avg/max and recent tiles),
  *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes.
  * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; `GET /location`.
+ * - `GET /settings`, `POST /settings?textScale=1.5`: user settings ([SettingsRoutes]).
+ * - `GET /labels`: rendered features per symbol layer in the view ([LabelRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
  */
 class Routes(private val app: DystopoApp) {
     private val tile = Regex("^/(dem|osm|contours)/(\\d+)/(\\d+)/(\\d+)\\.(png|pbf|mvt)$")
+    private val settings = SettingsRoutes(app)
+    private val labels = LabelRoutes(app)
     private val glyph = Regex("^/glyphs/([^/]+)/(\\d+-\\d+)\\.pbf$")
 
     fun handle(r: Request): Response {
@@ -48,6 +52,8 @@ class Routes(private val app: DystopoApp) {
         if (!BuildConfig.DEBUG_ENDPOINTS) return Response.notFound()
         AttributionRoutes.handle(app, r)?.let { return it }
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
+        settings.handle(r)?.let { return it }
+        labels.handle(r)?.let { return it }
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

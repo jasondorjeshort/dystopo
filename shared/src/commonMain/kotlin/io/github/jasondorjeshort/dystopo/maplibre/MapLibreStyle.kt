@@ -47,20 +47,44 @@ data class MapLibreSources(
  *   sheet) with the label below; a marker `text` glyph is drawn on the disc.
  * - Label priority: the devtool places symbol layers in list order (first wins); MapLibre places the
  *   topmost layer first, so symbol layers are emitted in reverse. Contour labels are the lowest.
- * - Sizes: text sizes, halos and marker sizes are multiplied by [textScale] (readable labels by
- *   default, docs/PLANNING.md product principle 6).
+ * - Sizes: text sizes, halos and marker sizes are multiplied by [BASE_TEXT_SCALE] (readable labels by
+ *   default, docs/PLANNING.md product principle 6) times the user's [textScale] (a setting, 1.0 by
+ *   default, clamped to [MIN_TEXT_SCALE]..[MAX_TEXT_SCALE]). Larger text also gets more room so it
+ *   does not just pile up: label padding and line-label spacing grow with the scale, and MapLibre's
+ *   collision detection (never `allow-overlap` for names) drops what no longer fits.
+ * - Fonts: every symbol layer names exactly one font from [FONTS] (MapLibre Native requests a glyph
+ *   range per font stack and draws nothing for a stack it cannot load; its default stack is not ours).
  */
 class MapLibreStyle(
     private val sources: MapLibreSources,
     private val style: OsmStyle = DefaultOsmStyle.style,
     private val units: ContourUnits = ContourUnits.FEET,
-    private val textScale: Double = 1.35,
+    textScale: Double = 1.0,
     private val zoomOffset: Double = -1.0,
 ) {
+    /** The user's multiplier after clamping. */
+    val textScale: Double = clampTextScale(textScale)
+    private val scale = BASE_TEXT_SCALE * this.textScale
     private val paper = "#f6f1e4"
     private val contourColor = "#8c5523"
-    private val regular = listOf("Noto Sans Regular")
-    private val italic = listOf("Noto Sans Italic")
+    private val regular = listOf(FONT_REGULAR)
+    private val italic = listOf(FONT_ITALIC)
+
+    companion object {
+        /** Built-in enlargement over the devtool's pixel sizes (phone labels were too small at 1.0). */
+        const val BASE_TEXT_SCALE = 1.35
+        const val MIN_TEXT_SCALE = 0.5
+        const val MAX_TEXT_SCALE = 3.0
+        const val FONT_REGULAR = "Noto Sans Regular"
+        const val FONT_ITALIC = "Noto Sans Italic"
+        const val FONT_MEDIUM = "Noto Sans Medium"
+
+        /** The fonts the style uses; the glyph route (and tools/android-push-pack.ps1) must provide each. */
+        val FONTS = listOf(FONT_REGULAR, FONT_ITALIC, FONT_MEDIUM)
+
+        /** Clamps a user text scale; NaN or infinite gives 1.0. */
+        fun clampTextScale(s: Double): Double = if (s.isNaN() || s.isInfinite()) 1.0 else s.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+    }
 
     /** The style JSON. */
     fun json(): String = JsonWriter.write(document())
@@ -147,12 +171,12 @@ class MapLibreStyle(
             "symbol-placement" to "line",
             "text-field" to listOf("to-string", listOf("get", "ele")),
             "text-font" to regular,
-            "text-size" to 11.0 * textScale,
-            "symbol-spacing" to 260,
+            "text-size" to 11.0 * scale,
+            "symbol-spacing" to round1(260 * textScale.coerceAtLeast(1.0)),
             "text-max-angle" to 45,
-            "text-padding" to 4,
+            "text-padding" to round1(4 * textScale),
         ),
-        "paint" to mapOf("text-color" to "#6b3f12", "text-halo-color" to paper, "text-halo-width" to 1.6),
+        "paint" to mapOf("text-color" to "#6b3f12", "text-halo-color" to paper, "text-halo-width" to round1(1.6 * scale / BASE_TEXT_SCALE)),
     )
 
     // ---- OSM layers ----
@@ -229,7 +253,7 @@ class MapLibreStyle(
         val geometry = geometryFilter(l.select.geometry ?: if (l.placement == Placement.LINE) GeometryType.LINESTRING else GeometryType.POINT)
         val marker = l.marker
         if (marker != null) {
-            val radius = marker.size * textScale / 2
+            val radius = marker.size * scale / 2
             markers += base("${l.id}-marker", "circle", l.select, geometry).apply {
                 this["paint"] = mapOf(
                     "circle-color" to color(marker.color),
@@ -241,7 +265,7 @@ class MapLibreStyle(
             marker.text?.let { glyph ->
                 symbols += base("${l.id}-glyph", "symbol", l.select, geometry).apply {
                     this["layout"] = mapOf(
-                        "text-field" to glyph, "text-font" to listOf("Noto Sans Medium"), "text-size" to radius * 1.6,
+                        "text-field" to glyph, "text-font" to listOf(FONT_MEDIUM), "text-size" to radius * 1.6,
                         "text-allow-overlap" to true, "text-ignore-placement" to true,
                     )
                     this["paint"] = mapOf("text-color" to color(marker.textColor))
@@ -253,17 +277,17 @@ class MapLibreStyle(
             val layout = linkedMapOf<String, Any?>(
                 "text-field" to textTemplate(l.text),
                 "text-font" to if (l.italic) italic else regular,
-                "text-size" to zoomValue(l.size, null, textScale),
+                "text-size" to zoomValue(l.size, null, scale),
                 "text-max-width" to 9,
-                "text-padding" to 3,
+                "text-padding" to round1(3 * textScale),
             )
             if (l.placement == Placement.LINE) {
                 layout["symbol-placement"] = "line"
-                layout["symbol-spacing"] = l.spacing
+                layout["symbol-spacing"] = round1(l.spacing * textScale.coerceAtLeast(1.0))
                 layout["text-max-angle"] = 40
             } else if (marker != null) {
                 layout["text-anchor"] = "top"
-                layout["text-offset"] = listOf(0.0, marker.size * textScale / 2 / (l.size.at(14.0) * textScale) + 0.3)
+                layout["text-offset"] = listOf(0.0, marker.size * scale / 2 / (l.size.at(14.0) * scale) + 0.3)
             }
             when (l.sortKey) {
                 "rank" -> layout["symbol-sort-key"] = listOf("coalesce", listOf("to-number", listOf("get", "rank")), 99)
@@ -273,7 +297,7 @@ class MapLibreStyle(
             this["paint"] = mapOf(
                 "text-color" to color(l.color),
                 "text-halo-color" to color(l.haloColor),
-                "text-halo-width" to l.haloWidth * textScale,
+                "text-halo-width" to l.haloWidth * scale,
             )
         }
     }
@@ -368,6 +392,8 @@ class MapLibreStyle(
 
     private fun color(c: StyleColor): String =
         if (c.a == 255) "rgb(${c.r},${c.g},${c.b})" else "rgba(${c.r},${c.g},${c.b},${fmt(c.a / 255.0)})"
+
+    private fun round1(d: Double): Double = kotlin.math.round(d * 10) / 10
 
     private fun fmt(d: Double): String = ((d * 1000).toLong() / 1000.0).toString()
 }

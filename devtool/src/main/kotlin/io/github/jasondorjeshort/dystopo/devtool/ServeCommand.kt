@@ -4,6 +4,7 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
@@ -43,6 +44,7 @@ class ServeCommand : CliktCommand(name = "serve") {
     private val osm by option("--osm", help = "OSM vector PMTiles (empty for terrain only)").default("out/rainier-outdoors.pmtiles")
     private val glyphs by option("--glyphs", help = "glyph PBF directory (<font>/<range>.pbf); tools/android-push-pack.ps1 fills cache/glyphs")
     private val port by option("--port").int().default(8687)
+    private val textScale by option("--text-scale", help = "label size multiplier, as the app's textScale setting (default 1.0)").double().default(1.0)
 
     override fun run() {
         val demReader = PmtilesReader.open(FileRangeSource(File(dem)), Gzip.decompressors)
@@ -65,7 +67,10 @@ class ServeCommand : CliktCommand(name = "serve") {
                 osmMinZoom = osmReader?.header?.minZoom ?: 0, osmMaxZoom = osmReader?.header?.maxZoom ?: 14,
                 glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
             ),
+            textScale = textScale,
         ).json()
+        // Fonts the style names but the glyph directory lacks: their labels would draw nothing.
+        val missingFonts = MapLibreStyle.FONTS.filter { !File(glyphDir, "$it/0-255.pbf").isFile }
         val timings = ArrayList<Double>()
         val sampleTimings = ArrayList<Double>()
         val contourStats = ContourTileStats()
@@ -143,7 +148,7 @@ class ServeCommand : CliktCommand(name = "serve") {
             }
         }
         server.start()
-        println(JsonWriter.write(mapOf("url" to "$base/", "style" to "$base/style.json", "stats" to "$base/stats", "dem" to dem, "osm" to osm, "glyphs" to glyphDir.path)))
+        println(JsonWriter.write(mapOf("url" to "$base/", "style" to "$base/style.json", "stats" to "$base/stats", "dem" to dem, "osm" to osm, "glyphs" to glyphDir.path, "missingFonts" to missingFonts, "textScale" to textScale)))
     }
 
     private fun reply(ex: HttpExchange, body: ByteArray?, type: String, status: Int = 200) {

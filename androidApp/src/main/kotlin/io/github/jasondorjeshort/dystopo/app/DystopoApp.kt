@@ -21,6 +21,7 @@ class DystopoApp : Application() {
         super.onCreate()
         instance = this
         MapLibre.getInstance(this)
+        AppSettings.load(this)
         tiles = openTiles()
         val routes = Routes(this)
         server = LocalServer(BuildConfig.SERVER_PORT, threads = 4, handler = routes::handle)

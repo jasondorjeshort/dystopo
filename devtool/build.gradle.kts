@@ -30,7 +30,7 @@ tasks.named<JavaExec>("run") {
 // Golden-image tests (src/test/kotlin/.../GoldenImageTest.kt). Text rendering must not depend on a display.
 tasks.named<Test>("test") {
     systemProperty("java.awt.headless", "true")
-    inputs.files(rootProject.file("areas.json"), rootProject.file("tools/demo/index.html")) // read by TourChecksTest, MarkerTableTest
+    inputs.files(rootProject.file("areas.json"), rootProject.file("tools/demo/index.html"), rootProject.file("tools/android-push-pack.ps1")) // read by TourChecksTest, MarkerTableTest, GlyphFontsTest
     systemProperty("dystopo.goldens.diffDir", layout.buildDirectory.dir("golden-diffs").get().asFile.path)
     // Print failure messages in full: golden failures list the actual/diff image paths.
     testLogging {

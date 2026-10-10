@@ -182,9 +182,10 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 osmTiles = osmPack?.let { "$base/osm/{z}/{x}/{y}.pbf" },
                 osmMinZoom = osmPack?.header?.minZoom ?: 0,
                 osmMaxZoom = osmPack?.header?.maxZoom ?: 14,
-                glyphs = "$base/glyphs/{fontstack}/{range}.pbf",
+                glyphs = Glyphs.styleUrl(packs.glyphDir, base),
                 attribution = attribution,
             ),
+            textScale = AppSettings.textScale,
         ).json()
     }
 
