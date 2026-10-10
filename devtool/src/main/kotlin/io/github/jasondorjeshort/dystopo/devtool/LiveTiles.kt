@@ -33,6 +33,7 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
@@ -64,6 +65,8 @@ class LiveTiles(
     demPacks: List<File>,
     osmPacks: List<File>,
     private val cacheRoot: File = Caches.root,
+    /** Where `/build` writes packs and `/out/` serves files from. */
+    val outDir: File = File("out"),
     threads: Int = Runtime.getRuntime().availableProcessors().coerceIn(4, 16),
     /** Renders one live DEM tile; the default runs the `best` source. Tests swap in a fake. */
     private val generateDem: (TileId) -> LiveDem = ::generateBest,
@@ -102,8 +105,21 @@ class LiveTiles(
         )
     }
 
-    private val dems = demPacks.map { Pack(it) }
-    private val osms = osmPacks.map { Pack(it) }
+    // Copy-on-write: a pack built by `/build` (BuildRoutes) joins while tiles are being served.
+    private val dems = CopyOnWriteArrayList(demPacks.map { Pack(it) })
+    private val osms = CopyOnWriteArrayList(osmPacks.map { Pack(it) })
+
+    /** Serves [file] (a DEM or vector PMTiles) from now on, replacing a pack already open from the same path. */
+    fun addPack(file: File) {
+        val pack = Pack(file)
+        val list = if (pack.reader.header.tileType == TileType.MVT) osms else dems
+        val path = file.canonicalPath
+        val at = list.indexOfFirst { it.file.canonicalPath == path }
+        if (at >= 0) list[at] = pack else list += pack
+        // Tiles remembered from the live path would keep reporting their live source over the new pack.
+        synchronized(memory) { memory.clear() }
+        sourceOf.clear()
+    }
     private val demCacheDir = File(cacheRoot, "live/$CACHE_VERSION")
     private val pool: ExecutorService = Executors.newFixedThreadPool(threads) { r -> Thread(r, "live-dem").apply { isDaemon = true } }
     private val ofmPool: ExecutorService = Executors.newCachedThreadPool { r -> Thread(r, "live-ofm").apply { isDaemon = true } }
@@ -186,11 +202,27 @@ class LiveTiles(
             remember(id, t)
             return CompletableFuture.completedFuture(t)
         }
-        // One render per tile however many requests want it at once.
-        val f = demInflight.computeIfAbsent(id) { key ->
-            CompletableFuture.supplyAsync({ renderLive(key) }, pool).also { fut -> fut.whenComplete { _, _ -> demInflight.remove(key) } }
-        }
-        return f.thenApply<Tile?> { it }
+        return renderOnce(id).thenApply<Tile?> { it }
+    }
+
+    /** One render per tile however many requests (viewer or pack build) want it at once. */
+    private fun renderOnce(id: TileId): CompletableFuture<Tile> = demInflight.computeIfAbsent(id) { key ->
+        CompletableFuture.supplyAsync({ renderLive(key) }, pool).also { fut -> fut.whenComplete { _, _ -> demInflight.remove(key) } }
+    }
+
+    /** A live DEM tile for a pack build: Terrarium PNG, the registry ids that made it (empty: no data there), whether the disk cache had it. */
+    class BuildDem(val png: ByteArray, val provenance: List<String>, val cached: Boolean)
+
+    /**
+     * DEM tile z/x/y from the live path only (never a pack: a build makes packs from the live sources),
+     * through the same disk cache and in-flight dedup as `/dem`. Used by [BuildRoutes].
+     */
+    fun liveDemAsync(z: Int, x: Int, y: Int): CompletableFuture<BuildDem> {
+        require(valid(z, x, y) && z in LIVE_MIN_ZOOM..LIVE_MAX_ZOOM) { "no live DEM tile $z/$x/$y" }
+        val id = TileId(z, x, y)
+        readDemCache(id)?.let { return CompletableFuture.completedFuture(BuildDem(it.bytes, readProvenance(id), true)) }
+        // The sidecar is published before the PNG, so it is there once the render completes.
+        return renderOnce(id).thenApply { BuildDem(it.bytes, readProvenance(id), false) }
     }
 
     fun dem(z: Int, x: Int, y: Int): Tile? = join(demAsync(z, x, y))
@@ -206,8 +238,12 @@ class LiveTiles(
         val png = demFile(id)
         if (!png.isFile) return null
         val side = File(png.path.removeSuffix(".png") + ".src")
-        val provenance = if (side.isFile) side.readText().split(',').map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
-        return Tile(png.readBytes(), if (side.isFile) labelFor(provenance) else "live", true)
+        return Tile(png.readBytes(), if (side.isFile) labelFor(readProvenance(id)) else "live", true)
+    }
+
+    private fun readProvenance(id: TileId): List<String> {
+        val side = File(demFile(id).path.removeSuffix(".png") + ".src")
+        return if (side.isFile) side.readText().split(',').map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
     }
 
     private fun renderLive(id: TileId): Tile {
@@ -269,6 +305,22 @@ class LiveTiles(
         if (!valid(z, x, y)) return null
         for (p in osms) p.tile(z, x, y)?.let { return Tile(it, "pack", false) }
         if (z > OSM_MAX_ZOOM) return null
+        return openFreeMap(z, x, y)
+    }
+
+    /** The OpenFreeMap build id and its TileJSON (`vector_layers` etc.), as cached for the live route. */
+    fun openFreeMapTileJson(): Pair<String, Map<String, Any?>> {
+        val build = ofm.second
+        return build to MiniJson.parseObject(File(cacheRoot, "openfreemap/planet.json").readText())
+    }
+
+    /**
+     * OpenFreeMap tile z/x/y (no pack lookup): from the disk cache, else fetched once (concurrent
+     * requests share one fetch) with at most 4 requests in flight. Empty bytes: no tile there.
+     * Shared by `/osm` and pack builds ([BuildRoutes]).
+     */
+    fun openFreeMap(z: Int, x: Int, y: Int): Tile {
+        require(valid(z, x, y) && z <= OSM_MAX_ZOOM) { "no OpenFreeMap tile $z/$x/$y" }
         val (template, build) = ofm
         val id = TileId(z, x, y)
         val file = File(cacheRoot, "openfreemap/$build/$z/$x/$y.pbf")
@@ -362,8 +414,13 @@ class LiveTiles(
         )
     }
 
+    /** `/build` jobs: region packs made from these live sources into [outDir], served under `/out/`. */
+    val builds: BuildRoutes by lazy { BuildRoutes(this, outDir) }
+
     private fun handle(ex: HttpExchange, style: String, glyphDir: File, demoPage: File) {
         val path = ex.requestURI.path
+        if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
+        if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
         tileRe.matchEntire(path)?.let { m ->
             val (kind, zs, xs, ys) = m.destructured
             val z = zs.toInt(); val x = xs.toInt(); val y = ys.toInt()
