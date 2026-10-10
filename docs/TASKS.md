@@ -268,6 +268,7 @@ Shared rules as in wave 6, with the T28 scripts: boot your own emulator with `po
 **Goal:** finish T31's edges: pause/resume recording; automatic new segment after a configurable gap; waypoint labels on the map and a rename/delete sheet; per-track stats cached in the store and invalidated on append; elevation profile view for a track (reuse the shared profile sampling from T24); import a GPX from the files dir (and via `POST /tracks/import`); keep our ids through GPX export/import (extension element); re-enable SQLDelight migration verification with a first real migration (the stats cache columns) and document how migrations work in CLAUDE.md.
 **Owns:** `shared/.../store/**`, `shared/.../gpx/**` (id extension only), `shared/src/commonMain/sqldelight/**`, `androidApp/.../tracking/**`, `TrackRoutes.kt`, `shared/build.gradle.kts` (migration task), the tracks paragraph in CLAUDE.md.
 **Done when:** round-trip test keeps ids; migration verification runs in `check`; on the emulator a replay with a 10-minute gap yields two segments, pause/resume works, waypoint labels visible and the profile view screenshot viewed; `check` green.
+**Status: merged (PR #37).** Migration verification is a JVM test, not SQLDelight's task (Windows worker environment). Follow-ups: recorder replay timeline (T33); profile panel vs attribution strip; profile step across gaps; a committed v1 fixture for the device upgrade.
 
 ### Later
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.
