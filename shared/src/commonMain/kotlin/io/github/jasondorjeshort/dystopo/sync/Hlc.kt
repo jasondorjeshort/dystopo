@@ -34,11 +34,20 @@ data class Hlc(val wall: Long, val counter: Int, val device: String) : Comparabl
         /** The smallest timestamp of [device]: what a version vector holds for a device it has seen nothing from. */
         fun zero(device: String) = Hlc(0, 0, device)
 
+        /** Parses [text]; anything malformed is a [SyncFormatException] (T51: one exception type for bad input). */
         fun parse(text: String): Hlc {
-            require(text.length > 20 && text[12] == '.' && text[19] == '.') { "not an HLC: $text" }
-            val wall = text.substring(0, 12).toLong(16)
-            val counter = text.substring(13, 19).toInt(16)
+            if (!(text.length > 20 && text[12] == '.' && text[19] == '.')) throw SyncFormatException("not an HLC: ${text.take(80)}")
+            val wall = text.substring(0, 12).toLongOrNull(16)
+            val counter = text.substring(13, 19).toIntOrNull(16)
+            if (wall == null || counter == null || wall < 0 || counter < 0) throw SyncFormatException("not an HLC: ${text.take(80)}")
             return Hlc(wall, counter, text.substring(20))
+        }
+
+        /** An HLC read from untrusted bytes: out-of-range parts are a [SyncFormatException], not an [IllegalArgumentException]. */
+        fun checked(wall: Long, counter: Long, device: String): Hlc {
+            if (wall !in 0..MAX_WALL) throw SyncFormatException("HLC wall $wall out of range")
+            if (counter !in 0..MAX_COUNTER.toLong()) throw SyncFormatException("HLC counter $counter out of range")
+            return Hlc(wall, counter.toInt(), device)
         }
 
         private fun hex(v: Long, width: Int): String {
@@ -60,7 +69,11 @@ class HlcClock(val device: String, last: Hlc? = null) {
 
     fun tick(now: Long): Hlc {
         val physical = now.coerceIn(0, Hlc.MAX_WALL)
-        last = if (physical > last.wall) Hlc(physical, 0, device) else Hlc(last.wall, last.counter + 1, device)
+        last = when {
+            physical > last.wall -> Hlc(physical, 0, device)
+            last.counter < Hlc.MAX_COUNTER -> Hlc(last.wall, last.counter + 1, device)
+            else -> Hlc(minOf(last.wall + 1, Hlc.MAX_WALL), 0, device) // T51: a full counter moves the wall on instead of failing
+        }
         return last
     }
 
@@ -68,6 +81,64 @@ class HlcClock(val device: String, last: Hlc? = null) {
     fun observe(remote: Hlc) {
         if (remote.wall > last.wall || (remote.wall == last.wall && remote.counter > last.counter)) {
             last = Hlc(remote.wall, remote.counter, device)
+        }
+    }
+
+    /**
+     * The receive rule with the clock-skew guard (T51): a [remote] timestamp more than [maxAheadMs]
+     * ahead of the physical time [now] is not observed (the clock stays where it is) and the call
+     * returns false. The operation itself is still merged (every replica must hold the same set, or
+     * they could not converge); the guard only stops a device whose clock runs far ahead from pinning
+     * every replica's clock to its future (and, at the extreme, exhausting the counter).
+     */
+    fun observe(remote: Hlc, now: Long, maxAheadMs: Long): Boolean {
+        if (remote.wall - now > maxAheadMs) return false
+        observe(remote)
+        return true
+    }
+
+    companion object {
+        /** How far ahead of local physical time a received HLC may be and still move the clock: one day. */
+        const val MAX_AHEAD_MS = 24L * 3600 * 1000
+
+        /**
+         * The entity-level receive rule (T51): a local change to an entity is stamped after every
+         * operation this replica holds on it (the user saw them), even one past [MAX_AHEAD_MS], up to
+         * this far ahead of local time: 30 days. A change to an entity touched from further ahead may
+         * lose to that operation until real time catches up.
+         */
+        const val MAX_SEEN_AHEAD_MS = 30L * 24 * 3600 * 1000
+    }
+}
+
+/**
+ * What the clock-skew guard saw on one replica (T51): received operations stamped more than
+ * [HlcClock.MAX_AHEAD_MS] ahead of local time (merged, not observed). Shown in `/sync/status`.
+ */
+data class SkewLog(
+    val clamped: Long = 0,
+    /** The largest lead seen, ms. */
+    val maxAheadMs: Long = 0,
+    /** The device of the last such operation, and the local time it arrived. */
+    val lastDevice: String? = null,
+    val lastAt: Long? = null,
+) {
+    fun plus(count: Int, aheadMs: Long, device: String?, at: Long): SkewLog =
+        if (count == 0) this else SkewLog(clamped + count, maxOf(maxAheadMs, aheadMs), device ?: lastDevice, at)
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "clamped" to clamped, "maxAheadMs" to maxAheadMs, "lastDevice" to lastDevice, "lastAt" to lastAt,
+        "limitMs" to HlcClock.MAX_AHEAD_MS,
+    )
+
+    /** For a store's metadata table. */
+    fun encode(): String = "$clamped,$maxAheadMs,${lastDevice?.replace(',', '_')?.take(100) ?: ""},${lastAt ?: ""}"
+
+    companion object {
+        fun decode(s: String?): SkewLog {
+            val p = s?.split(',') ?: return SkewLog()
+            if (p.size != 4) return SkewLog()
+            return SkewLog(p[0].toLongOrNull() ?: 0, p[1].toLongOrNull() ?: 0, p[2].ifEmpty { null }, p[3].toLongOrNull())
         }
     }
 }

@@ -16,7 +16,8 @@ import io.github.jasondorjeshort.dystopo.model.Waypoint
 object OpCodec {
     fun encode(op: Op): ByteArray = ByteWriter().also { writeOp(it, op) }.toByteArray()
 
-    fun decode(bytes: ByteArray): Op = ByteReader(bytes).let { r -> readOp(r).also { r.end() } }
+    /** Decodes one operation; any malformed input is a [SyncFormatException]. */
+    fun decode(bytes: ByteArray): Op = SyncFormatException.guard { ByteReader(bytes).let { r -> readOp(r).also { r.end() } } }
 
     /** 64-bit FNV-1a of an append's segment and points: two appends with the same digest add the same points. */
     fun digest(append: AppendPoints): String {
@@ -87,7 +88,9 @@ object OpCodec {
             TYPE_SET -> SetField(kind, id, r.string(), r.nstring())
             TYPE_APPEND -> {
                 if (kind != EntityKind.TRACK) throw SyncFormatException("append to a $kind")
-                AppendPoints(id, r.uvarint().toInt(), readPoints(r))
+                val segment = r.uvarint()
+                if (segment > Int.MAX_VALUE) throw SyncFormatException("segment $segment out of range")
+                AppendPoints(id, segment.toInt(), readPoints(r))
             }
             TYPE_DELETE -> Delete(kind, id)
             else -> throw SyncFormatException("unknown operation type $type")
@@ -121,7 +124,11 @@ object OpCodec {
 
     fun writeHlc(w: ByteWriter, h: Hlc) { w.uvarint(h.wall); w.uvarint(h.counter.toLong()); w.id(h.device) }
 
-    fun readHlc(r: ByteReader): Hlc = Hlc(r.uvarint(), r.uvarint().toInt(), r.id())
+    fun readHlc(r: ByteReader): Hlc {
+        val wall = r.uvarint()
+        val counter = r.uvarint()
+        return Hlc.checked(wall, counter, r.id())
+    }
 
     fun writeVector(w: ByteWriter, v: VersionVector) {
         w.uvarint(v.entries.size.toLong())
@@ -203,6 +210,8 @@ class ByteReader(private val buf: ByteArray, private var pos: Int = 0, private v
     fun byte(): Int { need(1); return buf[pos++].toInt() and 0xff }
 
     fun bytes(n: Int): ByteArray { need(n); return buf.copyOfRange(pos, pos + n).also { pos += n } }
+
+    fun skip(n: Int) { need(n); pos += n }
 
     fun uvarint(): Long {
         var shift = 0

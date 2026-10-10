@@ -241,6 +241,24 @@ SELECT hlc FROM sync_op WHERE entity = ? AND digest = ? AND hlc < ?;
 opsOfDevice:
 SELECT body FROM sync_op WHERE device = ? AND hlc > ? ORDER BY hlc;
 
+-- ---- T51: pages, pending counts, run merging, conflicts (queries only; the schema is unchanged) ----
+
+opsOfDeviceLimit:
+SELECT body FROM sync_op WHERE device = ? AND hlc > ? ORDER BY hlc LIMIT ?;
+
+countOpsOfDevice:
+SELECT count(*) FROM sync_op WHERE device = ? AND hlc > ?;
+
+newestOfEntity:
+SELECT hlc FROM sync_op WHERE kind = ? AND entity = ? ORDER BY hlc DESC LIMIT 1;
+
+countDigest:
+SELECT count(*) FROM sync_op WHERE entity = ? AND digest = ?;
+
+-- Operations that write fields or delete (no appends), for conflict detection.
+fieldOpsOfEntity:
+SELECT body FROM sync_op WHERE kind = ? AND entity = ? AND type != 3 ORDER BY hlc;
+
 countOps:
 SELECT count(*) FROM sync_op;
 

@@ -24,11 +24,20 @@ import kotlin.random.Random
  * push of what the other lacks. After [Config.ops] changes the partitions heal, changes stop, and
  * syncing continues until every peer holds the same vector and state (or [Config.maxQuiesceRounds]
  * sync intervals pass).
+ *
+ * T51 adds three hazards. [Config.bigSkewMs] moves the last peer's clock far off (two days ahead or
+ * behind), past the clock-skew guard ([HlcClock.observe]); [Config.crashes] crash-restarts peer 1 that
+ * many times during the change phase (it is down for [Config.downMs]: messages to it are lost, its
+ * in-flight syncs never finish, and it comes back from its durable state through [restart]);
+ * [Config.pageOps] makes every pull return pages of that many operations (the receiver pulls the
+ * next page at once) and every push one page.
  */
 class SyncSimulator(
     private val config: Config,
     /** Builds a peer's store; the default is [InMemoryTrackStore]. `sync-sim --store sql` passes SQLite stores. */
     private val newStore: (deviceId: String, wallClock: () -> Long) -> SyncStore = { d, c -> InMemoryTrackStore(d, c) },
+    /** A crash and restart of a peer: the same replica reopened from what it keeps durably (T51). */
+    private val restart: (SyncStore) -> SyncStore = { (it as InMemoryTrackStore).restarted() },
 ) {
     data class Config(
         val peers: Int = 3,
@@ -53,13 +62,23 @@ class SyncSimulator(
         val maxQuiesceRounds: Int = 200,
         /** Compaction on a random peer every this many changes (tombstones are kept: retention is far longer than the run). */
         val compactEvery: Int = 250,
+        /** T51: added to the last peer's clock (negative: behind), on top of [skewMs]. */
+        val bigSkewMs: Long = 0,
+        /** T51: crash-restarts of peer 1 during the change phase. */
+        val crashes: Int = 0,
+        /** T51: how long a crashed peer stays down. */
+        val downMs: Long = 30_000,
+        /** T51: page size of pulls and pushes (0: whole bundles). */
+        val pageOps: Int = 0,
     ) {
         init {
             require(peers >= 2) { "at least 2 peers" }
-            require(ops >= 0 && partitions >= 0)
+            require(ops >= 0 && partitions >= 0 && crashes >= 0 && pageOps >= 0)
         }
 
-        fun commandLine(): String = "sync-sim --peers $peers --ops $ops --seed $seed --partitions $partitions" + (if (reorder) " --reorder" else "")
+        fun commandLine(): String = "sync-sim --peers $peers --ops $ops --seed $seed --partitions $partitions" + (if (reorder) " --reorder" else "") +
+            (if (bigSkewMs != 0L) " --big-skew-ms $bigSkewMs" else "") + (if (crashes > 0) " --crashes $crashes" else "") +
+            (if (pageOps > 0) " --page $pageOps" else "")
     }
 
     private val rnd = Random(config.seed)
@@ -67,13 +86,19 @@ class SyncSimulator(
     private val epoch = 1_700_000_000_000L
     private var time = 0L
 
-    private class Peer(val index: Int, val store: SyncStore, val skew: Long) {
+    private class Peer(val index: Int, var store: SyncStore, val skew: Long) {
         /** Track this peer is "recording" into (appends go there), and the last fix time it used. */
         var recording: String? = null
         var lastFix = 0L
+
+        /** T51: bumped by a crash; messages addressed to an older epoch are lost. */
+        var epoch = 0
+        var downUntil = -1L
     }
 
-    private val skews = List(config.peers) { if (config.skewMs > 0) rnd.nextLong(-config.skewMs, config.skewMs + 1) else 0L }
+    private val skews = List(config.peers) { i ->
+        (if (config.skewMs > 0) rnd.nextLong(-config.skewMs, config.skewMs + 1) else 0L) + (if (i == config.peers - 1) config.bigSkewMs else 0L)
+    }
     private val peers: List<Peer> = List(config.peers) { i ->
         val skew = skews[i]
         Peer(i, newStore(ids.next()) { epoch + time + skew }, skew)
@@ -84,6 +109,10 @@ class SyncSimulator(
     // ---- events ----
 
     private sealed class Msg(val from: Int, val to: Int) {
+        /** T51: the recipient's epoch this message belongs to (a crash in between loses it), and the sender's. */
+        var toEpoch = 0
+        var fromEpoch = 0
+
         class PullRequest(from: Int, to: Int, val since: VersionVector) : Msg(from, to)
         class PullResponse(from: Int, to: Int, val bundle: Bundle) : Msg(from, to)
         class Push(from: Int, to: Int, val bundle: Bundle) : Msg(from, to)
@@ -93,6 +122,7 @@ class SyncSimulator(
         class LocalChange(at: Long, seq: Long) : Event(at, seq)
         class SyncTick(at: Long, seq: Long, val peer: Int) : Event(at, seq)
         class Deliver(at: Long, seq: Long, val msg: Msg, val sentAt: Long) : Event(at, seq)
+        class Crash(at: Long, seq: Long, val peer: Int) : Event(at, seq)
     }
 
     /** A binary min-heap on (at, seq): deterministic order for equal times. */
@@ -169,9 +199,13 @@ class SyncSimulator(
     private var duplicated = 0; private var reordered = 0; private var relayed = 0; private var syncsStarted = 0; private var syncsCompleted = 0
     private var applied = 0L; private var duplicates = 0L; private var dead = 0L; private var gapSkips = 0L; private var rejected = 0L
     private var compactions = 0; private var errors = ArrayList<String>()
+    private var clamped = 0L; private var maxAheadMs = 0L; private var conflicts = 0L
+    private var crashes = 0; private var droppedByCrash = 0; private var pagesFollowed = 0
     private val lastDeliveryOnLink = HashMap<Pair<Int, Int>, Long>()
 
-    private fun send(msg: Msg) {
+    private fun send(msg: Msg, toEpoch: Int = peers[msg.to].epoch) {
+        msg.toEpoch = toEpoch
+        msg.fromEpoch = peers[msg.from].epoch
         sent++
         if (cut(msg.from, msg.to, time)) { droppedByPartition++; return }
         if (rnd.nextDouble() < config.dropRate) { dropped++; return }
@@ -198,19 +232,30 @@ class SyncSimulator(
     private fun merge(p: Peer, b: Bundle) {
         val r = p.store.apply(b, now(p))
         applied += r.applied; duplicates += r.duplicate; dead += r.dead; gapSkips += r.gapDevices.size; rejected += r.rejected
+        clamped += r.clamped; maxAheadMs = maxOf(maxAheadMs, r.maxAheadMs); conflicts += r.conflicts.size
     }
+
+    private fun outgoing(p: Peer, since: VersionVector): Bundle =
+        if (config.pageOps > 0) p.store.page(since, config.pageOps) else p.store.bundle(since)
 
     private fun deliver(msg: Msg) {
         if (cut(msg.from, msg.to, time)) { droppedByPartition++; return }
-        delivered++
         val p = peers[msg.to]
+        if (p.epoch != msg.toEpoch || time < p.downUntil) { droppedByCrash++; return }
+        delivered++
         when (msg) {
-            is Msg.PullRequest -> send(Msg.PullResponse(p.index, msg.from, wire(p.store.bundle(msg.since))))
+            is Msg.PullRequest -> send(Msg.PullResponse(p.index, msg.from, wire(outgoing(p, msg.since))), toEpoch = msg.fromEpoch)
             is Msg.PullResponse -> {
                 merge(p, msg.bundle)
-                val out = p.store.bundle(msg.bundle.vector)
-                if (out.ops.isNotEmpty()) send(Msg.Push(p.index, msg.from, wire(out)))
-                syncsCompleted++
+                if (msg.bundle.more) {
+                    // A page: pull the next one at once, from the new vector.
+                    pagesFollowed++
+                    send(Msg.PullRequest(p.index, msg.from, p.store.vector()))
+                } else {
+                    val out = outgoing(p, msg.bundle.vector)
+                    if (out.ops.isNotEmpty()) send(Msg.Push(p.index, msg.from, wire(out)))
+                    syncsCompleted++
+                }
                 if (peers.size > 2 && rnd.nextDouble() < config.relayRate) {
                     var third = rnd.nextInt(peers.size - 2)
                     for (x in listOf(p.index, msg.from).sorted()) if (third >= x) third++
@@ -246,7 +291,8 @@ class SyncSimulator(
     }
 
     private fun localChange() {
-        val p = peers[rnd.nextInt(peers.size)]
+        var p = peers[rnd.nextInt(peers.size)]
+        if (time < p.downUntil) p = peers[(p.index + 1) % peers.size] // a crashed peer makes no changes
         val s = p.store
         val t = now(p)
         val tracks = s.list()
@@ -362,6 +408,13 @@ class SyncSimulator(
         }
         val changeEnd = maxOf(t, changePhaseMs)
         for (p in peers) schedule { s -> Event.SyncTick(rnd.nextLong(0, config.syncIntervalMs), s, p.index) }
+        // T51: crash-restarts of peer 1, spread over the change phase.
+        val crashPeer = 1 % peers.size
+        repeat(config.crashes) { i ->
+            val slot = changeEnd / config.crashes
+            val at = i * slot + rnd.nextLong(0, maxOf(1L, slot))
+            schedule { s -> Event.Crash(at, s, crashPeer) }
+        }
 
         var changesDone = 0
         var convergedAt: Long? = null
@@ -392,13 +445,28 @@ class SyncSimulator(
                     val p = peers[e.peer]
                     var other = rnd.nextInt(peers.size - 1)
                     if (other >= p.index) other++
-                    syncsStarted++
-                    send(Msg.PullRequest(p.index, other, p.store.vector()))
+                    if (time >= p.downUntil) {
+                        syncsStarted++
+                        send(Msg.PullRequest(p.index, other, p.store.vector()))
+                    }
                     val jitter = (config.syncIntervalMs * (0.5 + rnd.nextDouble())).toLong()
                     schedule { s -> Event.SyncTick(time + jitter, s, p.index) }
                     if (time > changeEnd && e.peer == 0) quiesceRounds++
                 }
                 is Event.Deliver -> deliver(e.msg)
+                is Event.Crash -> {
+                    // The process dies: in-flight syncs are lost, volatile state is gone; it comes back
+                    // from its durable state after downMs.
+                    val p = peers[e.peer]
+                    try {
+                        p.store = restart(p.store)
+                    } catch (ex: Exception) {
+                        errors += "t=$time: restart of peer ${p.index}: ${ex::class.simpleName}: ${ex.message}"
+                    }
+                    p.epoch++
+                    p.downUntil = time + config.downMs
+                    crashes++
+                }
             }
         }
 
@@ -448,13 +516,24 @@ class SyncSimulator(
                 "tracks" to final.tracks.size, "points" to final.tracks.sumOf { it.pointCount }, "waypoints" to final.waypoints.size,
                 "routes" to final.routes.size, "settings" to final.settings.size, "opsInLog" to peers.map { it.store.opCount }, "opsEver" to union.size,
                 "tracksRenamedOnSeveralPeers" to renamers,
+                // T51: recorded fixes merge into runs, so the log holds fewer appends than fixes.
+                "appendOpsInLog" to union.values.count { it.body is AppendPoints },
             ),
             "messages" to linkedMapOf(
                 "sent" to sent, "delivered" to delivered, "dropped" to dropped, "droppedByPartition" to droppedByPartition,
-                "duplicated" to duplicated, "reorderedOnLink" to reordered, "relayed" to relayed, "bundleBytes" to wireBytes,
+                "droppedByCrash" to droppedByCrash, "duplicated" to duplicated, "reorderedOnLink" to reordered, "relayed" to relayed,
+                "pagesFollowed" to pagesFollowed, "bundleBytes" to wireBytes,
             ),
             "syncs" to linkedMapOf("started" to syncsStarted, "completed" to syncsCompleted),
-            "merge" to linkedMapOf("applied" to applied, "duplicates" to duplicates, "dead" to dead, "gapSkips" to gapSkips, "rejected" to rejected),
+            "merge" to linkedMapOf(
+                "applied" to applied, "duplicates" to duplicates, "dead" to dead, "gapSkips" to gapSkips, "rejected" to rejected,
+                "clamped" to clamped, "maxAheadMs" to maxAheadMs, "conflicts" to conflicts,
+            ),
+            "crashes" to crashes,
+            "bigSkewMs" to config.bigSkewMs,
+            // T51: how far each peer's newest own operation is ahead of its own clock at the end (the skew guard keeps honest peers near 0).
+            "ownClockLeadMs" to peers.map { p -> p.store.vector().entries[p.store.deviceId]?.let { it.wall - now(p) } },
+            "pageOps" to config.pageOps,
             "compactions" to compactions,
             "partitionWindows" to partitions.map { it.json() },
             "skewMs" to skews,

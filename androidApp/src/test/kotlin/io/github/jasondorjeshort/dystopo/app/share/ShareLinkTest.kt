@@ -93,7 +93,7 @@ class ShareLinkTest {
 
         val (peer, report) = ShareClient.exchange(b, ShareClient.parse("127.0.0.1:$port"), "123456", { 3_000L })
         assertEquals("A", peer["name"])
-        assertEquals(1 + 5, report.merged.applied) // A's put and its points (one append per point)
+        assertEquals(1 + 1, report.merged.applied) // A's put and its 5 points as one run (T51 merges unshipped fixes into one append)
         assertTrue(report.pushed > 0)
         assertEquals(a.snapshot().digest(), b.snapshot().digest())
         assertEquals(2, a.list().size)

@@ -14,14 +14,27 @@ interface SyncReplica {
     /** For every device, the newest operation of it this replica holds. */
     fun vector(): VersionVector
 
-    /** Every operation this replica holds that [since] does not cover, oldest first. Dead ones (see [Materializer]) may be left out. */
+    /**
+     * Every operation this replica holds that [since] does not cover, oldest first. Dead ones (see
+     * [Materializer]) may be left out. Whatever this returns may leave the device, so this replica's
+     * own operations up to now count as shipped (see run merging in [TrackStore.append]).
+     */
     fun opsSince(since: VersionVector): List<Op>
 
     fun bundle(since: VersionVector = VersionVector.EMPTY): Bundle = Bundle(deviceId, since, vector(), opsSince(since))
 
     /**
+     * One page of [bundle] (T51): the oldest operations after [since], at most [maxOps] of them and
+     * about [maxBytes] encoded (always at least one), with the continuation vector and
+     * [Bundle.more] (see [Bundle]). Implementations override it to avoid loading the whole log.
+     */
+    fun page(since: VersionVector, maxOps: Int, maxBytes: Int = Int.MAX_VALUE): Bundle =
+        Paging.page(deviceId, since, vector(), opsSince(since), { true }, maxOps, maxBytes)
+
+    /**
      * Merges a bundle from another replica (any order, duplicates and replays are harmless), with the
-     * gap rule of [Bundle], and moves this replica's clock past everything in it ([HlcClock.observe]).
+     * gap rule of [Bundle], and moves this replica's clock past everything in it ([HlcClock.observe])
+     * except timestamps more than [HlcClock.MAX_AHEAD_MS] ahead of [now] (the skew guard, T51).
      * [now] is the local physical time.
      */
     fun apply(bundle: Bundle, now: Long): ApplyResult
@@ -38,6 +51,12 @@ interface SyncReplica {
 
     /** Operations held (live and tombstones). */
     val opCount: Long
+
+    /** Operations held that [peer] does not cover: what a sync with that peer would push (T51). */
+    fun pendingFor(peer: VersionVector): Long = opsSince(peer).size.toLong()
+
+    /** What the clock-skew guard has seen on this replica (T51). */
+    val skewLog: SkewLog get() = SkewLog()
 
     companion object {
         /** How long a tombstone is kept: 180 days. */
@@ -60,11 +79,29 @@ data class ApplyResult(
     val rejected: Int,
     /** Entities rematerialised. */
     val touched: Int,
+    /** T51: operations merged whose HLC was more than [HlcClock.MAX_AHEAD_MS] ahead of local time (not observed). */
+    val clamped: Int = 0,
+    /** T51: the largest such lead, ms (0 when none). */
+    val maxAheadMs: Long = 0,
+    /** T51: fields written concurrently on two devices, found in this merge (see [Conflicts]). */
+    val conflicts: List<Conflict> = emptyList(),
 ) {
     fun json(): Map<String, Any?> = linkedMapOf(
         "received" to received, "applied" to applied, "duplicate" to duplicate, "dead" to dead,
         "gapDevices" to gapDevices, "rejected" to rejected, "touched" to touched,
+        "clamped" to clamped, "maxAheadMs" to maxAheadMs, "conflicts" to conflicts.size,
     )
+
+    /** Sums two results (pages of one sync). */
+    operator fun plus(o: ApplyResult) = ApplyResult(
+        received + o.received, applied + o.applied, duplicate + o.duplicate, dead + o.dead,
+        (gapDevices + o.gapDevices).distinct(), rejected + o.rejected, touched + o.touched,
+        clamped + o.clamped, maxOf(maxAheadMs, o.maxAheadMs), conflicts + o.conflicts,
+    )
+
+    companion object {
+        val NONE = ApplyResult(0, 0, 0, 0, emptyList(), 0, 0)
+    }
 }
 
 data class CompactResult(val tombstonesDropped: Int, val opsDropped: Int)
@@ -126,5 +163,116 @@ object SyncRules {
             }
         }
         return Plan(take.sortedBy { it.hlc }, raise, dup, gaps, rejected)
+    }
+
+    /** The skew guard's findings for one merge: operations past the limit, the largest lead, a device that was ahead. */
+    data class Skew(val count: Int, val maxAheadMs: Long, val device: String?)
+
+    /**
+     * The skew guard (T51) for one merge: observes the raised vector entries on [clock] except those
+     * more than [maxAheadMs] ahead of [now], and counts the taken operations past that limit.
+     */
+    fun observe(plan: Plan, clock: HlcClock, now: Long, maxAheadMs: Long): Skew {
+        for (h in plan.raise) clock.observe(h, now, maxAheadMs)
+        var count = 0
+        var lead = 0L
+        var device: String? = null
+        for (op in plan.take) {
+            val ahead = op.hlc.wall - now
+            if (ahead > maxAheadMs) {
+                count++
+                if (ahead > lead) { lead = ahead; device = op.device }
+            }
+        }
+        return Skew(count, lead, device)
+    }
+}
+
+/**
+ * Pages of a bundle (T51), shared by every replica: [candidates] are operations after `since` in HLC
+ * order, and `exhausted` says whether they hold *all* of a device's remaining operations (a store
+ * that read at most N per device passes false for a device that hit N).
+ */
+object Paging {
+    fun page(
+        from: String,
+        since: VersionVector,
+        full: VersionVector,
+        candidates: List<Op>,
+        exhausted: (String) -> Boolean,
+        maxOps: Int,
+        maxBytes: Int,
+    ): Bundle {
+        require(maxOps > 0) { "maxOps must be positive" }
+        val taken = ArrayList<Op>()
+        var bytes = 0
+        for (op in candidates) {
+            if (taken.size >= maxOps) break
+            val size = OpCodec.encode(op).size + 3
+            if (taken.isNotEmpty() && bytes + size > maxBytes) break
+            taken += op
+            bytes += size
+        }
+        val lastTaken = HashMap<String, Hlc>()
+        for (op in taken) lastTaken[op.device] = op.hlc
+        val leftOver = HashSet<String>()
+        for (i in taken.size until candidates.size) leftOver += candidates[i].device
+        val v = LinkedHashMap<String, Hlc>()
+        var more = false
+        for ((device, top) in full.entries) {
+            val complete = device !in leftOver && exhausted(device)
+            val entry = if (complete) top else lastTaken[device] ?: since.entries[device]
+            if (entry != null) v[device] = entry
+            if (entry != top) more = true
+        }
+        return Bundle(from, since, VersionVector(v), taken, more)
+    }
+}
+
+/**
+ * Fields edited on two devices (T51), found when a merge brings a write of a field whose current value
+ * (the newest live write this replica holds) came from another device and differs. Two cases are
+ * reported, the same way on every replica:
+ * - **concurrent**: the sender of the bundle did not hold the current write ([Bundle.vector] does not
+ *   cover it), so neither writer saw the other's value. The merge point (the first replica holding
+ *   both) finds these; it is a lower bound, since operations carry no causal history beyond their HLC.
+ * - **overwritten here**: the current value was written by this replica's own device and the incoming
+ *   write replaces it, so the device whose value lost always learns of it, concurrent or not.
+ * Merge results are unchanged (the greater HLC wins); this only lets the app say so.
+ */
+object Conflicts {
+    /** The LWW fields an operation writes (puts write all of them), or null for appends and deletes. */
+    fun fields(body: OpBody): Map<String, String?>? = when (body) {
+        is PutTrack -> mapOf("name" to body.name, "description" to body.description, "comment" to body.comment, "source" to body.source, "type" to body.trackType, "extensions" to body.extensions)
+        is PutWaypoint -> body.waypoint.let { mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "symbol" to it.symbol, "type" to it.type, "extensions" to it.extensions) }
+        is PutRoute -> body.route.let { mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "type" to it.type, "extensions" to it.extensions) }
+        is PutSetting -> mapOf("value" to body.value)
+        is SetField -> if (body.field in body.kind.fields) mapOf(body.field to body.value) else null
+        is AppendPoints, is Delete -> null
+    }
+
+    /**
+     * Conflicts between [incoming] and the operations [held] on its entity (before it was added; any
+     * order), given the vector of the bundle it came in.
+     */
+    fun detect(incoming: Op, held: Collection<Op>, sender: VersionVector, self: String): List<Conflict> {
+        val mine = fields(incoming.body) ?: return emptyList()
+        val live = Materializer.live(held)
+        val out = ArrayList<Conflict>()
+        for ((field, value) in mine) {
+            val current = live.lastOrNull { fields(it.body)?.containsKey(field) == true } ?: continue
+            if (current.device == incoming.device) continue
+            val currentValue = fields(current.body)!![field]
+            if (currentValue == value) continue
+            val concurrent = !sender.covers(current.hlc)
+            val incomingWins = incoming.hlc > current.hlc
+            if (!concurrent && !(incomingWins && current.device == self)) continue
+            out += if (incomingWins) {
+                Conflict(incoming.body.kind, incoming.body.id, field, value, incoming.device, currentValue, current.device, incoming.hlc, concurrent)
+            } else {
+                Conflict(incoming.body.kind, incoming.body.id, field, currentValue, current.device, value, incoming.device, current.hlc, concurrent)
+            }
+        }
+        return out
     }
 }

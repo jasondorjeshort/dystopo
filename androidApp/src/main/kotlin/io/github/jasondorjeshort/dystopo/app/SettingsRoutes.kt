@@ -68,6 +68,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
         if (map != mapBefore) AppSettings.setMapOptions(map)
+        io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.publish(app, parsed) // T51: user choices into the synced log
         if (AppSettings.units != unitsBefore || AppSettings.warmup != warmupBefore || map.contourInterval != mapBefore.contourInterval) {
             app.reload() // new tile service: contour units, warm-up; reloads the style too
         } else if (AppSettings.textScale != styleBefore || map != mapBefore) {

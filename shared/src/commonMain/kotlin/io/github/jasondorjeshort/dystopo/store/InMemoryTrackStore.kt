@@ -10,6 +10,9 @@ import io.github.jasondorjeshort.dystopo.sync.AppendPoints
 import io.github.jasondorjeshort.dystopo.sync.ApplyResult
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import io.github.jasondorjeshort.dystopo.sync.CompactResult
+import io.github.jasondorjeshort.dystopo.sync.Conflict
+import io.github.jasondorjeshort.dystopo.sync.Conflicts
+import io.github.jasondorjeshort.dystopo.sync.SkewLog
 import io.github.jasondorjeshort.dystopo.sync.Delete
 import io.github.jasondorjeshort.dystopo.sync.EntityKind
 import io.github.jasondorjeshort.dystopo.sync.Hlc
@@ -38,21 +41,38 @@ import io.github.jasondorjeshort.dystopo.sync.WaypointView
  * sorts last is applied directly, which is what rematerialising would give).
  *
  * [deviceId] defaults to a random UUID; [wallClock] is the physical clock for operations of calls
- * without a `now` (delete); it defaults to 0, so the HLC alone orders them.
+ * without a `now` (delete); it defaults to 0, so the HLC alone orders them. [maxAheadMs] is the
+ * clock-skew guard (T51, see [HlcClock.observe]) uses the default limit.
  */
 class InMemoryTrackStore(
     override val deviceId: String = Uuid.random(),
     private val wallClock: () -> Long = { 0L },
 ) : SyncStore {
+    private val maxAheadMs: Long = HlcClock.MAX_AHEAD_MS
     private data class Key(val kind: EntityKind, val id: String)
 
     /** Local-only state of a track: not synced. */
     private class Local(var updatedAt: Long, var recording: Boolean = false, var stats: TrackStats? = null)
 
+    /** The run a recorded fix may extend (T51): this device's last single-point append, while it was added. */
+    private class Run(val track: String, val segment: Int, val hlc: Hlc, val points: List<TrackPoint>, val digest: String)
+
     private val clock = HlcClock(deviceId)
     private val ops = LinkedHashMap<Hlc, Op>()
     private val byEntity = HashMap<Key, MutableList<Op>>()
+    private val newest = HashMap<Key, Hlc>()
     private val vec = LinkedHashMap<String, Hlc>()
+
+    /** This device's newest operation that may have left in a bundle; runs never grow past it (T51). */
+    private var shipped: Hlc? = null
+    private var run: Run? = null
+
+    /** Recorded fixes that extended a run instead of adding an operation (T51). */
+    var runsExtended = 0L
+        private set
+
+    override var skewLog = SkewLog()
+        private set
 
     private val tracks = LinkedHashMap<String, TrackView>()
     private val digests = HashMap<String, HashSet<Pair<Int, String>>>()
@@ -72,7 +92,15 @@ class InMemoryTrackStore(
 
     private fun hold(op: Op) {
         ops[op.hlc] = op
-        byEntity.getOrPut(keyOf(op.body)) { ArrayList() } += op
+        val key = keyOf(op.body)
+        byEntity.getOrPut(key) { ArrayList() } += op
+        if (newest[key]?.let { op.hlc > it } != false) newest[key] = op.hlc
+    }
+
+    /** Removes one of this device's unshipped operations that a grown run replaces. */
+    private fun unhold(op: Op) {
+        ops.remove(op.hlc)
+        byEntity[keyOf(op.body)]?.removeAll { it.hlc == op.hlc }
     }
 
     /** Drops everything on the entity older than its new tombstone [t] (they can never matter again). */
@@ -85,7 +113,10 @@ class InMemoryTrackStore(
     }
 
     private fun emit(body: OpBody, now: Long): Op {
-        val op = Op(clock.tick(maxOf(now, wallClock())), body)
+        val physical = maxOf(now, wallClock())
+        // T51: the entity-level receive rule (see HlcClock.MAX_SEEN_AHEAD_MS).
+        newest[keyOf(body)]?.let { clock.observe(it, physical, HlcClock.MAX_SEEN_AHEAD_MS) }
+        val op = Op(clock.tick(physical), body)
         hold(op)
         if (body is Delete) prune(keyOf(body), op.hlc)
         vec[deviceId] = op.hlc
@@ -138,11 +169,42 @@ class InMemoryTrackStore(
         val v = view(trackId)
         val last = v.segments.lastOrNull()?.number ?: -1
         val seg = if (newSegment || last < 0) last + 1 else last
-        val body = AppendPoints(trackId, seg, listOf(point))
-        emit(body, now)
-        val d = seg to OpCodec.digest(body)
         val set = digests.getOrPut(trackId) { HashSet() }
+        val prev = run
+        if (prev != null && prev.track == trackId && prev.segment == seg && prev.points.size < AppendPoints.MAX_RUN &&
+            vec[deviceId] == prev.hlc && shipped.let { it == null || prev.hlc > it } && newest[Key(EntityKind.TRACK, trackId)] == prev.hlc
+        ) {
+            // T51: extend the run. Its points are the last of the segment, and so are the grown run's.
+            val grown = AppendPoints(trackId, seg, prev.points + point)
+            val gd = OpCodec.digest(grown)
+            if (seg to gd !in set) {
+                unhold(ops.getValue(prev.hlc))
+                set.remove(seg to prev.digest)
+                val op = emit(grown, now)
+                set.add(seg to gd)
+                run = Run(trackId, seg, op.hlc, grown.points, gd)
+                runsExtended++
+                val segs = v.segments.toMutableList()
+                segs[segs.size - 1] = SegmentView(seg, segs.last().points + point)
+                tracks[trackId] = v.copy(segments = segs, lastHlc = clock.last)
+                local.getValue(trackId).stats = null
+                touch(trackId, now)
+                return
+            }
+        }
+        val body = AppendPoints(trackId, seg, listOf(point))
+        val op = emit(body, now)
+        val d = seg to OpCodec.digest(body)
+        run = null
+        if (newest[Key(EntityKind.TRACK, trackId)] != op.hlc) {
+            // T51: the track holds an operation stamped later than this device's clock (merged past the
+            // skew guard, not observed), so this append does not sort last: rematerialise.
+            rematerialize(Key(EntityKind.TRACK, trackId))
+            touch(trackId, now)
+            return
+        }
         if (set.add(d)) {
+            run = Run(trackId, seg, op.hlc, body.points, d.second)
             // Fast path: a local append has the newest HLC, so it sorts after every point of segment >= seg.
             val segs = v.segments.toMutableList()
             if (segs.isNotEmpty() && segs.last().number == seg) segs[segs.size - 1] = SegmentView(seg, segs.last().points + point)
@@ -207,6 +269,7 @@ class InMemoryTrackStore(
         emit(PutTrack(t.id, createdAt, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
         t.segments.filter { it.points.isNotEmpty() }.forEachIndexed { i, s -> emit(AppendPoints(t.id, i, s.points), now) }
         rematerialize(Key(EntityKind.TRACK, t.id))
+        check(t.id in tracks) { "track ${t.id} stays hidden by a delete stamped more than 30 days ahead of this device's clock" }
         for (w in waypoints) {
             emit(PutWaypoint(t.id, w), now)
             rematerialize(Key(EntityKind.WAYPOINT, w.id))
@@ -286,7 +349,14 @@ class InMemoryTrackStore(
 
     override fun vector(): VersionVector = VersionVector(vec)
 
-    override fun opsSince(since: VersionVector): List<Op> = ops.values.filter { !since.covers(it.hlc) }.sortedBy { it.hlc }
+    private fun collect(since: VersionVector): List<Op> = ops.values.filter { !since.covers(it.hlc) }.sortedBy { it.hlc }
+
+    override fun opsSince(since: VersionVector): List<Op> {
+        shipped = vec[deviceId]
+        return collect(since)
+    }
+
+    override fun pendingFor(peer: VersionVector): Long = ops.values.count { !peer.covers(it.hlc) }.toLong()
 
     override val opCount: Long get() = ops.size.toLong()
 
@@ -296,11 +366,14 @@ class InMemoryTrackStore(
         var applied = 0
         var dup = plan.duplicate
         var dead = 0
+        val conflicts = ArrayList<Conflict>()
         for (op in plan.take) {
             if (op.hlc in ops) { dup++; continue }
             val key = keyOf(op.body)
-            val t = Materializer.tombstone(opsOf(key))
+            val held = opsOf(key)
+            val t = Materializer.tombstone(held)
             if (Materializer.isDead(op.hlc, t)) { dead++; continue }
+            if (Conflicts.fields(op.body) != null) conflicts += Conflicts.detect(op, held.filter { it.body !is AppendPoints }, bundle.vector, deviceId)
             hold(op)
             if (op.body is Delete) prune(key, op.hlc)
             applied++
@@ -308,11 +381,30 @@ class InMemoryTrackStore(
         }
         for (h in plan.raise) {
             if (h > (vec[h.device] ?: Hlc.zero(h.device))) vec[h.device] = h
-            clock.observe(h)
         }
+        val skew = SyncRules.observe(plan, clock, now, maxAheadMs)
+        skewLog = skewLog.plus(skew.count, skew.maxAheadMs, skew.device, now)
         // Tracks first: waypoint visibility depends on them.
         touched.sortedBy { it.kind.code }.forEach { rematerialize(it) }
-        return ApplyResult(bundle.ops.size, applied, dup, dead, plan.gapDevices, plan.rejected, touched.size)
+        return ApplyResult(bundle.ops.size, applied, dup, dead, plan.gapDevices, plan.rejected, touched.size, skew.count, skew.maxAheadMs, conflicts)
+    }
+
+    /**
+     * This store after a process restart (T51, the simulator's crash-restart peer): the log, the
+     * vector and the skew log survive; the clock restarts from the vector (this device's entry, and
+     * the others within the skew guard), and run merging and local state (recording, `updatedAt`)
+     * start afresh, as [SqlTrackStore] does when it is reopened.
+     */
+    fun restarted(): InMemoryTrackStore = InMemoryTrackStore(deviceId, wallClock).also { it.load(this) }
+
+    private fun load(from: InMemoryTrackStore) {
+        from.ops.values.sortedBy { it.hlc }.forEach { hold(it) }
+        vec.putAll(from.vec)
+        skewLog = from.skewLog
+        vec[deviceId]?.let { clock.observe(it) }
+        val now = wallClock()
+        for (h in vec.values) if (h.device != deviceId) clock.observe(h, now, maxAheadMs)
+        byEntity.keys.sortedWith(compareBy({ it.kind.code }, { it.id })).forEach { rematerialize(it) }
     }
 
     override fun snapshot(): SyncSnapshot = SyncSnapshot.of(tracks.values.toList(), waypointViews.values.filter { visible(it) }, routes(), settings())
@@ -326,7 +418,12 @@ class InMemoryTrackStore(
             old.forEach { ops.remove(it.hlc) }
             list.removeAll(old)
             tombstones += old.size
-            if (list.isEmpty()) byEntity.remove(key)
+            if (list.isEmpty()) {
+                byEntity.remove(key)
+                newest.remove(key)
+            } else {
+                newest[key] = list.maxOf { it.hlc }
+            }
         }
         return CompactResult(tombstones, 0)
     }

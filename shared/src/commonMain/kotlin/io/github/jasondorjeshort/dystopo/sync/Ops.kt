@@ -85,6 +85,15 @@ data class AppendPoints(override val id: String, val segment: Int, val points: L
     override val kind get() = EntityKind.TRACK
     override val parent get() = id
     override val type get() = TYPE_APPEND
+
+    companion object {
+        /**
+         * Run merging (T51): a recorded fix extends this device's previous append (same track and
+         * segment) instead of adding an operation, while that append is still unshipped and the newest
+         * operation on the track; a run holds at most this many points.
+         */
+        const val MAX_RUN = 64
+    }
 }
 
 data class Delete(override val kind: EntityKind, override val id: String) : OpBody() {
@@ -101,4 +110,43 @@ data class Op(val hlc: Hlc, val body: OpBody) {
     val device: String get() = hlc.device
 }
 
-class SyncFormatException(message: String) : IllegalArgumentException(message)
+/**
+ * Malformed sync input (a bundle, an operation, an HLC, a vector). T51: every parser in this package
+ * throws only this type for bad bytes, whatever is wrong with them, so callers need one catch.
+ */
+class SyncFormatException(message: String) : IllegalArgumentException(message) {
+    companion object {
+        /** Runs a parser and turns any runtime failure it did not anticipate into a [SyncFormatException]. */
+        inline fun <T> guard(block: () -> T): T = try {
+            block()
+        } catch (e: SyncFormatException) {
+            throw e
+        } catch (e: RuntimeException) {
+            throw SyncFormatException("corrupt sync data: ${e::class.simpleName}: ${e.message}")
+        }
+    }
+}
+
+/**
+ * A field written on two devices without either seeing the other's write (T51): found when merging a
+ * bundle, kept by the app for the "edited on two devices" note. Last writer wins as always; this only
+ * records that a value was overwritten. [kept] is the winning value (greater HLC) and [lost] the other.
+ */
+data class Conflict(
+    val kind: EntityKind,
+    val id: String,
+    val field: String,
+    val kept: String?,
+    val keptDevice: String,
+    val lost: String?,
+    val lostDevice: String,
+    /** The HLC of the winning write. */
+    val at: Hlc,
+    /** Neither writer had seen the other's value (see [Conflicts]); false: a later edit on another device replaced this device's value. */
+    val concurrent: Boolean = true,
+) {
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "kind" to kind.name.lowercase(), "id" to id, "field" to field, "kept" to kept, "keptDevice" to keptDevice,
+        "lost" to lost, "lostDevice" to lostDevice, "at" to at.text, "concurrent" to concurrent,
+    )
+}

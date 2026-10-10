@@ -13,9 +13,17 @@ import io.github.jasondorjeshort.dystopo.sync.EntityKind
  *   JSON: pulled, merged counts (applied, duplicate, dead, gap devices), pushed, both vectors, ms.
  * - `GET /sync/status`: device id, vector, operation count, state counts and digest (equal digests on
  *   two replicas mean equal synced data), whether the tables match the log, peer, last result, files.
- * - `GET /sync/settings`; `POST /sync/settings?peer=<url|file|>`: the default peer (empty: use the online server).
+ * - `GET /sync/settings`; `POST /sync/settings?peer=<url|file|>[&token=]`: the default peer (empty: use the online
+ *   server) and (T51) the bearer token sent to a gated HTTP peer (the `server` module's `/sync`; empty clears it).
  * - `POST /sync/field?kind=track|waypoint|route&id=&field=name&value=`: change one synced field (a
  *   rename, for checking concurrent edits; omit `value` to clear a text field).
+ *
+ * T51: `POST /sync` pages (`&page=N` operations per page, default 2000; `page=0` for one bundle each
+ * way) and reports `pullPages`, `pushPages`, bytes, `conflicts` and the synced settings it applied;
+ * `/sync/status` adds `pendingOps`, `conflicts`, `clockSkew` (the skew guard's log), `settingsSync`
+ * and `runsExtended`. Also:
+ * - `GET /sync/conflicts`: fields edited on two devices (newest first); `DELETE /sync/conflicts[?id=]` dismisses notes.
+ * - `POST /sync/ui?open=1|0`: opens or closes the sync status sheet (for screenshots).
  */
 object SyncRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -23,13 +31,28 @@ object SyncRoutes {
         val sync = AppSync.of(app)
         return try {
             when (r.method to r.path) {
-                "POST" to "/sync" -> Response.json(sync.syncNow(r.query["with"]))
+                "POST" to "/sync" -> {
+                    val page = r.query["page"]?.let { it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: return Response.json(mapOf("error" to "page must be a whole number >= 0"), 400) }
+                    Response.json(sync.syncNow(r.query["with"], page ?: io.github.jasondorjeshort.dystopo.sync.Sync.DEFAULT_PAGE_OPS))
+                }
+                "GET" to "/sync/conflicts" -> Response.json(mapOf("total" to sync.conflictsTotal, "conflicts" to sync.conflicts))
+                "DELETE" to "/sync/conflicts" -> {
+                    sync.dismiss(r.query["id"])
+                    Response.json(mapOf("conflicts" to sync.conflicts.size))
+                }
+                "POST" to "/sync/ui" -> {
+                    val open = r.query["open"] != "0"
+                    app.map.onMain { io.github.jasondorjeshort.dystopo.app.sync.SyncUi.visible = open; io.github.jasondorjeshort.dystopo.app.sync.SyncUi.refresh() }
+                    Response.json(mapOf("open" to open))
+                }
                 "GET" to "/sync/status", "GET" to "/sync" -> Response.json(sync.status())
-                "GET" to "/sync/settings" -> Response.json(mapOf("peer" to sync.peerSetting, "defaultPeer" to sync.defaultPeer))
+                "GET" to "/sync/settings" -> Response.json(mapOf("peer" to sync.peerSetting, "defaultPeer" to sync.defaultPeer, "tokenSet" to sync.syncToken.isNotEmpty()))
                 "POST" to "/sync/settings" -> {
-                    val peer = r.query["peer"] ?: return Response.json(mapOf("error" to "pass peer= (empty to clear)"), 400)
-                    sync.setPeer(peer)
-                    Response.json(mapOf("peer" to sync.peerSetting, "defaultPeer" to sync.defaultPeer))
+                    // T51: token= sets the bearer token for a peer whose /sync is gated (the server module); empty clears it.
+                    if (r.query["peer"] == null && r.query["token"] == null) return Response.json(mapOf("error" to "pass peer= and/or token= (empty to clear)"), 400)
+                    r.query["peer"]?.let { sync.setPeer(it) }
+                    r.query["token"]?.let { sync.setSyncToken(it) }
+                    Response.json(mapOf("peer" to sync.peerSetting, "defaultPeer" to sync.defaultPeer, "tokenSet" to sync.syncToken.isNotEmpty()))
                 }
                 "POST" to "/sync/field" -> {
                     val kind = when (r.query["kind"]) {
@@ -47,7 +70,7 @@ object SyncRoutes {
                     t.refreshOverlay(force = true)
                     Response.json(mapOf("kind" to kind.name.lowercase(), "id" to id, "field" to field, "value" to r.query["value"]))
                 }
-                else -> Response.json(mapOf("error" to "POST /sync?with=, GET /sync/status, GET|POST /sync/settings, POST /sync/field"), 404)
+                else -> Response.json(mapOf("error" to "POST /sync?with=[&page=], GET /sync/status, GET|POST /sync/settings, POST /sync/field, GET|DELETE /sync/conflicts, POST /sync/ui"), 404)
             }
         } catch (e: IllegalArgumentException) {
             Response.json(mapOf("error" to e.message), 400)

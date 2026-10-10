@@ -14,6 +14,10 @@ import io.github.jasondorjeshort.dystopo.sync.AppendPoints
 import io.github.jasondorjeshort.dystopo.sync.ApplyResult
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import io.github.jasondorjeshort.dystopo.sync.CompactResult
+import io.github.jasondorjeshort.dystopo.sync.Conflict
+import io.github.jasondorjeshort.dystopo.sync.Conflicts
+import io.github.jasondorjeshort.dystopo.sync.Paging
+import io.github.jasondorjeshort.dystopo.sync.SkewLog
 import io.github.jasondorjeshort.dystopo.sync.Delete
 import io.github.jasondorjeshort.dystopo.sync.EntityKind
 import io.github.jasondorjeshort.dystopo.sync.Hlc
@@ -58,6 +62,8 @@ import io.github.jasondorjeshort.dystopo.sync.WaypointView
 class SqlTrackStore(
     driver: SqlDriver,
     private val wallClock: () -> Long = { 0L },
+    /** The clock-skew guard's limit (T51, see [HlcClock.observe]). */
+    private val maxAheadMs: Long = HlcClock.MAX_AHEAD_MS,
     /** The device id for a new database (an existing one keeps its own); a random UUID by default. */
     newDeviceId: () -> String = { UuidGenerator().next() },
 ) : SyncStore {
@@ -72,6 +78,20 @@ class SqlTrackStore(
     /** True when this open seeded the log from pre-T44 rows. */
     val seededFromTables: Boolean
 
+    /** The run a recorded fix may extend (T51): this device's last single-point append, while it was added. */
+    private class Run(val track: String, val segment: Long, val hlc: Hlc, val points: List<TrackPoint>)
+
+    /** This device's newest operation that may have left in a bundle; runs never grow past it (T51). In memory: a restart starts no run. */
+    private var shipped: Hlc? = null
+    private var run: Run? = null
+
+    /** Recorded fixes that extended a run instead of adding an operation, since open (T51). */
+    var runsExtended = 0L
+        private set
+
+    override var skewLog: SkewLog
+        private set
+
     init {
         var seeded = false
         var device = ""
@@ -79,7 +99,13 @@ class SqlTrackStore(
             device = q.getMeta("device").executeAsOneOrNull() ?: newDeviceId().also { q.putMeta("device", it) }
         }
         deviceId = device
-        clock = HlcClock(deviceId, q.lastOp().executeAsOneOrNull()?.let(Hlc::parse))
+        // T51: the clock resumes after this device's newest operation and every other device's entry
+        // within the skew guard (a far-future entry merged earlier must not pin it on reopen either).
+        val vector = vector()
+        clock = HlcClock(deviceId, vector.entries[deviceId])
+        val now = wallClock()
+        for (h in vector.entries.values) if (h.device != deviceId) clock.observe(h, now, maxAheadMs)
+        skewLog = SkewLog.decode(q.getMeta("skew").executeAsOneOrNull())
         q.transaction {
             if (q.getMeta("log").executeAsOneOrNull() == null) {
                 seeded = seedLog()
@@ -101,7 +127,10 @@ class SqlTrackStore(
     }
 
     private fun emit(body: OpBody, now: Long): Op {
-        val op = Op(clock.tick(maxOf(now, wallClock())), body)
+        val physical = maxOf(now, wallClock())
+        // T51: the entity-level receive rule (see HlcClock.MAX_SEEN_AHEAD_MS).
+        q.newestOfEntity(body.kind.code.toLong(), body.id).executeAsOneOrNull()?.let { clock.observe(Hlc.parse(it), physical, HlcClock.MAX_SEEN_AHEAD_MS) }
+        val op = Op(clock.tick(physical), body)
         hold(op)
         q.putVector(deviceId, op.hlc.text)
         return op
@@ -191,9 +220,36 @@ class SqlTrackStore(
         val (seq, segment) = tail(trackId)
         val seg = if (newSegment || segment < 0) segment + 1 else segment
         var added = true
+        val prev = run
+        run = null
+        var next: Run? = null
         q.transaction {
+            if (prev != null && prev.track == trackId && prev.segment == seg && prev.points.size < AppendPoints.MAX_RUN &&
+                vector().entries[deviceId] == prev.hlc && shipped.let { it == null || prev.hlc > it } &&
+                q.newestOfEntity(EntityKind.TRACK.code.toLong(), trackId).executeAsOneOrNull() == prev.hlc.text
+            ) {
+                // T51: extend the run (one op row rewritten, one point row added). Its points are the
+                // last of the segment, and so are the grown run's.
+                val grown = AppendPoints(trackId, seg.toInt(), prev.points + point)
+                if (q.countDigest(trackId, OpCodec.digest(grown)).executeAsOne() == 0L) {
+                    q.deleteOp(prev.hlc.text)
+                    val op = emit(grown, now)
+                    q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
+                    q.touchTrackPoints(now, trackId)
+                    next = Run(trackId, seg, op.hlc, grown.points)
+                    return@transaction
+                }
+            }
             val body = AppendPoints(trackId, seg.toInt(), listOf(point))
             val op = emit(body, now)
+            if (q.newestOfEntity(EntityKind.TRACK.code.toLong(), trackId).executeAsOneOrNull() != op.hlc.text) {
+                // T51: the track holds an operation stamped later than this device's clock (merged past
+                // the skew guard, not observed), so this append does not sort last: rebuild from the log.
+                rebuildTrack(trackId)
+                q.touchTrack(now, trackId)
+                added = false
+                return@transaction
+            }
             // The same segment and points appended before (and still live) count once (see Materializer).
             val same = q.sameDigest(trackId, OpCodec.digest(body), op.hlc.text).executeAsList()
             val t = if (same.isEmpty()) null else tombstone(EntityKind.TRACK, trackId)
@@ -201,10 +257,13 @@ class SqlTrackStore(
             if (added) {
                 q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
                 q.touchTrackPoints(now, trackId)
+                next = Run(trackId, seg, op.hlc, body.points)
             } else {
                 q.touchTrack(now, trackId)
             }
         }
+        if (next != null && next!!.points.size > 1) runsExtended++
+        run = next
         if (added) tails[trackId] = seq + 1 to seg
     }
 
@@ -218,6 +277,7 @@ class SqlTrackStore(
             emit(PutTrack(t.id, createdAt, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
             t.segments.filter { it.points.isNotEmpty() }.forEachIndexed { i, s -> emit(AppendPoints(t.id, i, s.points), now) }
             rebuildTrack(t.id)
+            check(q.selectTrack(t.id).executeAsOneOrNull() != null) { "track ${t.id} stays hidden by a delete stamped more than 30 days ahead of this device's clock" }
             for (w in waypoints) {
                 emit(PutWaypoint(t.id, w), now)
                 rebuildWaypoint(w.id)
@@ -413,12 +473,32 @@ class SqlTrackStore(
     override fun vector(): VersionVector = VersionVector(q.selectVector().executeAsList().associate { it.device to Hlc.parse(it.hlc) })
 
     override fun opsSince(since: VersionVector): List<Op> {
+        val vector = vector()
+        shipped = vector.entries[deviceId]
         val out = ArrayList<Op>()
-        for (device in vector().entries.keys) {
+        for (device in vector.entries.keys) {
             q.opsOfDevice(device, since[device].text).executeAsList().mapTo(out, OpCodec::decode)
         }
         return out.sortedBy { it.hlc }
     }
+
+    /** T51: reads at most [maxOps] operations per device, not the whole log. */
+    override fun page(since: VersionVector, maxOps: Int, maxBytes: Int): Bundle {
+        val full = vector()
+        shipped = full.entries[deviceId]
+        val candidates = ArrayList<Op>()
+        val exhausted = HashSet<String>()
+        for (device in full.entries.keys) {
+            val rows = q.opsOfDeviceLimit(device, since[device].text, maxOps.toLong()).executeAsList()
+            if (rows.size < maxOps) exhausted += device
+            rows.mapTo(candidates, OpCodec::decode)
+        }
+        candidates.sortBy { it.hlc }
+        return Paging.page(deviceId, since, full, candidates, { it in exhausted }, maxOps, maxBytes)
+    }
+
+    override fun pendingFor(peer: VersionVector): Long =
+        vector().entries.keys.sumOf { q.countOpsOfDevice(it, peer[it].text).executeAsOne() }
 
     override val opCount: Long get() = q.countOps().executeAsOne()
 
@@ -428,6 +508,8 @@ class SqlTrackStore(
         var dead = 0
         var gaps = emptyList<String>()
         var rejected = 0
+        var skew = SyncRules.Skew(0, 0, null)
+        val conflicts = ArrayList<Conflict>()
         val touched = LinkedHashMap<Pair<EntityKind, String>, Boolean>() // value: fields only
         q.transaction {
             val plan = SyncRules.plan(bundle, vector())
@@ -440,6 +522,10 @@ class SqlTrackStore(
                 val key = op.body.kind to op.body.id
                 val t = tombstones.getOrPut(key) { tombstone(key.first, key.second) }
                 if (Materializer.isDead(op.hlc, t)) { dead++; continue }
+                if (Conflicts.fields(op.body) != null) {
+                    val held = q.fieldOpsOfEntity(key.first.code.toLong(), key.second).executeAsList().map(OpCodec::decode)
+                    conflicts += Conflicts.detect(op, held, bundle.vector, deviceId)
+                }
                 hold(op)
                 if (op.body is Delete) tombstones[key] = op.hlc
                 applied++
@@ -448,7 +534,11 @@ class SqlTrackStore(
             for (h in plan.raise) {
                 val mine = vector()[h.device]
                 if (h > mine) q.putVector(h.device, h.text)
-                clock.observe(h)
+            }
+            skew = SyncRules.observe(plan, clock, now, maxAheadMs)
+            if (skew.count > 0) {
+                skewLog = skewLog.plus(skew.count, skew.maxAheadMs, skew.device, now)
+                q.putMeta("skew", skewLog.encode())
             }
             for ((key, fieldsOnly) in touched.entries.sortedBy { it.key.first.code }) {
                 when (key.first) {
@@ -458,7 +548,7 @@ class SqlTrackStore(
                 }
             }
         }
-        return ApplyResult(bundle.ops.size, applied, dup, dead, gaps, rejected, touched.size)
+        return ApplyResult(bundle.ops.size, applied, dup, dead, gaps, rejected, touched.size, skew.count, skew.maxAheadMs, conflicts)
     }
 
     /** The synced state as the tables show it (what the app displays). */

@@ -131,6 +131,7 @@ private fun BoxScope.Controls() {
                             )
                             Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
                             Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
+                            io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51
                         }
                     }
                 }
