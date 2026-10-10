@@ -74,6 +74,22 @@ class VerticalDatumTest {
     }
 
     @Test
+    fun swissHeightsGoThroughChgeoThenEgm2008() {
+        // Zimmerwald (swisstopo refsys 7.1): LN02 897.915 m, ETRS89 ellipsoidal 947.149 m, so N(LN02) = 49.234 m.
+        val chgeo = GeoidModel { _, _ -> 49.234 }
+        val egm2008 = GeoidModel { _, _ -> 49.5 }
+        assertEquals(49.234 - 49.5, Datums.swissToEgm2008(46.877, 7.465, chgeo, egm2008), 1e-12)
+        assertEquals("ch_swisstopo_chgeo2004_ETRS89_LN02.tif", Datums.swissGeoidFor(5728)?.file)
+        assertEquals("ch_swisstopo_chgeo2004_ETRS89_LHN95.tif", Datums.swissGeoidFor(5729)?.file)
+        assertNull(Datums.swissGeoidFor(5703))
+        for (g in Datums.SWISS_GEOIDS) {
+            val entry = SourceRegistry.builtIn[g.registryId] ?: error("${g.registryId} not in sources.json")
+            assertEquals(SourceKind.GEOID, entry.kind)
+        }
+        assertEquals("https://cdn.proj.org/${Datums.swissGeoidFor(5728)!!.file}", SourceRegistry.builtIn["chgeo2004"]?.url)
+    }
+
+    @Test
     fun pa11ShiftDiffersFromNad83Of2011ByAboutTenCentimetersInHawaii() {
         val a = Datums.wgs84MinusNad83Height(19.82, -155.47, Nad83Frame.NAD83_2011)
         val b = Datums.wgs84MinusNad83Height(19.82, -155.47, Nad83Frame.NAD83_PA11)

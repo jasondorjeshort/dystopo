@@ -19,7 +19,28 @@ enum class VerticalDatum {
      * Hawaii (the USGG2012-based local datum).
      */
     NAVD88,
+
+    /**
+     * Swiss national heights: LN02 (the official levelling network of 1902, used by swissALTI3D,
+     * vertical EPSG:5728) and its successor LHN95 (EPSG:5729). Realized through swisstopo's
+     * CHGeo2004 geoid, one PROJ grid per system ([Datums.SWISS_GEOIDS]); LN02 differs from LHN95 by
+     * -0.2 to +0.5 m, growing with height, so the matching grid is used rather than a constant.
+     */
+    LN02,
 }
+
+/**
+ * A swisstopo CHGeo2004 grid on the PROJ CDN: Swiss height + undulation = ETRS89 ellipsoidal
+ * height. ETRS89 is taken as WGS84 (they differ by centimetres vertically).
+ */
+data class SwissGeoid(
+    /** Vertical CRS the heights are in (5728 LN02, 5729 LHN95). */
+    val verticalEpsg: Int,
+    /** Registry id in sources.json. */
+    val registryId: String,
+    /** File name on the PROJ CDN. */
+    val file: String,
+)
 
 /** Geoid height N: meters from the reference ellipsoid up to the geoid at a location. */
 fun interface GeoidModel {
@@ -125,4 +146,25 @@ object Datums {
         egm2008: GeoidModel,
         frame: Nad83Frame = Nad83Frame.NAD83_2011,
     ): Double = hybrid.undulation(lat, lon) + wgs84MinusNad83Height(lat, lon, frame) - egm2008.undulation(lat, lon)
+
+    /**
+     * CHGeo2004 grids by vertical CRS. Both are CC0 (swisstopo via PROJ-data) and cover
+     * 5.85-10.5 E, 45.75-47.85 N, a little more than Switzerland and Liechtenstein.
+     */
+    val SWISS_GEOIDS: List<SwissGeoid> = listOf(
+        SwissGeoid(5728, "chgeo2004", "ch_swisstopo_chgeo2004_ETRS89_LN02.tif"),
+        SwissGeoid(5729, "chgeo2004", "ch_swisstopo_chgeo2004_ETRS89_LHN95.tif"),
+    )
+
+    /** Extent of the CHGeo2004 grids: west, south, east, north. */
+    val SWISS_GEOID_BOUNDS = doubleArrayOf(5.85, 45.75, 10.5, 47.85)
+
+    fun swissGeoidFor(verticalEpsg: Int): SwissGeoid? = SWISS_GEOIDS.firstOrNull { it.verticalEpsg == verticalEpsg }
+
+    /**
+     * Meters to add to a Swiss (LN02 or LHN95) height to get an EGM2008 height: height + CHGeo2004
+     * undulation = ETRS89 ellipsoidal height (= WGS84 to a few cm), minus the EGM2008 undulation.
+     */
+    fun swissToEgm2008(lat: Double, lon: Double, chgeo: GeoidModel, egm2008: GeoidModel): Double =
+        chgeo.undulation(lat, lon) - egm2008.undulation(lat, lon)
 }

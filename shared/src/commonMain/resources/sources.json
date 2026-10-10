@@ -64,6 +64,27 @@
       "notes": "10x10 km tiles in NAD83 / UTM, grouped by survey project; newer surveys are composited on top. Bare earth. Converted to EGM2008 with the hybrid geoid covering each cell (geoid18, geoid18-prvi, geoid12b-alaska, geoid12b-hawaii) and egm2008."
     },
     {
+      "id": "swissalti3d",
+      "name": "swisstopo swissALTI3D",
+      "kind": "dem",
+      "provider": "Federal Office of Topography swisstopo",
+      "coverage": {
+        "summary": "Switzerland and Liechtenstein, in 1x1 km LV95 tiles. Tiles straddling the border are filled across the whole tile (seen at the Matterhorn), so coverage ends in a 1 km staircase up to a kilometre beyond the border.",
+        "bbox": [5.9503666, 45.7213375, 10.4998461, 47.8216742]
+      },
+      "resolution": "2 m (used to z15) and 0.5 m (used where output cells are under 2 m)",
+      "verticalDatum": "LN02 (EPSG:5728) on LV95 (EPSG:2056)",
+      "license": "LicenseRef-swisstopo-OGD",
+      "licenseName": "Terms of use for free geodata and geoservices (OGD) from swisstopo, 26 August 2022: free use for all purposes, including commercial, with the source indicated",
+      "licenseUrl": "https://www.swisstopo.admin.ch/en/conditions-geodata",
+      "attribution": "Elevation: swissALTI3D © swisstopo (Federal Office of Topography swisstopo).",
+      "attributionHtml": "Elevation: <a href=\"https://www.swisstopo.admin.ch/en/height-model-swissalti3d\" target=\"_blank\">swissALTI3D</a> &copy; swisstopo (Federal Office of Topography swisstopo).",
+      "allowedUses": "Free use, processing and redistribution, including commercial, with the source indicated next to the data or in accompanying documentation (derived products may say derived from).",
+      "url": "https://data.geo.admin.ch/api/stac/v0.9/collections/ch.swisstopo.swissalti3d/items?bbox={west},{south},{east},{north}",
+      "updateCadence": "Six-year update cycle; tiles are re-flown region by region and published under a new year in their item id.",
+      "notes": "Bare-earth DTM. Found through the swisstopo STAC API (cached per 0.1 degree cell); each item is one 1x1 km tile with Cloud-Optimized GeoTIFF assets (2 m: 500x500 px, 128 px LZW tiles, one 4 m overview; 0.5 m: 2000x2000 px with 1, 2 and 4 m overviews), no-data -9999. Reprojected from LV95 with the rigorous swisstopo formulas (mm-level against the published REFRAME points). Heights converted LN02 -> EGM2008 with chgeo2004 (ETRS89 taken as WGS84, a few cm) and egm2008; the conversion error is that of the two geoid models, a few cm for CHGeo2004 plus EGM2008's own decimetre-level error in the Alps. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
+    },
+    {
       "id": "terrarium",
       "name": "Mapzen Terrain Tiles (Terrarium, legacy)",
       "kind": "dem",
@@ -166,6 +187,27 @@
       "url": "https://cdn.proj.org/us_noaa_g2012bh0.tif",
       "updateCadence": "Static; GEOID18 does not cover Hawaii, so NGS keeps GEOID12B there until GEOID2022.",
       "notes": "Referenced to NAD83(PA11), not NAD83(2011); the ellipsoid shift to WGS84 uses the PA11 translation. Used with egm2008 to convert Hawaii heights (USGS DEMs) to EGM2008."
+    },
+    {
+      "id": "chgeo2004",
+      "name": "swisstopo CHGeo2004 geoid (LN02 and LHN95 grids)",
+      "kind": "geoid",
+      "provider": "Federal Office of Topography swisstopo; grids converted to GeoTIFF by the PROJ-data project",
+      "coverage": {
+        "summary": "Switzerland and Liechtenstein with a margin.",
+        "bbox": [5.85, 45.75, 10.5, 47.85]
+      },
+      "resolution": "30 arc-second grid",
+      "verticalDatum": "LN02 (EPSG:5728) and LHN95 (EPSG:5729) relative to the ETRS89 ellipsoid",
+      "license": "CC0-1.0",
+      "licenseName": "Creative Commons CC0 1.0 Universal",
+      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/ch_swisstopo/ch_swisstopo_README.txt",
+      "attribution": "Geoid: CHGeo2004 © swisstopo (CC0), via PROJ-data.",
+      "attributionHtml": "Geoid: <a href=\"https://www.swisstopo.admin.ch/en/knowledge-facts/surveying-geodesy/geoid.html\" target=\"_blank\">CHGeo2004</a> &copy; swisstopo (CC0), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
+      "allowedUses": "Unrestricted (CC0).",
+      "url": "https://cdn.proj.org/ch_swisstopo_chgeo2004_ETRS89_LN02.tif",
+      "updateCadence": "Static.",
+      "notes": "ch_swisstopo_chgeo2004_ETRS89_LN02.tif converts LN02 heights (swissALTI3D), ch_swisstopo_chgeo2004_ETRS89_LHN95.tif LHN95 heights; used with egm2008 to put Swiss heights in EGM2008. Striped (not tiled) GeoTIFFs of about 300 kB, read whole."
     },
     {
       "id": "egm2008",

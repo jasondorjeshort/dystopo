@@ -389,6 +389,7 @@ The project will be fully open source. Code and map content may need different l
 | OpenStreetMap | ODbL 1.0 | Vector tiles that contain OSM data are a derived database, so they **must stay ODbL** (share-alike). Rendered raster images are a "produced work" and can use any license, with OSM attribution. |
 | USGS 3DEP / NED, SRTM | Public domain | No restrictions |
 | Copernicus GLO-30 DEM | Free, attribution required | Fine for generated contours/hillshade |
+| swisstopo swissALTI3D (and the CHGeo2004 geoid) | swisstopo OGD terms: free use incl. commercial, source required (CHGeo2004 grid: CC0) | Fine for generated contours/hillshade; credit swisstopo wherever Swiss data shows (registry ids `swissalti3d`, `chgeo2004`) |
 | User-added third-party sources | Per provider | Many forbid caching or redistribution; user-added sources stay on the user's device and are never republished |
 
 - The likely result: **ODbL for vector tiles** (forced by OSM), and **CC BY-SA 4.0** (the share-alike, GPL-like content license) or CC BY 4.0 for raster tiles and non-OSM layers.

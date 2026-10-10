@@ -27,17 +27,20 @@ class GeoTiffTest {
         return out
     }
 
-    /** 3x2 image in 2x2 tiles (so 2 tiles across, 1 down, right tile padded). */
-    private fun buildTiff(pixelIsPoint: Boolean, noData: String?): ByteArray {
+    /**
+     * 3x2 image in 2x2 tiles (so 2 tiles across, 1 down, right tile padded), or with [strips] in two
+     * one-row strips.
+     */
+    private fun buildTiff(pixelIsPoint: Boolean, noData: String?, strips: Boolean = false): ByteArray {
         val image = arrayOf(floatArrayOf(1f, 2f, 3f), floatArrayOf(4f, 5f, 6f))
-        val tile0 = floatArrayOf(image[0][0], image[0][1], image[1][0], image[1][1])
-        val tile1 = floatArrayOf(image[0][2], 0f, image[1][2], 0f)
+        val tile0 = if (strips) image[0] else floatArrayOf(image[0][0], image[0][1], image[1][0], image[1][1])
+        val tile1 = if (strips) image[1] else floatArrayOf(image[0][2], 0f, image[1][2], 0f)
 
         val t = TiffBuilder()
         t.bytes("II".encodeToByteArray()); t.u16(42); t.u32(8)
         // Out-of-line data first, IFD after; tags need these offsets.
         val tags = ArrayList<Triple<Int, Int, Any>>() // tag, type, value (Long inline, or offset placeholder)
-        val ifdEntries = 15 + (if (noData != null) 1 else 0)
+        val ifdEntries = (if (strips) 14 else 15) + (if (noData != null) 1 else 0)
         val ifdStart = 8
         val dataStart = ifdStart + 2 + ifdEntries * 12 + 4
         var cursor = dataStart
@@ -46,7 +49,7 @@ class GeoTiffTest {
         val t0 = place(floatBytesLE(tile0))
         val t1 = place(floatBytesLE(tile1))
         val offsets = TiffBuilder().apply { u32(t0); u32(t1) }.toByteArray()
-        val counts = TiffBuilder().apply { u32(16); u32(16) }.toByteArray()
+        val counts = TiffBuilder().apply { u32(tile0.size * 4L); u32(tile1.size * 4L) }.toByteArray()
         val offsetsAt = place(offsets)
         val countsAt = place(counts)
         val scaleAt = place(TiffBuilder().apply { f64(0.5); f64(0.25); f64(0.0) }.toByteArray())
@@ -57,8 +60,12 @@ class GeoTiffTest {
 
         tags += Triple(256, 3, 3L); tags += Triple(257, 3, 2L); tags += Triple(258, 3, 32L)
         tags += Triple(259, 3, 1L); tags += Triple(277, 3, 1L); tags += Triple(317, 3, 1L)
-        tags += Triple(322, 3, 2L); tags += Triple(323, 3, 2L)
-        tags += Triple(324, 4, listOf(2L, offsetsAt)); tags += Triple(325, 4, listOf(2L, countsAt))
+        if (strips) {
+            tags += Triple(273, 4, listOf(2L, offsetsAt)); tags += Triple(278, 3, 1L); tags += Triple(279, 4, listOf(2L, countsAt))
+        } else {
+            tags += Triple(322, 3, 2L); tags += Triple(323, 3, 2L)
+            tags += Triple(324, 4, listOf(2L, offsetsAt)); tags += Triple(325, 4, listOf(2L, countsAt))
+        }
         tags += Triple(339, 3, 3L)
         tags += Triple(33550, 12, listOf(3L, scaleAt)); tags += Triple(33922, 12, listOf(6L, tieAt))
         tags += Triple(34735, 3, listOf(8L, keysAt))
@@ -98,6 +105,17 @@ class GeoTiffTest {
         assertEquals(46.875, tiff.yOf(0.0), 1e-12)
         assertEquals(0.0, tiff.colOf(-121.75), 1e-12)
         assertEquals(1.0, tiff.rowOf(46.625), 1e-12)
+    }
+
+    @Test
+    fun readsStripsAsFullWidthTiles() {
+        val tiff = GeoTiff.open(source(buildTiff(pixelIsPoint = false, noData = null, strips = true)))
+        assertEquals(3, tiff.tileWidth)
+        assertEquals(1, tiff.tileHeight)
+        assertEquals(1, tiff.tilesAcross)
+        assertEquals(2, tiff.tilesDown)
+        assertEquals(listOf(1f, 2f, 3f), tiff.readTile(0, 0).toList())
+        assertEquals(listOf(4f, 5f, 6f), tiff.readTile(0, 1).toList())
     }
 
     @Test

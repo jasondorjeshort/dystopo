@@ -30,7 +30,10 @@ class SourceRegistryMappingTest {
     @Test
     fun bestCreditsEveryLayerAndTheGeoids() {
         assertEquals(
-            listOf("copernicus", "3dep", "3dep-1m", "geoid18", "geoid18-prvi", "geoid12b-alaska", "geoid12b-hawaii", "egm2008"),
+            listOf(
+                "copernicus", "3dep", "3dep-1m", "swissalti3d",
+                "geoid18", "geoid18-prvi", "geoid12b-alaska", "geoid12b-hawaii", "chgeo2004", "egm2008",
+            ),
             registry.ordered(ElevationSource.byId("best").registryIds),
         )
         // USGS layers are converted from US datums, so their full credit includes every hybrid geoid and EGM2008.

@@ -10,7 +10,8 @@ typealias Decompressor = (input: ByteArray, expectedSize: Int) -> ByteArray
 
 /**
  * Minimal reader for tiled, single-band, 32-bit float GeoTIFFs, which covers USGS 3DEP and
- * Copernicus DEM Cloud-Optimized GeoTIFFs. Reads only the header up front; tiles are fetched
+ * Copernicus DEM Cloud-Optimized GeoTIFFs. Striped files (small grids such as PROJ's Swiss geoid)
+ * are read as tiles one strip tall and the full image wide. Reads only the header up front; tiles are fetched
  * on demand through [ByteRangeSource], so remote files work without downloading them whole.
  *
  * Supported: little/big-endian classic TIFF; compression none (1) and LZW (5) built in, others
@@ -78,7 +79,8 @@ class GeoTiff private constructor(
         val raw = source.read(tileOffsets[index], byteCount)
         val decompress = decompressors[compression]
             ?: throw UnsupportedOperationException("TIFF compression $compression not supported")
-        val bytes = decompress(raw, count * 4)
+        // A short last strip decodes to fewer bytes than a full tile: pad it (rows past the image are never read).
+        val bytes = decompress(raw, count * 4).let { if (it.size < count * 4) it.copyOf(count * 4) else it }
         return when (predictor) {
             1 -> FloatArray(count) { Float.fromBits(u32(bytes, it * 4, littleEndian).toInt()) }
             2 -> undoHorizontalPredictor32(bytes, tileWidth, tileHeight, littleEndian)
@@ -164,18 +166,21 @@ class GeoTiff private constructor(
                 val sampleFormat = number(339, 1.0).toInt()
                 require(bits == 32 && sampleFormat == 3) { "only 32-bit float samples supported (bits $bits, format $sampleFormat)" }
                 require(number(277, 1.0).toInt() == 1) { "only single-band TIFFs supported" }
-                require(tags.containsKey(322)) { "only tiled TIFFs supported" }
+                // Strips are tiles the full width wide (RowsPerStrip, default the whole image, tall).
+                val tiled = tags.containsKey(322)
+                val width = number(256).toInt()
+                val height = number(257).toInt()
 
                 return Ifd(
-                    width = number(256).toInt(),
-                    height = number(257).toInt(),
-                    tileWidth = number(322).toInt(),
-                    tileHeight = number(323).toInt(),
+                    width = width,
+                    height = height,
+                    tileWidth = if (tiled) number(322).toInt() else width,
+                    tileHeight = if (tiled) number(323).toInt() else number(278, height.toDouble()).toInt().coerceAtMost(height),
                     compression = number(259, 1.0).toInt(),
                     predictor = number(317, 1.0).toInt(),
                     subfileType = number(254, 0.0).toInt(),
-                    tileOffsets = numbers(324)!!.map { it.toLong() }.toLongArray(),
-                    tileByteCounts = numbers(325)!!.map { it.toLong() }.toLongArray(),
+                    tileOffsets = numbers(if (tiled) 324 else 273)!!.map { it.toLong() }.toLongArray(),
+                    tileByteCounts = numbers(if (tiled) 325 else 279)!!.map { it.toLong() }.toLongArray(),
                     numbers = ::numbers,
                     ascii = { tag -> raw(tag)?.second?.decodeToString()?.trimEnd('\u0000')?.trim() },
                     next = u32(ifdBytes, count * 12, le),

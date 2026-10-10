@@ -342,8 +342,9 @@ class ThreeDepBestSource : FeatheredSource {
 
 /**
  * Best available elevation anywhere: Copernicus 30 m globally, with US 3DEP (10 m, then 1 m lidar)
- * laid over it where available. Everything is in EGM2008. The 30 m -> 10 m transition gets a
- * wider blend band than lidar -> 10 m, scaled to the coarser source's resolution.
+ * and swissALTI3D (2 m, Switzerland and Liechtenstein) laid over it where available. Everything is
+ * in EGM2008. The 30 m -> finer transitions get a wider blend band than lidar -> 10 m, scaled to
+ * the coarser source's resolution.
  */
 class BestSource : FeatheredSource {
     companion object {
@@ -351,23 +352,33 @@ class BestSource : FeatheredSource {
     }
 
     override val id = "best"
-    override val registryIds = listOf("copernicus", "3dep", "3dep-1m") + Geoids.REGISTRY_IDS
+    override val registryIds = listOf("copernicus", "3dep", "3dep-1m", "swissalti3d", "chgeo2004") + Geoids.REGISTRY_IDS
 
     override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val global = CopernicusSource().fetch(window)
+        // Regional layers never overlap (Switzerland, US), so each feathers into Copernicus on its own.
+        val swiss = SwissAltiSource().fetch(window)
         val us = ThreeDepBestSource().fetch(window, featherCellSizeMeters)
-        val merged = Composite.over(us.grid, global.grid, GLOBAL_FEATHER_METERS / featherCellSizeMeters)
+        val feather = GLOBAL_FEATHER_METERS / featherCellSizeMeters
+        val withSwiss = Composite.over(swiss.grid, global.grid, feather)
+        val merged = Composite.over(us.grid, withSwiss, feather)
         val counters = LinkedHashMap<String, Long>()
         global.counters.forEach { (k, v) -> counters["copernicus.$k"] = v }
+        swiss.counters.forEach { (k, v) -> counters["swissalti3d.$k"] = v }
         us.counters.forEach { (k, v) -> counters["3dep.$k"] = v }
         counters["usCoveragePermille"] = (Composite.coverage(us.grid) * 1000).toLong()
+        counters["swissCoveragePermille"] = (Composite.coverage(swiss.grid) * 1000).toLong()
+        SwissAltiSource.seamSteps(swiss.grid, global.grid, withSwiss)?.let { (feathered, hard) ->
+            counters["swissSeamStepCm"] = Math.round(feathered * 100)
+            counters["swissSeamHardCutStepCm"] = Math.round(hard * 100)
+        }
         counters["noDataCells"] = merged.values.count { it.isNaN() }.toLong()
-        // Each layer counts only if it shows: the US layers have data (they're NaN outside the US), and
-        // Copernicus is visible wherever the US layers have holes (Composite.over leaves full US cover untouched).
-        val globalShows = us.grid.values.any { it.isNaN() }
+        // Each layer counts only if it shows: the regional layers have data (they're NaN elsewhere), and
+        // Copernicus is visible wherever both have holes (Composite.over leaves full cover untouched).
+        val globalShows = us.grid.values.indices.any { us.grid.values[it].isNaN() && swiss.grid.values[it].isNaN() }
         return ElevationSource.Result(
             merged, counters,
-            ElevationSource.mergeProvenance(if (globalShows) global.provenance else emptyList(), us.provenance),
+            ElevationSource.mergeProvenance(if (globalShows) global.provenance else emptyList(), swiss.provenance, us.provenance),
         )
     }
 }

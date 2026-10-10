@@ -138,6 +138,18 @@
       "expectedElevation": [650, 3700],
       "tags": ["world"]
     },
+    "matterhorn": {
+      "bbox": [7.62, 45.95, 7.70, 46.00],
+      "description": "Matterhorn (4478 m, summit 45.9763N 7.6586E) on the Swiss-Italian border, Zmutt and Theodul glaciers. swissALTI3D (2 m) on the Swiss side feathered into Copernicus on the Italian side.",
+      "expectedElevation": [2200, 4478],
+      "tags": ["world", "swiss-edge"]
+    },
+    "jungfrau": {
+      "bbox": [7.92, 46.51, 8.00, 46.57],
+      "description": "Jungfrau (4158 m, summit 46.5367N 7.9625E), Jungfraujoch and the head of the Lauterbrunnen valley, Switzerland. All swissALTI3D.",
+      "expectedElevation": [1000, 4158],
+      "tags": ["world"]
+    },
     "rainier-lidar-edge": {
       "bbox": [-121.90, 46.71, -121.78, 46.80],
       "description": "Southwest Mount Rainier National Park, WA, USA: Longmire, Tahoma Creek and the Nisqually valley. USGS 1 m lidar (WA_CentralWildfire_D22) ends along a roughly east-west line at about 46.768N; north of it only 3DEP 10 m exists. Forested valleys, cliffs and moraines on both sides of the edge.",

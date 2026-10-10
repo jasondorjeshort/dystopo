@@ -45,7 +45,7 @@ interface ElevationSource {
     fun fetch(window: MercatorWindow): Result
 
     companion object {
-        val ids = listOf("best", "copernicus", "terrarium", "3dep", "3dep-1m", "3dep-best")
+        val ids = listOf("best", "copernicus", "terrarium", "3dep", "3dep-1m", "3dep-best", "swissalti3d")
 
         fun byId(id: String): ElevationSource = when (id) {
             "best" -> BestSource()
@@ -54,6 +54,7 @@ interface ElevationSource {
             "3dep" -> ThreeDepSource()
             "3dep-1m" -> LidarSource()
             "3dep-best" -> ThreeDepBestSource()
+            "swissalti3d" -> SwissAltiSource()
             else -> throw IllegalArgumentException("unknown source '$id'; known: ${ids.joinToString()}")
         }
 
