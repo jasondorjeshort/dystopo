@@ -11,6 +11,8 @@
   "syncDb": null,
   "corsOrigins": ["*"],
   "token": null,
+  "users": [],
+  "adminToken": null,
   "threads": 32,
   "liveThreads": null,
   "shutdownGraceSeconds": 10,

@@ -10,6 +10,7 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Pack
 import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner
+import io.github.jasondorjeshort.dystopo.app.sync.ShareLinkClient
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.model.RouteEditor
 import io.github.jasondorjeshort.dystopo.model.RouteGpx
@@ -208,6 +209,41 @@ object Trips {
         }
 
     fun gpx(id: String): String? = plan(id)?.let(RouteGpx::gpx)
+
+    /**
+     * T67: a read-only share link for route [id] on the sync server ([ShareLinkClient]: syncs first so the
+     * server has the route as it is now), copied to the clipboard. Returns the server's answer plus
+     * `copied` (the clipboard holds the URL afterwards).
+     */
+    fun shareLink(id: String): Map<String, Any?> {
+        plan(id) ?: throw NoSuchElementException("no route $id")
+        ui { message = "Making a share link…" }
+        val r = ShareLinkClient.of(app).create(id)
+        val url = r["url"] as String
+        val copied = copyToClipboard("Dystopo trip", url)
+        ui { message = (if (copied) "Share link copied: " else "Share link: ") + url }
+        return r + mapOf("copied" to copied)
+    }
+
+    /** T67: revokes the last share link made for route [id] on this device. */
+    fun revokeShareLink(id: String): Map<String, Any?> =
+        ShareLinkClient.of(app).revoke(id).also { r -> ui { message = if (r["revoked"] == true) "Share link revoked" else "Share link was already gone" } }
+
+    /** Puts [text] on the clipboard (on the main thread) and reads it back; true when it is there. */
+    private fun copyToClipboard(label: String, text: String): Boolean {
+        val done = java.util.concurrent.CompletableFuture<Boolean>()
+        main.post {
+            done.complete(
+                runCatching {
+                    val cm = app.getSystemService(android.content.ClipboardManager::class.java)
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+                    // Reading back works while the app has focus (Android 10+); otherwise trust the set.
+                    cm.primaryClip?.getItemAt(0)?.text?.toString()?.let { it == text } ?: true
+                }.getOrElse { Log.w(TAG, "clipboard", it); false },
+            )
+        }
+        return runCatching { done.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrDefault(false)
+    }
 
     /** Writes the route's GPX to `files/exports/`. */
     fun export(id: String): File? {

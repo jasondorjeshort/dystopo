@@ -57,7 +57,8 @@ private val Flag = Color(0xFFC79A00)
  * top-right chips), the Routes list (name, distance, climb, time by the hike model, a small profile),
  * and, while a route is open, the trip card at the bottom: totals, the elevation profile with waypoint
  * markers, and the editor's tools (drag the numbered via points on the map; Via adds a via point where
- * you tap, Waypoint adds a waypoint; Hike/Bike reroutes; the via chips remove one).
+ * you tap, Waypoint adds a waypoint; Hike/Bike reroutes; the via chips remove one). T67: "Share link"
+ * asks the sync server for a read-only link to the trip and copies it.
  */
 @Composable
 fun TripControls() {
@@ -182,6 +183,7 @@ private fun TripCard(modifier: Modifier) {
                 for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }
             }
             Action("GPX") { Trips.background { Trips.export(p.id) } }
+            Action("Share link") { Trips.background { Trips.shareLink(p.id) } } // T67: a read-only link from the sync server
             Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }
         }
     }

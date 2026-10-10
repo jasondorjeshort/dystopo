@@ -4,6 +4,7 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
+import io.github.jasondorjeshort.dystopo.app.sync.ShareLinkClient
 import io.github.jasondorjeshort.dystopo.model.RouteGpx
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
@@ -27,6 +28,9 @@ import java.security.MessageDigest
  *   sent to the map view (the finger path: the route must be open and the point on screen).
  * - `POST /routes/{id}/waypoint?lat=&lon=&name=[&sym=]`, `DELETE /routes/{id}/waypoint/{wid}`.
  * - `POST /routes/{id}/mode?mode=`, `/rename?name=`, `/reroute`, `/open`, `/export`; `DELETE /routes/{id}`.
+ * - T67: `POST /routes/{id}/share`: the trip card's "Share link" (syncs with the sync peer, asks it for a
+ *   read-only link, copies it; answers `url`, `gpx`, `token`, `existing`, `copied`, `sync`);
+ *   `GET /routes/{id}/share`: the last link made here; `DELETE /routes/{id}/share`: revokes it.
  * - `POST /routes/import[?replace=1]` with a GPX body. `POST /routes/ui?open=1|0` (the Routes list),
  *   `POST /routes/close` (closes the editor), `POST /routes/tool?tool=none|via|waypoint`,
  *   `POST /routes/tap?lat=&lon=` (a tap on the map with the current tool).
@@ -152,6 +156,9 @@ object TripRoutes {
                 return Response.json(mapOf("renamed" to Trips.rename(id, name)))
             }
             r.method == "POST" && suffix == "/open" -> return Response.json(planJson(Trips.open(id) ?: throw NoSuchElementException("no route $id"), false))
+            r.method == "POST" && suffix == "/share" -> return Response.json(Trips.shareLink(id))
+            r.method == "GET" && suffix == "/share" -> return Response.json(mapOf("link" to ShareLinkClient.of(app).last(id)))
+            r.method == "DELETE" && suffix == "/share" -> return Response.json(Trips.revokeShareLink(id))
             r.method == "POST" && suffix == "/export" -> {
                 val f = Trips.export(id) ?: throw NoSuchElementException("no route $id")
                 return Response.json(mapOf("file" to f.path, "bytes" to f.length()))

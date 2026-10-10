@@ -153,10 +153,15 @@ class SyncSimCommand : CliktCommand(name = "sync-sim") {
  * - `sync export --db F --out x.dsync [--since <vector>]`, `sync import --db F --file x.dsync`.
  * - `sync import-gpx --db F --file x.gpx`, `sync rename --db F --track ID --name N`,
  *   `sync gpx --db F --track ID [--out file]` (writes the GPX, prints its size and SHA-256).
+ * - T67: `sync import-route --db F --file x.gpx` (a route, as the phone's route import);
+ *   `sync share --peer URL --route ID`, `sync links --peer URL`, `sync unshare --peer URL --link T`
+ *   (trip share links on the server, as the token's user).
+ * Against the `server` module each user has their own replica: `--token` (or `DYSTOPO_SYNC_TOKEN`) picks
+ * the user, so `with --token <alice's>` syncs with alice's replica only.
  */
 class SyncCommand : CliktCommand(name = "sync") {
     init {
-        subcommands(Status(), With(), Export(), Import(), ImportGpx(), Rename(), GpxOut(), Gen())
+        subcommands(Status(), With(), Export(), Import(), ImportGpx(), Rename(), GpxOut(), Gen(), ImportRoute(), Share(), Links(), Unshare())
     }
 
     override fun help(context: Context) = "A sync replica in a SQLite file: status, sync with a peer or a .dsync file, export/import bundles, GPX in and out."
@@ -185,7 +190,7 @@ class SyncCommand : CliktCommand(name = "sync") {
         private val peer by option("--peer", help = "http(s)://host:port of a sync peer, or a .dsync file").required()
         private val page by option("--page", help = "T51: operations per page each way (0: one bundle each way)").int().default(Sync.DEFAULT_PAGE_OPS)
         private val pageBytes by option("--page-bytes", help = "T51: about this many raw bytes per page at most").int().default(Sync.DEFAULT_PAGE_BYTES)
-        private val token by option("--token", help = "T51: bearer token for a gated /sync (the server module); default DYSTOPO_SYNC_TOKEN")
+        private val token by option("--token", help = "T51: bearer token for a gated /sync (the server module; T67: the user's token picks their replica); default DYSTOPO_SYNC_TOKEN")
 
         override fun run() {
             val s = open()
@@ -302,6 +307,54 @@ class SyncCommand : CliktCommand(name = "sync") {
             val sha = MessageDigest.getInstance("SHA-256").digest(gpx.toByteArray()).joinToString("") { "%02x".format(it) }
             print(linkedMapOf("file" to f.path, "bytes" to f.length(), "sha256" to sha, "name" to s.summary(track)!!.name))
         }
+    }
+
+    /** T67: a route GPX into the replica (ids kept, like the phone's `POST /routes/import`). */
+    class ImportRoute : DbCommand("import-route") {
+        private val file by option("--file").required()
+
+        override fun run() {
+            val s = open()
+            val r = io.github.jasondorjeshort.dystopo.store.RouteImport.import(s, File(file).readText(), System.currentTimeMillis(), File(file).nameWithoutExtension)
+            print(linkedMapOf("imported" to r.imported.map { it.id }, "skipped" to r.skipped, "waypoints" to r.waypoints))
+        }
+    }
+
+    /** T67: share-link commands against a server peer, as the user whose token is given. */
+    abstract class PeerCommand(name: String) : CliktCommand(name = name) {
+        protected val peer by option("--peer", help = "http(s)://host:port of the server").required()
+        protected val token by option("--token", help = "the user's bearer token; default DYSTOPO_SYNC_TOKEN")
+
+        protected fun call(method: String, path: String): Pair<Int, String> {
+            val c = URI(peer.trimEnd('/') + path).toURL().openConnection() as HttpURLConnection
+            c.requestMethod = method
+            c.connectTimeout = 10_000
+            c.readTimeout = 60_000
+            (token ?: System.getenv("DYSTOPO_SYNC_TOKEN"))?.takeIf { it.isNotEmpty() }?.let { c.setRequestProperty("Authorization", "Bearer $it") }
+            if (method == "POST") { c.doOutput = true; c.outputStream.use { } }
+            val code = c.responseCode
+            val text = ((if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readAllBytes() } ?: ByteArray(0)).decodeToString()
+            return code to text.trim()
+        }
+
+        protected fun answer(r: Pair<Int, String>) {
+            println(JsonWriter.write(mapOf("status" to r.first, "body" to runCatching { io.github.jasondorjeshort.dystopo.pmtiles.MiniJson.parse(r.second) }.getOrElse { r.second })))
+            if (r.first !in 200..299) throw ProgramResult(1)
+        }
+    }
+
+    class Share : PeerCommand("share") {
+        private val route by option("--route", help = "route id (as in GET /sync/routes)").required()
+        override fun run() = answer(call("POST", "/sync/share?route=" + java.net.URLEncoder.encode(route, Charsets.UTF_8)))
+    }
+
+    class Links : PeerCommand("links") {
+        override fun run() = answer(call("GET", "/sync/share"))
+    }
+
+    class Unshare : PeerCommand("unshare") {
+        private val link by option("--link", help = "the link's token (the part after /s/)").required()
+        override fun run() = answer(call("DELETE", "/sync/share/" + link.substringAfterLast("/s/")))
     }
 
     companion object {

@@ -43,6 +43,17 @@ data class ServerConfig(
      * environment variable `DYSTOPO_SERVER_TOKEN` overrides it (keeps the secret out of the file).
      */
     val token: String? = null,
+    /**
+     * T67: the people this server syncs for: `[{"id": "alice", "token": "<43 random characters>"}]`. Each
+     * user's `/sync*` runs on their own replica (`<syncDb's directory>/<id>.db`); `server --add-user <id>`
+     * (or `POST /admin/users?id=`) makes the token. Users may also call `/build`.
+     */
+    val users: List<UserConfig> = emptyList(),
+    /**
+     * T67: the admin token: `/admin/users` (list, add, remove) and any user's `/sync*` with `?user=<id>`.
+     * The environment variable `DYSTOPO_ADMIN_TOKEN` overrides it.
+     */
+    val adminToken: String? = null,
     /** HTTP worker threads. */
     val threads: Int = 32,
     /** Threads rendering live DEM tiles; null: the CPU count, clamped to 4..16. */
@@ -72,6 +83,10 @@ data class ServerConfig(
         val name: String? = null,
     )
 
+    /** T67: one sync user: an id (`[a-z0-9][a-z0-9_-]{0,31}`, names the replica file) and their bearer token. */
+    @Serializable
+    data class UserConfig(val id: String, val token: String)
+
     @Serializable
     data class BuildConfig(
         /** DEM and OSM tiles per job. */
@@ -97,7 +112,16 @@ data class ServerConfig(
     fun effectiveToken(env: (String) -> String? = System::getenv): String? =
         (env("DYSTOPO_SERVER_TOKEN") ?: token)?.trim()?.takeIf { it.isNotEmpty() }
 
-    fun validate(): List<String> = buildList {
+    /** T67: the admin token in force: `DYSTOPO_ADMIN_TOKEN`, else [adminToken]; blank means none. */
+    fun effectiveAdminToken(env: (String) -> String? = System::getenv): String? =
+        (env("DYSTOPO_ADMIN_TOKEN") ?: adminToken)?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** T67: the users, the admin token and the legacy token as the gate's registry. */
+    fun usersRegistry(env: (String) -> String? = System::getenv): Users =
+        Users(users.map { Users.User(it.id, it.token.trim()) }, effectiveAdminToken(env), effectiveToken(env))
+
+    fun validate(env: (String) -> String? = System::getenv): List<String> = buildList {
+        addAll(Users.problems(users.map { Users.User(it.id, it.token.trim()) }, effectiveAdminToken(env), effectiveToken(env)))
         if (port !in 0..65535) add("port must be 0..65535 (0: any free port; got $port)")
         if (threads < 1) add("threads must be at least 1")
         if (liveThreads != null && liveThreads < 1) add("liveThreads must be at least 1")

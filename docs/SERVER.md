@@ -315,6 +315,89 @@ sync client sends the token from its sync settings (`POST /sync/settings?token=`
 curl -X POST -H "Authorization: Bearer $TOKEN" "https://maps.example.org/build?name=paradise&bbox=-121.76,46.77,-121.70,46.80&minZoom=8&maxZoom=14"
 ```
 
+## Users and trip share links (T67)
+
+One server can sync for several people. Each user has a bearer token and **their own sync replica**;
+the catalog, builds, tiles and `/out/` stay shared. Code: `serverlib/.../Users.kt` (tokens to users),
+`SyncRoutes.kt` (one replica per user), `ShareLinks.kt` (links); `server/.../Gate.kt` (who a request is),
+`UserAdmin.kt` (the user flags and `/admin/users`).
+
+Config keys (both optional; with neither, nor `token`, the server stays open as before):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `users` | `[]` | `[{"id": "alice", "token": "<at least 16 characters>"}]`. Ids are `[a-z0-9][a-z0-9_-]{0,31}` (they name a file; `peer`, `admin` and `shares` are reserved). Every token must differ. |
+| `adminToken` | `null` | The admin token: `/admin/users`, and any user's `/sync*` with `?user=<id>`. `DYSTOPO_ADMIN_TOKEN` overrides it. |
+
+Who a token is:
+
+- **A user token**: `/sync*` runs on `<syncDb's directory>/<id>.db` (by default `out/sync/<id>.db`),
+  created on the user's first request with its own device id. Two users never see each other's
+  tracks, routes or settings: a pull returns only that replica's operations and a push merges only into
+  it. User tokens also open `/build` and `/catalog/refresh`.
+- **The admin token**: `/admin/users`; on `/sync*` only as a named user (`?user=alice`: 400 without it,
+  404 for an unknown id), to inspect a replica (`/sync/status?user=alice`, `/sync/tracks?user=alice`).
+- **The T52 `token`**: still works and reaches the default replica `peer.db`, so a server configured
+  before T67 behaves as it did. A user token on `/admin*` is a 403; no token or an unknown one is a 401.
+
+The user a request runs as is decided once, in the gate, and kept on that request only (not in the JDK's
+exchange attributes, which are shared by every request on a context).
+
+Making users. On the command line (edits the config file, keeping its other keys, validates it, prints
+one JSON object; the token is printed once and never again):
+
+```
+server/build/install/server/bin/server --config server.json --add-user alice      # {"added":"alice","token":"..."}; creates server.json if missing
+server/build/install/server/bin/server --config server.json --new-admin-token     # {"adminToken":"..."}
+server/build/install/server/bin/server --config server.json --list-users          # ids, replica files and sizes, no tokens
+server/build/install/server/bin/server --config server.json --remove-user alice   # the replica file stays on disk
+```
+
+A running server reads the file only at startup; to add a user without a restart use the admin routes,
+which also write the config file when the server was started with one (`persisted`):
+
+```
+curl -H "Authorization: Bearer $ADMIN" https://maps.example.org/admin/users                    # users with replica file, bytes, ops, tracks, routes, share links, last request
+curl -X POST -H "Authorization: Bearer $ADMIN" "https://maps.example.org/admin/users?id=carol"  # {"added":"carol","token":"...","persisted":true}
+curl -X DELETE -H "Authorization: Bearer $ADMIN" https://maps.example.org/admin/users/carol     # token refused at once, her share links revoked, replica kept
+```
+
+Tokens from the tools are 32 random bytes in base64url (43 characters). Give each person theirs: the
+phone's sync settings (`POST /sync/settings?peer=https://maps.example.org&token=<token>`, or the sync
+sheet), `devtool sync with --peer ... --token <token>` (or `DYSTOPO_SYNC_TOKEN`). `/healthz` reports
+`users` (configured), `replicas` (replica files on disk) and `shareLinks`.
+
+### Trip share links
+
+A user can share one trip (a planned route) read-only with anyone, by link:
+
+- `POST /sync/share?route=<id>` (the user's token): makes a link to that route in the user's replica, or
+  returns the existing one for the same route (`existing: true`). Answer: `token`, `url`
+  (`<base>/s/<token>`), `gpx`, `name`, `createdAt`. A 404 means the server's replica does not hold the
+  route yet: sync the device first (the phone's "Share link" does).
+- `GET /sync/share`: the user's links (with the route's current name and whether it still exists).
+- `DELETE /sync/share/<token>`: revokes a link (404 when it is not this user's). From then on every form
+  of the link is a 404.
+- `GET /s/<token>` (no token needed; the link is the secret): a page with the route on the live map
+  (MapLibre GL JS over this server's `/style.json`; trail legs solid, straight legs dashed, start, end
+  and waypoints), its name, distance, climb and hike time, and "Download GPX". `GET /s/<token>.gpx`: the
+  GPX, byte for byte what the phone writes for that route (`rte` with via marks, `wpt`, our ids), as an
+  attachment named after the route. `GET /s/<token>.json`: name, summary and the route as GeoJSON.
+
+A link serves the route as it is now in the owner's replica: an edit synced later shows up, and a
+deleted route (once the delete is synced) is a 404 like a revoked link. Removing a user revokes their
+links. Links are stored in `shares.json` next to the replicas (not in the sync log). Link tokens are
+128 random bits. The `/s/` answers carry `Cache-Control: no-store` (a revocation takes effect at once,
+also through a proxy), `Referrer-Policy: no-referrer` (the token is in the URL) and
+`X-Robots-Tag: noindex`. The link's base is `publicUrl` when set, else the request's
+`X-Forwarded-Proto`/`X-Forwarded-Host` or `Host`, so behind a proxy the link points at the public name;
+a phone that syncs with `http://10.0.2.2:8080` (an emulator) gets links with that address.
+
+On the phone: the trip card's "Share link" syncs with the sync peer, asks it for the link and copies it
+to the clipboard (debug: `POST /routes/{id}/share`, `GET|DELETE /routes/{id}/share`). On the JVM:
+`devtool sync share --peer URL --token T --route ID`, `sync links`, `sync unshare --link <token>`.
+`devtool serve` answers the same routes without tokens, on its one default replica.
+
 ## Logs
 
 One JSON object per line on stdout: `ts` (ISO-8601 UTC), `level` (`info`, `warn`, `error`), `event`, then

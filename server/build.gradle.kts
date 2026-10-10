@@ -28,6 +28,7 @@ distributions {
     main {
         contents {
             from(rootProject.file("tools/demo/index.html")) { into("web") }
+            from(rootProject.file("tools/demo/trips.js")) { into("web") } // T68's trip editor, loaded by index.html
             from(layout.projectDirectory.file("server.example.json")) { into("config") }
             // The image (server/Dockerfile, T58) builds from the repository root in two stages, so the
             // distribution no longer carries the Dockerfile.

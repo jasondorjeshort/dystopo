@@ -37,7 +37,10 @@ import kotlin.system.exitProcess
  * `/sync`, a CORS allowlist ([Gate]) and a graceful shutdown on SIGTERM. Usage:
  *
  *     server [--config server.json] [--print-config]
+ *     server [--config server.json] --add-user <id> | --remove-user <id> | --list-users | --new-admin-token
  *
+ * T67: the config's `users` each get their own sync replica, `adminToken` reaches `/admin/users`
+ * ([UserAdmin], which also runs the user flags above), and `/sync/share` makes read-only trip links.
  * The config file is `--config`, else `DYSTOPO_SERVER_CONFIG`, else `config/server.json` in the
  * distribution when present, else the defaults. docs/SERVER.md has the details.
  */
@@ -45,12 +48,32 @@ fun main(args: Array<String>) {
     System.setOut(PrintStream(FileOutputStream(FileDescriptor.out), true, Charsets.UTF_8))
     System.setErr(PrintStream(FileOutputStream(FileDescriptor.err), true, Charsets.UTF_8))
     val log = JsonLog()
-    val (configFile, printConfig) = try {
-        parseArgs(args)
+    val usage = "usage: server [--config <file.json>] [--print-config | --add-user <id> | --remove-user <id> | --list-users | --new-admin-token]"
+    val (userCommand, configFile, printConfig) = try {
+        val (cmd, rest) = UserAdmin.parse(args)
+        // T67: --add-user and --new-admin-token may create the config file they name.
+        if (cmd is UserAdmin.Command.Add || cmd is UserAdmin.Command.NewAdminToken) {
+            configArg(rest)?.let { f -> if (!f.exists()) { f.absoluteFile.parentFile?.mkdirs(); f.writeText("{}\n") } }
+        }
+        val (file, print) = parseArgs(rest)
+        Triple(cmd, file, print)
     } catch (e: IllegalArgumentException) {
         System.err.println(e.message)
-        System.err.println("usage: server [--config <file.json>] [--print-config]")
+        System.err.println(usage)
         exitProcess(2)
+    }
+    if (userCommand != null) {
+        val file = configFile ?: run {
+            System.err.println("the user flags edit a config file: pass --config <file.json> (or DYSTOPO_SERVER_CONFIG)")
+            exitProcess(2)
+        }
+        try {
+            println(JsonWriter.write(UserAdmin.run(userCommand, file)))
+            return
+        } catch (e: Exception) {
+            System.err.println(JsonWriter.write(mapOf("error" to (e.message?.lineSequence()?.first() ?: e.toString()))))
+            exitProcess(2)
+        }
     }
     val config = try {
         configFile?.let { ServerConfig.load(it) } ?: ServerConfig()
@@ -60,7 +83,11 @@ fun main(args: Array<String>) {
         exitProcess(2)
     }
     if (printConfig) {
-        println(ServerConfig.json.encodeToString(ServerConfig.serializer(), config.copy(token = config.token?.let { "<set>" })))
+        val masked = config.copy(
+            token = config.token?.let { "<set>" }, adminToken = config.adminToken?.let { "<set>" },
+            users = config.users.map { it.copy(token = "<set>") },
+        )
+        println(ServerConfig.json.encodeToString(ServerConfig.serializer(), masked))
         return
     }
     config.validate().takeIf { it.isNotEmpty() }?.let {
@@ -75,6 +102,13 @@ fun main(args: Array<String>) {
     }
     Runtime.getRuntime().addShutdownHook(Thread({ server.stop("signal") }, "shutdown"))
     server.awaitStopped()
+}
+
+/** The file `--config` names in [args], if any (whether or not it exists). */
+fun configArg(args: Array<String>): File? {
+    val i = args.indexOfFirst { it == "--config" || it == "-c" }
+    if (i >= 0) return args.getOrNull(i + 1)?.let { File(it) }
+    return args.firstOrNull { it.startsWith("--config=") }?.let { File(it.removePrefix("--config=")) }
 }
 
 /** `--config <file>` and `--print-config`; the config file falls back as described on [main]. */
@@ -106,6 +140,9 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
     lateinit var live: LiveTiles
         private set
 
+    /** T67: the sync users and tokens the gate checks (changed at run time by `/admin/users`). */
+    val users: Users = config.usersRegistry()
+
     val cacheDir = File(config.cacheDir)
     val outDir = File(config.outDir)
     val glyphDir = config.glyphsDir?.let { File(it) } ?: File(cacheDir, "glyphs")
@@ -119,6 +156,9 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         cacheDir.mkdirs()
         outDir.mkdirs()
         SyncRoutes.dbOverride = config.syncDb?.let { File(it) } ?: File(outDir, "sync/peer.db")
+        // T67: user replicas (<id>.db) and share links (shares.json) live next to the default replica.
+        SyncRoutes.userDir = SyncRoutes.dbOverride!!.absoluteFile.parentFile
+        SyncRoutes.publicUrl = config.publicUrl
         val (dems, osms) = LiveTiles.findPacks(emptyList(), outDir)
         val tilebuild = config.tilebuildHome?.let { TilebuildProcess(home = File(it)) } ?: TilebuildProcess()
         live = LiveTiles(
@@ -139,7 +179,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
             },
         )
         val token = config.effectiveToken()
-        val gate = Gate(token, config.corsOrigins, log, config.logRequests)
+        val gate = Gate(users, config.corsOrigins, log, config.logRequests)
         val fallbackBase = config.publicUrl?.trimEnd('/') ?: "http://127.0.0.1:${config.port}"
         val base: (com.sun.net.httpserver.HttpExchange) -> String =
             if (config.publicUrl != null) { _ -> fallbackBase } else { ex -> LiveTiles.requestBase(ex, fallbackBase) }
@@ -155,6 +195,8 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
             ex.sendResponseHeaders(if (stopping) 503 else 200, body.size.toLong())
             ex.responseBody.use { it.write(body) }
         }.filters += gate
+        // T67: user administration (the gate lets only the admin token through).
+        http.createContext("/admin") { ex -> UserAdmin.handle(ex, users, configFile) }.filters += gate
         http.start()
 
         val stale = live.pruneStaleDemCaches()
@@ -169,6 +211,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
                 "syncDb" to SyncRoutes.dbOverride?.path,
                 "demPacks" to dems.map { it.name }, "osmPacks" to osms.map { it.name },
                 "token" to (token != null), "corsOrigins" to config.corsOrigins,
+                "users" to users.all().size, "adminToken" to (users.adminToken != null),
                 "tilebuild" to (tilebuild.unavailable() == null),
                 "staleCachesDeleting" to stale.map { it.name },
             ),
@@ -186,6 +229,10 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         "errors" to live.stats()["errors"],
         // T58: the startup hash pass (cold, warming, ready); /catalog hashes on demand until it is ready.
         "catalog" to live.catalog.warmState(),
+        // T67: configured sync users, replica files on disk, share links.
+        "users" to users.all().size,
+        "replicas" to SyncRoutes.replicaFiles().size,
+        "shareLinks" to SyncRoutes.shares.count(),
     )
 
     /** Stops accepting requests, lets those in flight finish (up to the grace period), cancels builds. */
