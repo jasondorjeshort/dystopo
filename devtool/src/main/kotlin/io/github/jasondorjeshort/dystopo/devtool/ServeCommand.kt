@@ -92,6 +92,7 @@ class ServeCommand : CliktCommand(name = "serve") {
         server.createContext("/") { ex ->
             try {
                 val path = ex.requestURI.path
+                if (SyncRoutes.handle(ex)) return@createContext // T44: /sync/* (the always-on sync peer)
                 // Static host for out/ (pack downloads in the app; ranges, ?kbps= throttle): see ServeStatic.
                 if (path.startsWith("/out/")) return@createContext ServeStatic.serve(ex, File("out"), path.removePrefix("/out/"))
                 SpriteSheets.route(path)?.let { (bytes, type) -> return@createContext reply(ex, bytes, type) }

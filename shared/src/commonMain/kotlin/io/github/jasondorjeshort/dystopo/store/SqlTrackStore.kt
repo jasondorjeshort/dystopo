@@ -3,31 +3,182 @@ package io.github.jasondorjeshort.dystopo.store
 import app.cash.sqldelight.db.SqlDriver
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
+import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 import io.github.jasondorjeshort.dystopo.store.db.TrackDb
+import io.github.jasondorjeshort.dystopo.sync.AppendPoints
+import io.github.jasondorjeshort.dystopo.sync.ApplyResult
+import io.github.jasondorjeshort.dystopo.sync.Bundle
+import io.github.jasondorjeshort.dystopo.sync.CompactResult
+import io.github.jasondorjeshort.dystopo.sync.Delete
+import io.github.jasondorjeshort.dystopo.sync.EntityKind
+import io.github.jasondorjeshort.dystopo.sync.Hlc
+import io.github.jasondorjeshort.dystopo.sync.HlcClock
+import io.github.jasondorjeshort.dystopo.sync.Materializer
+import io.github.jasondorjeshort.dystopo.sync.Op
+import io.github.jasondorjeshort.dystopo.sync.OpBody
+import io.github.jasondorjeshort.dystopo.sync.OpCodec
+import io.github.jasondorjeshort.dystopo.sync.PutRoute
+import io.github.jasondorjeshort.dystopo.sync.PutSetting
+import io.github.jasondorjeshort.dystopo.sync.PutTrack
+import io.github.jasondorjeshort.dystopo.sync.PutWaypoint
+import io.github.jasondorjeshort.dystopo.sync.SegmentView
+import io.github.jasondorjeshort.dystopo.sync.SetField
+import io.github.jasondorjeshort.dystopo.sync.SyncRules
+import io.github.jasondorjeshort.dystopo.sync.SyncSnapshot
+import io.github.jasondorjeshort.dystopo.sync.SyncStore
+import io.github.jasondorjeshort.dystopo.sync.TrackView
+import io.github.jasondorjeshort.dystopo.sync.VersionVector
+import io.github.jasondorjeshort.dystopo.sync.WaypointView
 
 /**
  * The durable [TrackStore]: SQLDelight over SQLite (schema in `src/commonMain/sqldelight/.../Track.sq`).
- * The caller builds the driver with [TrackDb.Schema] so a new database gets its tables: on Android
- * `AndroidSqliteDriver(TrackDb.Schema, context, "tracks.db")`, on the JVM
+ * The caller builds the driver with [TrackDb.Schema] so a new database gets its tables (and an old one
+ * its migrations): on Android `AndroidSqliteDriver(TrackDb.Schema, context, "tracks.db")`, on the JVM
  * `JdbcSqliteDriver("jdbc:sqlite:tracks.db", Properties(), TrackDb.Schema)`.
  *
- * Each [append] is one INSERT in its own implicit transaction, so every fix is on disk when the
- * call returns (SQLite's journal makes a crash lose at most the write in flight).
+ * Since T44 it is a [SyncStore]: every change is first an [Op] in the `sync_op` table, and the
+ * `track`, `track_point` and `waypoint` tables are its materialised view, updated in the same
+ * transaction. Local changes take a direct path (a recorded fix is one op row plus one point row);
+ * operations merged from another replica rematerialise the entities they touch with [Materializer],
+ * which is what makes every replica agree. Routes and settings live only in the log and are
+ * materialised when read. The device id is created on first open and kept in `sync_meta`; a database
+ * from before T44 gets its log seeded from its rows on that first open (same ids, same data).
+ *
+ * [wallClock] is the physical clock under the HLC for calls without a `now` (delete) and a floor for
+ * the others; the app passes `System::currentTimeMillis`.
+ *
+ * Each [append] is one transaction, so every fix is on disk when the call returns (SQLite's journal
+ * makes a crash lose at most the write in flight).
  */
-class SqlTrackStore(driver: SqlDriver) : TrackStore {
+class SqlTrackStore(
+    driver: SqlDriver,
+    private val wallClock: () -> Long = { 0L },
+    /** The device id for a new database (an existing one keeps its own); a random UUID by default. */
+    newDeviceId: () -> String = { UuidGenerator().next() },
+) : SyncStore {
     private val q = TrackDb(driver).trackQueries
 
     /** Last (seq, segment) per track, so an append doesn't query for it. */
     private val tails = HashMap<String, Pair<Long, Long>>()
 
+    override val deviceId: String
+    private val clock: HlcClock
+
+    /** True when this open seeded the log from pre-T44 rows. */
+    val seededFromTables: Boolean
+
+    init {
+        var seeded = false
+        var device = ""
+        q.transaction {
+            device = q.getMeta("device").executeAsOneOrNull() ?: newDeviceId().also { q.putMeta("device", it) }
+        }
+        deviceId = device
+        clock = HlcClock(deviceId, q.lastOp().executeAsOneOrNull()?.let(Hlc::parse))
+        q.transaction {
+            if (q.getMeta("log").executeAsOneOrNull() == null) {
+                seeded = seedLog()
+                q.putMeta("log", "1")
+            }
+        }
+        seededFromTables = seeded
+    }
+
+    // ---- log ----
+
+    private fun hold(op: Op) {
+        val b = op.body
+        q.insertOp(
+            op.hlc.text, op.device, b.type.toLong(), b.kind.code.toLong(), b.id, b.parent,
+            (b as? AppendPoints)?.let(OpCodec::digest), OpCodec.encode(op),
+        )
+        if (b is Delete) q.pruneEntity(b.kind.code.toLong(), b.id, op.hlc.text)
+    }
+
+    private fun emit(body: OpBody, now: Long): Op {
+        val op = Op(clock.tick(maxOf(now, wallClock())), body)
+        hold(op)
+        q.putVector(deviceId, op.hlc.text)
+        return op
+    }
+
+    private fun opsOf(kind: EntityKind, id: String): List<Op> = q.opsOfEntity(kind.code.toLong(), id).executeAsList().map(OpCodec::decode)
+
+    private fun tombstone(kind: EntityKind, id: String): Hlc? = q.tombstoneOf(kind.code.toLong(), id).executeAsOneOrNull()?.let(Hlc::parse)
+
+    /**
+     * Writes ops for the rows of a version-2 database (tracks in creation order with their segments,
+     * then every waypoint in its order), stamped by this device. Returns false when there was nothing.
+     */
+    private fun seedLog(): Boolean {
+        val tracks = q.selectTracks().executeAsList()
+        val waypoints = q.selectAllWaypoints().executeAsList()
+        if (tracks.isEmpty() && waypoints.isEmpty()) return false
+        val now = maxOf(wallClock(), tracks.maxOfOrNull { it.updated_at } ?: 0L)
+        for (t in tracks) {
+            emit(PutTrack(t.id, t.created_at, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
+            q.selectPoints(t.id).executeAsList().groupBy { it.segment }.toList().sortedBy { it.first }.forEach { (seg, pts) ->
+                emit(AppendPoints(t.id, seg.toInt(), pts.map { TrackPoint(it.lat, it.lon, it.ele, it.time, it.extensions) }), now)
+            }
+        }
+        for (w in waypoints) {
+            val op = emit(PutWaypoint(w.track_id, Waypoint(w.id, w.name, w.lat, w.lon, w.ele, w.time, w.description, w.comment, w.symbol, w.type, w.extensions)), now)
+            q.setWaypointHlc(op.hlc.text, w.id)
+        }
+        return true
+    }
+
+    // ---- materialisation ----
+
+    /** Rewrites the track's row (and its points unless [fieldsOnly]) from the log. */
+    private fun rebuildTrack(id: String, fieldsOnly: Boolean = false) {
+        val view = Materializer.track(id, opsOf(EntityKind.TRACK, id))
+        val exists = q.selectTrack(id).executeAsOneOrNull() != null
+        tails.remove(id)
+        if (view == null) {
+            if (exists) {
+                q.deleteTrackPoints(id)
+                q.deleteTrack(id)
+            }
+            return
+        }
+        if (!exists) {
+            q.insertTrack(id, view.name, view.createdAt, view.lastHlc.wall, 0L, view.description, view.comment, view.source, view.type, view.extensions)
+        } else {
+            q.updateTrackFields(view.name, view.createdAt, view.description, view.comment, view.source, view.type, view.extensions, view.lastHlc.wall, id)
+        }
+        if (!fieldsOnly || !exists) {
+            q.deleteTrackPoints(id)
+            var seq = 0L
+            for (s in view.segments) for (p in s.points) q.insertPoint(id, seq++, s.number.toLong(), p.lat, p.lon, p.ele, p.time, p.extensions)
+            q.invalidateStats(id)
+        }
+    }
+
+    private fun rebuildWaypoint(id: String) {
+        val view = Materializer.waypoint(id, opsOf(EntityKind.WAYPOINT, id))
+        if (view == null) {
+            q.deleteWaypoint(id)
+            return
+        }
+        val w = view.waypoint
+        q.upsertWaypoint(id, view.trackId, w.name, w.lat, w.lon, w.ele, w.time, w.description, w.comment, w.symbol, w.type, w.extensions, view.order.text)
+    }
+
+    // ---- TrackStore ----
+
     override fun create(id: String, name: String, now: Long, recording: Boolean): TrackSummary {
-        require(q.selectTrack(id).executeAsOneOrNull() == null) { "track $id exists" }
-        q.insertTrack(id, name, now, now, if (recording) 1L else 0L, null, null, null, null, null)
-        tails[id] = -1L to -1L
+        q.transaction {
+            require(q.selectTrack(id).executeAsOneOrNull() == null) { "track $id exists" }
+            emit(PutTrack(id, now, name), now)
+            rebuildTrack(id)
+            q.setRecording(if (recording) 1L else 0L, now, id)
+        }
         return summary(id)!!
     }
 
@@ -39,31 +190,40 @@ class SqlTrackStore(driver: SqlDriver) : TrackStore {
     override fun append(trackId: String, point: TrackPoint, newSegment: Boolean, now: Long) {
         val (seq, segment) = tail(trackId)
         val seg = if (newSegment || segment < 0) segment + 1 else segment
+        var added = true
         q.transaction {
-            q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
-            q.touchTrackPoints(now, trackId)
+            val body = AppendPoints(trackId, seg.toInt(), listOf(point))
+            val op = emit(body, now)
+            // The same segment and points appended before (and still live) count once (see Materializer).
+            val same = q.sameDigest(trackId, OpCodec.digest(body), op.hlc.text).executeAsList()
+            val t = if (same.isEmpty()) null else tombstone(EntityKind.TRACK, trackId)
+            added = same.none { t == null || Hlc.parse(it) > t }
+            if (added) {
+                q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
+                q.touchTrackPoints(now, trackId)
+            } else {
+                q.touchTrack(now, trackId)
+            }
         }
-        tails[trackId] = seq + 1 to seg
+        if (added) tails[trackId] = seq + 1 to seg
     }
 
     override fun insert(track: Track, waypoints: List<Waypoint>, createdAt: Long, now: Long): TrackSummary {
         q.transaction {
             require(q.selectTrack(track.id).executeAsOneOrNull() == null) { "track ${track.id} exists" }
+            val ids = waypoints.map { it.id }
+            require(ids.toSet().size == ids.size) { "duplicate waypoint ids" }
+            for (w in waypoints) require(q.selectWaypoint(w.id).executeAsOneOrNull() == null) { "waypoint ${w.id} exists" }
             val t = track
-            q.insertTrack(t.id, t.name, createdAt, now, 0L, t.description, t.comment, t.source, t.type, t.extensions)
-            var seq = 0L
-            var segment = 0L
-            for (s in t.segments) {
-                if (s.points.isEmpty()) continue
-                for (p in s.points) q.insertPoint(t.id, seq++, segment, p.lat, p.lon, p.ele, p.time, p.extensions)
-                segment++
-            }
+            emit(PutTrack(t.id, createdAt, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
+            t.segments.filter { it.points.isNotEmpty() }.forEachIndexed { i, s -> emit(AppendPoints(t.id, i, s.points), now) }
+            rebuildTrack(t.id)
             for (w in waypoints) {
-                require(q.selectWaypoint(w.id).executeAsOneOrNull() == null) { "waypoint ${w.id} exists" }
-                q.insertWaypoint(w.id, t.id, w.name, w.lat, w.lon, w.ele, w.time, w.description, w.comment, w.symbol, w.type, w.extensions)
+                emit(PutWaypoint(t.id, w), now)
+                rebuildWaypoint(w.id)
             }
+            q.touchTrack(now, t.id)
         }
-        tails.remove(track.id)
         return summary(track.id)!!
     }
 
@@ -99,58 +259,55 @@ class SqlTrackStore(driver: SqlDriver) : TrackStore {
     }
 
     override fun waypoint(id: String): StoredWaypoint? =
-        q.selectWaypoint(id) { wid, trackId, _, name, lat, lon, ele, time, description, comment, symbol, type, extensions ->
+        q.selectWaypoint(id) { wid, trackId, _, name, lat, lon, ele, time, description, comment, symbol, type, extensions, _ ->
             StoredWaypoint(trackId, Waypoint(wid, name, lat, lon, ele, time, description, comment, symbol, type, extensions))
         }.executeAsOneOrNull()
 
-    override fun renameWaypoint(id: String, name: String, now: Long): Boolean {
-        var found = false
-        q.transaction {
-            val w = q.selectWaypoint(id).executeAsOneOrNull() ?: return@transaction
-            found = true
-            q.renameWaypoint(name, id)
-            w.track_id?.let { q.touchTrack(now, it) }
-        }
-        return found
-    }
+    override fun renameWaypoint(id: String, name: String, now: Long): Boolean = setField(EntityKind.WAYPOINT, id, "name", name, now)
 
     override fun deleteWaypoint(id: String, now: Long): Boolean {
         var found = false
         q.transaction {
-            val w = q.selectWaypoint(id).executeAsOneOrNull() ?: return@transaction
+            val w = waypoint(id) ?: return@transaction
             found = true
-            q.deleteWaypoint(id)
-            w.track_id?.let { q.touchTrack(now, it) }
+            emit(Delete(EntityKind.WAYPOINT, id), now)
+            rebuildWaypoint(id)
+            w.trackId?.let { q.touchTrack(now, it) }
         }
         return found
     }
 
     override fun addWaypoint(trackId: String?, waypoint: Waypoint, now: Long) {
         q.transaction {
-            if (trackId != null) {
-                if (q.selectTrack(trackId).executeAsOneOrNull() == null) throw TrackNotFoundException(trackId)
-                q.touchTrack(now, trackId)
-            }
-            val w = waypoint
-            q.insertWaypoint(w.id, trackId, w.name, w.lat, w.lon, w.ele, w.time, w.description, w.comment, w.symbol, w.type, w.extensions)
+            if (trackId != null && q.selectTrack(trackId).executeAsOneOrNull() == null) throw TrackNotFoundException(trackId)
+            require(waypoint(waypoint.id) == null) { "waypoint ${waypoint.id} exists" }
+            emit(PutWaypoint(trackId, waypoint), now)
+            rebuildWaypoint(waypoint.id)
+            trackId?.let { q.touchTrack(now, it) }
         }
     }
 
     override fun setRecording(trackId: String, recording: Boolean, now: Long) {
+        // Local state of this device's recorder, not synced.
         q.setRecording(if (recording) 1L else 0L, now, trackId)
     }
 
     override fun rename(trackId: String, name: String, now: Long) {
-        q.renameTrack(name, now, trackId)
+        setField(EntityKind.TRACK, trackId, "name", name, now)
     }
 
     override fun delete(trackId: String): Boolean {
         var existed = false
         q.transaction {
             existed = q.selectTrack(trackId).executeAsOneOrNull() != null
-            q.deleteTrackPoints(trackId)
-            q.deleteTrackWaypoints(trackId)
-            q.deleteTrack(trackId)
+            if (!existed) return@transaction
+            val now = wallClock()
+            for (wid in q.selectWaypointsOfTrack(trackId).executeAsList()) {
+                emit(Delete(EntityKind.WAYPOINT, wid), now)
+                rebuildWaypoint(wid)
+            }
+            emit(Delete(EntityKind.TRACK, trackId), now)
+            rebuildTrack(trackId)
         }
         tails.remove(trackId)
         return existed
@@ -167,23 +324,178 @@ class SqlTrackStore(driver: SqlDriver) : TrackStore {
 
     override fun track(trackId: String): Track? {
         val t = q.selectTrack(trackId).executeAsOneOrNull() ?: return null
-        val segments = ArrayList<TrackSegment>()
+        val segments = segmentsOf(trackId).map { TrackSegment(it.points) }
+        return Track(t.id, t.name, segments, t.description, t.comment, t.source, t.type, t.extensions)
+    }
+
+    private fun segmentsOf(trackId: String): List<SegmentView> {
+        val segments = ArrayList<SegmentView>()
         var current = ArrayList<TrackPoint>()
         var currentSegment = Long.MIN_VALUE
         for (p in q.selectPoints(trackId).executeAsList()) {
             if (p.segment != currentSegment) {
-                if (current.isNotEmpty()) segments += TrackSegment(current)
+                if (current.isNotEmpty()) segments += SegmentView(currentSegment.toInt(), current)
                 current = ArrayList()
                 currentSegment = p.segment
             }
             current += TrackPoint(p.lat, p.lon, p.ele, p.time, p.extensions)
         }
-        if (current.isNotEmpty()) segments += TrackSegment(current)
-        return Track(t.id, t.name, segments, t.description, t.comment, t.source, t.type, t.extensions)
+        if (current.isNotEmpty()) segments += SegmentView(currentSegment.toInt(), current)
+        return segments
     }
 
-    override fun waypoints(trackId: String?): List<Waypoint> =
-        q.selectWaypoints(trackId) { id, _, _, name, lat, lon, ele, time, description, comment, symbol, type, extensions ->
+    override fun waypoints(trackId: String?): List<Waypoint> {
+        // Rows of a track that does not exist (added concurrently with its deletion) stay hidden.
+        if (trackId != null && q.selectTrack(trackId).executeAsOneOrNull() == null) return emptyList()
+        return q.selectWaypoints(trackId) { id, _, _, name, lat, lon, ele, time, description, comment, symbol, type, extensions, _ ->
             Waypoint(id, name, lat, lon, ele, time, description, comment, symbol, type, extensions)
         }.executeAsList()
+    }
+
+    // ---- SyncStore ----
+
+    override fun setField(kind: EntityKind, id: String, field: String, value: String?, now: Long): Boolean {
+        if (field !in kind.fields) return false
+        var ok = false
+        q.transaction {
+            val trackOf: String? = when (kind) {
+                EntityKind.TRACK -> if (q.selectTrack(id).executeAsOneOrNull() == null) return@transaction else id
+                EntityKind.WAYPOINT -> (waypoint(id) ?: return@transaction).trackId
+                EntityKind.ROUTE -> { route(id) ?: return@transaction; null }
+                EntityKind.SETTING -> { if (id !in settings()) return@transaction; null }
+            }
+            emit(SetField(kind, id, field, value), now)
+            when (kind) {
+                EntityKind.TRACK -> rebuildTrack(id, fieldsOnly = true)
+                EntityKind.WAYPOINT -> rebuildWaypoint(id)
+                else -> Unit
+            }
+            trackOf?.let { q.touchTrack(now, it) }
+            ok = true
+        }
+        return ok
+    }
+
+    override fun putRoute(route: Route, now: Long) {
+        q.transaction { emit(PutRoute(route), now) }
+    }
+
+    override fun deleteRoute(id: String, now: Long): Boolean {
+        var ok = false
+        q.transaction {
+            if (route(id) == null) return@transaction
+            emit(Delete(EntityKind.ROUTE, id), now)
+            ok = true
+        }
+        return ok
+    }
+
+    override fun route(id: String): Route? = Materializer.route(id, opsOf(EntityKind.ROUTE, id))
+
+    private fun <T : Any> ofKind(kind: EntityKind, f: (String, List<Op>) -> T?): List<Pair<String, T>> =
+        q.opsOfKind(kind.code.toLong()).executeAsList().groupBy({ it.entity }, { OpCodec.decode(it.body) })
+            .mapNotNull { (id, ops) -> f(id, ops)?.let { id to it } }.sortedBy { it.first }
+
+    override fun routes(): List<Route> = ofKind(EntityKind.ROUTE) { id, ops -> Materializer.route(id, ops) }.map { it.second }
+
+    override fun setSetting(key: String, value: String?, now: Long) {
+        q.transaction {
+            if (value == null) {
+                if (key in settings()) emit(Delete(EntityKind.SETTING, key), now)
+            } else {
+                emit(PutSetting(key, value), now)
+            }
+        }
+    }
+
+    override fun settings(): Map<String, String> = ofKind(EntityKind.SETTING) { _, ops -> Materializer.setting(ops) }.toMap()
+
+    override fun vector(): VersionVector = VersionVector(q.selectVector().executeAsList().associate { it.device to Hlc.parse(it.hlc) })
+
+    override fun opsSince(since: VersionVector): List<Op> {
+        val out = ArrayList<Op>()
+        for (device in vector().entries.keys) {
+            q.opsOfDevice(device, since[device].text).executeAsList().mapTo(out, OpCodec::decode)
+        }
+        return out.sortedBy { it.hlc }
+    }
+
+    override val opCount: Long get() = q.countOps().executeAsOne()
+
+    override fun apply(bundle: Bundle, now: Long): ApplyResult {
+        var applied = 0
+        var dup = 0
+        var dead = 0
+        var gaps = emptyList<String>()
+        var rejected = 0
+        val touched = LinkedHashMap<Pair<EntityKind, String>, Boolean>() // value: fields only
+        q.transaction {
+            val plan = SyncRules.plan(bundle, vector())
+            dup = plan.duplicate
+            gaps = plan.gapDevices
+            rejected = plan.rejected
+            val tombstones = HashMap<Pair<EntityKind, String>, Hlc?>()
+            for (op in plan.take) {
+                if (q.hasOp(op.hlc.text).executeAsOne() > 0) { dup++; continue }
+                val key = op.body.kind to op.body.id
+                val t = tombstones.getOrPut(key) { tombstone(key.first, key.second) }
+                if (Materializer.isDead(op.hlc, t)) { dead++; continue }
+                hold(op)
+                if (op.body is Delete) tombstones[key] = op.hlc
+                applied++
+                touched[key] = (touched[key] ?: true) && op.body is SetField
+            }
+            for (h in plan.raise) {
+                val mine = vector()[h.device]
+                if (h > mine) q.putVector(h.device, h.text)
+                clock.observe(h)
+            }
+            for ((key, fieldsOnly) in touched.entries.sortedBy { it.key.first.code }) {
+                when (key.first) {
+                    EntityKind.TRACK -> rebuildTrack(key.second, fieldsOnly)
+                    EntityKind.WAYPOINT -> rebuildWaypoint(key.second)
+                    else -> Unit // routes and settings are materialised on read
+                }
+            }
+        }
+        return ApplyResult(bundle.ops.size, applied, dup, dead, gaps, rejected, touched.size)
+    }
+
+    /** The synced state as the tables show it (what the app displays). */
+    override fun snapshot(): SyncSnapshot {
+        val tracks = q.selectTracks().executeAsList().map { t ->
+            TrackView(t.id, t.created_at, t.name, t.description, t.comment, t.source, t.type, t.extensions, segmentsOf(t.id), Hlc.zero(""))
+        }.sortedBy { it.id }
+        val waypoints = q.selectVisibleWaypoints().executeAsList().map { w ->
+            WaypointView(
+                w.track_id, Waypoint(w.id, w.name, w.lat, w.lon, w.ele, w.time, w.description, w.comment, w.symbol, w.type, w.extensions),
+                w.created_hlc?.let(Hlc::parse) ?: Hlc.zero(""), Hlc.zero(""),
+            )
+        }
+        return SyncSnapshot.of(tracks, waypoints, routes(), settings())
+    }
+
+    /**
+     * The synced state computed from the log alone (every entity rematerialised): equal to [snapshot]
+     * when the tables are a faithful view of the log. Used by tests, `sync-sim --sql` and `/sync/status`.
+     */
+    fun snapshotFromLog(): SyncSnapshot {
+        val tracks = ofKind(EntityKind.TRACK) { id, ops -> Materializer.track(id, ops) }.map { it.second }
+        val trackIds = tracks.map { it.id }.toSet()
+        val waypoints = ofKind(EntityKind.WAYPOINT) { id, ops -> Materializer.waypoint(id, ops) }.map { it.second }
+            .filter { it.trackId == null || it.trackId in trackIds }
+        return SyncSnapshot.of(tracks, waypoints, routes(), settings())
+    }
+
+    override fun compact(now: Long, retentionMs: Long): CompactResult {
+        var dropped = 0
+        q.transaction {
+            val horizon = Hlc((now - retentionMs).coerceIn(0, Hlc.MAX_WALL), 0, "").text
+            for (h in q.oldTombstones(horizon).executeAsList()) {
+                q.deleteOp(h)
+                dropped++
+            }
+        }
+        return CompactResult(dropped, 0)
+    }
 }

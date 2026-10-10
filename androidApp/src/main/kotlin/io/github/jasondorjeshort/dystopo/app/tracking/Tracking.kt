@@ -77,7 +77,7 @@ class Tracking private constructor(private val app: DystopoApp) {
     private val main = Handler(Looper.getMainLooper())
     private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val dbFile: File = app.getDatabasePath(DB_NAME)
-    val store: TrackStore = SqlTrackStore(AndroidSqliteDriver(TrackDb.Schema, app, DB_NAME))
+    val store: TrackStore = SqlTrackStore(AndroidSqliteDriver(TrackDb.Schema, app, DB_NAME), System::currentTimeMillis) // T44: wall clock under the sync HLC
     val recorder = TrackRecorder(store, RecorderOptions(segmentGapMs = gapMsOf(prefs.getLong(KEY_GAP_S, RecorderOptions.DEFAULT_SEGMENT_GAP_MS / 1000))), clock = System::currentTimeMillis)
     val injected = InjectedLocationSource()
     val gps = GpsLocationSource(app)

@@ -2,9 +2,13 @@
 -- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
 -- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
 --
--- This file is the CURRENT schema (version 2). Changing it needs a migration: see 1.sqm and the
+-- This file is the CURRENT schema (version 3). Changing it needs a migration: see 1.sqm, 2.sqm and the
 -- "Track database migrations" paragraph in CLAUDE.md. New columns go at the END of a table, in the
 -- order the migration adds them.
+--
+-- Version 3 (T44): the tables track, track_point and waypoint are a materialised view of the operation
+-- log in sync_op (see sync/Materializer.kt and docs/PLANNING.md > Sync). Every change is first an
+-- operation there; the view is updated in the same transaction.
 
 CREATE TABLE track (
     id TEXT NOT NULL PRIMARY KEY,
@@ -68,10 +72,43 @@ CREATE TABLE waypoint (
     comment TEXT,
     symbol TEXT,
     type TEXT,
-    extensions TEXT
+    extensions TEXT,
+    -- Version 3 (T44): HLC text of the waypoint's first live put; waypoints of a track are listed in this order.
+    created_hlc TEXT
 );
 
 CREATE INDEX waypoint_track ON waypoint(track_id, seq);
+
+-- Version 3 (T44): the operation log. One row per operation: its HLC text (unique; sorts in HLC order),
+-- the device that made it, the operation type (1 put, 2 set field, 3 append points, 4 delete), the
+-- entity kind (1 track, 2 waypoint, 3 route, 4 setting) and id, the parent track of a waypoint or an
+-- append, the content digest of an append, and the encoded operation (sync/OpCodec.kt).
+CREATE TABLE sync_op (
+    hlc TEXT NOT NULL PRIMARY KEY,
+    device TEXT NOT NULL,
+    type INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    entity TEXT NOT NULL,
+    parent TEXT,
+    digest TEXT,
+    body BLOB NOT NULL
+);
+
+CREATE INDEX sync_op_entity ON sync_op(kind, entity, hlc);
+CREATE INDEX sync_op_device ON sync_op(device, hlc);
+CREATE INDEX sync_op_digest ON sync_op(entity, digest);
+
+-- For every device, the newest of its operations this replica holds (the version vector).
+CREATE TABLE sync_vector (
+    device TEXT NOT NULL PRIMARY KEY,
+    hlc TEXT NOT NULL
+);
+
+-- This install's device id (`device`) and whether the log was seeded from version-2 tables (`log`).
+CREATE TABLE sync_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
 
 insertTrack:
 INSERT INTO track(id, name, created_at, updated_at, recording, description, comment, source, type, extensions)
@@ -135,18 +172,95 @@ SELECT seq, segment FROM track_point WHERE track_id = ? ORDER BY seq DESC LIMIT 
 selectPoints:
 SELECT segment, lat, lon, ele, time, extensions FROM track_point WHERE track_id = ? ORDER BY seq;
 
-insertWaypoint:
-INSERT INTO waypoint(id, track_id, seq, name, lat, lon, ele, time, description, comment, symbol, type, extensions)
-VALUES (?, ?, (SELECT coalesce(max(seq), -1) + 1 FROM waypoint), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+-- Insert or replace a materialised waypoint, keeping its seq when it exists.
+upsertWaypoint:
+INSERT OR REPLACE INTO waypoint(id, track_id, seq, name, lat, lon, ele, time, description, comment, symbol, type, extensions, created_hlc)
+VALUES (:id, :track_id, coalesce((SELECT seq FROM waypoint WHERE id = :id), (SELECT coalesce(max(seq), -1) + 1 FROM waypoint)),
+    :name, :lat, :lon, :ele, :time, :description, :comment, :symbol, :type, :extensions, :created_hlc);
 
+-- Waypoints of a track (or the free-standing ones), in the order they were created.
 selectWaypoints:
-SELECT * FROM waypoint WHERE track_id = ? ORDER BY seq;
+SELECT * FROM waypoint WHERE track_id = ? ORDER BY created_hlc, seq;
 
+-- A waypoint is visible when it is free-standing or its track exists (a waypoint added concurrently
+-- with its track's deletion stays in the table, hidden).
 selectWaypoint:
-SELECT * FROM waypoint WHERE id = ?;
+SELECT * FROM waypoint w WHERE w.id = ? AND (w.track_id IS NULL OR EXISTS (SELECT 1 FROM track t WHERE t.id = w.track_id));
 
-renameWaypoint:
-UPDATE waypoint SET name = ? WHERE id = ?;
+selectVisibleWaypoints:
+SELECT * FROM waypoint w WHERE w.track_id IS NULL OR EXISTS (SELECT 1 FROM track t WHERE t.id = w.track_id) ORDER BY w.id;
+
+selectAllWaypoints:
+SELECT * FROM waypoint ORDER BY seq;
+
+selectWaypointsOfTrack:
+SELECT id FROM waypoint WHERE track_id = ?;
+
+setWaypointHlc:
+UPDATE waypoint SET created_hlc = ? WHERE id = ?;
 
 deleteWaypoint:
 DELETE FROM waypoint WHERE id = ?;
+
+-- Materialised track fields after a merge (T44); updated_at only moves forward.
+updateTrackFields:
+UPDATE track SET name = ?, created_at = ?, description = ?, comment = ?, source = ?, type = ?, extensions = ?,
+    updated_at = max(updated_at, ?) WHERE id = ?;
+
+invalidateStats:
+UPDATE track SET stats_points = NULL WHERE id = ?;
+
+selectAllPoints:
+SELECT track_id, segment, lat, lon, ele, time, extensions FROM track_point ORDER BY track_id, seq;
+
+-- ---- Operation log (T44) ----
+
+insertOp:
+INSERT OR IGNORE INTO sync_op(hlc, device, type, kind, entity, parent, digest, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+hasOp:
+SELECT count(*) FROM sync_op WHERE hlc = ?;
+
+opsOfEntity:
+SELECT body FROM sync_op WHERE kind = ? AND entity = ? ORDER BY hlc;
+
+opsOfKind:
+SELECT entity, body FROM sync_op WHERE kind = ? ORDER BY entity, hlc;
+
+tombstoneOf:
+SELECT hlc FROM sync_op WHERE kind = ? AND entity = ? AND type = 4 ORDER BY hlc DESC LIMIT 1;
+
+-- Everything on an entity older than its new tombstone.
+pruneEntity:
+DELETE FROM sync_op WHERE kind = ? AND entity = ? AND hlc < ?;
+
+-- Older appends to the same track with the same content (OpCodec.digest).
+sameDigest:
+SELECT hlc FROM sync_op WHERE entity = ? AND digest = ? AND hlc < ?;
+
+opsOfDevice:
+SELECT body FROM sync_op WHERE device = ? AND hlc > ? ORDER BY hlc;
+
+countOps:
+SELECT count(*) FROM sync_op;
+
+lastOp:
+SELECT hlc FROM sync_op ORDER BY hlc DESC LIMIT 1;
+
+oldTombstones:
+SELECT hlc FROM sync_op WHERE type = 4 AND hlc < ?;
+
+deleteOp:
+DELETE FROM sync_op WHERE hlc = ?;
+
+selectVector:
+SELECT device, hlc FROM sync_vector ORDER BY device;
+
+putVector:
+INSERT OR REPLACE INTO sync_vector(device, hlc) VALUES (?, ?);
+
+getMeta:
+SELECT value FROM sync_meta WHERE key = ?;
+
+putMeta:
+INSERT OR REPLACE INTO sync_meta(key, value) VALUES (?, ?);

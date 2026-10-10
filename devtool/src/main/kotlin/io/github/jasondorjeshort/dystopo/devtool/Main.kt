@@ -29,5 +29,5 @@ fun useUtf8Output() {
 }
 
 fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
-    .subcommands(AreasCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand(), ServeCommand(), SearchCommand(), ContoursCommand(), SpriteCommand())
+    .subcommands(AreasCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand(), ServeCommand(), SearchCommand(), ContoursCommand(), SpriteCommand(), SyncSimCommand(), SyncCommand())
     .main(args)

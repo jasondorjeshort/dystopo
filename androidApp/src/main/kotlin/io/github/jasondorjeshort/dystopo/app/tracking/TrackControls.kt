@@ -114,6 +114,7 @@ private fun BoxScope.Controls() {
             Panel(Modifier.widthIn(max = 300.dp).heightIn(max = 380.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Action("Import") { importOpen = !importOpen }
+                    io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
                     if (importOpen) Action("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
                 }
                 if (importOpen) ImportList(tracking) { importOpen = false }

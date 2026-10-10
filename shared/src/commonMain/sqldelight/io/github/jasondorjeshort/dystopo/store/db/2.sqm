@@ -1,0 +1,30 @@
+-- Version 2 -> 3 (T44): the operation log. The existing tracks, points and waypoints stay as they are
+-- (same ids, same rows); SqlTrackStore seeds the log from them on the first open after this migration
+-- (sync_meta `log` is absent until it has), because seeding needs the new device id and an HLC.
+
+ALTER TABLE waypoint ADD COLUMN created_hlc TEXT;
+
+CREATE TABLE sync_op (
+    hlc TEXT NOT NULL PRIMARY KEY,
+    device TEXT NOT NULL,
+    type INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    entity TEXT NOT NULL,
+    parent TEXT,
+    digest TEXT,
+    body BLOB NOT NULL
+);
+
+CREATE INDEX sync_op_entity ON sync_op(kind, entity, hlc);
+CREATE INDEX sync_op_device ON sync_op(device, hlc);
+CREATE INDEX sync_op_digest ON sync_op(entity, digest);
+
+CREATE TABLE sync_vector (
+    device TEXT NOT NULL PRIMARY KEY,
+    hlc TEXT NOT NULL
+);
+
+CREATE TABLE sync_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);

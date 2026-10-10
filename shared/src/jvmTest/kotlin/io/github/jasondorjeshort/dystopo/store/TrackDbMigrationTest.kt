@@ -104,6 +104,81 @@ class TrackDbMigrationTest {
         }
     }
 
+    /**
+     * T44: a version-2 database (tracks recorded before the operation log existed) opened with the
+     * current schema keeps every id and row, gets its log seeded once, and syncs to a fresh store
+     * that then exports identical GPX.
+     */
+    @Test
+    fun versionTwoDataSurvivesAndSyncs() {
+        val dir = Files.createTempDirectory("dystopo-upgrade2").toFile()
+        val t1 = "00000000-0000-4000-8000-000000000001"
+        val t2 = "00000000-0000-4000-8000-000000000002"
+        try {
+            val f = frozen(2, dir)
+            DriverManager.getConnection(url(f)).use { c ->
+                c.createStatement().use { st ->
+                    st.executeUpdate("INSERT INTO track(id, name, created_at, updated_at, recording, description, stats_points, stats_segments, stats_distance_m) VALUES ('$t1', 'Old', 10, 20, 0, 'desc', 99, 1, 1.5)")
+                    st.executeUpdate("INSERT INTO track(id, name, created_at, updated_at, recording) VALUES ('$t2', 'Still recording', 30, 40, 1)")
+                    for (i in 0 until 6) {
+                        st.executeUpdate("INSERT INTO track_point VALUES ('$t1', $i, ${i / 3}, ${46.85 + i * 0.001}, -121.76, ${1600 + i * 10}, ${1_000_000 + i * 60_000L}, NULL)")
+                    }
+                    st.executeUpdate("INSERT INTO track_point VALUES ('$t2', 0, 0, 46.9, -121.7, NULL, NULL, '<x:y>1</x:y>')")
+                    st.executeUpdate("INSERT INTO waypoint(id, track_id, seq, name, lat, lon) VALUES ('00000000-0000-4000-8000-0000000000f1', '$t1', 0, 'Mark', 46.85, -121.76)")
+                    st.executeUpdate("INSERT INTO waypoint(id, track_id, seq, name, lat, lon, symbol) VALUES ('00000000-0000-4000-8000-0000000000f2', NULL, 1, 'Free', 46.86, -121.75, 'Flag')")
+                    st.executeUpdate("INSERT INTO waypoint(id, track_id, seq, name, lat, lon) VALUES ('00000000-0000-4000-8000-0000000000f3', '$t1', 2, 'Later', 46.87, -121.74)")
+                    st.executeUpdate("PRAGMA user_version = 2")
+                }
+            }
+            val gpxBefore = InMemoryTrackStore().let { ref ->
+                // What the version-2 rows mean, built through the public API.
+                ref.insert(
+                    io.github.jasondorjeshort.dystopo.model.Track(t1, "Old", listOf(0, 1).map { s ->
+                        io.github.jasondorjeshort.dystopo.model.TrackSegment((s * 3 until s * 3 + 3).map { i ->
+                            io.github.jasondorjeshort.dystopo.model.TrackPoint(46.85 + i * 0.001, -121.76, (1600 + i * 10).toDouble(), 1_000_000 + i * 60_000L)
+                        })
+                    }, description = "desc"),
+                    listOf(
+                        io.github.jasondorjeshort.dystopo.model.Waypoint("00000000-0000-4000-8000-0000000000f1", "Mark", 46.85, -121.76),
+                        io.github.jasondorjeshort.dystopo.model.Waypoint("00000000-0000-4000-8000-0000000000f3", "Later", 46.87, -121.74),
+                    ),
+                    10, 20,
+                )
+                TrackExport.gpx(ref, t1)
+            }
+            val opsAfterFirstOpen: Long
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d)
+                assertTrue(store.seededFromTables)
+                assertEquals(listOf(TrackSummary(t1, "Old", 10, 20, false, 6, 2), TrackSummary(t2, "Still recording", 30, 40, true, 1, 0)), store.list())
+                assertEquals(gpxBefore, TrackExport.gpx(store, t1))
+                assertEquals(listOf("Mark", "Later"), store.waypoints(t1).map { it.name })
+                assertEquals(listOf("Free"), store.waypoints(null).map { it.name })
+                // 2 tracks + 3 segments + 3 waypoints.
+                assertEquals(8, store.opCount)
+                assertEquals(store.snapshotFromLog(), store.snapshot())
+                opsAfterFirstOpen = store.opCount
+
+                // Everything reaches another replica through a bundle, ids and all.
+                JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, Properties(), TrackDb.Schema).use { d2 ->
+                    val other = SqlTrackStore(d2)
+                    other.apply(io.github.jasondorjeshort.dystopo.sync.Bundle.decode(store.bundle().encode()), 0)
+                    assertEquals(TrackExport.gpx(store, t1), TrackExport.gpx(other, t1))
+                    assertEquals(TrackExport.gpx(store, t2), TrackExport.gpx(other, t2))
+                    assertEquals(store.snapshot(), other.snapshot())
+                }
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val again = SqlTrackStore(d)
+                assertEquals(false, again.seededFromTables)
+                assertEquals(opsAfterFirstOpen, again.opCount, "seeded once")
+            }
+            assertEquals(schemaOf(fresh(dir)), schemaOf(f))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     /** What the app does on first open after an update: a version-1 file with a track, opened with the current schema. */
     @Test
     fun versionOneDataSurvivesTheUpgrade() {

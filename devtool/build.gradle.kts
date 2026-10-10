@@ -12,6 +12,9 @@ dependencies {
     implementation(project(":shared"))
     implementation(libs.clikt)
     implementation(libs.kotlinx.serialization.json)
+    // T44: the server peer stores its replica of the sync log in a SQLite file (SqlTrackStore over JDBC;
+    // SQLDelight's driver and sqlite-jdbc are both Apache-2.0), and sync-sim --store sql uses it.
+    implementation(libs.sqldelight.sqlite.driver)
     testImplementation(kotlin("test"))
 }
 

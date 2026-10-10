@@ -133,8 +133,8 @@ DEM sources in use: USGS 3DEP 1/3″ and 1 m lidar (US), Copernicus GLO-30 (glob
 - Every entity (waypoint, track, route, map, folder, share) has a UUID and is never identified by a server-assigned ID.
 - Changes are recorded as an **operation log** with hybrid logical clock (HLC) timestamps. Peers exchange the ops they're missing. Conflicts resolve per field (last-writer-wins, plus CRDT types where merging matters, e.g. track point lists).
 - Transport is pluggable: HTTPS/WebSocket to the server first, possibly device-to-device later (Wi-Fi Direct / Bluetooth / LAN) with the same protocol.
-- Wire format: versioned schema (kotlinx.serialization with protobuf or CBOR) so old clients keep working.
-- Candidates to evaluate instead of building our own: Automerge, Electric/PowerSync-style sync, Couchbase Lite.
+- Wire format: versioned, so old clients keep working. Built as a hand-written compact binary format (no serialization dependency in `shared`); see [Sync](#sync-as-built-t44).
+- Candidates considered instead of building our own: Automerge (a Rust core behind JNI bindings, a native library per platform, whole-document CRDT history: more than per-field last-writer-wins on a handful of entity types needs), Electric/PowerSync-style sync (server-authoritative database replication, against "the server is just a peer"), Couchbase Lite (its own document store and server stack). The op log below is under 2,000 lines of pure Kotlin with a simulator that checks it; revisit if collaborative editing of long texts ever matters.
 
 ### Peer-to-peer (long-term goal)
 Ideally modules talk directly with no central server, BitTorrent-style. Not built early, but these choices keep it possible:
@@ -143,6 +143,35 @@ Ideally modules talk directly with no central server, BitTorrent-style. Not buil
 - **The op log is already peer-friendly.** UUIDs + HLC timestamps + "send me the ops I'm missing" works the same between two phones as between a phone and a server.
 - **Transport stays pluggable.** Start with direct HTTP/WebSocket to a known peer. Later: LAN discovery (mDNS), a DHT for finding peers, relays for NAT traversal. Evaluate jvm-libp2p (MIT/Apache) before building our own.
 - **The server is just an always-on peer** that also seeds content and can act as a relay.
+
+### Sync (as built, T44)
+Code: `shared/.../sync/` (pure Kotlin, every platform), the stores in `shared/.../store/`, the server peer in `devtool/.../SyncRoutes.kt`, the phone in `androidApp/.../sync/` and `SyncRoutes.kt`.
+
+**Model.** All user data (tracks, waypoints, routes, settings) is an append-only **operation log**; the tables the app reads (`track`, `track_point`, `waypoint` in `tracks.db`) are a **materialised view** of it, updated in the same SQLite transaction as the operation. Operations are small and typed: `PutTrack`/`PutWaypoint`/`PutRoute`/`PutSetting` (create, or replace all fields: an import, a re-import after a delete), `SetField` (one field: rename, description), `AppendPoints` (points added to one numbered segment of a track; a recorded fix is one append of one point), `Delete` (a tombstone). Every operation carries a **hybrid logical clock** timestamp (wall ms, counter, device id): totally ordered, with the receive rule (a replica that merged an operation stamps everything afterwards later than it, even when its own clock is behind). Device ids are random UUIDs created with the database on first open and kept in `sync_meta` (one per install). Local-only state is not synced: which track this device is recording, `updatedAt`, the stats cache.
+
+**Merge rules** (`Materializer`: the state of an entity is a pure function of the set of its operations, so arrival order, duplicates and the replica computing it do not matter):
+- *Tombstones:* the newest `Delete` hides every operation on the entity older than it. An entity exists when a `Put` newer than its newest delete exists, so a delete wins over every change it could have seen, and a re-import of the same file (same ids) after a delete brings the track back as imported. Operations older than a tombstone are dropped from the log when it arrives (compaction rule 1), and are dropped on arrival afterwards.
+- *Fields:* last writer wins per field by HLC. Two concurrent renames resolve to the greater HLC on every replica (later wall clock, else counter, else device id).
+- *Track points:* the union of all live appends, ordered by (segment number, HLC of the append, position in it). A device's own appends are in its HLC order, so a recording keeps its order, and two devices appending to one track interleave the same way everywhere. Two appends with the same segment and identical points (64-bit FNV-1a content digest), such as the same GPX imported on two devices, count once.
+- *Waypoints* belong to a track (fixed at their put) or to none; a waypoint whose track does not exist is hidden (added on one device while the track was deleted on another). Waypoints of a track are listed in the order of their first put.
+
+**Protocol.** Each replica keeps a **version vector**: per device, the newest operation of that device it holds. Sync with a peer is pull, merge, push: `pull(since = my vector)` returns a **bundle** (the peer's operations after my vector, the vector they were selected against (`base`), and the peer's vector); I merge it, then push the operations the peer's vector lacks. A device's operations always reach a replica as a prefix in HLC order: a bundle's operations of device D are taken only when `base[D]` is at or below what the receiver holds of D, otherwise D is skipped for that bundle (a gap; a later sync fills it). Replays, duplicates and reordering are harmless.
+
+**Format** (version 1; `OpCodec`, `Bundle`): LEB128 varints (signed ones zigzag), doubles as 8 bytes little-endian (exact, so a GPX survives a sync byte for byte), strings as length + UTF-8 (nullable ones length + 1, 0 for null), ids as a tag byte (1 + 16 bytes for a canonical lowercase UUID, 0 + string otherwise, 2 for none). An operation is its HLC (wall, counter, device), a type byte (1 put, 2 set, 3 append, 4 delete), a kind byte (1 track, 2 waypoint, 3 route, 4 setting), the id, then the type's fields; a recorded fix is 76 bytes. A bundle is `DSYNC`, a version byte, the sender id, base vector, vector, count, then each operation as length + bytes; gzipped on the wire and in files. HLC text (the database key, vectors in URLs): `<wall, 12 hex>.<counter, 6 hex>.<device>`, which sorts like the HLC.
+
+**Transports** (`SyncTransport`): HTTP against any `SyncServer`: `POST /sync/pull?since=<comma-separated HLC texts>` returns a gzipped bundle, `POST /sync/push` takes one and answers JSON with the merge counts and the vector, `GET /sync/status`. The devtool server (`serve`, both modes) is the always-on peer, its replica in `out/sync/peer.db` (`DYSTOPO_SYNC_DB`). A `.dsync` **file**: syncing with it merges what it holds and rewrites it with everything this replica holds, so one file passed between devices (adb, USB, a shared folder) keeps them in step; `devtool sync export --since <vector>` writes an incremental one. Phone: "Sync now" in the tracks list (the `peer` setting, else the online server), `POST /sync?with=<url|file>`, `GET /sync/status`, `POST /sync/field` (debug). JVM: `devtool sync status|with|export|import|import-gpx|rename|gpx --db <file>`.
+
+**Migration.** `2.sqm` (schema 3) adds `sync_op`, `sync_vector`, `sync_meta` and `waypoint.created_hlc`; existing rows stay as they are, and the first open seeds the log from them (one put per track and waypoint, one append per segment, stamped by the new device id), keeping every id. `TrackDbMigrationTest` checks that a version-2 file with tracks, a recording flag, segments and waypoints keeps them, seeds once, and syncs to a fresh store with identical GPX.
+
+**Verification.** `devtool sync-sim --peers 3 --ops 2000 --seed 42 --partitions 5 --reorder [--seeds 20] [--store sql]`: in-process peers make weighted random changes (recording, new segments, imports including the same file on two peers, racing renames, waypoints, deletes and re-imports, routes, settings) while syncing over a simulated network with latency, 5 % loss, duplicates, reordering (latencies spread so messages overtake each other), gossip relays of other peers' bundles (which exercise the gap rule) and partition episodes; then the partitions heal and syncing continues until every vector and state agree. A run converges when all peers have the same state digest and vector, equal to a fresh replica merged from the union of all operations; with `--store sql` the peers are `SqlTrackStore`s and each one's tables must also equal its log rematerialised. Runs are deterministic from the seed (the report's `replay` line reruns a failure), and SQLite and in-memory peers produce identical runs (`SqlSyncTest` asserts it).
+
+**Limits.**
+- Tombstones are kept for 180 days (`compact`); a replica offline longer than that can resurrect something deleted in the meantime with its stale operations.
+- No clock-drift guard: a device whose clock runs far ahead wins every concurrent field edit until real time catches up, and pushes every replica's HLC forward.
+- Bundles are not paged: a first sync sends the whole log in one request (about 76 bytes per recorded point before gzip). Runs of single-point appends are not compacted yet.
+- No authentication or signatures: anyone who can reach a peer can read and write its log (the devtool server binds 127.0.0.1). Keys per device and signed operations are the [peer-to-peer](#peer-to-peer-long-term-goal) plan.
+- Settings are in the log, but the app's own settings (`AppSettings`) are not wired to it yet; routes sync, but the app has no route screen yet.
+- Concurrent appends from two devices to the same segment interleave by HLC; a recording is expected to come from one device.
 
 ### Routing (future)
 - BRouter (Java, offline, hiking/bike profiles, already runs on Android) or GraphHopper (Java, offline-capable). Both are JVM-only, so they sit behind a `Router` interface.
@@ -365,8 +394,8 @@ Feet versus metres is a **user preference, not a geographic rule**. Region only 
 | Code sharing | Kotlin Multiplatform | Decided; in use (JVM target now, Android and iOS targets added later) |
 | Android UI | Jetpack Compose (Compose Multiplatform later?) | In use (T10) |
 | Map renderer | MapLibre Native 11 (Android); MapLibre GL JS in the browser demo | In use (T10) |
-| Local DB | SQLDelight (SQLite) | Proposed |
-| Sync | Op log + HLC, pluggable transport | Proposed; evaluate libraries first |
+| Local DB | SQLDelight (SQLite) | In use (T31) |
+| Sync | Own op log + HLC, per-field LWW, file and HTTP transports | Built (T44); see [Sync](#sync-as-built-t44) |
 | Server | Ktor (Kotlin, JVM) | Proposed |
 | Tile generation | Elevation: own code in `shared` (working). OSM: Planetiler on server/desktop | Elevation done on desktop; Planetiler is task T6 |
 | Routing | BRouter or GraphHopper | Future |
