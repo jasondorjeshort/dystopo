@@ -1,0 +1,533 @@
+package io.github.jasondorjeshort.dystopo.routing
+
+import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.mvt.Geometry
+import io.github.jasondorjeshort.dystopo.mvt.MvtDecoder
+import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesHeader
+import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.pmtiles.TileIds
+import io.github.jasondorjeshort.dystopo.pmtiles.TileType
+import io.github.jasondorjeshort.dystopo.search.LayerFilter
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+import kotlin.math.tan
+
+/** A routable line in lon/lat degrees (for building a graph from anything but a pack: tests, imports). */
+class WayLine(val lons: DoubleArray, val lats: DoubleArray, val attrs: WayAttrs) {
+    init {
+        require(lons.size == lats.size && lons.size >= 2) { "a line needs two or more points" }
+    }
+
+    companion object {
+        /** A line through [points], each (lat, lon). */
+        fun of(attrs: WayAttrs, vararg points: Pair<Double, Double>) =
+            WayLine(DoubleArray(points.size) { points[it].second }, DoubleArray(points.size) { points[it].first }, attrs)
+    }
+}
+
+/** Counters from one graph build, for reports. */
+data class GraphBuildStats(
+    val zoom: Int,
+    val tiles: Int,
+    val tileErrors: Int,
+    /** Routable `transportation` features read. */
+    val features: Int,
+    /** Line pieces after clipping to the tiles (one feature can give several). */
+    val lines: Int,
+    val inputVertices: Int,
+    /** Distinct vertices after snapping within [RoutingGraphBuilder.SNAP_M]. */
+    val vertices: Int,
+    /** Junctions added where lines cross or touch without a shared vertex. */
+    val crossings: Int,
+    val nodes: Int,
+    val edges: Int,
+    val duplicateEdges: Int,
+    val elevationSamples: Int,
+    val timingsMs: Map<String, Long>,
+) {
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "zoom" to zoom, "tiles" to tiles, "tileErrors" to tileErrors, "features" to features, "lines" to lines,
+        "inputVertices" to inputVertices, "vertices" to vertices, "crossings" to crossings, "nodes" to nodes, "edges" to edges,
+        "duplicateEdges" to duplicateEdges, "elevationSamples" to elevationSamples, "timingsMs" to timingsMs,
+    )
+}
+
+/**
+ * Builds a [RoutingGraph] from the routable lines of a vector pack ([WayAttrs.of]: paths, footways,
+ * cycleways, tracks, service and minor roads up to primary; outdoors or OpenMapTiles schema):
+ *
+ * 1. Every tile at the archive's max zoom (capped at 14, where both schemas hold every line unmerged)
+ *    is decoded; each line is clipped to its tile's exact square (tiles repeat a buffer around their
+ *    edge), so the pieces of a line in neighbouring tiles meet end to end on the shared tile border.
+ * 2. Vertices within [SNAP_M] of each other become one, which joins those pieces, shared OSM nodes
+ *    and lines that merely end at the same spot.
+ * 3. Where two segments cross or touch without a shared vertex, a vertex is added to both, so the
+ *    junction exists; not for bridges and tunnels, which pass over or under what they cross.
+ * 4. Lines are split into edges at every vertex used more than once and at line ends.
+ * 5. Elevation from [elevation] (when given) is sampled at every vertex, and the edge's ascent and
+ *    descent from samples every [SAMPLE_M] along it.
+ *
+ * Coordinates are snapped in the integer frame of the read zoom (4096 units per tile).
+ * [progress] is called after each tile with (done, total).
+ */
+class RoutingGraphBuilder(
+    private val elevation: ElevationSampler? = null,
+    private val demFingerprint: String = "",
+    private val progress: (Int, Int) -> Unit = { _, _ -> },
+) {
+    var stats: GraphBuildStats? = null
+        private set
+
+    private val timings = LinkedHashMap<String, Long>()
+    private var clock: () -> Long = { 0L }
+
+    /** A monotonic millisecond clock for [GraphBuildStats.timingsMs] (commonMain has none); optional. */
+    fun withClock(nowMs: () -> Long): RoutingGraphBuilder = apply { clock = nowMs }
+
+    private inline fun <T> timed(label: String, block: () -> T): T {
+        val t0 = clock()
+        return block().also { timings[label] = (timings[label] ?: 0L) + (clock() - t0) }
+    }
+
+    /** Builds the graph of the vector archive [reader], the file [fileName]. */
+    fun build(reader: PmtilesReader, fileName: String, builtAtMs: Long = 0L): RoutingGraph {
+        val h = reader.header
+        require(h.tileType == TileType.MVT) { "not a vector archive (tile type ${h.tileType.label})" }
+        val z = min(h.maxZoom, MAX_ZOOM)
+        val ids = timed("directory") { tileIdsAt(reader, z) }
+        val acc = Accumulator(z, (h.minLat + h.maxLat) / 2)
+        var errors = 0
+        var features = 0
+        timed("readTiles") {
+            ids.forEachIndexed { i, id ->
+                val t = TileIds.toZxy(id)
+                try {
+                    val bytes = reader.tile(t.z, t.x, t.y)
+                    if (bytes != null) {
+                        val tile = MvtDecoder.decode(LayerFilter.filter(bytes, LAYERS))
+                        for (layer in tile.layers) {
+                            if (layer.name != LAYER) continue
+                            val scale = UNITS.toDouble() / layer.extent
+                            for (f in layer.features) {
+                                val g = f.geometry as? Geometry.Lines ?: continue
+                                val attrs = WayAttrs.of(f.properties) ?: continue
+                                features++
+                                for (line in g.lines) {
+                                    val xs = DoubleArray(line.size) { t.x * UNITS + line[it].x * scale }
+                                    val ys = DoubleArray(line.size) { t.y * UNITS + line[it].y * scale }
+                                    acc.addClipped(xs, ys, attrs, t.x * UNITS.toDouble(), t.y * UNITS.toDouble(), (t.x + 1) * UNITS.toDouble(), (t.y + 1) * UNITS.toDouble())
+                                }
+                            }
+                        }
+                    }
+                } catch (e: IllegalArgumentException) {
+                    errors++ // one bad tile must not sink the graph
+                }
+                progress(i + 1, ids.size)
+            }
+        }
+        return assemble(acc, GraphSource(fileName, fingerprint(h), demFingerprint, z, builtAtMs), ids.size, errors, features)
+    }
+
+    /** Builds a graph from lon/lat lines (tests; any non-pack source), snapping in the zoom-14 frame. */
+    fun build(lines: List<WayLine>, source: GraphSource): RoutingGraph {
+        val z = source.zoom
+        val lat0 = if (lines.isEmpty()) 0.0 else lines.sumOf { it.lats.average() } / lines.size
+        val acc = Accumulator(z, lat0)
+        val world = UNITS.toDouble() * (1 shl z)
+        for (l in lines) {
+            acc.add(DoubleArray(l.lons.size) { (l.lons[it] + 180) / 360 * world }, DoubleArray(l.lats.size) { mercY(l.lats[it]) * world }, l.attrs)
+        }
+        progress(1, 1)
+        return assemble(acc, source, 0, 0, lines.size)
+    }
+
+    /** Line pieces in world units of zoom [z] (4096 per tile). */
+    private inner class Accumulator(val z: Int, lat0: Double) {
+        val xs = ArrayList<DoubleArray>()
+        val ys = ArrayList<DoubleArray>()
+        val attrs = ArrayList<WayAttrs>()
+        /** Metres per world unit at the pack's middle latitude. */
+        val metersPerUnit = 40_075_016.686 * cos(lat0 * PI / 180) / (UNITS.toDouble() * (1 shl z))
+        var inputVertices = 0
+
+        fun add(x: DoubleArray, y: DoubleArray, a: WayAttrs) {
+            if (x.size < 2) return
+            xs += x; ys += y; attrs += a
+            inputVertices += x.size
+        }
+
+        /** Adds the parts of the line inside [x0, x1] x [y0, y1] (Liang-Barsky per segment). */
+        fun addClipped(x: DoubleArray, y: DoubleArray, a: WayAttrs, x0: Double, y0: Double, x1: Double, y1: Double) {
+            var px = DoubleList()
+            var py = DoubleList()
+            fun flush() {
+                if (px.size >= 2) add(px.toArray(), py.toArray(), a)
+                px = DoubleList(); py = DoubleList()
+            }
+            for (i in 0 until x.size - 1) {
+                val ax = x[i]; val ay = y[i]; val bx = x[i + 1]; val by = y[i + 1]
+                val dx = bx - ax; val dy = by - ay
+                var t0 = 0.0
+                var t1 = 1.0
+                var visible = true
+                for ((p, q) in arrayOf(-dx to ax - x0, dx to x1 - ax, -dy to ay - y0, dy to y1 - ay)) {
+                    if (p == 0.0) {
+                        if (q < 0) { visible = false; break }
+                    } else {
+                        val r = q / p
+                        if (p < 0) { if (r > t1) { visible = false; break }; if (r > t0) t0 = r }
+                        else { if (r < t0) { visible = false; break }; if (r < t1) t1 = r }
+                    }
+                }
+                if (!visible) { flush(); continue }
+                val sx = ax + t0 * dx; val sy = ay + t0 * dy
+                val ex = ax + t1 * dx; val ey = ay + t1 * dy
+                if (px.size == 0 || px[px.size - 1] != sx || py[py.size - 1] != sy) {
+                    flush()
+                    px.add(sx); py.add(sy)
+                }
+                px.add(ex); py.add(ey)
+                if (t1 < 1.0) flush() // left the tile
+            }
+            flush()
+        }
+    }
+
+    /** Snapped vertices with a hash grid of cell [tol]. */
+    private class Vertices(val tol: Double) {
+        val x = DoubleList()
+        val y = DoubleList()
+        private val cells = HashMap<Long, IntList>()
+        private fun key(cx: Long, cy: Long) = (cx shl 32) xor (cy and 0xFFFFFFFFL)
+
+        /** The vertex within [tol] of (px, py) nearest to it, or a new one there. */
+        fun id(px: Double, py: Double): Int {
+            val cx = floor(px / tol).toLong()
+            val cy = floor(py / tol).toLong()
+            var best = -1
+            var bestD = tol * tol
+            for (dy in -1L..1L) for (dx in -1L..1L) {
+                val list = cells[key(cx + dx, cy + dy)] ?: continue
+                for (i in 0 until list.size) {
+                    val v = list[i]
+                    val ddx = x[v] - px; val ddy = y[v] - py
+                    val d = ddx * ddx + ddy * ddy
+                    if (d <= bestD) { bestD = d; best = v }
+                }
+            }
+            if (best >= 0) return best
+            val v = x.size
+            x.add(px); y.add(py)
+            cells.getOrPut(key(cx, cy)) { IntList(2) }.add(v)
+            return v
+        }
+    }
+
+    private fun assemble(acc: Accumulator, source: GraphSource, tiles: Int, errors: Int, features: Int): RoutingGraph {
+        val tol = SNAP_M / acc.metersPerUnit
+        val verts = Vertices(tol)
+        // 2. Snap.
+        val lines = timed("snap") {
+            val out = ArrayList<IntArray>(acc.xs.size)
+            for (i in acc.xs.indices) {
+                val ids = IntList(acc.xs[i].size)
+                for (k in acc.xs[i].indices) {
+                    val v = verts.id(acc.xs[i][k], acc.ys[i][k])
+                    if (ids.size == 0 || ids[ids.size - 1] != v) ids.add(v)
+                }
+                out += ids.toArray()
+            }
+            out
+        }
+        val vertexCountBeforeCrossings = verts.x.size
+        // 3. Crossings.
+        val crossed = timed("crossings") { addCrossings(lines, acc.attrs, verts, tol) }
+        // 4. Split at junctions.
+        val occ = IntArray(verts.x.size)
+        val isEnd = BooleanArray(verts.x.size)
+        for (l in crossed) {
+            if (l.size < 2) continue
+            for (v in l) occ[v]++
+            isEnd[l[0]] = true
+            isEnd[l[l.size - 1]] = true
+        }
+        val world = UNITS.toDouble() * (1 shl acc.z)
+        fun lonE6(v: Int): Int = ((verts.x[v] / world * 360.0 - 180.0) * E6).roundToInt()
+        fun latE6(v: Int): Int = (unmercY(verts.y[v] / world) * E6).roundToInt()
+
+        val nodeOf = IntArray(verts.x.size) { -1 }
+        val nodeVerts = IntList()
+        fun node(v: Int): Int {
+            if (nodeOf[v] < 0) { nodeOf[v] = nodeVerts.size; nodeVerts.add(v) }
+            return nodeOf[v]
+        }
+        val eFrom = IntList(); val eTo = IntList(); val eCls = IntList(); val eAttrs = IntList(); val eFlags = IntList()
+        val geomStart = IntList(); geomStart.add(0)
+        val geomVerts = IntList()
+        val seen = HashSet<String>()
+        var duplicates = 0
+        timed("split") {
+            for ((li, l) in crossed.withIndex()) {
+                if (l.size < 2) continue
+                val a = acc.attrs[li]
+                var start = 0
+                for (k in 1 until l.size) {
+                    val v = l[k]
+                    if (k < l.size - 1 && occ[v] < 2 && !isEnd[v]) continue
+                    // Edge from l[start] to l[k].
+                    val from = l[start]
+                    val mid = (start + 1 until k).map { l[it] }
+                    val key = run {
+                        val fwd = listOf(from) + mid + v
+                        val canon = if (fwd.first() < fwd.last() || (fwd.first() == fwd.last() && fwd.size > 2 && fwd[1] <= fwd[fwd.size - 2])) fwd else fwd.reversed()
+                        canon.joinToString(",")
+                    }
+                    if (!seen.add(key)) {
+                        duplicates++
+                    } else if (!(from == v && mid.isEmpty())) {
+                        eFrom.add(node(from)); eTo.add(node(v))
+                        eCls.add(a.cls.code); eAttrs.add(a.packed); eFlags.add(a.flags)
+                        for (m in mid) geomVerts.add(m)
+                        geomStart.add(geomVerts.size)
+                    }
+                    start = k
+                }
+            }
+        }
+        // 5. Coordinates, elevation, lengths, ascent and descent.
+        val n = nodeVerts.size
+        val m = eFrom.size
+        val nodeLon = IntArray(n) { lonE6(nodeVerts[it]) }
+        val nodeLat = IntArray(n) { latE6(nodeVerts[it]) }
+        val gs = geomStart.toArray()
+        val gv = geomVerts.toArray()
+        val gLon = IntArray(gv.size) { lonE6(gv[it]) }
+        val gLat = IntArray(gv.size) { latE6(gv[it]) }
+        var samples = 0
+        val sampler = elevation
+        val len = FloatArray(m)
+        val asc = FloatArray(m)
+        val desc = FloatArray(m)
+        val (nodeEle, gEle) = timed("elevation") {
+            // Pass 1: every point to sample (nodes, vertices, then points every SAMPLE_M along each segment).
+            val sLat = DoubleList(n + gv.size * 2)
+            val sLon = DoubleList(n + gv.size * 2)
+            for (i in 0 until n) { sLat.add(nodeLat[i] / E6); sLon.add(nodeLon[i] / E6) }
+            for (i in gv.indices) { sLat.add(gLat[i] / E6); sLon.add(gLon[i] / E6) }
+            val segLen = DoubleList(gv.size + 2 * m)
+            for (e in 0 until m) {
+                val cnt = gs[e + 1] - gs[e] + 2
+                fun lat(k: Int) = (if (k == 0) nodeLat[eFrom[e]] else if (k == cnt - 1) nodeLat[eTo[e]] else gLat[gs[e] + k - 1]) / E6
+                fun lon(k: Int) = (if (k == 0) nodeLon[eFrom[e]] else if (k == cnt - 1) nodeLon[eTo[e]] else gLon[gs[e] + k - 1]) / E6
+                for (k in 1 until cnt) {
+                    val d = TrackStats.distanceM(lat(k - 1), lon(k - 1), lat(k), lon(k))
+                    segLen.add(d)
+                    if (sampler == null) continue
+                    val steps = ceil(d / SAMPLE_M).toInt()
+                    for (st in 1 until steps) {
+                        val f = st.toDouble() / steps
+                        sLat.add(lat(k - 1) + (lat(k) - lat(k - 1)) * f)
+                        sLon.add(lon(k - 1) + (lon(k) - lon(k - 1)) * f)
+                    }
+                }
+            }
+            // Sample in DEM tile order, so each tile is decoded once however small the sampler's cache.
+            val total = if (sampler == null) 0 else sLat.size
+            val values = DoubleArray(total)
+            if (sampler != null) {
+                val order = LongArray(total) { i ->
+                    val tx = ((sLon[i] + 180) / 360 * (1 shl SORT_ZOOM)).toLong().coerceIn(0, (1L shl SORT_ZOOM) - 1)
+                    val ty = (mercY(sLat[i]) * (1 shl SORT_ZOOM)).toLong().coerceIn(0, (1L shl SORT_ZOOM) - 1)
+                    (((ty shl SORT_ZOOM) or tx) shl 32) or i.toLong()
+                }
+                order.sort()
+                for (o in order) {
+                    val i = (o and 0xFFFFFFFFL).toInt()
+                    values[i] = sampler.elevation(sLat[i], sLon[i])
+                }
+                samples = total
+            }
+            val nodeEle = FloatArray(n) { if (sampler == null) Float.NaN else RoutingGraph.quantizeEle(values[it]) }
+            val gEle = FloatArray(gv.size) { if (sampler == null) Float.NaN else RoutingGraph.quantizeEle(values[n + it]) }
+            // Pass 2: lengths, ascent and descent, reading the samples in the order pass 1 queued them.
+            var next = n + gv.size
+            var seg = 0
+            for (e in 0 until m) {
+                val cnt = gs[e + 1] - gs[e] + 2
+                fun ele(k: Int) = (if (k == 0) nodeEle[eFrom[e]] else if (k == cnt - 1) nodeEle[eTo[e]] else gEle[gs[e] + k - 1]).toDouble()
+                var length = 0.0
+                var up = 0.0
+                var down = 0.0
+                var prev = ele(0)
+                for (k in 1 until cnt) {
+                    val d = segLen[seg++]
+                    length += d
+                    if (sampler == null) continue
+                    val steps = ceil(d / SAMPLE_M).toInt()
+                    for (st in 1..steps) {
+                        val cur = if (st == steps) ele(k) else values[next++]
+                        if (!cur.isNaN() && !prev.isNaN()) {
+                            if (cur > prev) up += cur - prev else down += prev - cur
+                        }
+                        if (!cur.isNaN()) prev = cur
+                    }
+                }
+                len[e] = RoutingGraph.quantizeLength(length)
+                asc[e] = RoutingGraph.quantizeLength(up)
+                desc[e] = RoutingGraph.quantizeLength(down)
+            }
+            nodeEle to gEle
+        }
+        val graph = RoutingGraph(
+            source, nodeLon, nodeLat, nodeEle, eFrom.toArray(), eTo.toArray(), len, asc, desc,
+            ByteArray(m) { eCls[it].toByte() }, ByteArray(m) { eAttrs[it].toByte() }, ByteArray(m) { eFlags[it].toByte() },
+            gs, gLon, gLat, gEle,
+        )
+        stats = GraphBuildStats(
+            zoom = acc.z, tiles = tiles, tileErrors = errors, features = features, lines = acc.xs.size,
+            inputVertices = acc.inputVertices, vertices = verts.x.size, crossings = verts.x.size - vertexCountBeforeCrossings + crossingsOnExisting,
+            nodes = n, edges = m, duplicateEdges = duplicates, elevationSamples = samples, timingsMs = LinkedHashMap(timings),
+        )
+        return graph
+    }
+
+    private var crossingsOnExisting = 0
+
+    /**
+     * Adds a shared vertex where two segments cross or touch (within the snap tolerance) without
+     * sharing one. Segments are bucketed in a grid; a pair is handled in the cell holding its
+     * intersection point only, so each crossing is found once.
+     */
+    private fun addCrossings(lines: List<IntArray>, attrs: List<WayAttrs>, verts: Vertices, tol: Double): List<IntArray> {
+        val cell = max(CROSSING_CELL_M / (SNAP_M / tol), tol * 4)
+        val segLine = IntList()
+        val segK = IntList()
+        val grid = HashMap<Long, IntList>()
+        fun key(cx: Long, cy: Long) = (cx shl 32) xor (cy and 0xFFFFFFFFL)
+        for ((li, l) in lines.withIndex()) {
+            if (attrs[li].brunnel) continue
+            for (k in 0 until l.size - 1) {
+                val s = segLine.size
+                segLine.add(li); segK.add(k)
+                val ax = verts.x[l[k]]; val ay = verts.y[l[k]]; val bx = verts.x[l[k + 1]]; val by = verts.y[l[k + 1]]
+                val cx0 = floor((min(ax, bx) - tol) / cell).toLong(); val cx1 = floor((max(ax, bx) + tol) / cell).toLong()
+                val cy0 = floor((min(ay, by) - tol) / cell).toLong(); val cy1 = floor((max(ay, by) + tol) / cell).toLong()
+                for (cy in cy0..cy1) for (cx in cx0..cx1) grid.getOrPut(key(cx, cy)) { IntList(4) }.add(s)
+            }
+        }
+        // Inserted vertices per segment: (t along the segment, vertex).
+        val inserts = HashMap<Int, MutableList<Pair<Double, Int>>>()
+        var existing = 0
+        for ((k, list) in grid) {
+            val cx = k shr 32
+            val cy = (k and 0xFFFFFFFFL).toInt().toLong()
+            for (i in 0 until list.size) {
+                val s1 = list[i]
+                val l1 = lines[segLine[s1]]
+                val a = l1[segK[s1]]; val b = l1[segK[s1] + 1]
+                val ax = verts.x[a]; val ay = verts.y[a]; val bx = verts.x[b]; val by = verts.y[b]
+                for (j in i + 1 until list.size) {
+                    val s2 = list[j]
+                    val l2 = lines[segLine[s2]]
+                    val c = l2[segK[s2]]; val d = l2[segK[s2] + 1]
+                    if (a == c || a == d || b == c || b == d) continue
+                    val cxx = verts.x[c]; val cyy = verts.y[c]; val dx = verts.x[d]; val dy = verts.y[d]
+                    val rx = bx - ax; val ry = by - ay
+                    val sx = dx - cxx; val sy = dy - cyy
+                    val denom = rx * sy - ry * sx
+                    val len1 = sqrt(rx * rx + ry * ry)
+                    val len2 = sqrt(sx * sx + sy * sy)
+                    if (len1 == 0.0 || len2 == 0.0) continue
+                    if (abs(denom) < 1e-9 * len1 * len2) continue // parallel
+                    val qx = cxx - ax; val qy = cyy - ay
+                    val t = (qx * sy - qy * sx) / denom
+                    val u = (qx * ry - qy * rx) / denom
+                    val e1 = tol / len1
+                    val e2 = tol / len2
+                    if (t < -e1 || t > 1 + e1 || u < -e2 || u > 1 + e2) continue
+                    val px = ax + t * rx
+                    val py = ay + t * ry
+                    if (floor(px / cell).toLong() != cx || floor(py / cell).toLong() != cy) continue
+                    val before = verts.x.size
+                    val v = verts.id(px, py)
+                    if (v < before) existing++
+                    if (v != a && v != b) inserts.getOrPut(s1) { ArrayList(1) } += t.coerceIn(0.0, 1.0) to v
+                    if (v != c && v != d) inserts.getOrPut(s2) { ArrayList(1) } += u.coerceIn(0.0, 1.0) to v
+                }
+            }
+        }
+        crossingsOnExisting = existing
+        if (inserts.isEmpty()) return lines
+        // Rebuild the lines with the inserted vertices in order along each segment.
+        val bySeg = HashMap<Long, List<Pair<Double, Int>>>()
+        for ((s, list) in inserts) bySeg[(segLine[s].toLong() shl 32) or segK[s].toLong()] = list.sortedBy { it.first }
+        return lines.mapIndexed { li, l ->
+            if (attrs[li].brunnel) return@mapIndexed l
+            val out = IntList(l.size + 2)
+            for (k in l.indices) {
+                if (out.size == 0 || out[out.size - 1] != l[k]) out.add(l[k])
+                if (k == l.size - 1) break
+                bySeg[(li.toLong() shl 32) or k.toLong()]?.forEach { (_, v) -> if (out[out.size - 1] != v) out.add(v) }
+            }
+            out.toArray()
+        }
+    }
+
+    companion object {
+        const val LAYER = "transportation"
+        private val LAYERS = setOf(LAYER)
+        /** Tile width in the snapping frame. */
+        const val UNITS = 4096
+        const val MAX_ZOOM = 14
+        /** Vertices closer than this are one (line pieces across tile borders, shared OSM nodes). */
+        const val SNAP_M = 1.0
+        /** Elevation sample spacing along an edge for ascent and descent. */
+        const val SAMPLE_M = 25.0
+        /** Grid cell for the crossing search. */
+        private const val CROSSING_CELL_M = 60.0
+        /** Elevation samples are taken in the row-major order of this zoom's tiles. */
+        private const val SORT_ZOOM = 13
+        private const val E6 = 1e6
+
+        /** Identifies the vector archive's content: the graph is rebuilt when this changes. */
+        fun fingerprint(h: PmtilesHeader): String =
+            "v1:${h.tileDataLength}:${h.addressedTiles}:${h.tileContents}:${h.rootDirectoryOffset}:${h.metadataLength}:${h.minZoom}-${h.maxZoom}"
+
+        /** Tile ids present at zoom [z] (run-length entries expanded), in id order. */
+        fun tileIdsAt(reader: PmtilesReader, z: Int): List<Long> {
+            val start = TileIds.zoomStart(z)
+            val end = TileIds.zoomStart(z + 1)
+            val out = ArrayList<Long>()
+            for (e in reader.tileEntries()) {
+                if (e.tileId >= end) break
+                if (e.tileId + e.runLength <= start) continue
+                for (k in 0 until e.runLength) {
+                    val id = e.tileId + k
+                    if (id in start until end) out += id
+                }
+            }
+            return out
+        }
+
+        internal fun mercY(lat: Double): Double {
+            val r = lat.coerceIn(-85.051129, 85.051129) * PI / 180
+            return (1 - ln(tan(r) + 1 / cos(r)) / PI) / 2
+        }
+
+        internal fun unmercY(y: Double): Double {
+            val v = PI * (1 - 2 * y)
+            return atan((exp(v) - exp(-v)) / 2) * 180 / PI
+        }
+    }
+}

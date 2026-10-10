@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+﻿package io.github.jasondorjeshort.dystopo.devtool
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
@@ -20,7 +20,7 @@ class Devtool : CliktCommand(name = "devtool") {
 }
 
 /**
- * Reports are UTF-8 ("©" in attributions, names in any script) whatever the platform charset: on Windows
+ * Reports are UTF-8 ("Â©" in attributions, names in any script) whatever the platform charset: on Windows
  * the JVM otherwise encodes redirected stdout in the ANSI code page (cp1252), which agents then fail to parse.
  */
 fun useUtf8Output() {
@@ -29,5 +29,5 @@ fun useUtf8Output() {
 }
 
 fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
-    .subcommands(AreasCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand(), ServeCommand(), SearchCommand(), ContoursCommand(), SpriteCommand(), SyncSimCommand(), SyncCommand())
+    .subcommands(AreasCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand(), ServeCommand(), SearchCommand(), ContoursCommand(), SpriteCommand(), SyncSimCommand(), SyncCommand(), RouteCommand())
     .main(args)

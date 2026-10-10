@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.app
+﻿package io.github.jasondorjeshort.dystopo.app
 
 import android.app.ActivityManager
 import android.content.Context
@@ -72,6 +72,7 @@ class Routes(private val app: DystopoApp) {
         SearchRoutes.handle(app, r)?.let { return it } // T39: /search, /search/status, /search/build, /search/ui, /search/select
         OnlineRoutes.handle(app, r)?.let { return it } // T38: /online, /online/download
         SyncRoutes.handle(app, r)?.let { return it } // T44: POST /sync?with=, /sync/status, /sync/settings, /sync/field
+        RouteRoutes.handle(app, r)?.let { return it } // T45: /route, /route/status, /route/build, /route/longpress, /route/save, /route/gpx
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

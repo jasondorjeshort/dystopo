@@ -77,6 +77,7 @@ class PackManager private constructor(private val app: DystopoApp) {
             "packs" to packs.map { it.json(it.info.name == active) },
             "downloads" to downloads.activeCount(),
             "search" to io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.json(app), // T39: active pack search index (build progress)
+            "routing" to io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.json(app), // T45: active pack trail graph (build progress)
         )
     }
 
