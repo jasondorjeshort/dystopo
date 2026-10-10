@@ -9,6 +9,8 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T59: Norway and Austria bare-earth elevation (#57)
+- T62: Public release preparation (#58)
 - Wave 9 sweeps on main (coordinator, no PR)
 - T49: Android leftover sweep 3 (#54)
 - T51: Sync hardening (#56)
