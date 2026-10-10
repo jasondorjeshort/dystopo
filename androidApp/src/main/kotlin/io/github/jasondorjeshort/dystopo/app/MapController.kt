@@ -536,6 +536,30 @@ class MapController {
         )
     }
 
+    // ---- T61: camera modes for navigation (driven by nav/NavSession) ----
+    enum class CameraMode { FREE, FOLLOW, HEADING_UP }
+
+    /** FREE: the user moves the map. FOLLOW: centred on each fix, north up. HEADING_UP: centred and turned to the heading. */
+    @Volatile var cameraMode = CameraMode.FREE
+    @Volatile var followMoves = 0L
+        private set
+
+    /** Eases the camera to a fix in FOLLOW and HEADING_UP (keeps zoom and tilt unless [zoom] is given); no-op in FREE. */
+    fun follow(lat: Double, lon: Double, headingDeg: Double?, zoom: Double? = null) {
+        if (cameraMode == CameraMode.FREE) return
+        main.post {
+            val m = map ?: return@post
+            val mode = cameraMode
+            if (mode == CameraMode.FREE) return@post
+            val c = m.cameraPosition
+            val bearing = if (mode == CameraMode.HEADING_UP) headingDeg ?: c.bearing else 0.0
+            lastCameraAt = SystemClock.elapsedRealtime()
+            val to = CameraPosition.Builder().target(LatLng(lat, lon)).zoom(zoom ?: c.zoom).bearing(bearing).tilt(c.tilt).build()
+            m.easeCamera(CameraUpdateFactory.newCameraPosition(to), 400)
+            followMoves++
+        }
+    }
+
     companion object {
         /** How long everything must stay settled before the map counts as idle. */
         const val QUIET_MS = 500L

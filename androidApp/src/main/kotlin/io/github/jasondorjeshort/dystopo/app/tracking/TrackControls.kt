@@ -139,6 +139,7 @@ private fun BoxScope.Controls() {
                                 modifier = Modifier.widthIn(max = 170.dp).clickable { Thread { tracking.show(t.id) }.start() },
                             )
                             Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
+                            Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start() } // T61: navigate
                             Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
                             io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51
                         }

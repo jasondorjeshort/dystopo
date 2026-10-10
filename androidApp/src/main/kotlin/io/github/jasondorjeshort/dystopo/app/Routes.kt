@@ -73,6 +73,7 @@ class Routes(private val app: DystopoApp) {
         if (r.path == "/style.json") return Response(200, "application/json", app.tiles.style().toByteArray())
         if (!BuildConfig.DEBUG_ENDPOINTS) return Response.notFound()
         AttributionRoutes.handle(app, r)?.let { return it }
+        NavRoutes.handle(app, r)?.let { return it } // T61: /nav, /nav/status, /nav/start|stop|camera|heading; observes POST /location?bearing=
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
         settings.handle(r)?.let { return it }
         ContourLabelRoutes(app).handle(r)?.let { return it } // T36: GET /contour-labels

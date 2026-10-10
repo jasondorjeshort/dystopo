@@ -142,6 +142,7 @@ fun RouteControls() {
                     Action("Save") { Thread { RouteSession.save() }.start() }
                     Action("GPX") { Thread { RouteSession.exportGpx() }.start() }
                     Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
+                    Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
                 }
                 Action("Clear") { RouteSession.clear() }
             }

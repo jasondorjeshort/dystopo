@@ -155,6 +155,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
+        io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
         SettingsSheet() // T33: units, text size, warm-up
         io.github.jasondorjeshort.dystopo.app.sync.SyncStatusSheet() // T51: sync status
         io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen
