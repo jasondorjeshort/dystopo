@@ -67,6 +67,7 @@ class LocalServer(
     private val debugThreads: Int = 3,
     private val isMapRequest: (Request) -> Boolean = { true },
     private val handler: (Request) -> Response,
+    private val bindAddress: String = "127.0.0.1", // T54: the share listener binds the LAN (0.0.0.0)
 ) {
     private val readQueue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val readPool = ThreadPoolExecutor(readers, readers, 30, TimeUnit.SECONDS, readQueue) { r ->
@@ -82,6 +83,9 @@ class LocalServer(
     }
     private var socket: ServerSocket? = null
     val requests = AtomicLong()
+
+    /** The bound port (T54: port 0 picks a free one). */
+    val localPort: Int get() = socket?.localPort ?: port
 
     /** Connections refused per reason: `busy`, `timeout`, `tooLarge`, `badRequest`. */
     private val rejected = ConcurrentHashMap<String, AtomicLong>()
@@ -117,7 +121,7 @@ class LocalServer(
     }
 
     fun start() {
-        val s = ServerSocket(port, 64, InetAddress.getByName("127.0.0.1"))
+        val s = ServerSocket(port, 64, InetAddress.getByName(bindAddress))
         s.reuseAddress = true
         socket = s
         Thread({
@@ -144,7 +148,7 @@ class LocalServer(
                 }
             }
         }, "dystopo-http-accept").apply { isDaemon = true }.start()
-        Log.i(TAG, "listening on 127.0.0.1:$port")
+        Log.i(TAG, "listening on $bindAddress:${s.localPort}")
     }
 
     fun stop() {

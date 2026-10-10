@@ -115,6 +115,7 @@ private fun BoxScope.Controls() {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Action("Import") { importOpen = !importOpen }
                     io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
+                    io.github.jasondorjeshort.dystopo.app.share.ShareAction() // T54: phone-to-phone sync
                     if (importOpen) Action("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
                 }
                 if (importOpen) ImportList(tracking) { importOpen = false }

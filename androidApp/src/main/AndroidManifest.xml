@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Needed for the loopback tile server socket (no traffic leaves the device). -->
+    <!-- The loopback tile server socket, and (T54) the Share screen: a LAN listener guarded by a 6-digit code and NSD
+         (mDNS) announce and discovery, only while that screen is open. NsdManager needs no further permission. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
