@@ -7,6 +7,12 @@ each release gets a section here.
 
 ## Unreleased
 
+(nothing yet)
+
+## v0.1.1-alpha (2026-10-10), the first published alpha
+
+Everything from the start of the project to the first-run fix (T79). `v0.1.0-alpha` was tagged earlier the same day and never published: its APK dead-ended on a fresh phone.
+
 ### 2026-10-10
 
 - T79: First run on a real phone (#73)
