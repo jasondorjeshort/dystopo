@@ -37,6 +37,7 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 - Don't edit the Phase 0 log in `docs/PLANNING.md` from a task branch; the integrator adds the log entry when merging. Edit other docs only where the task says so.
 - The privacy hooks run in worktrees too (they read `devtool.local.json` from the main checkout). Use only public areas from `areas.json` in anything committed or written up.
 - When the task is merged: `git worktree remove ..\dystopo-wt\<task-id>` and delete the branch.
+- Model per kind of work (for whoever launches agents): the most capable model for planning, docs, review decisions and merges; a strong coding model (Opus-class) for implementing a task and its tests; a mid-tier model (Sonnet-class) for verifying a PR (run `check`, view PNGs, check done criteria) and small fix-ups; the cheapest model (Haiku-class) for mechanical git work (rebase, push, open the PR from a given summary, cleanup). Set the model explicitly on every launch; the default inherits the launcher's, usually the most expensive.
 
 ## Rules
 - **Never commit personal locations.** No home/travel areas, real GPS tracks, or coordinates that reveal where the developer lives or travels, in code, tests, fixtures, docs, planning logs, PR descriptions, or commit messages. That includes indirect hints: nearby place names, lidar project names, DEM cell/tile names. When logging results from a personal area, describe it generically. Use public places (Rainier, Mont Blanc, Glacier/Waterton, Bonneville) or synthetic data in anything committed.
