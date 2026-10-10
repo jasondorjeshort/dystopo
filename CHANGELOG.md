@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T72: Sync over the internet: TLS, discovery and a public peer (#71)
 - T65: Android leftover sweep 5 (#69)
 - T70: Map quality sweep (#68)
 - T69: Canada and New Zealand elevation (#67)
