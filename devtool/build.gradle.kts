@@ -24,3 +24,26 @@ application {
 tasks.named<JavaExec>("run") {
     workingDir = rootDir
 }
+
+// Golden-image tests (src/test/kotlin/.../GoldenImageTest.kt). Text rendering must not depend on a display.
+tasks.named<Test>("test") {
+    systemProperty("java.awt.headless", "true")
+    systemProperty("dystopo.goldens.diffDir", layout.buildDirectory.dir("golden-diffs").get().asFile.path)
+    // Print failure messages in full: golden failures list the actual/diff image paths.
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = false
+    }
+}
+
+// Regenerates the approved golden images from the current renderer. View them before committing.
+tasks.register<JavaExec>("updateGoldens") {
+    group = "verification"
+    description = "Regenerates devtool/src/test/resources/goldens/*.png from the current renderer."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass = "io.github.jasondorjeshort.dystopo.devtool.UpdateGoldensKt"
+    systemProperty("java.awt.headless", "true")
+    args(layout.projectDirectory.dir("src/test/resources/goldens").asFile.path)
+}
+
