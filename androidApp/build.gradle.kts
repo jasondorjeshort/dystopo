@@ -103,5 +103,10 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.maplibre.android)
     implementation(libs.sqldelight.android.driver)
+    // T57: the QR scanner's camera frames and preview (CameraX, Apache-2.0); the QR decoding itself is ours
+    // (share/QrDecoder.kt), not ML Kit. 1.4.x is the newest line that compiles against API 35.
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
     testImplementation(kotlin("test"))
 }

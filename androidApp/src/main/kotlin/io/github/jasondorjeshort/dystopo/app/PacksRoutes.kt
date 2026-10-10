@@ -22,6 +22,8 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
  *   installed hashes, download progress, and the map overlay state (`overlay.outlines`).
  * - `POST /packs/catalog/download?id=[&activate=true]`: download a catalog pack; every archive's SHA-256 is
  *   checked against the catalog before the pack is used (a mismatch fails the job with `hash mismatch`).
+ * - `POST /packs/catalog/refresh[?server=]` (T57): fetch the catalog again now (the open "From server" section
+ *   reloads too); JSON as `GET /packs/catalog`.
  * - `GET /packs/update`: installed packs whose catalog content hash differs (fresh catalog).
  * - `POST /packs/update?name=`: update one: only the changed archives are downloaded and verified, then
  *   swapped in while the pack is closed.
@@ -51,7 +53,7 @@ object PacksRoutes {
                         if (catalog != null) PacksUi.catalogOpen = catalog
                         if (catalog == true) PacksUi.fitRequest++
                     }
-                    Response.json(mapOf("visible" to show, "catalogOpen" to app.map.onMain { PacksUi.catalogOpen }))
+                    Response.json(mapOf("visible" to show, "catalogOpen" to app.map.onMain { PacksUi.catalogOpen }, "firstVisibleItem" to PacksUi.firstVisibleItem, "localRows" to PacksUi.localRows)) // T57
                 }
                 // T53: the server's catalog
                 r.method == "GET" && r.path == "/packs/catalog" -> {
@@ -62,6 +64,13 @@ object PacksRoutes {
                     }.exceptionOrNull()
                     val body = c.json()
                     Response.json(if (error != null) body + mapOf("error" to (error.message ?: error.javaClass.simpleName)) else body, if (error != null && c.catalog == null) 502 else 200)
+                }
+                r.method == "POST" && r.path == "/packs/catalog/refresh" -> { // T57
+                    val c = m.catalogClient
+                    val error = runCatching { c.refresh(r.query["server"]) }.exceptionOrNull()
+                    app.map.onMain { PacksUi.catalogRefresh++ }
+                    val body = c.json() + mapOf("refreshed" to (error == null), "fetchedAt" to c.fetchedAt)
+                    Response.json(if (error != null) body + mapOf("error" to (error.message ?: error.javaClass.simpleName)) else body, if (error != null) 502 else 200)
                 }
                 r.method == "POST" && r.path == "/packs/catalog/download" -> {
                     val id = r.query["id"] ?: r.query["name"] ?: return bad("id required")

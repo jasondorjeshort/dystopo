@@ -70,6 +70,38 @@ object AppSettings {
         mapOptions = loadMapOptions(p)
         server = p.getString(KEY_SERVER, null) ?: defaultServer()
         loadCaches(p) // T41
+        routeSnapM = p.getInt(KEY_ROUTE_SNAP_M, DEFAULT_ROUTE_SNAP_M).coerceIn(ROUTE_SNAP_RANGE) // T57
+        debugFixedPort = p.getBoolean(KEY_DEBUG_FIXED_PORT, false)
+    }
+
+    // ---- T57: routing snap distance, debug server port ----
+
+    private const val KEY_ROUTE_SNAP_M = "routeSnapM"
+    private const val KEY_DEBUG_FIXED_PORT = "debugFixedPort"
+    const val DEFAULT_ROUTE_SNAP_M = 300
+    /** How far a tapped start or end may be from the nearest trail or road, metres. */
+    val ROUTE_SNAP_RANGE = 50..1000
+
+    /** T57: the route planner's snap distance (default 300 m, up to 1 km). */
+    @Volatile var routeSnapM: Int = DEFAULT_ROUTE_SNAP_M
+        private set
+
+    fun setRouteSnapM(m: Int) {
+        routeSnapM = m
+        prefs?.edit()?.putInt(KEY_ROUTE_SNAP_M, m)?.apply()
+    }
+
+    /**
+     * T57: debug builds serve the debug routes on a random loopback port announced only in logcat
+     * ([DystopoApp.debugPort]); with this set (`POST /settings?debugFixedPort=1`, from the next launch) they
+     * stay on the tile server's port 8686 with the `/health` token bootstrap, as before T57.
+     */
+    @Volatile var debugFixedPort: Boolean = false
+        private set
+
+    fun setDebugFixedPort(on: Boolean) {
+        debugFixedPort = on
+        prefs?.edit()?.putBoolean(KEY_DEBUG_FIXED_PORT, on)?.commit() // commit: usually followed by a restart
     }
 
     // ---- T41: cache caps ----
@@ -202,5 +234,8 @@ object AppSettings {
         "warmup" to warmup,
         "onlineCacheMb" to onlineCacheMb, // T41
         "contourCacheMb" to contourCacheMb,
+        "routeSnapM" to routeSnapM, // T57
+        "routeSnapRange" to listOf(ROUTE_SNAP_RANGE.first, ROUTE_SNAP_RANGE.last),
+        "debugFixedPort" to debugFixedPort,
     ) + mapOptions.json(units) // T47
 }

@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -64,11 +65,12 @@ fun OnlineOverlay() {
     val ui = remember(tick) {
         OnlineUi(service.state(), OnlineView.currentOnMain(app), service.region.json(), service.region.running, service.attribution())
     }
-    if (ui.state == "none" && !ui.running) return
+    if (ui.state == "none" && !ui.running) return io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsHidden() // T57
     Box(Modifier.fillMaxSize()) {
         Column(
             // Below the search box (T39), which is drawn after this overlay so its results cover it.
-            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 8.dp, top = 60.dp).widthIn(max = 260.dp),
+            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 8.dp, top = 60.dp).widthIn(max = 260.dp)
+                .onGloballyPositioned { io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsAt(it) }, // T57: catalog fits keep clear
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val (label, dot) = when (ui.state) {

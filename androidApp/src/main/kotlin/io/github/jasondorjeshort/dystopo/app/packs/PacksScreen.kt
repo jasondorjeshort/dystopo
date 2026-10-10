@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
@@ -60,6 +61,13 @@ object PacksUi {
     /** Bumped to make the open screen fit the camera to the catalog again (`POST /packs/ui?catalog=1`). */
     var fitRequest by mutableStateOf(0)
 
+    /** T57: bumped by `POST /packs/catalog/refresh` (and the Refresh chip) to reload the open catalog section. */
+    var catalogRefresh by mutableStateOf(0)
+
+    /** T57: the list's first visible row and how many local pack rows there are (for `POST /packs/ui` answers). */
+    @Volatile var firstVisibleItem = 0
+    @Volatile var localRows = 0
+
     /** Height of the list while the catalog section is open; the map shows above it. */
     const val CATALOG_SHEET = 0.6f
 }
@@ -99,7 +107,8 @@ fun PacksOverlay() {
 
 /**
  * T53: moves the camera so [b] fills the part of the map above the pack list ([visible] of the height from
- * the top), or the whole map when [visible] is 1.
+ * the top), or the whole map when [visible] is 1. T57: and below the online indicator at the top left
+ * ([io.github.jasondorjeshort.dystopo.app.MapInsets]), so its credit line does not cover a catalog label.
  */
 fun fitAbove(b: PackBounds, visible: Double = 1.0 - PacksUi.CATALOG_SHEET): Map<String, Any?>? {
     val app = DystopoApp.instance
@@ -109,10 +118,12 @@ fun fitAbove(b: PackBounds, visible: Double = 1.0 - PacksUi.CATALOG_SHEET): Map<
         if (w <= 0 || h <= 0) return null
         val wd = w / density.toDouble()
         val hd = h / density.toDouble()
-        val zoom = b.fitZoom(wd, hd * visible, 512.0, 24.0).coerceIn(3.0, 16.0) // the map stops at z3
-        // The box centre goes to the middle of the visible band, (1 - visible) / 2 of the height above the map centre.
+        val bottom = hd * visible
+        val top = (io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChips?.get(3)?.div(density)?.toDouble() ?: 0.0).coerceIn(0.0, bottom / 2)
+        val zoom = b.fitZoom(wd, bottom - top, 512.0, 24.0).coerceIn(3.0, 16.0) // the map stops at z3
+        // The box centre goes to the middle of the visible band [top, bottom], hd / 2 - (top + bottom) / 2 above the map centre.
         val worldPx = 512.0 * 2.0.pow(zoom)
-        val y = (PackBounds.mercatorY(b.centerLat) + hd * (1 - visible) / 2 / worldPx).coerceIn(0.0, 1.0)
+        val y = (PackBounds.mercatorY(b.centerLat) + (hd / 2 - (top + bottom) / 2) / worldPx).coerceIn(0.0, 1.0)
         val lat = atan(sinh(PI * (1 - 2 * y))) * 180 / PI
         app.map.setCamera(lat, b.centerLon, zoom, 0.0, 0.0)
     } catch (e: Exception) {
@@ -134,10 +145,19 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     var rows by remember { mutableStateOf<List<PackCatalogClient.Row>>(emptyList()) }
     var catalogError by remember { mutableStateOf<String?>(null) }
     var catalogLoading by remember { mutableStateOf(false) }
-    var catalogRefresh by remember { mutableStateOf(0) }
     val catalogOpen = PacksUi.catalogOpen
+    val listState = rememberLazyListState()
 
-    LaunchedEffect(catalogOpen, catalogRefresh, PacksUi.fitRequest) {
+    // T57: rows that arrive above the first visible one (the local packs load after the catalog section is
+    // already showing) would keep the list anchored below them, so the local packs sat above the visible top:
+    // start at the top whenever the section opens or the local list changes size.
+    LaunchedEffect(catalogOpen, packs.size) {
+        listState.scrollToItem(0)
+        PacksUi.localRows = packs.size
+    }
+    LaunchedEffect(listState.firstVisibleItemIndex) { PacksUi.firstVisibleItem = listState.firstVisibleItemIndex }
+
+    LaunchedEffect(catalogOpen, PacksUi.catalogRefresh, PacksUi.fitRequest) {
         if (!catalogOpen) return@LaunchedEffect
         catalogLoading = true
         catalogError = withContext(Dispatchers.IO) { runCatching { client.refresh() }.exceptionOrNull()?.message }
@@ -191,7 +211,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
         if (packs.isEmpty()) {
             BasicText("No packs on this device yet. Download one below.", style = TextStyle(color = Muted, fontSize = 14.sp))
         }
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(packs, key = { it.info.name }) { p ->
                 PackRow(p, isActive = p.info.name == active, onMap = p.info.name in used,
                     onShow = { background("Opening ${p.info.name}") { manager.activate(p.info.name); close() } },
@@ -206,7 +226,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BasicText((if (catalogOpen) "\u25BE " else "\u25B8 ") + "From server", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
-                    if (catalogOpen) Chip("Refresh") { catalogRefresh++ }
+                    if (catalogOpen) Chip("Refresh") { PacksUi.catalogRefresh++ }
                 }
             }
             if (catalogOpen) {

@@ -34,7 +34,8 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   `POST /tracks/import?file=<name>` for a file in `files/tracks/`; `GET /tracks/files` lists those.
  *   Tracks keep their ids from `dystopo:id`; ids already stored are skipped.
  * - `POST /location/replay?rate=10[&record=name][&accuracy=5]` with a GPX body: replays its track
- *   points as injected fixes at `rate` × real time (optionally recording them into a new track,
+ *   points as injected fixes at `rate` × real time (optionally recording them into a new track; T57: 409
+ *   with `record=` while a track is already recording,
  *   source `injected`); `GET /location/replay` progress; `DELETE /location/replay` cancels.
  *
  * `POST /location` (T10/T27) is observed, not handled: the fix also goes to the recorder's injected
@@ -108,6 +109,14 @@ object TrackRoutes {
                 val rate = p.d("rate") ?: 1.0
                 if (!(rate > 0 && rate <= 10_000)) return Response.json(mapOf("error" to "rate must be in (0, 10000]"), 400)
                 if (r.body.isEmpty()) return Response.json(mapOf("error" to "POST a GPX file as the body"), 400)
+                // T57: record= while a track is recording would leave that one behind (empty when it had just
+                // started) beside the replay's own: refuse, and say how to get either.
+                if (p.s("record") != null && t.call { t.recorder.recording }) {
+                    return Response.json(mapOf(
+                        "error" to "already recording: stop that track first (POST /tracks/stop), or replay without record= to add the fixes to it",
+                        "recording" to recorderJson(t),
+                    ), 409)
+                }
                 p.s("record")?.let { t.start(it, Tracking.Mode.INJECTED) }
                 return try {
                     Response.json(t.replay.start(r.bodyText, rate, p.d("accuracy") ?: 5.0) + mapOf("recording" to t.recorder.activeId))

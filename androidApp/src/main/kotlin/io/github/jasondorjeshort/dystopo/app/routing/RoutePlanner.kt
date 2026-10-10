@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.app.routing
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
+import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.FileRangeSource
 import io.github.jasondorjeshort.dystopo.app.gunzip
@@ -54,7 +55,7 @@ object RoutePlanner {
         fun json(): Map<String, Any?> = linkedMapOf(
             "pack" to pack, "status" to status, "file" to file.path, "bytes" to file.takeIf { it.isFile }?.length(),
             "progress" to if (total > 0) linkedMapOf("tiles" to done, "of" to total, "percent" to done * 100 / total) else null,
-            "buildMs" to buildMs, "loadMs" to loadMs, "demTilesDecoded" to demTilesDecoded, "demDecodeMs" to demDecodeMs, "demDecoder" to demDecoder, "rebuildReason" to rebuildReason, "error" to error,
+            "buildMs" to buildMs, "loadMs" to loadMs, "demTilesDecoded" to demTilesDecoded, "demDecodeMs" to demDecodeMs, "demDecoder" to demDecoder, "decoder" to TileService.decoderName, "rebuildReason" to rebuildReason, "error" to error, // T57: decoder
             "nodes" to graph?.nodeCount, "edges" to graph?.edgeCount, "networks" to graph?.componentLengthM?.size,
         )
     }
@@ -153,10 +154,15 @@ object RoutePlanner {
         return s.graph ?: throw NotReady(s)
     }
 
-    /** Plans a route on the active pack's graph (blocking; call off the main thread). */
-    fun plan(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, mode: TravelMode, name: String, waitMs: Long): RouteResult {
+    /**
+     * Plans a route on the active pack's graph (blocking; call off the main thread). T57: ends snap within
+     * [snapM] (the `routeSnapM` setting), and an off-network failure names the nearest trail ([OffNetwork]).
+     */
+    fun plan(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, mode: TravelMode, name: String, waitMs: Long, snapM: Double = AppSettings.routeSnapM.toDouble()): RouteResult {
         val g = graph(waitMs)
-        return Router(g).route(fromLat, fromLon, toLat, toLon, mode, name = name)
+        val r = Router(g).route(fromLat, fromLon, toLat, toLon, mode, maxSnapM = snapM, name = name)
+        if (r !is RouteResult.Failed) return r
+        return OffNetwork.explain(g, r, fromLat to fromLon, toLat to toLon, snapM, AppSettings.ROUTE_SNAP_RANGE.last.toDouble(), AppSettings.units)
     }
 
     /** Status for `/packs` and `/route/status`: the state when a graph was used this session, else what is on disk. */
@@ -164,7 +170,7 @@ object RoutePlanner {
         current?.takeIf { it.matches(app.tiles.packs.name ?: "default", app.tiles.packs.osm?.file) }?.let { return it.json() }
         val vector = app.tiles.packs.osm?.file ?: return null
         val f = File(vector.absoluteFile.parentFile, RoutingGraph.fileNameFor(vector.name))
-        return linkedMapOf("pack" to (app.tiles.packs.name ?: "default"), "status" to "idle", "file" to f.path, "bytes" to f.takeIf { it.isFile }?.length())
+        return linkedMapOf("pack" to (app.tiles.packs.name ?: "default"), "status" to "idle", "file" to f.path, "bytes" to f.takeIf { it.isFile }?.length(), "decoder" to TileService.decoderName) // T57
     }
 
     /**

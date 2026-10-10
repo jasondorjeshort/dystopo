@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bad-input probes against the app's loopback server (through `adb forward`).
 
-    python -I tools/android-probe.py [--port 8686] [--host 127.0.0.1]
+    python -I tools/android-probe.py [--port 8686] [--serial emulator-5570] [--host 127.0.0.1]
 
 Sends malformed and hostile requests (huge, negative and out-of-range tile coordinates, 10k
 headers, an over-long request line, a slow header drip, an oversized body, a lying Content-Length,
@@ -11,15 +11,27 @@ statuses, and whether the server was alive afterwards. Exit 0 when every probe g
 and the server survived; 1 when the server died (or never answered); 2 when it survived but some
 probe got an unexpected answer. Python 3 standard library only.
 
-The app requires its per-launch loopback token on every request (T49): the script reads it from
-GET /health without a token (debug builds answer only {"token": ...}) and sends it as an
+The app requires its per-launch loopback token on every request (T49): the script sends it as an
 X-Dystopo-Token header on every probe, except the no-token and wrong-token probes, which expect 401.
+T57: debug builds serve the debug routes on a random port per launch, announced with the token only in
+logcat (`debug server on port N token T`). With --serial (or ANDROID_SERIAL, or the serial that owns
+--port) the script reads that line, forwards --port to it, expects GET /health without a token to be a
+401 (no bootstrap), and also probes the tile server (device port 8686, through a temporary forward): map
+routes need the token, debug routes are 404 there with or without it. Without adb it reads the token from
+GET /health without one (the app's debugFixedPort=1 mode) and expects that bootstrap to answer 200.
 """
 import argparse
+import importlib.util
 import json
+import os
 import socket
 import sys
 import time
+
+# T57: logcat bootstrap of the debug server's port and token (tools/android_debug.py; -I keeps tools/ off sys.path).
+_spec = importlib.util.spec_from_file_location("android_debug", os.path.join(os.path.dirname(os.path.abspath(__file__)), "android_debug.py"))
+android_debug = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(android_debug)
 
 
 def recv_status(sock, timeout):
@@ -116,12 +128,28 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", type=int, default=8686)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""), help="device to read the debug port and token from (logcat)")
     ap.add_argument("--quick", action="store_true", help="skip the slow probes (header drip, idle connections)")
     a = ap.parse_args()
     host, port = a.host, a.port
 
     global TOKEN
-    TOKEN = read_token(host, port) or ""
+    exe = android_debug.adb_path()
+    owner = android_debug.forward_owner(exe, port) if exe else None
+    if a.serial and owner and owner != a.serial:
+        print(json.dumps({"ok": False, "serverAlive": False, "error": f"host port {port} is forwarded to {owner}, not {a.serial}"}))
+        return 1
+    serial = a.serial or owner
+    device_port = None
+    if exe and serial:
+        try:
+            device_port, TOKEN = android_debug.bootstrap(exe, serial, port)  # T57: from logcat
+        except RuntimeError as e:
+            print(json.dumps({"ok": False, "serverAlive": False, "error": str(e)}))
+            return 1
+    else:
+        TOKEN = read_token(host, port) or ""
+    fixed = device_port in (None, 8686)  # debugFixedPort=1: debug routes and the /health bootstrap on 8686
     if not TOKEN or not health(host, port):
         print(json.dumps({"ok": False, "serverAlive": False, "error": f"/health did not answer on {host}:{port} before probing (token read: {bool(TOKEN)})"}))
         return 1
@@ -156,8 +184,23 @@ def main():
         ("wrong-token-query", lambda: raw(host, port, get("/contours/10/165/357.pbf?t=0000", token=False)), {401}),
         ("wrong-token-header", lambda: raw(host, port, b"GET /stats HTTP/1.1\r\nX-Dystopo-Token: " + (TOKEN + "x").encode() + b"\r\n\r\n"), {401}),
         ("token-query-ok", lambda: raw(host, port, get(f"/dem/10/165/357.png?t={TOKEN}", token=False)), {200, 404}),
-        ("health-no-token-bootstrap", lambda: raw(host, port, get("/health", token=False)), {200}),
+        # T57: the token-only /health answer exists only in debugFixedPort mode; otherwise the token is in logcat.
+        ("health-no-token-bootstrap" if fixed else "health-no-token-401", lambda: raw(host, port, get("/health", token=False)), {200} if fixed else {401}),
     ]
+    tile_port = None
+    if exe and serial and not fixed:
+        # T57: the tile server on device port 8686 answers map routes only (like release); a temporary host forward.
+        code, out = android_debug.adb(exe, serial, "forward", "tcp:0", "tcp:8686", timeout=30)
+        tile_port = int(out.strip().splitlines()[-1]) if code == 0 and out.strip().splitlines()[-1].strip().isdigit() else None
+    if tile_port:
+        probes += [
+            ("tile-server-style-with-token", lambda: raw(host, tile_port, get("/style.json")), {200}),
+            ("tile-server-style-no-token", lambda: raw(host, tile_port, get("/style.json", token=False)), {401}),
+            ("tile-server-health-no-token", lambda: raw(host, tile_port, get("/health", token=False)), {404}),
+            ("tile-server-health-with-token", lambda: raw(host, tile_port, get("/health")), {404}),
+            ("tile-server-stats-with-token", lambda: raw(host, tile_port, get("/stats")), {404}),
+            ("tile-server-camera-post", lambda: raw(host, tile_port, b"POST /camera?lat=0&lon=0 HTTP/1.1\r\n" + auth() + b"Content-Length: 0\r\n\r\n"), {404}),
+        ]
     if not a.quick:
         probes += [
             ("slow-header-drip", lambda: raw(host, port, None, chunks=[b"GET /health HTTP/1.1\r\n"] + [b"X-Drip: %d\r\n" % i for i in range(40)], delay=0.5, timeout=30), {408, "reset"}),
@@ -181,8 +224,11 @@ def main():
                 alive = False
                 break
 
+    if tile_port:
+        android_debug.adb(exe, serial, "forward", "--remove", f"tcp:{tile_port}", timeout=30)
     unexpected = [r["probe"] for r in results if not r["ok"]]
-    print(json.dumps({"ok": alive and not unexpected, "serverAlive": alive, "unexpected": unexpected, "probes": results}, indent=1))
+    print(json.dumps({"ok": alive and not unexpected, "serverAlive": alive, "unexpected": unexpected, "serial": serial,
+                      "debugPort": device_port, "tileServerHostPort": tile_port, "probes": results}, indent=1))
     if not alive:
         return 1
     return 2 if unexpected else 0

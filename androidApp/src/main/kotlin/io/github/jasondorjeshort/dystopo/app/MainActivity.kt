@@ -60,6 +60,8 @@ class MainActivity : ComponentActivity() {
         app.map.activity = this
         app.map.attach(mapView, styleJson = { app.tiles.style() })
         DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
+        io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(intent) // T57: dystopo://share links
+        addOnNewIntentListener { io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(it) }
 
         // Dark status-bar icons: the map, the pack list and the sheets are all light (paper) under the bar.
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
@@ -160,5 +162,6 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.sync.SyncStatusSheet() // T51: sync status
         io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen
         io.github.jasondorjeshort.dystopo.app.share.ShareOverlay() // T54: Share screen (LAN listener + NSD while open)
+        io.github.jasondorjeshort.dystopo.app.share.QrScannerOverlay() // T57: the Share screen's QR scanner
     }
 }

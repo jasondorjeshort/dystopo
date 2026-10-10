@@ -14,7 +14,8 @@ import java.io.File
  * Always: `/style.json`, `/dem/{z}/{x}/{y}.png`, `/osm/{z}/{x}/{y}.pbf`, `/contours/{z}/{x}/{y}.pbf`,
  * `/glyphs/{fontstack}/{range}.pbf`.
  *
- * Debug builds only ([BuildConfig.DEBUG_ENDPOINTS]), for agents through `adb forward`:
+ * Debug builds only ([BuildConfig.DEBUG_ENDPOINTS]), for agents through `adb forward`; T57: on the debug
+ * server's random port (logcat line `debug server on port N token T`), or on 8686 with `debugFixedPort=1`:
  * - `GET /health`: JSON (server load and refusals, packs, map state: `map.idle` with
  *   `map.notIdleBecause`, see [MapController.idleBlockers]).
  * - `GET /screenshot`: PNG of the map (MapLibre snapshot). `?mode=window` captures the app's content
@@ -44,15 +45,21 @@ class Routes(private val app: DystopoApp) {
         app.map.lastTileAt = { tileKinds.maxOf { app.server.lastDone(it) } }
     }
 
-    /** T49: the per-launch token gates every route ([LoopbackToken]); `t` is stripped before routing. */
-    fun handle(raw: Request): Response {
-        // Release builds have no debug routes: 404 for those with or without a token; tile routes need the token.
-        if (!BuildConfig.DEBUG_ENDPOINTS && !isMapRequest(raw)) return Response.notFound()
-        val (r, answer) = app.token.admit(raw, BuildConfig.DEBUG_ENDPOINTS)
-        return answer ?: route(r!!)
+    /**
+     * T49: the per-launch token gates every route ([LoopbackToken]); `t` is stripped before routing.
+     * T57: [debugRoutes] is false on the tile server (port 8686) unless `debugFixedPort` is set, and always in
+     * release builds: there only map routes answer (404 for the rest, with or without a token). The token-only
+     * `/health` bootstrap exists only with `debugFixedPort`; otherwise the token is in logcat
+     * ([DystopoApp.DEBUG_TAG]) with the debug server's port.
+     */
+    fun handle(raw: Request, debugRoutes: Boolean = BuildConfig.DEBUG_ENDPOINTS): Response {
+        val debug = debugRoutes && BuildConfig.DEBUG_ENDPOINTS
+        if (!debug && !isMapRequest(raw)) return Response.notFound()
+        val (r, answer) = app.token.admit(raw, debug && app.fixedDebugPort)
+        return answer ?: route(r!!, debug)
     }
 
-    private fun route(r: Request): Response {
+    private fun route(r: Request, debug: Boolean): Response {
         tile.matchEntire(r.path)?.let { m ->
             val (kind, zs, xs, ys) = m.destructured
             val (zxy, error) = RequestChecks.tile(zs, xs, ys)
@@ -71,7 +78,7 @@ class Routes(private val app: DystopoApp) {
         }
         ShadeRoutes.handle(app, r)?.let { return it } // T47: /shade/{z}/{x}/{y}.png, GET /shade
         if (r.path == "/style.json") return Response(200, "application/json", app.tiles.style().toByteArray())
-        if (!BuildConfig.DEBUG_ENDPOINTS) return Response.notFound()
+        if (!debug) return Response.notFound()
         AttributionRoutes.handle(app, r)?.let { return it }
         NavRoutes.handle(app, r)?.let { return it } // T61: /nav, /nav/status, /nav/start|stop|camera|heading; observes POST /location?bearing=
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
@@ -163,7 +170,8 @@ class Routes(private val app: DystopoApp) {
         return mapOf(
             "ok" to true,
             "app" to mapOf("version" to BuildConfig.VERSION_NAME, "debug" to BuildConfig.DEBUG, "sdk" to Build.VERSION.SDK_INT, "device" to Build.MODEL),
-            "server" to mapOf("port" to BuildConfig.SERVER_PORT, "tokenRefused" to app.token.refused.get()) + app.server.stats(), // T49
+            "server" to mapOf("port" to BuildConfig.SERVER_PORT, "tokenRefused" to app.token.refused.get()) + app.server.stats() + // T49
+                mapOf("debugPort" to app.debugPort, "debugFixedPort" to app.fixedDebugPort, "debugServer" to app.debugServer?.stats()), // T57
             "uptimeMs" to SystemClock.elapsedRealtime() - app.startedAt,
             "packs" to mapOf("dem" to packJson(t.packs.dem), "osm" to packJson(t.packs.osm), "glyphs" to t.packs.glyphDir?.path, "primary" to t.packs.name, "inUse" to t.packs.json()), // T41: every pack on the map
             "map" to mapOf(
@@ -209,6 +217,7 @@ class Routes(private val app: DystopoApp) {
                 "packBytes" to t.packs.archives.sumOf { it.file.length() },
             ),
             "server" to mapOf("requests" to app.server.requests.get()),
+            "counters" to mapOf("since" to "app start", "uptimeMs" to SystemClock.elapsedRealtime() - app.startedAt, "tileServiceOpens" to app.tileCounters.serviceOpens.get()), // T57
         )
     }
 

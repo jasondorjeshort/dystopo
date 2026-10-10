@@ -10,11 +10,13 @@ import java.util.concurrent.atomic.AtomicLong
  * MapLibre loads) or an `X-Dystopo-Token` header; anything else gets 401. The token is random per
  * process start and lives only in memory.
  *
- * Bootstrap for the debug tools (`android-check.py`, `android-probe.py`, `android-emu.ps1`): in builds
- * with debug endpoints, `GET /health` without the token answers only `{"token": "..."}` to a loopback
- * caller (through `adb forward` that is the host). Release builds have no `/health`, so there the token
- * never leaves the process. In debug builds other apps on the device could read it the same way; the
- * debug routes are for development only.
+ * Bootstrap for the debug tools (`android-check.py`, `android-probe.py`, `android-emu.ps1`), T57: debug
+ * builds log `debug server on port N token T` (tag `Dystopo`) at launch, and the debug routes answer on that
+ * random loopback port only; the tools read the line with `adb logcat` and forward to the port. Logcat is
+ * readable by this app and adb, not by other apps, so the token stays with the app's own process. With the
+ * setting `debugFixedPort=1` the debug routes stay on 8686 and `GET /health` without the token answers only
+ * `{"token": "..."}` to a loopback caller, as T49 did (other apps on the device could read it then). Release
+ * builds have no debug routes and no bootstrap, so there the token never leaves the process.
  */
 class LoopbackToken(val value: String = generate()) {
     /** Requests refused for a missing or wrong token. */

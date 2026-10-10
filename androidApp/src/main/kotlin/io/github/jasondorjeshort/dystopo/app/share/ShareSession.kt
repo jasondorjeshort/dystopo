@@ -1,23 +1,19 @@
 package io.github.jasondorjeshort.dystopo.app.share
 
 import android.os.Build
-import android.os.SystemClock
 import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.LocalServer
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
+import io.github.jasondorjeshort.dystopo.app.sync.AppSync
+import io.github.jasondorjeshort.dystopo.app.sync.ClockCheck
+import io.github.jasondorjeshort.dystopo.app.sync.SettingsSync
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
+import io.github.jasondorjeshort.dystopo.sync.Sync
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.store.SqlTrackStore
-import io.github.jasondorjeshort.dystopo.sync.ApplyResult
-import io.github.jasondorjeshort.dystopo.sync.Bundle
-import io.github.jasondorjeshort.dystopo.sync.CompactResult
-import io.github.jasondorjeshort.dystopo.sync.Op
-import io.github.jasondorjeshort.dystopo.sync.SyncReplica
 import io.github.jasondorjeshort.dystopo.sync.SyncServer
-import io.github.jasondorjeshort.dystopo.sync.SyncSnapshot
-import io.github.jasondorjeshort.dystopo.sync.VersionVector
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -28,7 +24,8 @@ import java.net.NetworkInterface
  *   sync routes through a [SyncServer] over the app's track store, each guarded by the 6-digit code;
  * - [ShareNsd] announces the phone as `_dystopo._tcp` and lists other phones doing the same.
  * [connect] is the other side: check the code, then one pull-merge-push exchange with the peer.
- * Store calls go through the tracking thread ([Tracking.call]), like [io.github.jasondorjeshort.dystopo.app.sync.AppSync].
+ * T57: both sides use [AppSync.replica] (store calls on the tracking thread) and a connect goes through
+ * [AppSync.run] (paged, conflicts, synced settings, the clock check against the other phone's `now`).
  */
 class ShareSession private constructor(private val app: DystopoApp) {
     private val tracking = Tracking.of(app)
@@ -52,17 +49,8 @@ class ShareSession private constructor(private val app: DystopoApp) {
 
     private val store: SqlTrackStore get() = tracking.store as SqlTrackStore
 
-    /** The track store seen through the tracking thread. */
-    private val replica = object : SyncReplica {
-        override val deviceId: String get() = store.deviceId
-        override fun vector(): VersionVector = tracking.call { store.vector() }
-        override fun opsSince(since: VersionVector): List<Op> = tracking.call { store.opsSince(since) }
-        override fun bundle(since: VersionVector): Bundle = tracking.call { store.bundle(since) }
-        override fun apply(bundle: Bundle, now: Long): ApplyResult = tracking.call { store.apply(bundle, now) }
-        override fun snapshot(): SyncSnapshot = tracking.call { store.snapshot() }
-        override fun compact(now: Long, retentionMs: Long): CompactResult = tracking.call { store.compact(now, retentionMs) }
-        override val opCount: Long get() = tracking.call { store.opCount }
-    }
+    /** T57: the same store wrapper as every other sync ([AppSync.replica]; store calls on the tracking thread). */
+    private val sync: AppSync get() = AppSync.of(app)
 
     val listening: Boolean get() = server != null
     val port: Int? get() = server?.localPort
@@ -75,8 +63,9 @@ class ShareSession private constructor(private val app: DystopoApp) {
     @Synchronized
     fun start(): Map<String, Any?> {
         if (server == null) {
-            val g = ShareGate(hello = { mapOf("device" to store.deviceId, "name" to deviceName) }, sync = ::serveSync)
-            syncServer = SyncServer(replica, System::currentTimeMillis, ShareClient.gzip, ShareClient.gunzip)
+            // T57: `now` lets the connecting phone compare clocks.
+            val g = ShareGate(hello = { mapOf("device" to store.deviceId, "name" to deviceName, "now" to System.currentTimeMillis()) }, sync = ::serveSync)
+            syncServer = SyncServer(sync.replica, System::currentTimeMillis, ShareClient.gzip, ShareClient.gunzip)
             gate = g
             val s = listen(ShareClient.DEFAULT_PORT, g) ?: listen(0, g) ?: throw java.io.IOException("could not open a LAN port")
             server = s
@@ -126,22 +115,29 @@ class ShareSession private constructor(private val app: DystopoApp) {
             val applied = (result["applied"] as? Number)?.toInt() ?: 0
             lastIncoming = linkedMapOf("at" to System.currentTimeMillis(), "applied" to applied, "received" to result["received"])
             tracking.refreshUi("Received $applied changes from a nearby phone")
-            if (applied > 0) tracking.refreshOverlay(force = true)
+            if (applied > 0) {
+                tracking.refreshOverlay(force = true)
+                runCatching { SettingsSync.pull(app) } // T57: synced settings, as after any merge
+            }
         }
         return Response(reply.status, reply.contentType, reply.body)
     }
 
     /** One sync with the phone at [addr] (`host[:port]` or a share link) using [code]. Throws on failure (also kept in [lastConnect]). */
-    fun connect(addr: String, code: String?): Map<String, Any?> {
+    fun connect(addr: String, code: String?, pageOps: Int = Sync.DEFAULT_PAGE_OPS): Map<String, Any?> {
         val target = ShareClient.parse(addr)
         val c = code?.trim()?.takeIf { it.isNotEmpty() } ?: target.code ?: throw IllegalArgumentException("pass code=<6 digits>")
         connecting = true
         try {
-            val (peer, report) = ShareClient.exchange(replica, target, c, System::currentTimeMillis, SystemClock::elapsedRealtime)
-            val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target.baseUrl.removePrefix("http://"), "peerName" to peer["name"], "peerDevice" to peer["device"], "at" to System.currentTimeMillis()) + report.json()
+            val (peer, sample) = ShareClient.hello(target, c)
+            val name = (peer["name"] as? String) ?: addr
+            // T57: paged like any HTTP sync, with the same post-merge steps and a clock check against the other phone.
+            val report = sync.run(target.baseUrl, name, ShareClient.transport(target, c), pageOps) {
+                ClockCheck.of(listOfNotNull(sample), name, System.currentTimeMillis())
+            }
+            val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target.baseUrl.removePrefix("http://"), "peerName" to peer["name"], "peerDevice" to peer["device"]) +
+                (report - "peer") + mapOf("transport" to "lan")
             lastConnect = json
-            tracking.refreshUi("Synced with ${peer["name"] ?: addr}: ${report.merged.applied} in, ${report.pushed} out")
-            if (report.merged.applied > 0) tracking.refreshOverlay(force = true)
             return json
         } catch (e: Exception) {
             Log.w(TAG, "share sync with $addr failed", e)

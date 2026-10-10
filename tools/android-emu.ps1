@@ -2,11 +2,15 @@
 # forwards its debug server, so agents can `curl` it:
 #
 #   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Build
-#   curl http://localhost:8686/health        curl -o out\phone.png http://localhost:8686/screenshot
+#   curl -H "X-Dystopo-Token: <token>" http://localhost:8686/health
 #
-# Every request needs the app's per-launch loopback token (T49): `curl localhost:8686/health` without it
-# answers {"token": "..."}; send it as `-H "X-Dystopo-Token: <token>"` or `?t=<token>`. The run ends by
-# printing the current one (it changes whenever the app restarts).
+# Every request needs the app's per-launch loopback token (T49), as `-H "X-Dystopo-Token: <token>"` or
+# `?t=<token>`. T57: the debug routes answer on a random device port per launch, logged with the token only
+# in logcat (`I/Dystopo: debug server on port N token T`); this script reads that line and forwards -Port to
+# that device port, and ends by printing the token. Both change whenever the app restarts: run
+# `tools\android-emu.ps1 -Avd <avd> -EmuPort <n> -Port <p> -Forward` (or the Python tools, which do it
+# themselves) to re-read them. The app setting debugFixedPort=1 keeps the debug routes on 8686 with the
+# GET /health token bootstrap (from the next launch); the script then still finds the port in logcat.
 #
 # Several emulators side by side: give each its own AVD, console port and host port. The serial is
 # emulator-<EmuPort>; every adb call in this script (and android-push-pack.ps1) uses it, and the run ends
@@ -32,8 +36,10 @@ param(
     [string]$Avd = 'dystopo35',
     [string]$SystemImage = 'system-images;android-35;google_apis;x86_64',
     [string]$Device = 'pixel_6',
-    # Host port forwarded to the app's debug server (always 8686 on the device).
+    # Host port forwarded to the app's debug server (T57: a random device port per launch, read from logcat).
     [int]$Port = 8686,
+    # T57: only re-read the debug port and token from logcat and re-forward -Port (after an app restart).
+    [switch]$Forward,
     # Emulator console port (even, 5554-5682); adb uses EmuPort+1 and the serial is emulator-<EmuPort>.
     [int]$EmuPort = 0,
     # Kill this AVD's emulator (found by -EmuPort or by AVD name) and remove its port forward.
@@ -127,6 +133,35 @@ function Get-Forwards {
     }
 }
 
+# T57: the debug server's device port and token, from the app's logcat line `debug server on port N token T`
+# (its current process only); waits up to $timeoutS seconds. Returns @(port, token) or $null.
+function Get-DebugEndpoint([int]$timeoutS = 60) {
+    $deadline = (Get-Date).AddSeconds($timeoutS)
+    while ($true) {
+        $procId = (Adb shell pidof $package | Select-Object -First 1)
+        if ($procId -and "$procId".Trim() -match '^\d+') {
+            $lines = Adb logcat -d -v brief "--pid=$($Matches[0])" -s 'Dystopo:I'
+            $hit = @($lines | Where-Object { $_ -match 'debug server on port (\d+) token ([0-9a-f]+)' } | Select-Object -Last 1)
+            if ($hit -and $hit[0] -match 'debug server on port (\d+) token ([0-9a-f]+)') { return @([int]$Matches[1], $Matches[2]) }
+        }
+        if ((Get-Date) -gt $deadline) { return $null }
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+# T57: forwards -Port to the debug server; returns the token ('' when the line never appeared: then 8686 and
+# the /health bootstrap, the debugFixedPort mode of builds before T57).
+function Connect-DebugServer {
+    $taken = @(Get-Forwards | Where-Object { $_.Port -eq $Port -and $_.Serial -ne $script:serial })
+    if ($taken) { throw "host port $Port is already forwarded to $($taken[0].Serial); pick another -Port" }
+    $ep = Get-DebugEndpoint
+    $remote = if ($ep) { $ep[0] } else { $devicePort }
+    $fwd = Adb forward "tcp:$Port" "tcp:$remote"
+    if ($LASTEXITCODE -ne 0) { throw "adb forward tcp:$Port failed: $fwd" }
+    $script:debugRemote = $remote
+    if ($ep) { $ep[1] } else { '' }
+}
+
 # 0. -Stop: kill this AVD's emulator and drop its forward.
 if ($Stop) {
     if ($NoEmulator) { throw '-Stop applies to emulators only' }
@@ -171,6 +206,22 @@ if ($Stop) {
         }
         Write-Host ("deleted AVD $Avd ({0:n1} GB) from $env:ANDROID_AVD_HOME" -f ($bytes / 1GB))
     }
+    exit 0
+}
+
+# T57: -Forward: the app restarted (new debug port and token); read them from logcat and re-forward -Port.
+if ($Forward) {
+    if ($NoEmulator) {
+        $script:serial = if ($Serial) { $Serial } else { @((Get-AdbDevices).GetEnumerator() | Where-Object { $_.Value -eq 'device' -and $_.Key -notmatch '^emulator-' } | ForEach-Object { $_.Key })[0] }
+    } elseif ($EmuPort) {
+        $candidate = "emulator-$EmuPort"
+        if ((Get-EmuAvdName $candidate) -ne $Avd) { throw "$candidate does not run AVD $Avd" }
+        $script:serial = $candidate
+    } else { $script:serial = Find-AvdSerial }
+    if (-not $script:serial) { throw "no running device for -Forward" }
+    $token = Connect-DebugServer
+    Write-Host "ANDROID_SERIAL=$script:serial"
+    Write-Host "Dystopo debug server: http://localhost:$Port -> device port $($script:debugRemote) (token $token)"
     exit 0
 }
 
@@ -309,16 +360,15 @@ if (-not $NoPush) {
 # The host port must not already be forwarded to another device (that would be cross-talk).
 $taken = @(Get-Forwards | Where-Object { $_.Port -eq $Port -and $_.Serial -ne $script:serial })
 if ($taken) { throw "host port $Port is already forwarded to $($taken[0].Serial); pick another -Port" }
-$fwd = Adb forward "tcp:$Port" "tcp:$devicePort"
-if ($LASTEXITCODE -ne 0) { throw "adb forward tcp:$Port failed: $fwd" }
+Adb logcat -c | Out-Null
 Adb shell am start -W -n $activity | Out-Null
+$token = Connect-DebugServer # T57: random debug port and token from logcat
 
 $url = "http://localhost:$Port"
 $deadline = (Get-Date).AddMinutes(5)
-$token = $null
 while ($true) {
     try {
-        # T49: /health without the token gives the token; with it, the full health report.
+        # T57: token from logcat; else (debugFixedPort) /health without the token gives it.
         if (-not $token) { $token = (Invoke-RestMethod -TimeoutSec 10 "$url/health").token }
         $health = Invoke-RestMethod -TimeoutSec 10 -Headers @{ 'X-Dystopo-Token' = $token } "$url/health"
         if ($health.map.styleLoaded) { break }
@@ -329,7 +379,7 @@ while ($true) {
 $stopArgs = if ($NoEmulator) { '' } else { "-Avd $Avd -EmuPort $($script:serial -replace 'emulator-', '') -Port $Port" + $(if ($AvdHome) { " -AvdHome $env:ANDROID_AVD_HOME" } else { '' }) + " -Stop [-Delete]" }
 Write-Host ''
 Write-Host "ANDROID_SERIAL=$script:serial"
-Write-Host "Dystopo debug server: $url (token $token; GET /health without it prints the current one)"
+Write-Host "Dystopo debug server: $url -> device port $($script:debugRemote) (token $token; after an app restart re-run with -Forward)"
 Write-Host "  curl -H `"X-Dystopo-Token: $token`" $url/health"
 Write-Host "  curl `"$url/stats?t=$token`""
 Write-Host "  curl -X POST `"$url/camera?lat=46.853&lon=-121.76&zoom=12&t=$token`""

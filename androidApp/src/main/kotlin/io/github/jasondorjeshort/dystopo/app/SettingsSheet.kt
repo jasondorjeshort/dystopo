@@ -96,10 +96,22 @@ fun SettingsSheet() {
                 Option("On", warmup) { change(SettingsRoutes.Parsed.Ok(null, false, null, true)) }
                 Option("Off", !warmup) { change(SettingsRoutes.Parsed.Ok(null, false, null, false)) }
             }
+            // T57: how far a long-pressed route start or end may be from the nearest trail or road.
+            val snap = AppSettings.routeSnapM
+            Setting("Route snap", "how far a route's start or end may be from a trail or road") {
+                for (m in SNAP_CHOICES) {
+                    Option(io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(m.toDouble(), units), snap == m) {
+                        change(SettingsRoutes.Parsed.Ok(null, false, null, null, routeSnapM = m))
+                    }
+                }
+            }
             io.github.jasondorjeshort.dystopo.app.options.MapOptionsSection { change(SettingsRoutes.Parsed.Ok(null, false, null, null, it)) } // T47
         }
     }
 }
+
+/** T57: the snap distances the sheet offers (any value in [AppSettings.ROUTE_SNAP_RANGE] through `/settings`). */
+private val SNAP_CHOICES = listOf(300, 500, 1000)
 
 private fun stepScale(scale: Double, dir: Int): Double =
     (Math.round((scale + 0.1 * dir) * 10) / 10.0).coerceIn(MapLibreStyle.MIN_TEXT_SCALE, MapLibreStyle.MAX_TEXT_SCALE)
@@ -119,6 +131,7 @@ private fun Setting(label: String, hint: String?, options: @Composable () -> Uni
 private fun Option(label: String, selected: Boolean, onClick: () -> Unit) {
     BasicText(
         label,
+        softWrap = false, // T57: "0.62 mi" on one line
         style = TextStyle(color = if (selected) Paper else Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium),
         modifier = Modifier
             .background(if (selected) Accent else Color(0xEEFFFCF5), RoundedCornerShape(16.dp))

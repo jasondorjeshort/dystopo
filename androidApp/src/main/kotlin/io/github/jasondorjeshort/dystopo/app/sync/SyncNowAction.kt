@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.remember
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import io.github.jasondorjeshort.dystopo.app.AppSettings
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -153,11 +159,20 @@ fun SyncStatusSheet() {
                 )
             }
             val clamped = (skew?.get("clamped") as? Number)?.toLong() ?: 0L
+            // T57: the clock comparison with the last peer, then what the skew guard saw.
+            @Suppress("UNCHECKED_CAST") val clock = s["clockCheck"] as? Map<String, Any?>
+            val clockLine = when {
+                clock == null -> "not compared yet (at the next sync)"
+                clock["warn"] == true -> clock["message"] as? String ?: "clocks differ"
+                else -> "agrees with ${clock["peer"]} (within ${((clock["uncertaintyMs"] as? Number)?.toLong() ?: 0L) / 1000 + 1} s)"
+            }
+            Item("Clock check", clockLine, if (clock?.get("warn") == true) Warn else Ink)
             Item(
-                "Clock check",
+                "Far-ahead edits",
                 if (clamped == 0L) "no device more than a day ahead"
                 else "$clamped operations from a device up to ${((skew?.get("maxAheadMs") as? Number)?.toLong() ?: 0L) / 3_600_000} h ahead (merged; clock not moved)",
             )
+            PeerSettings(s)
             Item("This device", "${(s["device"] as? String)?.take(8)}  ${s["ops"]} operations, ${s["tracks"]} tracks, ${s["settings"]} synced settings")
         }
     }
@@ -166,16 +181,65 @@ fun SyncStatusSheet() {
 private fun lastLine(last: Map<String, Any?>?): String {
     if (last == null) return "never"
     val at = (last["at"] as? Number)?.toLong()?.let { SimpleDateFormat("MMM d HH:mm", Locale.US).format(Date(it)) } ?: "?"
-    return if (last["ok"] == true) "$at, ${(last["ms"] as? Number)?.toLong() ?: 0} ms" else "$at failed: ${last["error"]}"
+    val with = (last["peer"] as? String)?.let { " with ${AppSync.shortName(it)}" } ?: "" // T57: which peer
+    return if (last["ok"] == true) "$at$with, ${(last["ms"] as? Number)?.toLong() ?: 0} ms" else "$at$with failed: ${last["error"]}"
 }
 
 private fun kb(v: Any?): String = ((v as? Number)?.toLong() ?: 0L).let { if (it < 10_240) "$it B" else "${it / 1024} kB" }
 
 @Composable
-private fun Item(label: String, value: String) {
+private fun Item(label: String, value: String, color: Color = Ink) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         BasicText(label, Modifier.width(120.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
-        BasicText(value, style = TextStyle(color = Ink, fontSize = 13.sp))
+        BasicText(value, style = TextStyle(color = color, fontSize = 13.sp))
+    }
+}
+
+/**
+ * T57: the peer and the bearer token for a server whose `/sync` is gated (the `server` module's token), as
+ * `POST /sync/settings?peer=&token=` sets them. The token is never shown back: the field starts empty and
+ * says whether one is set; Save keeps the stored token when the field is left empty; Clear token removes it.
+ */
+@Composable
+private fun PeerSettings(s: Map<String, Any?>) {
+    val sync = AppSync.of(DystopoApp.instance)
+    var peer by remember { mutableStateOf(s["peerSetting"] as? String ?: "") }
+    var token by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf<String?>(null) }
+    val tokenSet = s["tokenSet"] == true
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        BasicText("Sync peer (empty: the online server ${AppSettings.server.ifEmpty { "(none set)" }})", style = TextStyle(color = Muted, fontSize = 12.sp))
+        BasicTextField(
+            peer, { peer = it }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).padding(8.dp),
+        )
+        BasicText(if (tokenSet) "Token: set (type a new one to replace it)" else "Token: none (for a server that requires one)", style = TextStyle(color = Muted, fontSize = 12.sp))
+        BasicTextField(
+            token, { token = it.trim() }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            visualTransformation = PasswordVisualTransformation(),
+            textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).padding(8.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button("Save") {
+                val p = peer.trim()
+                val t = token
+                Thread {
+                    sync.setPeer(p)
+                    if (t.isNotEmpty()) sync.setSyncToken(t)
+                    note = "Saved" + if (t.isNotEmpty()) " (token set)" else ""
+                    SyncUi.refresh()
+                }.start()
+                token = ""
+            }
+            if (tokenSet) Button("Clear token") {
+                Thread { sync.setSyncToken(""); note = "Token cleared"; SyncUi.refresh() }.start()
+            }
+            note?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+        }
     }
 }
 

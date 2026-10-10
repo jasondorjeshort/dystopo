@@ -37,6 +37,25 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.CRC32
 import java.util.zip.Inflater
 
+/**
+ * T57: the tile counters `/stats` reports, kept by [DystopoApp] across tile service reopens (a pack install,
+ * a sync that changes settings, `/reload`), so they count since the app started, not since the last reopen.
+ */
+class TileCounters {
+    val dem = SourceCounters()
+    val demSynthesized = AtomicLong()
+    val osm = SourceCounters()
+    val contours = SourceCounters()
+    val glyphs = SourceCounters()
+    val contourGen = ContourTileStats(keepRecent = 48)
+    val contourCacheHits = AtomicLong()
+    val contourWaits = AtomicLong()
+    val demSynthesis = Timing()
+
+    /** Tile services opened with these counters (1 + reloads). */
+    val serviceOpens = AtomicLong()
+}
+
 /** Counters for one tile source, reported by `/stats`. */
 class SourceCounters {
     val served = AtomicLong()
@@ -120,16 +139,20 @@ fun packIdentity(file: File): String {
  * directory of the shared [ContourCache] (kept across switches, one LRU cap). Cliff lines in vector tiles
  * are turned so the ground falls to their right ([CliffSides]), the side the style draws ticks on.
  */
-class TileService(val packs: PackSet, private val cacheDir: File, private val port: Int, private val token: LoopbackToken) {
-    val dem = SourceCounters()
-    val demSynthesized = AtomicLong()
-    val osm = SourceCounters()
-    val contours = SourceCounters()
-    val glyphs = SourceCounters()
-    val contourGen = ContourTileStats(keepRecent = 48)
-    val contourCacheHits = AtomicLong()
-    val contourWaits = AtomicLong()
-    val demSynthesis = Timing()
+class TileService(
+    val packs: PackSet, private val cacheDir: File, private val port: Int, private val token: LoopbackToken,
+    /** T57: the `/stats` counters, owned by the app so they stay cumulative when a reload replaces the service. */
+    val counters: TileCounters = TileCounters(),
+) {
+    val dem = counters.dem
+    val demSynthesized = counters.demSynthesized
+    val osm = counters.osm
+    val contours = counters.contours
+    val glyphs = counters.glyphs
+    val contourGen = counters.contourGen
+    val contourCacheHits = counters.contourCacheHits
+    val contourWaits = counters.contourWaits
+    val demSynthesis = counters.demSynthesis
 
     private val contourOptions = ContourTileOptions(
         units = AppSettings.units, // T33: the units preference

@@ -46,6 +46,11 @@ import java.util.zip.GZIPOutputStream
  * thread call, so recording carries on between pages); the last sync, the peer's vector (for the
  * pending count) and the fields edited on two devices ([conflicts], the "edited on two devices" notes)
  * are kept across restarts; synced app settings are applied after a merge ([SettingsSync]).
+ *
+ * T57: [replica] is also what the Share screen's LAN listener serves and its connect syncs with ([run] does
+ * the post-merge steps for both: conflicts, synced settings, the result line, the map). Every sync compares
+ * clocks with the peer ([ClockCheck]: the server's `Date` header, a nearby phone's `now`) and warns when they
+ * differ by minutes or more.
  */
 class AppSync private constructor(private val app: DystopoApp) {
     private val tracking = Tracking.of(app)
@@ -98,8 +103,8 @@ class AppSync private constructor(private val app: DystopoApp) {
 
     private val store: SqlTrackStore get() = tracking.store as SqlTrackStore
 
-    /** The store seen through the tracking thread. */
-    private val replica = object : SyncReplica {
+    /** The store seen through the tracking thread (T57: shared with the Share screen's listener and connect). */
+    val replica: SyncReplica = object : SyncReplica {
         override val deviceId: String get() = store.deviceId
         override fun vector(): VersionVector = tracking.call { store.vector() }
         override fun opsSince(since: VersionVector): List<Op> = tracking.call { store.opsSince(since) }
@@ -113,9 +118,12 @@ class AppSync private constructor(private val app: DystopoApp) {
         override val skewLog: SkewLog get() = tracking.call { store.skewLog }
     }
 
-    /** An HTTP peer for a URL, else a file in [filesDir] (`.dsync` added when the name has no extension). */
-    fun transport(peer: String): SyncTransport {
-        if (peer.startsWith("http://") || peer.startsWith("https://")) return HttpSyncTransport(peer, { u, b -> post(u, b, syncToken) }, gzip, gunzip)
+    /**
+     * An HTTP peer for a URL, else a file in [filesDir] (`.dsync` added when the name has no extension). T57:
+     * HTTP replies' `Date` headers go to [clock].
+     */
+    fun transport(peer: String, clock: ClockSamples? = null): SyncTransport {
+        if (peer.startsWith("http://") || peer.startsWith("https://")) return HttpSyncTransport(peer, { u, b -> post(u, b, syncToken, clock) }, gzip, gunzip)
         val name = peer.removePrefix("file:")
         require(name.isNotEmpty() && '/' !in name && '\\' !in name && name != "." && name != "..") { "a file peer is a plain name in ${filesDir.path}" }
         val f = File(filesDir, if ('.' in name) name else "$name.dsync")
@@ -129,19 +137,38 @@ class AppSync private constructor(private val app: DystopoApp) {
     fun syncNow(peer: String? = null, pageOps: Int = Sync.DEFAULT_PAGE_OPS): Map<String, Any?> {
         val target = peer?.takeIf { it.isNotBlank() } ?: defaultPeer
         require(target.isNotBlank()) { "no sync peer: pass with=<url|file> or set one (POST /sync/settings?peer=)" }
+        val samples = ClockSamples()
+        val transport = transport(target, samples)
+        return run(target, shortName(target), transport, pageOps) { ClockCheck.of(samples.all(), shortName(target), System.currentTimeMillis()) }
+    }
+
+    /**
+     * T57: one exchange with [transport] (the default peer's, or a nearby phone's over the LAN link) and what
+     * follows a merge: the peer's vector, conflicts, synced settings, the clock check ([clock], read after the
+     * exchange), the remembered result and the line in the tracks list. [target] keys the peer's vector,
+     * [label] names the peer to the user. Throws on failure (also kept in [last]).
+     */
+    fun run(target: String, label: String, transport: SyncTransport, pageOps: Int, clock: () -> ClockCheck?): Map<String, Any?> {
         synchronized(this) {
             running = true
             SyncUi.refresh()
             try {
-                val r: SyncReport = Sync.exchange(replica, transport(target), System::currentTimeMillis, SystemClock::elapsedRealtime, pageOps)
+                val r: SyncReport = Sync.exchange(replica, transport, System::currentTimeMillis, SystemClock::elapsedRealtime, pageOps)
                 syncs++
                 r.peerVector?.let { prefs.edit().putString(KEY_PEER_VECTOR + target, it.text).apply() }
                 if (r.merged.conflicts.isNotEmpty()) addConflicts(r)
                 val settings = if (r.merged.applied > 0) runCatching { SettingsSync.pull(app) }.getOrElse { mapOf("error" to it.message) } else null
-                val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target, "at" to System.currentTimeMillis()) + r.json() + mapOf("settings" to settings)
+                val check = runCatching(clock).getOrNull()
+                check?.let { rememberClock(it) }
+                val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target, "at" to System.currentTimeMillis()) + r.json() +
+                    mapOf("settings" to settings, "clock" to check?.json())
                 remember(json)
                 val m = r.merged
-                tracking.refreshUi("Synced with ${shortName(target)}: ${m.applied} in, ${r.pushed} out" + if (m.conflicts.isNotEmpty()) ", ${m.conflicts.size} edited on two devices" else "")
+                tracking.refreshUi(
+                    "Synced with $label: ${m.applied} in, ${r.pushed} out" +
+                        (if (m.conflicts.isNotEmpty()) ", ${m.conflicts.size} edited on two devices" else "") +
+                        (check?.message()?.let { ". $it" } ?: ""),
+                )
                 if (m.applied > 0) tracking.refreshOverlay(force = true)
                 return json
             } catch (e: Exception) {
@@ -156,10 +183,29 @@ class AppSync private constructor(private val app: DystopoApp) {
         }
     }
 
+    /** T57: the last clock comparison with any peer (kept across restarts); null before the first sync. */
+    @Volatile var clockCheck: ClockCheck? = loadClock()
+        private set
+
+    private fun rememberClock(c: ClockCheck) {
+        clockCheck = c
+        prefs.edit().putString(KEY_CLOCK, MiniJson.encode(c.json())).apply()
+    }
+
+    private fun loadClock(): ClockCheck? = prefs.getString(KEY_CLOCK, null)?.let { text ->
+        runCatching {
+            val o = MiniJson.parseObject(text)
+            ClockCheck(
+                (o["offsetMs"] as Number).toLong(), (o["uncertaintyMs"] as Number).toLong(), o["peer"] as String,
+                (o["at"] as Number).toLong(), (o["samples"] as? Number)?.toInt() ?: 1,
+            )
+        }.getOrNull()
+    }
+
     /** Keeps the last result (without the long per-conflict list) across restarts. */
     private fun remember(json: Map<String, Any?>) {
         last = json
-        val short = json - "conflicts" - "settings"
+        val short = json - "conflicts" - "settings" - "clock"
         prefs.edit().putString(KEY_LAST, MiniJson.encode(short)).apply()
     }
 
@@ -198,6 +244,7 @@ class AppSync private constructor(private val app: DystopoApp) {
     fun status(): Map<String, Any?> = linkedMapOf<String, Any?>(
         "peer" to defaultPeer, "peerSetting" to peerSetting, "tokenSet" to syncToken.isNotEmpty(), "running" to running, "syncs" to syncs, "last" to last,
         "pendingOps" to pending(),
+        "clockCheck" to clockCheck?.json(), // T57: the last clock comparison with a peer
         "conflicts" to linkedMapOf("total" to conflictsTotal, "concurrent" to conflicts.count { it["concurrent"] == true }, "recent" to conflicts.take(10)),
         "settingsSync" to SettingsSync.json(),
         "files" to filesDir.listFiles { f -> f.isFile && f.name.endsWith(".dsync") }.orEmpty().sortedBy { it.name }.map { mapOf("name" to it.name, "bytes" to it.length()) },
@@ -213,6 +260,7 @@ class AppSync private constructor(private val app: DystopoApp) {
         private const val KEY_LAST = "last"
         private const val KEY_TOKEN = "token"
         private const val KEY_PEER_VECTOR = "peerVector:"
+        private const val KEY_CLOCK = "clockCheck"
         const val MAX_CONFLICTS = 100
 
         @Volatile private var instance: AppSync? = null
@@ -226,8 +274,9 @@ class AppSync private constructor(private val app: DystopoApp) {
         val gzip: (ByteArray) -> ByteArray = { b -> ByteArrayOutputStream(b.size / 2 + 64).also { o -> GZIPOutputStream(o).use { it.write(b) } }.toByteArray() }
         val gunzip: (ByteArray) -> ByteArray = { b -> GZIPInputStream(b.inputStream()).use { it.readBytes() } }
 
-        fun post(url: String, body: ByteArray, token: String = ""): ByteArray {
+        fun post(url: String, body: ByteArray, token: String = "", clock: ClockSamples? = null): ByteArray {
             val c = URI(url).toURL().openConnection() as HttpURLConnection
+            val sent = System.currentTimeMillis()
             try {
                 c.requestMethod = "POST"
                 c.connectTimeout = 10_000
@@ -238,6 +287,8 @@ class AppSync private constructor(private val app: DystopoApp) {
                 c.setFixedLengthStreamingMode(body.size)
                 c.outputStream.use { it.write(body) }
                 val code = c.responseCode
+                // T57: the server's clock, from its Date header (whole seconds).
+                ClockCheck.httpDate(c.getHeaderField("Date"))?.let { clock?.add(ClockSample(it, sent, System.currentTimeMillis(), 1000)) }
                 val bytes = (if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes() } ?: ByteArray(0)
                 check(code in 200..299) { "POST $url: HTTP $code ${bytes.decodeToString().take(300)}" }
                 return bytes

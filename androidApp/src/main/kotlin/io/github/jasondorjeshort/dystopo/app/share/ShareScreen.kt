@@ -51,6 +51,26 @@ import java.util.concurrent.Executors
 object ShareUi {
     var visible by mutableStateOf(false)
 
+    /** T57: the address and code fields (a tapped share link or a scanned QR code fills them). */
+    var addr by mutableStateOf("")
+    var code by mutableStateOf("")
+
+    /** Where the fields came from: `link` (a tapped `dystopo://share` link), `qr` (the scanner), `scan` (`POST /share/scan`), or null (typed). */
+    var prefilledFrom by mutableStateOf<String?>(null)
+
+    /** Main thread. */
+    fun prefill(addr: String, code: String, source: String) {
+        this.addr = addr
+        this.code = code
+        prefilledFrom = source
+        prefills++
+    }
+
+    @Volatile var prefills = 0
+        private set
+
+    fun json(): Map<String, Any?> = linkedMapOf("addr" to addr, "codeSet" to code.isNotEmpty(), "from" to prefilledFrom, "prefills" to prefills)
+
     /** Start and stop in order, off the main thread (opening and closing quickly must end stopped). */
     val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-share").apply { isDaemon = true } }
 }
@@ -92,8 +112,8 @@ fun ShareOverlay() {
 @Composable
 private fun ShareScreen(session: ShareSession, close: () -> Unit) {
     var status by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) }
-    var addr by remember { mutableStateOf("") }
-    var code by remember { mutableStateOf("") }
+    val addr = ShareUi.addr
+    val code = ShareUi.code
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
@@ -157,12 +177,20 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
             BasicText(
                 "${p.name}  (${p.hostPort})",
                 style = TextStyle(color = Link, fontSize = 14.sp),
-                modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).clickable { addr = p.hostPort ?: "" }.padding(10.dp),
+                modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).clickable { ShareUi.addr = p.hostPort ?: ""; ShareUi.prefilledFrom = null }.padding(10.dp),
             )
         }
-        Field("Address (host:port)", addr, KeyboardType.Uri) { addr = it }
-        Field("Code", code, KeyboardType.Number) { code = it.filter(Char::isDigit).take(6) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // T57: a tapped share link or a scanned code fills the fields; the user still taps Sync.
+        ShareUi.prefilledFrom?.let { from ->
+            BasicText(
+                (if (from == "link") "From a share link" else "From a QR code") + ": tap Sync to sync with $addr",
+                style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+            )
+        }
+        Field("Address (host:port)", addr, KeyboardType.Uri) { ShareUi.addr = it; ShareUi.prefilledFrom = null }
+        Field("Code", code, KeyboardType.Number) { ShareUi.code = it.filter(Char::isDigit).take(6) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Scan QR code") { ScanUi.visible = true } // T57: the in-app scanner
             Chip(if (busy) "Syncing..." else "Sync") {
                 if (busy || addr.isBlank()) return@Chip
                 busy = true

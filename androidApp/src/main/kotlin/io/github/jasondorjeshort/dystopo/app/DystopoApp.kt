@@ -20,6 +20,9 @@ class DystopoApp : Application() {
     val token = LoopbackToken()
     val startedAt = SystemClock.elapsedRealtime()
 
+    /** T57: `/stats` tile counters for the whole process, shared by every [TileService] it opens. */
+    val tileCounters = TileCounters()
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -30,12 +33,43 @@ class DystopoApp : Application() {
         tiles = openTiles()
         io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)
-        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = routes::handle) // T33: debug routes get their own pool
+        // T57: in debug builds the debug routes live on a second loopback server on a random port, announced
+        // only in logcat with the token; 8686 then answers like a release build (map routes only, no /health).
+        // debugFixedPort=1 keeps everything on 8686 with the /health token bootstrap (pre-T57 behaviour).
+        fixedDebugPort = BuildConfig.DEBUG_ENDPOINTS && AppSettings.debugFixedPort
+        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = fixedDebugPort) }) // T33: debug routes get their own pool
         try {
             server.start()
         } catch (e: Exception) {
             Log.e(LocalServer.TAG, "server failed to start on port ${BuildConfig.SERVER_PORT}", e)
         }
+        if (BuildConfig.DEBUG_ENDPOINTS) startDebugServer(routes)
+    }
+
+    /** T57: the debug server (null with [fixedDebugPort] or in release builds). */
+    var debugServer: LocalServer? = null
+        private set
+
+    /** T57: debug routes share the tile server's port 8686 (setting `debugFixedPort`). */
+    var fixedDebugPort = false
+        private set
+
+    /** Where the debug routes answer: the debug server's random port, or 8686 with [fixedDebugPort]. */
+    val debugPort: Int? get() = if (!BuildConfig.DEBUG_ENDPOINTS) null else debugServer?.localPort ?: BuildConfig.SERVER_PORT.takeIf { fixedDebugPort }
+
+    private fun startDebugServer(routes: Routes) {
+        if (!fixedDebugPort) {
+            val s = LocalServer(0, threads = 2, debugThreads = 3, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = true) })
+            try {
+                s.start()
+                debugServer = s
+            } catch (e: Exception) {
+                Log.e(LocalServer.TAG, "debug server failed to start", e)
+                return
+            }
+        }
+        // The one place the port and token are announced: logcat is readable by this app and adb, not by other apps.
+        Log.i(DEBUG_TAG, "debug server on port $debugPort token ${token.value}")
     }
 
     /** Pack roots: internal files dir first (adb push + run-as), then the app-specific external dir. */
@@ -46,7 +80,8 @@ class DystopoApp : Application() {
         // T33: the first pack opened seeds the units preference (once; see AppSettings.seedUnits).
         packs.dem?.header?.let { h -> AppSettings.seedUnits((h.minLat + h.maxLat) / 2, (h.minLon + h.maxLon) / 2, "pack:${packs.name ?: "default"}") }
         collectContourGarbage()
-        return TileService(packs, cacheDir, BuildConfig.SERVER_PORT, token)
+        tileCounters.serviceOpens.incrementAndGet()
+        return TileService(packs, cacheDir, BuildConfig.SERVER_PORT, token, tileCounters) // T57: cumulative counters
     }
 
     /** T41: contour (and T49 cliff) caches of every pack file on the device stay (switches, restarts); only orphans go (background). */
@@ -66,6 +101,9 @@ class DystopoApp : Application() {
     }
 
     companion object {
+        /** T57: logcat tag of the `debug server on port N token T` line the tools read. */
+        const val DEBUG_TAG = "Dystopo"
+
         lateinit var instance: DystopoApp
             private set
     }

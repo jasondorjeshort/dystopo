@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- The loopback tile server socket, and (T54) the Share screen: a LAN listener guarded by a 6-digit code and NSD
@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- T57: the Share screen's QR scanner (asked for when the scanner opens; the app works without it). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".DystopoApp"
@@ -32,6 +35,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="dystopo" android:host="map" />
+            </intent-filter>
+            <!-- T57: dystopo://share?addr=&code= opens the Share screen with both filled in (share/ShareLink.kt). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dystopo" android:host="share" />
             </intent-filter>
         </activity>
         <activity android:name=".about.AboutActivity" android:exported="false" />

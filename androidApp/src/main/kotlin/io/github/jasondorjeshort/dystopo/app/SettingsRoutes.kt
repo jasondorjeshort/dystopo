@@ -64,6 +64,8 @@ class SettingsRoutes(private val app: DystopoApp) {
         parsed.warmup?.let { AppSettings.setWarmup(it) }
         parsed.onlineCacheMb?.let { AppSettings.setOnlineCacheMb(it); io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.resize(it * ContourCache.MB) } // T41
         parsed.contourCacheMb?.let { AppSettings.setContourCacheMb(it); ContourCache.resize(it) }
+        parsed.routeSnapM?.let { AppSettings.setRouteSnapM(it) } // T57: the next plan uses it
+        parsed.debugFixedPort?.let { AppSettings.setDebugFixedPort(it) } // T57: from the next launch
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -86,6 +88,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             /** T47: validated map option parameters ([MapOptions.KEYS]), applied over the current options. */
             val map: Map<String, Any?> = emptyMap(),
             val onlineCacheMb: Long? = null, val contourCacheMb: Long? = null, // T41
+            val routeSnapM: Int? = null, val debugFixedPort: Boolean? = null, // T57
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -95,7 +98,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb")
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder") + MapOptions.KEYS + CACHE_KEYS // decoder: T42, TileService.setDecoder
+        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort") + MapOptions.KEYS + CACHE_KEYS // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -132,12 +135,15 @@ class SettingsRoutes(private val app: DystopoApp) {
                 }
             }
             var warmup: Boolean? = null
-            params["warmup"]?.let { raw ->
-                warmup = when (raw.toString().trim().lowercase()) {
-                    "1", "true", "on", "yes" -> true
-                    "0", "false", "off", "no" -> false
-                    else -> return Parsed.Error("warmup must be 1 or 0 (got $raw)")
-                }
+            params["warmup"]?.let { raw -> warmup = flag(raw) ?: return Parsed.Error("warmup must be 1 or 0 (got $raw)") }
+            var debugFixedPort: Boolean? = null
+            params["debugFixedPort"]?.let { raw -> debugFixedPort = flag(raw) ?: return Parsed.Error("debugFixedPort must be 1 or 0 (got $raw)") }
+            var routeSnapM: Int? = null
+            params["routeSnapM"]?.let { raw ->
+                val v = (raw as? Number)?.toDouble() ?: raw.toString().trim().toDoubleOrNull()
+                val r = AppSettings.ROUTE_SNAP_RANGE
+                if (v == null || !v.isFinite() || v < r.first || v > r.last) return Parsed.Error("routeSnapM must be between ${r.first} and ${r.last} m (got $raw)")
+                routeSnapM = Math.round(v).toInt()
             }
             val map = params.filterKeys { it in MapOptions.KEYS }
             if (map.isNotEmpty()) {
@@ -151,7 +157,13 @@ class SettingsRoutes(private val app: DystopoApp) {
             onlineError?.let { return Parsed.Error(it) }
             val (contour, contourError) = cacheMb(params, "contourCacheMb")
             contourError?.let { return Parsed.Error(it) }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour)
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort)
+        }
+
+        private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {
+            "1", "true", "on", "yes" -> true
+            "0", "false", "off", "no" -> false
+            else -> null
         }
     }
 }

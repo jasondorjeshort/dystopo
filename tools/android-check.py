@@ -36,14 +36,17 @@ Before the tour (unless --no-restart) the app is force-stopped and relaunched th
 MapLibre's tile caches and the glyph cache start empty, and the contour disk cache is cleared (unless
 --keep-cache) so contour timings measure generation, not disk reads.
 
-Every request carries the app's per-launch loopback token (T49): read from GET /health without a token
-(debug builds answer only {"token": ...}) and again after a 401; setup.token in the summary also records that a
-request without the token got 401.
+Every request carries the app's per-launch loopback token (T49). T57: the debug routes answer on a random
+port per launch, announced with the token only in logcat (`debug server on port N token T`, tag Dystopo):
+with a device (--serial, or the serial that owns --port) the script reads that line and forwards --port to
+it (again after a relaunch or a 401); without adb it falls back to GET /health without a token, which
+answers {"token": ...} when the app runs with the setting debugFixedPort=1. setup.token in the summary
+records the device port and that a request without the token got 401.
 
 Device selection: --port is the host port forwarded to the app (tools/android-emu.ps1 -Port). With
---serial (or ANDROID_SERIAL) the script checks that `adb forward --list` maps that port to that serial
-and refuses to run otherwise, so a tour can never drive another emulator; without either it reports
-the serial that owns the port. adb is also used for the restart and to collect the app's logcat
+--serial (or ANDROID_SERIAL) the script refuses a port that `adb forward --list` maps to another serial
+(it forwards the port itself when nothing holds it), so a tour can never drive another emulator; without
+either it uses the serial that owns the port. adb is also used for the restart and to collect the app's logcat
 warnings during the tour (reported, not checked).
 
 Writes <out stem>-<i>.png per view, <out stem>-sheet.png (a contact sheet, red/green bar per view) and
@@ -62,6 +65,13 @@ import time
 import urllib.error
 import urllib.request
 import zlib
+import http.client
+import importlib.util
+
+# T57: the debug server's port and token come from logcat (tools/android_debug.py; -I keeps tools/ off sys.path).
+_spec = importlib.util.spec_from_file_location("android_debug", os.path.join(os.path.dirname(os.path.abspath(__file__)), "android_debug.py"))
+android_debug = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(android_debug)
 
 SOURCES = ("dem", "osm", "contours")
 PACKAGE = "io.github.jasondorjeshort.dystopo"
@@ -104,18 +114,29 @@ def read_views(args):
 # HTTP and adb
 
 class Server:
-    """The app's debug server. Every request carries the app's per-launch loopback token (T49): it is read
-    from GET /health without a token (debug builds answer only {"token": ...} then) and read again after a
-    401, since a relaunched app has a new one."""
+    """The app's debug server. Every request carries the app's per-launch loopback token (T49). T57: with adb and
+    a serial the port and token come from the app's logcat line and --port is forwarded to that port; read again
+    after a 401 or a refused connection, since a relaunch makes new ones. Without adb: GET /health without a
+    token (the app's debugFixedPort=1 mode)."""
 
-    def __init__(self, port):
+    def __init__(self, port, exe=None, serial=None):
+        self.port = port
         self.base = f"http://127.0.0.1:{port}"
+        self.exe = exe
+        self.serial = serial
         self.token = None
+        self.device_port = None
 
     def fetch_token(self, timeout=10.0):
-        with urllib.request.urlopen(self.base + "/health", timeout=timeout) as r:
-            self.token = json.loads(r.read().decode("utf-8"))["token"]
+        if self.exe and self.serial:
+            self.device_port, self.token = android_debug.bootstrap(self.exe, self.serial, self.port, timeout=max(timeout, 30.0))
+        else:
+            self.token = android_debug.health_token(self.base, timeout)
         return self.token
+
+    def reset(self):
+        """Forget the token and port (after a relaunch)."""
+        self.token = None
 
     def _open(self, path, method="GET", timeout=30.0):
         for attempt in (0, 1):
@@ -130,6 +151,10 @@ class Server:
                 if e.code != 401 or attempt:
                     raise
                 self.token = None  # the app was relaunched: fetch its new token and retry once
+            except (urllib.error.URLError, ConnectionError, http.client.RemoteDisconnected):
+                if attempt or not self.serial:
+                    raise
+                self.token = None  # T57: relaunched on a new port: read logcat again and re-forward
 
     def get(self, path, timeout=30.0):
         return self._open(path, timeout=timeout)
@@ -146,26 +171,9 @@ class Server:
             return e.code
 
 
-def adb_path():
-    sdk = os.environ.get("ANDROID_HOME") or os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Android", "sdk")
-    exe = os.path.join(sdk, "platform-tools", "adb.exe" if os.name == "nt" else "adb")
-    return exe if os.path.isfile(exe) else None
-
-
-def adb(exe, serial, *args, timeout=120):
-    cmd = [exe] + (["-s", serial] if serial else []) + list(args)
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
-    return p.returncode, p.stdout + p.stderr
-
-
-def forward_owner(exe, port):
-    """The serial whose `adb forward` holds host tcp:<port>, or None."""
-    code, out = adb(exe, None, "forward", "--list", timeout=30)
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[1] == f"tcp:{port}":
-            return parts[0]
-    return None
+adb_path = android_debug.adb_path
+adb = android_debug.adb
+forward_owner = android_debug.forward_owner
 
 
 def restart_app(exe, serial, server, timeout):
@@ -173,14 +181,15 @@ def restart_app(exe, serial, server, timeout):
     code, out = adb(exe, serial, "shell", "am", "start", "-W", "-n", ACTIVITY)
     if code != 0:
         raise RuntimeError(f"am start failed: {out.strip()}")
+    server.reset()  # T57: new process, new debug port and token
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             h = server.json("/health", timeout=10)
             if h.get("map", {}).get("styleLoaded"):
                 return h
-        except (urllib.error.URLError, OSError, ValueError):
-            pass
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+            server.reset()
         time.sleep(1)
     raise RuntimeError(f"app did not report a loaded style within {timeout:.0f} s of a restart")
 
@@ -478,7 +487,6 @@ def main():
     views = read_views(args)
     if not views:
         ap.error("no views: pass --views or --views-file")
-    server = Server(args.port)
     stem, ext = os.path.splitext(args.out)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
 
@@ -489,11 +497,12 @@ def main():
         if not exe:
             print(json.dumps({"error": "--serial given but adb was not found (set ANDROID_HOME)"}))
             return 2
-        if owner != args.serial:
-            print(json.dumps({"error": f"host port {args.port} is forwarded to {owner or 'nothing'}, not {args.serial}; "
-                                       f"start it with tools/android-emu.ps1 -Port {args.port} or adb -s {args.serial} forward tcp:{args.port} tcp:8686"}))
+        if owner and owner != args.serial:
+            print(json.dumps({"error": f"host port {args.port} is forwarded to {owner}, not {args.serial}; pick another --port "
+                                       f"(tools/android-emu.ps1 -Port) or remove that forward"}))
             return 2
     serial = args.serial or owner
+    server = Server(args.port, exe if serial else None, serial)  # T57: logcat bootstrap through this serial
     if serial and serial.startswith("emulator-") and exe:
         _, name = adb(exe, serial, "emu", "avd", "name", timeout=30)
         avd = next((l.strip() for l in name.splitlines() if l.strip() and l.strip() != "OK"), None)
@@ -518,7 +527,8 @@ def main():
             _, since = adb(exe, serial, "shell", "date '+%m-%d %H:%M:%S.000'", timeout=30)
             since = since.strip()
         health = server.json("/health")
-        summary["setup"]["token"] = {"sent": True, "noTokenStatsStatus": server.status_without_token("/stats")}  # T49: expect 401
+        summary["setup"]["token"] = {"sent": True, "noTokenStatsStatus": server.status_without_token("/stats"),  # T49: expect 401
+                                     "devicePort": server.device_port, "from": "logcat" if server.serial else "/health"}  # T57
         summary["app"] = health.get("app")
         summary["packs"] = {k: (v if not isinstance(v, dict) else {kk: v[kk] for kk in ("file", "minZoom", "maxZoom", "bounds", "bytes")})
                             for k, v in health.get("packs", {}).items()}

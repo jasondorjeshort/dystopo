@@ -46,7 +46,30 @@ object CatalogOverlay {
         private set
     @Volatile private var names: List<String> = emptyList()
 
-    fun json(): Map<String, Any?> = linkedMapOf("visible" to visible, "outlines" to outlines, "installedOnStyle" to installedOnStyle, "packs" to names)
+    fun json(): Map<String, Any?> = linkedMapOf("visible" to visible, "outlines" to outlines, "installedOnStyle" to installedOnStyle, "packs" to names,
+        "labelsUnderOnlineChips" to labelsUnderOnlineChips()) // T57
+
+    /**
+     * T57: catalog labels (pack centres, with a label's half height as margin) that sit under the online
+     * indicator at the top left; 0 when either is hidden. Null when the map is not ready.
+     */
+    fun labelsUnderOnlineChips(): Int? {
+        val chips = io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChips ?: return 0
+        if (!visible) return 0
+        val centres = centres
+        return runCatching {
+            io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.map.onMain {
+                val m = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.map.map ?: return@onMain null
+                val margin = 16f * (view?.resources?.displayMetrics?.density ?: 1f)
+                centres.count { (lat, lon) ->
+                    val p = m.projection.toScreenLocation(org.maplibre.android.geometry.LatLng(lat, lon))
+                    io.github.jasondorjeshort.dystopo.app.MapInsets.inside(chips, p.x, p.y, margin)
+                }
+            }
+        }.getOrNull()
+    }
+
+    @Volatile private var centres: List<Pair<Double, Double>> = emptyList()
 
     /** Main thread. */
     fun bind(mapView: MapView) {
@@ -79,6 +102,7 @@ object CatalogOverlay {
         visible = rows != null
         outlines = fs.size / 2
         names = rows.orEmpty().filter { it.pack.bounds != null }.map { it.pack.name }
+        centres = rows.orEmpty().mapNotNull { it.pack.bounds }.map { it.centerLat to it.centerLon }
         data = FeatureCollection.fromFeatures(fs)
         main.post { apply() }
     }
