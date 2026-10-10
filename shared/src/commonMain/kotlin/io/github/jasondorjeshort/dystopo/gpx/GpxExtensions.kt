@@ -31,6 +31,35 @@ object GpxExtensions {
         return null
     }
 
+    /**
+     * Our entity ids in GPX (T40): `<dystopo:id>uuid</dystopo:id>` as the first child of the
+     * `<extensions>` of a `wpt`, `rte` or `trk`, with `dystopo` bound to [NS_DYSTOPO] on the root.
+     * [Gpx.write] adds it, [Gpx.read] takes it out again (so the model's `extensions` never holds
+     * it) and uses it as the entity's id when it is a valid UUID. Other apps keep unknown extensions
+     * or drop them; either way the file stays valid GPX 1.1.
+     */
+    const val NS_DYSTOPO = "https://jasondorjeshort.github.io/dystopo/gpx/1"
+    const val DYSTOPO_PREFIX = "dystopo"
+
+    /** [extensions] with our id element in front. */
+    fun withId(id: String, extensions: String?): String = "<$DYSTOPO_PREFIX:id>$id</$DYSTOPO_PREFIX:id>" + (extensions ?: "")
+
+    private val idElement = Regex("""<([A-Za-z_][\w.-]*):id>\s*([0-9A-Fa-f-]{36})\s*</\1:id>""")
+
+    /**
+     * Splits our id out of [extensions]: the id (lowercase; null when absent or not a valid UUID)
+     * and the remaining extensions (null when nothing is left). Only elements whose prefix is in
+     * [prefixes] (those bound to [NS_DYSTOPO] in the file) count.
+     */
+    fun takeId(extensions: String?, prefixes: Set<String>): Pair<String?, String?> {
+        if (extensions == null || prefixes.isEmpty() || ":id>" !in extensions) return null to extensions
+        val m = idElement.findAll(extensions).firstOrNull { it.groupValues[1] in prefixes } ?: return null to extensions
+        val id = m.groupValues[2].lowercase()
+        if (!io.github.jasondorjeshort.dystopo.model.Uuid.isValid(id)) return null to extensions
+        val rest = extensions.removeRange(m.range).trim().ifEmpty { null }
+        return id to rest
+    }
+
     /** A `gpxtpx:TrackPointExtension` fragment (declare [Gpx.NS_GARMIN_TPX1] as `gpxtpx`; [Gpx.write] does). */
     fun trackPointExtension(heartRate: Int? = null, cadence: Int? = null, temperature: Double? = null): String {
         val sb = StringBuilder("<gpxtpx:TrackPointExtension>")

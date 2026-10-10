@@ -66,14 +66,32 @@ sqldelight {
     databases {
         create("TrackDb") {
             packageName.set("io.github.jasondorjeshort.dystopo.store.db")
+            // Migrations (T40): `<n>.sqm` beside Track.sq upgrades schema version n to n + 1 (see
+            // CLAUDE.md, Track database migrations). SQLDelight checks a .sqm only against a frozen .db
+            // in the source set (impossible on Windows, below); with no .db it would see an empty
+            // schema and reject every ALTER, so its check is off and TrackDbMigrationTest does the work.
+            verifyMigrations.set(false)
+            // Only for generateCommonMainTrackDbSchema (which fails on Windows, below); never into src/.
+            schemaOutputDirectory.set(layout.buildDirectory.dir("sqldelight-schema"))
         }
     }
 }
 
-// No migrations yet (schema version 1). SQLDelight's verify-migration task loads sqlite-jdbc's native
-// library inside the Gradle daemon, whose temp dir resolved to C:\Windows here (AccessDeniedException
-// unpacking the DLL). Re-enable it with the first .sqm migration (and point org.sqlite.tmpdir at build/).
-tasks.matching { it.name.startsWith("verify") && it.name.endsWith("Migration") }.configureEach { enabled = false }
+// Why the frozen schemas are SQL text (databases/<n>.sql) checked by TrackDbMigrationTest rather than
+// SQLDelight's databases/<n>.db: SQLDelight reads .db files with sqlite-jdbc inside a process-isolated
+// Gradle worker, both in code generation and in verifyCommonMainTrackDbMigration. On Windows Gradle
+// 8.14 starts those workers with an EMPTY environment (DefaultProcessWorkerSpec.sanitizeEnvironment
+// keeps nothing when the OS is not Unix), so the worker's java.io.tmpdir falls back to C:\Windows and
+// sqlite-jdbc cannot unpack its DLL there (AccessDeniedException). org.sqlite.tmpdir or java.io.tmpdir
+// set in the daemon never reach the worker, and SQLDelight 2.1 exposes no fork options. A .db in the
+// source set would break code generation on Windows outright. TrackDbMigrationTest (jvmTest, so part
+// of `check` on every OS) builds each frozen version from its .sql, applies the generated migrations,
+// compares tables, columns and indexes with a fresh Track.sq database, and upgrades real rows.
+// SQLDelight's verify task opens sqlite-jdbc even with no .db, so it is skipped on Windows hosts.
+val windowsHost = System.getProperty("os.name").startsWith("Windows")
+tasks.matching { it.name.startsWith("verify") && it.name.endsWith("Migration") }.configureEach {
+    onlyIf("sqlite-jdbc cannot load in a Gradle worker on Windows; TrackDbMigrationTest covers it") { !windowsHost }
+}
 
 if (androidSdk) {
     extensions.configure<com.android.build.api.dsl.LibraryExtension>("android") {

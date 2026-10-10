@@ -42,9 +42,9 @@ class GpxException(message: String) : IllegalArgumentException(message)
  * Import keeps everything the model has a field for and the verbatim inner XML of every
  * `<extensions>` element; other elements (`link`, `fix`, `hdop`, GPX 1.0 `speed`/`course`...) are
  * skipped and counted in [ParseResult.ignored]. Points with a missing or out-of-range lat/lon are
- * dropped and counted too. Each waypoint, route and track gets a fresh UUID from the caller's
- * [UuidGenerator]: GPX has no ids, so importing the same file twice gives new entities unless the
- * generator is seeded the same way.
+ * dropped and counted too. A waypoint, route or track keeps the id our writer stored in its
+ * `dystopo:id` extension ([GpxExtensions.NS_DYSTOPO]; T40), so an export and its re-import are the
+ * same entity; any other gets a fresh UUID from the caller's [UuidGenerator] (plain GPX has no ids).
  */
 object Gpx {
     const val CREATOR = "Dystopo"
@@ -67,6 +67,8 @@ object Gpx {
     private class Reader(text: String, private val ids: UuidGenerator) {
         private val x = XmlReader(text.removePrefix("﻿"))
         val ignored = LinkedHashMap<String, Int>()
+        /** Prefixes the root binds to [GpxExtensions.NS_DYSTOPO]: where our ids are. */
+        private var idPrefixes: Set<String> = emptySet()
 
         private fun ignore(what: String) {
             ignored[what] = (ignored[what] ?: 0) + 1
@@ -89,7 +91,8 @@ object Gpx {
             val creator = x.attributes["creator"] ?: CREATOR
             val namespaces = LinkedHashMap<String, String>()
             for ((k, v) in x.attributes) {
-                if (k.startsWith("xmlns:") && v != NS_XSI && v != NS_GPX11 && v != NS_GPX10) namespaces[k.substring(6)] = v
+                if (k.startsWith("xmlns:") && v == GpxExtensions.NS_DYSTOPO) idPrefixes = idPrefixes + k.substring(6)
+                else if (k.startsWith("xmlns:") && v != NS_XSI && v != NS_GPX11 && v != NS_GPX10) namespaces[k.substring(6)] = v
             }
             val waypoints = ArrayList<Waypoint>()
             val routes = ArrayList<Route>()
@@ -200,13 +203,20 @@ object Gpx {
             return p
         }
 
+        /** Our id out of an entity's extensions (else a fresh one) and the extensions without it. */
+        private fun idOf(extensions: String?): Pair<String, String?> {
+            val (id, rest) = GpxExtensions.takeId(extensions, idPrefixes)
+            return (id ?: ids.next()) to rest
+        }
+
         private fun waypoint(): Waypoint? {
             val p = point() ?: return null
-            return Waypoint(ids.next(), p.name ?: "", p.lat, p.lon, p.ele, p.time, p.desc, p.cmt, p.sym, p.type, p.extensions)
+            val (id, ext) = idOf(p.extensions)
+            return Waypoint(id, p.name ?: "", p.lat, p.lon, p.ele, p.time, p.desc, p.cmt, p.sym, p.type, ext)
         }
 
         private fun route(): Route {
-            var r = Route(ids.next(), "", emptyList())
+            var r = Route("", "", emptyList())
             val points = ArrayList<RoutePoint>()
             while (x.nextChild()) {
                 when (child()) {
@@ -219,11 +229,12 @@ object Gpx {
                     else -> skip()
                 }
             }
-            return r.copy(points = points)
+            val (id, ext) = idOf(r.extensions)
+            return r.copy(id = id, extensions = ext, points = points)
         }
 
         private fun track(): Track {
-            var t = Track(ids.next(), "", emptyList())
+            var t = Track("", "", emptyList())
             val segments = ArrayList<TrackSegment>()
             while (x.nextChild()) {
                 when (child()) {
@@ -237,7 +248,8 @@ object Gpx {
                     else -> skip()
                 }
             }
-            return t.copy(segments = segments)
+            val (id, ext) = idOf(t.extensions)
+            return t.copy(id = id, extensions = ext, segments = segments)
         }
 
         private fun segment(): TrackSegment {
@@ -254,10 +266,17 @@ object Gpx {
         }
     }
 
-    /** Writes [doc] as GPX 1.1. Unknown extensions are copied verbatim, with their namespace prefixes declared on the root. */
-    fun write(doc: GpxDocument): String {
+    /**
+     * Writes [doc] as GPX 1.1. Unknown extensions are copied verbatim, with their namespace prefixes
+     * declared on the root. With [ids] (the default) every waypoint, route and track carries its id
+     * in a `dystopo:id` extension ([GpxExtensions.NS_DYSTOPO]) so a re-import keeps it.
+     */
+    fun write(doc: GpxDocument, ids: Boolean = true): String {
         val namespaces = LinkedHashMap(doc.namespaces)
         if ("gpxtpx" !in namespaces && usesPrefix(doc, "gpxtpx:")) namespaces["gpxtpx"] = NS_GARMIN_TPX1
+        val withIds = ids && (doc.waypoints.isNotEmpty() || doc.routes.isNotEmpty() || doc.tracks.isNotEmpty())
+        if (withIds) namespaces[GpxExtensions.DYSTOPO_PREFIX] = GpxExtensions.NS_DYSTOPO
+        fun ext(id: String, extensions: String?) = if (withIds) GpxExtensions.withId(id, extensions) else extensions
         val rootAttrs = ArrayList<Pair<String, String>>()
         rootAttrs += "version" to "1.1"
         rootAttrs += "creator" to doc.creator
@@ -277,7 +296,7 @@ object Gpx {
             w.end()
         }
         for (p in doc.waypoints) {
-            point(w, "wpt", p.lat, p.lon, p.ele, p.time, p.name.ifEmpty { null }, p.comment, p.description, p.symbol, p.type, p.extensions)
+            point(w, "wpt", p.lat, p.lon, p.ele, p.time, p.name.ifEmpty { null }, p.comment, p.description, p.symbol, p.type, ext(p.id, p.extensions))
         }
         for (r in doc.routes) {
             w.start("rte")
@@ -285,7 +304,7 @@ object Gpx {
             w.element("cmt", r.comment)
             w.element("desc", r.description)
             w.element("type", r.type)
-            w.rawElement("extensions", r.extensions)
+            w.rawElement("extensions", ext(r.id, r.extensions))
             for (p in r.points) point(w, "rtept", p.lat, p.lon, p.ele, p.time, p.name, null, p.description, p.symbol, null, p.extensions)
             w.end()
         }
@@ -296,7 +315,7 @@ object Gpx {
             w.element("desc", t.description)
             w.element("src", t.source)
             w.element("type", t.type)
-            w.rawElement("extensions", t.extensions)
+            w.rawElement("extensions", ext(t.id, t.extensions))
             for (s in t.segments) {
                 w.start("trkseg")
                 for (p in s.points) point(w, "trkpt", p.lat, p.lon, p.ele, p.time, null, null, null, null, null, p.extensions)

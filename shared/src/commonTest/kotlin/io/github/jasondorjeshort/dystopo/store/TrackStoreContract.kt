@@ -104,7 +104,11 @@ abstract class TrackStoreContract {
         val started = rec.start("Synthetic loop")
         fixesOf(first).forEach { assertTrue(rec.onFix(it)); now += 1000 }
         rec.pause()
+        assertFalse(rec.onFix(fixesOf(second).first().copy(time = first.last().time!! + 1)), "paused")
+        rec.resume()
         fixesOf(second).forEach { assertTrue(rec.onFix(it)); now += 1000 }
+        assertEquals(1, rec.skippedPaused)
+        assertEquals(0, rec.gapSplits, "the resume started the second segment, not the hour-long gap")
         val wp = rec.waypoint("End")!!
         val stopped = rec.stop()!!
         assertFalse(stopped.recording)
@@ -129,7 +133,8 @@ abstract class TrackStoreContract {
     @Test
     fun recorderRejectsInaccurateAndStaleFixesAndKeepsLiveStats() {
         val s = newStore()
-        val rec = TrackRecorder(s, RecorderOptions(maxAccuracyM = 20.0), clock = { 0L })
+        // loopPoints(10) is 314 s between points: no gap splitting here.
+        val rec = TrackRecorder(s, RecorderOptions(maxAccuracyM = 20.0, segmentGapMs = null), clock = { 0L })
         assertFalse(rec.onFix(LocationFix(1.0, 1.0, time = 1)), "not recording")
         assertNull(rec.liveStats())
         val id = rec.start("t").id
@@ -173,6 +178,185 @@ abstract class TrackStoreContract {
         assertEquals(1600.0, w.ele)
         assertEquals(50, w.time)
         assertEquals(listOf(w), s.waypoints(null))
+    }
+
+    /** T40 done criterion (shared half): a 10-minute hole in the fix times gives two segments, and stats don't bridge it. */
+    @Test
+    fun tenMinuteGapStartsNewSegment() {
+        val s = newStore()
+        val rec = TrackRecorder(s, clock = { 0L })
+        val id = rec.start("gap").id
+        val first = loopPoints(40)
+        val second = loopPoints(40).map { it.copy(time = it.time!! + (first.last().time!! - first.first().time!!) + 10 * 60_000) }
+        fixesOf(first + second).forEach { assertTrue(rec.onFix(it)) }
+        assertEquals(1, rec.gapSplits)
+        rec.stop()
+        val t = s.track(id)!!
+        assertEquals(listOf(first.size, second.size), t.segments.map { it.points.size })
+        assertEquals(TrackStats.of(listOf(first, second)).distanceM, s.stats(id)!!.distanceM, 1e-9)
+        // A gap of exactly the threshold does not split; disabled splitting never does.
+        val r2 = TrackRecorder(s, RecorderOptions(segmentGapMs = 60_000), clock = { 0L })
+        val id2 = r2.start("edge").id
+        r2.onFix(LocationFix(1.0, 1.0, time = 0))
+        r2.onFix(LocationFix(1.0, 1.001, time = 60_000))
+        r2.onFix(LocationFix(1.0, 1.002, time = 120_001))
+        assertEquals(listOf(2, 1), s.track(id2)!!.segments.map { it.points.size })
+        val r3 = TrackRecorder(s, RecorderOptions(segmentGapMs = null), clock = { 0L })
+        val id3 = r3.start("never").id
+        fixesOf(first + second).forEach { r3.onFix(it) }
+        assertEquals(1, s.track(id3)!!.segments.size)
+    }
+
+    @Test
+    fun pauseHoldsFixesAndResumeStartsSegment() {
+        val s = newStore()
+        val rec = TrackRecorder(s, clock = { 0L })
+        rec.pause()
+        assertFalse(rec.paused, "pause without recording is a no-op")
+        val id = rec.start("p").id
+        val fixes = fixesOf(loopPoints(60))
+        fixes.take(20).forEach { rec.onFix(it) }
+        rec.pause()
+        assertTrue(rec.paused)
+        fixes.subList(20, 30).forEach { assertFalse(rec.onFix(it)) }
+        assertEquals(10, rec.skippedPaused)
+        assertEquals(fixes[29], rec.lastFix, "the position still follows while paused")
+        rec.resume()
+        rec.resume()
+        fixes.drop(30).forEach { assertTrue(rec.onFix(it)) }
+        assertEquals(listOf(20, 31), s.track(id)!!.segments.map { it.points.size })
+        assertEquals(listOf(20, 31), rec.livePoints().map { it.size })
+        rec.pause()
+        rec.stop()
+        assertFalse(rec.paused)
+    }
+
+    @Test
+    fun statsAreCachedUntilAppend() {
+        val s = newStore()
+        val id = s.create("00000000-0000-4000-8000-000000000001", "x", 1).id
+        assertNull(s.stats("00000000-0000-4000-8000-0000000000ff"))
+        val pts = loopPoints(20)
+        pts.take(10).forEach { s.append(id, it) }
+        val before = s.statsComputed
+        val a = s.stats(id)!!
+        assertEquals(TrackStats.of(s.track(id)!!), a)
+        assertEquals(a, s.stats(id))
+        assertEquals(before + 1, s.statsComputed, "second read is cached")
+        s.rename(id, "renamed", 5)
+        s.addWaypoint(id, Waypoint("00000000-0000-4000-8000-0000000000f1", "w", 1.0, 2.0))
+        assertEquals(a, s.stats(id))
+        assertEquals(before + 1, s.statsComputed, "renames and waypoints keep the cache")
+        pts.drop(10).forEach { s.append(id, it) }
+        val b = s.stats(id)!!
+        assertEquals(before + 2, s.statsComputed, "an append invalidates")
+        assertEquals(TrackStats.of(s.track(id)!!), b)
+        assertEquals(21, b.points)
+        // An empty track has stats too (zero points, no bounds).
+        val e = s.create("00000000-0000-4000-8000-000000000002", "empty", 2).id
+        assertEquals(TrackStats.of(emptyList<List<TrackPoint>>()), s.stats(e))
+        assertEquals(TrackStats.of(emptyList<List<TrackPoint>>()), s.stats(e))
+    }
+
+    @Test
+    fun waypointsRenameAndDelete() {
+        val s = newStore()
+        val id = s.create("00000000-0000-4000-8000-000000000001", "x", 1).id
+        val w1 = Waypoint("00000000-0000-4000-8000-0000000000f1", "Camp", 1.0, 2.0)
+        val w2 = Waypoint("00000000-0000-4000-8000-0000000000f2", "Lake", 1.5, 2.5)
+        s.addWaypoint(id, w1, 2)
+        s.addWaypoint(null, w2, 3)
+        assertEquals(StoredWaypoint(id, w1), s.waypoint(w1.id))
+        assertEquals(StoredWaypoint(null, w2), s.waypoint(w2.id))
+        assertNull(s.waypoint("00000000-0000-4000-8000-0000000000f9"))
+        assertTrue(s.renameWaypoint(w1.id, "High camp", 10))
+        assertEquals("High camp", s.waypoints(id).single().name)
+        assertEquals(10, s.summary(id)!!.updatedAt)
+        assertFalse(s.renameWaypoint("00000000-0000-4000-8000-0000000000f9", "?", 11))
+        assertTrue(s.deleteWaypoint(w1.id, 12))
+        assertFalse(s.deleteWaypoint(w1.id, 13))
+        assertEquals(0, s.summary(id)!!.waypoints)
+        assertEquals(12, s.summary(id)!!.updatedAt)
+        assertTrue(s.renameWaypoint(w2.id, "Tarn", 14))
+        assertEquals(listOf("Tarn"), s.waypoints(null).map { it.name })
+    }
+
+    @Test
+    fun insertKeepsEveryTrackField() {
+        val s = newStore()
+        val pts = loopPoints(12)
+        val t = Track(
+            "00000000-0000-4000-8000-000000000001", "Imported",
+            listOf(TrackSegment(pts.take(5)), TrackSegment(emptyList()), TrackSegment(pts.drop(5))),
+            description = "d", comment = "c", source = "src", type = "hike", extensions = "<x:y>1</x:y>",
+        )
+        val w = Waypoint("00000000-0000-4000-8000-0000000000f1", "Camp", 1.0, 2.0)
+        val sum = s.insert(t, listOf(w), createdAt = 50, now = 60)
+        assertEquals(TrackSummary(t.id, "Imported", 50, 60, false, 13, 1), sum)
+        assertEquals(t.copy(segments = listOf(TrackSegment(pts.take(5)), TrackSegment(pts.drop(5)))), s.track(t.id))
+        assertEquals(listOf(w), s.waypoints(t.id))
+        assertFailsWith<IllegalArgumentException> { s.insert(t, emptyList(), 1, 1) }
+        // Appending to an inserted track continues its last segment.
+        s.append(t.id, pts.last().copy(time = pts.last().time!! + 1000))
+        assertEquals(listOf(5, 9), s.track(t.id)!!.segments.map { it.points.size })
+    }
+
+    /** T40 done criterion: export, import into another store, export again: same ids, same text; a re-import is a no-op. */
+    @Test
+    fun gpxRoundTripKeepsIds() {
+        val a = newStore()
+        var now = 1_700_000_000_000L
+        val rec = TrackRecorder(a, ids = UuidGenerator(Random(11)), clock = { now })
+        val id = rec.start("Round trip").id
+        val first = loopPoints(30)
+        fixesOf(first).forEach { rec.onFix(it); now += 1000 }
+        rec.pause(); rec.resume()
+        fixesOf(loopPoints(12).map { it.copy(time = it.time!! + 7_200_000) }).forEach { rec.onFix(it) }
+        val w = rec.waypoint("Top")!!
+        rec.stop()
+        val gpx = TrackExport.gpx(a, id)!!
+        assertTrue("<dystopo:id>$id</dystopo:id>" in gpx)
+        assertTrue("<dystopo:id>${w.id}</dystopo:id>" in gpx)
+
+        val b = newStore()
+        val r = TrackImport.import(b, gpx, now = 99, ids = UuidGenerator(Random(12)))
+        assertEquals(listOf(id), r.imported.map { it.id })
+        assertEquals(1, r.waypoints)
+        assertEquals(listOf(w), b.waypoints(id))
+        assertEquals(a.track(id), b.track(id))
+        assertEquals(a.summary(id)!!.createdAt, b.summary(id)!!.createdAt)
+        assertEquals(gpx, TrackExport.gpx(b, id))
+        assertEquals(a.stats(id), b.stats(id))
+
+        val again = TrackImport.import(b, gpx, now = 100)
+        assertEquals(emptyList(), again.imported)
+        assertEquals(listOf(id), again.skippedTracks)
+        assertEquals(1, again.skippedWaypoints)
+        assertEquals(1, b.list().size)
+    }
+
+    @Test
+    fun importPlainGpx() {
+        val s = newStore()
+        val pts = loopPoints(8)
+        val plain = Gpx.write(
+            GpxDocument(
+                waypoints = listOf(Waypoint("ignored-a", "A", 1.0, 2.0), Waypoint("ignored-b", "B", 1.1, 2.1)),
+                tracks = listOf(Track("ignored-1", "", listOf(TrackSegment(pts))), Track("ignored-2", "Second", listOf(TrackSegment(pts.take(3))))),
+                metadata = GpxMetadata(name = "From elsewhere"),
+            ),
+            ids = false,
+        )
+        assertFalse("dystopo" in plain)
+        val r = TrackImport.import(s, plain, now = 5, ids = UuidGenerator(Random(3)))
+        assertEquals(listOf("From elsewhere", "Second"), r.imported.map { it.name })
+        assertEquals(listOf(pts.first().time, pts.first().time), r.imported.map { it.createdAt })
+        assertTrue(r.imported.all { io.github.jasondorjeshort.dystopo.model.Uuid.isValid(it.id) })
+        // Two tracks: the waypoints are free-standing.
+        assertEquals(listOf("A", "B"), s.waypoints(null).map { it.name })
+        assertEquals(0, r.imported.sumOf { it.waypoints })
+        assertFailsWith<IllegalArgumentException> { TrackImport.import(s, "<gpx version=\"1.1\"></gpx>", now = 6) }
+        assertFailsWith<IllegalArgumentException> { TrackImport.import(s, "not xml", now = 6) }
     }
 }
 

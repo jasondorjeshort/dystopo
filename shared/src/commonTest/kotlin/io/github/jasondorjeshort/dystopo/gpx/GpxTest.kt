@@ -113,10 +113,13 @@ class GpxTest {
         )
         val text = Gpx.write(doc)
         val back = Gpx.parse(text, UuidGenerator(Random(11)))
-        // Ids are regenerated in document order (waypoints, routes, tracks), the same order as above.
+        // Ids come back from the dystopo:id extensions (T40); without them they are regenerated in
+        // document order (waypoints, routes, tracks), the same order as above.
         assertEquals(doc.copy(namespaces = mapOf("gpxtpx" to Gpx.NS_GARMIN_TPX1)), back)
+        assertEquals(back, Gpx.parse(Gpx.write(doc, ids = false), UuidGenerator(Random(11))))
         assertEquals(301 + 101, back.tracks[0].points.size)
-        assertNull(Regex("\\d[eE][-+]?\\d").find(text), "no exponent notation")
+        // (UUIDs like 4e5f... would look like exponents; numbers are checked in the id-free text.)
+        assertNull(Regex("\\d[eE][-+]?\\d").find(Gpx.write(doc, ids = false)), "no exponent notation")
     }
 
     @Test

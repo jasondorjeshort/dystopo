@@ -1,0 +1,143 @@
+package io.github.jasondorjeshort.dystopo.store
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.store.db.TrackDb
+import java.io.File
+import java.nio.file.Files
+import java.sql.DriverManager
+import java.util.Properties
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * Migration verification for the track database (T40), in the test JVM so it runs in `check` on
+ * every OS (SQLDelight's own verifyCommonMainTrackDbMigration task cannot load sqlite-jdbc in a Gradle
+ * worker on Windows; see shared/build.gradle.kts). For every frozen schema `databases/<n>.sql`:
+ * create a database from it, apply the generated migrations n..current and compare tables, columns (name, type, not-null,
+ * default, primary key, in order) and indexes with a database created fresh from Track.sq. Also
+ * upgrades a version-1 database holding a track, as the app's Android driver does on first open
+ * after an update, and checks nothing is lost.
+ *
+ * It also writes the current schema to `build/trackdb/<version>.sql`: before changing Track.sq,
+ * copy that file to `src/commonMain/sqldelight/databases/` (see CLAUDE.md).
+ */
+class TrackDbMigrationTest {
+    private val frozenDir = File("src/commonMain/sqldelight/databases")
+
+    private fun url(f: File) = "jdbc:sqlite:" + f.absolutePath.replace('\\', '/')
+
+    /** Tables and indexes of a database as comparable text, one line per column or index. */
+    private fun schemaOf(f: File): List<String> = DriverManager.getConnection(url(f)).use { c ->
+        val out = ArrayList<String>()
+        val objects = c.createStatement().executeQuery(
+            "SELECT type, name, tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        ).use { rs -> generateSequence { if (rs.next()) Triple(rs.getString(1), rs.getString(2), rs.getString(3)) else null }.toList() }
+        for ((type, name, table) in objects) {
+            when (type) {
+                "table" -> c.createStatement().executeQuery("PRAGMA table_info('$name')").use { rs ->
+                    while (rs.next()) {
+                        out += "table $name col ${rs.getInt("cid")} ${rs.getString("name")} ${rs.getString("type")} " +
+                            "notnull=${rs.getInt("notnull")} default=${rs.getString("dflt_value")} pk=${rs.getInt("pk")}"
+                    }
+                }
+                "index" -> c.createStatement().executeQuery("PRAGMA index_info('$name')").use { rs ->
+                    val cols = ArrayList<String>()
+                    while (rs.next()) cols += rs.getString("name")
+                    out += "index $name on $table(${cols.joinToString()})"
+                }
+                else -> out += "$type $name on $table"
+            }
+        }
+        out
+    }
+
+    private fun fresh(dir: File): File {
+        val f = File(dir, "fresh.db")
+        JdbcSqliteDriver(url(f), Properties()).use { TrackDb.Schema.create(it) }
+        return f
+    }
+
+    /** A database file created by a frozen schema's statements (comments stripped, split on `;`). */
+    private fun frozen(version: Long, dir: File): File {
+        val sql = File(frozenDir, "$version.sql").readText()
+        val f = File(dir, "v$version.db")
+        DriverManager.getConnection(url(f)).use { c ->
+            val statements = sql.lines().filterNot { it.trimStart().startsWith("--") }.joinToString("\n").split(';').map { it.trim() }.filter { it.isNotEmpty() }
+            c.createStatement().use { st -> statements.forEach { st.executeUpdate(it) } }
+        }
+        return f
+    }
+
+    /** The current schema as SQL text (what a new frozen `<n>.sql` holds), read back from a fresh database. */
+    private fun schemaSql(f: File): String = DriverManager.getConnection(url(f)).use { c ->
+        c.createStatement().executeQuery("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid").use { rs ->
+            buildString { while (rs.next()) append(rs.getString(1)).append(";\n\n") }
+        }
+    }
+
+    @Test
+    fun writesCurrentSchema() {
+        val dir = File("build/trackdb").apply { mkdirs() }
+        val db = File(dir, "current.db").apply { delete() }
+        JdbcSqliteDriver(url(db), Properties()).use { TrackDb.Schema.create(it) }
+        File(dir, "${TrackDb.Schema.version}.sql").writeText(schemaSql(db))
+        assertTrue(File(dir, "${TrackDb.Schema.version}.sql").readText().startsWith("CREATE TABLE track"))
+    }
+
+    @Test
+    fun everyFrozenSchemaMigratesToTrackSq() {
+        val versions = frozenDir.listFiles { f -> f.name.matches(Regex("\\d+\\.sql")) }.orEmpty().map { it.nameWithoutExtension.toLong() }.sorted()
+        // One frozen schema per released version: 1 up to (but not including) the current one.
+        assertEquals((1 until TrackDb.Schema.version).toList(), versions, "frozen schemas in $frozenDir")
+        val dir = Files.createTempDirectory("dystopo-migrate").toFile()
+        try {
+            val expected = schemaOf(fresh(dir))
+            for (v in versions) {
+                val db = frozen(v, dir)
+                JdbcSqliteDriver(url(db), Properties()).use { TrackDb.Schema.migrate(it, v, TrackDb.Schema.version) }
+                assertEquals(expected, schemaOf(db), "version $v migrated to version ${TrackDb.Schema.version}")
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /** What the app does on first open after an update: a version-1 file with a track, opened with the current schema. */
+    @Test
+    fun versionOneDataSurvivesTheUpgrade() {
+        val dir = Files.createTempDirectory("dystopo-upgrade").toFile()
+        try {
+            val f = frozen(1, dir)
+            DriverManager.getConnection(url(f)).use { c ->
+                c.createStatement().use { st ->
+                    st.executeUpdate("INSERT INTO track(id, name, created_at, updated_at, recording) VALUES ('00000000-0000-4000-8000-000000000001', 'Old', 10, 20, 0)")
+                    for (i in 0 until 5) {
+                        st.executeUpdate("INSERT INTO track_point VALUES ('00000000-0000-4000-8000-000000000001', $i, 0, ${46.85 + i * 0.001}, -121.76, ${1600 + i * 10}, ${1_000_000 + i * 60_000L}, NULL)")
+                    }
+                    st.executeUpdate("INSERT INTO waypoint(id, track_id, seq, name, lat, lon) VALUES ('00000000-0000-4000-8000-0000000000f1', '00000000-0000-4000-8000-000000000001', 0, 'Mark', 46.85, -121.76)")
+                    st.executeUpdate("PRAGMA user_version = 1")
+                }
+            }
+            // The JDBC driver, like AndroidSqliteDriver, migrates from user_version to Schema.version.
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d)
+                val s = store.summary("00000000-0000-4000-8000-000000000001")!!
+                assertEquals(TrackSummary(s.id, "Old", 10, 20, false, 5, 1), s)
+                val stats = store.stats(s.id)!!
+                assertEquals(TrackStats.of(store.track(s.id)!!), stats)
+                assertEquals(40.0, stats.ascentM)
+                assertEquals(1, store.statsComputed)
+                assertEquals(stats, store.stats(s.id))
+                assertEquals(1, store.statsComputed)
+            }
+            DriverManager.getConnection(url(f)).use { c ->
+                c.createStatement().executeQuery("PRAGMA user_version").use { rs -> rs.next(); assertEquals(TrackDb.Schema.version, rs.getLong(1)) }
+            }
+            assertEquals(schemaOf(fresh(dir)), schemaOf(f))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+}

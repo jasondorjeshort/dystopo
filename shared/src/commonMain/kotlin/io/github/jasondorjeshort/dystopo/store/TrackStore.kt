@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.store
 
+import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.Waypoint
@@ -58,6 +59,35 @@ interface TrackStore {
 
     /** Waypoints of [trackId] (or the free-standing ones for null), in the order they were added. */
     fun waypoints(trackId: String?): List<Waypoint>
+
+    /**
+     * Stores a complete track (an import) and [waypoints] on it, in one transaction: the track's
+     * fields and segments as given (empty segments dropped; segment extensions are not stored), not
+     * recording. Throws if the track id or a waypoint id exists.
+     */
+    fun insert(track: Track, waypoints: List<Waypoint>, createdAt: Long, now: Long): TrackSummary
+
+    /**
+     * The track's [TrackStats] (default [io.github.jasondorjeshort.dystopo.gpx.StatsOptions]), cached
+     * in the store: computed from the points on the first call and kept until a point is appended.
+     * Null for an unknown track.
+     */
+    fun stats(trackId: String): TrackStats?
+
+    /** How many [stats] calls had to compute (cache misses) since this store was opened. */
+    val statsComputed: Long
+
+    /** One waypoint by id with the track it belongs to, or null. */
+    fun waypoint(id: String): StoredWaypoint?
+
+    /** Renames a waypoint (and touches its track); false if unknown. */
+    fun renameWaypoint(id: String, name: String, now: Long): Boolean
+
+    /** Deletes a waypoint (and touches its track); false if unknown. */
+    fun deleteWaypoint(id: String, now: Long): Boolean
 }
+
+/** A waypoint and the track it belongs to (null: free-standing). */
+data class StoredWaypoint(val trackId: String?, val waypoint: Waypoint)
 
 class TrackNotFoundException(id: String) : NoSuchElementException("no track $id")

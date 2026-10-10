@@ -1,0 +1,24 @@
+-- Version 1 -> 2 (T40): the per-track stats cache. Columns are appended to `track` in the order
+-- Track.sq declares them, so a migrated database and a fresh one have the same column order.
+-- Every cache starts empty (stats_points NULL); the store fills it on the first read.
+
+ALTER TABLE track ADD COLUMN stats_points INTEGER;
+ALTER TABLE track ADD COLUMN stats_segments INTEGER;
+ALTER TABLE track ADD COLUMN stats_distance_m REAL;
+ALTER TABLE track ADD COLUMN stats_ascent_m REAL;
+ALTER TABLE track ADD COLUMN stats_descent_m REAL;
+ALTER TABLE track ADD COLUMN stats_min_ele_m REAL;
+ALTER TABLE track ADD COLUMN stats_max_ele_m REAL;
+ALTER TABLE track ADD COLUMN stats_start_time INTEGER;
+ALTER TABLE track ADD COLUMN stats_end_time INTEGER;
+ALTER TABLE track ADD COLUMN stats_duration_s REAL;
+ALTER TABLE track ADD COLUMN stats_moving_time_s REAL;
+ALTER TABLE track ADD COLUMN stats_moving_speed_mps REAL;
+ALTER TABLE track ADD COLUMN stats_moving_pace_s_per_km REAL;
+ALTER TABLE track ADD COLUMN stats_overall_pace_s_per_km REAL;
+ALTER TABLE track ADD COLUMN stats_avg_heart_rate REAL;
+ALTER TABLE track ADD COLUMN stats_max_heart_rate REAL;
+ALTER TABLE track ADD COLUMN stats_west REAL;
+ALTER TABLE track ADD COLUMN stats_south REAL;
+ALTER TABLE track ADD COLUMN stats_east REAL;
+ALTER TABLE track ADD COLUMN stats_north REAL;

@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.store
 
 import app.cash.sqldelight.db.SqlDriver
+import io.github.jasondorjeshort.dystopo.geo.BoundingBox
+import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
@@ -39,9 +41,88 @@ class SqlTrackStore(driver: SqlDriver) : TrackStore {
         val seg = if (newSegment || segment < 0) segment + 1 else segment
         q.transaction {
             q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
-            q.touchTrack(now, trackId)
+            q.touchTrackPoints(now, trackId)
         }
         tails[trackId] = seq + 1 to seg
+    }
+
+    override fun insert(track: Track, waypoints: List<Waypoint>, createdAt: Long, now: Long): TrackSummary {
+        q.transaction {
+            require(q.selectTrack(track.id).executeAsOneOrNull() == null) { "track ${track.id} exists" }
+            val t = track
+            q.insertTrack(t.id, t.name, createdAt, now, 0L, t.description, t.comment, t.source, t.type, t.extensions)
+            var seq = 0L
+            var segment = 0L
+            for (s in t.segments) {
+                if (s.points.isEmpty()) continue
+                for (p in s.points) q.insertPoint(t.id, seq++, segment, p.lat, p.lon, p.ele, p.time, p.extensions)
+                segment++
+            }
+            for (w in waypoints) {
+                require(q.selectWaypoint(w.id).executeAsOneOrNull() == null) { "waypoint ${w.id} exists" }
+                q.insertWaypoint(w.id, t.id, w.name, w.lat, w.lon, w.ele, w.time, w.description, w.comment, w.symbol, w.type, w.extensions)
+            }
+        }
+        tails.remove(track.id)
+        return summary(track.id)!!
+    }
+
+    override var statsComputed = 0L
+        private set
+
+    override fun stats(trackId: String): TrackStats? {
+        val row = q.selectStats(trackId).executeAsOneOrNull() ?: return null
+        val cached = row.stats_points?.let {
+            val bounds = if (row.stats_west != null && row.stats_south != null && row.stats_east != null && row.stats_north != null) {
+                BoundingBox(row.stats_west, row.stats_south, row.stats_east, row.stats_north)
+            } else null
+            TrackStats(
+                segments = row.stats_segments!!.toInt(), points = it.toInt(), distanceM = row.stats_distance_m!!,
+                ascentM = row.stats_ascent_m, descentM = row.stats_descent_m, minEleM = row.stats_min_ele_m, maxEleM = row.stats_max_ele_m,
+                startTime = row.stats_start_time, endTime = row.stats_end_time, durationS = row.stats_duration_s,
+                movingTimeS = row.stats_moving_time_s, movingSpeedMps = row.stats_moving_speed_mps,
+                movingPaceSPerKm = row.stats_moving_pace_s_per_km, overallPaceSPerKm = row.stats_overall_pace_s_per_km,
+                avgHeartRate = row.stats_avg_heart_rate, maxHeartRate = row.stats_max_heart_rate, bounds = bounds,
+            )
+        }
+        if (cached != null) return cached
+        val track = track(trackId) ?: return null
+        val s = TrackStats.of(track)
+        statsComputed++
+        val b = s.bounds
+        q.putStats(
+            s.points.toLong(), s.segments.toLong(), s.distanceM, s.ascentM, s.descentM, s.minEleM, s.maxEleM,
+            s.startTime, s.endTime, s.durationS, s.movingTimeS, s.movingSpeedMps, s.movingPaceSPerKm, s.overallPaceSPerKm,
+            s.avgHeartRate, s.maxHeartRate, b?.west, b?.south, b?.east, b?.north, trackId,
+        )
+        return s
+    }
+
+    override fun waypoint(id: String): StoredWaypoint? =
+        q.selectWaypoint(id) { wid, trackId, _, name, lat, lon, ele, time, description, comment, symbol, type, extensions ->
+            StoredWaypoint(trackId, Waypoint(wid, name, lat, lon, ele, time, description, comment, symbol, type, extensions))
+        }.executeAsOneOrNull()
+
+    override fun renameWaypoint(id: String, name: String, now: Long): Boolean {
+        var found = false
+        q.transaction {
+            val w = q.selectWaypoint(id).executeAsOneOrNull() ?: return@transaction
+            found = true
+            q.renameWaypoint(name, id)
+            w.track_id?.let { q.touchTrack(now, it) }
+        }
+        return found
+    }
+
+    override fun deleteWaypoint(id: String, now: Long): Boolean {
+        var found = false
+        q.transaction {
+            val w = q.selectWaypoint(id).executeAsOneOrNull() ?: return@transaction
+            found = true
+            q.deleteWaypoint(id)
+            w.track_id?.let { q.touchTrack(now, it) }
+        }
+        return found
     }
 
     override fun addWaypoint(trackId: String?, waypoint: Waypoint, now: Long) {

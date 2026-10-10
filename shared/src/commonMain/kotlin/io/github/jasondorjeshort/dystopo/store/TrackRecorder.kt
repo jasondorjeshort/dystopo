@@ -20,32 +20,54 @@ data class LocationFix(
     val source: String = "gps",
 )
 
-/** Which fixes a [TrackRecorder] keeps. */
+/** Which fixes a [TrackRecorder] keeps, and when it starts a new segment. */
 data class RecorderOptions(
     /** Fixes less accurate than this are dropped (a phone indoors or just after a cold start reports 100 m and more). */
     val maxAccuracyM: Double = 50.0,
-)
+    /**
+     * A fix whose time is more than this after the previous accepted fix starts a new segment (the
+     * receiver lost the sky, or the phone slept), so distance and moving time never bridge the gap.
+     * Null: never split on time. Measured on the fixes' own times, so a GPX replay splits where the file has a gap.
+     */
+    val segmentGapMs: Long? = DEFAULT_SEGMENT_GAP_MS,
+) {
+    init {
+        require(segmentGapMs == null || segmentGapMs > 0) { "segmentGapMs must be positive" }
+    }
+
+    companion object {
+        const val DEFAULT_SEGMENT_GAP_MS = 5 * 60_000L
+    }
+}
 
 /**
  * Turns a stream of [LocationFix]es into a track in a [TrackStore]: [start] creates the track,
  * [onFix] appends each accepted fix (written through at once, so a kill loses nothing already
- * accepted), [pause] makes the next fix start a new segment, [stop] closes it. It also keeps the
- * active track's points in memory so [liveStats] doesn't reread the store.
+ * accepted), [pause] and [resume] hold recording (the first fix after a resume starts a new
+ * segment), [stop] closes it. It also keeps the active track's points in memory so [liveStats]
+ * doesn't reread the store.
  *
- * Rejected fixes are counted, not stored: worse than [RecorderOptions.maxAccuracyM], or not newer
- * than the last accepted fix (duplicates and out-of-order reports, which GPS chipsets and
- * replays both produce). Not thread-safe: the app calls it from one thread.
+ * Rejected fixes are counted, not stored: worse than [RecorderOptions.maxAccuracyM], not newer
+ * than the last accepted fix (duplicates and out-of-order reports, which GPS chipsets and replays
+ * both produce), or arriving while paused. A fix more than [RecorderOptions.segmentGapMs] after the
+ * last accepted one starts a new segment. Not thread-safe: the app calls it from one thread.
  */
 class TrackRecorder(
     private val store: TrackStore,
-    private val options: RecorderOptions = RecorderOptions(),
+    options: RecorderOptions = RecorderOptions(),
     private val ids: UuidGenerator = UuidGenerator(),
     private val clock: () -> Long,
 ) {
+    /** Takes effect from the next fix (the app changes the gap from its settings). */
+    var options: RecorderOptions = options
+
     var activeId: String? = null
         private set
     /** The last fix seen from any source (accepted or not, recording or not): where "here" is for a waypoint. */
     var lastFix: LocationFix? = null
+        private set
+    /** True between [pause] and [resume] (or [stop]): fixes are counted in [skippedPaused], not stored. */
+    var paused = false
         private set
 
     private var lastAccepted: LocationFix? = null
@@ -58,8 +80,16 @@ class TrackRecorder(
         private set
     var rejectedTime = 0L
         private set
+    var skippedPaused = 0L
+        private set
+    /** Segments started because of a time gap (not counting the first segment or resumes). */
+    var gapSplits = 0L
+        private set
 
     val recording: Boolean get() = activeId != null
+
+    /** Time of the last fix appended to the active track: a fix must be newer than this to be kept. */
+    val lastAcceptedTime: Long? get() = lastAccepted?.time
 
     /** Starts recording into a new track (stopping the current one first). */
     fun start(name: String): TrackSummary {
@@ -69,10 +99,13 @@ class TrackRecorder(
         activeId = s.id
         lastAccepted = null
         newSegment = true
+        paused = false
         live.clear()
         accepted = 0
         rejectedAccuracy = 0
         rejectedTime = 0
+        skippedPaused = 0
+        gapSplits = 0
         return s
     }
 
@@ -80,6 +113,10 @@ class TrackRecorder(
     fun onFix(fix: LocationFix): Boolean {
         lastFix = fix
         val id = activeId ?: return false
+        if (paused) {
+            skippedPaused++
+            return false
+        }
         val acc = fix.accuracyM
         if (acc != null && acc > options.maxAccuracyM) {
             rejectedAccuracy++
@@ -89,6 +126,11 @@ class TrackRecorder(
         if (prev != null && fix.time <= prev.time) {
             rejectedTime++
             return false
+        }
+        val gap = options.segmentGapMs
+        if (prev != null && !newSegment && gap != null && fix.time - prev.time > gap) {
+            newSegment = true
+            gapSplits++
         }
         val p = TrackPoint(fix.lat, fix.lon, fix.ele, fix.time)
         store.append(id, p, newSegment, clock())
@@ -100,8 +142,15 @@ class TrackRecorder(
         return true
     }
 
-    /** The next accepted fix starts a new segment (recording paused, or the fix was lost for a while). */
+    /** Holds recording: fixes are ignored until [resume]. No effect when not recording. */
     fun pause() {
+        if (activeId != null) paused = true
+    }
+
+    /** Continues after [pause]; the next accepted fix starts a new segment. */
+    fun resume() {
+        if (activeId == null || !paused) return
+        paused = false
         newSegment = true
     }
 
@@ -110,6 +159,7 @@ class TrackRecorder(
         val id = activeId ?: return null
         store.setRecording(id, false, clock())
         activeId = null
+        paused = false
         return store.summary(id)
     }
 

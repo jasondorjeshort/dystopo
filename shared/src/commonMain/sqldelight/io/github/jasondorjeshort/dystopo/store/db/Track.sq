@@ -1,6 +1,10 @@
 -- Durable TrackStore schema (T31). One row per track, per recorded point, per waypoint.
 -- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
 -- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
+--
+-- This file is the CURRENT schema (version 2). Changing it needs a migration: see 1.sqm and the
+-- "Track database migrations" paragraph in CLAUDE.md. New columns go at the END of a table, in the
+-- order the migration adds them.
 
 CREATE TABLE track (
     id TEXT NOT NULL PRIMARY KEY,
@@ -13,7 +17,29 @@ CREATE TABLE track (
     comment TEXT,
     source TEXT,
     type TEXT,
-    extensions TEXT
+    extensions TEXT,
+    -- Version 2 (T40): TrackStats cache, computed with the default StatsOptions. stats_points is the
+    -- point count it was computed from; NULL means no cache (never computed, or a point was appended since).
+    stats_points INTEGER,
+    stats_segments INTEGER,
+    stats_distance_m REAL,
+    stats_ascent_m REAL,
+    stats_descent_m REAL,
+    stats_min_ele_m REAL,
+    stats_max_ele_m REAL,
+    stats_start_time INTEGER,
+    stats_end_time INTEGER,
+    stats_duration_s REAL,
+    stats_moving_time_s REAL,
+    stats_moving_speed_mps REAL,
+    stats_moving_pace_s_per_km REAL,
+    stats_overall_pace_s_per_km REAL,
+    stats_avg_heart_rate REAL,
+    stats_max_heart_rate REAL,
+    stats_west REAL,
+    stats_south REAL,
+    stats_east REAL,
+    stats_north REAL
 );
 
 CREATE TABLE track_point (
@@ -52,13 +78,13 @@ INSERT INTO track(id, name, created_at, updated_at, recording, description, comm
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectTracks:
-SELECT t.*,
+SELECT t.id, t.name, t.created_at, t.updated_at, t.recording, t.description, t.comment, t.source, t.type, t.extensions,
     (SELECT count(*) FROM track_point p WHERE p.track_id = t.id) AS point_count,
     (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count
 FROM track t ORDER BY t.created_at, t.id;
 
 selectTrack:
-SELECT t.*,
+SELECT t.id, t.name, t.created_at, t.updated_at, t.recording, t.description, t.comment, t.source, t.type, t.extensions,
     (SELECT count(*) FROM track_point p WHERE p.track_id = t.id) AS point_count,
     (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count
 FROM track t WHERE t.id = ?;
@@ -68,6 +94,10 @@ UPDATE track SET recording = ?, updated_at = ? WHERE id = ?;
 
 touchTrack:
 UPDATE track SET updated_at = ? WHERE id = ?;
+
+-- A point was appended: the stats cache is stale.
+touchTrackPoints:
+UPDATE track SET updated_at = ?, stats_points = NULL WHERE id = ?;
 
 renameTrack:
 UPDATE track SET name = ?, updated_at = ? WHERE id = ?;
@@ -80,6 +110,20 @@ DELETE FROM track_point WHERE track_id = ?;
 
 deleteTrackWaypoints:
 DELETE FROM waypoint WHERE track_id = ?;
+
+selectStats:
+SELECT stats_points, stats_segments, stats_distance_m, stats_ascent_m, stats_descent_m, stats_min_ele_m, stats_max_ele_m,
+    stats_start_time, stats_end_time, stats_duration_s, stats_moving_time_s, stats_moving_speed_mps,
+    stats_moving_pace_s_per_km, stats_overall_pace_s_per_km, stats_avg_heart_rate, stats_max_heart_rate,
+    stats_west, stats_south, stats_east, stats_north
+FROM track WHERE id = ?;
+
+putStats:
+UPDATE track SET stats_points = ?, stats_segments = ?, stats_distance_m = ?, stats_ascent_m = ?, stats_descent_m = ?,
+    stats_min_ele_m = ?, stats_max_ele_m = ?, stats_start_time = ?, stats_end_time = ?, stats_duration_s = ?,
+    stats_moving_time_s = ?, stats_moving_speed_mps = ?, stats_moving_pace_s_per_km = ?, stats_overall_pace_s_per_km = ?,
+    stats_avg_heart_rate = ?, stats_max_heart_rate = ?, stats_west = ?, stats_south = ?, stats_east = ?, stats_north = ?
+WHERE id = ?;
 
 insertPoint:
 INSERT INTO track_point(track_id, seq, segment, lat, lon, ele, time, extensions)
@@ -97,3 +141,12 @@ VALUES (?, ?, (SELECT coalesce(max(seq), -1) + 1 FROM waypoint), ?, ?, ?, ?, ?, 
 
 selectWaypoints:
 SELECT * FROM waypoint WHERE track_id = ? ORDER BY seq;
+
+selectWaypoint:
+SELECT * FROM waypoint WHERE id = ?;
+
+renameWaypoint:
+UPDATE waypoint SET name = ? WHERE id = ?;
+
+deleteWaypoint:
+DELETE FROM waypoint WHERE id = ?;
