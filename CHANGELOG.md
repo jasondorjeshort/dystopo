@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T67: Users on the server and trip sharing (#66)
 - T68: Route planning in the browser (#65)
 - T63: Cold start and tile scheduling (#64)
 - T57: Android leftover sweep 4 (#63)
