@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
         val tiles = app.tiles
         val dem = tiles.packs.dem?.header
         // Start over the middle of the DEM pack (a public test area such as Rainier), else a world view.
-        val start = if (dem != null) {
+        val start = DeepLink.camera(intent) ?: if (dem != null) { // T55: dystopo://map?lat=&lon=&z= wins
             CameraPosition.Builder()
                 .target(LatLng((dem.minLat + dem.maxLat) / 2, (dem.minLon + dem.maxLon) / 2))
                 .zoom(12.0).build()
@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
         mapView.onCreate(savedInstanceState)
         app.map.activity = this
         app.map.attach(mapView, styleJson = { app.tiles.style() })
+        DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
 
         // Dark status-bar icons: the map, the pack list and the sheets are all light (paper) under the bar.
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true

@@ -24,6 +24,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- T55: dystopo://map?lat=&lon=&z= opens the map there (DeepLink.kt). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dystopo" android:host="map" />
+            </intent-filter>
         </activity>
         <activity android:name=".about.AboutActivity" android:exported="false" />
         <service
