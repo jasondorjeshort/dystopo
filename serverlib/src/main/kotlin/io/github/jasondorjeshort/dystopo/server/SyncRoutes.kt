@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+package io.github.jasondorjeshort.dystopo.server
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.sun.net.httpserver.HttpExchange

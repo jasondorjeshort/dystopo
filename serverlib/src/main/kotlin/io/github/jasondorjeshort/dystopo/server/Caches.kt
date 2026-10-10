@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+package io.github.jasondorjeshort.dystopo.server
 
 import java.io.File
 

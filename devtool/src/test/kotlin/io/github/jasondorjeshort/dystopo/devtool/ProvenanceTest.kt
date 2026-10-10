@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
+import io.github.jasondorjeshort.dystopo.server.*
+
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import kotlin.test.Test
 import kotlin.test.assertEquals

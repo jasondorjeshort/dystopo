@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+package io.github.jasondorjeshort.dystopo.server
 
 import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
 import io.github.jasondorjeshort.dystopo.style.OsmStyle

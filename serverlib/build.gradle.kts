@@ -1,7 +1,7 @@
 // The server pieces shared by `devtool serve` and the standalone `server` (T52): the HTTP routes (live
 // tiles, pack builds, static /out/, the sync peer, the pack catalog), the elevation sources they render
-// from, and the small JVM helpers those need. The Kotlin package stays `...dystopo.devtool` (the files
-// moved here from devtool unchanged), so devtool code and tests use them without new imports.
+// from, and the small JVM helpers those need. The Kotlin package is `...dystopo.server` (T58; it was
+// `...dystopo.devtool` when the files moved here), shared with the `server` module.
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)

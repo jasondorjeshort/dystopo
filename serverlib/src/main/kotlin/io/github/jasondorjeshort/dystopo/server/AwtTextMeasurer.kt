@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+package io.github.jasondorjeshort.dystopo.server
 
 import io.github.jasondorjeshort.dystopo.render.TextMeasurer
 import io.github.jasondorjeshort.dystopo.render.TextSize

@@ -1,9 +1,11 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
+import io.github.jasondorjeshort.dystopo.server.*
+
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.geo.TileId
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
-import io.github.jasondorjeshort.dystopo.devtool.LiveTiles.Tile
+import io.github.jasondorjeshort.dystopo.server.LiveTiles.Tile
 import io.github.jasondorjeshort.dystopo.mvt.Feature
 import io.github.jasondorjeshort.dystopo.mvt.Geometry
 import io.github.jasondorjeshort.dystopo.mvt.Layer

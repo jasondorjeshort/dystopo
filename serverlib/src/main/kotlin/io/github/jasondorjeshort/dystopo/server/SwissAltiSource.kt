@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+package io.github.jasondorjeshort.dystopo.server
 
 import io.github.jasondorjeshort.dystopo.dem.Datums
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid

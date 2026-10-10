@@ -6,8 +6,8 @@ logs, `/healthz`, a pack catalog, an optional bearer token, a CORS allowlist and
 
 Code: `server/` (the program: `Main.kt`, `ServerConfig.kt`, `Gate.kt`, `JsonLog.kt`) over `serverlib/`
 (the routes and sources, shared with `devtool serve`: `LiveTiles`, `BuildRoutes`, `ServeStatic`,
-`SyncRoutes`, `PackCatalog`, the elevation sources). The Kotlin package of `serverlib` is still
-`io.github.jasondorjeshort.dystopo.devtool`: the files moved there unchanged.
+`SyncRoutes`, `PackCatalog`, the elevation sources). Both modules use the Kotlin package
+`io.github.jasondorjeshort.dystopo.server` (T58 renamed `serverlib` from `...devtool`).
 
 ## Run it locally
 

@@ -5,7 +5,7 @@ Open-source, offline-first topographic maps. Design, decisions, and findings: `d
 ## Layout
 - `shared/` — Kotlin Multiplatform core (currently JVM target only; Android and iOS come later). `commonMain` must stay pure Kotlin: **no `java.*` imports**, so it compiles for every target. Platform-specific pieces (image decoding, HTTP, zlib) are injected through small interfaces such as `ByteRangeSource` and `Decompressor`.
 - `devtool/` — JVM command-line tool that runs shared-core features and prints JSON reports. JVM-only code (image I/O, HTTP, elevation sources) lives here.
-- `serverlib/` and `server/` — the server pieces (`LiveTiles`, `BuildRoutes`, `ServeStatic`, `SyncRoutes`, `PackCatalog`, the elevation sources; package still `...devtool`) shared by `devtool serve` and the standalone server (`./gradlew :server:installDist`, config file, `/catalog`, `/healthz`, token, Dockerfile): see `docs/SERVER.md`.
+- `serverlib/` and `server/` — the server pieces (`LiveTiles`, `BuildRoutes`, `ServeStatic`, `SyncRoutes`, `PackCatalog`, the elevation sources; package `...dystopo.server`) shared by `devtool serve` and the standalone server (`./gradlew :server:installDist`, config file, `/catalog`, `/healthz`, token, Dockerfile): see `docs/SERVER.md`.
 - `tilebuild/` — JVM-only build tool: OSM extract → PMTiles via Planetiler (heavy dependencies stay here, out of devtool). `./gradlew :tilebuild:run --args="--extract liechtenstein --out out/liechtenstein.pmtiles"`; first run downloads ~1.45 GB of aux data into the cache.
 - `tools/` — repo tooling: `PrivacyCheck.java` and the git hooks in `tools/git-hooks`.
 - `areas.json` — public named test areas. Personal areas go in `devtool.local.json` (gitignored, same format, main checkout only).
