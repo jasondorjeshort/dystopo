@@ -9,6 +9,7 @@ each release gets a section here.
 
 ### 2026-10-10
 
+- T63: Cold start and tile scheduling (#64)
 - T57: Android leftover sweep 4 (#63)
 - T61: Navigation mode (#61)
 - T58: Desktop and server leftover sweep 4 (#62)
