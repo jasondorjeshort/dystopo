@@ -44,7 +44,16 @@ sealed class SceneLayer {
     /** Rings (exteriors and holes, as in the tiles) to fill together with the non-zero rule. */
     class Fill(override val style: StyleLayer.Fill, val rings: List<DoubleArray>) : SceneLayer()
 
-    class Line(override val style: StyleLayer.Line, val lines: List<DoubleArray>) : SceneLayer()
+    /**
+     * Lines of one style layer. A layer with modifiers becomes several of these, one per distinct
+     * width and opacity factor ([widthScale], [opacityScale]), in style order of first appearance.
+     */
+    class Line(
+        override val style: StyleLayer.Line,
+        val lines: List<DoubleArray>,
+        val widthScale: Double = 1.0,
+        val opacityScale: Double = 1.0,
+    ) : SceneLayer()
 
     class Contours(override val style: StyleLayer.Contours) : SceneLayer()
 }
@@ -99,14 +108,24 @@ class OsmScene(
                         if (rings.isNotEmpty()) layers += SceneLayer.Fill(layer, rings)
                     }
                     is StyleLayer.Line -> {
-                        val pieces = ArrayList<DoubleArray>()
+                        // Pieces grouped by modifier factors (width, opacity); plain layers have one group.
+                        val groups = LinkedHashMap<Pair<Double, Double>, MutableList<DoubleArray>>()
                         forEachFeature(tiles, window, image, layer.select, GeometryType.LINESTRING, count) { f, place, clip ->
+                            var w = 1.0
+                            var o = 1.0
+                            for (m in layer.modifiers) if (m.filter.matches(f.properties)) {
+                                w *= m.width
+                                o *= m.opacity
+                            }
+                            val pieces = groups.getOrPut(w to o) { ArrayList() }
                             for (line in outlines(f.geometry, place)) pieces += Clip.polyline(line, clip)
                         }
-                        val merged = LineMerge.merge(pieces)
-                        count.pieces = merged.size
-                        count.vertices = merged.sumOf { it.size / 2 }
-                        if (merged.isNotEmpty()) layers += SceneLayer.Line(layer, merged)
+                        for ((factors, pieces) in groups) {
+                            val merged = LineMerge.merge(pieces)
+                            count.pieces += merged.size
+                            count.vertices += merged.sumOf { it.size / 2 }
+                            if (merged.isNotEmpty()) layers += SceneLayer.Line(layer, merged, factors.first, factors.second)
+                        }
                     }
                     is StyleLayer.Symbol -> {
                         val requests = symbolRequests(layer, tiles, window, image, elevationUnits, count)
@@ -177,7 +196,8 @@ class OsmScene(
                     if (layer.select.geometry != null && f.type != layer.select.geometry) continue
                     if (!layer.select.filter.matches(f.properties)) continue
                     val lines = TextTemplate.render(layer.text, f.properties, units)
-                    if (lines.isEmpty()) continue
+                    // An empty text still places the marker when the text is optional.
+                    if (lines.isEmpty() && !(layer.textOptional && layer.marker != null && layer.placement == Placement.POINT)) continue
                     val sort = sortValue(layer.sortKey, f)
                     when (val g = f.geometry) {
                         is Geometry.Points -> if (layer.placement == Placement.POINT) {

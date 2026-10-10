@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.parameters.groups.provideDelegate
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.render.ContourLabel
+import io.github.jasondorjeshort.dystopo.style.PlacedLabel
 import io.github.jasondorjeshort.dystopo.testing.SyntheticTerrain
 import java.awt.image.BufferedImage
 import java.io.File
@@ -40,8 +41,10 @@ data class GoldenCase(
     val centerX: Double = 0.0,
     val centerY: Double = 0.0,
     val args: List<String> = emptyList(),
+    /** OpenStreetMap data drawn over the terrain (`--osm`), from a synthetic archive. */
+    val osm: OsmFixture? = null,
 ) {
-    val name: String get() = "${terrain.name}-z$zoom"
+    val name: String get() = "${terrain.name}${if (osm != null) "-osm" else ""}-z$zoom"
     val fileName: String get() = "$name.png"
 
     /** Approved label list next to the image (see [Goldens.formatLabels]). */
@@ -50,11 +53,21 @@ data class GoldenCase(
 
     fun grid(): ElevationGrid = terrain.grid(sizePx, sizePx, cellSizeMeters, centerX, centerY)
 
-    fun style(): StyleOptions = styleOptions(*args.toTypedArray())
+    fun style(): StyleOptions = styleOptions(*(args + osmArgs()).toTypedArray())
+
+    private fun osmArgs(): List<String> = osm?.let { listOf("--osm", it.file(this).path) }.orEmpty()
 }
 
-/** Result of rendering a [GoldenCase]: the image, its report numbers, and where labels were drawn. */
-class GoldenRender(val image: BufferedImage, val stats: ContourStats, val labels: List<ContourLabel>)
+/**
+ * Result of rendering a [GoldenCase]: the image, its report numbers, and where labels were drawn
+ * ([labels]: the contour labels that were drawn; [osmLabels]: map labels and markers from `--osm`).
+ */
+class GoldenRender(
+    val image: BufferedImage,
+    val stats: ContourStats,
+    val labels: List<ContourLabel>,
+    val osmLabels: List<PlacedLabel> = emptyList(),
+)
 
 object Goldens {
     /**
@@ -69,6 +82,9 @@ object Goldens {
         GoldenCase(SyntheticTerrain.CONE, zoom = 14, centerX = 500.0, centerY = 300.0),
         GoldenCase(SyntheticTerrain.LAKE_CLIFF, zoom = 13),
         GoldenCase(SyntheticTerrain.LAKE_CLIFF, zoom = 15, centerX = 250.0, centerY = 0.0),
+        // The default map style over a synthetic outdoors-schema archive: trails by difficulty, cliff
+        // ticks, POI markers, park and wilderness boundaries, peak, trail and cliff labels.
+        GoldenCase(SyntheticTerrain.LAKE_CLIFF, zoom = 15, centerX = 200.0, centerY = 0.0, osm = OsmFixture.LAKE_CLIFF),
     )
 
     /** Source directory of the approved images (relative to the devtool project dir, where Gradle runs tests). */
@@ -80,10 +96,12 @@ object Goldens {
     fun render(case: GoldenCase): GoldenRender {
         val grid = case.grid()
         val style = case.style()
-        val (image, stats) = MapRenderer.render(grid, case.zoom, style, Timings())
-        // Same inputs, same placement: rebuild the contour layer to learn where the labels went.
+        val window = case.osm?.window(case)
+        val (image, stats) = MapRenderer.render(grid, case.zoom, style, Timings(), window = window)
+        // Same inputs, same placement: rebuild the contour (and OSM) layers to learn where the labels went.
         val labels = ContourLayer.build(grid, case.zoom, style, Timings()).labels
-        return GoldenRender(image, stats, labels)
+        val osm = window?.let { OsmLayer.build(style, it, grid, Timings()) } ?: return GoldenRender(image, stats, labels)
+        return GoldenRender(image, stats, osm.contourLabelsKept(labels), osm.labels)
     }
 
     /** A label as recorded in a golden's `.labels.txt`: text, center in pixels, angle in degrees. */
@@ -97,9 +115,9 @@ object Goldens {
      * those boxes come from the render under test, so an extra label, or one with the wrong
      * number, would otherwise pass; this list pins count, text and placement exactly.
      */
-    fun formatLabels(labels: List<ContourLabel>): String =
+    fun formatLabels(labels: List<ContourLabel>, osmLabels: List<PlacedLabel> = emptyList()): String =
         "# text x y angleDeg; written by ./gradlew updateGoldens\n" +
-            record(labels).joinToString("") { "${it.text} ${fmt(it.x)} ${fmt(it.y)} ${fmt(it.angleDeg)}\n" }
+            record(labels, osmLabels).joinToString("") { "${it.text} ${fmt(it.x)} ${fmt(it.y)} ${fmt(it.angleDeg)}\n" }
 
     fun parseLabels(text: String): List<RecordedLabel> = text.lines()
         .map { it.trim() }
@@ -110,9 +128,17 @@ object Goldens {
             RecordedLabel(f[0], f[1].toDouble(), f[2].toDouble(), f[3].toDouble())
         }
 
-    fun record(labels: List<ContourLabel>): List<RecordedLabel> = labels
-        .map { RecordedLabel(it.text, round1(it.x), round1(it.y), round1(Math.toDegrees(it.angle))) }
-        .sortedWith(compareBy({ it.y }, { it.x }, { it.text }))
+    /**
+     * Contour labels and OSM labels as recorded lines. An OSM label's text has spaces as `_` and
+     * lines joined by `|`; a marker without text is `@layer-id` at the marker.
+     */
+    fun record(labels: List<ContourLabel>, osmLabels: List<PlacedLabel> = emptyList()): List<RecordedLabel> =
+        (labels.map { RecordedLabel(it.text, round1(it.x), round1(it.y), round1(Math.toDegrees(it.angle))) } +
+            osmLabels.map { l ->
+                if (l.lines.isEmpty()) RecordedLabel("@${l.style.id}", round1(l.markerX), round1(l.markerY), 0.0)
+                else RecordedLabel(l.lines.joinToString("|").replace(' ', '_'), round1(l.x), round1(l.y), round1(Math.toDegrees(l.angle)))
+            })
+            .sortedWith(compareBy({ it.y }, { it.x }, { it.text }))
 
     /**
      * Differences between approved and actual labels: every approved label needs an actual one
@@ -150,29 +176,55 @@ object Goldens {
      * Pixels covered by labels and their halos, grown by [marginPx]. Text is where machines differ
      * (font files, hinting, rasterizer), so these pixels get a looser tolerance.
      */
-    fun labelMask(labels: List<ContourLabel>, width: Int, height: Int, marginPx: Double = 3.0): BooleanArray {
+    fun labelMask(
+        labels: List<ContourLabel>,
+        width: Int,
+        height: Int,
+        marginPx: Double = 3.0,
+        osmLabels: List<PlacedLabel> = emptyList(),
+    ): BooleanArray {
         val mask = BooleanArray(width * height)
         for (label in labels) {
             val halfW = label.width / 2 + label.fontPx * 0.11 + marginPx
             val halfH = label.height / 2 + label.fontPx * 0.11 + marginPx
-            val reach = ceil(kotlin.math.hypot(halfW, halfH)).toInt() + 1
-            val c = cos(label.angle)
-            val s = sin(label.angle)
-            val cx = label.x + 0.5
-            val cy = label.y + 0.5
-            for (py in (cy.toInt() - reach)..(cy.toInt() + reach)) {
-                if (py !in 0 until height) continue
-                for (px in (cx.toInt() - reach)..(cx.toInt() + reach)) {
-                    if (px !in 0 until width) continue
-                    val dx = px + 0.5 - cx
-                    val dy = py + 0.5 - cy
-                    // Into the label's frame (the drawing rotates by +angle about the center).
-                    val u = dx * c + dy * s
-                    val v = -dx * s + dy * c
-                    if (abs(u) <= halfW && abs(v) <= halfH) mask[py * width + px] = true
-                }
+            markBox(mask, width, height, label.x, label.y, label.angle, halfW, halfH)
+        }
+        for (label in osmLabels) {
+            val halo = maxOf(label.fontPx * 0.11, label.style.haloWidth * 1.5)
+            if (label.marker != null) {
+                // Markers can hold a glyph (P); the shapes reach a little beyond their nominal size.
+                val r = label.markerPx * 0.65 + 2 + marginPx
+                markBox(mask, width, height, label.markerX, label.markerY, 0.0, r, r)
+            }
+            val glyphs = label.glyphs
+            if (glyphs != null) {
+                for (g in glyphs) markBox(mask, width, height, g.x, g.y, g.angle, label.fontPx * 0.6 + halo + marginPx, label.fontPx * 0.6 + halo + marginPx)
+            } else if (label.lines.isNotEmpty()) {
+                // Point text: ink runs a little below the box (descenders of the last line).
+                markBox(mask, width, height, label.x, label.y, label.angle, label.width / 2 + halo + marginPx, label.height / 2 + label.fontPx * 0.15 + halo + marginPx)
             }
         }
         return mask
+    }
+
+    /** Marks the pixels of an oriented box (center, angle, half sizes). */
+    private fun markBox(mask: BooleanArray, width: Int, height: Int, x: Double, y: Double, angle: Double, halfW: Double, halfH: Double) {
+        val reach = ceil(kotlin.math.hypot(halfW, halfH)).toInt() + 1
+        val c = cos(angle)
+        val s = sin(angle)
+        val cx = x + 0.5
+        val cy = y + 0.5
+        for (py in (cy.toInt() - reach)..(cy.toInt() + reach)) {
+            if (py !in 0 until height) continue
+            for (px in (cx.toInt() - reach)..(cx.toInt() + reach)) {
+                if (px !in 0 until width) continue
+                val dx = px + 0.5 - cx
+                val dy = py + 0.5 - cy
+                // Into the label's frame (the drawing rotates by +angle about the center).
+                val u = dx * c + dy * s
+                val v = -dx * s + dy * c
+                if (abs(u) <= halfW && abs(v) <= halfH) mask[py * width + px] = true
+            }
+        }
     }
 }

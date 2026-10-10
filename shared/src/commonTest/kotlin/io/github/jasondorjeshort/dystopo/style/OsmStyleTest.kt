@@ -60,6 +60,40 @@ class OsmStyleTest {
     }
 
     @Test
+    fun outdoorsStyleKeys() {
+        val style = OsmStyle.parse(
+            """{"layers": [
+              {"id": "c", "type": "line", "source-layer": "natural_line", "color": "#000",
+               "ticks": {"spacing": [[12, 3], [15, 5]], "length": 4, "side": "downhill"},
+               "modifiers": [{"filter": {"informal": 1}, "width": 0.5}, {"filter": {"trail_visibility": "bad"}, "opacity": 0.4}]},
+              {"id": "p", "type": "symbol", "source-layer": "outdoor_poi", "text": "", "color": "#000", "text-optional": true,
+               "marker": {"shape": "star", "size": 9, "color": "#c25e00", "text": "P", "text-color": "#ff0"}}
+            ]}""",
+        )
+        val c = style.byId["c"] as StyleLayer.Line
+        val t = c.ticks!!
+        assertEquals(TickSide.DOWNHILL, t.side)
+        assertEquals(11.0 / 3, t.spacing.at(13.0), 1e-9)
+        assertEquals(1.0, t.width.at(13.0))
+        assertEquals(listOf(0.5 to 1.0, 1.0 to 0.4), c.modifiers.map { it.width to it.opacity })
+        assertTrue(c.modifiers[0].filter.matches(mapOf("informal" to Value.IntValue(1))))
+        val p = style.byId["p"] as StyleLayer.Symbol
+        assertTrue(p.textOptional)
+        assertEquals(Marker(MarkerShape.STAR, 9.0, StyleColor(0xc2, 0x5e, 0), "P", StyleColor(255, 255, 0)), p.marker)
+        assertFailsWith<IllegalArgumentException> {
+            OsmStyle.parse("""{"layers": [{"id": "m", "type": "symbol", "source-layer": "x", "text": "", "color": "#000", "marker": {"shape": "hexagon"}}]}""")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            OsmStyle.parse("""{"layers": [{"id": "t", "type": "line", "source-layer": "x", "color": "#000", "ticks": {"side": "up"}}]}""")
+        }
+        // Every marker shape and tick side in the default style parses, and the outdoors layers are there.
+        for (id in listOf("cliff", "wilderness-boundary", "trail-mountain", "trail-demanding", "trail-alpine", "huts", "trailheads", "campsites",
+            "shelters", "waterfalls", "viewpoints", "springs", "caves", "parking", "natural-line-names", "ridge-names")) {
+            assertTrue(id in DefaultOsmStyle.style.byId, "default style has $id")
+        }
+    }
+
+    @Test
     fun parseErrorsNameTheLayer() {
         val e = assertFailsWith<IllegalArgumentException> {
             OsmStyle.parse("""{"layers": [{"id": "bad", "type": "line", "source-layer": "x", "color": "#123456", "dash": ["a"]}]}""")

@@ -48,7 +48,7 @@ class GoldenImageTest {
             val written = writeOut(case, actual, null)
             return "  ${case.name}: size ${actual.width}x${actual.height}, golden ${expected.width}x${expected.height}; actual at $written"
         }
-        val mask = Goldens.labelMask(render.labels, actual.width, actual.height)
+        val mask = Goldens.labelMask(render.labels, actual.width, actual.height, osmLabels = render.osmLabels)
         val diff = ImageDiff(expected, actual, mask, pixelThreshold)
         val labelProblems = checkLabels(case, render)
         if (diff.outside.within(strict) && diff.inside.within(labels) && labelProblems.isEmpty()) return null
@@ -65,7 +65,7 @@ class GoldenImageTest {
         val stream = javaClass.getResourceAsStream("/goldens/${case.labelsFileName}")
             ?: return listOf("no approved label list goldens/${case.labelsFileName}")
         val expected = Goldens.parseLabels(stream.use { it.readBytes().decodeToString() })
-        return Goldens.compareLabels(expected, Goldens.record(render.labels))
+        return Goldens.compareLabels(expected, Goldens.record(render.labels, render.osmLabels))
     }
 
     private fun writeOut(case: GoldenCase, actual: java.awt.image.BufferedImage, diff: ImageDiff?): String {

@@ -131,12 +131,82 @@ class OsmSceneTest {
         assertEquals(1, n("road-major"))
         assertEquals(1, n("road-unpaved"))
         assertEquals(0, n("road-minor"), "unpaved tertiary is not drawn as paved")
-        assertEquals(1, n("trail-difficult"), "sac_scale alpine_hiking")
+        assertEquals(1, n("trail-alpine"), "sac_scale alpine_hiking")
         assertEquals(1, n("glacier"))
         assertEquals(1, n("wood"))
         assertEquals(1, n("stream"))
         assertEquals(1, n("stream-intermittent"))
         assertEquals(0, n("river"), "tunnels are not drawn")
+    }
+
+    @Test
+    fun outdoorsSchemaClassification() {
+        fun tr(vararg kv: Pair<String, Any>) = kv.associate { (k, v) -> k to if (v is Int) Value.IntValue(v.toLong()) else s(v as String) }
+        val t = tile(
+            14, 100, 200,
+            "transportation" to listOf(
+                line(tr("class" to "path", "sac_scale" to "hiking"), 100, 100, 900, 100),
+                line(tr("class" to "path", "sac_scale" to "mountain_hiking"), 100, 200, 900, 200),
+                line(tr("class" to "path", "sac_scale" to "demanding_mountain_hiking"), 100, 300, 900, 300),
+                line(tr("class" to "path", "sac_scale" to "difficult_alpine_hiking"), 100, 400, 900, 400),
+                line(tr("class" to "path", "subclass" to "footway", "sac_scale" to "mountain_hiking"), 100, 500, 900, 500),
+                // Same grade, three looks: plain, faint (bad visibility), thin (informal), both.
+                line(tr("class" to "path"), 100, 1000, 900, 1000),
+                line(tr("class" to "path", "trail_visibility" to "bad"), 100, 1100, 900, 1100),
+                line(tr("class" to "path", "informal" to 1), 100, 1200, 900, 1200),
+                line(tr("class" to "path", "informal" to 1, "trail_visibility" to "no"), 100, 1300, 900, 1300),
+            ),
+            "natural_line" to listOf(
+                line(tr("class" to "cliff"), 100, 2000, 900, 2000),
+                line(tr("class" to "ridge", "name" to "Test Ridge"), 100, 2100, 3900, 2100),
+                line(tr("class" to "arete"), 100, 2200, 900, 2200),
+            ),
+            "park" to listOf(
+                box(tr("class" to "wilderness", "protect_class" to "1b"), 0, 0, 2000, 2000),
+                box(tr("class" to "national_park"), 0, 0, 3000, 3000),
+            ),
+            "outdoor_poi" to listOf(
+                point(tr("class" to "hut", "subclass" to "alpine_hut", "name" to "High Hut"), 3000, 300),
+                point(tr("class" to "trailhead"), 3000, 600),
+                point(tr("class" to "campsite", "subclass" to "camp_site", "name" to "Lake Camp"), 3000, 900),
+                point(tr("class" to "campsite", "subclass" to "camp_pitch"), 3000, 1000),
+                point(tr("class" to "shelter", "subclass" to "picnic_shelter"), 3000, 1100),
+                point(tr("class" to "spring"), 3000, 1200),
+                point(tr("class" to "viewpoint", "name" to "Big View"), 3000, 1500),
+                point(tr("class" to "waterfall", "name" to "Test Falls"), 3000, 1800),
+                point(tr("class" to "cave"), 3000, 2100),
+                point(tr("class" to "parking", "name" to "Lot"), 3000, 2400),
+                point(tr("class" to "toilets"), 3000, 2700),
+            ),
+            "mountain_peak" to listOf(point(tr("class" to "ridge", "name" to "Test Ridge"), 2000, 2100)),
+        )
+        val scene = OsmScene.build(DefaultOsmStyle.style, listOf(t), SceneWindow(15, 100 * 512, 200 * 512, 512, 512))
+        fun n(id: String) = scene.counts[id]?.features ?: 0
+        assertEquals(5, n("trail"), "hiking, and untagged in four visibility/informal variants")
+        assertEquals(2, n("trail-mountain"), "mountain_hiking, footway included")
+        assertEquals(0, n("footway"), "a graded footway draws as its grade")
+        assertEquals(1, n("trail-demanding"))
+        assertEquals(1, n("trail-alpine"))
+        assertEquals(1, n("cliff"))
+        assertEquals(1, n("arete"))
+        assertEquals(1, n("natural-line-names"))
+        assertEquals(0, n("ridge-names"), "OpenMapTiles ridge lines only; outdoors ridge label points are not drawn")
+        assertEquals(1, n("wilderness-boundary"))
+        assertEquals(1, n("park-boundary"))
+        for (id in listOf("huts", "trailheads", "campsites", "springs", "viewpoints", "waterfalls", "caves", "parking")) assertEquals(1, n(id), id)
+        assertEquals(0, n("shelters"), "picnic shelters are not drawn")
+
+        // Modifiers split the trail layer into groups with their factors.
+        val trails = scene.layers.filterIsInstance<SceneLayer.Line>().filter { it.style.id == "trail" }
+        val factors = trails.map { it.widthScale to it.opacityScale }.toSet()
+        assertEquals(setOf(1.0 to 1.0, 1.0 to 0.5, 0.65 to 1.0, 0.65 to 0.5), factors)
+        assertEquals(1, trails.single { it.widthScale == 0.65 && it.opacityScale == 0.5 }.lines.size)
+
+        // Text-optional markers: unnamed features still get a (text-less) request; parking never has text.
+        val labels = scene.labels.groupBy { it.layer.id }
+        assertEquals(emptyList(), labels.getValue("trailheads").single().lines)
+        assertEquals(emptyList(), labels.getValue("parking").single().lines)
+        assertEquals(listOf("High Hut"), labels.getValue("huts").single().lines)
     }
 
     @Test

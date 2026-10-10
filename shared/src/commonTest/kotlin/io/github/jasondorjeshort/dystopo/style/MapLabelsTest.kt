@@ -92,6 +92,56 @@ class MapLabelsTest {
     }
 
     @Test
+    fun lineLabelsKeepTheirPaddingEndToEnd() {
+        // Two trails along one straight line, the second starting right where the first label would end:
+        // every glyph box is padded along the line too, so the labels never come closer than the padding.
+        val p = placer()
+        val a = p.placeAll(listOf(LabelRequest(trails, listOf("Alpha Trail"), path = doubleArrayOf(100.0, 300.0, 400.0, 300.0)))).single()
+        val aGlyphs = assertNotNull(a.glyphs)
+        val aEnd = aGlyphs.last().x
+        val b = p.placeAll(listOf(LabelRequest(trails, listOf("Beta Trail"), path = doubleArrayOf(aEnd, 300.0, aEnd + 400.0, 300.0)))).singleOrNull()
+        if (b != null) {
+            val bStart = assertNotNull(b.glyphs).first().x
+            val font = a.fontPx
+            // Glyph centers; half an advance (0.3 em with the fake font) on each side, then the 3 px padding twice.
+            assertTrue(bStart - aEnd >= 0.6 * font + 2 * 3.0 - 1e-6, "gap ${bStart - aEnd}")
+        }
+        // Parallel trails 1.3 em apart, on short lines so the second label cannot slide away: the old
+        // 0.85 em glyph boxes let it in with its caps' halo on the first label's descenders; the boxes are
+        // now 1.12 em tall (descenders included) plus the padding, which keeps it off.
+        val q = placer()
+        val top = q.placeAll(listOf(LabelRequest(trails, listOf("Upper Trail"), path = doubleArrayOf(100.0, 300.0, 220.0, 300.0)))).single()
+        val close = 1.3 * top.fontPx
+        assertTrue(q.placeAll(listOf(LabelRequest(trails, listOf("Lower Trail"), path = doubleArrayOf(100.0, 300.0 + close, 220.0, 300.0 + close)))).isEmpty())
+    }
+
+    @Test
+    fun markersWithoutTextAndOptionalText() {
+        val style = DefaultOsmStyle.style
+        val parking = style.byId["parking"] as StyleLayer.Symbol
+        val huts = style.byId["huts"] as StyleLayer.Symbol
+        val p = placer(400, 300)
+        val lot = p.placeAll(listOf(LabelRequest(parking, emptyList(), 200.0, 150.0))).single()
+        assertTrue(lot.lines.isEmpty())
+        assertEquals(200.0, lot.markerX)
+        assertTrue(p.collides(doubleArrayOf(199.0, 149.0, 201.0, 149.0, 201.0, 151.0, 199.0, 151.0)), "the marker claims its space")
+        // A hut whose name has no room on any side keeps its marker (text-optional); a peak would be dropped.
+        val q = placer(400, 300)
+        val walls = listOf(
+            LabelRequest(places, listOf("WWWWWWWWWW"), 100.0, 150.0),
+            LabelRequest(places, listOf("WWWWWWWWWW"), 300.0, 150.0),
+            LabelRequest(places, listOf("WWWWWWWWWW"), 200.0, 120.0),
+            LabelRequest(places, listOf("WWWWWWWWWW"), 200.0, 180.0),
+        )
+        q.placeAll(walls)
+        val hut = q.placeAll(listOf(LabelRequest(huts, listOf("A Hut With A Long Name"), 200.0, 150.0))).single()
+        assertTrue(hut.lines.isEmpty() && hut.marker != null, "marker only: $hut")
+        val r = placer(400, 300)
+        r.placeAll(walls)
+        assertTrue(r.placeAll(listOf(LabelRequest(peaks, listOf("A Peak With A Long Name"), 200.0, 150.0))).isEmpty())
+    }
+
+    @Test
     fun shortLinesGetNoLabel() {
         val p = placer()
         assertNull(p.placeAll(listOf(LabelRequest(trails, listOf("A Very Long Trail Name"), path = doubleArrayOf(10.0, 10.0, 60.0, 10.0)))).firstOrNull())

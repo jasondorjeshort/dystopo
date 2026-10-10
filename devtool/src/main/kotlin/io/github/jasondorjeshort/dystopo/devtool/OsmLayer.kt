@@ -4,10 +4,14 @@ import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.mvt.VectorTile
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
+import io.github.jasondorjeshort.dystopo.render.ContourLabel
+import io.github.jasondorjeshort.dystopo.render.ContourSimplify
 import io.github.jasondorjeshort.dystopo.render.TextMeasurer
 import io.github.jasondorjeshort.dystopo.render.TextSize
 import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
 import io.github.jasondorjeshort.dystopo.style.LabelPlacer
+import io.github.jasondorjeshort.dystopo.style.LineTicks
+import io.github.jasondorjeshort.dystopo.style.Marker
 import io.github.jasondorjeshort.dystopo.style.MarkerShape
 import io.github.jasondorjeshort.dystopo.style.OsmScene
 import io.github.jasondorjeshort.dystopo.style.OsmStyle
@@ -18,6 +22,8 @@ import io.github.jasondorjeshort.dystopo.style.SourceTile
 import io.github.jasondorjeshort.dystopo.style.StyleColor
 import io.github.jasondorjeshort.dystopo.style.StyleLayer
 import io.github.jasondorjeshort.dystopo.style.TextAdvances
+import io.github.jasondorjeshort.dystopo.style.TickSide
+import io.github.jasondorjeshort.dystopo.style.Ticks
 import kotlinx.serialization.Serializable
 import java.awt.BasicStroke
 import java.awt.Color
@@ -61,6 +67,10 @@ data class OsmStats(
     val labelsPlaced: Int,
     /** Contour labels removed because an OSM label took their place. */
     val contourLabelsDropped: Int,
+    /** Lines with downhill ticks drawn on their left because the DEM says that side is lower (against the OSM way direction). */
+    val ticksFlipped: Int = 0,
+    /** Lines with downhill ticks where the DEM could not tell the sides apart (ticks on the right, the OSM convention). */
+    val ticksUndecided: Int = 0,
     val layers: Map<String, OsmLayerStats>,
 )
 
@@ -96,17 +106,24 @@ class AwtAdvances(private val font: (Double) -> Font) : TextAdvances {
  */
 class OsmLayer private constructor(
     private val scene: OsmScene,
-    private val labels: List<PlacedLabel>,
+    /** The placed OSM labels, in drawing order (goldens record them). */
+    val labels: List<PlacedLabel>,
     private val textScale: Double,
     private val baseStats: OsmStats,
     private val placer: LabelPlacer,
+    /** Elevation at an image pixel position (nearest cell), NaN outside; for downhill tick sides. */
+    private val elevation: (Double, Double) -> Float,
 ) {
     private val drawMs = LinkedHashMap<String, Double>()
     private var contourLabelsDropped = 0
+    private var ticksFlipped = 0
+    private var ticksUndecided = 0
 
     val stats: OsmStats
         get() = baseStats.copy(
             contourLabelsDropped = contourLabelsDropped,
+            ticksFlipped = ticksFlipped,
+            ticksUndecided = ticksUndecided,
             layers = baseStats.layers.mapValues { (id, s) -> s.copy(drawMs = drawMs[id]?.let { (it * 100).roundToInt() / 100.0 }) },
         )
 
@@ -176,7 +193,10 @@ class OsmLayer private constructor(
                 contourLabelsDropped = 0,
                 layers = layerStats,
             )
-            return OsmLayer(scene, labels, style.textScale, stats, placer)
+            val sample = { x: Double, y: Double ->
+                if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) Float.NaN else grid[x.toInt(), y.toInt()]
+            }
+            return OsmLayer(scene, labels, style.textScale, stats, placer, sample)
         }
     }
 
@@ -190,8 +210,7 @@ class OsmLayer private constructor(
         val g3 = graphics(image)
         for (layer in scene.layers.subList(minOf(split + 1, scene.layers.size), scene.layers.size)) drawLayer(g3, layer)
         g3.dispose()
-        // Contour labels give way to OSM labels (peak names and trail names matter more).
-        val kept = contours.labels.filter { !placer.collides(it.corners(2.0)) }
+        val kept = contourLabelsKept(contours.labels)
         contourLabelsDropped = contours.labels.size - kept.size
         ContourLayer(contours.spec, emptyList(), kept, contours.stats).draw(image)
         val g4 = graphics(image)
@@ -202,6 +221,9 @@ class OsmLayer private constructor(
         if (labels.isNotEmpty()) labels.groupingBy { it.style.id }.eachCount().forEach { (id, n) -> drawMs[id] = perLabel * n / labels.size }
         g4.dispose()
     }
+
+    /** Contour labels give way to OSM labels (peak names and trail names matter more): the ones that stay. */
+    fun contourLabelsKept(labels: List<ContourLabel>): List<ContourLabel> = labels.filter { !placer.collides(it.corners(2.0)) }
 
     private fun graphics(image: BufferedImage): Graphics2D = image.createGraphics().apply {
         setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -232,8 +254,8 @@ class OsmLayer private constructor(
                     path.moveTo(line[0], line[1])
                     for (i in 1 until line.size / 2) path.lineTo(line[2 * i], line[2 * i + 1])
                 }
-                val width = s.width.at(zoom).toFloat()
-                val opacity = s.opacity.at(zoom)
+                val width = (s.width.at(zoom) * layer.widthScale).toFloat()
+                val opacity = (s.opacity.at(zoom) * layer.opacityScale).coerceIn(0.0, 1.0)
                 val casing = s.casingWidth.at(zoom).toFloat()
                 if (s.casingColor != null && casing > 0) {
                     g2.color = color(s.casingColor!!, opacity)
@@ -249,34 +271,98 @@ class OsmLayer private constructor(
                     BasicStroke(width, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10f, d, 0f)
                 }
                 g2.draw(path)
+                s.ticks?.let { t -> drawTicks(g2, layer, t, zoom) }
             }
             is SceneLayer.Contours -> {}
         }
         drawMs[layer.style.id] = (System.nanoTime() - start) / 1e6
     }
 
+    /** Tick hatching on each line; [TickSide.DOWNHILL] asks the DEM which side is lower, per line. */
+    private fun drawTicks(g2: Graphics2D, layer: SceneLayer.Line, t: Ticks, zoom: Double) {
+        val length = t.length.at(zoom)
+        val spacing = t.spacing.at(zoom)
+        val ticks = Path2D.Double()
+        for (line in layer.lines) {
+            // Raw cliff ways zig-zag at the pixel scale; ticks follow a lightly simplified copy.
+            val simple = ContourSimplify.simplify(line, false, 0.75)
+            val right = when (t.side) {
+                TickSide.RIGHT -> true
+                TickSide.LEFT -> false
+                TickSide.DOWNHILL -> {
+                    val r = LineTicks.rightIsDownhill(simple, length + 2.0, elevation)
+                    if (r == false) ticksFlipped++ else if (r == null) ticksUndecided++
+                    r ?: true
+                }
+            }
+            for (seg in LineTicks.ticks(simple, spacing, length, right)) {
+                ticks.moveTo(seg[0], seg[1])
+                ticks.lineTo(seg[2], seg[3])
+            }
+        }
+        g2.stroke = BasicStroke((t.width.at(zoom) * layer.widthScale).toFloat(), BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER)
+        g2.draw(ticks)
+    }
+
+    private fun markerShape(m: Marker, cx: Double, cy: Double, r: Double): java.awt.Shape = when (m.shape) {
+        MarkerShape.CIRCLE -> Ellipse2D.Double(cx - r, cy - r, 2 * r, 2 * r)
+        MarkerShape.SQUARE -> Rectangle2D.Double(cx - r * 0.9, cy - r * 0.9, 1.8 * r, 1.8 * r)
+        MarkerShape.TRIANGLE -> Path2D.Double().apply {
+            moveTo(cx, cy - r * 1.1)
+            lineTo(cx + r, cy + r * 0.8)
+            lineTo(cx - r, cy + r * 0.8)
+            closePath()
+        }
+        MarkerShape.DIAMOND -> Path2D.Double().apply {
+            moveTo(cx, cy - r * 1.15)
+            lineTo(cx + r * 0.9, cy)
+            lineTo(cx, cy + r * 1.15)
+            lineTo(cx - r * 0.9, cy)
+            closePath()
+        }
+        MarkerShape.HOUSE -> Path2D.Double().apply {
+            // A pitched roof over a square body.
+            moveTo(cx, cy - r * 1.1)
+            lineTo(cx + r, cy - r * 0.1)
+            lineTo(cx + r * 0.75, cy - r * 0.1)
+            lineTo(cx + r * 0.75, cy + r * 0.9)
+            lineTo(cx - r * 0.75, cy + r * 0.9)
+            lineTo(cx - r * 0.75, cy - r * 0.1)
+            lineTo(cx - r, cy - r * 0.1)
+            closePath()
+        }
+        MarkerShape.STAR -> Path2D.Double().apply {
+            for (k in 0 until 10) {
+                val a = -Math.PI / 2 + k * Math.PI / 5
+                val rr = if (k % 2 == 0) r * 1.2 else r * 0.5
+                val x = cx + rr * Math.cos(a)
+                val y = cy + rr * Math.sin(a)
+                if (k == 0) moveTo(x, y) else lineTo(x, y)
+            }
+            closePath()
+        }
+    }
+
+    private fun drawMarker(g2: Graphics2D, label: PlacedLabel, m: Marker, halo: Color) {
+        val shape = markerShape(m, label.markerX, label.markerY, label.markerPx / 2)
+        g2.color = halo
+        g2.stroke = BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g2.draw(shape)
+        g2.color = color(m.color)
+        g2.fill(shape)
+        val text = m.text ?: return
+        // A glyph inside the marker, sized to it (P for parking).
+        val gv = AwtTextMeasurer.font(label.markerPx * 0.8).createGlyphVector(g2.fontRenderContext, text)
+        val ink = gv.visualBounds
+        g2.color = color(m.textColor)
+        g2.fill(gv.getOutline((label.markerX - ink.centerX).toFloat(), (label.markerY - ink.centerY).toFloat()))
+    }
+
     private fun drawLabel(g2: Graphics2D, label: PlacedLabel) {
         val s = label.style
         val halo = color(s.haloColor)
         val haloStroke = BasicStroke((2 * s.haloWidth * textScale).toFloat().coerceAtLeast(1f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-        label.marker?.let { m ->
-            val r = label.markerPx / 2
-            val shape = when (m.shape) {
-                MarkerShape.CIRCLE -> Ellipse2D.Double(label.markerX - r, label.markerY - r, 2 * r, 2 * r)
-                MarkerShape.SQUARE -> Rectangle2D.Double(label.markerX - r, label.markerY - r, 2 * r, 2 * r)
-                MarkerShape.TRIANGLE -> Path2D.Double().apply {
-                    moveTo(label.markerX, label.markerY - r * 1.1)
-                    lineTo(label.markerX + r, label.markerY + r * 0.8)
-                    lineTo(label.markerX - r, label.markerY + r * 0.8)
-                    closePath()
-                }
-            }
-            g2.color = halo
-            g2.stroke = BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-            g2.draw(shape)
-            g2.color = color(m.color)
-            g2.fill(shape)
-        }
+        label.marker?.let { drawMarker(g2, label, it, halo) }
         val frc = g2.fontRenderContext
         val font = if (s.italic) AwtItalicMeasurer.font(label.fontPx) else AwtTextMeasurer.font(label.fontPx)
         label.glyphs?.let { glyphs ->

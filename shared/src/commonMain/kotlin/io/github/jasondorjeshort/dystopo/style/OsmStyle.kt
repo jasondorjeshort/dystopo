@@ -67,6 +67,27 @@ class OsmStyle(val name: String, val layers: List<StyleLayer>) {
                     dash = (o["dash"] as? List<*>)?.map { (it as? Number)?.toDouble() ?: throw IllegalArgumentException("dash must be numbers") },
                     casingColor = (o["casing-color"] as? String)?.let { StyleColor.parse(it) },
                     casingWidth = ZoomValue.parse(o["casing-width"], 0.0),
+                    modifiers = (o["modifiers"] as? List<*>).orEmpty().map { raw ->
+                        val m = raw.asObject("modifier")
+                        LineModifier(
+                            filter = Filter.parse(m["filter"] ?: throw IllegalArgumentException("modifier needs a filter")),
+                            width = (m["width"] as? Number)?.toDouble() ?: 1.0,
+                            opacity = (m["opacity"] as? Number)?.toDouble() ?: 1.0,
+                        )
+                    },
+                    ticks = (o["ticks"] as? Map<*, *>)?.let { t ->
+                        Ticks(
+                            spacing = ZoomValue.parse(t["spacing"], 6.0),
+                            length = ZoomValue.parse(t["length"], 4.0),
+                            width = ZoomValue.parse(t["width"], 1.0),
+                            side = when (val s = t["side"] as? String ?: "right") {
+                                "right" -> TickSide.RIGHT
+                                "left" -> TickSide.LEFT
+                                "downhill" -> TickSide.DOWNHILL
+                                else -> throw IllegalArgumentException("ticks side must be right, left or downhill, not '$s'")
+                            },
+                        )
+                    },
                 )
                 "symbol" -> StyleLayer.Symbol(
                     id, select,
@@ -86,15 +107,21 @@ class OsmStyle(val name: String, val layers: List<StyleLayer>) {
                                 "circle" -> MarkerShape.CIRCLE
                                 "triangle" -> MarkerShape.TRIANGLE
                                 "square" -> MarkerShape.SQUARE
-                                else -> throw IllegalArgumentException("marker shape must be circle, triangle or square, not '$s'")
+                                "diamond" -> MarkerShape.DIAMOND
+                                "house" -> MarkerShape.HOUSE
+                                "star" -> MarkerShape.STAR
+                                else -> throw IllegalArgumentException("marker shape must be one of ${MarkerShape.entries.map { it.name.lowercase() }}, not '$s'")
                             },
                             size = (m["size"] as? Number)?.toDouble() ?: 8.0,
                             color = StyleColor.parse(m["color"] as? String ?: "#333333"),
+                            text = m["text"] as? String,
+                            textColor = StyleColor.parse(m["text-color"] as? String ?: "#ffffff"),
                         )
                     },
                     spacing = (o["spacing"] as? Number)?.toDouble() ?: 400.0,
                     sortKey = o["sort"] as? String,
                     italic = o["italic"] as? Boolean ?: false,
+                    textOptional = o["text-optional"] as? Boolean ?: false,
                 )
                 else -> throw IllegalArgumentException("unknown type '$type' (fill, line, symbol, contours)")
             }
@@ -149,6 +176,10 @@ sealed class StyleLayer {
         val dash: List<Double>?,
         val casingColor: StyleColor?,
         val casingWidth: ZoomValue,
+        /** Per-feature width and opacity factors; every modifier whose filter matches applies. */
+        val modifiers: List<LineModifier> = emptyList(),
+        /** Short strokes on one side of the line (cliffs), drawn in the line color. */
+        val ticks: Ticks? = null,
     ) : StyleLayer()
 
     /**
@@ -159,7 +190,8 @@ sealed class StyleLayer {
      * marker size and [haloWidth], the halo's reach outside the glyphs). [spacing] is the minimum
      * distance in pixels between two labels with the same text in this layer (and the repeat
      * distance along a line). [sortKey] orders features within the layer: `rank` places low ranks
-     * first, `-ele` places high values first.
+     * first, `-ele` places high values first. With [textOptional] (MapLibre's `text-optional`) a
+     * feature with a [marker] still gets the marker when its text is empty or does not fit.
      */
     data class Symbol(
         override val id: String,
@@ -174,6 +206,7 @@ sealed class StyleLayer {
         val spacing: Double,
         val sortKey: String?,
         val italic: Boolean,
+        val textOptional: Boolean = false,
     ) : StyleLayer()
 
     /** Where the contour lines draw relative to the other layers. */
@@ -182,10 +215,34 @@ sealed class StyleLayer {
 
 enum class Placement { POINT, LINE }
 
-enum class MarkerShape { CIRCLE, TRIANGLE, SQUARE }
+enum class MarkerShape { CIRCLE, TRIANGLE, SQUARE, DIAMOND, HOUSE, STAR }
 
-/** A point marker drawn under a point label; [size] in pixels before the text scale. */
-data class Marker(val shape: MarkerShape, val size: Double, val color: StyleColor)
+/**
+ * A point marker drawn beside a point label; [size] in pixels before the text scale. [text] is an
+ * optional short glyph (one or two characters, such as `P`) drawn inside it in [textColor].
+ */
+data class Marker(
+    val shape: MarkerShape,
+    val size: Double,
+    val color: StyleColor,
+    val text: String? = null,
+    val textColor: StyleColor = StyleColor(255, 255, 255),
+)
+
+/** Multiplies a line's [width] and [opacity] for the features matching [filter] (data-driven styling). */
+data class LineModifier(val filter: Filter, val width: Double, val opacity: Double)
+
+enum class TickSide {
+    /** Right of the line's direction: the OSM convention for `natural=cliff` (the drop is on the right). */
+    RIGHT,
+    LEFT,
+
+    /** Toward lower ground, judged from the DEM by the renderer; [RIGHT] where it cannot tell. */
+    DOWNHILL,
+}
+
+/** Tick hatching along a line: a tick every [spacing] pixels, [length] long and [width] wide, on [side]. */
+data class Ticks(val spacing: ZoomValue, val length: ZoomValue, val width: ZoomValue, val side: TickSide)
 
 /** An sRGB color with alpha, each channel 0..255. */
 data class StyleColor(val r: Int, val g: Int, val b: Int, val a: Int = 255) {

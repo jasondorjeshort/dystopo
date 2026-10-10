@@ -1,0 +1,11 @@
+# text x y angleDeg; written by ./gradlew updateGoldens
+Old_Hut 76.8 30.0 0.0
+Rim_Peak|5988_ft 186.5 46.0 0.0
+@parking 16.0 96.0 0.0
+Rim_View 197.6 118.0 0.0
+@trailheads 26.0 122.0 0.0
+Lake_Trail 72.2 124.2 -0.9
+@springs 132.0 168.0 0.0
+Long_Wall 210.5 170.5 78.7
+Lake_Camp 142.3 196.0 0.0
+@waterfalls 181.0 222.0 0.0

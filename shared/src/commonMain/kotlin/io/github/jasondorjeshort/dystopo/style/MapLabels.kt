@@ -130,10 +130,20 @@ class LabelPlacer(
         val font = fontPx(style)
         val m = measurer(style)
         val advance = font * 1.2
+        val marker = style.marker
+        if (r.lines.isEmpty()) {
+            // Marker only (text-optional layers with no text for this feature).
+            if (marker == null) return null
+            val mp = marker.size * textScale
+            val markerBox = orientedBox(r.x, r.y, 0.0, mp + 2 * padding, mp + 2 * padding)
+            if (!fits(markerBox)) return null
+            val label = PlacedLabel(style, r.lines, r.x, r.y, 0.0, 0.0, 0.0, font, advance, marker, r.x, r.y, mp)
+            boxes += markerBox
+            return label
+        }
         val w = r.lines.maxOf { m.measure(it, font).width }
         val h = font + advance * (r.lines.size - 1)
         if (nearSameText(style, r.text, r.x, r.y)) return null
-        val marker = style.marker
         if (marker == null) {
             val label = PlacedLabel(style, r.lines, r.x, r.y, 0.0, w, h, font, advance)
             val box = label.corners(padding)
@@ -156,6 +166,11 @@ class LabelPlacer(
                 return label
             }
         }
+        if (style.textOptional) {
+            // No room for the text: the marker alone still marks the place.
+            boxes += markerBox
+            return PlacedLabel(style, emptyList(), r.x, r.y, 0.0, 0.0, 0.0, font, advance, marker, r.x, r.y, mp)
+        }
         return null
     }
 
@@ -171,7 +186,9 @@ class LabelPlacer(
         val smooth = ContourSimplify.smooth(ContourSimplify.simplify(pts, false, font * 0.4), false, 2)
         val path = Path(smooth)
         if (path.total < len + 2 * padding) return emptyList()
-        val h = font * 0.85
+        // Glyphs are centered on the line with the baseline 0.36 em below it, so ink runs from
+        // about 0.4 em above the line (ascenders) to 0.56 em below (descenders).
+        val h = font * 1.12
         val step = maxOf(2.0, font * 0.4)
         val sections = maxOf(1, (path.total / style.spacing).toInt())
         val sectionLen = path.total / sections
@@ -231,7 +248,9 @@ class LabelPlacer(
             prev = angle
             val (px, py) = path.at(sc)
             glyphs += PlacedGlyph(text[i].toString(), px, py, angle)
-            boxes += orientedBox(px, py, angle, adv[i] + 1.0, h + 2 * padding)
+            // Padded on every side, like point labels: two labels never come closer than the padding
+            // (along the line as well as across it, and in the gaps on the outside of a bend).
+            boxes += orientedBox(px, py, angle, adv[i] + 2 * padding, h + 2 * padding)
         }
         if (turning > maxTotalTurn * 1.5) return null
         var chordAngle = atan2(by - ay, bx - ax)
