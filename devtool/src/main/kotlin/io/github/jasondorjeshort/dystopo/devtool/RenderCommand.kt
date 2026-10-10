@@ -34,6 +34,8 @@ data class RenderReport(
     /** Data source registry ids that contributed (see `devtool sources`). */
     val provenance: List<String>,
     val attribution: String,
+    /** OSM overlay counts and timings; present with --osm. */
+    val osm: OsmStats? = null,
 )
 
 class RenderCommand : AreaCommand("render") {
@@ -52,7 +54,7 @@ class RenderCommand : AreaCommand("render") {
 
         val fetched = timings.time("fetch") { src.fetch(window) }
         val grid = fetched.grid
-        val (image, contours, shading) = MapRenderer.render(grid, zoom, style, timings)
+        val (image, contours, shading, osm) = MapRenderer.render(grid, zoom, style, timings, window = window)
         val outFile = out ?: File("out/${name ?: "bbox"}-$source-z$zoom.png")
         timings.time("writePng") {
             outFile.absoluteFile.parentFile.mkdirs()
@@ -77,7 +79,8 @@ class RenderCommand : AreaCommand("render") {
             shading = shading,
             timingsMs = timings.ms,
             provenance = fetched.provenance,
-            attribution = fetched.attribution(src),
+            attribution = fetched.attribution(src) + (if (osm != null) " Map data © OpenStreetMap contributors (ODbL)." else ""),
+            osm = osm,
         )
         echo(reportJson.encodeToString(report))
     }

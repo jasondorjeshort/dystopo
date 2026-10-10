@@ -1,4 +1,4 @@
-package io.github.jasondorjeshort.dystopo.devtool
+﻿package io.github.jasondorjeshort.dystopo.devtool
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.groups.OptionGroup
@@ -7,10 +7,12 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
+import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.restrictTo
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.dem.Smooth
+import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import java.awt.image.BufferedImage
 
 /** Map style options shared by render and compare. */
@@ -31,6 +33,10 @@ class StyleOptions : OptionGroup("Style") {
     val smoothDem by option("--smooth-dem", help = "Smooth the elevation grid with a (2r+1)x(2r+1) Gaussian before hillshade and slope only (contours stay raw); 1 or 2 tames striping, 0 disables")
         .int().restrictTo(0..Smooth.MAX_RADIUS).default(0)
     val noContours by option("--no-contours").flag()
+    val osm by option("--osm", help = "OpenMapTiles-schema vector PMTiles archive (tilebuild output) to draw over the terrain (render only)")
+        .file(mustExist = true, canBeDir = false)
+    val osmStyle by option("--osm-style", help = "Style JSON for --osm (default: the built-in topo style, see shared style/DefaultOsmStyle.kt)")
+        .file(mustExist = true, canBeDir = false)
 }
 
 /** Records wall-clock time per labeled step, for JSON reports. */
@@ -44,20 +50,22 @@ class Timings {
 }
 
 /** A rendered map. Destructures as (image, contours) for callers that don't need the rest. */
-data class RenderResult(val image: BufferedImage, val contours: ContourStats, val shading: ShadingStats)
+data class RenderResult(val image: BufferedImage, val contours: ContourStats, val shading: ShadingStats, val osm: OsmStats? = null)
 
 object MapRenderer {
-    fun render(grid: ElevationGrid, zoom: Int, style: StyleOptions, timings: Timings, prefix: String = ""): RenderResult {
+    /** [window] is where [grid] sits in Web Mercator; needed only for `--osm`. */
+    fun render(grid: ElevationGrid, zoom: Int, style: StyleOptions, timings: Timings, prefix: String = "", window: MercatorWindow? = null): RenderResult {
         val (pixels, shading) = Shading.render(grid, style, timings, prefix)
         val contours = ContourLayer.build(grid, zoom, style, timings, prefix)
-        val image = timings.time("${prefix}draw") { draw(grid, pixels, contours) }
-        return RenderResult(image, contours.stats, shading)
+        val osm = OsmLayer.build(style, window, grid, timings, prefix)
+        val image = timings.time("${prefix}draw") { draw(grid, pixels, contours, osm) }
+        return RenderResult(image, contours.stats, shading, osm?.stats)
     }
 
-    private fun draw(grid: ElevationGrid, pixels: IntArray, contours: ContourLayer): BufferedImage {
+    private fun draw(grid: ElevationGrid, pixels: IntArray, contours: ContourLayer, osm: OsmLayer?): BufferedImage {
         val image = BufferedImage(grid.width, grid.height, BufferedImage.TYPE_INT_RGB)
         image.setRGB(0, 0, grid.width, grid.height, pixels, 0, grid.width)
-        contours.draw(image)
+        if (osm == null) contours.draw(image) else osm.draw(image, contours)
         return image
     }
 }
