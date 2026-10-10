@@ -1,0 +1,28 @@
+# Licenses considered permissive for every module. One "Id | regex" per line; the regex is matched
+# case-insensitively anywhere in "<name> <url>" of each license a POM (or override) declares.
+# This list is checked before the LGPL/GPL patterns, so an entry here wins over a GPL match: keep the
+# regexes specific. Policy: docs/PLANNING.md > Licensing, hard rule 3.
+
+Apache-2.0              | apache[- ]?(software )?(license)?[ ,-]*(version |v)?2(\.0)?|asl[- ]?2(\.0)?|apache\.org/licenses/LICENSE-2\.0
+MIT                     | \bMIT\b|opensource\.org/licenses/mit
+MIT-0                   | \bMIT-0\b
+BSD-2-Clause            | \bBSD[- ]2|2-clause bsd|simplified bsd|freebsd license
+BSD-3-Clause            | \bBSD[- ]3|3-clause bsd|new bsd|revised bsd|modified bsd|eclipse distribution license|\bEDL\b
+BSD                     | ^\s*(the )?BSD( license)?\s*($|https?://)|opensource\.org/licenses/bsd-license
+0BSD                    | \b0BSD\b|zero-clause bsd
+ISC                     | \bISC\b
+EPL-1.0                 | eclipse public license[ ,-]*(version |v)?1\.0|\bEPL[- ]?1\.0\b
+EPL-2.0                 | eclipse public license[ ,-]*(version |v)?2\.0|\bEPL[- ]?2\.0\b|eclipse\.org/legal/epl-2\.0
+MPL-2.0                 | mozilla public license[ ,-]*(version |v)?2\.0|\bMPL[- ]?2\.0\b
+CDDL                    | common development and distribution license|\bCDDL\b
+GPL-2.0-with-classpath-exception | classpath[- ]exception|\bCPE\b|gnu\.org/software/classpath/license
+CC0-1.0                 | \bCC0\b|creativecommons\.org/publicdomain/zero
+CC-BY-2.5               | \bCC[- ]BY[- ]2\.5\b|creative commons attribution 2\.5|creativecommons\.org/licenses/by/2\.5
+CC-BY-4.0               | \bCC[- ]BY[- ]4\.0\b|creative commons attribution 4\.0|creativecommons\.org/licenses/by/4\.0
+Public-Domain           | public domain
+Unicode                 | \bUnicode-3\.0\b|unicode(/ICU)? license|unicode-dfs|unicode, inc\. license|\bICU license
+Bouncy-Castle           | bouncy castle licen[cs]e|bouncycastle\.org/licen[cs]e
+Go                      | \bGo license|golang\.org/LICENSE
+HSQLDB                  | hsqldb license|hsqldb\.org/web/hsqllicense
+UPL-1.0                 | universal permissive license|\bUPL\b
+Zlib                    | \bzlib\b

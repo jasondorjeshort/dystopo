@@ -250,7 +250,7 @@ The project will be fully open source. Code and map content may need different l
    - Write our own code. Don't copy code from other projects into the repo.
    - Dependencies must be permissively licensed (MIT, BSD, Apache-2.0, EPL/EDL, etc.). **No GPL or AGPL dependencies anywhere.** Those would lock in our license choice. **LGPL is allowed only in build-side tooling** (`tilebuild`, later the server's tile pipeline) where the library stays a separate, replaceable jar; never in `shared`, the apps, or anything distributed to users. (Decided 2026-10-09 when Planetiler brought in GeoTools, LGPL-2.1: LGPL doesn't constrain the license of code that merely uses the library, so it doesn't threaten relicensing.)
    - No outside contributions until there's a contribution policy (CLA or copyright assignment).
-   - An automated dependency-license check fails the build on any disallowed license.
+   - An automated dependency-license check fails the build on any disallowed license. **Done (T7):** `./gradlew licenseCheck`, part of `check`; config in `gradle/licenses/`.
    - Versions already released under a license stay available under that license; relicensing applies going forward.
 4. **Data source registry.** Every data source (DEM, OSM, overlays) is listed with its license, required attribution text, and allowed uses. Tile builds read attribution from this registry and write it into tile metadata.
 

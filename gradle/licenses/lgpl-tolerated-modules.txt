@@ -1,0 +1,4 @@
+# Modules (Gradle paths) whose runtime classpath may contain LGPL artifacts. Only build-side tooling
+# whose output is data, never code shipped to users: LGPL stays a separate, replaceable jar there and
+# doesn't constrain our license. See docs/PLANNING.md > Licensing, hard rule 3.
+:tilebuild

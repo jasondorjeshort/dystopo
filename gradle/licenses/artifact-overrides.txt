@@ -1,0 +1,11 @@
+# License for artifacts whose POM (and parent POMs) lack usable license metadata, or declare it wrongly.
+# One "group:name = License" per line; the license is classified like a POM license name, so it must
+# match allowed-licenses.txt (or an LGPL pattern, which only tolerated modules accept). Overrides apply
+# to every version; record where the license was verified.
+
+# LGPL-2.1: GeoTools/GeoSolutions project license (via GeoTools, tilebuild only).
+it.geosolutions.jgridshift:jgridshift-core = LGPL-2.1
+# CC-BY-2.5: stated on jcip.net and in the jar's annotations source headers.
+net.jcip:jcip-annotations = CC-BY-2.5
+# BSD-3-Clause code (CC-BY 4.0 schema design): LICENSE.md in the openmaptiles/planetiler-openmaptiles repo; JitPack POM has no licenses.
+com.github.openmaptiles:planetiler-openmaptiles = BSD-3-Clause
