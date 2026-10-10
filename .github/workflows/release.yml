@@ -72,7 +72,7 @@ jobs:
         run: |
           chmod +x gradlew
           # versionName is the tag without its v; versionCode is the commit count, which only grows on main.
-          ./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist \n            -PdystopoVersion="${TAG#v}" -PdystopoVersionCode="$(git rev-list --count HEAD)"
+          ./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist -PdystopoVersion="${TAG#v}" -PdystopoVersionCode="$(git rev-list --count HEAD)"
 
       - name: Collect artifacts
         run: |
