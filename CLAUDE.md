@@ -53,6 +53,7 @@ The implementer debugs the change; the reviewer confirms. Before opening a PR:
 - Don't edit the Phase 0 log in `docs/PLANNING.md` from a task branch; the integrator adds the log entry when merging. Edit other docs only where the task says so.
 - The privacy hooks run in worktrees too (they read `devtool.local.json` from the main checkout). Use only public areas from `areas.json` in anything committed or written up.
 - When the task is merged: `git worktree remove ..\dystopo-wt\<task-id>` and delete the branch.
+- **Never create a junction or symlink inside a worktree that points at the main checkout** (e.g. `mklink /J out ...`). Removing the worktree follows the link and deletes the target's contents; this wiped the main `out/` once. Read shared data by absolute path (`C:\Users\Dorje\Documents\src\android-app\out\...`), or copy the few files you need, or generate into your own `out/`.
 - Model per kind of work (for whoever launches agents): the most capable model for planning, docs, review decisions and merges; a strong coding model (Opus-class) for implementing a task and its tests; a mid-tier model (Sonnet-class) for verifying a PR (run `check`, view PNGs, check done criteria) and small fix-ups; the cheapest model (Haiku-class) for mechanical git work (rebase, push, open the PR from a given summary, cleanup). Set the model explicitly on every launch; the default inherits the launcher's, usually the most expensive.
 
 ## Rules
