@@ -32,6 +32,7 @@ Every task is done only when:
 **Goal:** write the composited `best` DEM as Terrarium-encoded PNG tiles in an XYZ directory for a zoom range, so a map renderer (MapLibre, task T10) can show hillshade and so T3 can package it later. Each tile is rendered through its own `MercatorWindow` with a halo so feathering at coverage edges gives identical values on both sides of a tile border. Reuse overviews: zoomed-out tiles read coarser source levels. Parallelize across tiles.
 **Owns:** new `devtool/.../TilesCommand.kt` (`tiles --area --min-zoom --max-zoom --source --out dir`), new `shared/.../dem/TileWindows.kt` (per-tile window + halo math) and tests. Don't touch `pmtiles/` (T3).
 **Done when:** tests prove adjacent tiles agree exactly on shared edges and that decoding a tile back equals a direct render of that window (max error ≤ 1/256 m); `tiles --area rainier --min-zoom 8 --max-zoom 13` runs and reports tile count, bytes, and time per zoom.
+**Status: merged (PR #4).** Follow-ups: cache TNM index results per 1° cell instead of per window (cold z8 tile took 58 s); pick overview levels per export rather than per window so tall exports can't get a resampling seam at a latitude threshold.
 
 ### T5. MVT decoder in `shared`
 **Goal:** decode Mapbox Vector Tiles (protobuf wire format, hand-written parser; no protobuf library) into layers, features (id, properties, geometry type), and geometry in tile coordinates (MoveTo/LineTo/ClosePath commands, zigzag deltas). Include a minimal encoder for tests.

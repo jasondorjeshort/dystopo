@@ -27,6 +27,7 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ./gradlew :devtool:run --args="compare --area rainier --zoom 14"      # sources side by side + diff stats
 ./gradlew :devtool:run --args="mvt dump --file tile.mvt"  # summarize a Mapbox Vector Tile (--gzip, --layer, --samples)
 ./gradlew :devtool:run --args="pmtiles info --file x.pmtiles"   # PMTiles header, metadata, per-zoom counts (--url for remote, --tile z/x/y)
+./gradlew :devtool:run --args="tiles --area rainier --min-zoom 8 --max-zoom 13 --verify --preview-zoom 13"   # Terrarium XYZ tiles -> out/rainier-best/
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```
 `devtool` runs with the repo root as working directory. Downloads are cached in `cache/` (or `$DYSTOPO_CACHE`), output goes to `out/`. Both are gitignored. **View output PNGs** to check rendering; several bugs so far were only visible in the image.
