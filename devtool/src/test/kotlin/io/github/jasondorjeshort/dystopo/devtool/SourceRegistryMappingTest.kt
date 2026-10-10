@@ -47,7 +47,8 @@ class SourceRegistryMappingTest {
         assertTrue("Copernicus" !in usOnly.attribution(best))
         assertTrue("3DEP" in usOnly.attribution(best))
         // Nothing contributed: fall back to the source's full credit.
-        assertEquals(best.attribution, ElevationSource.Result(grid, emptyMap()).attribution(best))
+        val noData = ElevationGrid(1, 1, 10.0, floatArrayOf(Float.NaN))
+        assertEquals(best.attribution, ElevationSource.Result(noData, emptyMap(), emptyList()).attribution(best))
         assertEquals(listOf("copernicus"), ElevationSource.provenanceIfData(grid, listOf("copernicus")))
         assertEquals(emptyList(), ElevationSource.provenanceIfData(ElevationGrid(1, 1, 10.0, floatArrayOf(Float.NaN)), listOf("copernicus")))
     }

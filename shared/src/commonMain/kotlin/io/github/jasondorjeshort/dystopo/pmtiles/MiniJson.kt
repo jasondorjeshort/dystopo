@@ -5,6 +5,12 @@ package io.github.jasondorjeshort.dystopo.pmtiles
  * Map<String, Any?> (insertion ordered), List<Any?>, String, Long, Double, Boolean and null.
  */
 object MiniJson {
+    /**
+     * Deepest nesting of arrays and objects [parse] accepts. The parser recurses per level, so a
+     * corrupt or hostile document of a few KB of `[` would otherwise overflow the stack.
+     */
+    const val MAX_DEPTH = 64
+
     fun parse(text: String): Any? {
         val p = Parser(text)
         val v = p.value()
@@ -72,6 +78,7 @@ object MiniJson {
 
     private class Parser(val s: String) {
         var pos = 0
+        private var depth = 0
 
         fun skipWs() {
             while (pos < s.length && s[pos].let { it == ' ' || it == '\n' || it == '\r' || it == '\t' }) pos++
@@ -88,14 +95,20 @@ object MiniJson {
             skipWs()
             if (pos >= s.length) fail("unexpected end")
             return when (val c = s[pos]) {
-                '{' -> obj()
-                '[' -> arr()
+                '{' -> nested { obj() }
+                '[' -> nested { arr() }
                 '"' -> str()
                 't' -> literal("true", true)
                 'f' -> literal("false", false)
                 'n' -> literal("null", null)
                 else -> if (c == '-' || c in '0'..'9') num() else fail("unexpected '$c'")
             }
+        }
+
+        private inline fun <T> nested(parse: () -> T): T {
+            if (depth >= MAX_DEPTH) fail("nesting deeper than $MAX_DEPTH")
+            depth++
+            return parse().also { depth-- }
         }
 
         private fun literal(word: String, v: Any?): Any? {
@@ -157,7 +170,8 @@ object MiniJson {
                             't' -> sb.append('\t')
                             'u' -> {
                                 if (pos + 4 > s.length) fail("bad unicode escape")
-                                sb.append(s.substring(pos, pos + 4).toInt(16).toChar())
+                                val code = s.substring(pos, pos + 4).toIntOrNull(16) ?: fail("bad unicode escape")
+                                sb.append(code.toChar())
                                 pos += 4
                             }
                             else -> fail("bad escape '\\$e'")

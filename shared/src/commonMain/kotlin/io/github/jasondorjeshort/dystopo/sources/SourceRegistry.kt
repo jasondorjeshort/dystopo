@@ -140,6 +140,30 @@ class SourceRegistry(val sources: List<DataSource>) {
             return SourceRegistry(sources)
         }
 
+        private val SPDX_ID = Regex("[A-Za-z0-9.+-]+")
+        private val SPDX_OPERATORS = setOf("AND", "OR", "WITH")
+
+        /**
+         * True for an SPDX-style license id (`ODbL-1.0`, `LicenseRef-Foo`) or a license expression
+         * combining ids with `AND`, `OR` and `WITH` (upper case, as SPDX requires) and parentheses,
+         * e.g. `BSD-3-Clause AND CC-BY-4.0` or `(MIT OR Apache-2.0) AND CC0-1.0`.
+         */
+        fun isSpdxExpression(text: String): Boolean {
+            val tokens = text.replace("(", " ( ").replace(")", " ) ").trim().split(Regex("\\s+"))
+            var depth = 0
+            var expectOperand = true
+            for (t in tokens) {
+                when {
+                    t == "(" -> { if (!expectOperand) return false; depth++ }
+                    t == ")" -> { if (expectOperand || depth == 0) return false; depth-- }
+                    t in SPDX_OPERATORS -> { if (expectOperand) return false; expectOperand = true }
+                    SPDX_ID.matches(t) && t.uppercase() !in SPDX_OPERATORS -> { if (!expectOperand) return false; expectOperand = false }
+                    else -> return false
+                }
+            }
+            return depth == 0 && !expectOperand
+        }
+
         /** Every problem with [sources]; empty when the registry is valid. */
         fun validate(sources: List<DataSource>): List<String> {
             val problems = ArrayList<String>()
@@ -161,8 +185,8 @@ class SourceRegistry(val sources: List<DataSource>) {
                 need("attributionHtml", s.attributionHtml)
                 need("url", s.url)
                 need("updateCadence", s.updateCadence)
-                if (s.license.isNotBlank() && !Regex("[A-Za-z0-9.+-]+").matches(s.license)) {
-                    problems += "$label: license '${s.license}' is not an SPDX-style id"
+                if (s.license.isNotBlank() && !isSpdxExpression(s.license)) {
+                    problems += "$label: license '${s.license}' is not an SPDX-style id or expression"
                 }
                 if (s.kind == SourceKind.DEM && s.verticalDatum == null) problems += "$label: DEM without verticalDatum"
                 s.coverage.bbox?.let { b ->

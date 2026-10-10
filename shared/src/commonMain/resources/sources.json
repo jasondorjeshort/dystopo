@@ -1,5 +1,5 @@
 {
-  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay. license is an SPDX id, or LicenseRef-* where SPDX has none.",
+  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay. license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
   "version": 1,
   "sources": [
     {
@@ -15,7 +15,7 @@
       "verticalDatum": "EGM2008",
       "license": "LicenseRef-Copernicus-DEM",
       "licenseName": "Copernicus DEM licence (free for the general public)",
-      "licenseUrl": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM",
+      "licenseUrl": "https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf",
       "attribution": "Elevation: Copernicus DEM GLO-30, produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.",
       "attributionHtml": "Elevation: <a href=\"https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM\" target=\"_blank\">Copernicus DEM GLO-30</a>, produced using Copernicus WorldDEM-30 &copy; DLR e.V. 2010-2014 and &copy; Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.",
       "allowedUses": "Free use, modification and redistribution of derived products (including commercial) with the required credit.",
@@ -32,7 +32,7 @@
         "summary": "Conterminous US, Hawaii, US territories and parts of Alaska; seamless."
       },
       "resolution": "1/3 arc-second (~10 m)",
-      "verticalDatum": "NAVD88",
+      "verticalDatum": "NAVD88 (CONUS); other datums elsewhere",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
       "licenseUrl": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
@@ -52,7 +52,7 @@
         "summary": "Patchy, project by project, across the US; growing. Found through the TNM Access API."
       },
       "resolution": "1 m",
-      "verticalDatum": "NAVD88",
+      "verticalDatum": "NAVD88 (CONUS); other datums elsewhere",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
       "licenseUrl": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
@@ -170,7 +170,7 @@
       "id": "osm-lake-centerlines",
       "name": "OSM lake centerlines",
       "kind": "osm",
-      "provider": "OpenMapTiles (osm-lakelines), derived from OpenStreetMap",
+      "provider": "OpenMapTiles (osm-lakelines), derived from OpenStreetMap; file hosted by MapTiler",
       "coverage": {
         "summary": "Global lakes large enough to label."
       },
@@ -183,13 +183,13 @@
       "allowedUses": "Same as OpenStreetMap (ODbL).",
       "url": "https://dev.maptiler.download/geodata/omt/lake_centerline.shp.zip",
       "updateCadence": "Irregular snapshots.",
-      "notes": "Planetiler aux input for lake label lines."
+      "notes": "Planetiler aux input for lake label lines. Downloaded from MapTiler's dev.maptiler.download server (the URL Planetiler's OpenMapTiles profile uses), not from an OSM or OpenMapTiles release; if that URL goes away the build needs a new mirror. The data stays ODbL either way."
     },
     {
       "id": "natural-earth",
       "name": "Natural Earth",
       "kind": "osm",
-      "provider": "Natural Earth (naturalearthdata.com), packaged as SQLite by OpenMapTiles",
+      "provider": "Natural Earth (naturalearthdata.com), packaged as SQLite by OpenMapTiles; file hosted by MapTiler",
       "coverage": {
         "summary": "Global; small-scale (1:10m to 1:110m) cultural and physical vectors.",
         "bbox": [-180, -90, 180, 90]
@@ -214,7 +214,7 @@
         "summary": "Not geographic: the vector tile schema (layers and attributes) our OSM tiles follow."
       },
       "resolution": "n/a",
-      "license": "CC-BY-4.0",
+      "license": "BSD-3-Clause AND CC-BY-4.0",
       "licenseName": "Design CC-BY 4.0; code BSD-3-Clause",
       "licenseUrl": "https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md",
       "attribution": "© OpenMapTiles",

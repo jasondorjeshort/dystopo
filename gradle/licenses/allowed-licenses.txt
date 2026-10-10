@@ -1,7 +1,9 @@
 # Licenses considered permissive for every module. One "Id | regex" per line; the regex is matched
 # case-insensitively anywhere in "<name> <url>" of each license a POM (or override) declares.
-# This list is checked before the LGPL/GPL patterns, so an entry here wins over a GPL match: keep the
-# regexes specific. Policy: docs/PLANNING.md > Licensing, hard rule 3.
+# A license string that also matches the LGPL/GPL patterns stays LGPL/GPL whatever it matches here
+# ("GPL ISC" is not ISC), except for the GPL-2.0-with-classpath-exception entry (LicensePolicy
+# .CLASSPATH_EXCEPTION_ID; keep the id in step). Keep the regexes specific anyway.
+# Policy: docs/PLANNING.md > Licensing, hard rule 3.
 
 Apache-2.0              | apache[- ]?(software )?(license)?[ ,-]*(version |v)?2(\.0)?|asl[- ]?2(\.0)?|apache\.org/licenses/LICENSE-2\.0
 MIT                     | \bMIT\b|opensource\.org/licenses/mit

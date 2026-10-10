@@ -99,6 +99,10 @@ data class PmtilesHeader(
             val r = ByteReader(bytes, MAGIC.size)
             val version = r.u8()
             require(version == VERSION) { "PMTiles version $version not supported (want $VERSION)" }
+            return decodeFields(r).also { it.validate() }
+        }
+
+        private fun decodeFields(r: ByteReader): PmtilesHeader {
             return PmtilesHeader(
                 rootDirectoryOffset = r.u64(),
                 rootDirectoryLength = r.u64(),
@@ -126,5 +130,17 @@ data class PmtilesHeader(
                 centerLat = r.i32() / 1e7,
             )
         }
+    }
+
+    /** Offsets, lengths and counts are unsigned 64-bit on disk; anything past Long.MAX_VALUE is corrupt. */
+    private fun validate() {
+        val fields = listOf(
+            "rootDirectoryOffset" to rootDirectoryOffset, "rootDirectoryLength" to rootDirectoryLength,
+            "metadataOffset" to metadataOffset, "metadataLength" to metadataLength,
+            "leafDirectoriesOffset" to leafDirectoriesOffset, "leafDirectoriesLength" to leafDirectoriesLength,
+            "tileDataOffset" to tileDataOffset, "tileDataLength" to tileDataLength,
+            "addressedTiles" to addressedTiles, "tileEntries" to tileEntries, "tileContents" to tileContents,
+        )
+        for ((name, v) in fields) require(v >= 0) { "PMTiles header $name out of range: ${v.toULong()}" }
     }
 }

@@ -28,7 +28,7 @@ class PmtilesReader private constructor(
     /** Metadata JSON text, decompressed. */
     fun metadataJson(): String {
         if (header.metadataLength == 0L) return "{}"
-        return decompressInternal(readRange(header.metadataOffset, header.metadataLength.toInt())).decodeToString()
+        return decompressInternal(readRange(header.metadataOffset, intLength(header.metadataLength, "metadata"))).decodeToString()
     }
 
     /** Metadata parsed into maps and lists; see [MiniJson]. */
@@ -83,11 +83,10 @@ class PmtilesReader private constructor(
     private fun decompressInternal(bytes: ByteArray) = decompress(header.internalCompression, bytes)
 
     private fun readRange(offset: Long, length: Int): ByteArray {
+        require(offset >= 0 && length >= 0 && offset <= Long.MAX_VALUE - length) { "bad range $offset+$length" }
         if (length == 0) return ByteArray(0)
         if (offset + length <= head.size) return head.copyOfRange(offset.toInt(), offset.toInt() + length)
-        val bytes = source.read(offset, length)
-        check(bytes.size == length) { "short read at $offset: wanted $length bytes, got ${bytes.size}" }
-        return bytes
+        return readExactly(source, offset, length)
     }
 
     companion object {
@@ -95,13 +94,40 @@ class PmtilesReader private constructor(
         const val HEAD_BYTES = 16384
         private const val MAX_LEAF_DEPTH = 4
 
+        /** A header length as an Int byte count; corrupt archives can claim more than an array can hold. */
+        private fun intLength(length: Long, what: String): Int {
+            require(length in 0..Int.MAX_VALUE.toLong()) { "$what length $length exceeds Int.MAX_VALUE" }
+            return length.toInt()
+        }
+
+        /**
+         * Reads exactly [length] bytes. More bytes than asked for means the source ignored the range
+         * (an HTTP server answering 200 with the whole file instead of 206), so every offset it
+         * returns is wrong; fewer means the archive is truncated.
+         */
+        private fun readExactly(source: ByteRangeSource, offset: Long, length: Int): ByteArray {
+            val bytes = source.read(offset, length)
+            check(bytes.size <= length) { ignoredRange(offset, length, bytes.size) }
+            check(bytes.size == length) { "short read at $offset: wanted $length bytes, got ${bytes.size}" }
+            return bytes
+        }
+
+        private fun ignoredRange(offset: Long, length: Int, got: Int) =
+            "source returned $got bytes for a $length-byte read at $offset: range request ignored " +
+                "(server answered with the full body?); PMTiles needs working range requests"
+
         fun open(source: ByteRangeSource, decompressors: Map<Compression, Decompress> = emptyMap()): PmtilesReader {
             val head = source.read(0, HEAD_BYTES)
+            // Fewer bytes is fine (a small archive); more means the range was ignored.
+            check(head.size <= HEAD_BYTES) { ignoredRange(0, HEAD_BYTES, head.size) }
             val header = PmtilesHeader.decode(head)
-            val rootEnd = header.rootDirectoryOffset + header.rootDirectoryLength
+            val rootLength = intLength(header.rootDirectoryLength, "root directory")
+            val rootOffset = header.rootDirectoryOffset
+            require(rootOffset <= Long.MAX_VALUE - rootLength) { "bad root directory offset $rootOffset" }
+            val rootEnd = rootOffset + rootLength
             val rootCompressed = if (rootEnd <= head.size) {
-                head.copyOfRange(header.rootDirectoryOffset.toInt(), rootEnd.toInt())
-            } else source.read(header.rootDirectoryOffset, header.rootDirectoryLength.toInt())
+                head.copyOfRange(rootOffset.toInt(), rootEnd.toInt())
+            } else readExactly(source, rootOffset, rootLength)
             val rootBytes = when (header.internalCompression) {
                 Compression.NONE -> rootCompressed
                 else -> (decompressors[header.internalCompression]

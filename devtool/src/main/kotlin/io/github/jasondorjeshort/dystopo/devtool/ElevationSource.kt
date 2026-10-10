@@ -26,8 +26,18 @@ interface ElevationSource {
     /**
      * [counters] carries source-specific numbers for the JSON report (tiles fetched, nodata cells...).
      * [provenance] lists the registry ids that actually contributed data to [grid], in registry order.
+     * It is required, and validated: every id must be in the registry, and a grid with any data must
+     * name at least one id (an empty list would silently fall back to crediting everything). Empty is
+     * only valid for an all-NaN grid; [ElevationSource.provenanceIfData] builds the usual value.
      */
-    data class Result(val grid: ElevationGrid, val counters: Map<String, Long>, val provenance: List<String> = emptyList()) {
+    data class Result(val grid: ElevationGrid, val counters: Map<String, Long>, val provenance: List<String>) {
+        init {
+            for (id in provenance) require(id in SourceRegistry.builtIn) { "provenance id '$id' is not in sources.json" }
+            require(provenance.isNotEmpty() || grid.values.all { it.isNaN() }) {
+                "result has elevation data but empty provenance; set it to the registry ids that contributed"
+            }
+        }
+
         /** Credit for what contributed; falls back to [source]'s full credit when nothing did. */
         fun attribution(source: ElevationSource): String =
             if (provenance.isEmpty()) source.attribution else SourceRegistry.builtIn.attribution(provenance)

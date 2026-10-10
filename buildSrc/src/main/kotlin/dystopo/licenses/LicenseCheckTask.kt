@@ -66,6 +66,8 @@ abstract class LicenseCheckTask : DefaultTask() {
         val source: String,
         val licenses: List<ClassifiedLicense>,
         val category: LicenseCategory,
+        /** Set when the artifact declares licenses of different categories and the check took the best. */
+        val choice: String? = null,
         var problem: String? = null,
     )
 
@@ -96,7 +98,7 @@ abstract class LicenseCheckTask : DefaultTask() {
                 "pom" to inheritedLicenses(coord, poms)
             }
             val classified = declared.map { policy.classify(it) }
-            Row(coord, configuration, path, source, classified, policy.categoryOf(classified))
+            Row(coord, configuration, path, source, classified, policy.categoryOf(classified), choice = policy.choiceNote(classified))
         }
         for (row in rows) {
             row.problem = when (row.category) {
@@ -119,6 +121,8 @@ abstract class LicenseCheckTask : DefaultTask() {
                 LicenseCategory.values().joinToString(", ") { "${counts[it] ?: 0} ${it.name.lowercase()}" } +
                 (if (lgplTolerated) " (LGPL tolerated)" else "") + "; report: $report",
         )
+        // Dual-licensed artifacts pass on their best option; list them so the choice is visible.
+        for (row in rows) row.choice?.let { logger.lifecycle("  ${row.coord.key}: $it") }
 
         val offenders = rows.filter { it.problem != null }
         if (offenders.isNotEmpty()) {
@@ -260,6 +264,7 @@ abstract class LicenseCheckTask : DefaultTask() {
       "category": ${str(row.category.name)},
       "source": ${str(row.source)},
       "licenses": ${arr(licenses, "      ")},
+      "choice": ${row.choice?.let(::str) ?: "null"},
       "configuration": ${str(row.configuration)},
       "path": ${arr(row.path.map(::str), "      ")},
       "problem": ${row.problem?.let(::str) ?: "null"}

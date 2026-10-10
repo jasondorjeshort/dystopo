@@ -20,9 +20,11 @@ object Areas {
     const val LOCAL_FILE = "devtool.local.json"
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun load(root: File = File(".")): Map<String, DoubleArray> {
+    fun load(root: File = File(".")): Map<String, DoubleArray> = loadFiles(root, PUBLIC_FILE, LOCAL_FILE)
+
+    private fun loadFiles(root: File, vararg fileNames: String): Map<String, DoubleArray> {
         val result = LinkedHashMap<String, DoubleArray>()
-        for (fileName in listOf(PUBLIC_FILE, LOCAL_FILE)) {
+        for (fileName in fileNames) {
             val file = File(root, fileName)
             if (!file.isFile) continue
             for ((name, def) in json.decodeFromString<AreasFile>(file.readText()).areas) {
@@ -32,9 +34,16 @@ object Areas {
         return result
     }
 
+    /**
+     * The bbox of a public or local area. The error for an unknown name lists only the public
+     * areas: error text ends up in terminals, logs and PR descriptions, and must never reveal the
+     * names of personal areas.
+     */
     fun bbox(name: String, root: File = File(".")): DoubleArray {
-        val areas = load(root)
-        return areas[name] ?: throw UsageError("unknown area '$name'; known: ${areas.keys.joinToString()}")
+        return load(root)[name] ?: throw UsageError(
+            "unknown area '$name'; public areas: ${loadFiles(root, PUBLIC_FILE).keys.joinToString()} " +
+                "(personal areas from $LOCAL_FILE also work but are not listed)"
+        )
     }
 
     /** Parses `west,south,east,north`. */

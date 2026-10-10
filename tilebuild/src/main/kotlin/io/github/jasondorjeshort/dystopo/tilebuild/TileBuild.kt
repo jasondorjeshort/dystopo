@@ -4,12 +4,14 @@ import com.onthegomap.planetiler.Planetiler
 import com.onthegomap.planetiler.config.Arguments
 import com.onthegomap.planetiler.config.PlanetilerConfig
 import com.onthegomap.planetiler.stats.Timer
+import com.onthegomap.planetiler.stats.Timers
 import com.onthegomap.planetiler.util.Geofabrik
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import org.openmaptiles.OpenMapTilesProfile
 import org.openmaptiles.generated.OpenMapTilesSchema
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 
 data class BuildRequest(
@@ -55,6 +57,8 @@ data class BuildReport(
     val extraMetadata: Map<String, String>,
     val auxiliaryData: List<String>,
     val stageSeconds: Map<String, Double>,
+    /** Why [stageSeconds] is empty, if reading Planetiler's timers failed (see [TileBuild.stageSeconds]). */
+    val stageSecondsError: String? = null,
     val totalSeconds: Double,
 )
 
@@ -87,7 +91,7 @@ object TileBuild {
         val planetilerCache = File(req.cacheRoot, "planetiler").apply { mkdirs() }
         req.input.path.absoluteFile.parentFile?.mkdirs()
         req.out.absoluteFile.parentFile?.mkdirs()
-        val tmpDir = File(planetilerCache, "tmp/${req.out.nameWithoutExtension}")
+        val tmpDir = tempDirFor(planetilerCache, req.out)
 
         val args = buildMap {
             put("download", "true")
@@ -137,11 +141,15 @@ object TileBuild {
             planetiler.addOsmSource(OpenMapTilesProfile.OSM_SOURCE, req.input.path.toPath())
         }
         planetiler.overwriteOutput(req.out.toPath())
-        planetiler.run()
+        try {
+            planetiler.run()
+        } finally {
+            // Planetiler removes its temp files on success but leaves the directory tree behind, and
+            // a failed run can leave gigabytes of feature data in it.
+            runCatching { tmpDir.deleteRecursively() }
+        }
 
-        val stages = stageSeconds(planetiler)
-        // Planetiler removes its temp files but leaves the (now empty) directory tree behind.
-        runCatching { tmpDir.deleteRecursively() }
+        val stages = stageSeconds(planetiler.stats().timers())
 
         val info = PmtilesInfo.read(req.out)
         return BuildReport(
@@ -166,21 +174,47 @@ object TileBuild {
             license = Attribution.LICENSE,
             extraMetadata = extra,
             auxiliaryData = listOf(LAKE_CENTERLINE_URL, WATER_POLYGONS_URL, NATURAL_EARTH_URL),
-            stageSeconds = stages,
+            stageSeconds = stages.seconds,
+            stageSecondsError = stages.error,
             totalSeconds = (System.nanoTime() - started) / 1e9,
         )
     }
 
     /**
-     * Wall time per Planetiler stage. `Timers.all()` returns a package-private record type, so the
-     * timer is pulled out reflectively; failures just leave the map empty.
+     * Planetiler's temp directory for a build writing [out]: named after the file for readability and
+     * keyed by a hash of its full path, so two builds of `a/x.pmtiles` and `b/x.pmtiles` running at
+     * the same time (e.g. in two worktrees sharing the cache) never share or delete each other's files.
      */
-    private fun stageSeconds(planetiler: Planetiler): Map<String, Double> = runCatching {
-        val all: Map<String, Any> = planetiler.stats().timers().all()
-        all.mapValues { (_, stage) ->
-            val method = stage.javaClass.getDeclaredMethod("timer").apply { isAccessible = true }
-            val timer = method.invoke(stage) as Timer
+    internal fun tempDirFor(cacheDir: File, out: File): File {
+        val path = out.absoluteFile.normalize().path
+        val digest = MessageDigest.getInstance("SHA-256").digest(path.toByteArray(Charsets.UTF_8))
+        val key = digest.take(6).joinToString("") { "%02x".format(it) }
+        return File(cacheDir, "tmp/${out.nameWithoutExtension}-$key")
+    }
+
+    internal data class StageTimes(val seconds: Map<String, Double>, val error: String?)
+
+    /**
+     * Wall time per Planetiler stage. Planetiler 0.9.3 has no public per-stage timing API:
+     * `Timers.all()` returns the package-private record `Timers.Stage`, so its public `timer()`
+     * accessor is called reflectively. This is guarded rather than trusted: if an upgrade changes
+     * the record, the build still succeeds and the report carries the reason in `stageSecondsError`
+     * (and `TileBuildTest` fails, so the upgrade notices).
+     */
+    internal fun stageSeconds(timers: Timers): StageTimes = try {
+        // Typed as Any on purpose: naming Timers.Stage (even through inference) makes Kotlin emit a
+        // checkcast to the package-private class, which fails with IllegalAccessError.
+        val all: Map<String, Any> = timers.all()
+        val seconds = all.mapValues { (_, stage) ->
+            val accessor = stage.javaClass.getMethod("timer").apply { isAccessible = true }
+            val timer = accessor.invoke(stage) as? Timer
+                ?: error("${stage.javaClass.name}.timer() did not return a ${Timer::class.java.name}")
             timer.elapsed().wall().toMillis() / 1000.0
         }
-    }.getOrDefault(emptyMap())
+        StageTimes(seconds, null)
+    } catch (e: Exception) {
+        StageTimes(emptyMap(), "${e.javaClass.simpleName}: ${e.message}")
+    } catch (e: LinkageError) {
+        StageTimes(emptyMap(), "${e.javaClass.simpleName}: ${e.message}")
+    }
 }

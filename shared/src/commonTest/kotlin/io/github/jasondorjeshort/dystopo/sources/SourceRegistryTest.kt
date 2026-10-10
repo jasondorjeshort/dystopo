@@ -26,10 +26,13 @@ class SourceRegistryTest {
     @Test
     fun builtInLicensesMatchProviders() {
         assertEquals("ODbL-1.0", registry.getValue("osm").license)
-        assertEquals("CC-BY-4.0", registry.getValue("openmaptiles").license)
+        assertEquals("BSD-3-Clause AND CC-BY-4.0", registry.getValue("openmaptiles").license)
         assertEquals(SourceKind.GEOID, registry.getValue("egm2008").kind)
         assertEquals("EGM2008", registry.getValue("copernicus").verticalDatum)
-        assertEquals("NAVD88", registry.getValue("3dep").verticalDatum)
+        assertEquals("NAVD88 (CONUS); other datums elsewhere", registry.getValue("3dep").verticalDatum)
+        assertEquals("NAVD88 (CONUS); other datums elsewhere", registry.getValue("3dep-1m").verticalDatum)
+        assertTrue(registry.getValue("copernicus").licenseUrl.endsWith("License-COPDEM-30.pdf"))
+        assertTrue("MapTiler" in registry.getValue("osm-lake-centerlines").provider)
         val cop = registry.getValue("copernicus").attribution
         assertTrue("© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved" in cop)
         assertTrue("© OpenStreetMap contributors" in registry.getValue("osm").attribution)
@@ -94,5 +97,23 @@ class SourceRegistryTest {
         val many = problem(entry("a", "license" to ""), entry("b", "attribution" to ""))
         assertTrue("a: empty license" in many && "b: empty attribution" in many)
         assertFailsWith<IllegalArgumentException> { SourceRegistry.parse("{}") }
+    }
+
+    @Test
+    fun licenseValidatorAcceptsSpdxExpressions() {
+        val ok = listOf(
+            "MIT", "ODbL-1.0", "LicenseRef-Copernicus-DEM", "BSD-3-Clause AND CC-BY-4.0", "MIT OR Apache-2.0",
+            "GPL-2.0-only WITH Classpath-exception-2.0", "(MIT OR Apache-2.0) AND CC0-1.0", "((MIT))", "MIT  AND  ISC",
+        )
+        for (l in ok) assertTrue(SourceRegistry.isSpdxExpression(l), l)
+        val bad = listOf(
+            "", "public domain", "MIT and ISC", "MIT AND", "AND MIT", "MIT ISC", "(MIT", "MIT)", "()", "MIT AND OR ISC",
+            "MIT, ISC", "MIT/ISC", "(MIT) (ISC)",
+        )
+        for (l in bad) assertFalse(SourceRegistry.isSpdxExpression(l), l)
+        // Through the registry validator too.
+        SourceRegistry.parse(registryJson(entry("a", "license" to "BSD-3-Clause AND CC-BY-4.0")))
+        val e = assertFailsWith<IllegalArgumentException> { SourceRegistry.parse(registryJson(entry("a", "license" to "MIT and ISC"))) }
+        assertTrue("SPDX" in e.message!!)
     }
 }

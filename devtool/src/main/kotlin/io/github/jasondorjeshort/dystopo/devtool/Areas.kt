@@ -47,12 +47,20 @@ object Areas {
         return result
     }
 
+    /**
+     * Error text for an unknown area. Lists only public areas: the message ends up in terminals,
+     * logs and PR descriptions, and must never reveal the names of personal areas.
+     */
+    fun unknownAreaMessage(name: String, areas: Map<String, NamedArea>): String =
+        "unknown area '$name'; public areas: ${areas.values.filterNot { it.local }.joinToString { it.name }} " +
+            "(personal areas from $LOCAL_FILE also work but are not listed)"
+
     /** Resolves --area / --bbox options to an optional area name and a bounding box. */
     fun resolve(areaName: String?, bboxText: String?): Pair<String?, BoundingBox> = when {
         areaName != null && bboxText != null -> throw UsageError("use --area or --bbox, not both")
         areaName != null -> {
             val areas = load()
-            val found = areas[areaName] ?: throw UsageError("unknown area '$areaName'; known: ${areas.keys.joinToString()}")
+            val found = areas[areaName] ?: throw UsageError(unknownAreaMessage(areaName, areas))
             areaName to found.boundingBox()
         }
         bboxText != null -> {

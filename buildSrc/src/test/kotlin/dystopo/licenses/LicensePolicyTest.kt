@@ -57,6 +57,42 @@ class LicensePolicyTest {
         assertEquals(LicenseCategory.UNKNOWN, of())
     }
 
+    /** One string naming a copyleft license and a permissive one must not pass as permissive. */
+    @Test fun copyleftWinsOverAllowlistTokenInOneString() {
+        assertAll(
+            LicenseCategory.GPL,
+            "GPL ISC", "GPL-3.0 MIT", "GNU GPL v3 or BSD-3-Clause", "Apache-2.0 / GPL-2.0", "AGPL-3.0, Zlib",
+            "GPL-2.0 Public Domain", "GPL-3.0 with CC0 docs",
+        )
+        assertAll(LicenseCategory.LGPL, "LGPL-2.1, Apache-2.0", "MIT and LGPL-3.0", "GNU Lesser General Public License (EPL 1.0)")
+        assertEquals(LicenseCategory.GPL, category("MIT", "https://www.gnu.org/licenses/gpl-3.0.txt"))
+        // The classpath exception is the one allowlist entry that may match alongside a GPL pattern.
+        assertEquals(LicensePolicy.CLASSPATH_EXCEPTION_ID, policy.classify(DeclaredLicense("GPL2 w/ CPE")).id)
+        assertEquals(LicenseCategory.PERMISSIVE, category("CDDL + GPLv2 with classpath exception"))
+        assertEquals(LicenseCategory.PERMISSIVE, category("GPL-2.0", "https://www.gnu.org/software/classpath/license.html"))
+    }
+
+    @Test fun classpathExceptionIdIsInTheAllowlist() {
+        val ids = LicensePolicy.parseAllowed(File("../gradle/licenses/allowed-licenses.txt").readLines()).map { it.first }
+        assert(LicensePolicy.CLASSPATH_EXCEPTION_ID in ids) { "allowed-licenses.txt lost ${LicensePolicy.CLASSPATH_EXCEPTION_ID}" }
+    }
+
+    @Test fun choiceNoteFlagsMixedCategories() {
+        fun note(vararg names: String) = policy.choiceNote(names.map { policy.classify(DeclaredLicense(it)) })
+        assertEquals(
+            "multiple licenses, best chosen: Apache-2.0 [permissive] over LGPL-2.1-or-later [lgpl]",
+            note("LGPL-2.1-or-later", "Apache-2.0"),
+        )
+        assertEquals(
+            "multiple licenses, best chosen: EPL-2.0 [permissive] over GPL-2.0 [gpl], Weird [unknown]",
+            note("GPL-2.0", "EPL 2.0", "Weird"),
+        )
+        // Same category throughout: no choice worth flagging.
+        assertEquals(null, note("Apache-2.0", "MIT"))
+        assertEquals(null, note("Apache-2.0"))
+        assertEquals(null, note())
+    }
+
     @Test fun parsesConfig() {
         val overrides = LicensePolicy.parseOverrides(listOf("﻿# comment", "", "a.b:c = LGPL-2.1  # why"))
         assertEquals(mapOf("a.b:c" to "LGPL-2.1"), overrides)
