@@ -240,12 +240,12 @@ class ExtractsTest {
         )
         val alps = "6.6,45.6,7.2,46.0" // Mont Blanc massif: over the cap and outside Washington
         val e = assertFailsWith<BuildRoutes.Refused> { builds.submit(mapOf("name" to "mb", "bbox" to alps, "minZoom" to "8", "maxZoom" to "9", "profile" to "outdoors")) }
-        assertEquals(413, e.status)
+        assertEquals(422, e.status, "no extract covers the box: unprocessable, not too large (T66)")
         assertTrue("no configured OSM extract covers" in e.message!! && "washington" in e.message!!, e.message)
         val forced = assertFailsWith<BuildRoutes.Refused> {
             builds.submit(mapOf("name" to "mb", "bbox" to "6.85,45.8,6.9,45.85", "minZoom" to "8", "maxZoom" to "9", "profile" to "outdoors", "source" to "extract"))
         }
-        assertEquals(413, forced.status)
+        assertEquals(422, forced.status)
 
         @Suppress("UNCHECKED_CAST") val out = builds.sources(mapOf("bbox" to alps))["outdoors"] as Map<String, Any?>
         assertEquals("openfreemap", out["source"])
@@ -256,5 +256,124 @@ class ExtractsTest {
         assertEquals("openmaptiles", job.osmProfile)
         assertTrue(job.warnings.single().contains("OpenFreeMap"), job.warnings.toString())
         await(builds, job.id)
+    }
+
+    // ---- T66: region polygons and downloads on demand ----
+
+    /** An L-shaped "state": the box -124..-117, 45.5..49 without its north-east quarter, plus a hole. */
+    private val lPoly = """
+        test-state
+        1
+           -124.0 45.5
+           -117.0 45.5
+           -117.0 47.0
+           -120.0 47.0
+           -120.0 49.0
+           -124.0 49.0
+           -124.0 45.5
+        END
+        !2
+           -123.0 46.0
+           -122.8 46.0
+           -122.8 46.2
+           -123.0 46.2
+        END
+        END
+    """.trimIndent()
+
+    @Test
+    fun polyCoverageIsThePolygonNotItsBbox() {
+        val p = OsmPoly.parse(lPoly)
+        assertEquals("test-state", p.name)
+        assertEquals(BoundingBox(-124.0, 45.5, -117.0, 49.0), p.bbox)
+        assertTrue(p.covers(BoundingBox(-122.05, 46.6, -121.4, 47.1)), "inside the L")
+        assertTrue(!p.covers(BoundingBox(-119.0, 47.5, -118.0, 48.0)), "the missing quarter is inside the bbox but not the polygon")
+        assertTrue(!p.covers(BoundingBox(-120.5, 46.5, -119.5, 47.5)), "a box across the inner corner")
+        assertTrue(!p.covers(BoundingBox(-123.1, 45.9, -122.7, 46.3)), "a box around the hole")
+        assertTrue(!p.covers(BoundingBox(-122.95, 46.05, -122.85, 46.15)), "a box inside the hole")
+        assertFailsWith<IllegalArgumentException> { OsmPoly.parse("x\n1\n 1 2\n") }
+
+        // The same polygon beside an extract replaces its bbox coverage.
+        val ex = File(dir, "extracts")
+        pbf(File(ex, "test-state-latest.osm.pbf"), BoundingBox(-124.0, 45.5, -117.0, 49.0), tsOct8)
+        val corner = BoundingBox(-119.0, 47.5, -118.0, 48.0)
+        assertTrue(Extracts(dir = ex).all().single().covers(corner), "bbox only")
+        File(ex, "test-state.poly").writeText(lPoly)
+        val e = Extracts(dir = ex).all().single()
+        assertEquals("poly", e.json()["coverage"])
+        assertTrue(!e.covers(corner))
+        assertTrue(e.covers(BoundingBox(-122.05, 46.6, -121.4, 47.1)))
+    }
+
+    /** A fake Geofabrik: the .poly and a PBF per region, counting requests. */
+    private inner class FakeGeofabrik(val pbfBytes: () -> ByteArray) {
+        val requests = mutableListOf<String>()
+        fun open(url: String): Triple<Int, Long, java.io.InputStream> {
+            synchronized(requests) { requests += url }
+            return when {
+                url.endsWith("/test-state.poly") -> lPoly.toByteArray().let { Triple(200, it.size.toLong(), it.inputStream()) }
+                url.endsWith("/test-state-latest.osm.pbf") -> pbfBytes().let { Triple(200, it.size.toLong(), it.inputStream()) }
+                else -> Triple(404, 0L, ByteArray(0).inputStream())
+            }
+        }
+    }
+
+    private fun pbfBytes(bbox: BoundingBox): ByteArray = File(dir, "tmp-${System.nanoTime()}.osm.pbf").let { f -> pbf(f, bbox, tsOct8); f.readBytes().also { f.delete() } }
+
+    @Test
+    fun downloadsTheRegionWhosePolygonCoversTheBox() {
+        val ex = File(dir, "cache/extracts")
+        val fake = FakeGeofabrik { pbfBytes(BoundingBox(-124.0, 45.5, -117.0, 49.0)) }
+        val downloads = ExtractDownloads(listOf("https://geofabrik.invalid/north-america/us/test-state", "https://geofabrik.invalid/europe/nowhere-latest.osm.pbf"), ex, open = fake::open)
+        assertEquals(listOf("test-state", "nowhere"), downloads.regions.map { it.name })
+        val tb = FakeTilebuild()
+        val overpass = NoOverpass()
+        val builds = BuildRoutes(
+            live(), File(dir, "out"), OverpassSource(File(dir, "cache/overpass"), "https://overpass.invalid/x", 0.05, 60, overpass::post), tb,
+            extracts = Extracts(dir = ex), downloads = downloads,
+        )
+        @Suppress("UNCHECKED_CAST") val sources = builds.sources(mapOf("bbox" to rainierPark))
+        @Suppress("UNCHECKED_CAST") val outdoors = sources["outdoors"] as Map<String, Any?>
+        assertEquals("extract", outdoors["source"])
+        @Suppress("UNCHECKED_CAST") assertEquals("test-state", (outdoors["download"] as Map<String, Any?>)["name"])
+        assertTrue(fake.requests.none { it.endsWith(".osm.pbf") }, "asking costs only the .poly files: ${fake.requests}")
+
+        // The missing quarter: inside the region's bbox, outside its polygon, over the Overpass cap: 422.
+        val e = assertFailsWith<BuildRoutes.Refused> {
+            builds.submit(mapOf("name" to "corner", "bbox" to "-119.4,47.4,-118.6,48.1", "minZoom" to "8", "maxZoom" to "9", "profile" to "outdoors"))
+        }
+        assertEquals(422, e.status)
+
+        val job = builds.submit(mapOf("name" to "park", "bbox" to rainierPark, "minZoom" to "8", "maxZoom" to "9", "profile" to "outdoors"))
+        val done = await(builds, job.id)
+        assertEquals(BuildRoutes.Status.DONE, done.status, done.json().toString())
+        assertEquals("extract", done.osmSource)
+        assertEquals("test-state-latest.osm.pbf", tb.inputs.single().name)
+        @Suppress("UNCHECKED_CAST") val dl = done.json()["download"] as Map<String, Any?>
+        assertEquals("test-state", dl["name"])
+        assertTrue((dl["bytes"] as Long) > 0)
+        assertTrue(File(ex, "test-state.poly").isFile && File(ex, "test-state-latest.osm.pbf").isFile)
+        assertEquals("poly", Extracts(dir = ex).all().single().json()["coverage"])
+        assertEquals(1, fake.requests.count { it.endsWith(".osm.pbf") })
+        assertEquals(0, overpass.calls.get())
+
+        // From now on the extract is on disk: no second download.
+        val again = await(builds, builds.submit(mapOf("name" to "park2", "bbox" to rainierPark, "minZoom" to "8", "maxZoom" to "9", "profile" to "outdoors")).id)
+        assertEquals(BuildRoutes.Status.DONE, again.status)
+        assertNull(again.json()["download"], "built from the extract on disk")
+        assertEquals(1, fake.requests.count { it.endsWith(".osm.pbf") })
+    }
+
+    @Test
+    fun aDownloadOverTheCapOrNotAPbfFailsTheJobAndLeavesNothing() {
+        val ex = File(dir, "cache/extracts")
+        val tooBig = ExtractDownloads(listOf("https://geofabrik.invalid/x/test-state"), ex, maxBytes = 10, open = FakeGeofabrik { ByteArray(100) }::open)
+        val r = tooBig.regions.single()
+        val e = assertFailsWith<java.io.IOException> { tooBig.download(r) }
+        assertTrue("limit" in e.message!!, e.message)
+        val junk = ExtractDownloads(listOf("https://geofabrik.invalid/x/test-state"), ex, open = FakeGeofabrik { "<html>busy</html>".toByteArray() }::open)
+        assertFailsWith<java.io.IOException> { junk.download(junk.regions.single()) }
+        assertTrue(ex.listFiles().orEmpty().none { it.name.contains("osm.pbf") }, ex.listFiles()?.map { it.name }.toString())
+        assertFailsWith<IllegalArgumentException> { ExtractDownloads(listOf("washington"), ex) }
     }
 }

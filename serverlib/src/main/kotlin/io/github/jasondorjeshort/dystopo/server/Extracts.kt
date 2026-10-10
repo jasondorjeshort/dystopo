@@ -15,8 +15,8 @@ import java.util.zip.Inflater
  * `POST /build?profile=outdoors` boxes too big for Overpass ([BuildRoutes], T64).
  *
  * @param bbox  what the extract covers (west, south, east, north). For a Geofabrik file this is the
- *              bounding box of the region's polygon, so a box near a state border can be "covered" while
- *              the data beyond the border is missing; pick extracts whose interior holds the boxes you build.
+ *              bounding box of the region's polygon; with [poly] (the region's `.poly` beside the file, T66)
+ *              coverage is the polygon itself, so a box near a state border is not counted as covered.
  * @param date  the OSM data's date (ISO-8601 instant): the PBF header's replication timestamp, a sidecar's
  *              `date`, or the file's modification time, as [dateSource] says.
  */
@@ -27,12 +27,15 @@ class OsmExtract(
     val date: String?,
     val dateSource: String,
     val bboxSource: String,
+    /** The region polygon (`<name>.poly` or `<base>.poly` next to the file), or null: coverage by [bbox]. */
+    val poly: OsmPoly? = null,
 ) {
     val bytes: Long get() = file.length()
 
-    /** The extract holds all of [box]. */
+    /** The extract holds all of [box]: inside [bbox], and inside [poly] when there is one. */
     fun covers(box: BoundingBox): Boolean =
-        box.west >= bbox.west && box.east <= bbox.east && box.south >= bbox.south && box.north <= bbox.north
+        box.west >= bbox.west && box.east <= bbox.east && box.south >= bbox.south && box.north <= bbox.north &&
+            (poly == null || poly.covers(box))
 
     val areaSqDeg: Double get() = (bbox.east - bbox.west) * (bbox.north - bbox.south)
 
@@ -42,6 +45,7 @@ class OsmExtract(
     fun json(): Map<String, Any?> = linkedMapOf(
         "name" to name, "file" to file.name, "bytes" to bytes, "date" to date, "dateSource" to dateSource,
         "bbox" to listOf(bbox.west, bbox.south, bbox.east, bbox.north), "bboxSource" to bboxSource,
+        "coverage" to if (poly != null) "poly" else "bbox",
     )
 }
 
@@ -54,7 +58,9 @@ class OsmExtract(
  * For each file the bbox and date come from, in order: a sidecar JSON next to it (`<base>.json` or
  * `<file>.json`, keys `name`, `bbox` `[w,s,e,n]`, `date`, all optional), the PBF header (Geofabrik writes
  * the region's bbox and the replication timestamp of the data), and for the date the file's mtime.
- * A file with no bbox anywhere is listed under [problems] and never used.
+ * A file with no bbox anywhere is listed under [problems] and never used. A `.poly` region polygon beside
+ * the file (`<name>.poly` or `<base>.poly`, Geofabrik's format; [ExtractDownloads] puts one there) makes
+ * coverage the polygon instead of the bbox (T66).
  */
 class Extracts(
     private val configured: List<Configured> = emptyList(),
@@ -106,7 +112,8 @@ class Extracts(
         if (!file.isFile) return null to "no such file"
         val key = file.absoluteFile.normalize().path + "|" + (bboxOverride?.toString() ?: "") + "|" + (nameOverride ?: "")
         val sidecar = sidecarFor(file)
-        val stamp = file.lastModified() xor (sidecar?.lastModified() ?: 0L)
+        val polyFile = polyFor(file)
+        val stamp = file.lastModified() xor (sidecar?.lastModified() ?: 0L) xor ((polyFile?.lastModified() ?: 0L) * 31)
         cache[key]?.let { if (it.length == file.length() && it.modified == stamp) return it.extract to it.problem }
         val result = try {
             val side = sidecar?.let { MiniJson.parseObject(it.readText()) }.orEmpty()
@@ -135,7 +142,8 @@ class Extracts(
                     else -> Instant.ofEpochMilli(file.lastModified()).toString() to "file-mtime"
                 }
                 val name = nameOverride ?: side["name"]?.toString()?.takeIf { it.isNotBlank() } ?: regionName(file)
-                OsmExtract(name, file, bbox, date, dateSource, bboxSource!!) to null
+                val poly = polyFile?.let { OsmPoly.parse(it.readText()) }
+                OsmExtract(name, file, bbox, date, dateSource, bboxSource!!, poly) to null
             }
         } catch (e: Exception) {
             null to "${e.javaClass.simpleName}: ${e.message}"
@@ -158,6 +166,10 @@ class Extracts(
         fun baseName(file: File): String = file.name.let {
             if (it.endsWith(PBF_SUFFIX, ignoreCase = true)) it.dropLast(PBF_SUFFIX.length) else it.substringBeforeLast('.')
         }
+
+        /** The region polygon beside an extract: `<base>.poly`, else `<region name>.poly`. */
+        fun polyFor(file: File): File? =
+            listOf(File(file.parentFile, baseName(file) + ".poly"), File(file.parentFile, regionName(file) + ".poly")).firstOrNull { it.isFile }
 
         private fun sidecarFor(file: File): File? =
             listOf(File(file.parentFile, baseName(file) + ".json"), File(file.parentFile, file.name + ".json")).firstOrNull { it.isFile }

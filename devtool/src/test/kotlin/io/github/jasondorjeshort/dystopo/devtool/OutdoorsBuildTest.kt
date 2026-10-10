@@ -145,14 +145,17 @@ class OutdoorsBuildTest {
     }
 
     @Test
-    fun tooBigBoxIs413UnlessFallbackAsked() {
+    fun tooBigBoxIsRefusedUnlessFallbackAsked() {
         val post = FakePost(body = overpassXml)
         val builds = routes(post, maxArea = 0.005)
         val e = assertFailsWith<BuildRoutes.Refused> {
             builds.submit(mapOf("name" to "big", "bbox" to bbox, "minZoom" to "10", "maxZoom" to "11", "profile" to "outdoors"))
         }
-        assertEquals(413, e.status)
+        assertEquals(422, e.status, "over the Overpass cap and no extract: 422 (T66); source=overpass alone is 413")
         assertTrue("square degrees" in e.message!! && "fallback=1" in e.message!!, e.message)
+        assertEquals(413, assertFailsWith<BuildRoutes.Refused> {
+            builds.submit(mapOf("name" to "big", "bbox" to bbox, "minZoom" to "10", "maxZoom" to "11", "profile" to "outdoors", "source" to "overpass"))
+        }.status)
         assertEquals(0, post.calls.get(), "nothing sent for a box over the cap")
 
         val job = builds.submit(mapOf("name" to "big", "bbox" to bbox, "minZoom" to "10", "maxZoom" to "11", "profile" to "outdoors", "fallback" to "1"))

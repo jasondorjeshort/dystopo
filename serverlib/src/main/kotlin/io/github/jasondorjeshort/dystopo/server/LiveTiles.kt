@@ -13,6 +13,8 @@ import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
+import io.github.jasondorjeshort.dystopo.mvt.Value
+import io.github.jasondorjeshort.dystopo.mvt.VectorTile
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
@@ -55,7 +57,8 @@ import kotlin.math.min
  *   contour tile needs are produced in parallel first).
  * - `/osm/{z}/{x}/{y}.pbf`: a vector pack that holds the tile; else OpenFreeMap's public planet tiles
  *   (OpenMapTiles schema, `sources.json` id `openfreemap`), fetched once per tile and cached on disk
- *   under `<cache>/openfreemap/<build>/`. Outdoors-only layers simply have no data there.
+ *   under `<cache>/openfreemap/<build>/`. Outdoors-only layers simply have no data there. Below z10
+ *   OpenFreeMap tiles go out without their glacier polygons ([GLACIER_MIN_ZOOM], T66).
  *
  * `/` serves the browser demo (`tools/demo/index.html`) in live mode, `/phone` the phone style
  * ([MapLibreStyle] over these routes), `/live/sources` which source each tile in a box came from (the
@@ -75,7 +78,12 @@ class LiveTiles(
     /** The OpenFreeMap TileJSON text (names the current planet build); read lazily, cached on disk for a day. */
     private val ofmTileJson: () -> String = { httpGet(OFM_TILEJSON)?.let { gunzipIfNeeded(it).decodeToString() } ?: error("no TileJSON at $OFM_TILEJSON") },
     /** Makes the `/build` routes; the standalone server passes its configured limits and Overpass endpoint (T52). */
-    private val makeBuilds: (LiveTiles) -> BuildRoutes = { BuildRoutes(it, it.outDir, extracts = Extracts(dir = File(cacheRoot, Extracts.DIR_NAME))) }, // T64: extracts in <cache>/extracts
+    private val makeBuilds: (LiveTiles) -> BuildRoutes = {
+        // T64: extracts in <cache>/extracts; T66: Geofabrik regions to download on demand from DYSTOPO_EXTRACT_DOWNLOADS (comma-separated URLs).
+        val dir = File(cacheRoot, Extracts.DIR_NAME)
+        val urls = System.getenv("DYSTOPO_EXTRACT_DOWNLOADS")?.split(',')?.map { u -> u.trim() }?.filter { u -> u.isNotEmpty() }.orEmpty()
+        BuildRoutes(it, it.outDir, extracts = Extracts(dir = dir), downloads = urls.takeIf { u -> u.isNotEmpty() }?.let { u -> ExtractDownloads(u, dir) })
+    },
 ) {
     /** One rendered live DEM tile: Terrarium PNG bytes plus the registry ids that contributed. */
     class LiveDem(val png: ByteArray, val provenance: List<String>)
@@ -235,6 +243,7 @@ class LiveTiles(
     private val liveGenerateMs = AtomicLong()
     private val ofmFetches = AtomicLong()
     private val ofmMissing = AtomicLong()
+    private val glaciersDropped = AtomicLong()
     private val errors = AtomicLong()
 
     private fun record(kind: String, t: TileId, tile: Tile?, startedNs: Long) {
@@ -393,7 +402,8 @@ class LiveTiles(
     }
 
     /**
-     * OSM tile z/x/y: from a pack whose bounds hold the whole tile; else OpenFreeMap. A pack that covers
+     * OSM tile z/x/y: from a pack whose bounds hold the whole tile; else OpenFreeMap (below
+     * [GLACIER_MIN_ZOOM] without its glacier polygons, see [withoutGlaciers]). A pack that covers
      * only part of the tile (its edge) would draw base layers that stop at the pack boundary, so there
      * the OpenFreeMap tile is used and the pack's outdoors-only layers (those OpenFreeMap lacks, such as
      * `outdoor_poi` and `natural_line`) are appended to it ([mergeMvtLayers]); the source is then
@@ -404,7 +414,12 @@ class LiveTiles(
         for (p in osms) if (p.complete(z, x, y)) p.tile(z, x, y)?.let { return Tile(it, "pack", false, p.registryIds) }
         val partial = osms.mapNotNull { p -> p.tile(z, x, y)?.let { it to p.registryIds } }
         if (z > OSM_MAX_ZOOM) return partial.firstOrNull()?.let { (bytes, ids) -> Tile(bytes, "pack", false, ids) }
-        val base = openFreeMap(z, x, y)
+        val base = openFreeMap(z, x, y).let { t ->
+            if (z >= GLACIER_MIN_ZOOM) t else withoutGlaciers(t.bytes).let { (bytes, dropped) ->
+                if (dropped > 0) glaciersDropped.addAndGet(dropped.toLong())
+                Tile(bytes, t.source, t.cached, t.provenance)
+            }
+        }
         if (partial.isEmpty()) return base
         val merged = partial.fold(base.bytes) { acc, (bytes, _) -> mergeMvtLayers(acc, bytes) }
         val ids = SourceRegistry.builtIn.ordered(base.provenance + partial.flatMap { it.second })
@@ -678,6 +693,7 @@ class LiveTiles(
             "openfreemap" to mapOf(
                 "fetches" to ofmFetches.get(), "missing" to ofmMissing.get(),
                 "build" to ofmBuild,
+                "glacierFeaturesDropped" to glaciersDropped.get(),
             ),
             "errors" to errors.get(),
             "shadeGeneration" to shadeStats.json(),
@@ -762,6 +778,37 @@ class LiveTiles(
             "ft", "feet" -> ContourUnits.FEET
             "m", "meters", "metres" -> ContourUnits.METERS
             else -> null
+        }
+
+        /**
+         * OpenFreeMap tiles below this zoom are served without glacier polygons (T66). OpenMapTiles drops the
+         * small pieces of a glacier that a tile edge cuts off, per tile, so at z7 to z9 one tile shows a glacier
+         * up to its edge and the next does not: a straight white edge on the hillshade (Everest at z9, the
+         * Mont Blanc massif). Measured over 3x3 tiles at Everest and Mont Blanc, 15 to 40 % of the glacier
+         * samples along tile seams had glacier on one side only at z7 to z9, 5 % at z10, 2 to 3 % at z11 and
+         * z12 (where real glacier edges crossing the sample line account for most of it). Packs and the
+         * outdoors profile are unaffected; z10 and deeper keep the fill.
+         */
+        const val GLACIER_MIN_ZOOM = 10
+
+        /**
+         * [tile] without the `landcover` features of class `ice` (glaciers), and how many were dropped. Other
+         * layers keep their bytes; a tile that does not parse, or has no glacier, comes back unchanged.
+         */
+        fun withoutGlaciers(tile: ByteArray): Pair<ByteArray, Int> {
+            if (tile.isEmpty()) return tile to 0
+            val layers = runCatching { mvtLayers(tile) }.getOrNull() ?: return tile to 0
+            val index = layers.indexOfFirst { it.name == "landcover" }
+            if (index < 0) return tile to 0
+            val decoded = runCatching { VectorTile.decode(layers[index].bytes).layers.single() }.getOrNull() ?: return tile to 0
+            val kept = decoded.features.filter { (it.properties["class"] as? Value.StringValue)?.value != "ice" }
+            val dropped = decoded.features.size - kept.size
+            if (dropped == 0) return tile to 0
+            val out = ByteArrayOutputStream(tile.size)
+            for ((i, l) in layers.withIndex()) {
+                if (i != index) out.write(l.bytes) else if (kept.isNotEmpty()) out.write(VectorTile(listOf(decoded.copy(features = kept))).encode())
+            }
+            return out.toByteArray() to dropped
         }
 
         /** One top-level MVT layer: its name and its encoded bytes (field 3: tag, length, message). */

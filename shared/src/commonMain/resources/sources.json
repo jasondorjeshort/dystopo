@@ -103,7 +103,7 @@
       "allowedUses": "Free use, adaptation and redistribution, including commercial, with attribution to Kartverket.",
       "url": "https://wcs.geonorge.no/skwms1/wcs.hoyde-dtm-nhm-25833?service=WCS&request=GetCoverage&version=1.0.0&coverage=nhm_dtm_topo_25833&format=GeoTIFF&crs=EPSG:25833&bbox={minx},{miny},{maxx},{maxy}&width=256&height=256",
       "updateCadence": "Continuous: new lidar blocks replace older data as they are processed.",
-      "notes": "Bare-earth DTM (nhm_dtm_topo_25833). There are no range-readable COGs: the open download (hoydedata.no) is zipped project blocks, so the source asks the WCS (an ArcGIS image service) for fixed 256x256 px blocks on a UTM 33 grid at 1, 2, 4, 8 or 16 m (nearest neighbour), about 260 kB each, and caches every block on disk; at most 4 requests in flight. Heights converted NN2000 -> EGM2008 with href2018b (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up in Norway)."
+      "notes": "Bare-earth DTM (nhm_dtm_topo_25833). There are no range-readable COGs: the open download (hoydedata.no) is zipped project blocks, so the source asks the WCS (an ArcGIS image service) for fixed 256x256 px blocks on a UTM 33 grid at 1, 2, 4, 8 or 16 m (nearest neighbour), about 260 kB each, and caches every block on disk; at most 4 requests in flight. Heights converted NN2000 -> EGM2008 with href2018b (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up in Norway). No-data (T66): the WCS answers 0 for the sea surface and for its fill; a block that is 0 everywhere is fill (NaN, Copernicus fills), a 0 in a block with land is kept as the sea surface (exactly 0 in EGM2008 too), and cells in Sweden, Finland and Russia are masked with Natural Earth 1:10m admin-0 polygons (natural-earth, public domain; serverlib resource borders/norway-neighbours.json, written by devtool borders), which clips the strip of WCS data beyond the border."
     },
     {
       "id": "bev-als-dtm",
@@ -122,9 +122,9 @@
       "attribution": "Elevation: ALS DTM © BEV, Austrian federal and state geodata providers (CC BY 4.0).",
       "attributionHtml": "Elevation: <a href=\"https://www.bev.gv.at/Services/Produkte/Digitales-Gelaendehoehenmodell/ALS-Hoehenraster.html\" target=\"_blank\">ALS DTM</a> &copy; BEV, Austrian federal and state geodata providers (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>).",
       "allowedUses": "Free use, adaptation and redistribution, including commercial, with attribution to BEV.",
-      "url": "https://data.bev.gv.at/download/ALS/DTM/20250915/ALS_DTM_CRS3035RES50000mN{north}E{east}.tif",
+      "url": "https://data.bev.gv.at/download/ALS/DTM/{edition}/ALS_DTM_CRS3035RES50000mN{north}E{east}.tif",
       "updateCadence": "Yearly editions (Stichtag 15 September), each a full set of 55 tiles; the source pins one edition.",
-      "notes": "Bare-earth DTM from the BEV INSPIRE download service (ATOM feed of series eae5f98d-d605-4783-8292-8b913d163cac). Each tile is a Cloud-Optimized BigTIFF of about 7.7 GB (50001x50001 float32, 512 px LZW tiles with the floating-point predictor, overviews), read with range requests only for the blocks a window needs. Reprojected from EPSG:3035 with LambertAzimuthalEqualArea (EPSG guidance-note formulas). Heights converted EVRF2000 Austria -> EGM2008 with bev-geoid (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
+      "notes": "Bare-earth DTM from the BEV INSPIRE download service (ATOM feed of series eae5f98d-d605-4783-8292-8b913d163cac). The edition read is the newest EVRF2000 one (2022 on) with at least 50 tiles in the service feed (data.bev.gv.at/geonetwork/srv/atom/describe/service?uuid=208cff7a-c8aa-42fe-bf4f-2b8156e37528, cached a week; T66); the {edition} in the url is that date, 20250915 when the feed cannot be read. Each tile is a Cloud-Optimized BigTIFF of about 7.7 GB (50001x50001 float32, 512 px LZW tiles with the floating-point predictor, overviews), read with range requests only for the blocks a window needs. Reprojected from EPSG:3035 with LambertAzimuthalEqualArea (EPSG guidance-note formulas). Heights converted EVRF2000 Austria -> EGM2008 with bev-geoid (ETRS89 taken as WGS84) and egm2008. Composited over Copernicus with a 300 m feather; only read where output cells are 30 m or finer (z12 and up)."
     },
     {
       "id": "hrdem",
@@ -202,13 +202,13 @@
       "verticalDatum": "NAVD88 relative to the NAD83(2011) ellipsoid",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "licenseUrl": "https://www.usa.gov/government-copyright",
       "attribution": "Geoid: NGS GEOID18, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
       "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID18/\" target=\"_blank\">NGS GEOID18</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Unrestricted.",
       "url": "https://cdn.proj.org/us_noaa_g2018u0.tif",
       "updateCadence": "Static; to be superseded by GEOID2022 when NGS releases the modernized NSRS (NAPGD2022).",
-      "notes": "Used with egm2008 to convert NAVD88 heights (USGS DEMs) to EGM2008."
+      "notes": "Licence as stated in PROJ-data's us_noaa_README.txt (https://cdn.proj.org/us_noaa_README.txt). Used with egm2008 to convert NAVD88 heights (USGS DEMs) to EGM2008."
     },
     {
       "id": "geoid18-prvi",
@@ -223,13 +223,13 @@
       "verticalDatum": "PRVD02 / VIVD09 relative to the NAD83(2011) ellipsoid",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "licenseUrl": "https://www.usa.gov/government-copyright",
       "attribution": "Geoid: NGS GEOID18, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
       "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID18/\" target=\"_blank\">NGS GEOID18</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Unrestricted.",
       "url": "https://cdn.proj.org/us_noaa_g2018p0.tif",
       "updateCadence": "Static; to be superseded by GEOID2022 when NGS releases the modernized NSRS (NAPGD2022).",
-      "notes": "Supersedes GEOID12B (us_noaa_g2012bp0) in Puerto Rico and the US Virgin Islands. Used with egm2008 to convert PRVD02 / VIVD09 heights (USGS DEMs) to EGM2008."
+      "notes": "Licence as stated in PROJ-data's us_noaa_README.txt (https://cdn.proj.org/us_noaa_README.txt). Supersedes GEOID12B (us_noaa_g2012bp0) in Puerto Rico and the US Virgin Islands. Used with egm2008 to convert PRVD02 / VIVD09 heights (USGS DEMs) to EGM2008."
     },
     {
       "id": "geoid12b-alaska",
@@ -243,13 +243,13 @@
       "verticalDatum": "NAVD88 relative to the NAD83(2011) ellipsoid",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "licenseUrl": "https://www.usa.gov/government-copyright",
       "attribution": "Geoid: NGS GEOID12B, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
       "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID12B/\" target=\"_blank\">NGS GEOID12B</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Unrestricted.",
       "url": "https://cdn.proj.org/us_noaa_g2012ba0.tif",
       "updateCadence": "Static; GEOID18 does not cover Alaska, so NGS keeps GEOID12B there until GEOID2022.",
-      "notes": "Used with egm2008 to convert Alaska NAVD88 heights (USGS DEMs) to EGM2008."
+      "notes": "Licence as stated in PROJ-data's us_noaa_README.txt (https://cdn.proj.org/us_noaa_README.txt). Used with egm2008 to convert Alaska NAVD88 heights (USGS DEMs) to EGM2008."
     },
     {
       "id": "geoid12b-hawaii",
@@ -264,13 +264,13 @@
       "verticalDatum": "USGG2012-based local datum (offset 50-60 cm from some local tidal bench marks) relative to the NAD83(PA11) ellipsoid",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_noaa/us_noaa_README.txt",
+      "licenseUrl": "https://www.usa.gov/government-copyright",
       "attribution": "Geoid: NGS GEOID12B, courtesy of NOAA National Geodetic Survey (public domain), via PROJ-data.",
       "attributionHtml": "Geoid: <a href=\"https://geodesy.noaa.gov/GEOID/GEOID12B/\" target=\"_blank\">NGS GEOID12B</a>, courtesy of NOAA National Geodetic Survey (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Unrestricted.",
       "url": "https://cdn.proj.org/us_noaa_g2012bh0.tif",
       "updateCadence": "Static; GEOID18 does not cover Hawaii, so NGS keeps GEOID12B there until GEOID2022.",
-      "notes": "Referenced to NAD83(PA11), not NAD83(2011); the ellipsoid shift to WGS84 uses the PA11 translation. Used with egm2008 to convert Hawaii heights (USGS DEMs) to EGM2008."
+      "notes": "Licence as stated in PROJ-data's us_noaa_README.txt (https://cdn.proj.org/us_noaa_README.txt). Referenced to NAD83(PA11), not NAD83(2011); the ellipsoid shift to WGS84 uses the PA11 translation. Used with egm2008 to convert Hawaii heights (USGS DEMs) to EGM2008."
     },
     {
       "id": "chgeo2004",
@@ -285,13 +285,13 @@
       "verticalDatum": "LN02 (EPSG:5728) and LHN95 (EPSG:5729) relative to the ETRS89 ellipsoid",
       "license": "CC0-1.0",
       "licenseName": "Creative Commons CC0 1.0 Universal",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/ch_swisstopo/ch_swisstopo_README.txt",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
       "attribution": "Geoid: CHGeo2004 © swisstopo (CC0), via PROJ-data.",
       "attributionHtml": "Geoid: <a href=\"https://www.swisstopo.admin.ch/en/knowledge-facts/surveying-geodesy/geoid.html\" target=\"_blank\">CHGeo2004</a> &copy; swisstopo (CC0), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Unrestricted (CC0).",
       "url": "https://cdn.proj.org/ch_swisstopo_chgeo2004_ETRS89_LN02.tif",
       "updateCadence": "Static.",
-      "notes": "ch_swisstopo_chgeo2004_ETRS89_LN02.tif converts LN02 heights (swissALTI3D), ch_swisstopo_chgeo2004_ETRS89_LHN95.tif LHN95 heights; used with egm2008 to put Swiss heights in EGM2008. Striped (not tiled) GeoTIFFs of about 300 kB, read whole."
+      "notes": "Licence as stated in PROJ-data's ch_swisstopo_README.txt (https://cdn.proj.org/ch_swisstopo_README.txt). ch_swisstopo_chgeo2004_ETRS89_LN02.tif converts LN02 heights (swissALTI3D), ch_swisstopo_chgeo2004_ETRS89_LHN95.tif LHN95 heights; used with egm2008 to put Swiss heights in EGM2008. Striped (not tiled) GeoTIFFs of about 300 kB, read whole."
     },
     {
       "id": "href2018b",
@@ -306,13 +306,13 @@
       "verticalDatum": "NN2000 (EPSG:5941) relative to the ETRS89 ellipsoid",
       "license": "CC-BY-4.0",
       "licenseName": "Creative Commons Attribution 4.0 International",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/no_kv/no_kv_README.txt",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
       "attribution": "Height reference: HREF2018B © Kartverket (CC BY 4.0), via PROJ-data.",
       "attributionHtml": "Height reference: HREF2018B &copy; Kartverket (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Free use with attribution.",
       "url": "https://cdn.proj.org/no_kv_HREF2018B_NN2000_EUREF89.tif",
       "updateCadence": "Static (HREF2025A realizes NN2000:2025; not used).",
-      "notes": "NN2000 height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put Kartverket heights in EGM2008."
+      "notes": "Licence as stated in PROJ-data's no_kv_README.txt (https://cdn.proj.org/no_kv_README.txt). NN2000 height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put Kartverket heights in EGM2008."
     },
     {
       "id": "bev-geoid",
@@ -327,13 +327,13 @@
       "verticalDatum": "EVRF2000 Austria (EPSG:9274) relative to the ETRS89 ellipsoid",
       "license": "CC-BY-4.0",
       "licenseName": "Creative Commons Attribution 4.0 International",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/at_bev/at_bev_README.txt",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
       "attribution": "Geoid: GEOID_GRS80_Oesterreich © BEV (CC BY 4.0), via PROJ-data.",
       "attributionHtml": "Geoid: GEOID_GRS80_Oesterreich &copy; BEV (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Free use with attribution.",
       "url": "https://cdn.proj.org/at_bev_GEOID_GRS80_Oesterreich.tif",
       "updateCadence": "Static.",
-      "notes": "EPSG:9276. EVRF2000 Austria height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put BEV ALS DTM heights in EGM2008. The GHA grid (at_bev_GV_Hoehengrid_plus_Geoid_V2.tif) would serve the 2021 edition, which is not used."
+      "notes": "Licence as stated in PROJ-data's at_bev_README.txt (https://cdn.proj.org/at_bev_README.txt). EPSG:9276. EVRF2000 Austria height + grid value = ETRS89 ellipsoidal height; used with egm2008 to put BEV ALS DTM heights in EGM2008. The GHA grid (at_bev_GV_Hoehengrid_plus_Geoid_V2.tif) would serve the 2021 edition, which is not used."
     },
     {
       "id": "cgg2013a",
@@ -348,13 +348,13 @@
       "verticalDatum": "CGVD2013(CGG2013a) heights (EPSG:9245) relative to the NAD83(CSRS)v6 ellipsoid",
       "license": "OGL-Canada-2.0",
       "licenseName": "Open Government Licence - Canada 2.0",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/ca_nrc/ca_nrc_README.txt",
+      "licenseUrl": "https://open.canada.ca/en/open-government-licence-canada",
       "attribution": "Geoid: CGG2013a, Natural Resources Canada, via PROJ-data. Contains information licensed under the Open Government Licence - Canada.",
       "attributionHtml": "Geoid: CGG2013a, Natural Resources Canada, via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>. Contains information licensed under the <a href=\"https://open.canada.ca/en/open-government-licence-canada\" target=\"_blank\">Open Government Licence - Canada</a>.",
       "allowedUses": "Free use with the attribution statement.",
       "url": "https://cdn.proj.org/ca_nrc_CGG2013an83.tif",
       "updateCadence": "Static.",
-      "notes": "EPSG:9247. CGVD2013 height + grid value = NAD83(CSRS) ellipsoidal height; the NAD83(2011) translation to WGS84 and egm2008 then put HRDEM heights in EGM2008."
+      "notes": "Licence as stated in PROJ-data's ca_nrc_README.txt (https://cdn.proj.org/ca_nrc_README.txt). EPSG:9247. CGVD2013 height + grid value = NAD83(CSRS) ellipsoidal height; the NAD83(2011) translation to WGS84 and egm2008 then put HRDEM heights in EGM2008."
     },
     {
       "id": "nzgeoid2016",
@@ -369,13 +369,13 @@
       "verticalDatum": "NZVD2016 (EPSG:7839) relative to the NZGD2000 ellipsoid",
       "license": "CC-BY-4.0",
       "licenseName": "Creative Commons Attribution 4.0 International",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/nz_linz/nz_linz_README.txt",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
       "attribution": "Geoid: NZGeoid2016, sourced from LINZ (CC BY 4.0), via PROJ-data.",
       "attributionHtml": "Geoid: NZGeoid2016, sourced from LINZ (<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\">CC BY 4.0</a>), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Free use with attribution.",
       "url": "https://cdn.proj.org/nz_linz_nzgeoid2016.tif",
       "updateCadence": "Static.",
-      "notes": "EPSG:7840. NZVD2016 height + grid value = NZGD2000 ellipsoidal height (taken as WGS84, a few centimetres); used with egm2008 to put LINZ DEM heights in EGM2008."
+      "notes": "Licence as stated in PROJ-data's nz_linz_README.txt (https://cdn.proj.org/nz_linz_README.txt). EPSG:7840. NZVD2016 height + grid value = NZGD2000 ellipsoidal height (taken as WGS84, a few centimetres); used with egm2008 to put LINZ DEM heights in EGM2008."
     },
     {
       "id": "egm2008",
@@ -390,13 +390,13 @@
       "verticalDatum": "EGM2008 relative to the WGS84 ellipsoid",
       "license": "LicenseRef-US-Government-Public-Domain",
       "licenseName": "Public domain (US federal government work)",
-      "licenseUrl": "https://github.com/OSGeo/PROJ-data/blob/master/us_nga/us_nga_README.txt",
+      "licenseUrl": "https://www.usa.gov/government-copyright",
       "attribution": "Geoid: EGM2008, courtesy of the U.S. National Geospatial-Intelligence Agency (public domain), via PROJ-data.",
       "attributionHtml": "Geoid: <a href=\"https://earth-info.nga.mil/\" target=\"_blank\">EGM2008</a>, courtesy of the U.S. National Geospatial-Intelligence Agency (public domain), via <a href=\"https://cdn.proj.org/\" target=\"_blank\">PROJ-data</a>.",
       "allowedUses": "Unrestricted.",
       "url": "https://cdn.proj.org/us_nga_egm08_25.tif",
       "updateCadence": "Static.",
-      "notes": "EGM2008 is Dystopo's internal vertical datum; every source converts to it."
+      "notes": "Licence as stated in PROJ-data's us_nga_README.txt (https://cdn.proj.org/us_nga_README.txt). EGM2008 is Dystopo's internal vertical datum; every source converts to it."
     },
     {
       "id": "osm",

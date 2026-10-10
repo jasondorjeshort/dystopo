@@ -186,6 +186,36 @@ class LiveTilesTest {
     }
 
     @Test
+    fun lowZoomOpenFreeMapTilesLoseTheirGlaciers() {
+        val square = Geometry.Polygons(listOf(io.github.jasondorjeshort.dystopo.mvt.Polygon(listOf(TilePoint(0, 0), TilePoint(100, 0), TilePoint(100, 100), TilePoint(0, 100)))))
+        fun lc(cls: String) = Feature(null, mapOf("class" to Value.StringValue(cls)), square)
+        val tile = VectorTile(listOf(
+            Layer("water", listOf(lc("lake"))),
+            Layer("landcover", listOf(lc("ice"), lc("wood"), lc("ice"))),
+            Layer("transportation", listOf(lc("path"))),
+        )).encode()
+        val (stripped, dropped) = LiveTiles.withoutGlaciers(tile)
+        assertEquals(2, dropped)
+        val layers = MvtDecoder.decode(stripped).layers
+        assertEquals(listOf("water", "landcover", "transportation"), layers.map { it.name })
+        assertEquals(listOf("wood"), layers.single { it.name == "landcover" }.features.map { (it.properties.getValue("class") as Value.StringValue).value })
+        // Only glaciers: the landcover layer goes; no glacier, or not a tile: unchanged bytes.
+        val onlyIce = VectorTile(listOf(Layer("water", listOf(lc("lake"))), Layer("landcover", listOf(lc("ice"))))).encode()
+        assertEquals(listOf("water"), MvtDecoder.decode(LiveTiles.withoutGlaciers(onlyIce).first).layers.map { it.name })
+        val noIce = mvt("water", "landcover")
+        assertContentEquals(noIce, LiveTiles.withoutGlaciers(noIce).first)
+        assertContentEquals(byteArrayOf(1, 2, 3), LiveTiles.withoutGlaciers(byteArrayOf(1, 2, 3)).first)
+
+        // Served through /osm: z9 without, z10 with (the cached OpenFreeMap tile itself keeps them).
+        val live = ofmLive(File(dir, "cache"), emptyList(), tile)
+        fun classes(z: Int) = MvtDecoder.decode(live.osm(z, 0, 0)!!.bytes).layer("landcover")!!.features.map { (it.properties.getValue("class") as Value.StringValue).value }
+        assertEquals(listOf("wood"), classes(LiveTiles.GLACIER_MIN_ZOOM - 1))
+        assertEquals(listOf("ice", "wood", "ice"), classes(LiveTiles.GLACIER_MIN_ZOOM))
+        assertEquals(2L, (live.stats()["openfreemap"] as Map<*, *>)["glacierFeaturesDropped"])
+        assertContentEquals(tile, live.openFreeMap(LiveTiles.GLACIER_MIN_ZOOM - 1, 0, 0).bytes)
+    }
+
+    @Test
     fun packEdgeTilesFallThroughToOpenFreeMap() {
         val z = 12
         val inner = TileId(z, 655, 1430)

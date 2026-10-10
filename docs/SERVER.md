@@ -63,8 +63,12 @@ docker run -d --name dystopo -p 8080:8080 \
   outdoors build downloads Planetiler's aux data (about 1.45 GB: water polygons, Natural Earth, Wikidata
   names) into the cache volume. tilebuild carries LGPL build tooling (GeoTools); the image ships those jars
   unmodified and separate, and they are never on the server's classpath.
-- CI builds and starts the image on every push (the `image` job: `/healthz`, the token, `/catalog`,
-  tilebuild available).
+- CI builds and starts the image on every push and (T66) builds an outdoors pack inside it: the cache
+  volume is a host directory whose `planetiler/` aux files are kept in an Actions cache between runs
+  (key `planetiler-aux-v1`), the config lists Geofabrik's Liechtenstein under `extractDownloads`, a box
+  no extract covers must be a 422, and a small box inside it at z8 to z10 must come back `done` with
+  `osmSource: extract`, `osmProfile: outdoors` and appear in `/catalog`. The `image` job also checks
+  `/healthz`, the token, `/catalog` and that tilebuild is available.
 
 Packs built elsewhere (`tilebuild`, `devtool tiles --pmtiles`) go into the out volume as
 `<name>-dem.pmtiles` plus `<name>-outdoors.pmtiles`; the server picks up new files at startup, and packs
@@ -142,7 +146,7 @@ key with its default.
 | `build.concurrent` | `1` | Builds running at once. |
 | `build.queue` | `4` | Builds waiting beyond those (then 429). |
 | `overpass.url` | `https://overpass-api.de/api/interpreter` | Overpass endpoint for `profile=outdoors` builds. |
-| `overpass.maxAreaSqDeg` | `0.05` | Largest box sent to Overpass (square degrees); larger is a 413 (or OpenFreeMap with `fallback=1`). |
+| `overpass.maxAreaSqDeg` | `0.05` | Largest box sent to Overpass (square degrees). A larger box needs an extract; without one it is a 422 (413 with `source=overpass`), or OpenFreeMap with `fallback=1`. |
 | `overpass.timeoutSeconds` | `90` | Overpass query timeout (10..900). |
 | `tilebuildHome` | `null` | A `./gradlew :tilebuild:installDist` install for `profile=outdoors` builds; null: `DYSTOPO_TILEBUILD_HOME` (`/opt/tilebuild` in the Docker image), else `tilebuild/build/install/tilebuild`. Without one, outdoors builds answer 503 and `profile=openmaptiles` builds work. |
 | `extracts` | `[]` | OSM extracts for outdoors packs bigger than Overpass serves (below): `[{"path": "data/washington-261008.osm.pbf", "bbox": [w, s, e, n], "name": "washington"}]`; `bbox` and `name` are optional. |
@@ -154,6 +158,8 @@ key with its default.
 | `relay.maxSlots` | `10000` | Slots (share codes in use) at once; beyond, 507. |
 | `relay.maxSides` | `4` | Phones per slot. |
 | `relay.requestsPerMinute` | `120` | Relay requests per client address per minute (token bucket; 429 with `Retry-After`). A phone polls every 5 s. |
+| `extractDownloads.urls` | `[]` | Geofabrik regions the server may download into `extractsDir` when an outdoors build needs one (T66, below), e.g. `["https://download.geofabrik.de/europe/alps"]` (a `-latest.osm.pbf` or `.poly` URL works too). `devtool serve` reads `DYSTOPO_EXTRACT_DOWNLOADS` (comma-separated) instead. |
+| `extractDownloads.maxMb` | `4096` | Largest extract downloaded (by `Content-Length`, checked again while streaming). |
 
 ## Routes
 
@@ -162,7 +168,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 - `/` browser map, `/phone` phone style page, `/style.json?units=ft|m` (or `?lat=&lon=`), `/live/info`,
   `/live/units`, `/live/sources?bbox=&dz=&oz=` (sources and attribution of a view), `/stats`.
 - `/dem/{z}/{x}/{y}.png`, `/contours/{z}/{x}/{y}.pbf?units=`, `/osm/{z}/{x}/{y}.pbf`: packs first, else
-  live (`X-Dystopo-Source` says which). `/glyphs/{fontstack}/{range}.pbf`, `/sprite*.json|png`.
+  live (`X-Dystopo-Source` says which; live OpenFreeMap tiles below z10 come without glacier polygons, which
+  OpenMapTiles cuts at tile edges there, T66). `/glyphs/{fontstack}/{range}.pbf`, `/sprite*.json|png`.
 - `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
 - `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
@@ -189,16 +196,27 @@ ticks, alpine routes, huts). The OSM data for it comes from, in order (`source=a
    z8 to z14) from the Washington file (364 MB) builds its vector pack in about 20 s (Planetiler passes 1
    and 2 read the whole state); the DEM half takes longer than that when its tiles are not cached.
 2. **Overpass** for a box under `overpass.maxAreaSqDeg` (one request per box, cached).
-3. **OpenFreeMap** (OpenMapTiles schema, no outdoors layers) with `fallback=1` and a warning in the job;
-   without it the request is a 413 that says why.
+3. **A configured Geofabrik region, downloaded on demand** (T66): the smallest of `extractDownloads.urls`
+   whose region polygon holds the whole box. Each region's `.poly` is fetched once into `extractsDir`
+   (a few kB; `GET /build/sources` and `GET /build` fetch the missing ones); the `-latest.osm.pbf` only when
+   a build needs it. The job's phase is then `osm-download` and its `download` has `name`, `url`, `bytes`
+   and `total`; one region downloads once at a time, and afterwards the file is an ordinary extract (step
+   1) with its `.poly` beside it. Measured: Liechtenstein (3.5 MB) downloaded in 2.1 s and built its
+   z8 to z12 outdoors pack in 6.9 s.
+4. **OpenFreeMap** (OpenMapTiles schema, no outdoors layers) with `fallback=1` and a warning in the job.
+   Without it the request is refused with a message that names the ways out: **422** when no extract
+   covers the box (the request is valid, the server has no data for it), **413** only for
+   `source=overpass` with a box over the Overpass cap (T66; both were 413 before).
 
-`source=extract` or `source=overpass` forces one. The job says what it used: `osmSource` (`extract`,
+`source=extract` (on disk or downloadable) or `source=overpass` forces one. The job says what it used: `osmSource` (`extract`,
 `overpass`, `openfreemap`), `osmProfile`, and for an extract `provenance.osmExtract` (`name`, `file`,
 `date` of the data). The archive itself carries `dystopo:extract` (the file's base name) and Planetiler's
 `planetiler:osm:osmosisreplicationtime`. `GET /build/sources?bbox=w,s,e,n` answers what an outdoors
 build of the box would use (`outdoors.source`, `profile`, `extract`, `why`), every extract with
-`covers`, the Overpass cap and whether tilebuild is installed; `GET /build` lists the extracts under
-`limits.extracts` with any file that could not be used (`problems`).
+`covers` and `coverage` (`poly` or `bbox`), the download regions under `downloads` (with `covers`,
+`downloaded`, `downloading`, `problem`), the Overpass cap and whether tilebuild is installed; `GET /build`
+lists the extracts under `limits.extracts` with any file that could not be used (`problems`) and the
+download regions under `limits.extractDownloads`.
 
 Getting an extract (Geofabrik, ODbL, rebuilt daily; the redirect names the file after its date):
 
@@ -210,9 +228,14 @@ curl -L -o cache/extracts/washington-261008.osm.pbf https://download.geofabrik.d
 The extract's bbox and date come from a sidecar JSON next to it (`washington-261008.json`:
 `{"name": "washington", "bbox": [w, s, e, n], "date": "2026-10-08"}`, every key optional), else from the
 PBF header (Geofabrik files carry the region's bounding box and the replication timestamp), else the
-date is the file's modification time. The name is the file name without `-latest` or a date suffix. The
-bbox is the region polygon's bounding box, so a box near the region's edge can count as covered while the
-data beyond the border is missing; give such extracts a tighter `bbox`. Planetiler needs its 1.45 GB of
+date is the file's modification time. The name is the file name without `-latest` or a date suffix.
+Coverage is the region polygon when a `.poly` lies beside the file (`<name>.poly` or `<base>.poly`,
+Geofabrik's Osmosis format; `curl -o cache/extracts/washington.poly
+https://download.geofabrik.de/north-america/us/washington.poly`, or listing the region in
+`extractDownloads.urls` fetches it): the whole box must be inside the polygon and no edge of it may
+enter the box. Without one it is the bbox, the region polygon's bounding box, so a box near the region's
+edge can count as covered while the data beyond the border is missing (a box just across Washington's southern border
+was "covered" by the Washington file's bbox and is not by its polygon). Planetiler needs its 1.45 GB of
 auxiliary data in the cache the first time (any tilebuild run downloads it); the default heap
 (`DYSTOPO_TILEBUILD_HEAP`, 3g) was enough for the Washington file.
 

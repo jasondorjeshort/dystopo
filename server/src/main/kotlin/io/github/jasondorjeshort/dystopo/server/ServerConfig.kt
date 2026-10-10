@@ -76,6 +76,8 @@ data class ServerConfig(
     val extractsDir: String? = null,
     /** T72: the encrypted sync relay (`/sync/relay`, docs/SERVER.md, The relay). */
     val relay: RelayConfig = RelayConfig(),
+    /** Geofabrik regions downloaded into the extracts directory when a build needs one (T66). */
+    val extractDownloads: ExtractDownloadConfig = ExtractDownloadConfig(),
 ) {
     /** T72: limits of the sync relay; it holds only ciphertext, in memory, for [ttlSeconds] after each write. */
     @Serializable
@@ -90,6 +92,14 @@ data class ServerConfig(
     ) {
         fun toRelay() = Relay.Config(enabled, ttlSeconds, maxBlobBytes, maxTotalBytes, maxSlots, maxSides, requestsPerMinute)
     }
+
+    @Serializable
+    data class ExtractDownloadConfig(
+        /** Region URLs, e.g. `https://download.geofabrik.de/europe/alps`; each one's `.poly` decides what it covers. */
+        val urls: List<String> = emptyList(),
+        /** Largest extract downloaded, MB (by Content-Length). */
+        val maxMb: Int = 4096,
+    )
 
     @Serializable
     data class ExtractConfig(
@@ -150,6 +160,11 @@ data class ServerConfig(
             if (b != null && (b.size != 4 || b[0] >= b[2] || b[1] >= b[3] || b.any { it.isNaN() })) add("extracts[$i].bbox must be [west, south, east, north] with west < east and south < north")
         }
         if (relay.ttlSeconds < 1 || relay.maxBlobBytes < 1024 || relay.maxTotalBytes < relay.maxBlobBytes || relay.maxSlots < 1 || relay.maxSides < 2 || relay.requestsPerMinute < 1) add("relay limits: ttlSeconds >= 1, maxBlobBytes >= 1024, maxTotalBytes >= maxBlobBytes, maxSlots >= 1, maxSides >= 2, requestsPerMinute >= 1")
+        extractDownloads.urls.forEachIndexed { i, u ->
+            if (!Regex("https?://[^\\s]+/[^/\\s]+").matches(u.trim())) add("extractDownloads.urls[$i] must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got $u)")
+        }
+        if (extractDownloads.maxMb < 1) add("extractDownloads.maxMb must be at least 1")
+        if (extractDownloads.urls.isNotEmpty() && extractsDir == "") add("extractDownloads needs an extracts directory (extractsDir is \"\")")
         if (corsOrigins.any { it != "*" && !Regex("https?://[^/\\s]+").matches(it) }) add("corsOrigins entries must be \"*\" or an origin like https://maps.example.org (no path)")
     }
 

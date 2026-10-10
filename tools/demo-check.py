@@ -28,7 +28,10 @@ source (pack, live-3dep, live-copernicus); the report's `sources` has the counts
 
 Needs the demo server running (tools/demo-server.py) and Playwright with Chrome (pip package
 `playwright`; uses the installed Google Chrome via channel="chrome", or `python -m playwright install
-chromium`). Exit code 1 if the map never became idle or any page error / console error occurred.
+chromium`). Exit code 1 if the map never became idle or any page error / console error occurred. Idle is
+two polls in a row with every tile loaded; a view that is not idle after --timeout is jumped to again and
+given another --timeout (--retries, default 1: the host under load, T66), and the report lists the misses
+under `notIdle` with the flags that were false.
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -206,6 +209,16 @@ def check_route(page, spec, shot, timeout):
     return out
 
 
+def not_idle_because(state, v):
+    """Why a view did not count as idle: the MapLibre flags that were false, or the zoom still moving."""
+    if not state:
+        return ["noMap"]
+    why = [k for k in ("styleLoaded", "loaded", "tilesLoaded") if not state.get(k)]
+    if v["z"] is not None and abs(state["zoom"] - v["z"]) >= 0.05:
+        why.append("zoom %s" % state["zoom"])
+    return why or ["flapping"]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8765/tools/demo/")
@@ -215,7 +228,10 @@ def main() -> int:
     ap.add_argument("--out", default="out/demo-check.png", help="screenshot path; a tour writes <stem>-<i>.png")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=900)
-    ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--timeout", type=float, default=60.0, help="seconds for a view to go idle, per attempt")
+    ap.add_argument("--retries", type=int, default=1,
+                    help="when a view is not idle after --timeout, jump to it again and wait again, this many times (default 1); "
+                         "each miss is listed under notIdle, and a view that never goes idle still fails")
     ap.add_argument("--channel", default="chrome", help="playwright browser channel; use '' for bundled chromium")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
@@ -276,16 +292,34 @@ def main() -> int:
                 page.evaluate("h => { location.hash = h; }", v["view"])
                 page.wait_for_timeout(500)  # let the hash handler start the jump and new tile requests
             # The page exposes nothing by default; poll MapLibre through the global `map` once it exists.
-            deadline = t0 + args.timeout
+            # Idle means two polls in a row (0.5 s apart) with the style and every tile loaded at the view's
+            # zoom, so the gap between one batch of tile requests and the next does not count. Under load a
+            # view can miss the deadline (a stalled request, a slow live tile): then jump to it again, which
+            # asks again for whatever is missing, and wait once more (--retries; T66).
             state = None
-            while time.time() < deadline:
-                state = page.evaluate(STATE_JS)
-                if state and state["loaded"] and state["tilesLoaded"] and state["styleLoaded"]:
-                    if v["z"] is None or abs(state["zoom"] - v["z"]) < 0.05:
-                        report["idle"] = True
-                        report["idleSeconds"] = round(time.time() - t0, 1)  # to idle, before the fixed settle wait below
-                        break
-                time.sleep(0.5)
+            for attempt in range(args.retries + 1):
+                deadline = time.time() + args.timeout
+                streak = 0
+                while time.time() < deadline:
+                    state = page.evaluate(STATE_JS)
+                    if state and state["loaded"] and state["tilesLoaded"] and state["styleLoaded"] and \
+                            (v["z"] is None or abs(state["zoom"] - v["z"]) < 0.05):
+                        streak += 1
+                        if streak >= 2:
+                            report["idle"] = True
+                            report["idleSeconds"] = round(time.time() - t0, 1)  # to idle, before the fixed settle wait below
+                            break
+                    else:
+                        streak = 0
+                    time.sleep(0.5)
+                if report["idle"]:
+                    break
+                report.setdefault("notIdle", []).append(not_idle_because(state, v))
+                if attempt < args.retries and v["z"] is not None:
+                    report["retries"] = attempt + 1
+                    page.evaluate("v => { map.jumpTo({center: [v.lon, v.lat], zoom: v.z}); map.triggerRepaint(); }",
+                                  {"lon": v["lon"], "lat": v["lat"], "z": v["z"]})
+                    page.wait_for_timeout(500)
             report["map"] = state
             # Let labels and the contour worker finish their last frame.
             page.wait_for_timeout(1500)

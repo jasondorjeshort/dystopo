@@ -39,5 +39,9 @@
     "maxSlots": 10000,
     "maxSides": 4,
     "requestsPerMinute": 120
+  },
+  "extractDownloads": {
+    "urls": [],
+    "maxMb": 4096
   }
 }

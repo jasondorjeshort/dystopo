@@ -162,6 +162,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         RelayRoutes.configure(config.relay.toRelay()) // T72: the encrypted sync relay
         val (dems, osms) = LiveTiles.findPacks(emptyList(), outDir)
         val tilebuild = config.tilebuildHome?.let { TilebuildProcess(home = File(it)) } ?: TilebuildProcess()
+        val extractsDir = when (config.extractsDir) { null -> File(cacheDir, Extracts.DIR_NAME); "" -> null; else -> File(config.extractsDir) }
         live = LiveTiles(
             dems, osms, cacheRoot = cacheDir, outDir = outDir,
             threads = config.liveThreads ?: Runtime.getRuntime().availableProcessors().coerceIn(4, 16),
@@ -174,8 +175,9 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
                     concurrentBuilds = config.build.concurrent, maxQueued = config.build.queue,
                     extracts = Extracts(
                         config.extracts.map { e -> Extracts.Configured(File(e.path), e.bbox?.let { BoundingBox(it[0], it[1], it[2], it[3]) }, e.name) },
-                        when (config.extractsDir) { null -> File(cacheDir, Extracts.DIR_NAME); "" -> null; else -> File(config.extractsDir) },
+                        extractsDir,
                     ),
+                    downloads = config.extractDownloads.urls.takeIf { it.isNotEmpty() }?.let { ExtractDownloads(it, extractsDir, config.extractDownloads.maxMb * 1_048_576L) },
                 )
             },
         )

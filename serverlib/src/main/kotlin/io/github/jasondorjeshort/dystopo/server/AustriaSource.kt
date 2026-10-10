@@ -14,11 +14,16 @@ import kotlin.math.floor
  * BEV publishes 55 tiles of 50x50 km per yearly edition through its INSPIRE download service, each a
  * Cloud-Optimized BigTIFF of about 7.7 GB (512 px LZW tiles with the floating-point predictor and
  * internal overviews), so a window reads only the blocks it needs with range requests, from the
- * overview level that matches its cells; the tile list is fixed per edition ([TILES]). Output pixels
+ * overview level that matches its cells. The edition and its tile list come from BEV's ATOM feed
+ * ([AustriaEditions], T66), with the pinned [EDITION] and [TILES] as the fallback. Output pixels
  * are projected with [LambertAzimuthalEqualArea.EUROPE] and sampled bilinearly. Heights are converted
  * EVRF2000 Austria -> EGM2008 with BEV's ETRS89 geoid and EGM2008.
  */
-class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : ElevationSource {
+class AustriaSource(
+    private val cacheDir: File = Caches.dir("bev-als-dtm"),
+    /** The edition to read; resolved lazily, so a window outside Austria never touches the feed. */
+    private val edition: () -> AustriaEditions.Edition = { AustriaEditions.current(cacheDir) },
+) : ElevationSource {
     override val id = "bev"
     override val registryIds = listOf("bev-als-dtm", Datums.AUSTRIA_GEOID.registryId, "egm2008")
 
@@ -29,6 +34,8 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
         val targetMeters = OverviewLevels.targetMeters(window)
         if (!NationalDem.useful(window)) return NationalDem.nanResult(window, mapOf("skippedCoarse" to 1L))
 
+        val ed = edition()
+        fun tileAt(x: Double, y: Double) = tileOf(x, y, ed)
         val w = window.width
         val h = window.height
         val xs = DoubleArray(w * h)
@@ -47,7 +54,7 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
         class Need(val tile: Pair<Int, Int>, var minX: Double, var minY: Double, var maxX: Double, var maxY: Double)
         val needs = HashMap<Pair<Int, Int>, Need>()
         for (k in xs.indices) {
-            val t = tileOf(xs[k], ys[k]) ?: continue
+            val t = tileAt(xs[k], ys[k]) ?: continue
             val need = needs.getOrPut(t) { Need(t, xs[k], ys[k], xs[k], ys[k]) }
             if (xs[k] < need.minX) need.minX = xs[k]
             if (xs[k] > need.maxX) need.maxX = xs[k]
@@ -57,7 +64,7 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
         if (needs.isEmpty()) return NationalDem.nanResult(window, mapOf("outsideTiles" to 1L))
 
         val readStarted = System.nanoTime()
-        val opened = io.map(needs.keys) { t -> t to RemoteTiff(tileUrl(t.first, t.second), File(cacheDir, "tiles/$EDITION/${t.first}-${t.second}")) }.toMap()
+        val opened = io.map(needs.keys) { t -> t to RemoteTiff(tileUrl(t.first, t.second, ed.id), File(cacheDir, "tiles/${ed.id}/${t.first}-${t.second}")) }.toMap()
         val levels = opened.mapValues { (_, tiff) -> tiff.levelFor(targetMeters, 1.0) }
         val blocks = ArrayList<() -> Unit>()
         for (need in needs.values) {
@@ -77,7 +84,7 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
 
         val values = FloatArray(w * h) { Float.NaN }
         for (k in xs.indices) {
-            val t = tileOf(xs[k], ys[k]) ?: continue
+            val t = tileAt(xs[k], ys[k]) ?: continue
             val tiff = opened[t] ?: continue
             values[k] = tiff.sample(levels.getValue(t), xs[k], ys[k])
         }
@@ -89,6 +96,8 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
 
         val grid = ElevationGrid(w, h, window.cellSizeMeters, values)
         val counters = LinkedHashMap<String, Long>()
+        counters["edition"] = ed.id.toLong()
+        counters["editionFromAtom"] = if (ed.from == "pinned") 0L else 1L
         counters["tilesUsed"] = opened.size.toLong()
         counters["overviewLevelMax"] = (levels.values.maxOrNull() ?: 0).toLong()
         counters["pixelMeters"] = opened.entries.maxOfOrNull { (t, tiff) -> tiff.level(levels.getValue(t)).pixelScaleX }?.toLong() ?: 0L
@@ -104,7 +113,7 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
     }
 
     companion object {
-        /** The edition (Stichtag) read: every edition from 2022 on is in EVRF2000 Austria heights. */
+        /** The pinned edition (Stichtag), used when the ATOM feed cannot be read; every edition from 2022 on is in EVRF2000 Austria heights. */
         const val EDITION = "20250915"
 
         const val BASE = "https://data.bev.gv.at/download/ALS/DTM"
@@ -131,14 +140,14 @@ class AustriaSource(private val cacheDir: File = Caches.dir("bev-als-dtm")) : El
 
         private val io = NationalDem.IoPool("bev-io")
 
-        /** The tile (north, east indices) holding EPSG:3035 point ([x], [y]), or null where BEV has none. */
-        fun tileOf(x: Double, y: Double): Pair<Int, Int>? {
+        /** The tile (north, east indices) holding EPSG:3035 point ([x], [y]) in [edition], or null where BEV has none. */
+        fun tileOf(x: Double, y: Double, edition: AustriaEditions.Edition = AustriaEditions.pinned): Pair<Int, Int>? {
             val n = floor(y / TILE_METERS).toInt()
             val e = floor(x / TILE_METERS).toInt()
-            return if (TILES[n]?.contains(e) == true) n to e else null
+            return if (edition.has(n, e)) n to e else null
         }
 
-        fun tileUrl(n: Int, e: Int): String =
-            "$BASE/$EDITION/ALS_DTM_CRS3035RES50000mN${n * TILE_METERS}E${e * TILE_METERS}.tif"
+        fun tileUrl(n: Int, e: Int, edition: String = EDITION): String =
+            "$BASE/$edition/ALS_DTM_CRS3035RES50000mN${n * TILE_METERS}E${e * TILE_METERS}.tif"
     }
 }

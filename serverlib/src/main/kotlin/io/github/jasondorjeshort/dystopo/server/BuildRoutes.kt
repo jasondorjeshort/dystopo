@@ -52,9 +52,13 @@ import kotlin.math.floor
  *   config's `extracts` list plus every `.osm.pbf` in `<cache>/extracts/`, e.g. Geofabrik's Washington file).
  *   With `profile=outdoors` the vector source is chosen per box ([planOsm]): a configured extract that
  *   holds the whole box (tilebuild runs Planetiler on it with `--bbox`, so whole-park boxes get the
- *   outdoors layers), else Overpass when the box is under its area cap, else OpenFreeMap with
- *   `fallback=1` (413 without). `source=auto|extract|overpass` forces one (default `auto`). The job says
- *   which in `osmSource` and, for an extract, `provenance.osmExtract` (name, file, date of the data).
+ *   outdoors layers), else Overpass when the box is under its area cap, else (T66) a configured
+ *   Geofabrik region whose `.poly` holds the box, downloaded on demand ([ExtractDownloads]; the job's
+ *   phase is `osm-download` and `download` has the bytes), else OpenFreeMap with `fallback=1`. Without
+ *   it the request is refused: 422 when no extract covers the box (the box is fine, this server has no
+ *   data for it), 413 only for `source=overpass` over the Overpass area cap. `source=auto|extract|overpass`
+ *   forces one (default `auto`). The job says which in `osmSource` and, for an extract,
+ *   `provenance.osmExtract` (name, file, date of the data).
  * - `GET /build/sources?bbox=w,s,e,n`: what a `profile=outdoors` build of the box would use, with every
  *   extract and whether it covers the box, the Overpass cap, and whether tilebuild is installed.
  * - `GET /build/{id}`: status (queued, running, done, failed, cancelled), phase, per-pack tile counts,
@@ -82,6 +86,8 @@ class BuildRoutes(
     private val tilebuild: OutdoorsTileBuilder = TilebuildProcess(),
     /** Regional OSM extracts for outdoors packs larger than Overpass serves (T64); none by default (`devtool serve` and the server scan `<cache>/extracts`). */
     val extracts: Extracts = Extracts(dir = null),
+    /** Geofabrik regions downloaded on demand when no extract on disk covers a box (T66); null: none. */
+    val downloads: ExtractDownloads? = null,
     val maxTiles: Int = env("DYSTOPO_BUILD_MAX_TILES")?.toIntOrNull() ?: 20_000,
     val maxSpanDegrees: Double = env("DYSTOPO_BUILD_MAX_SPAN_DEG")?.toDoubleOrNull() ?: 3.0,
     val concurrentBuilds: Int = env("DYSTOPO_BUILD_CONCURRENT")?.toIntOrNull()?.coerceAtLeast(1) ?: 1,
@@ -129,6 +135,9 @@ class BuildRoutes(
         @Volatile var osmSource: String = if (profile == PROFILE_OUTDOORS) SOURCE_OVERPASS else SOURCE_OPENFREEMAP
         /** The extract an outdoors pack is built from (T64), when [osmSource] is [SOURCE_EXTRACT]. */
         @Volatile var extract: OsmExtract? = null
+        /** A region to download first (T66), when no extract on disk holds the box; [extract] is set after. */
+        @Volatile var download: ExtractDownloads.Region? = null
+        @Volatile var downloadInfo: Map<String, Any?>? = null
         @Volatile var tilebuildInfo: Map<String, Any?>? = null
         /** The last log line of a running tilebuild, as a progress hint. */
         @Volatile var detail: String? = null
@@ -167,7 +176,7 @@ class BuildRoutes(
                 "files" to files.toList(),
                 "provenance" to linkedMapOf("dem" to demProvenance, "osm" to osmProvenance, "osmExtract" to extract?.let { extractProvenance(it) }),
                 "profile" to profile, "osmProfile" to osmProfile, "osmSource" to osmSource, "detail" to detail,
-                "overpass" to overpassInfo, "tilebuild" to tilebuildInfo,
+                "overpass" to overpassInfo, "tilebuild" to tilebuildInfo, "download" to downloadInfo,
                 "warnings" to warnings.toList(),
                 "error" to error,
             ).also { m -> antimeridian?.let { m["antimeridian"] = it } }
@@ -189,6 +198,7 @@ class BuildRoutes(
         "sources" to listOf(SOURCE_AUTO, SOURCE_EXTRACT, SOURCE_OVERPASS),
         "overpass" to overpass.describe(),
         "extracts" to extracts.describe(),
+        "extractDownloads" to linkedMapOf("maxMb" to downloads?.maxBytes?.div(1_048_576), "regions" to (downloads?.describe() ?: emptyList())),
         "tilebuild" to linkedMapOf("available" to (tilebuild.unavailable() == null), "unavailable" to tilebuild.unavailable(), "how" to tilebuild.describe()),
     )
 
@@ -266,6 +276,8 @@ class BuildRoutes(
                 Job("b${nextId.getAndIncrement()}", partName, box, minZoom, maxZoom, demZooms, osmZooms, overwrite, profile).also {
                     it.osmSource = plan.source
                     it.extract = plan.extract
+                    it.download = plan.download
+                    plan.download?.let { r -> it.downloadInfo = linkedMapOf("name" to r.name, "url" to r.pbfUrl, "bytes" to 0L, "total" to null) }
                     it.osmProfile = if (plan.source == SOURCE_OPENFREEMAP) PROFILE_OPENMAPTILES else PROFILE_OUTDOORS
                     plan.warning?.let { w -> it.warnings += w }
                 }
@@ -282,14 +294,19 @@ class BuildRoutes(
         }
     }
 
-    /** The vector source chosen for one box: [source] and, for [SOURCE_EXTRACT], the [extract]; [warning] after a fallback. */
-    class OsmPlan(val source: String, val extract: OsmExtract?, val warning: String?)
+    /**
+     * The vector source chosen for one box: [source] and, for [SOURCE_EXTRACT], the [extract] on disk or the
+     * region to [download] first; [warning] after a fallback.
+     */
+    class OsmPlan(val source: String, val extract: OsmExtract?, val warning: String?, val download: ExtractDownloads.Region? = null)
 
     /**
      * Picks the vector source of a `profile=outdoors` build of [box] (T64): with [requested] `auto`, a
-     * configured extract holding the whole box (the smallest), else Overpass under its area cap; `extract`
-     * or `overpass` force one. When the choice cannot serve the box, OpenFreeMap with [fallback] (and a
-     * warning), else a 413 that names the ways out.
+     * configured extract holding the whole box (the smallest), else Overpass under its area cap, else a
+     * configured download region whose polygon holds the box (T66); `extract` (on disk or downloadable) or
+     * `overpass` force one. When the choice cannot serve the box, OpenFreeMap with [fallback] (and a
+     * warning), else a refusal that names the ways out: 413 when `source=overpass` and the box is over its
+     * cap, 422 when no extract covers it.
      */
     fun planOsm(box: BoundingBox, requested: String, fallback: Boolean): OsmPlan {
         val extract = if (requested == SOURCE_OVERPASS) null else extracts.covering(box)
@@ -304,14 +321,20 @@ class BuildRoutes(
                 if (requested == SOURCE_OVERPASS) e.message!! else "${e.message}, and no configured OSM extract covers it (${extractSummary()})"
             }
         }
+        if (requested != SOURCE_OVERPASS) downloads?.covering(box)?.let { return OsmPlan(SOURCE_EXTRACT, null, null, download = it) }
         if (!fallback) {
-            throw Refused(413, "$why. Pick a smaller box (zoom in), add an extract that covers it (docs/SERVER.md, extracts), use profile=$PROFILE_OPENMAPTILES, or add fallback=1 to build this box from OpenFreeMap without the outdoors layers")
+            throw Refused(
+                if (requested == SOURCE_OVERPASS) 413 else 422,
+                "$why. Pick a smaller box (zoom in), add an extract that covers it (docs/SERVER.md, extracts and extractDownloads), use profile=$PROFILE_OPENMAPTILES, or add fallback=1 to build this box from OpenFreeMap without the outdoors layers",
+            )
         }
         return OsmPlan(SOURCE_OPENFREEMAP, null, "outdoors profile not built: $why; built from OpenFreeMap (OpenMapTiles schema) instead")
     }
 
     private fun extractSummary(): String = extracts.all().let { all ->
-        if (all.isEmpty()) "none configured" else all.joinToString(", ") { "${it.name} ${TileSets.geoJsonBounds(it.bbox).joinToString(",") { d -> fmt(d) }}" }
+        val local = if (all.isEmpty()) "none on disk" else all.joinToString(", ") { "${it.name} ${TileSets.geoJsonBounds(it.bbox).joinToString(",") { d -> fmt(d) }}" }
+        val dl = downloads?.regions?.takeIf { it.isNotEmpty() }?.let { r -> "; downloadable: " + r.joinToString(", ") { it.name } } ?: ""
+        local + dl
     }
 
     /** `GET /build/sources?bbox=`: what a `profile=outdoors` build of the box would use, and why. */
@@ -333,11 +356,13 @@ class BuildRoutes(
                 "source" to if (tb != null) SOURCE_OPENFREEMAP else plan.source,
                 "profile" to if (outdoors) PROFILE_OUTDOORS else PROFILE_OPENMAPTILES,
                 "extract" to plan.extract?.json(),
+                "download" to plan.download?.let { linkedMapOf("name" to it.name, "url" to it.pbfUrl) },
                 "needsFallback" to !outdoors,
                 "why" to (tb?.let { "tilebuild is not installed: $it" } ?: plan.warning),
             ),
             "extracts" to all.map { it.json() + ("covers" to it.covers(box)) },
             "extractProblems" to extracts.problems,
+            "downloads" to (downloads?.describe(box) ?: emptyList()),
             "overpass" to linkedMapOf("underCap" to (area <= overpass.maxAreaSqDeg), "maxAreaSqDeg" to overpass.maxAreaSqDeg, "endpoint" to overpass.endpoint),
             "tilebuild" to linkedMapOf("available" to (tb == null), "unavailable" to tb),
         )
@@ -488,6 +513,7 @@ class BuildRoutes(
      */
     private fun buildOutdoors(job: Job, out: File) {
         val zooms = job.osmZooms ?: return
+        job.download?.takeIf { job.extract == null }?.let { region -> job.extract = downloadExtract(job, region) }
         job.extract?.let { return buildFromExtract(job, out, it, zooms) }
         job.phase = "osm-overpass"
         val started = System.nanoTime()
@@ -510,6 +536,36 @@ class BuildRoutes(
         runTilebuild(job, out, extract.file, zooms, listOf(OVERPASS_ID), started)
         // "cached" = built from a cached Overpass answer (no network), "fetched" = from a fresh one.
         if (extract.cached) job.osm.cached.set(job.osm.total)
+    }
+
+    /**
+     * Downloads [region]'s extract for [job] (T66): phase `osm-download`, `download` in the job JSON with
+     * the bytes so far, then the extract as [Extracts] reads it (header date, the region polygon).
+     */
+    private fun downloadExtract(job: Job, region: ExtractDownloads.Region): OsmExtract {
+        val dl = downloads ?: error("no extract downloads configured")
+        job.phase = "osm-download"
+        val started = System.nanoTime()
+        val watcher = Thread {
+            while (job.active && job.phase == "osm-download") {
+                dl.progress[region.name]?.let { p -> job.downloadInfo = linkedMapOf("name" to region.name, "url" to region.pbfUrl, "bytes" to p[0], "total" to p[1].takeIf { it >= 0 }) }
+                try { Thread.sleep(250) } catch (_: InterruptedException) { break }
+            }
+        }.apply { isDaemon = true; start() }
+        val file = try {
+            dl.download(region) { job.cancelled }
+        } catch (e: java.io.IOException) {
+            if (job.cancelled) throw CancelledBuild()
+            throw IllegalStateException("downloading the ${region.name} extract failed: ${e.message}", e)
+        } finally {
+            watcher.interrupt()
+        }
+        job.timings["downloadMs"] = (System.nanoTime() - started) / 1_000_000
+        job.downloadInfo = linkedMapOf("name" to region.name, "url" to region.pbfUrl, "bytes" to file.length(), "total" to file.length(), "file" to file.name)
+        if (job.cancelled) throw CancelledBuild()
+        val target = file.absoluteFile.normalize()
+        return extracts.all().firstOrNull { it.file.absoluteFile.normalize() == target }
+            ?: error("the downloaded ${region.name} extract is not usable: ${extracts.problems[file.path] ?: "not in the extracts directory ${extracts.dir}"}")
     }
 
     /**

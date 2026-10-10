@@ -20,11 +20,25 @@ import kotlin.math.floor
  * but its WCS cuts any box at any resolution. So this source asks the WCS for fixed blocks of
  * [BLOCK] x [BLOCK] pixels on a UTM 33 grid at one of [RESOLUTIONS], chosen per window like an
  * overview level, and caches each block on disk as raw floats: a block is requested once ever, and
- * windows anywhere reuse it. Values of exactly 0 are the service's fill (sea, and land beyond a strip
- * along the Swedish, Finnish and Russian borders) and become NaN, so Copernicus fills there.
+ * windows anywhere reuse it.
+ *
+ * No-data (T66): the service answers 0 both for real sea-level cells and for its fill (open sea, and
+ * land beyond a strip of coarser data that reaches 10 km or more into Sweden, Finland and Russia). Only
+ * the fill pattern becomes NaN, so Copernicus takes over there while true 0 m coastline cells stay:
+ * a block that is 0 everywhere is fill (open sea, or beyond the strip), and every cell on the far side
+ * of the border is masked with Natural Earth's admin-0 polygons ([BorderMask.norwayNeighbours]), which
+ * also clips the strip of Kartverket data inside Sweden, Finland and Russia at the border. A 0 in a block
+ * with land is the sea surface: it is kept, so the shore is Kartverket's to the waterline (turning it
+ * into NaN feathered Copernicus 300 m inland along every coast), and it stays exactly 0 through the
+ * datum conversion, like Copernicus's sea, so no 0 m contour appears where the two seas meet at the
+ * edge of a block of fill.
  * Heights are converted NN2000 -> EGM2008 with HREF2018B and EGM2008.
  */
-class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : ElevationSource {
+class NorwaySource(
+    private val cacheDir: File = Caches.dir("kartverket-dtm"),
+    /** Cells beyond the border; null turns the clip off (tests). */
+    private val border: BorderMask? = BorderMask.norwayNeighbours,
+) : ElevationSource {
     override val id = "kartverket"
     override val registryIds = listOf("kartverket-dtm", Datums.NORWAY_GEOID.registryId, "egm2008")
 
@@ -90,10 +104,23 @@ class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : 
             values[k] = (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
         }
 
+        // The border clip: nothing from Kartverket on the far side of the Swedish, Finnish and Russian borders.
+        var borderMasked = 0L
+        border?.rasterize(window)?.let { mask ->
+            for (k in values.indices) if (mask[k] && !values[k].isNaN()) {
+                values[k] = Float.NaN
+                borderMasked++
+            }
+        }
+        val sea = BooleanArray(values.size) { values[it] == 0f }.takeIf { m -> m.any { it } }
+        val seaLevel = sea?.count { it }?.toLong() ?: 0L
+
         // NN2000 -> EGM2008.
         val any = values.any { !it.isNaN() }
         val (meanOffset, converted, unconverted) =
             if (any) NationalDem.applyOffsets(values, NationalDem.offsets(window, Datums.NORWAY_GEOID)) else Triple(0.0, 0L, 0L)
+        // The sea surface is 0 in EGM2008 as well (as in Copernicus): undo the datum offset on those cells.
+        if (seaLevel > 0) for (k in values.indices) if (sea!![k]) values[k] = 0f
 
         val grid = ElevationGrid(w, h, window.cellSizeMeters, values)
         val counters = LinkedHashMap<String, Long>()
@@ -104,15 +131,20 @@ class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : 
         counters["readMs"] = readMs
         counters["datumOffsetMeanCm"] = Math.round(meanOffset * 100)
         counters["datumUnconvertedCells"] = unconverted
+        counters["borderMaskedCells"] = borderMasked
+        counters["seaLevelCells"] = seaLevel
         counters["coveragePermille"] = (grid.values.count { !it.isNaN() } * 1000L) / grid.values.size
         counters["noDataCells"] = grid.values.count { it.isNaN() }.toLong()
         val ids = if (converted > 0) registryIds else emptyList()
         return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, ids))
     }
 
-    /** One block's floats (row-major, north row first, 0 fill as NaN): from the disk cache, else from the WCS. */
+    /**
+     * One block's floats (row-major, north row first; 0 kept, an all-0 block as NaN): from the disk cache,
+     * else from the WCS. Cached under `blocks2/` (T66): `blocks/` held blocks with every 0 turned into NaN.
+     */
     private fun block(res: Int, bx: Long, by: Long, requests: AtomicLong, cachedBefore: AtomicLong): FloatArray {
-        val file = File(cacheDir, "blocks/r$res/$bx/$bx-$by.f32")
+        val file = File(cacheDir, "$BLOCK_DIR/r$res/$bx/$bx-$by.f32")
         if (file.exists() && file.length() == BLOCK * BLOCK * 4L) {
             cachedBefore.incrementAndGet()
             return decodeFloats(file.readBytes())
@@ -120,7 +152,7 @@ class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : 
         val minX = bx * BLOCK * res
         val minY = by * BLOCK * res
         val url = blockUrl(minX, minY, res)
-        val tmp = File(cacheDir, "blocks/r$res/$bx/$bx-$by.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.tif")
+        val tmp = File(cacheDir, "$BLOCK_DIR/r$res/$bx/$bx-$by.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.tif")
         val floats = LidarSource.retryTnm {
             try {
                 Http.download(url, tmp)
@@ -141,6 +173,9 @@ class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : 
         const val WCS = "https://wcs.geonorge.no/skwms1/wcs.hoyde-dtm-nhm-25833"
         const val COVERAGE_ID = "nhm_dtm_topo_25833"
         const val ZONE = 33
+
+        /** Block cache directory under the source's cache dir; the name changes when the stored values do. */
+        const val BLOCK_DIR = "blocks2"
 
         /** Block edge in pixels: 256 x 256 float32 is 262 kB uncompressed (the WCS sends no compression). */
         const val BLOCK = 256
@@ -168,8 +203,10 @@ class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : 
         }
 
         /**
-         * A WCS response as BLOCK x BLOCK floats, row-major from the north, with the fill value 0 as NaN.
-         * Checks the georeference against the request ([west], [north] edges, [res] pixel size).
+         * A WCS response as BLOCK x BLOCK floats, row-major from the north. No-data, negative fill and NaN
+         * become NaN; 0 stays 0 (sea level) unless the whole block is 0, the service's fill for open sea and
+         * beyond its coverage, which becomes NaN. Checks the georeference against the request ([west],
+         * [north] edges, [res] pixel size).
          */
         fun parseBlock(bytes: ByteArray, west: Double, north: Double, res: Double): FloatArray {
             require(bytes.size > 8 && (bytes[0] == 'I'.code.toByte() || bytes[0] == 'M'.code.toByte())) {
@@ -194,11 +231,18 @@ class NorwaySource(private val cacheDir: File = Caches.dir("kartverket-dtm")) : 
                         if (col >= BLOCK) break
                         val v = t[r * tiff.tileWidth + c]
                         val nd = tiff.noData
-                        out[row * BLOCK + col] = if (v == 0f || v.isNaN() || (nd != null && v == nd) || v < -1000f) Float.NaN else v
+                        out[row * BLOCK + col] = if (v.isNaN() || (nd != null && v == nd) || v < -1000f) Float.NaN else v
                     }
                 }
             }
-            return out
+            return fillToNaN(out)
+        }
+
+        /** [values] with every cell NaN when none of them is a non-zero height (a block of the service's 0 fill). */
+        fun fillToNaN(values: FloatArray): FloatArray {
+            if (values.any { !it.isNaN() && it != 0f }) return values
+            values.fill(Float.NaN)
+            return values
         }
 
         private fun key(bx: Long, by: Long): Long = (bx shl 32) or (by and 0xFFFFFFFFL)

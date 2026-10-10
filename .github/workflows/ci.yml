@@ -109,19 +109,40 @@ jobs:
 
   image:
     # T58: the server image (server/Dockerfile: a Gradle build stage, then the JRE with the server and
-    # tilebuild). Built and started here because the development machine has no Docker.
+    # tilebuild). Built and started here because the development machine has no Docker. T66: an outdoors
+    # pack is built inside the container from a Geofabrik extract the server downloads on demand
+    # (extractDownloads), with Planetiler's aux data (about 1.45 GB) in an Actions cache between runs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
       - name: Build the image
         run: docker build -f server/Dockerfile -t dystopo-server .
 
+      # The container's cache volume is a host directory, so the aux data can be cached by Actions. The
+      # key names the aux set; bump it to refresh the files (they change rarely; tilebuild re-downloads
+      # anything missing).
+      - name: Restore Planetiler's aux data
+        uses: actions/cache@v4
+        with:
+          path: |
+            ci-cache/planetiler/*.zip
+            ci-cache/planetiler/*.index
+          key: planetiler-aux-v1
+
       - name: Run it; check /healthz, the token, /catalog and tilebuild
         run: |
-          docker run -d --name dystopo -p 8080:8080 -e DYSTOPO_SERVER_TOKEN=ci-token dystopo-server
+          mkdir -p ci-cache/planetiler ci-out
+          chmod -R a+rwX ci-cache ci-out
+          cat > /tmp/server.json <<'JSON'
+          {"extractDownloads": {"urls": ["https://download.geofabrik.de/europe/liechtenstein"], "maxMb": 64}}
+          JSON
+          chmod a+r /tmp/server.json
+          docker run -d --name dystopo -p 8080:8080 -e DYSTOPO_SERVER_TOKEN=ci-token \
+            -v "$PWD/ci-cache:/data/cache" -v "$PWD/ci-out:/data/out" \
+            -v /tmp/server.json:/opt/dystopo/config/server.json:ro dystopo-server
           for i in $(seq 1 60); do curl -fsS localhost:8080/healthz > /dev/null 2>&1 && break; sleep 1; done
           curl -fsS localhost:8080/healthz | tee /tmp/healthz.json; echo
           curl -fsS localhost:8080/catalog | tee /tmp/catalog.json; echo
@@ -134,10 +155,50 @@ jobs:
           assert "catalog" in h, h
           c = json.load(open("/tmp/catalog.json"))
           assert c["packs"] == [], c
-          t = json.load(open("/tmp/build.json"))["limits"]["tilebuild"]
+          limits = json.load(open("/tmp/build.json"))["limits"]
+          t = limits["tilebuild"]
           assert t["available"], t
-          print("image ok: healthz", h["catalog"], "tilebuild", t["how"])
+          regions = limits["extractDownloads"]["regions"]
+          assert [r["name"] for r in regions] == ["liechtenstein"], regions
+          print("image ok: healthz", h["catalog"], "tilebuild", t["how"], "download regions", regions)
           PY
           docker exec dystopo /opt/tilebuild/bin/tilebuild --help > /dev/null
-          docker stop -t 15 dystopo
+          ls -la ci-cache/planetiler
+
+      - name: Outdoors pack inside the container (extract downloaded on demand)
+        timeout-minutes: 25
+        run: |
+          AUTH='Authorization: Bearer ci-token'
+          # A box over the Overpass cap that no extract covers is refused with 422 (T66).
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" -X POST 'localhost:8080/build?name=far&bbox=6.6,45.6,7.2,46.0&minZoom=8&maxZoom=9&profile=outdoors')" = 422
+          curl -fsS -H "$AUTH" -X POST 'localhost:8080/build?name=ci-small&bbox=9.54,47.11,9.60,47.16&minZoom=8&maxZoom=10&profile=outdoors&source=extract' | tee /tmp/job.json; echo
+          ID=$(python3 -c 'import json; print(json.load(open("/tmp/job.json"))["id"])')
+          for i in $(seq 1 280); do
+            curl -fsS -H "$AUTH" "localhost:8080/build/$ID" > /tmp/job.json
+            STATUS=$(python3 -c 'import json; d = json.load(open("/tmp/job.json")); print(d["status"])')
+            [ "$STATUS" = done ] || [ "$STATUS" = failed ] || [ "$STATUS" = cancelled ] && break
+            [ $((i % 12)) = 0 ] && python3 -c 'import json; d = json.load(open("/tmp/job.json")); print(d["phase"], d["download"], d["detail"])'
+            sleep 5
+          done
+          cat /tmp/job.json; echo
+          curl -fsS localhost:8080/catalog > /tmp/catalog.json
+          python3 - <<'PY'
+          import json
+          j = json.load(open("/tmp/job.json"))
+          assert j["status"] == "done", j
+          assert j["osmSource"] == "extract" and j["osmProfile"] == "outdoors", j
+          assert j["download"]["name"] == "liechtenstein" and j["download"]["bytes"] > 1_000_000, j["download"]
+          assert j["provenance"]["osmExtract"]["name"] == "liechtenstein", j["provenance"]
+          packs = {p["id"]: p for p in json.load(open("/tmp/catalog.json"))["packs"]}
+          assert packs["ci-small"]["profile"] == "outdoors", packs
+          print("outdoors build ok:", j["timings"], j["download"])
+          PY
+          ls -la ci-cache/planetiler ci-cache/extracts
+
+      - name: Stop it (SIGTERM, graceful shutdown)
+        if: always()
+        run: |
+          docker stop -t 15 dystopo || true
           docker logs dystopo 2>&1 | tail -5
+          # The cache step saves ci-cache/planetiler after the job; the files are world-readable.
+          sudo chmod -R a+rX ci-cache || true
