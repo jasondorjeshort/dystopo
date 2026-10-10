@@ -229,6 +229,26 @@
       "notes": "Used only by devtool serve --live, outside region packs: each missing z/x/y is fetched once and cached on disk under <cache>/openfreemap/<build>/. The schema is OpenMapTiles 3.16, so the default style's outdoors-only layers (outdoor_poi, natural_line, wilderness) match nothing there."
     },
     {
+      "id": "overpass",
+      "name": "Overpass API (raw OpenStreetMap for a box)",
+      "kind": "osm",
+      "provider": "Overpass API public instance overpass-api.de (FOSSGIS); serves current OpenStreetMap data",
+      "coverage": {
+        "summary": "Global; Dystopo asks it only for small boxes (default at most 0.05 square degrees).",
+        "bbox": [-180, -90, 180, 90]
+      },
+      "resolution": "Vector (raw OSM nodes, ways and relations)",
+      "license": "ODbL-1.0",
+      "licenseName": "ODbL 1.0 (the OpenStreetMap data)",
+      "licenseUrl": "https://www.openstreetmap.org/copyright",
+      "attribution": "© OpenStreetMap contributors (ODbL 1.0)",
+      "attributionHtml": "<a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\">&copy; OpenStreetMap contributors</a> (<a href=\"https://opendatacommons.org/licenses/odbl/1-0/\" target=\"_blank\">ODbL 1.0</a>)",
+      "allowedUses": "Usage policy of the public instances (dev.overpass-api.de/overpass-doc/en/preface/commons.html, wiki Overpass_API): fewer than about 10000 requests and 1 GB per day per user, no parallel scripts, no scraping by stitching boxes, a timeout and maxsize on heavy queries, back off after 429 (rate limit) and 504 (server load). Dystopo sends one request per pack build with a descriptive User-Agent, a timeout and a maxsize, caches the answer per box and never retries automatically.",
+      "url": "https://overpass-api.de/api/interpreter",
+      "updateCadence": "Minutely replication of OpenStreetMap.",
+      "notes": "Used by devtool serve --live for POST /build?profile=outdoors (OverpassSource.kt): one [out:xml] query per box, cached under <cache>/overpass/, converted to .osm.pbf and built with tilebuild's outdoors profile. Same credit as osm, so composed attribution shows it once."
+    },
+    {
       "id": "osm-water-polygons",
       "name": "OSM water polygons",
       "kind": "osm",

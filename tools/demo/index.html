@@ -59,6 +59,7 @@
   <div id="live-tools" hidden>
     <label>Pack name <input id="packname" size="14" placeholder="from the view"></label>
     <label>Zooms <input id="packmin" type="number" min="0" max="15" value="8" style="width:3.2em"> to <input id="packmax" type="number" min="6" max="15" value="13" style="width:3.2em"></label>
+    <label>Vector <select id="packprofile"><option value="outdoors">outdoors profile (Overpass + tilebuild, small boxes)</option><option value="openmaptiles">OpenMapTiles (OpenFreeMap tiles)</option></select></label>
     <label><input type="checkbox" id="packreplace"> replace a pack of that name</label>
     <button id="buildpack" type="button">Build pack here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
     <pre id="buildcmd" hidden></pre>
@@ -448,7 +449,7 @@ if (LIVE) {
   };
   map.on("idle", () => { window.dystopoLiveSources().catch(() => {}); });
   // Build pack here: POST /build on the server for the current view (DEM from the live sources, OSM from
-  // OpenFreeMap), then poll GET /build/{id} for progress. The finished files are under /out/ and the server
+  // Overpass + tilebuild's outdoors profile, or OpenFreeMap tiles with profile=openmaptiles), then poll GET /build/{id} for progress. The finished files are under /out/ and the server
   // serves the view from them at once (the source box then says pack). window.dystopoBuild has the last job.
   const pre = document.getElementById("buildcmd"), cancelBtn = document.getElementById("buildcancel");
   let buildTimer = null, buildId = null;
@@ -457,6 +458,8 @@ if (LIVE) {
     if (j.error && !j.id) return "refused: " + j.error;
     const part = (k, o) => o.zooms ? k + " z" + o.zooms[0] + "-" + o.zooms[1] + " " + o.done + "/" + o.total + " (" + o.cached + " cached, " + o.written + " written)" : k + " none";
     const lines = [j.name + " " + j.status + " " + j.percent + "%  " + (j.elapsedMs / 1000).toFixed(1) + " s", part("DEM", j.dem), part("OSM", j.osm)];
+    if (j.osmProfile) lines.push("vector profile " + j.osmProfile + (j.status === "running" && j.phase ? ", phase " + j.phase : "") + (j.detail ? ": " + j.detail : ""));
+    for (const w of j.warnings || []) lines.push("warning: " + w);
     if (j.status === "done") for (const f of j.files) lines.push(f.url + "  " + (f.bytes / 1048576).toFixed(1) + " MB, " + f.tiles + " tiles z" + f.minZoom + "-" + f.maxZoom);
     if (j.error) lines.push("error: " + j.error);
     return lines.join("\n");
@@ -474,7 +477,7 @@ if (LIVE) {
     const bbox = [r3(Math.max(-180, b.getWest())), r3(Math.max(-85, b.getSouth())), r3(Math.min(180, b.getEast()), true), r3(Math.min(85, b.getNorth()), true)].join(",");
     const auto = (c.lat >= 0 ? "n" : "s") + Math.abs(c.lat).toFixed(2) + (c.lng >= 0 ? "e" : "w") + Math.abs(c.lng).toFixed(2);
     const name = document.getElementById("packname").value.trim() || auto;
-    const q = new URLSearchParams({ name, bbox, minZoom: document.getElementById("packmin").value, maxZoom: document.getElementById("packmax").value });
+    const q = new URLSearchParams({ name, bbox, minZoom: document.getElementById("packmin").value, maxZoom: document.getElementById("packmax").value, profile: document.getElementById("packprofile").value });
     if (document.getElementById("packreplace").checked) q.set("overwrite", "1");
     clearTimeout(buildTimer);
     const r = await fetch(base + "/build?" + q, { method: "POST" });

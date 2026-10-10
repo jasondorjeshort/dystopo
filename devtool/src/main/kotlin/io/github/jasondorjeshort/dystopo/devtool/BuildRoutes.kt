@@ -18,8 +18,13 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
+import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
+import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
+import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -35,6 +40,14 @@ import kotlin.math.floor
  *   `out/<name>-outdoors.pmtiles` from OpenFreeMap tiles ([LiveTiles.openFreeMap]: fetched once, cached,
  *   at most 4 requests in flight; zooms up to 14) through [OsmPackWriter]. The vector pack is the
  *   OpenMapTiles schema, not the outdoors profile, and its metadata says so (`dystopo:profile`).
+ * - `POST /build?...&profile=outdoors[&fallback=1]` makes the vector pack with tilebuild's outdoors
+ *   profile instead (wilderness, cliffs with ticks, alpine and climbing routes, huts): one Overpass
+ *   request for the box ([OverpassSource]: area cap, timeout, cached by box), converted to `.osm.pbf`
+ *   and built by tilebuild in a subprocess ([TilebuildProcess]); the archive says
+ *   `dystopo:profile=outdoors` and credits `overpass` in its provenance. A box over the Overpass area cap
+ *   is a 413 (with `fallback=1` it is built from OpenFreeMap instead, with a warning in the job); when
+ *   Overpass refuses at build time (429, 504, a timeout, no network) the job falls back to OpenFreeMap
+ *   and says so in `warnings`.
  * - `GET /build/{id}`: status (queued, running, done, failed, cancelled), phase, per-pack tile counts,
  *   timings, the finished files' `/out/` URLs, provenance. `GET /build`: every job plus the limits.
  * - `DELETE /build/{id}` or `POST /build/{id}/cancel`: stops the job; no new tile is requested after
@@ -54,6 +67,10 @@ import kotlin.math.floor
 class BuildRoutes(
     private val live: LiveTiles,
     private val outDir: File = File("out"),
+    /** Raw OSM for `profile=outdoors` builds. */
+    val overpass: OverpassSource = OverpassSource(),
+    /** Runs tilebuild's outdoors profile on an Overpass extract; [TilebuildProcess] by default. */
+    private val tilebuild: OutdoorsTileBuilder = TilebuildProcess(),
     val maxTiles: Int = env("DYSTOPO_BUILD_MAX_TILES")?.toIntOrNull() ?: 20_000,
     val maxSpanDegrees: Double = env("DYSTOPO_BUILD_MAX_SPAN_DEG")?.toDoubleOrNull() ?: 3.0,
     val concurrentBuilds: Int = env("DYSTOPO_BUILD_CONCURRENT")?.toIntOrNull()?.coerceAtLeast(1) ?: 1,
@@ -90,7 +107,16 @@ class BuildRoutes(
         val demZooms: IntRange,
         val osmZooms: IntRange?,
         val overwrite: Boolean,
+        /** The vector profile asked for: [PROFILE_OPENMAPTILES] (OpenFreeMap) or [PROFILE_OUTDOORS] (Overpass + tilebuild). */
+        val profile: String = PROFILE_OPENMAPTILES,
     ) {
+        /** The profile the vector pack was actually built with (differs from [profile] after a fallback). */
+        @Volatile var osmProfile: String = profile
+        val warnings = java.util.concurrent.CopyOnWriteArrayList<String>()
+        @Volatile var overpassInfo: Map<String, Any?>? = null
+        @Volatile var tilebuildInfo: Map<String, Any?>? = null
+        /** The last log line of a running tilebuild, as a progress hint. */
+        @Volatile var detail: String? = null
         @Volatile var status = Status.QUEUED
         @Volatile var phase = "queued"
         @Volatile var cancelled = false
@@ -125,6 +151,9 @@ class BuildRoutes(
                 "elapsedMs" to elapsed, "timings" to timings.toSortedMap(),
                 "files" to files.toList(),
                 "provenance" to mapOf("dem" to demProvenance, "osm" to osmProvenance),
+                "profile" to profile, "osmProfile" to osmProfile, "detail" to detail,
+                "overpass" to overpassInfo, "tilebuild" to tilebuildInfo,
+                "warnings" to warnings.toList(),
                 "error" to error,
             ).also { m -> antimeridian?.let { m["antimeridian"] = it } }
         }
@@ -141,6 +170,9 @@ class BuildRoutes(
     fun limits(): Map<String, Any?> = linkedMapOf(
         "maxTiles" to maxTiles, "maxSpanDegrees" to maxSpanDegrees, "concurrentBuilds" to concurrentBuilds, "maxQueued" to maxQueued,
         "demZooms" to listOf(LiveTiles.LIVE_MIN_ZOOM, LiveTiles.LIVE_MAX_ZOOM), "osmMaxZoom" to LiveTiles.OSM_MAX_ZOOM,
+        "profiles" to listOf(PROFILE_OPENMAPTILES, PROFILE_OUTDOORS),
+        "overpass" to overpass.describe(),
+        "tilebuild" to linkedMapOf("available" to (tilebuild.unavailable() == null), "unavailable" to tilebuild.unavailable(), "how" to tilebuild.describe()),
     )
 
     /**
@@ -178,6 +210,25 @@ class BuildRoutes(
         }
         if (maxZoom < LiveTiles.LIVE_MIN_ZOOM) throw Refused(400, "maxZoom must be at least ${LiveTiles.LIVE_MIN_ZOOM}: the live DEM starts there")
         val boxes = parts.map { it.second }
+        val profile = params["profile"]?.trim()?.lowercase()?.ifEmpty { null } ?: PROFILE_OPENMAPTILES
+        if (profile != PROFILE_OPENMAPTILES && profile != PROFILE_OUTDOORS) {
+            throw Refused(400, "profile must be $PROFILE_OPENMAPTILES (OpenFreeMap tiles) or $PROFILE_OUTDOORS (Overpass + tilebuild), got '$profile'")
+        }
+        val fallback = params["fallback"].let { it == "1" || it == "true" }
+        val warnings = ArrayList<String>()
+        var osmProfile = profile
+        if (profile == PROFILE_OUTDOORS) {
+            try {
+                boxes.forEach { overpass.checkArea(it) }
+                tilebuild.unavailable()?.let { throw Refused(503, "the outdoors profile needs tilebuild: $it") }
+            } catch (e: OverpassSource.TooBig) {
+                if (!fallback) {
+                    throw Refused(413, "${e.message}. Pick a smaller box (zoom in), use profile=$PROFILE_OPENMAPTILES, or add fallback=1 to build this box from OpenFreeMap without the outdoors layers")
+                }
+                warnings += "outdoors profile not built: ${e.message}; built from OpenFreeMap (OpenMapTiles schema) instead"
+                osmProfile = PROFILE_OPENMAPTILES
+            }
+        }
         val demZooms = maxOf(minZoom, LiveTiles.LIVE_MIN_ZOOM)..maxZoom
         val osmZooms = (minZoom..minOf(maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
         fun tilesUpTo(z: Int) = boxes.sumOf { box ->
@@ -201,7 +252,7 @@ class BuildRoutes(
             }
             val active = jobs.values.count { it.active }
             if (active + parts.size > concurrentBuilds + maxQueued) throw Refused(429, "$active builds are queued or running (limit ${concurrentBuilds + maxQueued}); try again later")
-            val made = parts.map { (partName, box) -> Job("b${nextId.getAndIncrement()}", partName, box, minZoom, maxZoom, demZooms, osmZooms, overwrite) }
+            val made = parts.map { (partName, box) -> Job("b${nextId.getAndIncrement()}", partName, box, minZoom, maxZoom, demZooms, osmZooms, overwrite, profile).also { it.osmProfile = osmProfile; it.warnings += warnings } }
             if (made.size == 2) {
                 made[0].antimeridian = mapOf("part" to "east", "other" to made[1].id)
                 made[1].antimeridian = mapOf("part" to "west", "other" to made[0].id)
@@ -237,7 +288,9 @@ class BuildRoutes(
         val osmTmp = File(outDir, osmOut.name + ".building")
         try {
             buildDem(job, demTmp)
-            if (job.osmZooms != null) buildOsm(job, osmTmp)
+            if (job.osmZooms != null) {
+                if (job.osmProfile == PROFILE_OUTDOORS) buildOutdoors(job, osmTmp) else buildOsm(job, osmTmp)
+            }
             job.phase = "publish"
             val published = listOfNotNull(demTmp to demOut, osmTmp.takeIf { it.isFile }?.let { it to osmOut })
             for ((tmp, out) in published) {
@@ -341,6 +394,68 @@ class BuildRoutes(
     }
 
     /**
+     * The vector pack with tilebuild's outdoors profile: one Overpass extract for the box (cached), then
+     * tilebuild in a subprocess. When Overpass refuses or fails, the pack is built from OpenFreeMap
+     * instead ([buildOsm]) and the job carries a warning; a tilebuild failure fails the job.
+     */
+    private fun buildOutdoors(job: Job, out: File) {
+        val zooms = job.osmZooms ?: return
+        job.phase = "osm-overpass"
+        val started = System.nanoTime()
+        val extract = try {
+            overpass.extract(job.box)
+        } catch (e: OverpassSource.Refused) {
+            job.warnings += "Overpass refused or failed (${e.message}); the vector pack was built from OpenFreeMap (OpenMapTiles schema, no outdoors layers) instead"
+            job.osmProfile = PROFILE_OPENMAPTILES
+            job.overpassInfo = linkedMapOf("status" to e.status, "error" to e.message, "requests" to overpass.fetches)
+            return buildOsm(job, out)
+        }
+        job.overpassInfo = linkedMapOf(
+            "cached" to extract.cached, "bytes" to extract.bytes, "ms" to extract.ms, "file" to extract.file.name,
+            "endpoint" to overpass.endpoint, "requests" to overpass.fetches, "cacheHits" to overpass.cacheHits,
+        )
+        job.timings["overpassMs"] = (System.nanoTime() - started) / 1_000_000
+        if (job.cancelled) throw CancelledBuild()
+
+        job.phase = "osm-tilebuild"
+        val tbStarted = System.nanoTime()
+        // tilebuild picks the output format from the extension, so it writes `<name>-outdoors.pmtiles` in a
+        // staging directory; the result is then moved onto the job's `.building` file.
+        val stagingDir = File(outDir, ".tilebuild-${job.id}")
+        val staged = File(stagingDir, out.name.removeSuffix(".building"))
+        try {
+            val report = tilebuild.build(
+                extract.file, staged, job.box, zooms, listOf(OVERPASS_ID),
+                cancelled = { job.cancelled },
+                log = { line -> job.detail = line.take(200) },
+            )
+            if (job.cancelled) throw CancelledBuild()
+            if (!staged.isFile) error("tilebuild finished without writing ${staged.name}")
+            Files.move(staged.toPath(), out.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            job.tilebuildInfo = linkedMapOf(
+                "totalSeconds" to report["totalSeconds"], "stageSeconds" to report["stageSeconds"],
+                "xmlConversion" to report["xmlConversion"], "schema" to report["profile"],
+            )
+        } finally {
+            job.detail = null
+            stagingDir.deleteRecursively()
+        }
+        job.timings["tilebuildMs"] = (System.nanoTime() - tbStarted) / 1_000_000
+        job.timings["osmMs"] = (System.nanoTime() - started) / 1_000_000
+
+        val reader = PmtilesReader.open(FileRangeSource(out), Gzip.decompressors)
+        val meta = reader.metadata()
+        job.osmProvenance = io.github.jasondorjeshort.dystopo.attribution.PackAttribution.registryIds(meta)
+        val written = reader.header.addressedTiles.toInt()
+        job.osm.written.set(written)
+        job.osm.done.set(job.osm.total)
+        // "cached" = built from a cached Overpass answer (no network), "fetched" = from a fresh one.
+        if (extract.cached) job.osm.cached.set(job.osm.total)
+        job.osm.empty.set((job.osm.total - written).coerceAtLeast(0))
+        if (meta["dystopo:profile"] != PROFILE_OUTDOORS) error("tilebuild wrote ${out.name} with dystopo:profile=${meta["dystopo:profile"]}, expected $PROFILE_OUTDOORS")
+    }
+
+    /**
      * Requests [tiles] through [start] with at most [window] outstanding and hands each result to
      * [consume] in order, on this thread. Stops requesting as soon as the job is cancelled.
      */
@@ -422,6 +537,13 @@ class BuildRoutes(
     }
 
     companion object {
+        /** `profile=` values; also the packs' `dystopo:profile`. */
+        const val PROFILE_OPENMAPTILES = OsmPackWriter.PROFILE_OPENMAPTILES
+        const val PROFILE_OUTDOORS = "outdoors"
+
+        /** Registry id credited for an extract fetched from the Overpass API. */
+        const val OVERPASS_ID = "overpass"
+
         private fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
 
         private fun fmt(d: Double) = "%.3f".format(java.util.Locale.ROOT, d)
@@ -443,5 +565,99 @@ class BuildRoutes(
             val y1 = floor(WebMercator.latToY(box.south, z)).toInt().coerceIn(0, max)
             return (x1 - x0 + 1) * (y1 - y0 + 1)
         }
+    }
+}
+
+/** Builds an outdoors-profile vector pack from an OSM XML extract (the tilebuild step of `profile=outdoors`). */
+interface OutdoorsTileBuilder {
+    /** Null when [build] can run; otherwise why not, with the fix. */
+    fun unavailable(): String?
+
+    /** How it runs, for `GET /build`. */
+    fun describe(): String
+
+    /**
+     * Writes [out] (a `.pmtiles` path) from [osmXml] clipped to [box] at [zooms], crediting [sourceIds] on
+     * top of the profile's own sources. Stops early when [cancelled] turns true. Returns tilebuild's JSON
+     * report; throws with the reason on failure.
+     */
+    fun build(
+        osmXml: File, out: File, box: BoundingBox, zooms: IntRange, sourceIds: List<String>,
+        cancelled: () -> Boolean, log: (String) -> Unit,
+    ): Map<String, Any?>
+}
+
+/**
+ * Runs tilebuild as a subprocess, so Planetiler and GeoTools (LGPL, build-side only) stay out of devtool's
+ * classpath. It runs from the installed distribution (`./gradlew :tilebuild:installDist`, once; set
+ * `DYSTOPO_TILEBUILD_HOME` to use another install) as `java -cp <install>/lib/(every jar) ...MainKt`: the same
+ * classpath the start script builds, without the start script (no .bat quoting, no CLASSPATH length
+ * limit), and without the Gradle configuration time `:tilebuild:run` would add to every build. The JVM is
+ * the one running devtool; the heap is `DYSTOPO_TILEBUILD_HEAP` (default 3g, plenty for the small boxes
+ * Overpass serves). The child gets `DYSTOPO_CACHE`, so Planetiler's 1.45 GB of aux data is shared.
+ */
+class TilebuildProcess(
+    private val home: File = File(System.getenv("DYSTOPO_TILEBUILD_HOME")?.takeIf { it.isNotBlank() } ?: "tilebuild/build/install/tilebuild"),
+    private val heap: String = System.getenv("DYSTOPO_TILEBUILD_HEAP")?.takeIf { it.isNotBlank() } ?: "3g",
+) : OutdoorsTileBuilder {
+    private val lib get() = File(home, "lib")
+
+    override fun unavailable(): String? =
+        if (lib.listFiles { f -> f.name.startsWith("tilebuild") && f.name.endsWith(".jar") }?.isNotEmpty() == true) null
+        else "no tilebuild install at ${home.path}: run ./gradlew :tilebuild:installDist once (or set DYSTOPO_TILEBUILD_HOME)"
+
+    override fun describe(): String = "java -Xmx$heap -cp ${File(lib, "*").path} $MAIN (subprocess)"
+
+    override fun build(
+        osmXml: File, out: File, box: BoundingBox, zooms: IntRange, sourceIds: List<String>,
+        cancelled: () -> Boolean, log: (String) -> Unit,
+    ): Map<String, Any?> {
+        unavailable()?.let { error(it) }
+        out.absoluteFile.parentFile.mkdirs()
+        val java = File(System.getProperty("java.home"), "bin/java").path
+        val bbox = listOf(box.west, box.south, box.east, box.north).joinToString(",") { String.format(Locale.ROOT, "%.6f", it) }
+        val cmd = mutableListOf(
+            java, "-Xmx$heap", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dfile.encoding=UTF-8",
+            "-cp", File(lib, "*").absolutePath, MAIN,
+            "--extract", osmXml.absolutePath, "--out", out.absolutePath, "--bbox", bbox,
+            "--profile", "outdoors", "--min-zoom", "${zooms.first}", "--max-zoom", "${zooms.last}",
+        )
+        for (id in sourceIds) cmd += listOf("--source-id", id)
+        val pb = ProcessBuilder(cmd)
+        pb.environment()["DYSTOPO_CACHE"] = Caches.root.absolutePath
+        val process = pb.start()
+        val tail = ConcurrentLinkedDeque<String>()
+        val stderr = Thread({
+            process.errorStream.bufferedReader(Charsets.UTF_8).forEachLine { line ->
+                tail.addLast(line)
+                while (tail.size > 40) tail.pollFirst()
+                if (line.isNotBlank()) log(line.trim())
+            }
+        }, "tilebuild-stderr").apply { isDaemon = true; start() }
+        val stdout = CompletableFuture.supplyAsync { process.inputStream.readBytes().toString(Charsets.UTF_8) }
+        try {
+            while (!process.waitFor(250, TimeUnit.MILLISECONDS)) {
+                if (cancelled()) {
+                    process.descendants().forEach { it.destroyForcibly() }
+                    process.destroyForcibly()
+                    process.waitFor(10, TimeUnit.SECONDS)
+                    out.delete()
+                    return emptyMap()
+                }
+            }
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
+        stderr.join(5_000)
+        val text = stdout.get(10, TimeUnit.SECONDS)
+        if (process.exitValue() != 0) {
+            val why = tail.filter { "ERROR" in it || "Exception" in it || "Error:" in it }.takeLast(3).ifEmpty { tail.toList().takeLast(3) }
+            error("tilebuild exited with ${process.exitValue()}: ${why.joinToString(" | ").take(600)}")
+        }
+        return MiniJson.parseObject(text.substring(text.indexOf('{').coerceAtLeast(0)))
+    }
+
+    companion object {
+        const val MAIN = "io.github.jasondorjeshort.dystopo.tilebuild.MainKt"
     }
 }

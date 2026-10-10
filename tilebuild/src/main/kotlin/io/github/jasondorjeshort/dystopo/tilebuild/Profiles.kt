@@ -31,6 +31,10 @@ object Profiles {
     const val WATER_POLYGONS_URL = "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip"
     const val NATURAL_EARTH_URL = "https://dev.maptiler.download/geodata/omt/natural_earth_vector.sqlite.zip"
 
+    /** Registry ids an outdoors build reads, without `natural-earth` when that source is skipped. */
+    internal fun outdoorsSourceIds(naturalEarth: Boolean): List<String> =
+        if (naturalEarth) Attribution.OUTDOORS_SOURCE_IDS else Attribution.OUTDOORS_SOURCE_IDS - "natural-earth"
+
     class Setup(
         val planetiler: Planetiler,
         /** Human-readable schema name and version for the report. */
@@ -47,7 +51,9 @@ object Profiles {
         val naturalEarth = File(planetilerCache, "natural_earth_vector.sqlite.zip").toPath()
         val setup = when (kind) {
             ProfileKind.OPENMAPTILES -> {
-                val extra = Attribution.extraMetadata(req.input.label, req.bbox)
+                val extra = Attribution.extraMetadata(
+                    req.input.label, req.bbox, Attribution.SOURCE_IDS + req.extraSourceIds, Attribution.SCHEMA, kind.cliName,
+                )
                 val planetiler = Planetiler.create(arguments)
                     .setDefaultLanguages(OpenMapTilesSchema.LANGUAGES)
                     .setProfile { runner -> DystopoOpenMapTilesProfile(runner, req.input.label, extra) }
@@ -65,17 +71,19 @@ object Profiles {
                 )
             }
             ProfileKind.OUTDOORS -> {
-                val extra = Attribution.extraMetadata(
-                    req.input.label, req.bbox, Attribution.OUTDOORS_SOURCE_IDS, Attribution.OUTDOORS_SCHEMA,
-                )
+                // Natural Earth only feeds z0 to 5 here (below OSM_WATER_MIN_ZOOM). A build starting at z6 or
+                // later skips it: unpacking the 430 MB sqlite was 20 of the 39 s of a small server-side build.
+                val naturalEarthUsed = req.minZoom < OutdoorsProfile.OSM_WATER_MIN_ZOOM
+                val ids = outdoorsSourceIds(naturalEarthUsed) + req.extraSourceIds
+                val extra = Attribution.extraMetadata(req.input.label, req.bbox, ids, Attribution.OUTDOORS_SCHEMA, kind.cliName)
                 val planetiler = Planetiler.create(arguments)
                     .setProfile(OutdoorsProfile(req.input.label, extra, req.maxZoom))
                     .addShapefileSource(OutdoorsProfile.WATER_POLYGON_SOURCE, waterPolygons, WATER_POLYGONS_URL)
-                    .addNaturalEarthSource(OutdoorsProfile.NATURAL_EARTH_SOURCE, naturalEarth, NATURAL_EARTH_URL)
+                if (naturalEarthUsed) planetiler.addNaturalEarthSource(OutdoorsProfile.NATURAL_EARTH_SOURCE, naturalEarth, NATURAL_EARTH_URL)
                 Setup(
                     planetiler,
                     "${OutdoorsSchema.NAME} ${OutdoorsSchema.VERSION}",
-                    listOf(WATER_POLYGONS_URL, NATURAL_EARTH_URL),
+                    listOfNotNull(WATER_POLYGONS_URL, NATURAL_EARTH_URL.takeIf { naturalEarthUsed }),
                     extra,
                 )
             }

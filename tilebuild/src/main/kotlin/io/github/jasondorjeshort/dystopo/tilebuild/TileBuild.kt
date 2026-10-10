@@ -24,6 +24,11 @@ data class BuildRequest(
     val threads: Int?,
     val cacheRoot: File,
     val profile: ProfileKind = ProfileKind.OPENMAPTILES,
+    /**
+     * Registry ids credited on top of the profile's own sources, for where the extract came from
+     * (`--source-id overpass` when devtool fetched it from the Overpass API).
+     */
+    val extraSourceIds: List<String> = emptyList(),
 )
 
 @Serializable
@@ -60,6 +65,8 @@ data class BuildReport(
     /** Why [stageSeconds] is empty, if reading Planetiler's timers failed (see [TileBuild.stageSeconds]). */
     val stageSecondsError: String? = null,
     val totalSeconds: Double,
+    /** For an OSM XML input: the conversion to PBF (or its reuse). */
+    val xmlConversion: XmlConversion? = null,
 )
 
 /**
@@ -100,6 +107,11 @@ object TileBuild {
         val arguments = Arguments.of(args)
         val config = PlanetilerConfig.from(arguments)
 
+        // Planetiler reads only PBF: an XML extract (an Overpass answer) is converted first, or reused when up to date.
+        val conversion = req.input.xml?.let { xml ->
+            if (!xml.isFile) throw IllegalArgumentException("OSM XML file $xml does not exist")
+            OsmXmlToPbf.convert(xml, req.input.path, req.bbox)
+        }
         val existedBefore = req.input.path.isFile
         val osmUrl = when {
             req.input.url == null -> null
@@ -135,7 +147,7 @@ object TileBuild {
                 path = req.input.path.path,
                 url = osmUrl,
                 bytes = req.input.path.length(),
-                downloaded = !existedBefore,
+                downloaded = !existedBefore && conversion == null,
             ),
             clipArea = req.clipArea,
             bbox = req.bbox?.toList(),
@@ -152,6 +164,7 @@ object TileBuild {
             stageSeconds = stages.seconds,
             stageSecondsError = stages.error,
             totalSeconds = (System.nanoTime() - started) / 1e9,
+            xmlConversion = conversion,
         )
     }
 

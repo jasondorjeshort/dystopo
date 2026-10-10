@@ -41,6 +41,10 @@ The tiles contain OpenStreetMap data and are an ODbL 1.0 derived database: the `
 "Â© OpenStreetMap contributors (ODbL 1.0)" and `dystopo:license` is `ODbL-1.0`. Because the schema reuses the
 OpenMapTiles layer names and class values (design CC-BY 4.0), the "Â© OpenMapTiles" credit stays as well.
 Sources are listed in `dystopo:sources` and `dystopo:provenance` (OSM, OSM water polygons, Natural Earth).
+A build with `--min-zoom` 6 or more skips Natural Earth (it only feeds z0-5) and leaves it out of the provenance;
+`--source-id overpass` adds the Overpass API when the extract came from there (an `.osm` XML file, converted to
+`.osm.pbf` first). `dystopo:profile` is `outdoors` (OpenMapTiles-profile archives say `openmaptiles`), which is
+how pack precedence tells the two apart.
 
 ## Layers
 

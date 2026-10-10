@@ -54,6 +54,7 @@ object Attribution {
         bbox: DoubleArray?,
         sourceIds: List<String> = SOURCE_IDS,
         schema: String = SCHEMA,
+        profile: String = ProfileKind.OPENMAPTILES.cliName,
     ): Map<String, String> = buildMap {
         put("dystopo:attribution", TEXT)
         put("dystopo:license", LICENSE)
@@ -61,6 +62,8 @@ object Attribution {
         put("dystopo:sources", sourcesFor(sourceIds).joinToString("; "))
         put("dystopo:provenance", registry.ordered(sourceIds).joinToString(","))
         put("dystopo:schema", schema)
+        // Which schema the tiles follow, so pack precedence (T41) can rank outdoors over plain OpenMapTiles packs.
+        put("dystopo:profile", profile)
         put("dystopo:extract", extract)
         if (bbox != null) put("dystopo:clip_bbox", bbox.joinToString(","))
     }
