@@ -2,19 +2,23 @@ package io.github.jasondorjeshort.dystopo.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.PixelCopy
+import android.view.SurfaceView
+import android.view.View
+import android.view.ViewGroup
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.location.LocationComponentActivationOptions
-import org.maplibre.android.location.modes.CameraMode
-import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -22,6 +26,7 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -42,23 +47,82 @@ class MapController {
     @Volatile var styleError: String? = null
         private set
 
-    /** True once MapLibre reports the map idle (all tiles loaded, no transition) and no frame has started since. */
-    @Volatile var idle = false
-        private set
-    @Volatile var lastIdleAt = 0L
+    /** Tile requests the loopback server is handling or has queued; set by [Routes]. */
+    @Volatile var pendingTiles: () -> Int = { 0 }
+
+    /** elapsedRealtime of the last finished tile request; set by [Routes]. */
+    @Volatile var lastTileAt: () -> Long = { 0L }
+
+    /** MapLibre's own idle signal (`onDidBecomeIdle`, reset when a frame starts). Diagnostic only, see [idle]. */
+    @Volatile var mapLibreIdle = false
         private set
     @Volatile var framesRendered = 0L
         private set
+
+    /** Whether the last rendered frame had every visible tile loaded (MapLibre's `fully` flag). */
+    @Volatile var lastFrameFully = false
+        private set
+    @Volatile private var lastPartialFrameAt = 0L
+
+    /** A camera transition (gesture, animation, or [setCamera]) is in progress. */
+    @Volatile var animating = false
+        private set
+    @Volatile private var lastCameraAt = 0L
     @Volatile var lastLocation: Location? = null
         private set
 
+    /** True while injected fixes drive the puck (device fixes are ignored). */
+    @Volatile var injectedLocation = false
+        private set
+
+    /**
+     * Why the map is not idle right now; empty when it is. The map is idle when the style is loaded,
+     * no camera transition runs, no tile request is pending, the last frame was fully rendered, and
+     * all of that has held for [QUIET_MS]. MapLibre's own idle event is not used: on the emulator it
+     * fires rarely while the renderer keeps drawing frames at a few fps.
+     */
+    fun idleBlockers(now: Long = SystemClock.elapsedRealtime()): List<String> {
+        val reasons = ArrayList<String>()
+        if (map == null) reasons += "mapNotReady"
+        if (!styleLoaded) reasons += "styleLoading"
+        if (animating) reasons += "animating"
+        val pending = pendingTiles()
+        if (pending > 0) reasons += "pendingTiles"
+        if (!lastFrameFully) reasons += "frameNotFullyRendered"
+        val busyAt = maxOf(lastCameraAt, lastTileAt(), lastPartialFrameAt)
+        if (reasons.isEmpty() && now - busyAt < QUIET_MS) reasons += "settling"
+        return reasons
+    }
+
+    val idle: Boolean get() = idleBlockers().isEmpty()
+
+    fun idleJson(): Map<String, Any?> {
+        val now = SystemClock.elapsedRealtime()
+        val blockers = idleBlockers(now)
+        return mapOf(
+            "idle" to blockers.isEmpty(),
+            "notIdleBecause" to blockers,
+            "pendingTiles" to pendingTiles(),
+            "animating" to animating,
+            "lastFrameFully" to lastFrameFully,
+            "msSinceCamera" to if (lastCameraAt == 0L) null else now - lastCameraAt,
+            "msSinceTile" to lastTileAt().takeIf { it > 0 }?.let { now - it },
+            "msSincePartialFrame" to if (lastPartialFrameAt == 0L) null else now - lastPartialFrameAt,
+            "quietMs" to QUIET_MS,
+            "mapLibreIdle" to mapLibreIdle,
+        )
+    }
+
     fun attach(view: MapView, styleJson: () -> String, onStyle: (Style) -> Unit = {}) {
         mapView = view
-        view.addOnWillStartRenderingFrameListener { idle = false }
-        view.addOnDidFinishRenderingFrameListener { _, _, _ -> framesRendered++ }
+        view.addOnWillStartRenderingFrameListener { mapLibreIdle = false }
+        view.addOnDidFinishRenderingFrameListener { fully, _, _ ->
+            framesRendered++
+            lastFrameFully = fully
+            if (!fully) lastPartialFrameAt = SystemClock.elapsedRealtime()
+        }
         view.addOnDidBecomeIdleListener {
-            idle = true
-            lastIdleAt = SystemClock.elapsedRealtime()
+            mapLibreIdle = true
         }
         view.addOnDidFailLoadingMapListener { styleError = it }
         view.getMapAsync { m ->
@@ -67,6 +131,8 @@ class MapController {
             m.uiSettings.isLogoEnabled = false
             m.setMinZoomPreference(3.0)
             m.setMaxZoomPreference(18.0)
+            m.addOnCameraMoveStartedListener { animating = true; lastCameraAt = SystemClock.elapsedRealtime() }
+            m.addOnCameraIdleListener { animating = false; lastCameraAt = SystemClock.elapsedRealtime() }
             loadStyle(styleJson(), onStyle)
         }
     }
@@ -83,6 +149,8 @@ class MapController {
     }
 
     fun detach() {
+        stopDeviceLocation()
+        puck.uninstall()
         mapView = null
         map = null
         styleLoaded = false
@@ -112,7 +180,8 @@ class MapController {
             val m = map ?: throw IllegalStateException("map not ready")
             val c = m.cameraPosition
             val target = LatLng(lat ?: c.target?.latitude ?: 0.0, lon ?: c.target?.longitude ?: 0.0)
-            idle = false
+            lastCameraAt = SystemClock.elapsedRealtime()
+            lastFrameFully = false // until MapLibre renders the new view
             m.moveCamera(
                 CameraUpdateFactory.newCameraPosition(
                     CameraPosition.Builder().target(target).zoom(zoom ?: c.zoom).bearing(bearing ?: c.bearing).tilt(tilt ?: c.tilt).build(),
@@ -125,17 +194,19 @@ class MapController {
     /** Waits up to [timeoutMs] for the map to be idle; returns whether it got there. */
     fun awaitIdle(timeoutMs: Long): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        // Give MapLibre a moment to start the frames a camera change triggers before trusting `idle`.
+        // Give MapLibre a moment to start the frames and requests a camera change triggers.
         Thread.sleep(150)
         while (SystemClock.elapsedRealtime() < deadline) {
-            if (idle && styleLoaded) return true
+            if (idle) return true
             Thread.sleep(50)
         }
-        return idle && styleLoaded
+        return idle
     }
 
     /** PNG of the map surface (MapLibre snapshot: the GL content only, no Compose overlay). */
-    fun mapSnapshotPng(timeoutMs: Long = 10_000): ByteArray {
+    fun mapSnapshotPng(timeoutMs: Long = 10_000): ByteArray = png(mapSnapshot(timeoutMs))
+
+    private fun mapSnapshot(timeoutMs: Long): Bitmap {
         val result = AtomicReference<Bitmap?>()
         val latch = CountDownLatch(1)
         onMain {
@@ -146,26 +217,64 @@ class MapController {
             }
         }
         check(latch.await(timeoutMs, TimeUnit.MILLISECONDS)) { "snapshot timed out" }
-        return png(result.get() ?: throw IllegalStateException("snapshot returned no bitmap"))
+        return result.get() ?: throw IllegalStateException("snapshot returned no bitmap")
     }
 
-    /** PNG of the whole activity window (map plus overlays) through PixelCopy. */
+    /**
+     * PNG of the activity's content area: the map plus everything drawn over it (attribution,
+     * messages). A window PixelCopy cannot do this: the map draws into its own SurfaceView, a
+     * separate surface, so the window copy has only a hole where the map is. Instead the map
+     * surface is copied with PixelCopy (exactly what the screen shows, puck included; MapLibre's
+     * snapshot if that fails) and the view hierarchy is drawn over it in software, where the
+     * SurfaceView draws as transparent.
+     */
     fun windowPng(timeoutMs: Long = 10_000): ByteArray {
         val act = activity ?: throw IllegalStateException("no activity")
-        val window = act.window
-        val view = window.decorView
-        val bmp = onMain { Bitmap.createBitmap(view.width.coerceAtLeast(1), view.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888) }
+        class Layout(val content: View, val surface: SurfaceView?, val left: Int, val top: Int, val w: Int, val h: Int)
+        val layout = onMain {
+            val content = act.findViewById<ViewGroup>(android.R.id.content)
+            val mv = mapView ?: throw IllegalStateException("map not attached")
+            val surface = findSurface(mv)
+            val target = surface ?: mv
+            val a = IntArray(2).also { target.getLocationInWindow(it) }
+            val b = IntArray(2).also { content.getLocationInWindow(it) }
+            Layout(content, surface, a[0] - b[0], a[1] - b[1], target.width, target.height)
+        }
+        val mapBitmap = layout.surface?.let { copySurface(it, layout.w, layout.h, timeoutMs) } ?: mapSnapshot(timeoutMs)
+        return onMain {
+            val content = layout.content
+            val out = Bitmap.createBitmap(content.width.coerceAtLeast(1), content.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(out)
+            canvas.drawARGB(255, 255, 255, 255)
+            canvas.drawBitmap(Bitmap.createScaledBitmap(mapBitmap, layout.w, layout.h, true), layout.left.toFloat(), layout.top.toFloat(), null)
+            // Overlays go to their own layer: SurfaceView.draw clears its rectangle (CLEAR mode), which
+            // must punch through to the map pixels instead of erasing them.
+            val overlay = Bitmap.createBitmap(out.width, out.height, Bitmap.Config.ARGB_8888)
+            content.draw(Canvas(overlay))
+            canvas.drawBitmap(overlay, 0f, 0f, null)
+            png(out)
+        }
+    }
+
+    private fun findSurface(v: View): SurfaceView? {
+        if (v is SurfaceView) return v
+        if (v is ViewGroup) for (i in 0 until v.childCount) findSurface(v.getChildAt(i))?.let { return it }
+        return null
+    }
+
+    private fun copySurface(surface: SurfaceView, w: Int, h: Int, timeoutMs: Long): Bitmap? {
+        if (w <= 0 || h <= 0) return null
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val latch = CountDownLatch(1)
-        var status = -1
+        val status = AtomicInteger(-1)
         onMain {
-            PixelCopy.request(window, bmp, { s ->
-                status = s
+            PixelCopy.request(surface, bmp, { s ->
+                status.set(s)
                 latch.countDown()
             }, main)
         }
-        check(latch.await(timeoutMs, TimeUnit.MILLISECONDS)) { "PixelCopy timed out" }
-        check(status == PixelCopy.SUCCESS) { "PixelCopy failed with status $status" }
-        return png(bmp)
+        if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) return null
+        return bmp.takeIf { status.get() == PixelCopy.SUCCESS }
     }
 
     private fun png(bmp: Bitmap): ByteArray {
@@ -180,33 +289,56 @@ class MapController {
             act.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
-    /** Shows the location puck; with permission it follows the device's location engine. */
+    private val puck = LocationPuck()
+    private var deviceListener: LocationListener? = null
+    @Volatile private var deviceProviders: List<String> = emptyList()
+
+    /** Adds the puck to a freshly loaded style and starts device fixes (unless fixes are being injected). */
     fun enableLocation(style: Style) {
-        val m = map ?: return
-        val ctx = mapView?.context ?: return
-        val granted = hasLocationPermission()
+        puck.uninstall()
+        puck.install(style, lastLocation)
+        startDeviceLocation()
+    }
+
+    /** Called when the user grants location permission after the style loaded. */
+    fun onLocationPermissionChanged() {
+        main.post { startDeviceLocation() }
+    }
+
+    private fun onFix(loc: Location) {
+        lastLocation = loc
+        if (puck.installed) puck.show(loc)
+    }
+
+    /** Device fixes from GPS and network providers (main thread). No-op without permission or while injecting. */
+    private fun startDeviceLocation() {
+        if (injectedLocation || deviceListener != null || !hasLocationPermission()) return
+        val lm = activity?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        val listener = LocationListener { if (!injectedLocation) onFix(it) }
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).filter {
+            runCatching { lm.isProviderEnabled(it) }.getOrDefault(false)
+        }
         try {
-            val lc = m.locationComponent
-            lc.activateLocationComponent(
-                LocationComponentActivationOptions.builder(ctx, style).useDefaultLocationEngine(granted).build(),
-            )
-            lc.isLocationComponentEnabled = true
-            lc.cameraMode = CameraMode.NONE
-            lc.renderMode = RenderMode.NORMAL
-            lastLocation?.let { lc.forceLocationUpdate(it) }
+            for (p in providers) lm.requestLocationUpdates(p, 1000L, 0f, listener, Looper.getMainLooper())
+            deviceListener = listener
+            deviceProviders = providers
         } catch (e: SecurityException) {
             styleError = "location: ${e.message}"
         }
     }
 
-    /** Called when the user grants location permission after the style loaded. */
-    fun onLocationPermissionChanged() {
-        main.post {
-            map?.style?.let { if (it.isFullyLoaded) enableLocation(it) }
-        }
+    private fun stopDeviceLocation() {
+        val l = deviceListener ?: return
+        (activity?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)?.removeUpdates(l)
+        deviceListener = null
+        deviceProviders = emptyList()
     }
 
-    /** Injects a location fix (tests): the puck moves there as if the GPS had reported it. */
+    /**
+     * Injects a location fix (tests): the puck moves there as if the GPS had reported it. Device fixes
+     * are ignored from then on (an emulator reports its own default position, which would move the
+     * puck away) until [useDeviceLocation].
+     */
     fun injectLocation(lat: Double, lon: Double, accuracy: Float, bearing: Float?): Map<String, Any?> {
         val loc = Location("dystopo-debug").apply {
             latitude = lat
@@ -216,22 +348,38 @@ class MapController {
             time = System.currentTimeMillis()
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         }
-        lastLocation = loc
+        injectedLocation = true
         onMain {
-            val m = map ?: return@onMain
-            val lc = m.locationComponent
-            if (lc.isLocationComponentActivated) lc.forceLocationUpdate(loc)
+            stopDeviceLocation()
+            onFix(loc)
         }
         return locationJson()
     }
 
+    /** Ends injection: the puck follows the device's own fixes again (when permitted). */
+    fun useDeviceLocation(): Map<String, Any?> {
+        injectedLocation = false
+        onMain { startDeviceLocation() }
+        return locationJson()
+    }
+
     fun locationJson(): Map<String, Any?> {
-        val active = runCatching { onMain { map?.locationComponent?.isLocationComponentActivated == true } }.getOrDefault(false)
+        val layers = runCatching {
+            onMain { map?.style?.layers?.map { it.id }?.let { ids -> LocationPuck.LAYERS.associateWith { ids.indexOf(it) } } }
+        }.getOrNull()
         val l = lastLocation
         return mapOf(
-            "componentActive" to active,
+            "puckInstalled" to puck.installed,
+            "puckLayerIndex" to layers,
             "permission" to hasLocationPermission(),
+            "injected" to injectedLocation,
+            "deviceProviders" to deviceProviders,
             "last" to l?.let { mapOf("lat" to it.latitude, "lon" to it.longitude, "accuracy" to it.accuracy, "provider" to it.provider) },
         )
+    }
+
+    companion object {
+        /** How long everything must stay settled before the map counts as idle. */
+        const val QUIET_MS = 500L
     }
 }

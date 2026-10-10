@@ -15,32 +15,43 @@ import java.io.File
  * `/glyphs/{fontstack}/{range}.pbf`.
  *
  * Debug builds only ([BuildConfig.DEBUG_ENDPOINTS]), for agents through `adb forward`:
- * - `GET /health`: JSON (server, packs, map state).
- * - `GET /screenshot`: PNG of the map (MapLibre snapshot). `?mode=window` captures the whole window
- *   (PixelCopy, with overlays); `?wait=<ms>` (default 15000) waits for the map to go idle first;
- *   `/health` `map.lastScreenshotIdle` says whether it did (false: tiles were still loading).
+ * - `GET /health`: JSON (server load and refusals, packs, map state: `map.idle` with
+ *   `map.notIdleBecause`, see [MapController.idleBlockers]).
+ * - `GET /screenshot`: PNG of the map (MapLibre snapshot). `?mode=window` captures the app's content
+ *   area, map plus overlays (see [MapController.windowPng]); `?wait=<ms>` (default 15000) waits for the
+ *   map to go idle first; `/health` `map.lastScreenshotIdle` says whether it did.
  * - `GET /camera`; `POST /camera` with query parameters or a JSON body: lat, lon, zoom, bearing, tilt.
  * - `GET /stats`: tiles served per source, contour generation timings (min/avg/max and recent tiles),
  *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes.
- * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; `GET /location`.
+ * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; the puck shows it and the
+ *   device's own location engine stays detached until `POST /location?device=1`. `GET /location`.
  * - `GET /settings`, `POST /settings?textScale=1.5`: user settings ([SettingsRoutes]).
  * - `GET /labels`: rendered features per symbol layer in the view ([LabelRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
  */
 class Routes(private val app: DystopoApp) {
-    private val tile = Regex("^/(dem|osm|contours)/(\\d+)/(\\d+)/(\\d+)\\.(png|pbf|mvt)$")
+    private val tile = Regex("^/(dem|osm|contours)/(-?\\d+)/(-?\\d+)/(-?\\d+)\\.(png|pbf|mvt)$")
     private val settings = SettingsRoutes(app)
     private val labels = LabelRoutes(app)
     private val glyph = Regex("^/glyphs/([^/]+)/(\\d+-\\d+)\\.pbf$")
 
+    init {
+        // The map's idle check counts the tile requests the server is still working on or has queued.
+        val tileKinds = listOf("dem", "osm", "contours", "glyphs")
+        app.map.pendingTiles = { tileKinds.sumOf { app.server.inFlight(it) } + app.server.queued }
+        app.map.lastTileAt = { tileKinds.maxOf { app.server.lastDone(it) } }
+    }
+
     fun handle(r: Request): Response {
         tile.matchEntire(r.path)?.let { m ->
-            val (kind, z, x, y) = m.destructured
+            val (kind, zs, xs, ys) = m.destructured
+            val (zxy, error) = RequestChecks.tile(zs, xs, ys)
+            val (z, x, y) = zxy ?: return Response.text("$error\n", 400)
             val t = app.tiles
             val res = when (kind) {
-                "dem" -> t.demTile(z.toInt(), x.toInt(), y.toInt())
-                "osm" -> t.osmTile(z.toInt(), x.toInt(), y.toInt())
-                else -> t.contourTile(z.toInt(), x.toInt(), y.toInt())
+                "dem" -> t.demTile(z, x, y)
+                "osm" -> t.osmTile(z, x, y)
+                else -> t.contourTile(z, x, y)
             }
             return Response(res.status, res.contentType, res.body)
         }
@@ -66,6 +77,7 @@ class Routes(private val app: DystopoApp) {
             "GET" to "/location" -> Response.json(app.map.locationJson())
             "POST" to "/location" -> {
                 val p = params(r)
+                if (p.d("device") == 1.0) return Response.json(app.map.useDeviceLocation())
                 val lat = p.d("lat") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
                 val lon = p.d("lon") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
                 Response.json(app.map.injectLocation(lat, lon, (p.d("accuracy") ?: 10.0).toFloat(), p.d("bearing")?.toFloat()))
@@ -110,7 +122,7 @@ class Routes(private val app: DystopoApp) {
         mapOf(
             "file" to it.file.name, "bytes" to it.file.length(), "minZoom" to h.minZoom, "maxZoom" to h.maxZoom,
             "bounds" to listOf(h.minLon, h.minLat, h.maxLon, h.maxLat), "tileType" to h.tileType.label,
-            "attribution" to it.attribution,
+            "attribution" to RequestChecks.htmlToText(it.attribution),
         )
     }
 
@@ -120,15 +132,14 @@ class Routes(private val app: DystopoApp) {
         return mapOf(
             "ok" to true,
             "app" to mapOf("version" to BuildConfig.VERSION_NAME, "debug" to BuildConfig.DEBUG, "sdk" to Build.VERSION.SDK_INT, "device" to Build.MODEL),
-            "server" to mapOf("port" to BuildConfig.SERVER_PORT, "requests" to app.server.requests.get()),
+            "server" to mapOf("port" to BuildConfig.SERVER_PORT) + app.server.stats(),
             "uptimeMs" to SystemClock.elapsedRealtime() - app.startedAt,
             "packs" to mapOf("dem" to packJson(t.packs.dem), "osm" to packJson(t.packs.osm), "glyphs" to t.packs.glyphDir?.path),
             "map" to mapOf(
                 "attached" to (m.mapView != null), "ready" to (m.map != null), "styleLoaded" to m.styleLoaded,
-                "styleError" to m.styleError, "idle" to m.idle, "framesRendered" to m.framesRendered,
-                "msSinceIdle" to if (m.lastIdleAt == 0L) null else SystemClock.elapsedRealtime() - m.lastIdleAt,
+                "styleError" to m.styleError, "framesRendered" to m.framesRendered,
                 "lastScreenshotIdle" to lastScreenshotIdle,
-            ),
+            ) + m.idleJson(),
         )
     }
 

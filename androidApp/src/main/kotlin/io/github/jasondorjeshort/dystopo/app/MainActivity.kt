@@ -64,7 +64,9 @@ class MainActivity : ComponentActivity() {
 
     private fun attribution(): String {
         val packs = app.tiles.packs
+        // Pack metadata holds HTML (`&copy; OpenStreetMap`); the overlay shows plain text.
         return listOfNotNull(packs.osm?.attribution, packs.dem?.attribution)
+            .map(RequestChecks::htmlToText)
             .filter { it.isNotEmpty() }
             .joinToString(" | ")
             .ifEmpty { "Dystopo" }

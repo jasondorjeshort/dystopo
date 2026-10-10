@@ -71,4 +71,5 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.maplibre.android)
     implementation(libs.sqldelight.android.driver)
+    testImplementation(kotlin("test"))
 }
