@@ -227,6 +227,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-09: T21 merged (PR #19): datums beyond CONUS.** The geoid grid is now chosen by location: GEOID18 for CONUS and Puerto Rico/USVI (which superseded GEOID12B there), GEOID12B for Alaska (a grid that crosses 180°) and Hawaii (on NAD83(PA11), with its own ellipsoid shift). Sources check geoid coverage before downloading, so areas outside the US no longer fetch 3DEP at all. Checks on bare ground: North Slope tundra agrees with Copernicus to +0.03 m (1.5 m off without the grid), Kona lava plain +0.10 m, Bonneville unchanged at +0.20 m. Denali and Mauna Kea now render from converted 3DEP; the tour is 50/50 with the two new flat areas. Verified against the PROJ grid index and README.
 
+**2026-10-09: T20b merged (PR #18): the browser demo reads the outdoors schema.** POI discs with class glyphs (trailheads, campsites, shelters, springs, viewpoints, waterfalls, parking), cliffs with ticks, named ridges, trails styled by `sac_scale` and faded when hard to follow, wilderness boundaries, lakes drawn over streams; the hillshade now uses the same ancestor fallback as the contours; a collapsible panel for phones. The tour grew to 21 views (phone width, lake views, outdoors views), all clean. The "missing lake names" question had a data answer: the profile only labels lakes about 48 px wide, so names appear from z14.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development
