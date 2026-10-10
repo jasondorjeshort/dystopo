@@ -1,0 +1,152 @@
+# Release (T62). On a v* tag: the per-ABI release APKs (signed with the release key from repository
+# secrets when they are set, else with a throwaway debug key and labelled so), the server and devtool
+# distributions as zips, NOTICES.md regenerated from the licence reports, the world tour contact sheet
+# rendered here (z9, from the network) and the device tour sheet committed under docs/images, all
+# attached to a DRAFT GitHub release. Publishing the draft is a person's decision.
+#
+# Secrets (all optional, all four together): RELEASE_KEYSTORE_B64 (base64 of a PKCS12 keystore),
+# RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD. Make the keystore with the keytool
+# command in CLAUDE.md > Release, then: base64 -w0 release.keystore | gh secret set RELEASE_KEYSTORE_B64
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DYSTOPO_CACHE: ${{ github.workspace }}/cache
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - name: Release signing key (from secrets, else debug)
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_B64" ] && [ -n "$RELEASE_STORE_PASSWORD" ]; then
+            echo "$RELEASE_KEYSTORE_B64" | base64 -d > tools/release.keystore
+            {
+              echo "storeFile=tools/release.keystore"
+              echo "storePassword=$RELEASE_STORE_PASSWORD"
+              echo "keyAlias=${RELEASE_KEY_ALIAS:-dystopo}"
+              echo "keyPassword=${RELEASE_KEY_PASSWORD:-$RELEASE_STORE_PASSWORD}"
+            } > tools/release.properties
+            echo "SIGNING=release" >> "$GITHUB_ENV"
+            echo "Signing with the release key from secrets."
+          else
+            rm -f tools/release.properties
+            echo "SIGNING=debug" >> "$GITHUB_ENV"
+            echo "No RELEASE_KEYSTORE_B64 secret: the APKs are signed with this runner's debug key."
+          fi
+
+      - name: Build APKs, server and devtool distributions, licence reports
+        # gradlew is committed without the executable bit (the repo is developed on Windows).
+        # Naming a release task turns on the ABI splits (androidApp/build.gradle.kts).
+        run: |
+          chmod +x gradlew
+          ./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p out/release
+          suffix=""
+          if [ "$SIGNING" = debug ]; then suffix="-debugsigned"; fi
+          for apk in androidApp/build/outputs/apk/release/androidApp-*-release.apk; do
+            abi=$(basename "$apk" | sed -e 's/^androidApp-//' -e 's/-release\.apk$//')
+            cp "$apk" "out/release/dystopo-$TAG-$abi$suffix.apk"
+          done
+          (cd server/build/install && zip -qr "../../../out/release/dystopo-server-$TAG.zip" server)
+          (cd devtool/build/install && zip -qr "../../../out/release/dystopo-devtool-$TAG.zip" devtool)
+          python3 tools/notices.py --out out/release/NOTICES.md
+          if [ -f docs/images/android-tour-sheet.png ]; then
+            cp docs/images/android-tour-sheet.png "out/release/dystopo-$TAG-device-tour.png"
+          fi
+          (cd out/release && sha256sum * > SHA256SUMS.txt)
+          ls -l out/release
+
+      - name: World tour contact sheet (z9, from the network)
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          mkdir -p out/tour
+          set +e
+          devtool/build/install/devtool/bin/devtool tour --zooms 9 > out/tour/stdout.json
+          echo "TOUR_STATUS=$?" >> "$GITHUB_ENV"
+          python3 -c 'import json; d = json.load(open("out/tour/summary.json")); print(json.dumps({k: d[k] for k in ("renders", "passed", "failed", "totalMs") if k in d}))' | tee out/tour/short.json
+          if [ -f out/tour/contact-sheet.png ]; then
+            cp out/tour/contact-sheet.png "out/release/dystopo-$TAG-world-tour.png"
+            (cd out/release && sha256sum "dystopo-$TAG-world-tour.png" >> SHA256SUMS.txt)
+          fi
+          exit 0
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          {
+            echo "Dystopo $TAG (draft made by the release workflow from $(git rev-parse --short HEAD))."
+            echo
+            if [ "$SIGNING" = debug ]; then
+              echo "**These APKs are signed with a throwaway debug key** (no release key in the repository secrets). They install, but a later build signed with the real key will not update them: uninstall first."
+            else
+              echo "APKs are signed with the Dystopo release key."
+            fi
+            echo
+            echo "## Files"
+            echo "- \`dystopo-$TAG-<abi>.apk\`: the Android app. Most phones want \`arm64-v8a\`; \`universal\` runs everywhere and is larger."
+            echo "- \`dystopo-server-$TAG.zip\`: the standalone server (\`bin/server\`; Java 21). Configuration: docs/SERVER.md."
+            echo "- \`dystopo-devtool-$TAG.zip\`: the command-line tool (\`bin/devtool\`; Java 21), run from a checkout of the repo."
+            echo "- \`NOTICES.md\`: third-party licences; \`SHA256SUMS.txt\`: checksums."
+            echo "- \`dystopo-$TAG-world-tour.png\`: world tour contact sheet rendered by this workflow (z9; exit status ${TOUR_STATUS:-not run})."
+            if [ -f "out/release/dystopo-$TAG-device-tour.png" ]; then
+              echo "- \`dystopo-$TAG-device-tour.png\`: device tour contact sheet from an emulator (committed in docs/images)."
+            fi
+            echo
+            echo "Changes: see CHANGELOG.md. Code: GPL-3.0; map data keeps its sources' licences (NOTICES.md)."
+          } > out/release-notes.md
+          cat out/release-notes.md
+
+      - name: Draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" --draft $prerelease --verify-tag --title "Dystopo $TAG" \
+            --notes-file out/release-notes.md out/release/*
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-reports
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            */build/reports/
+            out/tour/

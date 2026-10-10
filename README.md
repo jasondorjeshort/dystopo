@@ -2,25 +2,130 @@
 
 [![CI](https://github.com/jasondorjeshort/dystopo/actions/workflows/ci.yml/badge.svg)](https://github.com/jasondorjeshort/dystopo/actions/workflows/ci.yml)
 
-Open-source, offline-first topographic maps and backcountry navigation. Android first, with a server, desktop, and iOS planned.
+Open-source, offline-first topographic maps for the backcountry. Dystopo builds its own hillshade, slope shading
+and labelled contours from public elevation data (USGS 3DEP lidar, swissALTI3D, Copernicus), draws OpenStreetMap
+trails, water and names over them, and packs a region into files a phone can use with no signal. Android first;
+a server and a desktop tool come with it, iOS later.
 
-**Status (October 2026): phase 2 well along: sync with an always-on peer and phone-to-phone over a local network, routing, map options, a deployable server with a pack catalog, a release build, and the first high-resolution elevation outside the US (Switzerland).** A Kotlin Multiplatform core reads USGS 3DEP (10 m and 1 m lidar) and Copernicus GLO-30 (global 30 m) directly from their public cloud files, converts everything to one vertical datum, blends sources seamlessly, and renders hillshade, slope shading and labelled contours. An OpenStreetMap build tool (Planetiler, with an outdoors profile) produces our own vector archives, and the renderer draws trails, water, peaks and names over the terrain from a declarative style. Region packs are PMTiles (DEM and vectors) that any PMTiles-aware tool can open; a browser demo (MapLibre) views them live. The Android app (Compose + MapLibre Native) shows region packs with hillshade, trails and contours generated on the device, browses the world online through a Dystopo server and downloads any region as a pack, records tracks with waypoints and GPX import/export, searches places offline, plans routes along trails offline, lets you tune hillshade, slope shading, contour interval, layers and night mode, syncs tracks, waypoints and settings between devices through a file, an always-on peer or another phone on the same network with a deterministic merge, browses and downloads packs from a server catalog with hash verification, and ships as a 14 MB release APK; everything is driven for testing through a loopback debug server, an emulator tour and a seeded sync simulator, and CI runs the checks on every push. The desktop `serve --live` mode renders any place on earth on demand (USGS 3DEP or Copernicus elevation, OpenFreeMap base map) and builds packs for a box, including outdoors-profile packs from Overpass data, and the same code runs as a standalone server with a config file, a pack catalog and a Dockerfile. Elevation comes from USGS 3DEP (10 m and 1 m lidar), swissALTI3D (2 m and 0.5 m) and Copernicus GLO-30, blended seamlessly in one vertical datum. A world tour of 22 public landmarks and a 14-view browser tour run as sanity sweeps.
+<p>
+<img src="docs/images/browser-matterhorn.png" width="49%" alt="The Matterhorn in the browser viewer: swissALTI3D hillshade, contours in metres, OpenStreetMap trails and peaks">
+<img src="docs/images/browser-everest.png" width="49%" alt="Mount Everest and Lhotse in the browser viewer, from Copernicus elevation rendered on demand">
+</p>
+<p>
+<img src="docs/images/phone-rainier.png" width="24%" alt="The Android app at the summit of Mount Rainier, contours in feet">
+<img src="docs/images/phone-mont-blanc.png" width="24%" alt="The Android app on the Mont Blanc massif, contours in metres">
+<img src="docs/images/browser-rainier.png" width="49%" alt="Mount Rainier in the browser viewer from a region pack, with climbing routes">
+</p>
+<p>
+<img src="docs/images/browser-mont-blanc.png" width="49%" alt="The Mont Blanc massif in the browser viewer from a region pack">
+<img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
+</p>
 
-- Design, decisions, and findings: [docs/PLANNING.md](docs/PLANNING.md)
-- Work breakdown for parallel development: [docs/TASKS.md](docs/TASKS.md)
-- Conventions and commands for agents: [CLAUDE.md](CLAUDE.md)
+**Status (October 2026): working and tested, not yet released.** No version has been published; the APKs that
+a release will carry can be built from source today (below). Expect rough edges.
 
-## Quick start
-Requires JDK 21 and Git.
+## Features
+
+**Terrain**
+- Elevation read straight from public cloud files: USGS 3DEP (10 m, and 1 m lidar where flown), swissALTI3D
+  (Switzerland, 0.5 to 2 m), Copernicus GLO-30 (the rest of the world, 30 m). All converted to one vertical datum
+  (EGM2008) and blended with feathered seams, so source edges do not show.
+- Hillshade (single or multi-directional), CalTopo-style slope-angle shading, contours with readable intervals
+  per zoom, index lines and labels in feet or metres.
+
+**Map**
+- OpenStreetMap trails, roads, water, glaciers, peaks with elevations, huts and place names, from an outdoors
+  profile built with Planetiler, or from OpenFreeMap tiles anywhere in the world.
+- Region packs are standard [PMTiles](https://github.com/protomaps/PMTiles) archives (elevation and vectors) that
+  other PMTiles tools can open.
+
+**Android app** (Compose + MapLibre Native)
+- Fully offline with a region pack: hillshade, trails and contours generated on the phone.
+- Online browsing anywhere through a Dystopo server, and "download this region" as a pack; a pack catalog with
+  hash-verified downloads.
+- Track recording with waypoints, elevation profiles and GPX import/export; offline place search; route planning
+  along trails, offline.
+- Map options: hillshade style and strength, slope shading, contour interval and label density, layers, night mode.
+- Sync of tracks, waypoints and settings between devices: through a file, an always-on server, or directly with
+  another phone on the same Wi-Fi (6-digit code or QR), with a deterministic merge.
+- A 14 MB release APK per CPU type.
+
+**Server and desktop**
+- `devtool serve --live` renders any place on earth on demand in the browser and builds packs for a box.
+- A standalone server (config file, pack catalog, token, Dockerfile) that the phone browses, downloads from and
+  syncs with.
+- A command-line tool (`devtool`) that renders PNGs, inspects PMTiles and vector tiles, plans routes and runs a
+  sync simulator, all printing JSON.
+
+**Tested by machines**: everything is driven through JSON-speaking tools and a debug server in the app, so the
+world tour (27 public places), a browser tour and a device tour on an emulator run on every change, with golden
+images for rendering. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Try it
+
+Requires JDK 21 and Git. On Windows use `gradlew` in place of `./gradlew`. Downloaded data is cached in `cache/`
+and output goes to `out/`.
+
+### Desktop: render and browse
 
 ```
-./gradlew check                                      # build and run all tests
-./gradlew :devtool:run --args="render --area rainier" # out/rainier-best-z13.png + JSON report
-./gradlew :devtool:run --args="compare --area glacier-waterton --sources copernicus,best"
+./gradlew check                                        # build and run all tests
+./gradlew :devtool:run --args="render --area rainier"  # out/rainier-best-z13.png and a JSON report
+./gradlew :devtool:run --args="areas"                  # the named public areas
+./gradlew :devtool:run --args="serve --live --port 8687"
 ```
 
-## Running a server
-The phone browses the world online and syncs through a Dystopo server: `./gradlew :server:installDist`, then `server/build/install/server/bin/server` (or the Docker image built from that directory) serves live hillshade, contours and base map anywhere, builds and hosts region packs, lists them in a catalog with content hashes, and acts as the always-on sync peer. Configuration, Docker, TLS behind a reverse proxy and limits: [docs/SERVER.md](docs/SERVER.md).
+Then open http://localhost:8687/ for the live viewer: pan anywhere, and the elevation and base map are fetched
+and rendered on demand (the first view of a new place takes 10 to 30 s; after that it is cached). The panel builds
+a pack of the visible box. All commands: `./gradlew :devtool:run --args="--help"`, and [CLAUDE.md](CLAUDE.md).
 
-## License
-Code: GPLv3 (see [LICENSE](LICENSE)); other modules may use AGPLv3/LGPLv3 later. Map data keeps its sources' licenses (OSM: ODbL; USGS: public domain; Copernicus: attribution required). See [docs/PLANNING.md › Licensing](docs/PLANNING.md#licensing).
+### Server
+
+```
+./gradlew :server:installDist
+server/build/install/server/bin/server        # 0.0.0.0:8080; --config my-server.json, --print-config
+```
+
+It serves live hillshade, contours and base map anywhere, builds and hosts region packs, lists them in a catalog
+and is the always-on sync peer for phones. Configuration, Docker, TLS behind a reverse proxy, the token and the
+limits: [docs/SERVER.md](docs/SERVER.md).
+
+### Phone
+
+Needs the Android SDK (`powershell -ExecutionPolicy Bypass -File tools\android-sdk.ps1` installs one on Windows
+without admin rights and writes `local.properties`).
+
+```
+./gradlew :androidApp:assembleDebug        # androidApp/build/outputs/apk/debug/androidApp-debug.apk
+./gradlew :androidApp:assembleRelease      # one APK per CPU type in androidApp/build/outputs/apk/release/
+```
+
+Install with `adb install`. To put a region on the phone, build a pack (the live viewer's "Build pack here", or
+`devtool tiles` and `tilebuild`, see CLAUDE.md) and push it with `tools\android-push-pack.ps1`, or point the app at
+a server in Settings and download regions from there. `tools\android-emu.ps1 -Build` boots a headless emulator,
+installs the app and pushes the Rainier pack in one step.
+
+## Documentation
+
+- [docs/PLANNING.md](docs/PLANNING.md): design, decisions and the development log with measurements.
+- [docs/TASKS.md](docs/TASKS.md): the task board.
+- [docs/SERVER.md](docs/SERVER.md): running the server.
+- [CLAUDE.md](CLAUDE.md): every command and convention (written for the coding agents that build most of Dystopo).
+- [CONTRIBUTING.md](CONTRIBUTING.md): how work is done here, privacy and licence rules.
+- [CHANGELOG.md](CHANGELOG.md): what has been merged.
+
+## Licence
+
+- **Code**: GNU General Public License v3 ([LICENSE](LICENSE)). The project may also offer other terms later
+  (for example an app-store exception); that is why its own dependencies are kept permissive.
+- **Dependencies**: all permissively licensed (Apache-2.0, MIT, BSD, EPL and similar), enforced by the build;
+  the build-side OSM tool may use LGPL libraries. Full list with versions: [NOTICES.md](NOTICES.md).
+- **Map data keeps its sources' licences**: OpenStreetMap data is ODbL 1.0 (© OpenStreetMap contributors), so
+  vector packs built from it are ODbL too; USGS 3DEP is public domain; Copernicus DEM is free with attribution;
+  swissALTI3D is free with the source named (swisstopo). Every pack and rendered image records its sources, and
+  the app shows the credits for what is on screen. Details: [NOTICES.md](NOTICES.md) and
+  [docs/PLANNING.md › Licensing](docs/PLANNING.md#licensing).
+- Text in rendered images uses Noto Sans (SIL Open Font License 1.1).
+
+Screenshots: the browser views come from `tools/demo-check.py` against `devtool serve --live`, the phone views
+from the app's debug server on an emulator. All show public places.
