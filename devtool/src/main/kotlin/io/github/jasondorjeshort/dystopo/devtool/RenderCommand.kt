@@ -49,7 +49,7 @@ class RenderCommand : AreaCommand("render") {
 
         val fetched = timings.time("fetch") { src.fetch(window) }
         val grid = fetched.grid
-        val (image, contours) = MapRenderer.render(grid, style, timings)
+        val (image, contours) = MapRenderer.render(grid, zoom, style, timings)
         val outFile = out ?: File("out/${name ?: "bbox"}-$source-z$zoom.png")
         timings.time("writePng") {
             outFile.absoluteFile.parentFile.mkdirs()
@@ -68,8 +68,8 @@ class RenderCommand : AreaCommand("render") {
             elevationMinMeters = grid.min().toDouble(),
             elevationMaxMeters = grid.max().toDouble(),
             sourceCounters = fetched.counters,
-            contourInterval = style.interval,
-            contourUnits = style.units,
+            contourInterval = contours.interval,
+            contourUnits = contours.units,
             contours = contours,
             timingsMs = timings.ms,
             attribution = src.attribution,

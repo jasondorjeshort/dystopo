@@ -76,7 +76,7 @@ class CompareCommand : AreaCommand("compare") {
         for (id in sources) {
             val src = ElevationSource.byId(id)
             val fetched = timings.time("$id.fetch") { src.fetch(window) }
-            val (image, contours) = MapRenderer.render(fetched.grid, style, timings, "$id.")
+            val (image, contours) = MapRenderer.render(fetched.grid, zoom, style, timings, "$id.")
             grids += fetched.grid
             panels += image
             summaries += SourceSummary(

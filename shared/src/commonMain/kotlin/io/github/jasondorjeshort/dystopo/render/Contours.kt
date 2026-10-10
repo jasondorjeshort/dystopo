@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.render
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.sqrt
 
 /**
  * One contour polyline. [points] holds interleaved x,y pairs in grid coordinates
@@ -48,6 +49,112 @@ object Contours {
             }
         }
         return tracers.flatMap { it.lines() }
+    }
+
+    /**
+     * Cuts non-index contours where the ground is so steep that neighboring lines would be closer
+     * than [minSpacing] grid cells (pixels, for a 1:1 render) and merge into a solid mass. The
+     * spacing of adjacent lines is `interval / |gradient|`; index contours are always kept, so
+     * cliffs still show their elevation. Pieces shorter than [minPieceLength] are dropped, and
+     * steep stretches shorter than [minRun] points are ignored so noise does not perforate lines.
+     * Returns the surviving lines (cut pieces are open lines) in the original order.
+     */
+    fun cutSteep(
+        lines: List<ContourLine>,
+        grid: ElevationGrid,
+        spec: ContourSpec,
+        minSpacing: Double,
+        minPieceLength: Double = 12.0,
+        minRun: Int = 4,
+    ): List<ContourLine> {
+        if (minSpacing <= 0) return lines
+        // Steep where interval / |grad| < minSpacing, i.e. |grad| > interval / minSpacing (meters per cell).
+        val gradLimit = spec.intervalMeters / minSpacing
+        val gradLimit2 = gradLimit * gradLimit
+        val out = ArrayList<ContourLine>(lines.size)
+        for (line in lines) {
+            if (spec.isIndex(line.level)) {
+                out += line
+                continue
+            }
+            val n = line.pointCount
+            val steep = BooleanArray(n) { i -> gradient2At(grid, line.points[2 * i], line.points[2 * i + 1]) > gradLimit2 }
+            closeShortRuns(steep, minRun)
+            if (steep.none { it }) {
+                out += line
+                continue
+            }
+            // Rotate a ring so it starts on a steep point; the pieces then never wrap around.
+            var pts = line.points
+            if (line.closed) {
+                val k = steep.indexOfFirst { it }
+                pts = DoubleArray(pts.size)
+                for (i in 0 until n) {
+                    val j = (i + k) % n
+                    pts[2 * i] = line.points[2 * j]
+                    pts[2 * i + 1] = line.points[2 * j + 1]
+                }
+                val rotated = BooleanArray(n) { steep[(it + k) % n] }
+                rotated.copyInto(steep)
+            }
+            var start = -1
+            for (i in 0..n) {
+                val keep = i < n && !steep[i]
+                if (keep && start < 0) start = i
+                if (!keep && start >= 0) {
+                    emitPiece(pts, start, i, line.level, minPieceLength, out)
+                    start = -1
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Squared gradient magnitude (meters per cell) at a point: a Sobel (3x3-smoothed central
+     * difference) around the nearest sample, so single noisy cells do not perforate lines. NaN counts as flat.
+     */
+    private fun gradient2At(grid: ElevationGrid, x: Double, y: Double): Double {
+        val cx = (x + 0.5).toInt().coerceIn(0, grid.width - 1)
+        val cy = (y + 0.5).toInt().coerceIn(0, grid.height - 1)
+        var gx = 0.0
+        var gy = 0.0
+        for (d in -1..1) {
+            val w = if (d == 0) 2.0 else 1.0
+            gx += w * (grid.clamped(cx + 1, cy + d) - grid.clamped(cx - 1, cy + d))
+            gy += w * (grid.clamped(cx + d, cy + 1) - grid.clamped(cx + d, cy - 1))
+        }
+        gx /= 8.0
+        gy /= 8.0
+        val g2 = gx * gx + gy * gy
+        return if (g2.isNaN()) 0.0 else g2
+    }
+
+    /** Flips steep runs shorter than [minRun] back to not steep. */
+    private fun closeShortRuns(steep: BooleanArray, minRun: Int) {
+        var i = 0
+        while (i < steep.size) {
+            if (!steep[i]) {
+                i++
+                continue
+            }
+            var j = i
+            while (j < steep.size && steep[j]) j++
+            if (j - i < minRun) for (k in i until j) steep[k] = false
+            i = j
+        }
+    }
+
+    private fun emitPiece(pts: DoubleArray, from: Int, to: Int, level: Double, minLength: Double, out: MutableList<ContourLine>) {
+        if (to - from < 2) return
+        var length = 0.0
+        for (i in from + 1 until to) {
+            val dx = pts[2 * i] - pts[2 * i - 2]
+            val dy = pts[2 * i + 1] - pts[2 * i - 1]
+            length += sqrt(dx * dx + dy * dy)
+        }
+        if (length < minLength) return
+        out += ContourLine(level, pts.copyOfRange(2 * from, 2 * to), closed = false)
     }
 
     /** Index of the first level strictly greater than [value]. */
