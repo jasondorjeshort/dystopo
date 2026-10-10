@@ -21,6 +21,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import io.github.jasondorjeshort.dystopo.app.about.AttributionLine
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMapOptions
@@ -126,15 +127,6 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
                     .padding(16.dp),
             )
         }
-        BasicText(
-            attribution,
-            style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp),
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .navigationBarsPadding()
-                .padding(6.dp)
-                .background(Color(0xCCF6F1E4), RoundedCornerShape(4.dp))
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-        )
+        AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
     }
 }

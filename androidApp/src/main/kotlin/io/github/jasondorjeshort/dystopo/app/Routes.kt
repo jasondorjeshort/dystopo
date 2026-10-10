@@ -46,6 +46,7 @@ class Routes(private val app: DystopoApp) {
         }
         if (r.path == "/style.json") return Response(200, "application/json", app.tiles.style().toByteArray())
         if (!BuildConfig.DEBUG_ENDPOINTS) return Response.notFound()
+        AttributionRoutes.handle(app, r)?.let { return it }
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

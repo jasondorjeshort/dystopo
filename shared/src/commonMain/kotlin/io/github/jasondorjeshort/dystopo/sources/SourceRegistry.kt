@@ -9,7 +9,8 @@ enum class SourceKind(val json: String) {
 
     /** Inputs to the OSM vector tile build (OSM itself, OSM-derived aux data, Natural Earth, the schema). */
     OSM("osm"),
-    OVERLAY("overlay");
+    OVERLAY("overlay"),
+    FONT("font");
 
     companion object {
         fun parse(s: String): SourceKind? = entries.firstOrNull { it.json == s }

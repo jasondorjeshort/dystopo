@@ -1,5 +1,5 @@
 {
-  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay. license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
+  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay | font (fonts the app draws labels with). license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
   "version": 1,
   "sources": [
     {
@@ -285,6 +285,25 @@
       "url": "https://github.com/openmaptiles/openmaptiles",
       "updateCadence": "Schema releases (3.16 in use).",
       "notes": "Planetiler's OpenMapTiles profile implements this schema."
+    },
+    {
+      "id": "noto-sans",
+      "name": "Noto Sans (map label glyphs)",
+      "kind": "font",
+      "provider": "The Noto Project Authors (Google); glyph PBF ranges from Protomaps basemaps-assets",
+      "coverage": {
+        "summary": "Not geographic: the font MapLibre draws map labels with (Noto Sans Regular, Italic and Medium)."
+      },
+      "resolution": "n/a",
+      "license": "OFL-1.1",
+      "licenseName": "SIL Open Font License 1.1",
+      "licenseUrl": "https://openfontlicense.org/open-font-license-official-text/",
+      "attribution": "Labels: Noto Sans, © The Noto Project Authors (SIL Open Font License 1.1).",
+      "attributionHtml": "Labels: <a href=\"https://notofonts.github.io/\" target=\"_blank\">Noto Sans</a>, &copy; The Noto Project Authors (<a href=\"https://openfontlicense.org/open-font-license-official-text/\" target=\"_blank\">SIL OFL 1.1</a>).",
+      "allowedUses": "Use, embedding and redistribution, including in commercial apps, with the copyright notice and license; the font may not be sold by itself; modified versions may not use the reserved font name.",
+      "url": "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
+      "updateCadence": "Static; fetched once into the cache by tools/android-push-pack.ps1 and pushed with the packs.",
+      "notes": "MapLibre loads label glyphs as signed-distance-field PBF ranges (0-255 ... 65280-65535) per font stack. The PBFs are generated from the Noto Sans TTFs, so the font's OFL applies to them."
     }
   ]
 }

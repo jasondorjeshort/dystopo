@@ -7,6 +7,8 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
+import io.github.jasondorjeshort.dystopo.attribution.PackMetadata
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
@@ -118,6 +120,7 @@ class ServeCommand : CliktCommand(name = "serve") {
                 }
                 when (path) {
                     "/style.json" -> reply(ex, style.toByteArray(), "application/json")
+                    "/attribution" -> reply(ex, JsonWriter.write(PackAttribution.compose(listOfNotNull(osmReader?.let { PackMetadata("osm", File(osm).name, synchronized(lock) { it.metadata() }) }, PackMetadata("dem", File(dem).name, synchronized(lock) { demReader.metadata() })), if (glyphDir.isDirectory) listOf(PackAttribution.GLYPH_FONT_ID) else emptyList()).json()).toByteArray(), "application/json")
                     "/stats" -> {
                         val t = synchronized(timings) { timings.toList() }
                         val s = synchronized(timings) { sampleTimings.toList() }
