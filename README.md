@@ -21,7 +21,7 @@ a server and a desktop tool come with it, iOS later.
 <img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
 </p>
 
-**Status (October 2026): working and tested, not yet released.** No version has been published; the APKs that
+**Status (October 2026): first alpha published, [v0.1.2-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.2-alpha) (Android APKs, server and devtool zips). Tested on emulators and one real phone.** No version has been published; the APKs that
 a release will carry can be built from source today (below). Expect rough edges.
 
 ## Features
