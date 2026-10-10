@@ -18,6 +18,8 @@ dependencies {
 application {
     mainClass = "io.github.jasondorjeshort.dystopo.devtool.MainKt"
     applicationName = "devtool"
+    // The installed launcher (build/install/devtool/bin) too: UTF-8 stdout even when redirected on Windows.
+    applicationDefaultJvmArgs = listOf("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
 }
 
 // Run from the repo root so areas.json, devtool.local.json, cache/ and out/ resolve there.

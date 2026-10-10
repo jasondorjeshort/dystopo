@@ -304,7 +304,11 @@ object TextTemplate {
             sb.append(line, i, open)
             val key = line.substring(open + 1, close)
             placeholders++
-            val value = if (key == "elevation") elevation(props, units) else props[key]?.asText()?.trim()
+            val value = when (key) {
+                "elevation" -> elevation(props, units)
+                "name" -> name(props)
+                else -> props[key]?.asText()?.trim()
+            }
             if (!value.isNullOrEmpty()) {
                 filled++
                 sb.append(value)
@@ -313,6 +317,18 @@ object TextTemplate {
         }
         return if (placeholders > 0 && filled == 0) null else sb.toString().trim()
     }
+
+    /**
+     * The name a label shows for `{name}`, as the phone style's `LABEL_NAME` picks it: English
+     * (`name:en`, `name_en`), else the Latin transliteration (`name:latin`), else the local `name`.
+     * The phone adds a non-Latin local name on a second line where MapLibre can shape the script; the
+     * PNG renderer does not (its fonts would draw boxes for many scripts).
+     */
+    fun name(props: Map<String, io.github.jasondorjeshort.dystopo.mvt.Value>): String? =
+        NAME_KEYS.firstNotNullOfOrNull { k -> props[k]?.asText()?.trim()?.takeIf { it.isNotEmpty() } }
+
+    /** Property keys tried in order for `{name}`. */
+    val NAME_KEYS = listOf("name:en", "name_en", "name:latin", "name")
 
     /** The `ele` property (meters) in [units] ("ft" or "m"), rounded, with the unit symbol. */
     fun elevation(props: Map<String, io.github.jasondorjeshort.dystopo.mvt.Value>, units: String): String? {

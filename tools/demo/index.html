@@ -51,7 +51,7 @@
   <summary>Dystopo: Mount Rainier</summary>
   <label><input type="checkbox" id="hill" checked> Hillshade (from our DEM tiles)</label>
   <label><input type="checkbox" id="contours" checked> Contours, <span id="contour-units">feet</span> (computed live)</label>
-  <label id="units-row" hidden>Units <select id="unitsel"><option value="">by region</option><option value="ft">feet</option><option value="m">metres</option></select></label>
+  <label id="units-row">Units <select id="unitsel"><option value="ft">feet</option><option value="m">metres</option><option value="">reset to the region default</option></select></label>
   <label><input type="checkbox" id="osm" checked> Trails, roads, water, names (OSM)</label>
   <label>OSM archive <select id="osmsel"><option value="outdoors">outdoors profile</option><option value="openmaptiles">OpenMapTiles profile</option></select></label>
   <label>Text size <input type="range" id="text" min="0.8" max="2" step="0.1" value="1.3"></label>
@@ -81,6 +81,33 @@ if (!LIVE && osmMode === "outdoors" && osmParam !== "outdoors") {
   try { if (!(await fetch(base + "/out/rainier-outdoors.pmtiles", { method: "HEAD" })).ok) osmMode = "openmaptiles"; } catch (e) { osmMode = "openmaptiles"; }
 }
 const osmArchiveUrl = base + (osmMode === "outdoors" ? "/out/rainier-outdoors.pmtiles" : "/out/rainier-osm.pmtiles");
+// Units (docs/PLANNING.md > Units): a preference kept in localStorage (dystopo.units), seeded once by region while unset:
+// live mode asks the server for the default where the page opens (GET /live/units: feet in the US, metres elsewhere,
+// shared UnitRegions); pack mode shows the demo pack, Mount Rainier, which is in the US, so feet. After that only the
+// user changes it (the Units select); panning, or opening the page somewhere else, keeps it. ?units=ft|m overrides it for
+// one load without storing it (links, tools). Contour lines and labels, peak elevations and the scale bar follow it.
+// window.dystopoUnits says which units are shown and where they came from (url, preference, region, pack).
+const UNITS_KEY = "dystopo.units";
+const readUnits = () => { try { const v = localStorage.getItem(UNITS_KEY); return v === "ft" || v === "m" ? v : null; } catch (e) { return null; } };
+const writeUnits = v => { try { if (v) localStorage.setItem(UNITS_KEY, v); else localStorage.removeItem(UNITS_KEY); } catch (e) { /* private mode: this load only */ } };
+let UNITS = "ft", unitsSource = "pack";
+{
+  const unitsParam = new URLSearchParams(location.search).get("units");
+  if (unitsParam === "ft" || unitsParam === "m") { UNITS = unitsParam; unitsSource = "url"; }
+  else if (readUnits()) { UNITS = readUnits(); unitsSource = "preference"; }
+  else {
+    if (LIVE) {
+      const h = location.hash.slice(1).split("/").map(Number);
+      const [lat, lon] = h.length >= 3 && h.every(Number.isFinite) ? [h[1], h[2]] : [46.86, -121.76];
+      try { UNITS = (await (await fetch(base + "/live/units?lat=" + lat + "&lon=" + lon)).json()).units; unitsSource = "region"; } catch (e) { /* keep feet */ }
+    }
+    writeUnits(UNITS);
+  }
+}
+window.dystopoUnits = { units: UNITS, source: unitsSource, stored: readUnits() };
+document.getElementById("contour-units").textContent = UNITS === "m" ? "metres" : "feet";
+const ELE = UNITS === "m" ? ["round", ["to-number", ["get", "ele"], 0]] : ["round", ["*", ["to-number", ["get", "ele"], 0], 3.28084]];
+
 let demSource = null, contourTiles = null, demArchive = null; // pack mode only (null in live mode)
 if (!LIVE) {
 const protocol = new pmtiles.Protocol();
@@ -96,7 +123,7 @@ if (demMode === "pmtiles") {
 }
 document.getElementById("dem-mode").textContent = (demMode === "pmtiles" ? "DEM: out/rainier-dem.pmtiles. " : "DEM: XYZ directory out/rainier-best. ") + "OSM: " + osmArchiveUrl.replace(base + "/", "") + ".";
 
-// Contours are generated from the Terrarium tiles; thresholds are in feet (multiplier).
+// Contours are generated from the Terrarium tiles in the preferred units (multiplier and thresholds per unit).
 // maplibre-contour fetches tiles with fetch() in a worker, which cannot read a PMTiles archive, so in
 // pmtiles mode it runs on the main thread and gets its tiles from the archive through getTile.
 demSource = new mlcontour.DemSource({
@@ -172,8 +199,10 @@ demSource.manager.getTile = async (url, abortController) => {
 const fetchDem0 = demSource.manager.fetchDem.bind(demSource.manager);
 demSource.manager.fetchDem = (...a) => fetchDem0(...a).catch(e => { if (/Bad response: 404/.test(e.message)) return undefined; throw e; });
 contourTiles = demSource.contourProtocolUrl({
-  multiplier: 3.28084,
-  thresholds: { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
+  multiplier: UNITS === "m" ? 1 : 3.28084,
+  thresholds: UNITS === "m"
+    ? { 8: [250, 1000], 10: [100, 500], 11: [50, 250], 12: [20, 100], 13: [20, 100], 14: [10, 50], 15: [5, 25] }
+    : { 8: [1000, 5000], 10: [500, 2500], 11: [200, 1000], 12: [100, 500], 13: [80, 400], 14: [40, 200], 15: [20, 100] },
   elevationKey: "ele",
   levelKey: "level",
   contourLayer: "contours",
@@ -181,21 +210,6 @@ contourTiles = demSource.contourProtocolUrl({
 } // end pack mode
 if (LIVE) document.getElementById("hint").textContent = "Scroll to zoom, drag to pan. " + "Live: packs in out/ first (" + (LIVE.demPacks.length + LIVE.osmPacks.length) + " open), else DEM from the cloud sources and OSM from OpenFreeMap.";
 
-// Contour and elevation units ("ft" or "m"); contour labels and peak elevations always agree. Pack mode keeps the
-// pack's unit (its contours are generated in feet above). Live mode: ?units=ft|m, else the default where the view
-// opens (GET /live/units: feet in the US, metres elsewhere; shared UnitRegions).
-let UNITS = "ft";
-if (LIVE) {
-  const unitsParam = new URLSearchParams(location.search).get("units");
-  if (unitsParam === "ft" || unitsParam === "m") UNITS = unitsParam;
-  else {
-    const h = location.hash.slice(1).split("/").map(Number);
-    const [lat, lon] = h.length >= 3 && h.every(Number.isFinite) ? [h[1], h[2]] : [46.86, -121.76];
-    try { UNITS = (await (await fetch(base + "/live/units?lat=" + lat + "&lon=" + lon)).json()).units; } catch (e) { /* keep feet */ }
-  }
-}
-document.getElementById("contour-units").textContent = UNITS === "m" ? "metres" : "feet";
-const ELE = UNITS === "m" ? ["round", ["to-number", ["get", "ele"], 0]] : ["round", ["*", ["to-number", ["get", "ele"], 0], 3.28084]];
 // Label names (as MapLibreStyle.LABEL_NAME): English, else Latin transliteration, else the local name; a local name in
 // another script follows on a second line where MapLibre can shape that script (not Devanagari, for example).
 const NAME = ["let", "primary", ["coalesce", ["get", "name:en"], ["get", "name_en"], ["get", "name:latin"], ["get", "name"], ""],
@@ -374,7 +388,7 @@ map.on("styleimagemissing", e => {
   if (m && !map.hasImage(e.id)) map.addImage(e.id, markerImage(m), { pixelRatio: MARKER_RATIO });
 });
 map.addControl(new maplibregl.NavigationControl(), "top-right");
-map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
+map.addControl(new maplibregl.ScaleControl({ unit: UNITS === "m" ? "metric" : "imperial" }));
 
 const textLayers = ["contour-labels", "trail-names", "ridge-names", "poi-markers", "water-names", "peaks", "places"];
 const baseSizes = { "contour-labels": 13, "trail-names": 13, "ridge-names": 13, "poi-markers": 12, "water-names": 13, "peaks": 14, "places": 16 };
@@ -387,6 +401,16 @@ map.on("load", () => {
   sel.onchange = () => { const u = new URL(location.href); u.searchParams.set("osm", sel.value); location.href = u.href; };
   document.getElementById("hill").onchange = e => toggle(["hillshade"], e.target.checked);
   document.getElementById("contours").onchange = e => toggle(["contour-minor", "contour-index", "contour-labels"], e.target.checked);
+  // Units: a change is stored as the preference and reloads the page (contour tiles and labels are built per unit);
+  // the reset entry forgets it, so the next load seeds it again from the region.
+  const unitSel = document.getElementById("unitsel");
+  unitSel.value = UNITS;
+  unitSel.onchange = () => {
+    writeUnits(unitSel.value || null);
+    // Assigning the same URL with a #hash only scrolls; reload when nothing else changes.
+    const u = new URL(location.href); u.searchParams.delete("units");
+    if (u.href === location.href) location.reload(); else location.href = u.href;
+  };
   document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "trail-names", "water-names", "peaks", "places"], e.target.checked);
 });
 const status = document.getElementById("status");
@@ -395,11 +419,6 @@ if (LIVE) {
   document.querySelector("#panel summary").textContent = "Dystopo: live world";
   document.getElementById("osmsel").parentElement.style.display = "none";
   document.getElementById("live-tools").hidden = false;
-  // Units setting: by region (the default), feet or metres; a change reloads the page with ?units=.
-  const unitSel = document.getElementById("unitsel");
-  document.getElementById("units-row").hidden = false;
-  unitSel.value = new URLSearchParams(location.search).get("units") || "";
-  unitSel.onchange = () => { const u = new URL(location.href); if (unitSel.value) u.searchParams.set("units", unitSel.value); else u.searchParams.delete("units"); location.href = u.href; };
   // Attribution for exactly what the view shows (the server knows each tile's provenance), conservative until known.
   let credit = null, creditText = "";
   const creditView = html => {

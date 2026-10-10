@@ -285,4 +285,29 @@ class LiveTilesTest {
         assertNull(live.osm(15, 0, 0))
         assertTrue(File(dir, "cache/openfreemap/b1/12/655/1430.pbf").isFile)
     }
+
+    @Test
+    fun staleLiveDemCachesAreDeleted() {
+        val cache = File(dir, "prune-cache")
+        val old = File(cache, "live/best-v1/12/1/2.png").apply { parentFile.mkdirs(); writeBytes(ByteArray(100)) }
+        File(cache, "live/best-v1/12/1/3.png").writeBytes(ByteArray(50))
+        val current = File(cache, "live/${LiveTiles.CACHE_VERSION}/12/1/2.png").apply { parentFile.mkdirs(); writeBytes(ByteArray(10)) }
+        val other = File(cache, "live/notes").apply { mkdirs() }
+        assertEquals(listOf("best-v1"), LiveTiles.staleDemCaches(File(cache, "live")).map { it.name })
+        val live = LiveTiles(emptyList(), emptyList(), cacheRoot = cache, outDir = File(dir, "out"), threads = 1)
+        assertEquals(listOf("best-v1"), live.pruneStaleDemCaches().map { it.name })
+        val deadline = System.currentTimeMillis() + 10_000
+        while (File(cache, "live/best-v1").exists() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertFalse(old.exists())
+        assertFalse(File(cache, "live/best-v1").exists())
+        assertTrue(current.isFile)
+        assertTrue(other.isDirectory)
+        while (System.currentTimeMillis() < deadline) {
+            val p = live.stats()["staleCachePrune"] as Map<*, *>
+            if ((p["best-v1"] as? Map<*, *>)?.get("status") == "deleted") break
+            Thread.sleep(10)
+        }
+        assertEquals(mapOf("status" to "deleted", "files" to 2L, "bytes" to 150L), (live.stats()["staleCachePrune"] as Map<*, *>)["best-v1"])
+        assertTrue(LiveTiles.staleDemCaches(File(cache, "live")).isEmpty())
+    }
 }

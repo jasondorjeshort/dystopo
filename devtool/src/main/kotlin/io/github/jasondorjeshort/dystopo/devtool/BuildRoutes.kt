@@ -40,6 +40,10 @@ import kotlin.math.floor
  * - `DELETE /build/{id}` or `POST /build/{id}/cancel`: stops the job; no new tile is requested after
  *   that (the few in flight finish into the cache), partial files are deleted.
  *
+ * A box across the antimeridian (west > east, e.g. `bbox=179.2,-17.2,-179.8,-16.4`) is split at 180°
+ * into two jobs, `<name>-e` (west..180) and `<name>-w` (-180..east), each a normal rectangular pack
+ * pair; the 202 answer is the first job, and both carry `antimeridian` with the other's id.
+ *
  * Files are written as `*.building` and renamed when complete, so `/out/` never serves half a pack;
  * a finished pack is also handed to [LiveTiles.addPack], so the viewer then shows it as `pack`.
  * Limits (constructor, or environment): [maxTiles] per job (`DYSTOPO_BUILD_MAX_TILES`, default
@@ -100,6 +104,8 @@ class BuildRoutes(
         val files = java.util.concurrent.CopyOnWriteArrayList<Map<String, Any?>>()
         @Volatile var demProvenance: List<String> = emptyList()
         @Volatile var osmProvenance: List<String> = emptyList()
+        /** For half of a box split at the antimeridian: which half and the other job's id. */
+        @Volatile var antimeridian: Map<String, String>? = null
 
         val active: Boolean get() = status == Status.QUEUED || status == Status.RUNNING
 
@@ -120,7 +126,7 @@ class BuildRoutes(
                 "files" to files.toList(),
                 "provenance" to mapOf("dem" to demProvenance, "osm" to osmProvenance),
                 "error" to error,
-            )
+            ).also { m -> antimeridian?.let { m["antimeridian"] = it } }
         }
     }
 
@@ -137,33 +143,49 @@ class BuildRoutes(
         "demZooms" to listOf(LiveTiles.LIVE_MIN_ZOOM, LiveTiles.LIVE_MAX_ZOOM), "osmMaxZoom" to LiveTiles.OSM_MAX_ZOOM,
     )
 
-    /** Validates a request and queues the job; throws [Refused] with the reason when it can't. */
+    /**
+     * Validates a request and queues the job; throws [Refused] with the reason when it can't. A box
+     * across the antimeridian queues two jobs (see the class comment) and returns the first.
+     */
     fun submit(params: Map<String, String>): Job {
         val name = params["name"]?.trim().orEmpty()
         if (!PackNames.isValidName(name)) throw Refused(400, "name must be 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit (got '$name')")
         val b = params["bbox"]?.split(',')?.map { it.trim().toDoubleOrNull() }
         if (b == null || b.size != 4 || b.any { it == null }) throw Refused(400, "bbox must be west,south,east,north in degrees")
         val (w, s, e, n) = b.map { it!! }
-        if (w < -180 || e > 180 || s < -WebMercator.MAX_LAT || n > WebMercator.MAX_LAT || w >= e || s >= n) {
-            throw Refused(400, "bbox $w,$s,$e,$n is not a box: need -180 <= west < east <= 180 and -85.05 <= south < north <= 85.05 (boxes across the antimeridian are not supported)")
+        if (w < -180 || w > 180 || e < -180 || e > 180 || s < -WebMercator.MAX_LAT || n > WebMercator.MAX_LAT || w == e || s >= n) {
+            throw Refused(400, "bbox $w,$s,$e,$n is not a box: need west != east within -180..180 (west > east crosses the antimeridian) and -85.05 <= south < north <= 85.05")
         }
-        if (e - w > maxSpanDegrees || n - s > maxSpanDegrees) {
-            throw Refused(413, "box is ${fmt(e - w)} x ${fmt(n - s)} degrees; the limit is $maxSpanDegrees degrees per side (DYSTOPO_BUILD_MAX_SPAN_DEG): pick a smaller box")
+        val parts = antimeridianParts(name, w, s, e, n)
+        val width = if (w < e) e - w else (180 - w) + (e + 180)
+        if (width > maxSpanDegrees || n - s > maxSpanDegrees) {
+            throw Refused(413, "box is ${fmt(width)} x ${fmt(n - s)} degrees; the limit is $maxSpanDegrees degrees per side (DYSTOPO_BUILD_MAX_SPAN_DEG): pick a smaller box")
+        }
+        for ((partName, _) in parts) {
+            if (!PackNames.isValidName(partName)) throw Refused(400, "name '$name' is too long for the antimeridian halves ('$partName'): use at most 62 characters")
         }
         val minZoom = params["minZoom"]?.let { it.toIntOrNull() ?: throw Refused(400, "minZoom must be an integer") } ?: 8
         val maxZoom = params["maxZoom"]?.let { it.toIntOrNull() ?: throw Refused(400, "maxZoom must be an integer") } ?: 13
-        if (minZoom < 0 || minZoom > maxZoom || maxZoom > LiveTiles.LIVE_MAX_ZOOM) {
+        if (maxZoom > LiveTiles.LIVE_MAX_ZOOM) {
+            throw Refused(
+                413,
+                "maxZoom=$maxZoom is past z${LiveTiles.LIVE_MAX_ZOOM}, the deepest zoom of the live DEM; the app and MapLibre overzoom " +
+                    "z${LiveTiles.LIVE_MAX_ZOOM} tiles, so use maxZoom=${LiveTiles.LIVE_MAX_ZOOM}",
+            )
+        }
+        if (minZoom < 0 || minZoom > maxZoom) {
             throw Refused(400, "need 0 <= minZoom <= maxZoom <= ${LiveTiles.LIVE_MAX_ZOOM} (got $minZoom..$maxZoom)")
         }
         if (maxZoom < LiveTiles.LIVE_MIN_ZOOM) throw Refused(400, "maxZoom must be at least ${LiveTiles.LIVE_MIN_ZOOM}: the live DEM starts there")
-        val box = BoundingBox(w, s, e, n)
+        val boxes = parts.map { it.second }
         val demZooms = maxOf(minZoom, LiveTiles.LIVE_MIN_ZOOM)..maxZoom
         val osmZooms = (minZoom..minOf(maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
-        val tiles = demZooms.sumOf { countTiles(box, it) } + (osmZooms?.sumOf { countTiles(box, it) } ?: 0)
+        fun tilesUpTo(z: Int) = boxes.sumOf { box ->
+            (maxOf(minZoom, LiveTiles.LIVE_MIN_ZOOM)..z).sumOf { countTiles(box, it) } + (minZoom..minOf(z, LiveTiles.OSM_MAX_ZOOM)).sumOf { countTiles(box, it) }
+        }
+        val tiles = tilesUpTo(maxZoom)
         if (tiles > maxTiles) {
-            val fits = (maxZoom downTo minZoom).firstOrNull { z ->
-                (maxOf(minZoom, LiveTiles.LIVE_MIN_ZOOM)..z).sumOf { countTiles(box, it) } + (minZoom..minOf(z, LiveTiles.OSM_MAX_ZOOM)).sumOf { countTiles(box, it) } <= maxTiles
-            }
+            val fits = (maxZoom downTo minZoom).firstOrNull { z -> tilesUpTo(z) <= maxTiles }
             throw Refused(
                 413,
                 "box needs $tiles tiles at z$minZoom-$maxZoom (DEM and OSM together); the limit is $maxTiles per job (DYSTOPO_BUILD_MAX_TILES): " +
@@ -172,15 +194,23 @@ class BuildRoutes(
         }
         val overwrite = params["overwrite"].let { it == "1" || it == "true" }
         synchronized(jobs) {
-            if (jobs.values.any { it.active && it.name == name }) throw Refused(409, "a build of '$name' is already queued or running")
-            val existing = PackRole.entries.map { File(outDir, PackNames.fileName(name, it)) }.filter { it.exists() }
-            if (existing.isNotEmpty() && !overwrite) throw Refused(409, "${existing.joinToString { it.name }} already exist(s) in ${outDir.path}; add overwrite=1 or pick another name")
+            for ((partName, _) in parts) {
+                if (jobs.values.any { it.active && it.name == partName }) throw Refused(409, "a build of '$partName' is already queued or running")
+                val existing = PackRole.entries.map { File(outDir, PackNames.fileName(partName, it)) }.filter { it.exists() }
+                if (existing.isNotEmpty() && !overwrite) throw Refused(409, "${existing.joinToString { it.name }} already exist(s) in ${outDir.path}; add overwrite=1 or pick another name")
+            }
             val active = jobs.values.count { it.active }
-            if (active >= concurrentBuilds + maxQueued) throw Refused(429, "$active builds are queued or running (limit ${concurrentBuilds + maxQueued}); try again later")
-            val job = Job("b${nextId.getAndIncrement()}", name, box, minZoom, maxZoom, demZooms, osmZooms, overwrite)
-            jobs[job.id] = job
-            executor.execute { run(job) }
-            return job
+            if (active + parts.size > concurrentBuilds + maxQueued) throw Refused(429, "$active builds are queued or running (limit ${concurrentBuilds + maxQueued}); try again later")
+            val made = parts.map { (partName, box) -> Job("b${nextId.getAndIncrement()}", partName, box, minZoom, maxZoom, demZooms, osmZooms, overwrite) }
+            if (made.size == 2) {
+                made[0].antimeridian = mapOf("part" to "east", "other" to made[1].id)
+                made[1].antimeridian = mapOf("part" to "west", "other" to made[0].id)
+            }
+            for (job in made) {
+                jobs[job.id] = job
+                executor.execute { run(job) }
+            }
+            return made.first()
         }
     }
 
@@ -265,6 +295,7 @@ class BuildRoutes(
                 name = "${job.name}-dem", tileSize = 256, bounds = TilesCommand.geoJsonBounds(job.box),
                 minzoom = writtenZooms.first(), maxzoom = writtenZooms.last(), source = "best",
                 attribution = registry.attribution(ids), attributionHtml = registry.attributionHtml(ids), provenance = ids,
+                license = TilesCommand.licenseExpression(ids, registry),
             )
             // The header's zooms are the ones that have tiles (a viewer asks nothing outside them).
             w.finish(meta, job.box, writtenZooms.first(), writtenZooms.last())
@@ -394,6 +425,14 @@ class BuildRoutes(
         private fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
 
         private fun fmt(d: Double) = "%.3f".format(java.util.Locale.ROOT, d)
+
+        /**
+         * The pack name and box of each job for a request box: one, or for a box across the antimeridian
+         * (west > east) two, `<name>-e` from west to 180 and `<name>-w` from -180 to east.
+         */
+        fun antimeridianParts(name: String, w: Double, s: Double, e: Double, n: Double): List<Pair<String, BoundingBox>> =
+            if (w < e) listOf(name to BoundingBox(w, s, e, n))
+            else listOf("$name-e" to BoundingBox(w, s, 180.0, n), "$name-w" to BoundingBox(-180.0, s, e, n))
 
         /** Tiles of zoom [z] covering [box] (as [WebMercator.tilesCovering] lists them), without listing them. */
         fun countTiles(box: BoundingBox, z: Int): Int {

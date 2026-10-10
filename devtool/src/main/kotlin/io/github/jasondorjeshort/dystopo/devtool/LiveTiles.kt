@@ -161,6 +161,32 @@ class LiveTiles(
         provenanceOf.clear()
     }
     private val demCacheDir = File(cacheRoot, "live/$CACHE_VERSION")
+    /** Stale live DEM cache directories deleted (or being deleted) by [pruneStaleDemCaches]: name to files and bytes removed. */
+    private val pruned = LinkedHashMap<String, Map<String, Any?>>()
+
+    /**
+     * Deletes the live DEM caches of earlier [CACHE_VERSION]s (`live/best-v1`, ...) on a background
+     * thread: nothing reads them any more, and they hold gigabytes after a while. Returns the
+     * directories found; progress and totals appear under `staleCachePrune` in `/stats`.
+     */
+    fun pruneStaleDemCaches(): List<File> {
+        val stale = staleDemCaches(File(cacheRoot, "live"))
+        if (stale.isEmpty()) return stale
+        Thread({
+            for (dir in stale) {
+                synchronized(pruned) { pruned[dir.name] = mapOf("status" to "deleting") }
+                var files = 0L
+                var bytes = 0L
+                dir.walkBottomUp().forEach { f ->
+                    val isFile = f.isFile
+                    val n = if (isFile) f.length() else 0L
+                    if (f.delete() && isFile) { files++; bytes += n }
+                }
+                synchronized(pruned) { pruned[dir.name] = mapOf("status" to if (dir.exists()) "partial" else "deleted", "files" to files, "bytes" to bytes) }
+            }
+        }, "live-cache-prune").apply { isDaemon = true }.start()
+        return stale
+    }
     private val pool: ExecutorService = Executors.newFixedThreadPool(threads) { r -> Thread(r, "live-dem").apply { isDaemon = true } }
     private val ofmPool: ExecutorService = Executors.newCachedThreadPool { r -> Thread(r, "live-ofm").apply { isDaemon = true } }
     private val demInflight = ConcurrentHashMap<TileId, CompletableFuture<Tile>>()
@@ -493,12 +519,14 @@ class LiveTiles(
             }
         }
         server.start()
+        val stale = pruneStaleDemCaches() // only once the port is ours: a second server that fails to bind touches nothing
         println(
             JsonWriter.write(
                 mapOf(
                     "url" to "$base/", "live" to true, "phone" to "$base/phone", "stats" to "$base/stats",
                     "demPacks" to dems.map { it.file.path }, "osmPacks" to osms.map { it.file.path },
                     "cache" to cacheRoot.path, "glyphs" to glyphDir.path,
+                    "staleCachesDeleting" to stale.map { it.name },
                 ),
             ),
         )
@@ -598,6 +626,7 @@ class LiveTiles(
                 "build" to ofmBuild,
             ),
             "errors" to errors.get(),
+            "staleCachePrune" to synchronized(pruned) { pruned.toMap() },
             "inflight" to mapOf("dem" to demInflight.size, "osm" to osmInflight.size),
             "recent" to recent.toList(),
             "demPacks" to dems.map { it.describe() },
@@ -631,6 +660,12 @@ class LiveTiles(
         const val OSM_MAX_ZOOM = 14
         /** Bump when the live DEM rendering changes, so old cached tiles are not served. v2: one overview level and blend band per zoom. */
         const val CACHE_VERSION = "best-v2"
+
+        /** Live DEM cache directories under [liveDir] from other versions than [CACHE_VERSION] (`best-v<n>`). */
+        fun staleDemCaches(liveDir: File): List<File> =
+            liveDir.listFiles { f -> f.isDirectory && f.name != CACHE_VERSION && STALE_CACHE_NAME.matches(f.name) }?.sortedBy { it.name } ?: emptyList()
+
+        private val STALE_CACHE_NAME = Regex("best-v[0-9]+")
         const val OFM_TILEJSON = "https://tiles.openfreemap.org/planet"
         /** Registry ids credited for OpenFreeMap tiles: the host, the schema and the data. */
         val OSM_REGISTRY_IDS = listOf("osm", "openmaptiles", "openfreemap")

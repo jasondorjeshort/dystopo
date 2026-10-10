@@ -113,4 +113,33 @@ class OsmStyleTest {
         assertEquals(emptyList(), TextTemplate.render("{name}", emptyMap(), "m"))
         assertEquals(listOf("Trail 12"), TextTemplate.render("Trail {ref}", mapOf("ref" to Value.IntValue(12)), "m"))
     }
+
+    @Test
+    fun cliffTicksKeepGrowingPastTheirLastStop() {
+        val cliffs = DefaultOsmStyle.style.layers.filterIsInstance<StyleLayer.Line>().first { it.id == "cliff" }
+        val t = cliffs.ticks!!
+        // Unchanged up to the deepest stop (z17), where the phone style's stops also end.
+        for (z in listOf(12.0, 15.0, 17.0)) {
+            assertEquals(t.length.at(z), t.lengthAt(z))
+            assertEquals(t.spacing.at(z), t.spacingAt(z))
+            assertEquals(t.width.at(z), t.widthAt(z))
+        }
+        // Then x sqrt(2) per zoom, all three together, until z20.
+        assertEquals(t.length.at(17.0) * 2, t.lengthAt(19.0), 1e-9)
+        assertEquals(t.spacing.at(17.0) * 2, t.spacingAt(19.0), 1e-9)
+        assertEquals(t.width.at(17.0) * 2, t.widthAt(19.0), 1e-9)
+        assertTrue(t.lengthAt(18.0) > t.lengthAt(17.0) * 1.4)
+        assertEquals(t.lengthAt(20.0), t.lengthAt(22.0))
+    }
+
+    @Test
+    fun nameTemplatePrefersEnglishThenLatin() {
+        // As MapLibreStyle.LABEL_NAME: name:en, name_en, name:latin, then name (OpenMapTiles fields).
+        val everest = mapOf("name" to s("\u0938\u0917\u0930\u092e\u093e\u0925\u093e"), "name:en" to s("Mount Everest"), "name:latin" to s("Sagarmatha"), "ele" to Value.SintValue(8849))
+        assertEquals(listOf("Mount Everest", "8849 m"), TextTemplate.render("{name}\n{elevation}", everest, "m"))
+        assertEquals("Mount Everest", TextTemplate.name(mapOf("name_en" to s("Mount Everest"), "name" to s("x"))))
+        assertEquals("Sagarmatha", TextTemplate.name(mapOf("name:latin" to s("Sagarmatha"), "name" to s("\u0938\u0917\u0930"), "name:en" to s(" "))))
+        assertEquals("Mont Blanc", TextTemplate.name(mapOf("name" to s("Mont Blanc"))))
+        assertEquals(null, TextTemplate.name(emptyMap()))
+    }
 }

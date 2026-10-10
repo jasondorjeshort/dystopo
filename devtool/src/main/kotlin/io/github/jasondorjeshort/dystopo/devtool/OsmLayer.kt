@@ -274,8 +274,8 @@ class OsmLayer private constructor(
 
     /** Tick hatching on each line; [TickSide.DOWNHILL] asks the DEM which side is lower, per segment. */
     private fun drawTicks(g2: Graphics2D, layer: SceneLayer.Line, t: Ticks, zoom: Double) {
-        val length = t.length.at(zoom)
-        val spacing = t.spacing.at(zoom)
+        val length = t.lengthAt(zoom)
+        val spacing = t.spacingAt(zoom)
         val ticks = Path2D.Double()
         for (line in layer.lines) {
             // Raw cliff ways zig-zag at the pixel scale; ticks follow a lightly simplified copy.
@@ -295,7 +295,7 @@ class OsmLayer private constructor(
                 ticks.lineTo(seg[2], seg[3])
             }
         }
-        g2.stroke = BasicStroke((t.width.at(zoom) * layer.widthScale).toFloat(), BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER)
+        g2.stroke = BasicStroke((t.widthAt(zoom) * layer.widthScale).toFloat(), BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER)
         g2.draw(ticks)
     }
 

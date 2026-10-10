@@ -91,6 +91,8 @@ class BuildRoutesTest {
         val demMeta = dem.metadata()
         assertEquals(listOf("copernicus", "egm2008"), demMeta["provenance"])
         assertEquals("best", demMeta["source"])
+        // Licence of the data actually in the tiles, from the registry (T37 follow-up).
+        assertEquals("LicenseRef-Copernicus-DEM AND LicenseRef-US-Government-Public-Domain", demMeta["license"])
 
         val osm = PmtilesReader.open(FileRangeSource(File(out, "mb-outdoors.pmtiles")), Gzip.decompressors)
         assertEquals(TileType.MVT, osm.header.tileType)
@@ -128,8 +130,13 @@ class BuildRoutesTest {
         fun refused(vararg p: Pair<String, String>) = assertFailsWith<BuildRoutes.Refused> { builds.submit(mapOf(*p)) }
         assertEquals(400, refused("name" to "../x", "bbox" to bbox).status)
         assertEquals(400, refused("name" to "a", "bbox" to "1,2,3").status)
-        assertEquals(400, refused("name" to "a", "bbox" to "7,46,6,47").status)
-        assertEquals(400, refused("name" to "a", "bbox" to bbox, "maxZoom" to "16").status)
+        assertEquals(400, refused("name" to "a", "bbox" to "7,46,7,47").status)
+        assertEquals(400, refused("name" to "a", "bbox" to "-181,46,7,47").status)
+        // West > east crosses the antimeridian; this one would be 359 degrees wide.
+        assertEquals(413, refused("name" to "a", "bbox" to "7,46,6,47").status)
+        val deep = refused("name" to "a", "bbox" to bbox, "maxZoom" to "16")
+        assertEquals(413, deep.status)
+        assertTrue(deep.message!!.contains("use maxZoom=15"), deep.message)
         assertEquals(400, refused("name" to "a", "bbox" to bbox, "minZoom" to "9", "maxZoom" to "8").status)
         val span = refused("name" to "a", "bbox" to "6,45,7.5,46")
         assertEquals(413, span.status)
@@ -143,6 +150,38 @@ class BuildRoutesTest {
     @Test
     fun countsTilesLikeTilesCovering() {
         for (z in 0..15) assertEquals(WebMercator.tilesCovering(box, z).size, BuildRoutes.countTiles(box, z))
+        for ((_, half) in BuildRoutes.antimeridianParts("fj", 179.2, -17.2, -179.8, -16.4)) {
+            for (z in 0..15) assertEquals(WebMercator.tilesCovering(half, z).size, BuildRoutes.countTiles(half, z))
+        }
+    }
+
+    @Test
+    fun antimeridianBoxIsSplitIntoTwoPacks() {
+        val builds = BuildRoutes(live(), out)
+        // Taveuni and Vanua Levu (Fiji) straddle 180 degrees.
+        val first = builds.submit(mapOf("name" to "fj", "bbox" to "179.2,-17.2,-179.8,-16.4", "minZoom" to "8", "maxZoom" to "10"))
+        val otherId = first.antimeridian!!["other"]!!
+        assertEquals("east", first.antimeridian!!["part"])
+        val east = await(builds, first.id)
+        val west = await(builds, otherId)
+        assertEquals(BuildRoutes.Status.DONE, east.status, east.json().toString())
+        assertEquals(BuildRoutes.Status.DONE, west.status, west.json().toString())
+        assertEquals("fj-e", east.name)
+        assertEquals("fj-w", west.name)
+        assertEquals(mapOf("part" to "west", "other" to east.id), west.json()["antimeridian"])
+        for ((name, w, e) in listOf(Triple("fj-e", 179.2, 180.0), Triple("fj-w", -180.0, -179.8))) {
+            for (role in listOf("dem", "outdoors")) {
+                val h = PmtilesReader.open(FileRangeSource(File(out, "$name-$role.pmtiles")), Gzip.decompressors).header
+                assertEquals(w, h.minLon, 1e-6, "$name-$role")
+                assertEquals(e, h.maxLon, 1e-6, "$name-$role")
+                assertTrue(h.minLon < h.maxLon)
+            }
+        }
+        val halves = BuildRoutes.antimeridianParts("fj", 179.2, -17.2, -179.8, -16.4).map { it.second }
+        assertEquals((8..10).sumOf { z -> halves.sumOf { WebMercator.tilesCovering(it, z).size } }, east.osm.total + west.osm.total)
+        // The span limit counts the box across 180, not 359 degrees.
+        val narrow = BuildRoutes(live(), out, maxSpanDegrees = 0.5)
+        assertEquals(413, assertFailsWith<BuildRoutes.Refused> { narrow.submit(mapOf("name" to "fk", "bbox" to "179.8,-17,-179.6,-16.9")) }.status)
     }
 
     @Test

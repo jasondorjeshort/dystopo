@@ -1,6 +1,10 @@
-# Dystopo demo tour: public Mount Rainier views. Run:
-#   python -I tools/demo-check.py --url http://localhost:8765/tools/demo/ --views-file tools/demo-tour.txt --out out/tour.png
-# z/lat/lon:label[|WxH][|req=layer+layer]   (default OSM archive: outdoors profile; add ?osm=openmaptiles to the --url for the other)
+# Dystopo demo tour: public Mount Rainier views. One file, two targets (both must pass):
+#   static demo:  python -I tools/demo-server.py 8765, then
+#                 python -I tools/demo-check.py --url http://localhost:8765/tools/demo/ --views-file tools/demo-tour.txt --out out/tour.png
+#   phone style:  ./gradlew :devtool:run --args="serve --port 8687" (pack mode, out/rainier-*.pmtiles), then
+#                 python -I tools/demo-check.py --url http://localhost:8687/ --views-file tools/demo-tour.txt --out out/serve-tour.png
+# z/lat/lon:label[|WxH][|req=role+role]   req= takes roles (trails, poi-markers, cliffs, water; see ROLES in demo-check.py)
+# that map to each style's layer ids. Default OSM archive: outdoors profile; add ?osm=openmaptiles to the static --url for the other.
 9/46.85/-121.72:region-z9
 10/46.85/-121.72:region-z10
 12/46.75/-121.81:longmire

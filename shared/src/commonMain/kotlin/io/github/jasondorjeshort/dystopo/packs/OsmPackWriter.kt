@@ -125,8 +125,27 @@ class OsmPackWriter(
 
         fun metadataJson(meta: OsmPackMetadata): String = MiniJson.encode(metadata(meta))
 
-        /** The `vector_layers` list of a TileJSON document (empty when it has none). */
-        fun vectorLayers(tileJson: Map<String, Any?>): List<Any?> = (tileJson["vector_layers"] as? List<*>)?.toList() ?: emptyList()
+        /**
+         * The `vector_layers` list of a TileJSON document (empty when it has none), trimmed to what a
+         * viewer reads: each layer's `id`, `minzoom`, `maxzoom` and `fields`, without descriptions and
+         * without the per-language name fields (`name:de`, `name_de`, ...) except [KEPT_NAME_FIELDS].
+         * OpenFreeMap's planet list is 18.7 KB, almost all of it name languages; trimmed it is 5.3 KB.
+         */
+        fun vectorLayers(tileJson: Map<String, Any?>): List<Any?> = (tileJson["vector_layers"] as? List<*>)?.mapNotNull { layer ->
+            val l = layer as? Map<*, *> ?: return@mapNotNull null
+            val id = l["id"] as? String ?: return@mapNotNull null
+            linkedMapOf<String, Any?>("id" to id).apply {
+                l["minzoom"]?.let { put("minzoom", it) }
+                l["maxzoom"]?.let { put("maxzoom", it) }
+                put("fields", (l["fields"] as? Map<*, *>).orEmpty().entries.filter { (k, _) -> k is String && keepField(k) }.associate { (k, v) -> k as String to v })
+            }
+        } ?: emptyList()
+
+        /** Name fields kept in [vectorLayers]: the ones our styles and search read. */
+        val KEPT_NAME_FIELDS = setOf("name", "name:en", "name_en", "name:latin", "name:nonlatin", "name_int")
+
+        private fun keepField(key: String) =
+            key in KEPT_NAME_FIELDS || !(key.startsWith("name:") || key.startsWith("name_"))
 
         private fun fmt(d: Double): String {
             val r = round(d * 1e6) / 1e6

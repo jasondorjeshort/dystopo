@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
 import io.github.jasondorjeshort.dystopo.model.Waypoint
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,6 +34,14 @@ class GpxOverlayTest {
         assertEquals(0, s.pointsOutside)
         assertEquals(4, s.arrows) // 186 px of line, one every 50 px from 25 px
         assertTrue(s.profileSamples > 100)
+        // Default units: metres and kilometres (100 to 200 m over 1.8 km).
+        assertEquals("m", s.profileUnits)
+        assertEquals(listOf("200 m", "100 m", "0 km", "1 km"), s.profileLabels)
+        // The map in feet: the profile in feet and miles (T34 follow-up: it used to stay in metres).
+        val feet = GpxOverlay(window, 1.4, 50.0, ContourUnits.FEET)
+        feet.draw(map, doc, 100)
+        assertEquals("ft", feet.stats.profileUnits)
+        assertEquals(listOf("656 ft", "328 ft", "0 mi", "1 mi"), feet.stats.profileLabels)
 
         // On the line between two arrows (arrows at 25, 75, ... px from the start): the track violet.
         val y = overlay.y(0.0).toInt()

@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.style
 import io.github.jasondorjeshort.dystopo.mvt.GeometryType
 import io.github.jasondorjeshort.dystopo.mvt.Value
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
+import kotlin.math.pow
 
 /**
  * A small declarative map style for OpenMapTiles-schema vector tiles. It mirrors the MapLibre
@@ -184,7 +185,8 @@ sealed class StyleLayer {
 
     /**
      * Labels, optionally with a marker. [text] is a template: `{key}` inserts a property, `{elevation}`
-     * inserts the `ele` property (meters) in the map's units with the unit symbol, and `\n` splits
+     * inserts the `ele` property (meters) in the map's units with the unit symbol, `{name}` the
+     * English or Latin name when the feature has one ([TextTemplate.name]), and `\n` splits
      * lines. A line whose placeholders are all missing is dropped; a label with no lines left is not drawn.
      * [size] is the text height in pixels at text scale 1 (the user's text scale multiplies it, the
      * marker size and [haloWidth], the halo's reach outside the glyphs). [spacing] is the minimum
@@ -241,8 +243,34 @@ enum class TickSide {
     DOWNHILL,
 }
 
-/** Tick hatching along a line: a tick every [spacing] pixels, [length] long and [width] wide, on [side]. */
-data class Ticks(val spacing: ZoomValue, val length: ZoomValue, val width: ZoomValue, val side: TickSide)
+/**
+ * Tick hatching along a line: a tick every [spacing] pixels, [length] long and [width] wide, on [side].
+ * Past the deepest stop the renderer keeps the ticks growing ([growth]), so they do not shrink to
+ * specks on the ground at z18 and beyond; spacing, length and width scale together, keeping the
+ * pattern's proportions.
+ */
+data class Ticks(val spacing: ZoomValue, val length: ZoomValue, val width: ZoomValue, val side: TickSide) {
+    fun spacingAt(zoom: Double): Double = spacing.at(zoom) * growth(zoom)
+
+    fun lengthAt(zoom: Double): Double = length.at(zoom) * growth(zoom)
+
+    fun widthAt(zoom: Double): Double = width.at(zoom) * growth(zoom)
+
+    /**
+     * 1 up to the deepest stop of [spacing], [length] and [width]; then x√2 per zoom (half the map's
+     * own doubling, so ticks grow on screen but still shrink on the ground) up to [MAX_GROWTH_ZOOM].
+     */
+    fun growth(zoom: Double): Double {
+        val last = maxOf(spacing.stops.last().first, length.stops.last().first, width.stops.last().first)
+        val dz = minOf(zoom, MAX_GROWTH_ZOOM) - last
+        return if (dz <= 0) 1.0 else 2.0.pow(dz / 2)
+    }
+
+    companion object {
+        /** Ticks stop growing here (deeper zooms are overzoomed data anyway). */
+        const val MAX_GROWTH_ZOOM = 20.0
+    }
+}
 
 /** An sRGB color with alpha, each channel 0..255. */
 data class StyleColor(val r: Int, val g: Int, val b: Int, val a: Int = 255) {

@@ -12,6 +12,14 @@ A view is `z/lat/lon` with an optional `:label` and optional `|`-separated optio
 that view (e.g. `|390x844` for a phone) and `req=a+b` names layers that must have rendered features there
 (e.g. `|req=poi-markers+cliffs`). --views-file has one view per line (`#` comments).
 
+One tour file serves both pages: the static demo (tools/demo/index.html) and the phone style that `devtool serve`
+draws (shared MapLibreStyle; also live mode's /phone). Their layer ids differ, so a `req=` name is a role (ROLES
+below: trails, poi-markers, cliffs, water), met when any of the role's layers present in the page's style has
+features; a name that is not a role is a layer id. A role none of whose layers exists in the style fails the view
+(a renamed layer must not pass silently). In pack mode a 404 for a tile route (`/dem/`, `/osm/`, `/contours/` as
+`devtool serve` answers outside its pack, or `/out/...png` on the static server) is a tile outside the pack, counted
+under missingTiles; in live mode every tile must exist, so there it is a failed request.
+
 Live world mode (`devtool serve --live`, then --url http://localhost:8687/?live=1): every view counts as covered,
 and besides the contour layers it must show hillshade (DEM tiles from some source) and OSM base layers (any layer
 of the osm source with features). `|src=live-copernicus` requires the view's DEM tiles to come mostly from that
@@ -28,6 +36,7 @@ fail on errors.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -36,8 +45,35 @@ from playwright.sync_api import sync_playwright
 # Generated demo coverage (see the generation commands at the top of tools/demo/index.html).
 REGION = (-122.05, 46.60, -121.40, 47.10)   # z8-12
 CORE = (-121.86, 46.78, -121.66, 46.93)     # z13-14
-# Layers that must have rendered features anywhere inside coverage.
+# Layers that must have rendered features anywhere inside coverage (same ids in both styles).
 REQUIRED_LAYERS = ("contour-minor", "contour-index")
+# req= roles: the static demo's layer ids first, then the phone style's (DefaultOsmStyle ids, via MapLibreStyle).
+ROLES = {
+    "trails": ["trails", "trails-mountain", "trails-alpine", "trail", "trail-mountain", "trail-demanding", "trail-alpine"],
+    "poi-markers": ["poi-markers", "huts", "trailheads", "campsites", "shelters", "waterfalls", "viewpoints", "springs",
+                    "caves", "parking", "outdoor-pois"],
+    "cliffs": ["cliffs", "cliff"],
+    "water": ["water"],
+}
+# A tile request: what a 404 means depends on the mode (see the module docstring).
+TILE_URL = re.compile(r"/(dem|osm|contours)/\d+/\d+/\d+\.(png|pbf)(\?|$)")
+
+
+def missing_roles(req, layers):
+    """The req= names not met by `layers` (layer id -> rendered feature count), each with the reason."""
+    out = []
+    for name in req:
+        ids = [l for l in ROLES.get(name, [name]) if l in layers]
+        if not ids:
+            out.append(name + " (no such layer in this style)")
+        elif sum(layers[l] for l in ids) == 0:
+            out.append(name)
+    return out
+
+
+def role_count(role, layers):
+    """Rendered features of a role's layers (for the summary table)."""
+    return sum(layers.get(l, 0) for l in ROLES.get(role, [role]))
 
 
 def in_box(box, lat, lon):
@@ -131,6 +167,8 @@ def main() -> int:
         def on_response(r):
             if r.status == 404 and r.url.endswith(".png") and "/out/" in r.url:
                 cur["missingTiles"] += 1
+            elif r.status == 404 and TILE_URL.search(r.url):
+                cur["tile404"].append({"url": r.url, "status": r.status})
             elif r.status >= 400:
                 cur["failedRequests"].append({"url": r.url, "status": r.status})
 
@@ -146,7 +184,7 @@ def main() -> int:
 
         for i, v in enumerate(views):
             url = args.url + ("#" + v["view"] if v["view"] else "")
-            report = {"url": url, "console": [], "pageErrors": [], "failedRequests": [], "idle": False, "map": None, "missingTiles": 0}
+            report = {"url": url, "console": [], "pageErrors": [], "failedRequests": [], "idle": False, "map": None, "missingTiles": 0, "tile404": []}
             if tour:
                 report["index"] = i
                 report["label"] = v["label"]
@@ -189,6 +227,14 @@ def main() -> int:
                 report["sources"] = page.evaluate("() => window.dystopoLiveSources()")
                 osm_ids = page.evaluate("() => map.getStyle().layers.filter(l => l.source === 'osm').map(l => l.id)")
                 report["osmFeatures"] = sum(report["layers"].get(l, 0) for l in osm_ids)
+            # Tile routes answering 404: outside the pack in pack mode; in live mode every tile must exist.
+            if live:
+                report["failedRequests"] += report["tile404"]
+            else:
+                report["missingTiles"] += len(report["tile404"])
+            del report["tile404"]
+            if report["idle"]:
+                report["units"] = page.evaluate("() => window.dystopoUnits || null")
             ok = report["idle"] and not report["pageErrors"] and not report["failedRequests"] and not any(c["type"] == "error" for c in report["console"])
             if tour and v["z"] is not None:
                 inside = live or covered(v["z"], v["lat"], v["lon"])
@@ -208,7 +254,7 @@ def main() -> int:
                         report["wrongSource"] = {"expected": v["src"], "got": report["demSource"]}
                     ok = ok and not report["emptyLayers"] and "wrongSource" not in report
                 if v.get("req") and report["idle"]:
-                    report["missingRequired"] = [l for l in v["req"] if report["layers"].get(l, 0) == 0]
+                    report["missingRequired"] = missing_roles(v["req"], report["layers"])
                     ok = ok and not report["missingRequired"]
             report["ok"] = ok
             reports.append(dict(report))
@@ -221,7 +267,7 @@ def main() -> int:
             print(f"{r['index']:>2} {r['url'].split('#')[-1]:<26} {r['label']:<14} {'ok' if r['ok'] else 'FAIL':<4} "
                   f"{'yes' if r.get('inCoverage') else 'no':<4} {r['missingTiles']:>5} "
                   f"{len(r['console']) + len(r['pageErrors']) + len(r['failedRequests']):>3} "
-                  f"{L.get('contour-minor', 0):>5} {L.get('contour-index', 0):>4} {L.get('contour-labels', 0):>4} {L.get('trails', 0) + L.get('trails-mountain', 0) + L.get('trails-alpine', 0):>5} {L.get('poi-markers', 0):>4} {L.get('cliffs', 0):>5} "
+                  f"{L.get('contour-minor', 0):>5} {L.get('contour-index', 0):>4} {L.get('contour-labels', 0):>4} {role_count('trails', L):>5} {role_count('poi-markers', L):>4} {role_count('cliffs', L):>5} "
                   f"{L.get('water', 0) + L.get('waterway', 0):>5} {L.get('peaks', 0):>4} {L.get('places', 0):>5} {r['seconds']:>5}"
                   + (f"  dem={r.get('demSource')} osm={r.get('osmFeatures')}" if r.get("live") else ""), file=sys.stderr)
         print(json.dumps(reports, indent=2))

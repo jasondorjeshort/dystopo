@@ -27,6 +27,8 @@ import io.github.jasondorjeshort.dystopo.gpx.TrackDrawing
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.gpx.XmlException
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.awt.BasicStroke
@@ -105,6 +107,10 @@ data class GpxOverlayStats(
     /** Track and route points outside the rendered window (clipped). */
     val pointsOutside: Int,
     val profileSamples: Int,
+    /** Units of the profile's axis labels: the map's contour units (`--units`). */
+    val profileUnits: String = "m",
+    /** The profile's axis labels as drawn: highest and lowest elevation, then the distance ticks. */
+    val profileLabels: List<String> = emptyList(),
 )
 
 @Serializable
@@ -318,7 +324,8 @@ class GpxRenderCommand : CliktCommand(name = "render") {
         val grid = fetched.grid
         val (map, contours, shading, osm) = MapRenderer.render(grid, zoom, style, timings, window = window)
         val (tracks, routes) = timings.time("stats") { GpxCommand.allStats(doc, StatsOptions(), 0) }
-        val overlay = GpxOverlay(window, style.textScale, arrowSpacing)
+        // The profile speaks the map's units (the contour labels and peak elevations follow --units too).
+        val overlay = GpxOverlay(window, style.textScale, arrowSpacing, ContourUnits.parse(style.units))
         val image = timings.time("drawGpx") { overlay.draw(map, doc, profileHeight) }
         val outFile = out ?: File("out/gpx-${file.nameWithoutExtension}-z$zoom.png")
         timings.time("writePng") {
@@ -356,7 +363,13 @@ class GpxRenderCommand : CliktCommand(name = "render") {
  * direction chevrons, routes as a dashed orange line, a green ring at each track start and a red
  * square at each end, waypoints as blue dots with names, and an elevation profile strip below.
  */
-class GpxOverlay(private val window: MercatorWindow, private val textScale: Double, private val arrowSpacing: Double) {
+class GpxOverlay(
+    private val window: MercatorWindow,
+    private val textScale: Double,
+    private val arrowSpacing: Double,
+    /** Profile labels: elevations in feet and distances in miles, or metres and kilometres. */
+    private val units: ContourUnits = ContourUnits.METERS,
+) {
     private val trackColor = Color(0x8e, 0x24, 0xe0)
     private val routeColor = Color(0xe6, 0x7e, 0x22)
     private val casing = Color(255, 255, 255, 220)
@@ -428,6 +441,7 @@ class GpxOverlay(private val window: MercatorWindow, private val textScale: Doub
         g.clip = null
 
         var samples = 0
+        profileLabels.clear()
         if (profileHeight > 0) samples = profile(g, doc, 0, map.height, map.width, profileHeight)
         g.dispose()
         stats = GpxOverlayStats(
@@ -438,6 +452,8 @@ class GpxOverlay(private val window: MercatorWindow, private val textScale: Doub
             waypointsOutside = wptOutside,
             pointsOutside = outside,
             profileSamples = samples,
+            profileUnits = units.symbol,
+            profileLabels = profileLabels.toList(),
         )
         return image
     }
@@ -531,6 +547,13 @@ class GpxOverlay(private val window: MercatorWindow, private val textScale: Doub
         g.fill(shape)
     }
 
+    private val profileLabels = ArrayList<String>()
+
+    private fun drawProfileLabel(g: Graphics2D, text: String, x: Int, y: Int) {
+        g.drawString(text, x, y)
+        profileLabels += text
+    }
+
     /** Elevation profile of all tracks (one after another) in a strip at ([x0], [y0]); returns the sample count. */
     private fun profile(g: Graphics2D, doc: GpxDocument, x0: Int, y0: Int, width: Int, height: Int): Int {
         g.color = Color(250, 248, 243)
@@ -571,16 +594,18 @@ class GpxOverlay(private val window: MercatorWindow, private val textScale: Doub
         g.stroke = BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
         g.draw(line)
         g.color = labelColor
-        g.drawString("${hi.roundToInt()} m", 4, sy(hi).toInt() + 4)
-        g.drawString("${lo.roundToInt()} m", 4, sy(lo).toInt() + 4)
-        // Distance ticks every 1 km (or 5 km for long tracks).
-        val step = if (total > 20_000) 5000.0 else 1000.0
+        drawProfileLabel(g, UnitFormat.elevation(hi, units), 4, sy(hi).toInt() + 4)
+        drawProfileLabel(g, UnitFormat.elevation(lo, units), 4, sy(lo).toInt() + 4)
+        // Distance ticks every 1 km or mile (5 for long tracks).
+        val unitM = if (units == ContourUnits.FEET) UnitFormat.METERS_PER_MILE else 1000.0
+        val unitName = if (units == ContourUnits.FEET) "mi" else "km"
+        val step = if (total > 20 * unitM) 5 * unitM else unitM
         var d = 0.0
         g.stroke = BasicStroke(1f)
         while (d <= total + 1) {
             val xx = sx(d).toInt()
             g.drawLine(xx, (top + plotH).toInt(), xx, (top + plotH).toInt() + 4)
-            g.drawString("${(d / 1000).roundToInt()} km", xx - 10, (top + plotH).toInt() + 16)
+            drawProfileLabel(g, "${(d / unitM).roundToInt()} $unitName", xx - 10, (top + plotH).toInt() + 16)
             d += step
         }
         return samples.size

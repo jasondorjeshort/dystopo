@@ -128,6 +128,8 @@ data class TileSetMetadata(
     val attribution: String,
     val attributionHtml: String,
     val provenance: List<String>,
+    /** SPDX-style licence expression of the data in the tiles, from the registry for [provenance] ([licenseExpression]). */
+    val license: String? = null,
 )
 
 class TilesCommand : CliktCommand(name = "tiles") {
@@ -252,6 +254,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
             attribution = SourceRegistry.builtIn.attribution(creditIds),
             attributionHtml = SourceRegistry.builtIn.attributionHtml(creditIds),
             provenance = provenance,
+            license = licenseExpression(creditIds),
         )
 
     /** Widest blend band the source uses; the halo is sized from it. */
@@ -465,6 +468,13 @@ class TilesCommand : CliktCommand(name = "tiles") {
          * expect. A box ending exactly at 180 keeps 180.
          */
         fun geoJsonBounds(box: BoundingBox): List<Double> = listOf(wrapLon(box.west), box.south, wrapLon(box.east), box.north)
+
+        /**
+         * The licences of the sources [ids] as one expression: each distinct registry licence once, in
+         * registry order, joined with AND (all of them apply to the combined tiles). Null for no ids.
+         */
+        fun licenseExpression(ids: Collection<String>, registry: SourceRegistry = SourceRegistry.builtIn): String? =
+            registry.ordered(ids).map { registry.getValue(it).license }.distinct().joinToString(" AND ").ifEmpty { null }
 
         /** Center longitude of [box] in -180..180 (the middle of an unwrapped box can be past 180). */
         fun centerLon(box: BoundingBox): Double = wrapLon(box.centerLon)

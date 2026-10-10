@@ -112,6 +112,27 @@ class OsmPackWriterTest {
     }
 
     @Test
+    fun vectorLayersAreTrimmedToIdsZoomsAndFields() {
+        val tileJson = MiniJson.parseObject(
+            """{"vector_layers":[{"id":"place","description":"long text","minzoom":0,"maxzoom":14,
+               "fields":{"class":"String","name":"String","name:de":"String","name:en":"String","name_de":"String","name_en":"String",
+                         "name:latin":"String","name:nonlatin":"String","name_int":"String","rank":"Number"}},
+               {"id":"water","fields":{"class":"String"}}, "junk", {"fields":{}}]}""",
+        )
+        val layers = OsmPackWriter.vectorLayers(tileJson)
+        assertEquals(
+            listOf(
+                mapOf("id" to "place", "minzoom" to 0L, "maxzoom" to 14L, "fields" to mapOf(
+                    "class" to "String", "name" to "String", "name:en" to "String", "name_en" to "String",
+                    "name:latin" to "String", "name:nonlatin" to "String", "name_int" to "String", "rank" to "Number",
+                )),
+                mapOf("id" to "water", "fields" to mapOf("class" to "String")),
+            ).toString(),
+            layers.toString(),
+        )
+    }
+
+    @Test
     fun vectorLayersMissingIsEmpty() {
         assertEquals(emptyList(), OsmPackWriter.vectorLayers(mapOf("tiles" to listOf("x"))))
     }
