@@ -64,6 +64,11 @@ object PmtilesExtract {
      * the input's metadata when given (callers usually patch bounds and zooms into it); otherwise it
      * is copied verbatim. Directories and metadata are written with the input's internal compression
      * when [compress] is supplied for it, else uncompressed. Fails if no tile matches.
+     *
+     * Kept tile contents go to [staging] (the writer's), not memory: pass a temp-file staging for
+     * region-sized extracts. Each distinct stored blob is read from [source] once; when the input
+     * points several entries at one blob (deduplicated ocean tiles, run lengths), the copy is read
+     * back from staging rather than held in a cache.
      */
     fun extract(
         source: ByteRangeSource,
@@ -74,6 +79,7 @@ object PmtilesExtract {
         decompressors: Map<Compression, Decompress> = emptyMap(),
         compress: Compress? = null,
         metadataJson: String? = null,
+        staging: TileStaging = MemoryTileStaging(),
     ): ExtractResult {
         val reader = PmtilesReader.open(source, decompressors)
         val h = reader.header
@@ -110,13 +116,16 @@ object PmtilesExtract {
         }
 
         val outInternal = if (compress != null) h.internalCompression else Compression.NONE
+        val recording = RecordingStaging(staging)
         val writer = PmtilesWriter(
             tileType = h.tileType,
             tileCompression = h.tileCompression,
             internalCompression = outInternal,
             compress = if (outInternal == Compression.NONE) null else compress,
+            staging = recording,
         )
-        val blobCache = HashMap<Long, ByteArray>()
+        // Input blob offset -> where the writer staged its bytes. Positions only, never the bytes.
+        val staged = HashMap<Long, Long>()
         val byZoom = sortedMapOf<Int, Int>()
         var scanned = 0L
         var skipped = 0
@@ -135,14 +144,21 @@ object PmtilesExtract {
                 for (k in 0 until e.runLength) {
                     val id = e.tileId + k
                     if (!isWanted(id)) continue
-                    val bytes = blobCache.getOrPut(e.offset) {
+                    val at = staged[e.offset]
+                    if (at != null) {
+                        // Same blob again: the writer deduplicates it against its staged copy.
+                        writer.addTile(id, staging.read(at, e.length))
+                    } else {
                         val b = source.read(h.tileDataOffset + e.offset, e.length)
                         check(b.size == e.length) { "short tile read at ${e.offset}: wanted ${e.length}, got ${b.size}" }
                         tileReads++
                         tileBytes += b.size
-                        b
+                        recording.lastAppend = -1L
+                        writer.addTile(id, b)
+                        // No append means the content matched an earlier blob at another offset (an input that
+                        // doesn't deduplicate); then a reuse of this offset reads the source again.
+                        if (recording.lastAppend >= 0) staged[e.offset] = recording.lastAppend
                     }
-                    writer.addTile(id, bytes)
                     val z = TileIds.zoomOf(id)
                     byZoom[z] = (byZoom[z] ?: 0) + 1
                 }
@@ -181,4 +197,13 @@ object PmtilesExtract {
             maxZoom = outMax,
         )
     }
+}
+
+/** Passes through to [inner], remembering where the last [append] landed. */
+private class RecordingStaging(private val inner: TileStaging) : TileStaging {
+    var lastAppend = -1L
+
+    override fun append(bytes: ByteArray): Long = inner.append(bytes).also { lastAppend = it }
+
+    override fun read(position: Long, length: Int): ByteArray = inner.read(position, length)
 }

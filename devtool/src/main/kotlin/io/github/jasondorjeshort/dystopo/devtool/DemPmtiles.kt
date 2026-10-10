@@ -122,10 +122,13 @@ class DemPmtilesWriter(private val file: File) : AutoCloseable {
     fun finish(metadata: TileSetMetadata, box: BoundingBox, minZoom: Int, maxZoom: Int): PmtilesOutputReport {
         val started = System.nanoTime()
         val json = reportJson.encodeToString(metadata)
+        // GeoJSON-style: an antimeridian box is written with west > east, both within -180..180.
+        val (w, s, e, n) = TilesCommand.geoJsonBounds(box)
         val result = BufferedOutputStream(file.outputStream(), 1 shl 16).use { os ->
             writer.finish(
-                ByteSink { os.write(it) }, json, box.west, box.south, box.east, box.north,
+                ByteSink { os.write(it) }, json, w, s, e, n,
                 centerZoom = (minZoom + maxZoom + 1) / 2, minZoom = minZoom, maxZoom = maxZoom,
+                centerLon = TilesCommand.centerLon(box), centerLat = box.centerLat,
             )
         }
         val h = result.header

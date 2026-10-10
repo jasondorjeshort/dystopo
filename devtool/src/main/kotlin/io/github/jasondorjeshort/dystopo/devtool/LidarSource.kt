@@ -86,9 +86,15 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
             val url = "https://tnmaccess.nationalmap.gov/api/v1/products?bbox=$bbox&datasets=$dataset&prodFormats=GeoTIFF&max=$PAGE&offset=$offset"
             // Unique per thread: other processes sharing the cache may be fetching the same cell.
             val tmp = File(cacheDir, "index/cell-${key.hashCode().toUInt()}-$offset.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.page")
-            Http.download(url, tmp)
-            queries.incrementAndGet()
-            return json.decodeFromString<TnmResponse>(tmp.readText()).also { tmp.delete() }
+            return retryTnm {
+                try {
+                    Http.download(url, tmp)
+                    queries.incrementAndGet()
+                    json.decodeFromString<TnmResponse>(tmp.readText())
+                } finally {
+                    tmp.delete()
+                }
+            }
         }
         // The first page says how many there are; fetch the rest in parallel.
         val first = page(0)
@@ -98,9 +104,9 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
         // Keep only what we use; the full API records are mostly long descriptions.
         val slim = TnmResponse(first.total, items.map { TnmItem(it.title, it.downloadURL, it.publicationDate, it.boundingBox) })
         cache.parentFile.mkdirs()
-        val part = File(cacheDir, "index/cell-${key.hashCode().toUInt()}.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.part")
+        val part = Http.partFile(cache)
         part.writeText(json.encodeToString(TnmResponse.serializer(), slim))
-        java.nio.file.Files.move(part.toPath(), cache.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        Http.publish(part, cache)
         return slim.items
     }
 
@@ -234,6 +240,23 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
         /** Width of the blend band at coverage edges. */
         const val FEATHER_METERS = 60.0
 
+        /**
+         * Coarsest output cell, in meters, for which the composites ([ThreeDepBestSource], so `best`)
+         * read lidar. Above it the 10 m 3DEP DEM already has at least two samples per output cell, so
+         * 1 m lidar (read from a 16 m or coarser overview by then) adds no visible detail but costs
+         * the TNM index queries and hundreds of tile reads. 20 m falls between z12 (~26 m at
+         * Rainier's latitude, skipped) and z13 (~13 m, read). The `3dep-1m` source itself always
+         * reads lidar, so it stays useful for diagnosis at any zoom.
+         */
+        const val MAX_USEFUL_CELL_METERS = 20.0
+
+        /**
+         * Whether lidar can contribute to [window]. Decided on [OverviewLevels.targetMeters], not the
+         * window's own cell size, so every tile of an export makes the same choice for a zoom level
+         * (no lidar/no-lidar seam at some latitude in a tall export).
+         */
+        fun useful(window: MercatorWindow): Boolean = OverviewLevels.targetMeters(window) <= MAX_USEFUL_CELL_METERS
+
         /** TNM API page size. */
         private const val PAGE = 200
 
@@ -243,6 +266,26 @@ class LidarSource(private val cacheDir: File = Caches.dir("3dep1m")) : Feathered
         private fun cellKey(cacheDir: File, lat: Int, lon: Int) = "${cacheDir.path}|$lat|$lon"
 
         private val json = Json { ignoreUnknownKeys = true }
+
+        /** TNM index retries: 5 tries, 1 s doubling (15 s of waiting in all), enough to ride out a brief API outage. */
+        const val TNM_ATTEMPTS = 5
+        const val TNM_INITIAL_DELAY_MS = 1000L
+
+        /**
+         * Failures worth retrying on the TNM API: dropped or timed-out connections, server errors and
+         * rate limiting (5xx, 429), and a truncated or garbled JSON body (the API sometimes returns an
+         * HTML error page with status 200). A 4xx means the query itself is wrong; retrying won't help.
+         */
+        fun isTransientTnmFailure(e: Exception): Boolean = when (e) {
+            is java.io.IOException -> true
+            is HttpStatusException -> e.status >= 500 || e.status == 429
+            is kotlinx.serialization.SerializationException -> true
+            else -> false
+        }
+
+        /** Runs one TNM API request with retry and backoff (see [isTransientTnmFailure]). */
+        fun <T> retryTnm(initialDelayMs: Long = TNM_INITIAL_DELAY_MS, block: () -> T): T =
+            Http.retry(TNM_ATTEMPTS, initialDelayMs, ::isTransientTnmFailure, block)
 
         /**
          * Threads for lidar I/O fan-out (index cells, tile headers, tile reads). Not the common
@@ -280,7 +323,9 @@ class ThreeDepBestSource : FeatheredSource {
 
     override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         val base = ThreeDepSource().fetch(window)
-        val lidar = LidarSource().layers(window)
+        // Coarse output: lidar can't add detail the 10 m DEM lacks, so don't query or read it at all.
+        val lidar = if (LidarSource.useful(window)) LidarSource().layers(window)
+        else LidarSource.Layers(emptyList(), mapOf("skippedCoarse" to 1L))
         val merged = LidarSource.mergeNewestOnTop(listOf(base.grid) + lidar.grids, featherCellSizeMeters)!!
         val counters = LinkedHashMap<String, Long>()
         base.counters.forEach { (k, v) -> counters["base.$k"] = v }

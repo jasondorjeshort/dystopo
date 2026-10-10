@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.core.subcommands
@@ -37,6 +38,22 @@ import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.floor
+
+/**
+ * Runs a pmtiles subcommand's work on archive [label]; any failure reading it (a corrupt or truncated
+ * archive: bad header, garbage directories, gzip errors, short reads, or an unreachable URL) becomes
+ * one error line on stderr and exit status 1 instead of a stack trace. Clikt's own errors pass through.
+ */
+internal fun archiveErrorsAsOneLine(command: String, label: String, block: () -> Unit) {
+    try {
+        block()
+    } catch (e: CliktError) {
+        throw e
+    } catch (e: Exception) {
+        val detail = e.message?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() } ?: "no detail"
+        throw CliktError("pmtiles $command failed on $label: ${e::class.simpleName}: $detail", statusCode = 1)
+    }
+}
 
 /** JVM gzip for PMTiles directories, metadata and MVT tiles. */
 object Gzip {
@@ -170,6 +187,10 @@ class PmtilesInfoCommand : CliktCommand(name = "info") {
             url != null -> Triple(url!!, cachedSource(url!!), null)
             else -> throw UsageError("one of --file or --url is required")
         }
+        archiveErrorsAsOneLine("info", label) { info(timings, label, raw, sourceBytes) }
+    }
+
+    private fun info(timings: Timings, label: String, raw: ByteRangeSource, sourceBytes: Long?) {
         val source = CountingRangeSource(raw)
         val reader = timings.time("open") { PmtilesReader.open(source, Gzip.decompressors) }
         val h = reader.header
@@ -349,25 +370,34 @@ class PmtilesExtractCommand : CliktCommand(name = "extract") {
             else -> throw UsageError("one of --file or --url is required")
         }
         if (file != null && file!!.canonicalFile == out.canonicalFile) throw UsageError("--out must differ from --file")
+        archiveErrorsAsOneLine("extract", label) { extract(timings, box, label, raw, sourceBytes) }
+    }
+
+    private fun extract(timings: Timings, box: BoundingBox, label: String, raw: ByteRangeSource, sourceBytes: Long?) {
         val source = CountingRangeSource(raw)
         val input = timings.time("open") { PmtilesReader.open(source, Gzip.decompressors) }
         val zMin = maxOf(minZoom ?: input.header.minZoom, input.header.minZoom)
         val zMax = minOf(maxZoom ?: input.header.maxZoom, input.header.maxZoom)
-        if (zMin > zMax) throw UsageError("zooms ${minZoom ?: "-"}..${maxZoom ?: "-"} do not overlap the archive's ${input.header.minZoom}..${input.header.maxZoom}")
+        if (zMin > zMax) throw CliktError("zooms ${minZoom ?: "-"}..${maxZoom ?: "-"} do not overlap the archive's ${input.header.minZoom}..${input.header.maxZoom}")
 
         val metadata = patchMetadata(input.metadataJson(), box, zMin, zMax)
         out.absoluteFile.parentFile.mkdirs()
         val result = timings.time("extract") {
+            // Kept tiles are staged in a temp file next to the output, not in memory.
+            val staging = FileTileStaging(File(out.absoluteFile.parentFile, out.name + ".staging"))
             try {
                 BufferedOutputStream(out.outputStream(), 1 shl 16).use { os ->
                     PmtilesExtract.extract(
                         source, box, ByteSink { os.write(it) }, zMin, zMax,
                         decompressors = Gzip.decompressors, compress = Gzip.compress, metadataJson = metadata,
+                        staging = staging,
                     )
                 }
-            } catch (e: IllegalArgumentException) {
+            } catch (e: Exception) {
                 out.delete()
-                throw UsageError(e.message ?: "extract failed")
+                throw e
+            } finally {
+                staging.close()
             }
         }
         val check = timings.time("check") { check(input, box, zMin, zMax) }

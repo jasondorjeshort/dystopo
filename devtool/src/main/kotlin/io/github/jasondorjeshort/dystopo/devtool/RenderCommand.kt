@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
+import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -23,8 +24,11 @@ data class RenderReport(
     val widthPx: Int,
     val heightPx: Int,
     val cellSizeMeters: Double,
-    val elevationMinMeters: Double,
-    val elevationMaxMeters: Double,
+    /** Null when the grid has no data at all (see [noData]). */
+    val elevationMinMeters: Double?,
+    val elevationMaxMeters: Double?,
+    /** True when every cell is NaN (open ocean, outside every source): the image is all no-data magenta. */
+    val noData: Boolean,
     val sourceCounters: Map<String, Long>,
     val contourInterval: Double,
     val contourUnits: String,
@@ -37,6 +41,12 @@ data class RenderReport(
     /** OSM overlay counts and timings; present with --osm. */
     val osm: OsmStats? = null,
 )
+
+/** Lowest elevation, or null for a grid with no data (where [ElevationGrid.min] is +Infinity, which JSON can't carry). */
+fun ElevationGrid.finiteMin(): Double? = min().toDouble().takeIf { it.isFinite() }
+
+/** Highest elevation, or null for a grid with no data. */
+fun ElevationGrid.finiteMax(): Double? = max().toDouble().takeIf { it.isFinite() }
 
 class RenderCommand : AreaCommand("render") {
     override fun help(context: Context) =
@@ -70,8 +80,9 @@ class RenderCommand : AreaCommand("render") {
             widthPx = grid.width,
             heightPx = grid.height,
             cellSizeMeters = (grid.cellSizeMeters * 100).roundToLong() / 100.0,
-            elevationMinMeters = grid.min().toDouble(),
-            elevationMaxMeters = grid.max().toDouble(),
+            elevationMinMeters = grid.finiteMin(),
+            elevationMaxMeters = grid.finiteMax(),
+            noData = grid.finiteMin() == null,
             sourceCounters = fetched.counters,
             contourInterval = contours.interval,
             contourUnits = contours.units,

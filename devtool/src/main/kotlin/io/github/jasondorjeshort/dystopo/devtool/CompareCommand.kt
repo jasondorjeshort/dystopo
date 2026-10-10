@@ -23,8 +23,9 @@ import kotlin.math.sqrt
 @Serializable
 data class SourceSummary(
     val source: String,
-    val elevationMinMeters: Double,
-    val elevationMaxMeters: Double,
+    /** Null when this source has no data in the window. */
+    val elevationMinMeters: Double?,
+    val elevationMaxMeters: Double?,
     val counters: Map<String, Long>,
     val contours: ContourStats,
     /** Data source registry ids that contributed (see `devtool sources`). */
@@ -82,7 +83,7 @@ class CompareCommand : AreaCommand("compare") {
             grids += fetched.grid
             panels += image
             summaries += SourceSummary(
-                id, fetched.grid.min().toDouble(), fetched.grid.max().toDouble(), fetched.counters, contours,
+                id, fetched.grid.finiteMin(), fetched.grid.finiteMax(), fetched.counters, contours,
                 fetched.provenance, fetched.attribution(src),
             )
         }

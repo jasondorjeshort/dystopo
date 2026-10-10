@@ -10,7 +10,6 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.time.Duration
 
 /** Something that can fill a Web Mercator window with elevations (meters, NAVD88/EGM-ish orthometric heights). */
@@ -90,59 +89,99 @@ object Http {
         .timeout(Duration.ofSeconds(120))
 
     /**
-     * Retries dropped connections (EOF, reset), which happen under many parallel requests to one
-     * host. HTTP error statuses are not retried.
+     * Runs [block] up to [attempts] times, sleeping [initialDelayMs] and doubling between tries, as
+     * long as each failure is [transient]. A non-transient failure, or the last one, is rethrown.
      */
-    private fun <T> withRetry(attempts: Int = 4, block: () -> T): T {
-        var delay = 300L
-        var last: java.io.IOException? = null
-        repeat(attempts) {
+    fun <T> retry(attempts: Int, initialDelayMs: Long, transient: (Exception) -> Boolean, block: () -> T): T {
+        require(attempts >= 1)
+        var delay = initialDelayMs
+        for (attempt in 1..attempts) {
             try {
                 return block()
-            } catch (e: java.io.IOException) {
-                last = e
+            } catch (e: Exception) {
+                if (attempt == attempts || !transient(e)) throw e
                 Thread.sleep(delay)
                 delay *= 2
             }
         }
-        throw last!!
+        error("unreachable")
     }
+
+    /**
+     * Retries dropped connections (EOF, reset), which happen under many parallel requests to one
+     * host. HTTP error statuses are not retried.
+     */
+    private fun <T> withRetry(attempts: Int = 4, block: () -> T): T =
+        retry(attempts, 300, { it is java.io.IOException }, block)
 
     /** Downloads [url] to [file] atomically. */
     fun download(url: String, file: File) {
         file.parentFile.mkdirs()
-        val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().threadId()}.part")
+        val tmp = partFile(file)
         val response = withRetry { client.send(request(url).build(), HttpResponse.BodyHandlers.ofFile(tmp.toPath())) }
-        check(response.statusCode() == 200) { "HTTP ${response.statusCode()} for $url" }
-        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        if (response.statusCode() != 200) {
+            tmp.delete()
+            throw HttpStatusException(response.statusCode(), url)
+        }
+        publish(tmp, file)
+    }
+
+    /** A temp name next to [file], unique per process and thread (worktrees and parallel renders share one cache). */
+    fun partFile(file: File): File =
+        File(file.parentFile, "${file.name}.${ProcessHandle.current().pid()}-${Thread.currentThread().threadId()}.part")
+
+    /**
+     * Moves a finished [tmp] onto [file]. If another thread or process got there first, its file is
+     * kept and [tmp] is dropped: both downloaded the same bytes, and replacing a cache file that may
+     * be open for reading fails on Windows (and, with REPLACE_EXISTING, two racing movers make each
+     * other fail with FileAlreadyExistsException). Returns false when the existing file was kept.
+     */
+    fun publish(tmp: File, file: File): Boolean {
+        try {
+            Files.move(tmp.toPath(), file.toPath())
+            return true
+        } catch (e: java.nio.file.FileSystemException) {
+            // FileAlreadyExistsException, or AccessDeniedException while the winner's file is being read.
+            if (!file.exists()) throw e
+            tmp.delete()
+            return false
+        }
     }
 
     fun range(url: String, offset: Long, length: Int): ByteArray {
         val req = request(url).header("Range", "bytes=$offset-${offset + length - 1}").build()
         val response = withRetry { client.send(req, HttpResponse.BodyHandlers.ofByteArray()) }
-        check(response.statusCode() == 206 || response.statusCode() == 200) { "HTTP ${response.statusCode()} for $url" }
+        if (response.statusCode() != 206 && response.statusCode() != 200) throw HttpStatusException(response.statusCode(), url)
         return response.body()
     }
 }
 
+/** An HTTP error status. An [IllegalStateException], as `check` threw before, so existing handlers still match. */
+class HttpStatusException(val status: Int, url: String) : IllegalStateException("HTTP $status for $url")
+
 /**
  * HTTP range reads with an on-disk cache per (offset, length), so re-running a render
- * doesn't re-download. [fetches] counts network requests.
+ * doesn't re-download. [fetches] counts network requests. [fetchRange] is the network layer
+ * (url, offset, length); tests swap in a fake.
  */
-class CachedHttpRangeSource(private val url: String, private val cacheDir: File) : ByteRangeSource {
+class CachedHttpRangeSource(
+    private val url: String,
+    private val cacheDir: File,
+    private val fetchRange: (String, Long, Int) -> ByteArray = Http::range,
+) : ByteRangeSource {
     @Volatile var fetches = 0L
         private set
 
     override fun read(offset: Long, length: Int): ByteArray {
         val file = File(cacheDir, "$offset-$length.bin")
         if (file.exists()) return file.readBytes()
-        val bytes = Http.range(url, offset, length)
+        val bytes = fetchRange(url, offset, length)
         synchronized(this) { fetches++ }
         file.parentFile.mkdirs()
-        // Unique temp name: parallel tile renders can fetch the same range at the same time.
-        val tmp = File(cacheDir, "$offset-$length.${Thread.currentThread().threadId()}.part")
+        // Parallel tile renders can fetch the same cold range at once: each writes its own temp file,
+        // the first to land wins, and the others return the winner's bytes so every caller agrees.
+        val tmp = Http.partFile(file)
         tmp.writeBytes(bytes)
-        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        return bytes
+        return if (Http.publish(tmp, file)) bytes else file.readBytes()
     }
 }

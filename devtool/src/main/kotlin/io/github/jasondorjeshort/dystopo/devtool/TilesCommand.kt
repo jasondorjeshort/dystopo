@@ -44,6 +44,11 @@ data class VerifyStats(
     /** Cells where one tile's halo render differs (in any bit) from the neighbour's own render. */
     val mismatchCells: Long,
     val maxMismatchMeters: Double,
+    /**
+     * Overlap cells not compared because they lie within the blend band of A's haloed window edge
+     * (see `verifySeams`): there A's feather can't see no-data just outside its window.
+     */
+    val edgeSkippedCells: Long = 0,
     /** [GridDigest] of every written tile decoded back from its PNG; equal across XYZ and PMTiles exports of the same tiles. */
     val gridDigest: String? = null,
 )
@@ -210,7 +215,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
 
         val report = TilesReport(
             area = name,
-            bbox = listOf(box.west, box.south, box.east, box.north),
+            bbox = geoJsonBounds(box),
             source = source,
             output = if (writeXyz) outDir.path else pmtiles!!.path,
             minZoom = minZoom,
@@ -232,7 +237,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
 
     private fun tileSetMetadata(name: String, box: BoundingBox, tileSize: Int, provenance: List<String>, creditIds: List<String>) =
         TileSetMetadata(
-            name = name, tileSize = tileSize, bounds = listOf(box.west, box.south, box.east, box.north),
+            name = name, tileSize = tileSize, bounds = geoJsonBounds(box),
             minzoom = minZoom, maxzoom = maxZoom, source = source,
             attribution = SourceRegistry.builtIn.attribution(creditIds),
             attributionHtml = SourceRegistry.builtIn.attributionHtml(creditIds),
@@ -276,7 +281,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
         if (archive != null) for (r in written) archive.add(r.tile, r.png!!)
         if (verify) for (r in written) expectedDigests[r.tile] = r.gridDigest
         val verifyStats = if (verify) {
-            verifySeams(plan, results).copy(gridDigest = GridDigest.hex(written.sumOf { it.gridDigest }))
+            verifySeams(plan, results, kotlin.math.ceil(feather / cellSize).toInt()).copy(gridDigest = GridDigest.hex(written.sumOf { it.gridDigest }))
         } else null
 
         return ZoomReport(
@@ -355,14 +360,21 @@ class TilesCommand : CliktCommand(name = "tiles") {
      * For every pair of neighbouring tiles, the cells of A's haloed render that fall inside B's tile
      * must equal B's own render of them. Any difference means the halo is too small for the blend
      * band or a source is not window-independent.
+     *
+     * Cells of A's window within [edgeMargin] cells (the blend band, rounded up) of its own edge are
+     * skipped: a feathered source weights a cell by its distance to no-data, and no-data just outside
+     * A's window is invisible to A, so A's value there legitimately differs from B's exact render (seen
+     * at a real lidar coverage edge: 30 cells, max 0.077 m, all in A's outermost 2 columns). Tile
+     * interiors are at least a halo (>= the blend band) from their window edge, so they are exact.
      */
-    private fun verifySeams(plan: List<TileWindow>, results: List<TileResult>): VerifyStats {
+    private fun verifySeams(plan: List<TileWindow>, results: List<TileResult>, edgeMargin: Int): VerifyStats {
         val byTile = results.associateBy { it.tile }
         val windows = plan.associateBy { it.tile }
         var pairs = 0
         var overlap = 0L
         var mismatches = 0L
         var maxDiff = 0f
+        var edgeSkipped = 0L
         for (a in plan) {
             val ga = byTile.getValue(a.tile).haloed ?: continue
             for (dy in -1..1) for (dx in -1..1) {
@@ -377,7 +389,13 @@ class TilesCommand : CliktCommand(name = "tiles") {
                 val y0 = maxOf(a.window.y0, b.tile.y * b.tileSize)
                 val y1 = minOf(a.window.y0 + a.window.height, (b.tile.y + 1) * b.tileSize)
                 for (gy in y0 until y1) for (gx in x0 until x1) {
-                    val va = ga[gx - a.window.x0, gy - a.window.y0]
+                    val ax = gx - a.window.x0
+                    val ay = gy - a.window.y0
+                    if (minOf(ax, ay, a.window.width - 1 - ax, a.window.height - 1 - ay) < edgeMargin) {
+                        edgeSkipped++
+                        continue
+                    }
+                    val va = ga[ax, ay]
                     val vb = gb[gx - b.window.x0, gy - b.window.y0]
                     overlap++
                     if (va.toBits() != vb.toBits()) {
@@ -394,6 +412,7 @@ class TilesCommand : CliktCommand(name = "tiles") {
             overlapCells = overlap,
             mismatchCells = mismatches,
             maxMismatchMeters = maxDiff.toDouble(),
+            edgeSkippedCells = edgeSkipped,
         )
     }
 
@@ -427,6 +446,23 @@ class TilesCommand : CliktCommand(name = "tiles") {
     private fun round2(x: Double) = Math.round(x * 100) / 100.0
 
     companion object {
+        /**
+         * [box] as TileJSON/GeoJSON-style bounds [west, south, east, north] with longitudes in
+         * -180..180. Boxes are unwrapped internally (an antimeridian box has east past 180), so here
+         * the east edge is wrapped back, and west > east marks the crossing, as TileJSON and MapLibre
+         * expect. A box ending exactly at 180 keeps 180.
+         */
+        fun geoJsonBounds(box: BoundingBox): List<Double> = listOf(wrapLon(box.west), box.south, wrapLon(box.east), box.north)
+
+        /** Center longitude of [box] in -180..180 (the middle of an unwrapped box can be past 180). */
+        fun centerLon(box: BoundingBox): Double = wrapLon(box.centerLon)
+
+        private fun wrapLon(lon: Double) = when {
+            lon > 180.0 -> lon - 360.0
+            lon < -180.0 -> lon + 360.0
+            else -> lon
+        }
+
         /**
          * The overview target for a whole zoom level of an export: the smallest cell size among its
          * tile windows (the one nearest the pole). Per-window choice would let tiles at different
