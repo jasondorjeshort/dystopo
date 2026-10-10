@@ -1,0 +1,97 @@
+# Nightly sweep (T71): the JVM and browser parts of the post-wave sweep through tools/sweep.sh, on main every
+# night, by hand (workflow_dispatch), and on a push that changes the sweep. Parts: check, :server:installDist, notices --check, the
+# world tour at z9 and z12 over every public area (network; the download cache is kept between runs), the
+# demo tour against the static page and against devtool serve, one live view per elevation source through
+# serve --live, and the sync simulator. The device parts need an emulator and run only in tools/sweep.ps1.
+# Artifact: out/sweep-<date>/ (summary.json, sheet.png, every part's log and screenshots).
+name: Nightly sweep
+
+on:
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+  # A change to the sweep itself runs it on its branch: workflow_dispatch only reaches workflows that are
+  # already on the default branch, so this is also how a branch that adds or edits the sweep gets a run.
+  push:
+    paths:
+      - '.github/workflows/nightly.yml'
+      - 'tools/sweep.sh'
+      - 'tools/sweep-summary.py'
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DYSTOPO_CACHE: ${{ github.workspace }}/cache
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      # Elevation tiles, geoids, OpenFreeMap and live tiles from earlier nights: the tour and the live views
+      # read the network only for what is missing. A new key every run, restored from the newest one, and
+      # saved even when a part failed (a cold live view is the likeliest failure, and the next night is warm).
+      - uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: sweep-cache-${{ github.run_id }}
+          restore-keys: sweep-cache-
+
+      - name: Sweep
+        run: |
+          chmod +x gradlew
+          bash tools/sweep.sh --channel "" --date nightly --live-timeout 240
+        env:
+          PYTHON: python
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f out/sweep-nightly/summary.json ]; then
+            { echo '```json'; cat out/sweep-nightly/summary.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: cache
+          key: sweep-cache-${{ github.run_id }}
+
+      - name: Upload the sweep folder
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sweep-nightly
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            out/sweep-nightly/
+            out/ci-*.json
+            build/reports/
+            */build/reports/
