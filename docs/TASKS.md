@@ -67,6 +67,12 @@ Every task is done only when:
 **Note:** installing the SDK and emulator changes the machine; ask before installing. Proposed min SDK 26.
 **Done when:** `./gradlew :androidApp:assembleDebug` builds; the emulator script boots, installs, and launches the app; `curl localhost:<port>/screenshot` returns a PNG showing the map.
 
+## Browser demo follow-ups (tools/demo)
+- Contour labels in the live viewer are sparse (MapLibre line placement on unsimplified contour geometry); tune `symbol-spacing`/`text-max-angle`, or feed MapLibre simplified lines from T1's pipeline.
+- Glyphs come from a CDN; for offline-first, bundle a glyph set (Noto Sans) under tools/demo or serve from the region pack.
+- Contour thresholds in the viewer should follow T1's zoom→interval table rather than a hand-written list.
+- The viewer is also the seed of the CalTopo-style website (planned); keep it working as features land (T2 shading, T9 attribution display).
+
 ## Wave 2 (after wave 1 merges)
 - T3 + T4: package DEM tiles as PMTiles; `pmtiles extract --bbox` for area downloads.
 - T5 + T6: draw OSM layers (trails, water, names) over terrain in `devtool`, with T1's label sizing.
