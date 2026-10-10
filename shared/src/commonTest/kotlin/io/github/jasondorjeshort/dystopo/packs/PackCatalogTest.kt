@@ -94,8 +94,12 @@ class PackCatalogTest {
         val noDem = LinkedHashMap(good).apply { put("name", "nodem"); put("files", (good["files"] as List<*>).drop(1)); remove("contentHash") }
         val badName = LinkedHashMap(good).apply { put("name", "../etc") }
         val skipped = ArrayList<String>()
-        val c = PackCatalog.parse(mapOf("version" to 1L, "packs" to listOf(good, tampered, noDem, badName, "junk")), skipped)
-        assertEquals(listOf("rainier"), c.packs.map { it.name })
+        val noFiles = LinkedHashMap(good).apply { put("name", "empty"); put("files", emptyList<Any>()); remove("contentHash") }
+        val c = PackCatalog.parse(mapOf("version" to 1L, "packs" to listOf(good, tampered, noDem, badName, noFiles, "junk")), skipped)
+        // T65: a vector-only entry is listed (vectorOnly), with the vector archive's bounds.
+        assertEquals(listOf("rainier", "nodem"), c.packs.map { it.name })
+        assertEquals(listOf(false, true), c.packs.map { it.vectorOnly })
+        assertEquals(c.packs[1].file(PackRole.VECTOR)!!.bounds ?: c.packs[1].bounds, c.packs[1].bounds)
         assertEquals(3, skipped.size, skipped.toString())
         assertTrue(skipped.any { "does not match" in it })
     }

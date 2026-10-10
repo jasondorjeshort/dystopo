@@ -40,6 +40,7 @@ import java.util.zip.Inflater
 /**
  * T57: the tile counters `/stats` reports, kept by [DystopoApp] across tile service reopens (a pack install,
  * a sync that changes settings, `/reload`), so they count since the app started, not since the last reopen.
+ * T65: the shade (`shadeGeneration`) and cliff (`cliffs`) counters too.
  */
 class TileCounters {
     val dem = SourceCounters()
@@ -54,6 +55,10 @@ class TileCounters {
 
     /** Tile services opened with these counters (1 + reloads). */
     val serviceOpens = AtomicLong()
+
+    /** T65: hillshade and slope tiles (`shadeGeneration`) and cliff rewrites (`cliffs`), cumulative like the rest. */
+    val shade = io.github.jasondorjeshort.dystopo.app.options.ShadeCounters()
+    val cliffs = CliffCounters()
 }
 
 /** Counters for one tile source, reported by `/stats`. */
@@ -207,7 +212,7 @@ class TileService(
     private val pyramid: DemPyramid? get() = packs.dem?.let(::pyramid)
 
     /** T47: hillshade and slope raster tiles from the DEM for the map options ([ShadeService]). */
-    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits) // T41: the pack under each tile; T49: its identity
+    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits, counters = counters.shade) // T41: the pack under each tile; T49: its identity; T65: cumulative counters
 
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
@@ -446,7 +451,7 @@ class TileService(
     }
 
     /** T41: cliff ticks on the downhill side, from the DEM pack under the tile; T49: cached on disk with the contours. */
-    val cliffs = CliffTiles(this::cliffPyramid) { contourCache }
+    val cliffs = CliffTiles(this::cliffPyramid, counters.cliffs) { contourCache } // T65: cumulative counters
 
     /** T49: each vector archive's identity, part of its cliff cache directory. */
     private val osmIdentities: Map<Pack, String> = packs.osmPacks.associateWith { packIdentity(it.file) }

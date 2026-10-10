@@ -30,13 +30,22 @@ data class RecorderOptions(
      * Null: never split on time. Measured on the fixes' own times, so a GPX replay splits where the file has a gap.
      */
     val segmentGapMs: Long? = DEFAULT_SEGMENT_GAP_MS,
+    /**
+     * T65: ...and only when the fix is also more than this many metres from the previous one. A gap spent in
+     * one place (a long stop: phones deliver no fixes while still, and the synthetic Skyline fixture has
+     * none for its 15 minutes at Panorama Point) is a pause, not a hole in the line, so the track keeps one
+     * segment; a gap that moved the walker leaves a hole stats must not bridge.
+     */
+    val segmentGapMinM: Double = DEFAULT_SEGMENT_GAP_MIN_M,
 ) {
     init {
         require(segmentGapMs == null || segmentGapMs > 0) { "segmentGapMs must be positive" }
+        require(segmentGapMinM >= 0) { "segmentGapMinM must not be negative" }
     }
 
     companion object {
         const val DEFAULT_SEGMENT_GAP_MS = 5 * 60_000L
+        const val DEFAULT_SEGMENT_GAP_MIN_M = 50.0
     }
 }
 
@@ -50,7 +59,7 @@ data class RecorderOptions(
  * Rejected fixes are counted, not stored: worse than [RecorderOptions.maxAccuracyM], not newer
  * than the last accepted fix (duplicates and out-of-order reports, which GPS chipsets and replays
  * both produce), or arriving while paused. A fix more than [RecorderOptions.segmentGapMs] after the
- * last accepted one starts a new segment. Not thread-safe: the app calls it from one thread.
+ * last accepted one and more than [RecorderOptions.segmentGapMinM] from it starts a new segment. Not thread-safe: the app calls it from one thread.
  */
 class TrackRecorder(
     private val store: TrackStore,
@@ -128,7 +137,9 @@ class TrackRecorder(
             return false
         }
         val gap = options.segmentGapMs
-        if (prev != null && !newSegment && gap != null && fix.time - prev.time > gap) {
+        if (prev != null && !newSegment && gap != null && fix.time - prev.time > gap &&
+            TrackStats.distanceM(prev.lat, prev.lon, fix.lat, fix.lon) > options.segmentGapMinM
+        ) {
             newSegment = true
             gapSplits++
         }

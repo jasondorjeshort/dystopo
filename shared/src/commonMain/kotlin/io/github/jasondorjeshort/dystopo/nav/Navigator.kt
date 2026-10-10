@@ -144,11 +144,29 @@ class Navigator(val path: NavPath, val options: NavOptions = NavOptions()) {
     var fixes = 0
         private set
 
+    /** Time of the first fix (epoch ms), the start of [etaVsPlan]'s elapsed time. */
+    var firstFixMs: Long? = null
+        private set
+
     /** Total time of the line by the model (what a route plan would say). */
     val plannedTimeS: Double get() = model.timeS(path.totalM, path.totalAscentM)
 
+    /**
+     * T65: the projected total time over the planned time, a pace ratio: (fix time elapsed since the first
+     * fix + the time still to go to the end by the model, [NavState.end], which includes the way back when
+     * off route) / [plannedS]. 1.0 at the start (the remaining time is the plan), above 1 when behind plan
+     * (slower than the model, or a detour), below 1 when ahead. Null before a fix or without a plan.
+     */
+    fun etaVsPlan(plannedS: Double = plannedTimeS): Double? {
+        val s = state ?: return null
+        val start = firstFixMs ?: return null
+        if (!(plannedS > 0)) return null
+        return (max(0.0, (s.timeMs - start) / 1000.0) + s.end.timeS) / plannedS
+    }
+
     fun onFix(lat: Double, lon: Double, timeMs: Long, accuracyM: Double? = null, headingDeg: Double? = null): NavState {
         fixes++
+        if (firstFixMs == null) firstFixMs = timeMs
         // Before any progress, look from the start: on a loop the start and the end are the same place.
         val p = path.project(lat, lon, lastAlong ?: 0.0)
         val before = maxAlong

@@ -68,6 +68,10 @@ param(
     [string]$Serial = ''
 )
 $ErrorActionPreference = 'Stop'
+# T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
+# PowerShell 5.1, which `| Tee-Object`, `| Select-Object` and `> log` in the calling session never see), so a
+# piped or redirected run shows each step as it happens. Functions below that return values never print.
+function Write-Host { Write-Output ($args -join ' ') }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
 $env:ANDROID_HOME = $sdk
@@ -235,10 +239,15 @@ if ($Build) {
         Write-Host "wrote $props ($line)"
     }
     Push-Location $repoRoot
+    $buildStarted = Get-Date
+    Write-Host 'building the debug APK (gradlew :androidApp:assembleDebug)'
     try {
-        & .\gradlew.bat :androidApp:assembleDebug --console=plain -q
+        # Gradle's warnings arrive on stderr: Continue, so they are passed on as lines instead of stopping the script.
+        $ErrorActionPreference = 'Continue'
+        & .\gradlew.bat :androidApp:assembleDebug --console=plain -q 2>&1 | ForEach-Object { "  $_" }
         if ($LASTEXITCODE -ne 0) { throw 'assembleDebug failed' }
-    } finally { Pop-Location }
+    } finally { Pop-Location; $ErrorActionPreference = 'Stop' }
+    Write-Host ("built in {0:n0} s" -f ((Get-Date) - $buildStarted).TotalSeconds)
 }
 $apkPath = if ([IO.Path]::IsPathRooted($Apk)) { $Apk } else { Join-Path $repoRoot $Apk }
 if (-not (Test-Path $apkPath)) { throw "APK not found: $apkPath (use -Build)" }

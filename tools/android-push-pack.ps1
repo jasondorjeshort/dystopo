@@ -21,6 +21,7 @@ param(
     [string]$Serial = ''
 )
 $ErrorActionPreference = 'Stop'
+function Write-Host { Write-Output ($args -join ' ') } # T65: progress on the output stream (see android-emu.ps1)
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }

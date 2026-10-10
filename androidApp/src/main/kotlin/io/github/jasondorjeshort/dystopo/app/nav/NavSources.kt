@@ -4,25 +4,55 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
+import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
+import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.nav.NavPath
-import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import java.io.File
 
 /**
  * What navigation can follow (T61), resolved into a [NavPath]: the route on the map (T45's current plan),
- * a saved route (a GPX in `files/routes/`, by route id, id prefix or file name: the lookup that exists until
- * T60's route store lands), a stored track (by id), or a GPX document (its first route, or its first
- * track with `prefer=track`/when it has no route; the file's waypoints ride along).
+ * a kept route from the trip store (T65; by id or id prefix), a saved route (a GPX in `files/routes/`, by
+ * route id, id prefix or file name), a stored track (by id), or a GPX document (its first route, or its
+ * first track with `prefer=track`/when it has no route; the file's waypoints ride along).
+ *
+ * T65: a route's planned time ([Resolved.planTimeS]) is its [RouteSummary] time, the same numbers the route
+ * card, the trip card and the Routes list show (T24 ascent, the T45 hike model), so `etaVsPlan` starts at 1.
  */
 object NavSources {
-    class Resolved(val path: NavPath, val source: Map<String, Any?>, val plan: PlannedRoute? = null)
+    class Resolved(
+        val path: NavPath,
+        val source: Map<String, Any?>,
+        /** The plan's total time (s) for `etaVsPlan`; null for tracks and GPX files (navigation's own model time is used). */
+        val planTimeS: Double? = null,
+        val mode: TravelMode? = null,
+    )
 
     class NotFound(message: String) : Exception(message)
 
     fun currentRoute(): Resolved {
         val p = RouteSession.plan ?: throw NotFound("no route on the map: plan one first (long-press start and end, or POST /route)")
-        return Resolved(NavPath.of(p.route), linkedMapOf("kind" to "route", "route" to "current", "id" to p.route.id, "name" to p.route.name, "mode" to p.mode.label), p)
+        val s = RouteSession.summaryOf(p)
+        return Resolved(
+            NavPath.of(RouteSession.unifiedRoute(p)),
+            linkedMapOf("kind" to "route", "route" to "current", "id" to p.route.id, "name" to p.route.name, "mode" to p.mode.label),
+            s.timeS, p.mode,
+        )
+    }
+
+    /** T65: a route kept in the trip store (Keep on the route card, the Routes list, synced from another device). */
+    fun keptRoute(key: String): Resolved? {
+        val plans = Trips.store { it.routePlans() }
+        val p: RoutePlan = plans.firstOrNull { it.id == key } ?: plans.filter { key.length >= 4 && it.id.startsWith(key) }.singleOrNull() ?: return null
+        require(p.path.points.size >= 2) { "route ${p.id} has fewer than two points" }
+        val s = RouteSummary.of(p, samples = 0)
+        return Resolved(
+            NavPath.of(p.toRoute(), p.waypoints),
+            linkedMapOf("kind" to "trip", "route" to key, "id" to p.id, "name" to p.name, "mode" to p.path.mode),
+            s.timeS, TravelMode.of(p.path.mode),
+        )
     }
 
     fun savedRoute(key: String): Resolved {
@@ -35,10 +65,11 @@ object NavSources {
                 return Resolved(NavPath.of(r, doc.waypoints), linkedMapOf("kind" to "route", "route" to key, "id" to r.id, "name" to r.name, "file" to f.name))
             }
         }
-        throw NotFound("no saved route $key in ${dir.path}")
+        throw NotFound("no route $key: not the current route, not a kept route (GET /routes) and not saved in ${dir.path}")
     }
 
-    fun route(key: String): Resolved = if (key == "current") currentRoute() else savedRoute(key)
+    /** `current`, else a kept route (trip store), else a saved GPX in `files/routes/`. */
+    fun route(key: String): Resolved = if (key == "current") currentRoute() else keptRoute(key) ?: savedRoute(key)
 
     fun track(id: String): Resolved {
         val t = Tracking.of(DystopoApp.instance)

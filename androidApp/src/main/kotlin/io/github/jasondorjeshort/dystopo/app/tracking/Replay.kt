@@ -93,3 +93,18 @@ class Replay(private val tracking: Tracking) {
         "elapsedMs" to if (startedAt == 0L) null else SystemClock.elapsedRealtime() - startedAt,
     )
 }
+
+/** T65: when `POST /location/replay` is refused, kept apart from the route so it is unit-tested. */
+object ReplayChecks {
+    /**
+     * Status and message for a refused replay, or null to go ahead: a rate outside (0, 10000] or no body is a
+     * 400; `record=` while a track is already [recording] is a 409 (T57: the replay's own track would leave that
+     * one behind), while a replay without `record=` adds its fixes to the recording.
+     */
+    fun refusal(rate: Double, bodyEmpty: Boolean, record: String?, recording: Boolean): Pair<Int, String>? = when {
+        !(rate > 0 && rate <= 10_000) -> 400 to "rate must be in (0, 10000]"
+        bodyEmpty -> 400 to "POST a GPX file as the body"
+        record != null && recording -> 409 to "already recording: stop that track first (POST /tracks/stop), or replay without record= to add the fixes to it"
+        else -> null
+    }
+}

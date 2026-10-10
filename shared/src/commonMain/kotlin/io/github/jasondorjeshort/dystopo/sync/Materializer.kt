@@ -3,7 +3,6 @@ package io.github.jasondorjeshort.dystopo.sync
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
-import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
@@ -125,7 +124,8 @@ object Materializer {
     }
 
     /**
-     * A planned route (T60): GPX fields, `path` and `waypoints` last writer wins like any field. The
+     * A planned route (T60): GPX fields and `path` last writer wins like any field (T65: waypoints per
+     * waypoint, [RouteOps.waypoints]). The
      * path is the newest live `path` write when it decodes, else the newest put's points as one fixed
      * leg ([RoutePath.fixed]); a value that does not decode (a newer format) counts as absent, the same
      * way on every replica.
@@ -135,7 +135,8 @@ object Materializer {
         val last = live.lastOrNull { it.body is PutRoute }?.body as PutRoute? ?: return null
         val f = lww(EntityKind.ROUTE, live) { b -> (b as? PutRoute)?.let(::routePutFields) }!!
         val path = RoutePath.decodeOrNull(f["path"]) ?: RoutePath.fixed(last.route.points, modeOf(last.route.type))
-        val waypoints = RouteWaypoints.decodeOrNull(f["waypoints"]) ?: emptyList()
+        // T65: the `waypoints` list plus the per-waypoint `wpt:` writes, in HLC order (RouteOps).
+        val waypoints = RouteOps.waypoints(live)
         return RoutePlan(id, f["name"] ?: "", path, waypoints, f["description"], f["comment"], f["type"], f["extensions"])
     }
 

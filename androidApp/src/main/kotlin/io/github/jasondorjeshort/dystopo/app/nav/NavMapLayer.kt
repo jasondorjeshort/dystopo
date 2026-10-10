@@ -126,7 +126,46 @@ class NavMapLayer {
                 it.setGeoJson(collection())
                 updates++
             }
+            if (path.isNotEmpty()) raise(style)
         }
+    }
+
+    /** Raises (re-adds) since this line was last drawn under another overlay. */
+    @Volatile var raises = 0
+        private set
+
+    /**
+     * T65: the navigation line draws above the planned route (T45, orange), a kept route (T60, purple) and the
+     * recorded track, which add their layers on top of the style whenever they install (after a style
+     * reload, or on first use after navigation started). When any of their layers sits above ours, ours move
+     * to the top (removed and added again), then the location puck above them, so the walker's dot stays on top.
+     */
+    private fun raise(style: Style) {
+        val ids = style.layers.map { it.id }
+        val ours = ids.indexOf(CASING)
+        if (ours < 0) return
+        val above = ids.drop(ours + 1).any { id -> OTHER_OVERLAYS.any { id.startsWith(it) } }
+        if (!above) return
+        for (id in LAYERS + LocationPuck.LAYERS) {
+            val l = style.getLayer(id) ?: continue
+            style.removeLayer(l)
+            style.addLayer(l)
+        }
+        raises++
+    }
+
+    /**
+     * Where the navigation line sits among the overlays in [style] (for `/nav`; main thread): the overlay layers
+     * above it (none when it is on top) and the index of its line.
+     */
+    fun order(style: Style): Map<String, Any?> {
+        val ids = style.layers.map { it.id }
+        val ours = ids.indexOf(LINE)
+        return linkedMapOf(
+            "lineIndex" to ours.takeIf { it >= 0 },
+            "overlaysAbove" to if (ours < 0) null else ids.drop(ours + 1).filter { id -> OTHER_OVERLAYS.any { id.startsWith(it) } },
+            "raises" to raises,
+        )
     }
 
     companion object {
@@ -136,6 +175,8 @@ class NavMapLayer {
         const val REJOIN = "dystopo-nav-rejoin"
         const val TARGET = "dystopo-nav-target"
         val LAYERS = listOf(CASING, LINE, REJOIN, TARGET)
+        /** Layer id prefixes of the overlays the navigation line must draw above (T65). */
+        val OTHER_OVERLAYS = listOf("dystopo-route-", "dystopo-trip-", "dystopo-track-")
         const val COLOR = "#7b3294"
         const val ALERT = "#d7191c"
     }

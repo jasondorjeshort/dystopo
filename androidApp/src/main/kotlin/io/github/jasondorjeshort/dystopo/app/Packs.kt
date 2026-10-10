@@ -83,8 +83,8 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
         val osmCoverage: PackCoverage? = osm?.let { coverage(name, it, primary, vector = true) }
     }
 
-    /** The primary pack (or the first one when none is stored). */
-    val primary: Region? = regions.firstOrNull { it.name == name } ?: regions.firstOrNull()
+    /** The primary pack (or the first one when none is stored); T65: always one with a DEM (vector-only packs are never primary). */
+    val primary: Region? = regions.firstOrNull { it.name == name && it.dem != null } ?: regions.firstOrNull { it.dem != null }
 
     /** The primary pack's DEM and vector archives. */
     val dem: Pack? get() = primary?.dem
@@ -171,7 +171,8 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
 
         /**
          * Opens every pack that has a DEM whose archives open and are complete (a truncated vector archive is
-         * left out, the pack's DEM still shows). [skip] names packs to leave closed (being deleted).
+         * left out, the pack's DEM still shows), and (T65) every vector-only pack whose archive opens and is
+         * complete. [skip] names packs to leave closed (being deleted).
          */
         fun open(roots: List<File>, skip: Set<String> = emptySet()): PackSet {
             val packs = catalog(roots).filter { it.name !in skip }
@@ -186,11 +187,15 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
                 }
                 return p
             }
+            // T65: a vector-only pack (a server's single-file pack) is opened too: its map data is drawn wherever it is
+            // the best vector archive, over another pack's DEM or the online one; it is never primary.
             val regions = packs.mapNotNull { set ->
-                val dem = open(set.dem, "dem") ?: return@mapNotNull null
-                Region(set.name, dem, open(set.vector, "osm"), primary = set.name == stored)
+                val dem = open(set.dem, "dem")
+                val osm = open(set.vector, "osm")
+                if (dem == null && (set.dem != null || osm == null)) return@mapNotNull null
+                Region(set.name, dem, osm, primary = dem != null && set.name == stored)
             }
-            val primary = stored?.takeIf { s -> regions.any { it.name == s } } ?: regions.firstOrNull()?.name
+            val primary = stored?.takeIf { s -> regions.any { it.name == s && it.dem != null } } ?: regions.firstOrNull { it.dem != null }?.name
             return PackSet(regions, glyphs, primary)
         }
     }

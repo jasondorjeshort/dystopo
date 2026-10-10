@@ -22,7 +22,14 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `POST /route/save[?name=]`: save the current route as GPX in `files/routes/`.
  * - `GET /route/saved`: saved routes. `GET /route/gpx`: the current route as GPX.
  * - `POST /route/export`: write the current route's GPX to `files/exports/`.
- * - `POST /route/clear`: clear the route, the markers and the card.
+ * - T65: `POST /route/import/pick`: opens the Routes list and the system file picker, as its Import does (pick a GPX
+ *   in the picker; it is imported as routes and the last one opens); `GET /route/import`: the last pick's result.
+ * - `POST /route/clear`: clear the route, the markers and the card; T65: also closes the route editor, so a
+ *   kept route's line leaves the map too (`closedTrip` names it; the route stays in the trip store).
+ * T65: `route` (in `POST /route` and `GET /route`) has the route's one set of numbers, distance, `ascentM`,
+ * `descentM` and `timeS` from [io.github.jasondorjeshort.dystopo.model.RouteSummary] of its points (what the card,
+ * the kept route, the trip card and navigation show); the router's own graph-based climb and time are under `graph`.
+ * The route card is hidden while navigating (`ui.cardHidden`).
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -42,7 +49,7 @@ object RouteRoutes {
                 }
                 val ms = (System.nanoTime() - t0) / 1_000_000
                 when (result) {
-                    is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to result.plan.json(r.query["profile"] == "1"), "graph" to RoutePlanner.json(app)))
+                    is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app)))
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
@@ -74,9 +81,19 @@ object RouteRoutes {
                 val p = RouteSession.plan ?: return Response.json(mapOf("error" to "no route"), 404)
                 Response(200, "application/gpx+xml; charset=utf-8", RoutePlanner.gpx(p.route).toByteArray())
             }
+            "POST" to "/route/import/pick" -> { // T65: the Routes list's Import (system file picker)
+                app.map.onMain {
+                    io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen = true
+                    io.github.jasondorjeshort.dystopo.app.routing.RouteImportPicker.requests++
+                }
+                Response.json(io.github.jasondorjeshort.dystopo.app.routing.RouteImportPicker.json())
+            }
+            "GET" to "/route/import" -> Response.json(io.github.jasondorjeshort.dystopo.app.routing.RouteImportPicker.json())
             "POST" to "/route/clear" -> {
-                app.map.onMain { RouteSession.clear() }
-                Response.json(RouteSession.json())
+                // T65: also closes the route editor, so a kept route's line goes too (the route stays in the trip store).
+                val closed = io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId
+                app.map.onMain { RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.close() }
+                Response.json(RouteSession.json() + mapOf("closedTrip" to closed))
             }
             else -> Response.notFound()
         }
@@ -84,7 +101,7 @@ object RouteRoutes {
 
     private fun current(app: DystopoApp, profile: Boolean): Map<String, Any?> = linkedMapOf(
         "ui" to RouteSession.json(),
-        "route" to RouteSession.plan?.json(profile),
+        "route" to RouteSession.plan?.let { RouteSession.routeJson(it, profile) },
         "failure" to RouteSession.failure?.json(),
         "graph" to RoutePlanner.json(app),
     )

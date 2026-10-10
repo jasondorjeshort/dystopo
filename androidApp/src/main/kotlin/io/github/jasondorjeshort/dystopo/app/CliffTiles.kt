@@ -7,17 +7,8 @@ import io.github.jasondorjeshort.dystopo.tiles.CliffSides
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import java.util.concurrent.atomic.AtomicLong
 
-/**
- * Cliff ticks on the downhill side on the phone (T41), like the devtool renderer: vector tiles holding
- * cliff lines are rewritten by [CliffSides] with the elevation of the DEM pack under the tile, so the
- * style's ticks (always on the line's right) sit on the low side. Tiles without cliffs pass through
- * untouched after a byte scan; rewritten tiles are kept in a small memory cache and (T49) on disk in
- * [disk] (the contour cache's LRU, a directory per vector and DEM archive, [ContourCache.cliffDir]), so a
- * restart does not pay the 100 to 400 ms rewrite again; a tile whose cliffs were already right is stored
- * as an empty file, meaning serve as stored. [pyramidFor] gives the DEM pyramid answering DEM tile
- * z/x/y, or null (no DEM there: the tile is served as stored).
- */
-class CliffTiles(private val pyramidFor: (Int, Int, Int) -> DemPyramid?, private val disk: () -> TileCache? = { null }) {
+/** T65: [CliffTiles]' `/stats` counters (`cliffs`), kept across tile service reopens like the T57 tile counters. */
+class CliffCounters {
     val tilesScanned = AtomicLong()
     val tilesWithCliffs = AtomicLong()
     val tilesChanged = AtomicLong()
@@ -28,6 +19,34 @@ class CliffTiles(private val pyramidFor: (Int, Int, Int) -> DemPyramid?, private
     val diskHits = AtomicLong()
     val diskWrites = AtomicLong()
     val timing = Timing(keepRecent = 8)
+}
+
+/**
+ * Cliff ticks on the downhill side on the phone (T41), like the devtool renderer: vector tiles holding
+ * cliff lines are rewritten by [CliffSides] with the elevation of the DEM pack under the tile, so the
+ * style's ticks (always on the line's right) sit on the low side. Tiles without cliffs pass through
+ * untouched after a byte scan; rewritten tiles are kept in a small memory cache and (T49) on disk in
+ * [disk] (the contour cache's LRU, a directory per vector and DEM archive, [ContourCache.cliffDir]), so a
+ * restart does not pay the 100 to 400 ms rewrite again; a tile whose cliffs were already right is stored
+ * as an empty file, meaning serve as stored. [pyramidFor] gives the DEM pyramid answering DEM tile
+ * z/x/y, or null (no DEM there: the tile is served as stored).
+ */
+class CliffTiles(
+    private val pyramidFor: (Int, Int, Int) -> DemPyramid?,
+    /** T65: the `/stats` counters, owned by the app ([TileCounters]) so they stay cumulative across tile service reopens. */
+    val counters: CliffCounters = CliffCounters(),
+    private val disk: () -> TileCache? = { null },
+) {
+    val tilesScanned = counters.tilesScanned
+    val tilesWithCliffs = counters.tilesWithCliffs
+    val tilesChanged = counters.tilesChanged
+    val lines = counters.lines
+    val piecesReversed = counters.piecesReversed
+    val segmentsUndecided = counters.segmentsUndecided
+    val noDem = counters.noDem
+    val diskHits = counters.diskHits
+    val diskWrites = counters.diskWrites
+    val timing = counters.timing
 
     private val memo = object : LinkedHashMap<String, ByteArray>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?) = size > 64

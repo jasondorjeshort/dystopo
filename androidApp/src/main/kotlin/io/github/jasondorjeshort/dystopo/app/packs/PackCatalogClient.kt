@@ -220,7 +220,7 @@ class PackCatalogClient(private val manager: PackManager, packsDir: File) {
     /** Downloads catalog pack [id] (not on the device yet; an installed one is updated instead). */
     fun download(id: String, activate: Boolean = false): PackDownloader.Job {
         val p = current().find(id) ?: throw NoSuchElementException("no pack '$id' in the catalog of $server")
-        if (manager.catalog().any { it.name == p.name && it.dem != null }) return update(p.name)
+        if (manager.catalog().any { it.name == p.name && (it.dem != null || it.vector != null) }) return update(p.name) // T65: vector-only packs too
         val s = server ?: throw IllegalStateException("no server")
         val files = p.files.associate { it.role to Triple(PackCatalog.resolveUrl(s, it.url), it.sha256, it.bytes) }
         return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = catalogInfo(p))

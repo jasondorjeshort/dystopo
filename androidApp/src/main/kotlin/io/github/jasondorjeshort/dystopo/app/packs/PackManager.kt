@@ -172,7 +172,8 @@ class PackManager private constructor(private val app: DystopoApp) {
             runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).installAssets(s) }
         }
         try {
-            if (activeName() == null) {
+            // T65: a vector-only pack cannot be primary (it has no terrain); it joins the map like any other pack.
+            if (activeName() == null && find(name)?.info?.usable == true) {
                 activate(name, moveCamera = show)
                 return
             }

@@ -348,8 +348,8 @@ private fun PackRow(p: PackManager.Listed, isActive: Boolean, onMap: Boolean, on
         val parts = listOfNotNull(
             (info.dem ?: info.vector)?.let { "z${it.minZoom}-${it.maxZoom}" },
             mb(info.bytes),
-            if (info.vector == null) "terrain only" else "terrain + map",
-            "incomplete".takeIf { !info.usable },
+            if (info.vector == null) "terrain only" else if (info.dem == null) "map only" else "terrain + map", // T65: vector-only packs
+            "incomplete".takeIf { !info.usable && !(info.dem == null && info.vector != null) },
         )
         BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
         if (b != null) {

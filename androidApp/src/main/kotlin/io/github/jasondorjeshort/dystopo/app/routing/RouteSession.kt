@@ -8,6 +8,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RoutePath
+import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
@@ -17,6 +20,7 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import java.io.File
 import java.util.concurrent.Executors
+import kotlin.math.roundToLong
 
 /**
  * The route being planned on the map: long-press once for the start, again for the end; the route is
@@ -178,11 +182,43 @@ object RouteSession {
         }
     }
 
-    /** One line for the card: distance, climb, time, in the user's units. */
+    /**
+     * T65: the route as Keep stores it (its points quantised like a trip's path, [RoutePath.fixed]), so the
+     * card, the kept route, the trip card and navigation all measure the same points.
+     */
+    fun unifiedRoute(p: PlannedRoute): Route = p.route.copy(points = RoutePath.fixed(p.route.points, p.mode.label).points)
+
+    @Volatile private var summaryCache: Pair<PlannedRoute, RouteSummary>? = null
+
+    /**
+     * T65: one ascent and descent figure per route. The router's own climb comes from the graph's DEM
+     * samples per edge and differed from the kept route's by up to 50 m (wave 10 sweep); everything now
+     * shows [RouteSummary] of the route's points (T24's 3 m hysteresis, the T45 hike model), computed once
+     * per plan. The graph's numbers stay in `GET /route` under `graph`.
+     */
+    fun summaryOf(p: PlannedRoute): RouteSummary {
+        summaryCache?.let { (k, v) -> if (k === p) return v }
+        val s = RouteSummary.of(RoutePath.fixed(p.route.points, p.mode.label), emptyList(), samples = 0)
+        summaryCache = p to s
+        return s
+    }
+
+    /** `route` in `GET /route` and `POST /route`: the plan with [summaryOf]'s distance, climb and time, the graph's beside them. */
+    fun routeJson(p: PlannedRoute, profile: Boolean): Map<String, Any?> {
+        val s = summaryOf(p)
+        return p.json(profile) + linkedMapOf(
+            "distanceM" to RouteSummary.r1(s.distanceM), "ascentM" to s.ascentM?.let { RouteSummary.r1(it) }, "descentM" to s.descentM?.let { RouteSummary.r1(it) },
+            "timeS" to s.timeS.roundToLong(), "time" to RouteSummary.hm(s.timeS),
+            "graph" to linkedMapOf("ascentM" to p.ascentM?.let { RouteSummary.r1(it) }, "descentM" to p.descentM?.let { RouteSummary.r1(it) }, "timeS" to p.timeS.roundToLong()),
+        )
+    }
+
+    /** One line for the card: distance, climb, time, in the user's units ([summaryOf]: the numbers the kept route shows too). */
     fun summary(p: PlannedRoute): String {
         val u = AppSettings.units
-        val climb = p.ascentM?.let { " · +${UnitFormat.elevation(it, u)} −${UnitFormat.elevation(p.descentM ?: 0.0, u)}" } ?: ""
-        return "${UnitFormat.distance(p.distanceM, u)}$climb · ${PlannedRoute.hm(p.timeS)} ${p.mode.label}"
+        val s = summaryOf(p)
+        val climb = s.ascentM?.let { " · +${UnitFormat.elevation(it, u)} −${UnitFormat.elevation(s.descentM ?: 0.0, u)}" } ?: ""
+        return "${UnitFormat.distance(s.distanceM, u)}$climb · ${RouteSummary.hm(s.timeS)} ${p.mode.label}"
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
@@ -190,6 +226,7 @@ object RouteSession {
         "start" to start?.let { listOf(it.latitude, it.longitude) }, "end" to end?.let { listOf(it.latitude, it.longitude) },
         "longPresses" to longPresses, "overlayFeatures" to overlay.features, "overlayInstalled" to overlay.installedOnStyle,
         "summary" to plan?.let { summary(it) }, "lastFile" to lastFile?.path,
+        "cardHidden" to (io.github.jasondorjeshort.dystopo.app.nav.NavSession.active && phase != "idle"), // T65: hidden while navigating
         "via" to plan?.via?.map { it.first }, // T49: trail names
         "lastFit" to lastFit, "layout" to BottomPanels.json(), // T49
     )

@@ -70,6 +70,37 @@ class SkylineNavTest {
         assertEquals(stats.distanceM, s.end.distanceM, 30.0)
     }
 
+    /**
+     * T65 (the wave 10 device sweep: a single-loop replay recorded two segments): the fixture has no fix
+     * for its 15-minute stop at Panorama Point, which the 5-minute gap rule split; a gap spent in one
+     * place no longer splits, so the replayed loop is one segment with the fixture's own distance.
+     */
+    @Test
+    fun theReplayedLoopRecordsOneSegment() {
+        val store = io.github.jasondorjeshort.dystopo.store.InMemoryTrackStore()
+        val rec = io.github.jasondorjeshort.dystopo.store.TrackRecorder(store, clock = { 0L })
+        val id = rec.start("Skyline").id
+        val pts = loop.tracks.single().points
+        val gaps = pts.zipWithNext().count { (a, b) -> b.time!! - a.time!! > 5 * 60_000 }
+        assertEquals(1, gaps, "the fixture's stop")
+        for (p in pts) assertTrue(rec.onFix(io.github.jasondorjeshort.dystopo.store.LocationFix(p.lat, p.lon, p.ele, p.time!!, 5.0, "replay")))
+        assertEquals(0, rec.gapSplits)
+        assertEquals(1, store.track(id)!!.segments.size)
+        assertEquals(TrackStats.of(loop.tracks.single()).distanceM, store.stats(id)!!.distanceM, 1e-6)
+    }
+
+    /** T65: `devtool nav replay` runs the same check on the JVM. */
+    @Test
+    fun navReplayReportsTheExcursion() {
+        val walk = gpx("skyline-offroute.gpx").tracks.single().points.map { NavReplay.Fix(it.lat, it.lon, it.time!!) }
+        val r = NavReplay.run(path, walk)
+        assertEquals(1, (r["counts"] as Map<*, *>)["offRoute"])
+        assertEquals(1, (r["counts"] as Map<*, *>)["backOnRoute"])
+        assertEquals(true, r["arrived"])
+        assertTrue((r["maxDistanceM"] as Double) in 120.0..160.0)
+        assertEquals(1.0, r["etaVsPlanAtStart"] as Double, 0.02)
+    }
+
     @Test
     fun theRouteInTheFixtureNavigatesToo() {
         val route = loop.routes.single()

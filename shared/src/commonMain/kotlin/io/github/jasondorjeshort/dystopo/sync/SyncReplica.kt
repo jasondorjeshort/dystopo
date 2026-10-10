@@ -4,7 +4,6 @@ import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
-import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 import io.github.jasondorjeshort.dystopo.store.TrackStore
 
@@ -50,7 +49,9 @@ interface SyncReplica {
     /**
      * Compaction: tombstones older than [retentionMs] before [now] are dropped (dead operations are
      * already dropped when their tombstone arrives). See docs/PLANNING.md › Sync for the resurrection
-     * limit this implies for a replica offline longer than the retention window.
+     * limit this implies for a replica offline longer than the retention window. T65: a route's field
+     * writes superseded by a newer write of the same field are dropped too ([RouteOps.superseded], counted
+     * in [CompactResult.opsDropped]), so the log keeps one `path` value per route.
      */
     fun compact(now: Long, retentionMs: Long = DEFAULT_RETENTION_MS): CompactResult
 
@@ -139,11 +140,28 @@ interface SyncStore : TrackStore, SyncReplica {
     /** T60: the Routes list: every route with its summary numbers, oldest first. */
     fun routeList(): List<RouteListItem> = routePlans().map { RouteListItem.of(it, 0L) }
 
-    /** T60: replaces the route's path (one field write); false if the route does not exist. */
-    fun setRoutePath(id: String, path: RoutePath, now: Long): Boolean = setField(EntityKind.ROUTE, id, "path", path.quantized().encode(), now)
+    /**
+     * T60: replaces the route's path (one field write); false if the route does not exist. T65: a path over
+     * [RouteOps.MAX_PATH_CHARS] encoded throws [RouteOps.RouteTooLargeException].
+     */
+    fun setRoutePath(id: String, path: RoutePath, now: Long): Boolean {
+        val q = path.quantized()
+        val value = q.encode()
+        RouteOps.checkPath(id, value, q.points.size)
+        return setField(EntityKind.ROUTE, id, "path", value, now)
+    }
 
-    /** T60: replaces the route's waypoints (one field write); false if the route does not exist. */
-    fun setRouteWaypoints(id: String, waypoints: List<Waypoint>, now: Long): Boolean = setField(EntityKind.ROUTE, id, "waypoints", RouteWaypoints.encode(waypoints), now)
+    /**
+     * Changes the route's waypoints to [waypoints]; false if the route does not exist. T65: one `wpt:<id>`
+     * write per added, changed or removed waypoint ([RouteOps.waypointWrites]), so concurrent edits of
+     * different waypoints on two devices both survive; nothing is written when nothing changed.
+     */
+    fun setRouteWaypoints(id: String, waypoints: List<Waypoint>, now: Long): Boolean {
+        val old = routePlan(id)?.waypoints ?: return false
+        var ok = true
+        for ((field, value) in RouteOps.waypointWrites(old, waypoints)) ok = setField(EntityKind.ROUTE, id, field, value, now) && ok
+        return ok
+    }
 
     /** Sets a synced setting; null removes it. */
     fun setSetting(key: String, value: String?, now: Long)

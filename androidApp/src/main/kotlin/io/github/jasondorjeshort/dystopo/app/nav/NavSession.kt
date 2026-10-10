@@ -19,7 +19,10 @@ import io.github.jasondorjeshort.dystopo.app.MapController.CameraMode
 import io.github.jasondorjeshort.dystopo.app.tracking.GpsLocationSource
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.nav.AlertSnooze
 import io.github.jasondorjeshort.dystopo.nav.Compass
+import io.github.jasondorjeshort.dystopo.nav.FixFreshness
+import io.github.jasondorjeshort.dystopo.nav.FixOrigin
 import io.github.jasondorjeshort.dystopo.nav.NavEvent
 import io.github.jasondorjeshort.dystopo.nav.NavOptions
 import io.github.jasondorjeshort.dystopo.nav.NavPath
@@ -62,6 +65,10 @@ object NavSession {
         val camera: CameraMode,
         val arrived: Boolean,
         val waiting: Boolean,
+        /** T65: "No GPS fix for 45 s" when the position is old ([FixFreshness.lost]); null when fresh. */
+        val fixAge: String? = null,
+        /** T65: "Alerts snoozed 9 min" or "Alerts quiet until back on route"; null when alerts sound. */
+        val snoozed: String? = null,
     )
 
     var ui by mutableStateOf<Ui?>(null)
@@ -74,8 +81,13 @@ object NavSession {
     @Volatile var navigator: Navigator? = null
         private set
     @Volatile private var source: Map<String, Any?> = emptyMap()
-    @Volatile private var plan: PlannedRoute? = null
+    /** T65: the followed route's planned total time ([NavSources.Resolved.planTimeS]); null for tracks and files. */
+    @Volatile private var planTimeS: Double? = null
     @Volatile private var startedAt = 0L
+    /** T65: off-route alert snooze (sound and buzz only; events are still listed). */
+    private val snooze = AlertSnooze()
+    /** T65: stale-fix rules for device fixes and the last known location. */
+    @Volatile private var freshness = FixFreshness()
     @Volatile var sound = true
         private set
     @Volatile var vibrate = true
@@ -115,14 +127,16 @@ object NavSession {
         sound: Boolean = true,
         vibrate: Boolean = true,
         zoom: Double? = 15.0,
-        planned: PlannedRoute? = null,
+        planTimeS: Double? = null,
     ): Map<String, Any?> {
         stop()
         hookInjected()
         synchronized(this) {
             navigator = Navigator(path, options)
             source = src
-            plan = planned
+            this.planTimeS = planTimeS
+            snooze.clear()
+            freshness = FixFreshness()
             this.sound = sound
             this.vibrate = vibrate
             this.zoom = zoom
@@ -139,6 +153,8 @@ object NavSession {
         }
         app.map.cameraMode = camera
         layer.show(path.points, null, null)
+        // T65: the route editor sheet closes (its card would sit under the stats bar; the trip stays stored).
+        io.github.jasondorjeshort.dystopo.app.trips.Trips.close()
         main.post {
             app.map.mapView?.let { layer.bind(it); it.keepScreenOn = true }
             // Again on the main thread, after any cleanup a previous stop() posted (a first start lost its line once).
@@ -166,8 +182,38 @@ object NavSession {
 
     private fun startFrom(resolve: () -> NavSources.Resolved) {
         runCatching { resolve() }
-            .onSuccess { r -> start(r.path, r.source, NavOptions(mode = r.plan?.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE), planned = r.plan) }
+            .onSuccess { r -> start(r.path, r.source, NavOptions(mode = r.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE), planTimeS = r.planTimeS) }
             .onFailure { Log.w(TAG, "cannot navigate", it) }
+    }
+
+    /** T65: "Go" on the trip card: navigate a kept route (background thread). */
+    fun startTrip(id: String) = startFrom { NavSources.keptRoute(id) ?: throw NavSources.NotFound("no kept route $id") }
+
+    /**
+     * T65: snooze the off-route alert for [minutes], or (null) until back on the route; [off] ends a snooze.
+     * Navigation still detects and lists every event.
+     */
+    fun snooze(minutes: Double?, off: Boolean = false): Map<String, Any?> {
+        val now = System.currentTimeMillis()
+        when {
+            off -> snooze.clear()
+            minutes == null -> snooze.snoozeExcursion()
+            else -> snooze.snooze(now, minutes)
+        }
+        main.post { ui = ui?.copy(snoozed = snoozedText(now)) }
+        return snooze.json(now)
+    }
+
+    private fun snoozedText(now: Long): String? = when {
+        snooze.untilBackOnRoute -> "Alerts quiet until back on route"
+        snooze.active(now) -> "Alerts snoozed " + ((snooze.untilMs!! - now + 59_999) / 60_000) + " min"
+        else -> null
+    }
+
+    private fun fixAgeText(now: Long): String? {
+        if (!freshness.lost(now, startedAt)) return null
+        val age = freshness.ageS(now) ?: return "No GPS fix yet"
+        return "No GPS fix for " + if (age < 120) "${age.toInt()} s" else "${(age / 60).toInt()} min"
     }
 
     fun stop(): Map<String, Any?> {
@@ -256,6 +302,16 @@ object NavSession {
     private fun onFix(fix: LocationFix, origin: String, gpsCourse: Double? = null, repeat: Boolean = false) {
         val nav = navigator ?: return
         if (!repeat) synchronized(fixCounts) { fixCounts[origin] = (fixCounts[origin] ?: 0) + 1 }
+        // T65: a stale device fix, or an old or far-away last known location, does not move navigation.
+        if (!repeat) {
+            val o = FixOrigin.of(origin)
+            val far = if (o == FixOrigin.LAST_KNOWN) nav.path.project(fix.lat, fix.lon).distanceM else null
+            val verdict = synchronized(this) { freshness.check(o, fix.time, System.currentTimeMillis(), far) }
+            if (verdict != FixFreshness.Verdict.USE) {
+                Log.i(TAG, "dropped a $origin fix: ${verdict.name.lowercase()} (age ${(System.currentTimeMillis() - fix.time) / 1000} s" + (far?.let { ", ${it.toInt()} m from the line" } ?: "") + ")")
+                return
+            }
+        }
         compass.locate(fix.lat, fix.lon, if (fix.time > 0) fix.time else System.currentTimeMillis())
         // Course over ground: the GPS's own, else between fixes at least 5 m apart.
         if (!repeat) {
@@ -276,11 +332,13 @@ object NavSession {
         val events = nav.events
         while (alerted < events.size) {
             val e = events[alerted++]
-            when (e.type) {
+            // T65: a snoozed alert is listed but silent.
+            val loud = (e.type == NavEvent.OFF_ROUTE || e.type == NavEvent.BACK_ON_ROUTE) && synchronized(this) { snooze.allow(e.type, System.currentTimeMillis()) }
+            if (loud) when (e.type) {
                 NavEvent.OFF_ROUTE -> alerts.offRoute(sound, vibrate)
                 NavEvent.BACK_ON_ROUTE -> alerts.backOnRoute(sound)
             }
-            Log.i(TAG, "event ${e.json()}")
+            Log.i(TAG, "event ${e.json()}" + if (!loud && (e.type == NavEvent.OFF_ROUTE || e.type == NavEvent.BACK_ON_ROUTE)) " (snoozed)" else "")
         }
         val rejoin = s.rejoin
         layer.setRejoin(
@@ -321,6 +379,11 @@ object NavSession {
                 }
                 nav.state?.let { s -> ui = uiOf(nav, s) }
             }
+            // T65: the fix age and the snooze line follow the clock between fixes.
+            val now = System.currentTimeMillis()
+            val age = fixAgeText(now)
+            val sn = snoozedText(now)
+            ui?.let { u -> if (u.fixAge != age || u.snoozed != sn) ui = u.copy(fixAge = age, snoozed = sn) }
             main.postDelayed(this, 500)
         }
     }
@@ -356,6 +419,8 @@ object NavSession {
             camera = app.map.cameraMode,
             arrived = s.arrived,
             waiting = false,
+            fixAge = fixAgeText(System.currentTimeMillis()),
+            snoozed = snoozedText(System.currentTimeMillis()),
         )
     }
 
@@ -373,19 +438,26 @@ object NavSession {
         val nav = navigator ?: return linkedMapOf("active" to false, "alerts" to alerts.json())
         val p = nav.path
         val s = nav.state
-        val planTime = plan?.timeS
+        val planTime = planTimeS
+        val now = System.currentTimeMillis()
         return linkedMapOf(
             "active" to true,
             "source" to source,
             "startedAt" to startedAt,
             "path" to linkedMapOf(
-                "name" to p.name, "points" to p.points.size, "totalM" to r1(p.totalM), "totalAscentM" to r1(p.totalAscentM),
+                "name" to p.name, "points" to p.points.size, "totalM" to r1(p.totalM), "totalAscentM" to r1(p.totalAscentM), "totalDescentM" to r1(p.totalDescentM),
                 "hasElevation" to p.hasElevation, "plannedTimeS" to Math.round(nav.plannedTimeS), "planned" to PlannedRoute.hm(nav.plannedTimeS),
                 "waypoints" to p.waypoints.map { linkedMapOf("name" to it.name, "alongM" to r1(it.alongM)) },
             ),
-            // T45 routes: the router's own time (DEM ascent from the graph) beside navigation's (the route points' elevations).
+            // T65: the route's planned time (its RouteSummary, as the route card and the trip card show it); null for tracks.
             "routePlanTimeS" to planTime?.let { Math.round(it) },
-            "etaVsPlan" to if (planTime != null && s != null && s.fixes > 0) Math.round(s.end.timeS / planTime * 1000) / 1000.0 else null,
+            // T65: Navigator.etaVsPlan, a pace ratio: (elapsed fix time + time still to go) / planned time. 1.0 at the
+            // start; above 1 behind plan (slower, or off route), below 1 ahead. Against the route's plan, else the line's model time.
+            "etaVsPlan" to nav.etaVsPlan(planTime ?: nav.plannedTimeS)?.let { Math.round(it * 1000) / 1000.0 },
+            "pace" to s?.let { st -> linkedMapOf(
+                "elapsedS" to nav.firstFixMs?.let { Math.round((st.timeMs - it) / 1000.0) }, "remainingS" to Math.round(st.end.timeS),
+                "plannedS" to Math.round(planTime ?: nav.plannedTimeS),
+            ) },
             "options" to nav.options.let { o ->
                 linkedMapOf("offRouteM" to o.offRouteM, "offRouteSeconds" to o.offRouteSeconds, "backOnRouteM" to o.backOnRouteM, "arriveM" to o.arriveM, "mode" to o.mode.label, "sound" to sound, "vibrate" to vibrate)
             },
@@ -394,10 +466,14 @@ object NavSession {
             "compass" to sensor.json(),
             "camera" to linkedMapOf("mode" to app.map.cameraMode.name.lowercase(), "followMoves" to app.map.followMoves),
             "keepScreenOn" to keepScreenOn(),
-            "layer" to linkedMapOf("installed" to layer.installedOnStyle, "updates" to layer.updates),
+            "layer" to linkedMapOf("installed" to layer.installedOnStyle, "updates" to layer.updates) +
+                (runCatching { app.map.onMain { app.map.map?.style?.let { layer.order(it) } } }.getOrNull() ?: emptyMap()), // T65: order among the overlays
             "fixes" to synchronized(fixCounts) { HashMap(fixCounts) }, "gpsIgnored" to ignored, "gps" to (gpsListener != null),
             "alerts" to alerts.json(),
-            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading) },
+            "snooze" to synchronized(this) { snooze.json(now) }, // T65
+            "fix" to synchronized(this) { freshness.json(now, startedAt) }, // T65: stale-fix handling
+            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed) },
+            "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null)), // T65
         )
     }
 
@@ -416,6 +492,7 @@ object NavSession {
             "counts" to ev.groupingBy { it.type.substringBefore(':') }.eachCount(),
             "events" to ev.map { it.json() },
             "alerts" to alerts.json(),
+            "snooze" to synchronized(this) { snooze.json(System.currentTimeMillis()) }, // T65
         )
     }
 

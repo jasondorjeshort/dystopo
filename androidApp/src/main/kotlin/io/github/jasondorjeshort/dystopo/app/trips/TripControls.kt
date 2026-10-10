@@ -83,7 +83,7 @@ fun TripControls() {
             return@Box
         }
         if (Trips.editing == null) {
-            Chip("Routes", Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 8.dp, top = 112.dp)) {
+            Chip("Routes", Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChip())) { // T65: below the track controls
                 Trips.listOpen = true
                 Trips.background { Trips.refresh() }
             }
@@ -105,6 +105,7 @@ private fun BoxScope.RoutesList() {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             BasicText("Routes", style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                io.github.jasondorjeshort.dystopo.app.routing.RouteImportAction() // T65: Import from the system file picker
                 Action("Close") { Trips.listOpen = false }
             }
         }
@@ -182,6 +183,7 @@ private fun TripCard(modifier: Modifier) {
                 BasicText("Remove via:", style = TextStyle(color = Ink, fontSize = 12.sp))
                 for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }
             }
+            Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrip(p.id) }.start() } // T65: navigate this route
             Action("GPX") { Trips.background { Trips.export(p.id) } }
             Action("Share link") { Trips.background { Trips.shareLink(p.id) } } // T67: a read-only link from the sync server
             Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }

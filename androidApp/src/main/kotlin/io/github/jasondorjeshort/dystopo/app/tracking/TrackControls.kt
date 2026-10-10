@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.lazy.LazyColumn
@@ -87,9 +86,16 @@ private fun BoxScope.Controls() {
         if (uri != null) Thread { importUri(tracking, uri) }.start()
     }
 
+    val density = androidx.compose.ui.platform.LocalDensity.current
     Column(
-        // Below the Packs button (T29), which sits in the top-right corner.
-        Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 64.dp),
+        // Below the Packs button (T29), which sits in the top-right corner; T65: below the navigation card while
+        // navigating, and measured so the Routes chip stacks under this column (TopChips).
+        Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.trackColumn()).padding(start = 8.dp, end = 8.dp)
+            .onGloballyPositioned { c ->
+                val chips = io.github.jasondorjeshort.dystopo.app.TopChips
+                chips.edge(c, density, top = true).let { if (it != chips.trackColumnTop) chips.trackColumnTop = it }
+                chips.edge(c, density).let { if (it != chips.trackColumnBottom) chips.trackColumnBottom = it }
+            },
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

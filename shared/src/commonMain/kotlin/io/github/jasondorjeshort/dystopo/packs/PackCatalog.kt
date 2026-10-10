@@ -29,8 +29,9 @@ data class PackCatalog(val version: Int, val generatedAt: String?, val packs: Li
         const val VERSION = 1
 
         /**
-         * Reads a catalog document. Entries that are unusable (no valid name, no DEM file, a file without a
-         * SHA-256) are skipped and reported in [skipped] instead of failing the whole catalog.
+         * Reads a catalog document. Entries that are unusable (no valid name, no files, a file without a
+         * SHA-256, a hash that does not match) are skipped and reported in [skipped] instead of failing the
+         * whole catalog. T65: vector-only entries (no DEM file, [CatalogPack.vectorOnly]) are kept.
          */
         fun parse(doc: Map<String, Any?>, skipped: MutableList<String>? = null): PackCatalog {
             val version = (doc["version"] as? Number)?.toInt() ?: VERSION
@@ -113,6 +114,9 @@ data class CatalogPack(
 ) {
     fun file(role: PackRole): CatalogFile? = files.firstOrNull { it.role == role }
 
+    /** T65: map data without a DEM (a server's single-file vector pack). */
+    val vectorOnly: Boolean get() = files.none { it.role == PackRole.DEM }
+
     /** `YYYY-MM-DD` of [builtAt], for lists. */
     val builtDate: String? get() = builtAt?.takeIf { it.length >= 10 }?.substring(0, 10)
 
@@ -130,7 +134,8 @@ data class CatalogPack(
                 @Suppress("UNCHECKED_CAST")
                 CatalogFile.parse(it as? Map<String, Any?> ?: throw IllegalArgumentException("$name: bad file entry"))
             }
-            require(files.any { it.role == PackRole.DEM }) { "$name: no DEM file" }
+            // T65: a vector-only entry (a server's single-file pack, T58) is listed too; the phone overlays its map data where a DEM pack or the online DEM covers it.
+            require(files.isNotEmpty()) { "$name: no files" }
             require(files.map { it.role }.distinct().size == files.size) { "$name: two files with one role" }
             val computed = PackHash.combine(files.associate { it.role to it.sha256 })
             val hash = ((m["contentHash"] ?: m["hash"]) as? String)?.trim()?.lowercase() ?: computed
@@ -139,7 +144,7 @@ data class CatalogPack(
                 id = (m["id"] as? String)?.takeIf { it.isNotBlank() } ?: name,
                 name = name,
                 title = m["title"] as? String,
-                bounds = parseBounds(m["bounds"]) ?: files.firstOrNull { it.role == PackRole.DEM }?.bounds,
+                bounds = parseBounds(m["bounds"]) ?: files.firstOrNull { it.role == PackRole.DEM }?.bounds ?: files.firstNotNullOfOrNull { it.bounds },
                 minZoom = (m["minZoom"] as? Number)?.toInt(),
                 maxZoom = (m["maxZoom"] as? Number)?.toInt(),
                 profile = m["profile"] as? String,

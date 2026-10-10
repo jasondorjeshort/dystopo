@@ -32,6 +32,15 @@ import java.util.concurrent.atomic.AtomicLong
  * Tiles the pack does not cover come from the online DEM pyramid when a server is set ([OnlineTiles]), not
  * disk-cached (their DEM may still be arriving).
  */
+/** T65: [ShadeService]'s `/stats` counters (`shadeGeneration`), kept across tile service reopens like the T57 tile counters. */
+class ShadeCounters {
+    val served = SourceCounters()
+    val cacheHits = AtomicLong()
+    val waits = AtomicLong()
+    val transparent = AtomicLong()
+    val stats = ShadeTileStats(keepRecent = 64)
+}
+
 class ShadeService(
     cacheDir: File,
     private val demIdentity: String,
@@ -41,12 +50,14 @@ class ShadeService(
     val permits: Int,
     /** T49: where tiles are kept (the contour cache's LRU). */
     private val cache: () -> TileCache = { ContourCache.get() },
+    /** T65: the `/stats` counters, owned by the app ([io.github.jasondorjeshort.dystopo.app.TileCounters]) so they stay cumulative across tile service reopens. */
+    val counters: ShadeCounters = ShadeCounters(),
 ) {
-    val served = SourceCounters()
-    val cacheHits = AtomicLong()
-    val waits = AtomicLong()
-    val transparent = AtomicLong()
-    val stats = ShadeTileStats(keepRecent = 64)
+    val served = counters.served
+    val cacheHits = counters.cacheHits
+    val waits = counters.waits
+    val transparent = counters.transparent
+    val stats = counters.stats
     private val slots = Semaphore(permits)
     private val inFlight = ConcurrentHashMap<String, CompletableFuture<ByteArray>>()
     private val legacyRoot = File(cacheDir, "shade")

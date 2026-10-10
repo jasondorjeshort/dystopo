@@ -8,18 +8,44 @@ import io.github.jasondorjeshort.dystopo.model.Waypoint
 enum class EntityKind(val code: Int) {
     TRACK(1), WAYPOINT(2), ROUTE(3), SETTING(4);
 
-    /** The fields a [SetField] may change; others are ignored when materialising (newer peers may know more). */
+    /**
+     * The fields a [SetField] may change; others are ignored when materialising (newer peers may know more).
+     * Iterating gives the named fields; `in` also accepts a family of fields named by a prefix (T65: a
+     * route's `wpt:<waypoint id>`, one waypoint each, see [RouteOps]).
+     */
     val fields: Set<String>
         get() = when (this) {
-            TRACK -> setOf("name", "description", "comment", "source", "type", "extensions")
-            WAYPOINT -> setOf("name", "description", "comment", "symbol", "type", "extensions")
-            // T60: `path` (RoutePath.encode) and `waypoints` (RouteWaypoints.encode) are the route's shape and waypoints.
-            ROUTE -> setOf("name", "description", "comment", "type", "extensions", "path", "waypoints")
-            SETTING -> setOf("value")
+            TRACK -> TRACK_FIELDS
+            WAYPOINT -> WAYPOINT_FIELDS
+            ROUTE -> ROUTE_FIELDS
+            SETTING -> SETTING_FIELDS
         }
 
     companion object {
         fun of(code: Int): EntityKind = entries.firstOrNull { it.code == code } ?: throw SyncFormatException("unknown entity kind $code")
+
+        private val TRACK_FIELDS = FieldSet(setOf("name", "description", "comment", "source", "type", "extensions"))
+        private val WAYPOINT_FIELDS = FieldSet(setOf("name", "description", "comment", "symbol", "type", "extensions"))
+        // T60: `path` (RoutePath.encode) and `waypoints` (RouteWaypoints.encode) are the route's shape and waypoints;
+        // T65: `wpt:<id>` is one waypoint (RouteOps.encodeWaypoint; null = removed), so concurrent waypoint edits merge.
+        private val ROUTE_FIELDS = FieldSet(setOf("name", "description", "comment", "type", "extensions", "path", "waypoints"), RouteOps.WAYPOINT_FIELD_PREFIX)
+        private val SETTING_FIELDS = FieldSet(setOf("value"))
+    }
+}
+
+/**
+ * The fields of an [EntityKind] (T65): [names], plus, with [prefix], every `<prefix><non-empty suffix>` field
+ * (a family such as a route's `wpt:<waypoint id>`). Iteration lists [names] only.
+ */
+class FieldSet(private val names: Set<String>, private val prefix: String? = null) : AbstractSet<String>() {
+    override val size: Int get() = names.size
+    override fun iterator(): Iterator<String> = names.iterator()
+    override fun contains(element: String): Boolean =
+        element in names || (prefix != null && element.length > prefix.length && element.startsWith(prefix) && element.length <= MAX_FIELD_LENGTH)
+
+    companion object {
+        /** Longest field name accepted in a family (a prefix plus a UUID is about 40). */
+        const val MAX_FIELD_LENGTH = 100
     }
 }
 

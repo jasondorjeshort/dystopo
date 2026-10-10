@@ -132,7 +132,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         catalog: Map<String, Any?>,
     ): Job {
         require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
-        require(PackRole.DEM in files || (update && PackRole.DEM in unchanged)) { "pack '$name' has no DEM archive" }
+        // T65: a vector-only pack (a server's single-file pack) is map data drawn where the DEM comes from another pack or online.
+        require(files.isNotEmpty() || (update && unchanged.isNotEmpty())) { "pack '$name' has no archive to download" }
         val source = PackSource(name, files[PackRole.DEM]?.first.orEmpty(), files[PackRole.VECTOR]?.first.orEmpty())
         return enqueue(source, update) {
             Job(source, activate, System.currentTimeMillis(), update, catalog).also { job ->
@@ -151,8 +152,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     private fun enqueue(source: PackSource, update: Boolean = false, make: () -> Job): Job {
         synchronized(jobs) {
             jobs[source.name]?.let { if (it.state == "queued" || it.state == "running") return it }
-            val existing = File(dir, PackNames.fileName(source.name, PackRole.DEM))
-            require(update || !existing.exists() || File(stateDir, "${source.name}.json").exists()) { "pack '${source.name}' is already on the device; DELETE /packs/${source.name} first" }
+            val existing = PackRole.entries.any { File(dir, PackNames.fileName(source.name, it)).exists() } // T65: or its vector archive alone
+            require(update || !existing || File(stateDir, "${source.name}.json").exists()) { "pack '${source.name}' is already on the device; DELETE /packs/${source.name} first" }
             val job = make()
             jobs[source.name] = job
             save(job)

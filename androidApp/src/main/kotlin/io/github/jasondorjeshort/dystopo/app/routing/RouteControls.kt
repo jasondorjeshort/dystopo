@@ -80,7 +80,8 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * The route card (T45): binds [RouteSession.overlay] to the map (long-press start, long-press end),
  * then shows what is happening: waiting for the end point, planning (with the trail-network build
  * progress on first use), the route's distance, climb and time with Hike/Bike, Save, GPX and Clear,
- * or why no route was found. Nothing shows until the first long-press.
+ * or why no route was found. Nothing shows until the first long-press, nor while navigating (T65). The
+ * distance, climb and time are [RouteSession.summaryOf], the figures the kept route shows (T65).
  */
 @Composable
 fun RouteControls() {
@@ -91,7 +92,8 @@ fun RouteControls() {
         onDispose { RouteSession.overlay.unbind() }
     }
     val phase = RouteSession.phase
-    if (phase == "idle") {
+    // T65: hidden while navigating (the stats bar has what matters; the card returns when navigation stops).
+    if (phase == "idle" || io.github.jasondorjeshort.dystopo.app.nav.NavSession.ui != null) {
         SideEffect { if (BottomPanels.routeCardTop != 0.dp) BottomPanels.routeCardTop = 0.dp }
         return
     }

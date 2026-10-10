@@ -25,6 +25,7 @@ import io.github.jasondorjeshort.dystopo.sync.Op
 import io.github.jasondorjeshort.dystopo.sync.OpBody
 import io.github.jasondorjeshort.dystopo.sync.OpCodec
 import io.github.jasondorjeshort.dystopo.sync.PutRoute
+import io.github.jasondorjeshort.dystopo.sync.RouteOps
 import io.github.jasondorjeshort.dystopo.sync.PutSetting
 import io.github.jasondorjeshort.dystopo.sync.PutTrack
 import io.github.jasondorjeshort.dystopo.sync.PutWaypoint
@@ -341,6 +342,7 @@ class InMemoryTrackStore(
     }
 
     override fun putRoutePlan(plan: RoutePlan, now: Long) {
+        io.github.jasondorjeshort.dystopo.sync.RouteOps.checkPlan(plan) // T65: size cap
         emit(PutRoute(Route(plan.id, plan.name, emptyList(), plan.description, plan.comment, plan.type, plan.extensions)), now)
         emit(SetField(EntityKind.ROUTE, plan.id, "path", plan.path.quantized().encode()), now)
         emit(SetField(EntityKind.ROUTE, plan.id, "waypoints", RouteWaypoints.encode(plan.waypoints)), now)
@@ -443,6 +445,10 @@ class InMemoryTrackStore(
                 newest[key] = list.maxOf { it.hlc }
             }
         }
-        return CompactResult(tombstones, 0)
+        // T65: field writes superseded by a newer write of the same field (a route keeps one `path` value).
+        val superseded = RouteOps.compactable(byEntity.filterKeys { it.kind == EntityKind.ROUTE }.values).toSet()
+        for (list in byEntity.values) list.removeAll { it.hlc in superseded }
+        superseded.forEach { ops.remove(it) }
+        return CompactResult(tombstones, superseded.size)
     }
 }

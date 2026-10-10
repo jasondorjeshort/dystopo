@@ -30,6 +30,7 @@ import io.github.jasondorjeshort.dystopo.sync.Op
 import io.github.jasondorjeshort.dystopo.sync.OpBody
 import io.github.jasondorjeshort.dystopo.sync.OpCodec
 import io.github.jasondorjeshort.dystopo.sync.PutRoute
+import io.github.jasondorjeshort.dystopo.sync.RouteOps
 import io.github.jasondorjeshort.dystopo.sync.RouteListItem
 import io.github.jasondorjeshort.dystopo.sync.PutSetting
 import io.github.jasondorjeshort.dystopo.sync.PutTrack
@@ -471,6 +472,7 @@ class SqlTrackStore(
     }
 
     override fun putRoutePlan(plan: RoutePlan, now: Long) {
+        io.github.jasondorjeshort.dystopo.sync.RouteOps.checkPlan(plan) // T65: size cap
         q.transaction {
             emit(PutRoute(Route(plan.id, plan.name, emptyList(), plan.description, plan.comment, plan.type, plan.extensions)), now)
             emit(SetField(EntityKind.ROUTE, plan.id, "path", plan.path.quantized().encode()), now)
@@ -638,13 +640,17 @@ class SqlTrackStore(
 
     override fun compact(now: Long, retentionMs: Long): CompactResult {
         var dropped = 0
+        var superseded = 0
         q.transaction {
             val horizon = Hlc((now - retentionMs).coerceIn(0, Hlc.MAX_WALL), 0, "").text
             for (h in q.oldTombstones(horizon).executeAsList()) {
                 q.deleteOp(h)
                 dropped++
             }
+            // T65: field writes superseded by a newer write of the same field (a route keeps one `path` value).
+            val routeOps = q.opsOfKind(EntityKind.ROUTE.code.toLong()).executeAsList().groupBy({ it.entity }, { OpCodec.decode(it.body) })
+            RouteOps.compactable(routeOps.values).forEach { q.deleteOp(it.text); superseded++ }
         }
-        return CompactResult(dropped, 0)
+        return CompactResult(dropped, superseded)
     }
 }

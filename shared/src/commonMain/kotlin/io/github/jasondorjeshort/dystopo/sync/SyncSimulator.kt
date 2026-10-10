@@ -393,9 +393,15 @@ class SyncSimulator(
                 count("editRoute")
             }
             r < 920 -> {
-                // T60: a waypoint added to a route (concurrent adds: last writer wins on the list).
-                val plan = pick(s.routePlans()) ?: return localChange0(p)
-                s.setRouteWaypoints(plan.id, plan.waypoints + Waypoint(ids.next(), "Camp ${rnd.nextInt(100)}", 46.81, -121.74 + rnd.nextDouble() * 0.01), t)
+                // T60/T65: a route waypoint added, renamed or removed (racing on the first routes; per-waypoint writes, so concurrent edits merge).
+                val plan = s.routePlans().take(2).let { pick(it) } ?: return localChange0(p)
+                val w = pick(plan.waypoints)
+                val next = when {
+                    w != null && rnd.nextInt(4) == 0 -> plan.waypoints.filter { it.id != w.id }.also { count("routeWaypointRemove") }
+                    w != null && rnd.nextInt(3) == 0 -> plan.waypoints.map { if (it.id == w.id) it.copy(name = "Camp renamed ${rnd.nextInt(100)}") else it }.also { count("routeWaypointRename") }
+                    else -> (plan.waypoints + Waypoint(ids.next(), "Camp ${rnd.nextInt(100)}", 46.81, -121.74 + rnd.nextDouble() * 0.01)).also { count("routeWaypointAdd") }
+                }
+                s.setRouteWaypoints(plan.id, next, t)
                 count("routeWaypoint")
             }
             r < 940 -> {

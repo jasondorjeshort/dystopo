@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.tracking.ReplayChecks
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Waypoint
@@ -107,15 +108,12 @@ object TrackRoutes {
             }
             "POST" to "/location/replay" -> {
                 val rate = p.d("rate") ?: 1.0
-                if (!(rate > 0 && rate <= 10_000)) return Response.json(mapOf("error" to "rate must be in (0, 10000]"), 400)
-                if (r.body.isEmpty()) return Response.json(mapOf("error" to "POST a GPX file as the body"), 400)
                 // T57: record= while a track is recording would leave that one behind (empty when it had just
-                // started) beside the replay's own: refuse, and say how to get either.
-                if (p.s("record") != null && t.call { t.recorder.recording }) {
-                    return Response.json(mapOf(
-                        "error" to "already recording: stop that track first (POST /tracks/stop), or replay without record= to add the fixes to it",
-                        "recording" to recorderJson(t),
-                    ), 409)
+                // started) beside the replay's own: refuse, and say how to get either. T65: the rules are
+                // ReplayChecks.refusal, unit-tested.
+                val recording = p.s("record") != null && t.call { t.recorder.recording }
+                ReplayChecks.refusal(rate, r.body.isEmpty(), p.s("record"), recording)?.let { (status, error) ->
+                    return Response.json(if (status == 409) mapOf("error" to error, "recording" to recorderJson(t)) else mapOf("error" to error), status)
                 }
                 p.s("record")?.let { t.start(it, Tracking.Mode.INJECTED) }
                 return try {

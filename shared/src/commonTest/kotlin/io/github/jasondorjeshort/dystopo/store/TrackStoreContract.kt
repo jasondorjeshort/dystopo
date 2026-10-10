@@ -187,7 +187,8 @@ abstract class TrackStoreContract {
         val rec = TrackRecorder(s, clock = { 0L })
         val id = rec.start("gap").id
         val first = loopPoints(40)
-        val second = loopPoints(40).map { it.copy(time = it.time!! + (first.last().time!! - first.first().time!!) + 10 * 60_000) }
+        // T65: the walker reappears 300 m away (a gap in one place is a stop, see segmentGapMinM).
+        val second = loopPoints(40).map { it.copy(lat = it.lat + 0.0027, time = it.time!! + (first.last().time!! - first.first().time!!) + 10 * 60_000) }
         fixesOf(first + second).forEach { assertTrue(rec.onFix(it)) }
         assertEquals(1, rec.gapSplits)
         rec.stop()
@@ -205,6 +206,26 @@ abstract class TrackStoreContract {
         val id3 = r3.start("never").id
         fixesOf(first + second).forEach { r3.onFix(it) }
         assertEquals(1, s.track(id3)!!.segments.size)
+    }
+
+    /** T65: a long stop with no fixes (the Skyline fixture's 15 minutes at Panorama Point) keeps one segment; moving through a gap splits. */
+    @Test
+    fun aGapSpentInOnePlaceDoesNotSplit() {
+        val s = newStore()
+        val rec = TrackRecorder(s, clock = { 0L })
+        val id = rec.start("stop").id
+        rec.onFix(LocationFix(46.8, -121.7, time = 0))
+        rec.onFix(LocationFix(46.8001, -121.7, time = 60_000))
+        rec.onFix(LocationFix(46.8001, -121.7, time = 60_000 + 15 * 60_000)) // same place, 15 min later
+        rec.onFix(LocationFix(46.80013, -121.7, time = 60_000 + 15 * 60_000 + 400_000)) // 6.7 min, 33 m: still a stop
+        rec.onFix(LocationFix(46.8030, -121.7, time = 60_000 + 15 * 60_000 + 800_000)) // 6.7 min, 320 m: a hole
+        assertEquals(1, rec.gapSplits)
+        assertEquals(listOf(4, 1), s.track(id)!!.segments.map { it.points.size })
+        val r2 = TrackRecorder(s, RecorderOptions(segmentGapMinM = 0.0), clock = { 0L })
+        val id2 = r2.start("strict").id
+        r2.onFix(LocationFix(46.8, -121.7, time = 0))
+        r2.onFix(LocationFix(46.80001, -121.7, time = 15 * 60_000))
+        assertEquals(2, s.track(id2)!!.segments.size, "with no distance threshold a long gap that moved at all splits")
     }
 
     @Test

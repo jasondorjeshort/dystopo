@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.nav
 
+import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.Track
@@ -34,9 +35,17 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
     /** Metres from the start to each point. */
     val cumM = DoubleArray(this.points.size)
 
-    /** Metres climbed from the start to each point (sum of rises between vertices; 0 without elevations). */
+    /**
+     * Metres climbed from the start to each point (0 without elevations). T65: the total is the route's one
+     * ascent figure, T24's rule ([TrackStats.ascentDescent] with the 3 m turning-point hysteresis, what the
+     * route card, the trip card and the Routes list show); the rises between vertices only spread it along
+     * the line (each rise counts in proportion), so the remaining climb at the start is that same figure.
+     */
     val cumAscentM = DoubleArray(this.points.size)
     val hasElevation: Boolean = this.points.count { it.ele != null } >= 2
+
+    /** Descent by the same rule as [totalAscentM] (T65). */
+    val totalDescentM: Double
 
     init {
         require(this.points.size >= 2) { "a path needs at least two distinct points" }
@@ -49,6 +58,10 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
             cumAscentM[i] = cumAscentM[i - 1] + if (e != null && lastEle != null) max(0.0, e - lastEle) else 0.0
             if (e != null) lastEle = e
         }
+        val (up, down) = TrackStats.ascentDescent(this.points.mapNotNull { it.ele }, StatsOptions().elevationThresholdM)
+        totalDescentM = down
+        val raw = cumAscentM.last()
+        if (raw > 0) for (i in cumAscentM.indices) cumAscentM[i] *= up / raw
     }
 
     val totalM: Double get() = cumM.last()
