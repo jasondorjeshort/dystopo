@@ -8,7 +8,9 @@ JSON report of console errors, uncaught exceptions, failed requests, map state, 
     python -I tools/demo-check.py --views "9/46.85/-121.7,13/46.85/-121.76:summit" --out out/tour.png
     python -I tools/demo-check.py --views-file tools/demo-tour.txt --out out/tour.png
 
-A view is `z/lat/lon` with an optional `:label`. --views-file has one view per line (`#` comments).
+A view is `z/lat/lon` with an optional `:label` and optional `|`-separated options: `WxH` sets the viewport for
+that view (e.g. `|390x844` for a phone) and `req=a+b` names layers that must have rendered features there
+(e.g. `|req=poi-markers+cliffs`). --views-file has one view per line (`#` comments).
 
 Needs the demo server running (tools/demo-server.py) and Playwright with Chrome (pip package
 `playwright`; uses the installed Google Chrome via channel="chrome", or `python -m playwright install
@@ -44,10 +46,19 @@ def covered(z, lat, lon):
 
 def parse_view(text):
     label = ""
+    opts = text.split("|")[1:]
+    text = text.split("|")[0]
+    size, req = None, []
+    for o in opts:
+        o = o.strip()
+        if o.startswith("req="):
+            req = [s for s in o[4:].split("+") if s]
+        elif "x" in o:
+            size = tuple(int(n) for n in o.split("x"))
     if ":" in text:
         text, label = text.split(":", 1)
     z, lat, lon = (float(x) for x in text.strip().split("/"))
-    return {"view": f"{z:g}/{lat:g}/{lon:g}", "z": z, "lat": lat, "lon": lon, "label": label.strip()}
+    return {"view": f"{z:g}/{lat:g}/{lon:g}", "z": z, "lat": lat, "lon": lon, "label": label.strip(), "size": size, "req": req}
 
 
 def read_views(args):
@@ -66,7 +77,7 @@ def read_views(args):
 
 
 STATE_JS = """() => {
-    const m = window.map; if (!m) return null;
+    const m = window.map; if (!m || !m.getCenter) return null; // before the page script runs, window.map is the #map div
     const c = m.getCenter();
     return { loaded: m.loaded(), tilesLoaded: m.areTilesLoaded(), zoom: +m.getZoom().toFixed(2),
              center: [+c.lng.toFixed(5), +c.lat.toFixed(5)], styleLoaded: m.isStyleLoaded() };
@@ -131,6 +142,7 @@ def main() -> int:
             if tour:
                 report["index"] = i
                 report["label"] = v["label"]
+            page.set_viewport_size({"width": v["size"][0], "height": v["size"][1]} if v.get("size") else {"width": args.width, "height": args.height})
             cur.clear()
             cur.update(report)
             report = cur  # share the lists/counters the handlers mutate
@@ -170,18 +182,21 @@ def main() -> int:
                 if inside and report["idle"]:
                     report["emptyLayers"] = [l for l in REQUIRED_LAYERS if report["layers"].get(l, 0) == 0]
                     ok = ok and not report["emptyLayers"]
+                if v.get("req") and report["idle"]:
+                    report["missingRequired"] = [l for l in v["req"] if report["layers"].get(l, 0) == 0]
+                    ok = ok and not report["missingRequired"]
             report["ok"] = ok
             reports.append(dict(report))
         browser.close()
 
     if tour:
-        print(f"{'#':>2} {'view':<26} {'label':<14} {'ok':<4} {'cov':<4} {'miss':>5} {'err':>3} {'cont':>5} {'idx':>4} {'clbl':>4} {'trail':>5} {'water':>5} {'peak':>4} {'place':>5} {'s':>5}", file=sys.stderr)
+        print(f"{'#':>2} {'view':<26} {'label':<14} {'ok':<4} {'cov':<4} {'miss':>5} {'err':>3} {'cont':>5} {'idx':>4} {'clbl':>4} {'trail':>5} {'poi':>4} {'cliff':>5} {'water':>5} {'peak':>4} {'place':>5} {'s':>5}", file=sys.stderr)
         for r in reports:
             L = r.get("layers", {})
             print(f"{r['index']:>2} {r['url'].split('#')[-1]:<26} {r['label']:<14} {'ok' if r['ok'] else 'FAIL':<4} "
                   f"{'yes' if r.get('inCoverage') else 'no':<4} {r['missingTiles']:>5} "
                   f"{len(r['console']) + len(r['pageErrors']) + len(r['failedRequests']):>3} "
-                  f"{L.get('contour-minor', 0):>5} {L.get('contour-index', 0):>4} {L.get('contour-labels', 0):>4} {L.get('trails', 0):>5} "
+                  f"{L.get('contour-minor', 0):>5} {L.get('contour-index', 0):>4} {L.get('contour-labels', 0):>4} {L.get('trails', 0) + L.get('trails-mountain', 0) + L.get('trails-alpine', 0):>5} {L.get('poi-markers', 0):>4} {L.get('cliffs', 0):>5} "
                   f"{L.get('water', 0) + L.get('waterway', 0):>5} {L.get('peaks', 0):>4} {L.get('places', 0):>5} {r['seconds']:>5}", file=sys.stderr)
         print(json.dumps(reports, indent=2))
         return 0 if all(r["ok"] for r in reports) else 1

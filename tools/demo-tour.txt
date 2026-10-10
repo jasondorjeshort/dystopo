@@ -1,6 +1,6 @@
 # Dystopo demo tour: public Mount Rainier views. Run:
 #   python -I tools/demo-check.py --url http://localhost:8765/tools/demo/ --views-file tools/demo-tour.txt --out out/tour.png
-# z/lat/lon:label
+# z/lat/lon:label[|WxH][|req=layer+layer]   (default OSM archive: outdoors profile; add ?osm=openmaptiles to the --url for the other)
 9/46.85/-121.72:region-z9
 10/46.85/-121.72:region-z10
 12/46.75/-121.81:longmire
@@ -15,3 +15,10 @@
 13/46.85/-121.86:core-edge-z13
 12/46.85/-121.86:core-edge-z12
 11/46.85/-122.30:outside
+14/46.786/-121.736:outdoors-paradise-z14|req=poi-markers+trails
+11/46.786/-121.736:outdoors-paradise-z11|req=trails
+13/46.835/-121.700:outdoors-cliffs-z13
+14/46.9317/-121.8619:mowich-lake-z14|req=water
+15/46.9317/-121.8619:mowich-lake-z15
+14/46.7686/-121.7295:reflection-lakes-z14|req=water
+13/46.786/-121.736:phone-paradise-z13|390x844|req=poi-markers
