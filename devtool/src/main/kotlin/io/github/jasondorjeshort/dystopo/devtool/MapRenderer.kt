@@ -9,7 +9,6 @@ import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
-import io.github.jasondorjeshort.dystopo.render.Hillshade
 import java.awt.image.BufferedImage
 
 /** Map style options shared by render and compare. */
@@ -23,7 +22,10 @@ class StyleOptions : OptionGroup("Style") {
     val textScale by option("--text-scale", help = "Label size multiplier; 1.0 is 12 px text").double().default(1.4)
     val noLabels by option("--no-labels").flag()
     val zFactor by option("--z-factor", help = "Hillshade vertical exaggeration").double().default(1.0)
-    val noHillshade by option("--no-hillshade").flag()
+    val shading by option("--shading", help = "hillshade: single light from the north-west; multi: blend of lights from 225-360 degrees, keeps steep faces readable; none: flat paper")
+        .choice("hillshade", "multi", "none").default("hillshade")
+    val slopeOverlay by option("--slope-overlay", help = "Tint slopes of 27 degrees and steeper in CalTopo-style bands").flag()
+    val slopeOpacity by option("--slope-opacity", help = "Opacity of the slope-band tint, 0..1").double().default(0.5)
     val noContours by option("--no-contours").flag()
 }
 
@@ -37,34 +39,20 @@ class Timings {
     }
 }
 
-object MapRenderer {
-    private val paper = intArrayOf(246, 241, 228)
-    private val noDataColor = (200 shl 16) or (60 shl 8) or 200 // magenta: impossible to miss
+/** A rendered map. Destructures as (image, contours) for callers that don't need the rest. */
+data class RenderResult(val image: BufferedImage, val contours: ContourStats, val shading: ShadingStats)
 
-    fun render(grid: ElevationGrid, zoom: Int, style: StyleOptions, timings: Timings, prefix: String = ""): Pair<BufferedImage, ContourStats> {
-        val shade = if (style.noHillshade) null else timings.time("${prefix}hillshade") {
-            Hillshade.compute(grid, zFactor = style.zFactor)
-        }
+object MapRenderer {
+    fun render(grid: ElevationGrid, zoom: Int, style: StyleOptions, timings: Timings, prefix: String = ""): RenderResult {
+        val (pixels, shading) = Shading.render(grid, style, timings, prefix)
         val contours = ContourLayer.build(grid, zoom, style, timings, prefix)
-        val image = timings.time("${prefix}draw") { draw(grid, shade, contours) }
-        return image to contours.stats
+        val image = timings.time("${prefix}draw") { draw(grid, pixels, contours) }
+        return RenderResult(image, contours.stats, shading)
     }
 
-    private fun draw(grid: ElevationGrid, shade: FloatArray?, contours: ContourLayer): BufferedImage {
-        val w = grid.width
-        val h = grid.height
-        val image = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
-        // Warm paper tone, darkened by the hillshade.
-        val pixels = IntArray(w * h) { i ->
-            if (grid.values[i].isNaN()) return@IntArray noDataColor
-            val k = if (shade == null) 1.0 else 0.35 + 0.65 * shade[i]
-            val r = (paper[0] * k).toInt().coerceIn(0, 255)
-            val g = (paper[1] * k).toInt().coerceIn(0, 255)
-            val b = (paper[2] * k).toInt().coerceIn(0, 255)
-            (r shl 16) or (g shl 8) or b
-        }
-        image.setRGB(0, 0, w, h, pixels, 0, w)
-
+    private fun draw(grid: ElevationGrid, pixels: IntArray, contours: ContourLayer): BufferedImage {
+        val image = BufferedImage(grid.width, grid.height, BufferedImage.TYPE_INT_RGB)
+        image.setRGB(0, 0, grid.width, grid.height, pixels, 0, grid.width)
         contours.draw(image)
         return image
     }

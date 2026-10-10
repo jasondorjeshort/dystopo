@@ -29,6 +29,7 @@ data class RenderReport(
     val contourInterval: Double,
     val contourUnits: String,
     val contours: ContourStats,
+    val shading: ShadingStats,
     val timingsMs: Map<String, Long>,
     val attribution: String,
 )
@@ -49,7 +50,7 @@ class RenderCommand : AreaCommand("render") {
 
         val fetched = timings.time("fetch") { src.fetch(window) }
         val grid = fetched.grid
-        val (image, contours) = MapRenderer.render(grid, zoom, style, timings)
+        val (image, contours, shading) = MapRenderer.render(grid, zoom, style, timings)
         val outFile = out ?: File("out/${name ?: "bbox"}-$source-z$zoom.png")
         timings.time("writePng") {
             outFile.absoluteFile.parentFile.mkdirs()
@@ -71,6 +72,7 @@ class RenderCommand : AreaCommand("render") {
             contourInterval = contours.interval,
             contourUnits = contours.units,
             contours = contours,
+            shading = shading,
             timingsMs = timings.ms,
             attribution = src.attribution,
         )
