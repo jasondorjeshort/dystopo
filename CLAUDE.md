@@ -47,6 +47,6 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
   - Git hooks in `tools/git-hooks` enforce this against `devtool.local.json` (area names, `privateTerms`, bbox coordinates, DEM cell names). Enable once per clone: `git config core.hooksPath tools/git-hooks`. They need Java (`JAVA_HOME` or `java` on PATH).
   - **Never bypass with `--no-verify`.** If the check fires, fix the content.
 - **Every feature must be agent-testable:** unit tests in `shared`, plus a devtool command (later: debug server endpoint) that triggers it and reports results as JSON or PNG.
-- **Dependencies must be permissively licensed** (MIT, BSD, Apache-2.0, EPL/EDL). No GPL/LGPL/AGPL dependencies; they'd block relicensing. Don't copy code from other projects.
+- **Dependencies must be permissively licensed** (MIT, BSD, Apache-2.0, EPL/EDL). No GPL or AGPL dependencies anywhere; they'd block relicensing. LGPL is tolerated only in build-side tooling modules (`tilebuild`), never in `shared`, `devtool`, or app modules. Don't copy code from other projects.
 - **Data sources need license and attribution recorded** (see `docs/PLANNING.md` › Licensing). Any output built from a source carries its attribution.
 - Commit as you go with descriptive messages. Don't amend pushed commits. Solo work goes straight to `main`; parallel work goes through branches and PRs (above).

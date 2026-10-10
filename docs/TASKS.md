@@ -46,7 +46,7 @@ Every task is done only when:
 **Done when:** `./gradlew :tilebuild:run --args="--extract liechtenstein --out out/liechtenstein.pmtiles"` builds a small archive and reports size and time; a second run on `washington` clipped to the `rainier` bbox works (large download: report time). ODbL attribution is written into the PMTiles metadata.
 
 ### T7. Dependency license check
-**Goal:** enforce the licensing rule: a Gradle task wired into `check` that fails if any runtime dependency of any module has a GPL/LGPL/AGPL/unknown license. Use POM license metadata (a permissively licensed plugin such as `com.github.jk1.dependency-license-report` is fine, or a custom task). Allowlist by license name, with an explicit per-artifact override file for artifacts whose POM lacks metadata.
+**Goal:** enforce the licensing rule: a Gradle task wired into `check` that fails if any runtime dependency has a GPL/AGPL/unknown license in any module, or an LGPL license outside the build-tooling modules (currently only `tilebuild`, where GeoTools LGPL-2.1 is accepted). Use POM license metadata (a permissively licensed plugin such as `com.github.jk1.dependency-license-report` is fine, or a custom task; `tilebuild` already has a reporting-only `licenseReport` task to build on). Allowlist by license name, per-module tolerance list, and an explicit per-artifact override file for artifacts whose POM lacks metadata (known: `jgridshift-core` LGPL-2.1 via GeoTools, `jcip-annotations` CC-BY-2.5, `planetiler-openmaptiles` BSD-3).
 **Owns:** root `build.gradle.kts`, new `gradle/licenses/` config, `docs/PLANNING.md` › Licensing hard rule 3 (mark done).
 **Done when:** `./gradlew check` passes on `main`; the PR shows it failing when a GPL artifact is added temporarily.
 

@@ -244,7 +244,7 @@ The project will be fully open source. Code and map content may need different l
 2. **iOS compatibility.** Tiles, the sync protocol, and anything else other modules exchange must be usable by a future iPhone app. Tile formats and the wire protocol are open, documented specs, so any client can implement them regardless of the code license.
 3. **Keep relicensing possible.** We can change the license later only as long as we remain the sole copyright holders. So:
    - Write our own code. Don't copy code from other projects into the repo.
-   - Dependencies must be permissively licensed (MIT, BSD, Apache-2.0, EPL/EDL, etc.). **No GPL/LGPL/AGPL dependencies.** Those would lock in our license choice.
+   - Dependencies must be permissively licensed (MIT, BSD, Apache-2.0, EPL/EDL, etc.). **No GPL or AGPL dependencies anywhere.** Those would lock in our license choice. **LGPL is allowed only in build-side tooling** (`tilebuild`, later the server's tile pipeline) where the library stays a separate, replaceable jar; never in `shared`, the apps, or anything distributed to users. (Decided 2026-10-09 when Planetiler brought in GeoTools, LGPL-2.1: LGPL doesn't constrain the license of code that merely uses the library, so it doesn't threaten relicensing.)
    - No outside contributions until there's a contribution policy (CLA or copyright assignment).
    - An automated dependency-license check fails the build on any disallowed license.
    - Versions already released under a license stay available under that license; relicensing applies going forward.
