@@ -88,7 +88,7 @@ class PackCatalogClient(private val manager: PackManager, packsDir: File) {
     }
 
     private fun get(url: String): Pair<Int, String> {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url) // T79: plain http only to home-network hosts
         conn.connectTimeout = 5_000
         conn.readTimeout = 60_000 // the first catalog request hashes the server's packs
         try {

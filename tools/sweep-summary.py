@@ -9,7 +9,7 @@ hand. The folder holds steps.tsv, one line per part the sweep ran or skipped:
 
 and each part's own outputs under fixed names (the table PARTS below). The summary keeps per part `ok`,
 `seconds`, the exit code and the few numbers the dated sweep log entries quote (tour passed/failed, demo
-views ok, live DEM sources, sync convergence, device views, probe count, release timings); `ok` overall is
+views ok, live DEM sources, sync convergence, device views, probe count, release timings, the first-run steps); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -165,6 +165,26 @@ def release(d, part):
     return out
 
 
+def first_run(d, part):
+    """T79: the release first run driven by taps (tools/android-firstrun.py): per step ok, and the screenshots."""
+    r = load_last_json(os.path.join(d, "first-run.json"))
+    if not isinstance(r, dict):
+        return {}
+    steps = [s for s in r.get("steps") or [] if isinstance(s, dict)]
+    out = {"steps": {s.get("step"): s.get("ok") for s in steps},
+           "screenshots": [os.path.relpath(s["png"], d).replace(os.sep, "/") for s in steps if s.get("png") and os.path.isabs(s["png"])]}
+    for s in steps:
+        if s.get("step") == "test":
+            out["catalogPacks"] = s.get("packs")
+        if s.get("step") in ("map", "import-map"):
+            out[s["step"] + "ContourShare"] = s.get("contourShare")
+        if s.get("step") == "download":
+            out["downloadWaitS"] = s.get("waitS")
+        if not s.get("ok"):
+            out.setdefault("error", f"{s.get('step')}: {s.get('error')}")
+    return out
+
+
 PARTS = {
     "tour": tour,
     "demo-static": demo,
@@ -174,6 +194,7 @@ PARTS = {
     "device-tour": device_tour,
     "probe": probe,
     "release": release,
+    "first-run": first_run,
 }
 
 
@@ -211,6 +232,7 @@ def sheet_images(d):
     add("World tour", os.path.join("tour", "contact-sheet.png"), label="contact sheet")
     add("Device tour", os.path.join("device", "tour*-sheet.png"))
     add("Release smoke tour", os.path.join("release", "*.png"))
+    add("First run (release, by taps)", os.path.join("first-run", "*.png"))
     for part, title in (("live", "Live views (serve --live)"), ("demo-static", "Demo tour, static page"),
                         ("demo-serve", "Demo tour, devtool serve")):
         add(title, os.path.join(part, "*.png"), shot_labels(d, part))

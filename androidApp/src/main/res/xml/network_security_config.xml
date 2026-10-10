@@ -1,9 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MapLibre reads tiles, glyphs and the style from the app's own loopback server over plain HTTP. Debug builds
-     add the emulator's host (10.0.2.2) in src/debug/res/xml/network_security_config.xml. -->
+<!-- T79: one config for debug and release builds.
+
+     MapLibre reads tiles, glyphs and the style from the app's own loopback server over plain HTTP, and a
+     Dystopo server at home (a laptop or a NAS on the same Wi-Fi) should work without certificates. Android's
+     <domain> entries are literal host names: they cannot say "10.0.0.0/8" or "192.168.0.0/16", so this file
+     permits cleartext and the app gates it itself. Every HttpURLConnection the app opens goes through
+     app/firstrun/CleartextPolicy.kt (automatic redirects off; followed redirects are checked too), which
+     allows https anywhere and plain http only to loopback, the private ranges 10/8, 172.16/12 and 192.168/16,
+     link-local 169.254/16, IPv6 unique-local and link-local addresses, and .local names; the server setting is
+     refused up front with that message. The Share screen's LAN client (share/LanHttp.kt) uses a raw socket
+     and is not covered; its payload is encrypted end to end under the share code (T72). HTTPS is
+     preferred for any server reachable from the internet (docs/SERVER.md › Behind a reverse proxy with TLS). -->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">127.0.0.1</domain>
-        <domain includeSubdomains="false">localhost</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
 </network-security-config>

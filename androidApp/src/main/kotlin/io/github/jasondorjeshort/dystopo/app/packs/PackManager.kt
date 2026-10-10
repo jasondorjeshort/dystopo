@@ -222,8 +222,139 @@ class PackManager private constructor(private val app: DystopoApp) {
         }
     }
 
+    // ---- T79: importing pack files picked on the phone ----
+
+    /** One file to import: its display name (the role and pack name come from it when it follows [PackNames]), size if known, and its bytes. */
+    class ImportSource(val displayName: String, val size: Long?, val open: () -> java.io.InputStream)
+
+    /** The import running or last finished (`GET /packs/import`, the first-run card and the pack list show it). */
+    @Volatile var importState: Map<String, Any?> = linkedMapOf("state" to "idle")
+        private set
+    private val importing = java.util.concurrent.atomic.AtomicBoolean(false)
+    val importRunning: Boolean get() = importing.get()
+
+    /**
+     * T79: imports a pack from files on the phone (the system file picker, or paths in debug builds): a
+     * `<name>-dem.pmtiles` and optionally a `<name>-outdoors.pmtiles`. Each file is copied into the packs
+     * directory as a part file and validated like a download (a PMTiles v3 archive whose header's sections
+     * all fit in the file; T29's check), its role taken from the name and checked against the tile type
+     * (raster = terrain, MVT = map); a file named otherwise gets its role from the tile type. Then the pack
+     * joins the map like a finished download ([onDownloaded]: primary when there is none, camera moved to
+     * it). A pack of the same name is replaced. Nothing is installed when any file fails. Blocks; returns
+     * the result, also kept in [importState].
+     */
+    fun importFiles(sources: List<ImportSource>, name: String? = null): Map<String, Any?> {
+        if (!importing.compareAndSet(false, true)) throw IllegalStateException("an import is already running")
+        val started = System.currentTimeMillis()
+        val parts = ArrayList<File>()
+        val progress = java.util.concurrent.atomic.AtomicLong()
+        val total = sources.sumOf { it.size ?: 0L }
+        fun state(s: String, extra: Map<String, Any?> = emptyMap()) {
+            importState = linkedMapOf<String, Any?>("state" to s, "files" to sources.map { it.displayName }, "bytesDone" to progress.get(),
+                "bytesTotal" to total.takeIf { it > 0 }, "elapsedMs" to System.currentTimeMillis() - started) + extra
+        }
+        try {
+            require(sources.isNotEmpty()) { "no files chosen" }
+            require(sources.size <= 2) { "choose one <name>-dem.pmtiles and at most one <name>-outdoors.pmtiles (got ${sources.size} files)" }
+            state("copying")
+            val picked = sources.mapIndexed { i, src ->
+                val part = File(packsDir, ".import-$i-${System.nanoTime()}.part")
+                parts += part
+                src.open().use { input ->
+                    java.io.FileOutputStream(part).use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            progress.addAndGet(n.toLong())
+                            if (progress.get() % (4L shl 20) < n) state("copying")
+                        }
+                    }
+                }
+                state("verifying")
+                val info = try {
+                    FileRangeSource(part).use { s -> PackArchiveInfo.read(src.displayName, part.length(), PmtilesReader.open(s, mapOf(Compression.GZIP to gunzip))) }
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("${src.displayName}: not a PMTiles archive (${e.message ?: e.javaClass.simpleName})")
+                }
+                require(info.complete) { "${src.displayName}: ${part.length()} bytes, but its header needs ${info.expectedBytes} (an incomplete copy?)" }
+                val role = importRole(src.displayName, info.tileType)
+                Picked(src.displayName, part, role, PackNames.parse(src.displayName)?.pack, info)
+            }
+            val roles = picked.groupBy { it.role }
+            roles.forEach { (role, files) -> require(files.size == 1) { "two ${role.label} archives: ${files.joinToString { it.displayName }}" } }
+            val dem = roles[io.github.jasondorjeshort.dystopo.packs.PackRole.DEM]?.single()
+                ?: throw IllegalArgumentException("no terrain file: choose the <name>-dem.pmtiles file (and optionally <name>-outdoors.pmtiles)")
+            val vector = roles[io.github.jasondorjeshort.dystopo.packs.PackRole.VECTOR]?.single()
+            val names = picked.mapNotNull { it.packName }.distinct()
+            require(names.size <= 1) { "the files belong to different packs: ${names.joinToString()}" }
+            val packName = name?.trim()?.ifEmpty { null } ?: names.firstOrNull() ?: importName(dem.displayName)
+            require(PackNames.isValidName(packName)) { "invalid pack name '$packName'" }
+            // Same name: close it, then the new files replace its archives (a vector archive it had stays unless replaced).
+            synchronized(this) {
+                if (packName in inUse()) app.reload(skip = setOf(packName))
+                val old = catalog().firstOrNull { it.name == packName }
+                for (p in picked) {
+                    val target = File(packsDir, PackNames.fileName(packName, p.role))
+                    val previous = if (p.role == io.github.jasondorjeshort.dystopo.packs.PackRole.DEM) old?.dem else old?.vector
+                    if (previous != null && previous.absolutePath != target.absolutePath) previous.delete()
+                    target.delete()
+                    if (!p.part.renameTo(target)) throw java.io.IOException("rename ${p.part.name} -> ${target.name} failed")
+                    archiveCache.remove(target.path)
+                }
+                PlaceSearch.forget(packName)
+                catalogClient.forget(packName) // hashed again in the background like any pack that arrived another way
+            }
+            onDownloaded(packName, show = true)
+            val result = linkedMapOf<String, Any?>(
+                "name" to packName, "dem" to dem.json(), "vector" to vector?.json(),
+                "active" to activeName(), "inUse" to inUse(), "bytes" to progress.get(),
+                "labels" to (app.tiles.packs.glyphDir != null || io.github.jasondorjeshort.dystopo.app.AppSettings.server.isNotEmpty()), // glyphs on the device or from the server
+            )
+            state("done", result)
+            Log.i(TAG, "imported pack $packName (${picked.size} files, ${progress.get()} bytes)")
+            return result
+        } catch (e: Exception) {
+            Log.w(TAG, "pack import failed", e)
+            state("failed", mapOf("error" to (e.message ?: e.javaClass.simpleName)))
+            throw e
+        } finally {
+            parts.forEach { if (it.isFile) it.delete() }
+            importing.set(false)
+        }
+    }
+
+    private class Picked(val displayName: String, val part: File, val role: io.github.jasondorjeshort.dystopo.packs.PackRole, val packName: String?, val info: PackArchiveInfo) {
+        fun json() = linkedMapOf("file" to displayName, "tileType" to info.tileType, "minZoom" to info.minZoom, "maxZoom" to info.maxZoom, "bytes" to info.bytes)
+    }
+
     companion object {
         const val TAG = "DystopoPacks"
+
+        /**
+         * T79: an imported file's role: the name's (`-dem`, `-outdoors`, `-osm`) when it has one, which must agree
+         * with the tile type; else the tile type's (raster = terrain, `mvt` = map).
+         */
+        fun importRole(displayName: String, tileType: String): io.github.jasondorjeshort.dystopo.packs.PackRole {
+            val byType = when (tileType) {
+                "mvt" -> io.github.jasondorjeshort.dystopo.packs.PackRole.VECTOR
+                "png", "webp", "jpeg" -> io.github.jasondorjeshort.dystopo.packs.PackRole.DEM
+                else -> null
+            }
+            val byName = PackNames.parse(displayName)?.role
+            if (byName != null && byType != null && byName != byType) {
+                throw IllegalArgumentException("$displayName: the name says ${byName.label} but it holds $tileType tiles")
+            }
+            return byName ?: byType ?: throw IllegalArgumentException("$displayName: unknown tile type '$tileType' (want terrain PNG tiles or map MVT tiles)")
+        }
+
+        /** T79: a pack name for a file whose name does not follow [PackNames]: its stem made file-name safe. */
+        fun importName(displayName: String): String {
+            val stem = displayName.substringAfterLast('/').removeSuffix(".pmtiles").removeSuffix("-dem").removeSuffix("-outdoors").removeSuffix("-osm")
+            val safe = stem.replace(Regex("[^A-Za-z0-9._-]+"), "-").replace(Regex("\\.{2,}"), ".").trim('-', '.', '_').take(64)
+            return safe.takeIf { PackNames.isValidName(it) } ?: "imported"
+        }
 
         @Volatile private var instance: PackManager? = null
 

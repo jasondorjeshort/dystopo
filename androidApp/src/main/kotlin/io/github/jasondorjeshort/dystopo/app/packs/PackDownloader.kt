@@ -116,6 +116,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     fun start(url: String, name: String? = null, activate: Boolean = false): Job {
         val source = PackDownload.resolve(url.trim(), name)
             ?: throw IllegalArgumentException("not a pack URL: '$url' (want http(s)://host/path/<name>-dem.pmtiles or .../<name>)")
+        io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.problem(url)?.let { throw IllegalArgumentException(it) } // T79: refuse at once, not after retries
         return enqueue(source) { Job(source, activate, System.currentTimeMillis()) }
     }
 
@@ -238,6 +239,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     /** T53: the downloaded bytes are not what the catalog promised. Not retried, not resumed. */
     class HashMismatch(message: String) : IOException(message)
+    /** T79: a redirect the cleartext policy refuses, or too many redirects: not retried. */
+    class RedirectRefused(message: String) : IOException(message)
 
     private fun run(job: Job) {
         if (job.cancelled) return
@@ -280,12 +283,15 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     private fun fetch(job: Job, f: FileJob) {
         var failures = 0
+        // T79: redirects are followed here, each Location checked by the cleartext policy (open() turns automatic ones off).
+        var url = f.url
+        var redirects = 0
         while (true) {
             if (job.cancelled) throw Cancelled()
             val have = if (f.part.isFile) f.part.length() else 0L
             f.done.set(have)
             f.status = "downloading"
-            val conn = (URL(f.url).openConnection() as HttpURLConnection).apply {
+            val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url).apply { // T79: plain http only to home-network hosts
                 connectTimeout = 15_000
                 readTimeout = 30_000
                 setRequestProperty("Accept-Encoding", "identity") // byte offsets must be file offsets
@@ -295,6 +301,17 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 }
             }
             try {
+                val next = try {
+                    io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.redirectTarget(conn)
+                } catch (e: IOException) {
+                    if (conn.responseCode in 300..399) throw RedirectRefused("${f.target.name}: ${e.message}") else throw e
+                }
+                if (next != null) {
+                    if (++redirects > io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.MAX_REDIRECTS) throw RedirectRefused("${f.target.name}: too many redirects")
+                    synchronized(f.responses) { f.responses += "${conn.responseCode} redirect to $next" }
+                    url = next
+                    continue
+                }
                 val status = conn.responseCode
                 val plan = PackDownload.plan(have, status, conn.getHeaderField("Content-Range"), conn.contentLengthLong.takeIf { it >= 0 }, f.total)
                 synchronized(f.responses) { f.responses += "$status from $have: ${plan.javaClass.simpleName}" }
@@ -330,7 +347,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     is PackDownload.Plan.Fail -> throw IOException("${f.url}: ${plan.reason}")
                 }
             } catch (e: IOException) {
-                if (e is HashMismatch) throw e
+                if (e is HashMismatch || e is RedirectRefused) throw e
                 if (job.cancelled) throw Cancelled()
                 if (++failures > 5) throw e
                 synchronized(f.responses) { f.responses += "error: ${e.message}" }

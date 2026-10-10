@@ -38,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.firstrun.ImportPicker
+import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.packs.CatalogStatus
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import kotlinx.coroutines.Dispatchers
@@ -89,8 +91,8 @@ fun PacksOverlay() {
         if (!PacksUi.visible) {
             // T33: the top-right chips in one row (Settings, Packs); track controls sit in the row below (TrackControls).
             Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Chip("Settings") { io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = !io.github.jasondorjeshort.dystopo.app.SettingsUi.visible }
-                Chip("Packs") { PacksUi.visible = true }
+                Chip(Screens.SETTINGS) { io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = !io.github.jasondorjeshort.dystopo.app.SettingsUi.visible }
+                Chip(Screens.PACKS) { PacksUi.visible = true }
             }
         } else {
             BackHandler { PacksUi.visible = false }
@@ -208,8 +210,10 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
             Chip("Close") { close() }
         }
         message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 13.sp)) }
+        // T79: the import started from here (progress and result come from the importer).
+        io.github.jasondorjeshort.dystopo.app.firstrun.FirstRun.message?.takeIf { it.startsWith("Import") }?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 13.sp)) }
         if (packs.isEmpty()) {
-            BasicText("No packs on this device yet. Download one below.", style = TextStyle(color = Muted, fontSize = 14.sp))
+            BasicText("No packs on this device yet. Choose one from your server below, download one by URL, or import pack files.", style = TextStyle(color = Muted, fontSize = 14.sp))
         }
         LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(packs, key = { it.info.name }) { p ->
@@ -231,15 +235,22 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
             }
             if (catalogOpen) {
                 item(key = "server-status") {
-                    val server = client.server ?: client.configuredServer()
+                    // T79: the alpha said "No server set (Settings)." while Settings had no server field; the status now
+                    // opens Settings › Sources (the server URL and its Test), and names the server the catalog came from.
+                    val server = client.configuredServer()
                     val text = when {
-                        server == null -> "No server set (Settings)."
+                        server == null -> "No server set. Set one in ${Screens.SETTINGS} › ${Screens.SOURCES} ›"
                         catalogLoading -> "Loading the catalog from $server..."
-                        catalogError != null -> "Catalog unavailable: $catalogError"
+                        catalogError != null -> "Catalog unavailable: $catalogError. Check the server in ${Screens.SETTINGS} › ${Screens.SOURCES} ›"
                         rows.isEmpty() -> "$server has no packs."
                         else -> "${rows.size} packs on $server"
                     }
-                    BasicText(text, style = TextStyle(color = if (catalogError != null) Color(0xFFB0302A) else Muted, fontSize = 13.sp))
+                    val linked = server == null || catalogError != null
+                    BasicText(
+                        text,
+                        style = TextStyle(color = if (catalogError != null) Color(0xFFB0302A) else if (linked) Color(0xFF2C7BB6) else Muted, fontSize = 13.sp, fontWeight = if (linked) FontWeight.SemiBold else FontWeight.Normal),
+                        modifier = if (linked) Modifier.clickable { close(); io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = true }.padding(vertical = 4.dp) else Modifier,
+                    )
                 }
                 items(rows, key = { "cat-" + it.pack.id }) { r ->
                     CatalogRow(
@@ -263,6 +274,12 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                 )
                 Spacer(Modifier.width(8.dp))
                 Chip("Download") { if (url.isNotBlank()) background("Starting download") { manager.downloads.start(url) } }
+            }
+            // T79: pack files already on the phone (Downloads, a USB stick, a cloud drive) through the system file picker.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicText("Or pick <name>-dem.pmtiles (and -outdoors.pmtiles) on this phone", Modifier.weight(1f), style = TextStyle(color = Muted, fontSize = 13.sp))
+                Spacer(Modifier.width(8.dp))
+                Chip("Import files") { ImportPicker.request() }
             }
         }
     }

@@ -62,7 +62,7 @@ class ShareLinkClient private constructor(private val app: DystopoApp) {
     }
 
     private fun request(method: String, url: String, peer: String = sync.defaultPeer): Pair<Int, String> {
-        val c = URI(url).toURL().openConnection() as HttpURLConnection
+        val c = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url) // T79
         try {
             c.requestMethod = method
             c.connectTimeout = 10_000

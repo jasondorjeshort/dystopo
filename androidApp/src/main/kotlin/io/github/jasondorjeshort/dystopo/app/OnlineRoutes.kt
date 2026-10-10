@@ -59,6 +59,7 @@ object OnlineRoutes {
      */
     fun setServer(app: DystopoApp, value: String): String? {
         val v = AppSettings.normalizeServer(value) ?: return "server must be empty or http(s)://host[:port][/path] (got '$value')"
+        if (v.isNotEmpty()) io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.problem(v)?.let { return it } // T79
         AppSettings.setServer(v)
         OnlineService.get(app).configure(v)
         app.reload()

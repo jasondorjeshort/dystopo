@@ -26,7 +26,7 @@ fun interface HttpGet {
 /** [HttpGet] over [HttpURLConnection]. */
 class UrlConnectionGet(private val connectTimeoutMs: Int = 3_000, private val readTimeoutMs: Int = 25_000) : HttpGet {
     override fun get(url: String): HttpReply {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url) // T79: plain http only to home-network hosts
         conn.connectTimeout = connectTimeoutMs
         conn.readTimeout = readTimeoutMs
         conn.useCaches = false

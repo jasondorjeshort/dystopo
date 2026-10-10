@@ -100,10 +100,26 @@ without admin rights and writes `local.properties`).
 ./gradlew :androidApp:assembleRelease      # one APK per CPU type in androidApp/build/outputs/apk/release/
 ```
 
-Install with `adb install`. To put a region on the phone, build a pack (the live viewer's "Build pack here", or
-`devtool tiles` and `tilebuild`, see CLAUDE.md) and push it with `tools\android-push-pack.ps1`, or point the app at
-a server in Settings and download regions from there. `tools\android-emu.ps1 -Build` boots a headless emulator,
-installs the app and pushes the Rainier pack in one step.
+**On a real phone.** Install the APK for its CPU (`androidApp-arm64-v8a-release.apk` on almost every phone made
+since 2017, or the universal one): copy it over and open it (allow installs from that app), or `adb install`. The
+first start has no map yet and says so, with three ways to get one, all in the app:
+
+- **Set your server, then download.** Run the server on a computer at home (above), open Settings › Sources on the
+  phone, type its address, for example `http://192.168.1.20:8080` (the computer's address on your Wi-Fi), tap Save
+  and Test: Test shows how many packs the server has. Then "Download the map around me" (your location; the server
+  builds the pack) or "Choose from server" (its catalog). Plain `http://` works only for home-network addresses
+  (10.x, 172.16-31.x, 192.168.x, 169.254.x, `.local` names); a server reachable from the internet needs `https://`
+  (TLS in front of it: docs/SERVER.md).
+- **Import pack files.** Copy `<name>-dem.pmtiles` (and `<name>-outdoors.pmtiles`, the trails and names) to the
+  phone, tap "Import pack files" and pick both. Labels need the fonts, which the app fetches from a server once one
+  is set.
+- **Push from a computer** (developers): `tools\android-release.ps1 -Serial <serial> -Name <pack>` installs the
+  release build and pushes `out\<pack>-dem.pmtiles` and its glyphs and sprites; `tools\android-push-pack.ps1` does
+  the same for the debug build.
+
+Build packs with the live viewer's "Build pack here", the server's `/build`, or `devtool tiles` and `tilebuild`
+(see CLAUDE.md). `tools\android-emu.ps1 -Build` boots a headless emulator, installs the debug app and pushes the
+Rainier pack in one step.
 
 ## Documentation
 

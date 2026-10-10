@@ -275,7 +275,7 @@ class AppSync private constructor(private val app: DystopoApp) {
         val gunzip: (ByteArray) -> ByteArray = { b -> GZIPInputStream(b.inputStream()).use { it.readBytes() } }
 
         fun post(url: String, body: ByteArray, token: String = "", clock: ClockSamples? = null): ByteArray {
-            val c = URI(url).toURL().openConnection() as HttpURLConnection
+            val c = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url) // T79
             val sent = System.currentTimeMillis()
             try {
                 c.requestMethod = "POST"

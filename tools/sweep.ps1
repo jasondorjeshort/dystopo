@@ -11,6 +11,11 @@
 #   device-tour  android-check.py --views-file tools/android-tour.txt (twice by default; token from logcat)
 #   probe        android-probe.py
 #   release      android-release.ps1 -Build -Port: the release smoke tour, tiles 401 / debug 404 without a token
+#   first-run    T79: the release build from a fresh install with no pack and no assets, driven only by taps
+#                (tools/android-firstrun.py): Settings > Sources with the host's LAN address and the sweep's own
+#                server (the standalone server on -BasePort+3, bound to all interfaces), Test shows the catalog count,
+#                "Download the map around me" at a mock fix at Rainier, a map with contours; then a second fresh
+#                install imports the Rainier pair through the system file picker. Screenshots in first-run\.
 # and writes out\sweep-<date>\: steps.tsv, each part's log and JSON, summary.json and sheet.png (a contact
 # sheet of the contact sheets) through tools/sweep-summary.py. Exit 1 when any part failed.
 #
@@ -64,8 +69,8 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-$allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour', 'probe', 'release')
-$deviceParts = @('device-boot', 'device-tour', 'probe', 'release')
+$allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour', 'probe', 'release', 'first-run')
+$deviceParts = @('device-boot', 'device-tour', 'probe', 'release', 'first-run')
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $LiveViews = @($LiveViews | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -92,7 +97,7 @@ $serial = "emulator-$EmuPort"
 
 # --- ports: never the coordinator's, never one already in use ----------------------------------------------
 $reserved = @(8765, 8686, 8687)
-$ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2 }
+$ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2; 'firstrun-server' = $BasePort + 3 }
 if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1 }
 $listening = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | ForEach-Object { $_.Port })
 foreach ($k in $ports.Keys) {
@@ -102,7 +107,9 @@ foreach ($k in $ports.Keys) {
 }
 if (-not $NoDevice -and $EmuPort -eq 5554) { throw "-EmuPort 5554 is the coordinator's emulator; pick another" }
 
+$script:bootImplied = $false
 function Want([string]$part) {
+    if ($part -eq 'device-boot' -and $script:bootImplied) { return -not $NoDevice } # T79: implied by device parts
     if ($Only.Count -and $Only -notcontains $part) { return $false }
     if ($Skip -contains $part) { return $false }
     if ($NoDevice -and $deviceParts -contains $part) { return $false }
@@ -257,6 +264,19 @@ try {
     if ($AvdHome) { $emuArgs += @('-AvdHome', $AvdHome) }
     $dem = Join-Path $localOut 'rainier-dem.pmtiles'
     $osm = Join-Path $localOut 'rainier-outdoors.pmtiles'
+    # T79: the device parts need a running emulator. When device-boot is not selected (-Only first-run, -Skip
+    # device-boot) and nothing answers on the serial, device-boot runs anyway (and its AVD is stopped and deleted
+    # at the end like any the sweep boots); an emulator already running on -EmuPort is used as it is.
+    if (-not $NoDevice -and -not (Want 'device-boot') -and @($deviceParts | Where-Object { $_ -ne 'device-boot' -and (Want $_) }).Count) {
+        $sdkDir = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
+        $state = ''
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $state = "$(& (Join-Path $sdkDir 'platform-tools\adb.exe') -s $serial get-state 2>$null)".Trim() } catch { } finally { $ErrorActionPreference = $eap }
+        if ($state -ne 'device') {
+            $script:bootImplied = $true
+            Write-Host "[sweep] $serial is not running: device-boot runs first (the device parts selected need it)"
+        }
+    }
     $booted = Part 'device-boot' {
         $script:emulatorStarted = $true
         # android-emu.ps1 prints nothing when its output is piped (T65 follow-up); its exit code and the
@@ -282,15 +302,54 @@ try {
             Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-release.ps1', '-Serial', $serial, '-Build',
                 '-Port', "$($Port + 1)", '-Dem', $dem, '-Osm', $osm, '-Out', (Join-Path $Out 'release')) (Join-Path $Out 'release.log') (Join-Path $Out 'release.err.log')
         }
+        $null = Part 'first-run' {
+            # T79: a fresh release install gets a map through the UI alone. The server is the standalone one (devtool
+            # serve listens on 127.0.0.1 only), on all interfaces, reached from the emulator at the host's LAN address:
+            # that exercises the app's private-range cleartext rule, not the emulator's 10.0.2.2 alias.
+            $fp = $BasePort + 3
+            $fdir = Join-Path $Out 'first-run'
+            New-Item -ItemType Directory -Force $fdir, (Join-Path $fdir 'server-out') | Out-Null
+            if (-not (Test-Path (Join-Path $repo 'server\build\install\server\bin\server.bat'))) {
+                $c = Run $gradle @(':server:installDist') (Join-Path $fdir 'server-install.log') (Join-Path $fdir 'server-install.err.log')
+                if ($c -ne 0) { throw ':server:installDist failed' }
+            }
+            $apkDir = Join-Path $repo 'androidApp\build\outputs\apk\release'
+            if (-not (Want 'release') -or -not (Get-ChildItem $apkDir -Filter 'androidApp-*-release.apk' -ErrorAction SilentlyContinue)) {
+                # The release part builds it (signed with tools\release.properties when present); build here when it did not run.
+                $c = Run $gradle @(':androidApp:assembleRelease') (Join-Path $fdir 'assemble.log') (Join-Path $fdir 'assemble.err.log')
+                if ($c -ne 0) { throw 'assembleRelease failed' }
+            }
+            $lan = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
+                    $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.PrefixOrigin -in @('Dhcp', 'Manual') } |
+                Sort-Object { if (Get-NetRoute -InterfaceIndex $_.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue) { 0 } else { 1 } } |
+                Select-Object -First 1).IPAddress
+            if (-not $lan) { throw 'no LAN IPv4 address on this host' }
+            $tbHome = @((Join-Path $repo 'tilebuild\build\install\tilebuild'), (Join-Path $mainCheckout 'tilebuild\build\install\tilebuild')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+            $cfg = [ordered]@{ bind = '0.0.0.0'; port = $fp; cacheDir = $(if ($env:DYSTOPO_CACHE) { $env:DYSTOPO_CACHE } else { Join-Path $repo 'cache' })
+                outDir = (Join-Path $fdir 'server-out'); logRequests = $false }
+            if ($tbHome) { $cfg.tilebuildHome = $tbHome }
+            $cfgPath = Join-Path $fdir 'server.json'
+            $cfg | ConvertTo-Json | Set-Content -Encoding ascii $cfgPath
+            Start-Server 'firstrun-server' (Join-Path $repo 'server\build\install\server\bin\server.bat') @('--config', $cfgPath) $fp '/healthz' 180
+            try {
+                Run $py @('-I', 'tools/android-firstrun.py', '--serial', $serial, '--server', "http://${lan}:$fp", '--out', $fdir,
+                    '--import', "$dem,$osm") (Join-Path $Out 'first-run.json') (Join-Path $Out 'first-run.err.log')
+            } finally { Stop-Server 'firstrun-server' }
+        }
     } else {
-        foreach ($p in @('device-tour', 'probe', 'release')) { if (Want $p) { Step $p 'error' 0 $deviceSkipNote } else { Skipped $p 'not selected' } }
+        foreach ($p in @('device-tour', 'probe', 'release', 'first-run')) { if (Want $p) { Step $p 'error' 0 $deviceSkipNote } else { Skipped $p 'not selected' } }
     }
 } finally {
     foreach ($name in @($script:servers.Keys)) { Stop-Server $name }
     if ($emulatorStarted -and -not $KeepEmulator) {
         $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
         $adb = Join-Path $sdk 'platform-tools\adb.exe'
-        if (Test-Path $adb) { & $adb -s $serial forward --remove "tcp:$($Port + 1)" 2>&1 | Out-Null }
+        # T79: a forward that was never set (a partial -Only run) makes adb exit 1 with stderr; that must not stop
+        # the cleanup, or the AVD stays up and summary.json is never written.
+        if (Test-Path $adb) {
+            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            try { & $adb -s $serial forward --remove "tcp:$($Port + 1)" 2>&1 | Out-Null } catch { } finally { $ErrorActionPreference = $eap }
+        }
         $code = Run 'powershell.exe' ($emuArgs + @('-Stop', '-Delete')) (Join-Path $dev 'emu-stop.log') (Join-Path $dev 'emu-stop.err.log')
         Write-Host "[sweep] emulator $serial ($Avd) stopped and deleted (exit $code)"
     }

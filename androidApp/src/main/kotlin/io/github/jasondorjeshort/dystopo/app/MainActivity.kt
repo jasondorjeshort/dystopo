@@ -132,7 +132,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        const val NO_PACK = "No region pack. Download one from Packs, or push one with tools/android-push-pack.ps1."
+        /** T79: the three ways to a map, all in the app (the first-run card has them as buttons). */
+        const val NO_PACK = "No region pack. Download the map around you or choose a pack from your server (set it in Settings › Sources), or import pack files (Packs)."
     }
 }
 
@@ -143,21 +144,11 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.tracking.TrackControls() // T31: record/stop, tracks list, track overlay
         io.github.jasondorjeshort.dystopo.app.routing.RouteControls() // T45: long-press route planning, route overlay and card
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
-        if (message != null) {
-            BasicText(
-                message,
-                style = TextStyle(color = Color(0xFF2B2420), fontSize = 18.sp),
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(24.dp)
-                    .background(Color(0xEEFFFCF5), RoundedCornerShape(8.dp))
-                    .padding(16.dp),
-            )
-        }
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
         io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
+        io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         SettingsSheet() // T33: units, text size, warm-up
         io.github.jasondorjeshort.dystopo.app.sync.SyncStatusSheet() // T51: sync status
         io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen

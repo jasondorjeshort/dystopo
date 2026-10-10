@@ -186,7 +186,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
 
     /** One JSON request to the server: status and the parsed object (empty when the body is not JSON). */
     private fun http(method: String, url: String): Pair<Int, Map<String, Any?>> {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url) // T79: plain http only to home-network hosts
         conn.requestMethod = method
         conn.connectTimeout = 5_000
         conn.readTimeout = 30_000

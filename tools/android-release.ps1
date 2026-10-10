@@ -20,6 +20,11 @@
 # debug routes (/health /stats /camera /screenshot /features) 404; the with-token tile check is skipped (the
 # deep-link views above already show the tiles are served to the app's own map). probeOk says whether it held.
 # Ends with a logcat check (crash buffer and the app's errors) and prints one JSON object.
+#
+# T79: -Name <pack> pushes any locally built pack, out\<pack>-dem.pmtiles plus out\<pack>-outdoors.pmtiles when it
+# exists (terrain only is fine), instead of the Rainier pair (-Dem/-Osm still name files anywhere):
+#   powershell -ExecutionPolicy Bypass -File tools\android-release.ps1 -Serial emulator-5674 -Name paradise -Views 46.786,-121.736,13
+# -NoPush installs with no pack and no assets (the first-run state, which tools/android-firstrun.py drives by tapping).
 param(
     [Parameter(Mandatory = $true)] [string]$Serial,
     [switch]$Build,
@@ -29,6 +34,8 @@ param(
     [string]$Dem = 'out\rainier-dem.pmtiles',
     [string]$Osm = 'out\rainier-outdoors.pmtiles',
     [string]$PackName = 'rainier',
+    # T79: a locally built pack by name (out\<Name>-dem.pmtiles, optional out\<Name>-outdoors.pmtiles); overrides -Dem/-Osm/-PackName.
+    [string]$Name = '',
     [switch]$NoPush,
     [switch]$NoInstall,
     # lat,lon,zoom per view. Default: three views of tools/android-tour.txt (summit, Paradise, Sunrise; Rainier pack).
@@ -50,6 +57,13 @@ $activity = "$package/io.github.jasondorjeshort.dystopo.app.MainActivity"
 $external = "/sdcard/Android/data/$package/files"
 function Resolve-RepoPath([string]$p) { if ([IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $repoRoot $p } }
 $outDir = Resolve-RepoPath $Out
+if ($Name) {
+    if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw "-Name '$Name' is not a pack name (letters, digits, . _ -)" }
+    $PackName = $Name
+    $Dem = "out\$Name-dem.pmtiles"
+    $Osm = "out\$Name-outdoors.pmtiles"
+    if (-not (Test-Path (Resolve-RepoPath $Osm))) { $Osm = '' } # terrain only
+}
 New-Item -ItemType Directory -Force $outDir | Out-Null
 
 function Adb {
@@ -260,6 +274,7 @@ if (-not $NoInstall) {
 if (-not $NoPush) {
     Adb shell "mkdir -p $external/packs $external/sprites" | Out-Null
     foreach ($pack in @(@{ Src = $Dem; Name = "$PackName-dem.pmtiles" }, @{ Src = $Osm; Name = "$PackName-outdoors.pmtiles" })) {
+        if (-not $pack.Src) { continue } # T79: -Name with a terrain-only pack
         $src = Resolve-RepoPath $pack.Src
         if (-not (Test-Path $src)) { throw "pack not found: $src" }
         Adb push $src "$external/packs/$($pack.Name)" | Out-Null
