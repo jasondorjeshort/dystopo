@@ -29,32 +29,32 @@ object ContourSimplify {
         require(tolerance >= 0) { "tolerance must be >= 0" }
         val n = points.size / 2
         if (n <= 2 || tolerance == 0.0) return points
-        // For a ring, append the start point so the chord logic sees a path that returns home.
-        val pts = if (closed) DoubleArray(points.size + 2).also {
-            points.copyInto(it)
-            it[points.size] = points[0]
-            it[points.size + 1] = points[1]
-        } else points
-        val m = pts.size / 2
+        val pts = points
+        // A ring is the path from point 0 back to point 0: index n stands for point 0 again, so the
+        // chord logic sees a path that returns home without copying the points.
+        val m = if (closed) n + 1 else n
         val keep = BooleanArray(m)
         keep[0] = true
         keep[m - 1] = true
         val tol2 = tolerance * tolerance
 
-        // Explicit stack instead of recursion: long contours would otherwise overflow it.
-        val stack = ArrayList<Int>()
-        stack += 0
-        stack += m - 1
-        while (stack.isNotEmpty()) {
-            val last = stack.removeAt(stack.size - 1)
-            val first = stack.removeAt(stack.size - 1)
+        // Explicit stack of (first, last) index pairs instead of recursion: long contours would
+        // otherwise overflow it. Pending intervals are disjoint, so 2m ints always suffice.
+        val stack = IntArray(2 * m + 2)
+        var sp = 0
+        stack[sp++] = 0
+        stack[sp++] = m - 1
+        while (sp > 0) {
+            val last = stack[--sp]
+            val first = stack[--sp]
             if (last - first < 2) continue
             var worst = -1
             var worstDist = tol2
             val ax = pts[2 * first]
             val ay = pts[2 * first + 1]
-            val bx = pts[2 * last]
-            val by = pts[2 * last + 1]
+            val b = if (last == n) 0 else last
+            val bx = pts[2 * b]
+            val by = pts[2 * b + 1]
             for (i in first + 1 until last) {
                 val d = segmentDistance2(pts[2 * i], pts[2 * i + 1], ax, ay, bx, by)
                 if (d > worstDist) {
@@ -64,17 +64,18 @@ object ContourSimplify {
             }
             if (worst >= 0) {
                 keep[worst] = true
-                stack += first
-                stack += worst
-                stack += worst
-                stack += last
+                stack[sp++] = first
+                stack[sp++] = worst
+                stack[sp++] = worst
+                stack[sp++] = last
             }
         }
 
-        val outCount = keep.count { it } - (if (closed) 1 else 0)
+        val limit = if (closed) m - 1 else m
+        var outCount = 0
+        for (i in 0 until limit) if (keep[i]) outCount++
         val out = DoubleArray(outCount * 2)
         var k = 0
-        val limit = if (closed) m - 1 else m
         for (i in 0 until limit) {
             if (keep[i]) {
                 out[k++] = pts[2 * i]
@@ -126,28 +127,29 @@ object ContourSimplify {
     private fun chaikin(pts: DoubleArray, closed: Boolean): DoubleArray {
         val n = pts.size / 2
         if (n < 3) return pts
-        val out = ArrayList<Double>(pts.size * 2)
         val segments = if (closed) n else n - 1
+        val out = DoubleArray(4 * segments + (if (closed) 0 else 4))
+        var k = 0
         if (!closed) {
-            out += pts[0]
-            out += pts[1]
+            out[k++] = pts[0]
+            out[k++] = pts[1]
         }
         for (s in 0 until segments) {
-            val t = (s + 1) % n
+            val t = if (s + 1 == n) 0 else s + 1
             val ax = pts[2 * s]
             val ay = pts[2 * s + 1]
             val bx = pts[2 * t]
             val by = pts[2 * t + 1]
-            out += ax + (bx - ax) * 0.25
-            out += ay + (by - ay) * 0.25
-            out += ax + (bx - ax) * 0.75
-            out += ay + (by - ay) * 0.75
+            out[k++] = ax + (bx - ax) * 0.25
+            out[k++] = ay + (by - ay) * 0.25
+            out[k++] = ax + (bx - ax) * 0.75
+            out[k++] = ay + (by - ay) * 0.75
         }
         if (!closed) {
-            out += pts[2 * n - 2]
-            out += pts[2 * n - 1]
+            out[k++] = pts[2 * n - 2]
+            out[k] = pts[2 * n - 1]
         }
-        return out.toDoubleArray()
+        return out
     }
 
     /** Squared distance from (px,py) to segment (ax,ay)-(bx,by). */

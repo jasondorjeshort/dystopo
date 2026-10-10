@@ -42,6 +42,7 @@ class DystopoApp : Application() {
     fun reload() {
         val old = tiles
         tiles = openTiles()
+        old.close() // T35: stop the old service's contour warm-up before its packs close
         old.packs.dem?.close()
         old.packs.osm?.close()
         map.onMain { map.loadStyle(tiles.style()) }

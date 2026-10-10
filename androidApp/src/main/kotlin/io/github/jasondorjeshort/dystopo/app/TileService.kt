@@ -1,13 +1,16 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import android.graphics.Bitmap
+import android.os.Process
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
+import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.tiles.BitmapImageDecoder
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileStats
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
+import io.github.jasondorjeshort.dystopo.tiles.ContourWarmupProgress
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -16,6 +19,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.CRC32
 
@@ -131,6 +135,18 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         DemPyramid(pack.header.minZoom, pack.header.maxZoom, BitmapImageDecoder, cacheTiles = 96) { z, x, y -> pack.tile(z, x, y) }
     }
 
+    /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
+    private val foregroundContours = AtomicInteger()
+
+    @Volatile
+    private var closed = false
+
+    /** Generation timings of the background warm-up, kept apart from the map's own [contourGen]. */
+    val warmupGen = ContourTileStats(keepRecent = 8)
+
+    /** Progress of the background warm-up started with this service; null without a DEM pack. */
+    val warmup: ContourWarmupProgress? = startWarmup()
+
     init {
         // Drop caches of other packs and older versions lazily, off the request path.
         Thread({
@@ -162,6 +178,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         "cacheVersion" to contourCacheVersion,
         "demPack" to packs.dem?.file?.let { mapOf("bytes" to it.length(), "mtime" to it.lastModified(), "identity" to demIdentity) },
         "staleCacheFilesDeleted" to staleCacheFilesDeleted.get(),
+        "warmup" to (warmup?.json()?.plus("generation" to warmupGen.json()) ?: mapOf("state" to "off")),
     )
 
     fun style(): String {
@@ -218,31 +235,46 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     }
 
     fun contourTile(z: Int, x: Int, y: Int): TileResult {
+        foregroundContours.incrementAndGet()
+        try {
+            val bytes = contourBytes(z, x, y, contourGen) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
+            return ok(contours, "application/x-protobuf", bytes)
+        } catch (e: Throwable) {
+            contours.errors.incrementAndGet()
+            throw e
+        } finally {
+            foregroundContours.decrementAndGet()
+        }
+    }
+
+    /**
+     * Contour tile bytes from the disk cache or generated (timed into [stats]); null without a DEM pack.
+     * One generation per tile: a second request for the same tile, from the map or the warm-up, waits
+     * for the first.
+     */
+    private fun contourBytes(z: Int, x: Int, y: Int, stats: ContourTileStats, onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() }): ByteArray? {
         val file = File(contourCache, "$z/$x/$y.pbf")
         if (file.isFile) {
-            contourCacheHits.incrementAndGet()
-            return ok(contours, "application/x-protobuf", file.readBytes())
+            onCacheHit()
+            return file.readBytes()
         }
-        val p = pyramid ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
-        // One generation per tile: a second request for the same tile waits for the first.
+        val p = pyramid ?: return null
         val key = "$z/$x/$y"
         val mine = CompletableFuture<ByteArray?>()
         val running = contourInFlight.putIfAbsent(key, mine)
         if (running != null) {
             contourWaits.incrementAndGet()
-            val bytes = try {
-                running.get()
+            return try {
+                running.get() ?: ByteArray(0)
             } catch (e: ExecutionException) {
                 throw e.cause ?: e
             }
-            return ok(contours, "application/x-protobuf", bytes ?: ByteArray(0))
         }
         try {
-            val bytes = generateContourTile(p, z, x, y, file)
+            val bytes = generateContourTile(p, z, x, y, file, stats)
             mine.complete(bytes)
-            return ok(contours, "application/x-protobuf", bytes)
+            return bytes
         } catch (e: Throwable) {
-            contours.errors.incrementAndGet()
             mine.completeExceptionally(e)
             throw e
         } finally {
@@ -250,10 +282,10 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         }
     }
 
-    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, file: File): ByteArray {
+    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, file: File, stats: ContourTileStats): ByteArray {
         val requested = System.nanoTime()
         contourSlots.acquire()
-        val concurrent = contourGen.begin()
+        val concurrent = stats.begin()
         try {
             val started = System.nanoTime()
             val plan = ContourTiles.plan(z, x, y, contourOptions, p.tileSize)
@@ -266,14 +298,56 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             tmp.writeBytes(tile.bytes)
             if (!tmp.renameTo(file)) tmp.delete()
             // Generation time excludes waiting for a slot (reported separately as waitMs).
-            contourGen.end(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, concurrent, (started - requested) / 1e6)
+            stats.end(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, concurrent, (started - requested) / 1e6)
             return tile.bytes
         } catch (e: Throwable) {
-            contourGen.abort()
+            stats.abort()
             throw e
         } finally {
             contourSlots.release()
         }
+    }
+
+    /**
+     * Background warm-up ([ContourTiles.warmupPlan]): one low-priority thread generates the contour tiles of
+     * the pack's two lowest zooms, plus the centre tile of each higher zoom, into the disk cache, pausing
+     * whenever the map's own contour requests are generating, so the first views after an install, a pack
+     * switch or `/reload` are cached and the JIT and DEM caches are warm. Stops when this service is
+     * [close]d. Timings go to [warmupGen], not [contourGen].
+     */
+    private fun startWarmup(): ContourWarmupProgress? {
+        val header = packs.dem?.header ?: return null
+        if (pyramid == null || header.minLon >= header.maxLon || header.minLat >= header.maxLat) return null
+        val bounds = BoundingBox(header.minLon, header.minLat, header.maxLon, header.maxLat)
+        // The style's highest contour zoom is the pack's max + 1 (see style()).
+        val plan = ContourTiles.warmupPlan(bounds, header.minZoom, zoomCount = WARMUP_ZOOMS, maxTiles = WARMUP_MAX_TILES, centreUpTo = header.maxZoom + 1)
+        val progress = ContourWarmupProgress(plan.map { it.z }.distinct(), plan.size)
+        Thread({
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            for (t in plan) {
+                // Yield to the map: wait while any of its contour tiles is generating.
+                val pauseStart = System.nanoTime()
+                while (foregroundContours.get() > 0 && !closed) Thread.sleep(WARMUP_POLL_MS)
+                if (closed) break
+                val paused = System.nanoTime() - pauseStart
+                if (paused > WARMUP_POLL_MS * 500_000L) progress.paused(paused / 1e6)
+                try {
+                    var hit = false
+                    contourBytes(t.z, t.x, t.y, warmupGen) { hit = true }
+                    if (hit) progress.cached() else progress.generated()
+                } catch (e: Throwable) {
+                    if (closed) break
+                    progress.failed(e)
+                }
+            }
+            progress.finish(stopped = closed)
+        }, "contour-warmup").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+        return progress
+    }
+
+    /** Stops the warm-up; call when this service is replaced (its packs are about to close). */
+    fun close() {
+        closed = true
     }
 
     fun glyph(fontstack: String, range: String): TileResult {
@@ -301,5 +375,12 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         c.served.incrementAndGet()
         c.bytes.addAndGet(bytes.size.toLong())
         return TileResult(200, type, bytes)
+    }
+
+    private companion object {
+        /** Lowest pack zooms warmed up: the fitted whole-pack view and the first zoom-in. */
+        const val WARMUP_ZOOMS = 2
+        const val WARMUP_MAX_TILES = 256
+        const val WARMUP_POLL_MS = 50L
     }
 }

@@ -1,6 +1,9 @@
 package io.github.jasondorjeshort.dystopo.tiles
 
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.geo.BoundingBox
+import io.github.jasondorjeshort.dystopo.geo.TileId
+import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.mvt.Feature
 import io.github.jasondorjeshort.dystopo.mvt.Geometry
 import io.github.jasondorjeshort.dystopo.mvt.Layer
@@ -116,6 +119,38 @@ object ContourTiles {
         z < options.quarterResolutionBelow -> 2
         z < options.halfResolutionBelow -> 1
         else -> 0
+    }
+
+    /**
+     * Contour tiles worth generating in the background as soon as a pack opens, so the first views are
+     * never cold: the tiles covering [bounds] at contour zooms [demMinZoom] and up, [zoomCount] zooms (the
+     * pack's lowest DEM zooms; contour tile z draws at map zoom z to z+1, so these are the fitted
+     * whole-pack view and the first zoom-in). Ordered by zoom, then by distance from the centre of
+     * [bounds], and capped at [maxTiles] (the far edge of the highest zoom goes first). Then, up to
+     * [centreUpTo], the one tile holding the centre at each higher zoom: the view a pack opens on, and
+     * one run of every sampling path (full-resolution tracing, the deepest DEM tiles) so the JIT and the
+     * DEM cache are warm before the user zooms in.
+     */
+    fun warmupPlan(bounds: BoundingBox, demMinZoom: Int, zoomCount: Int = 2, maxTiles: Int = 256, centreUpTo: Int = -1): List<TileId> {
+        require(zoomCount >= 0 && maxTiles >= 0) { "zoomCount and maxTiles must be >= 0" }
+        val centres = (demMinZoom + zoomCount..centreUpTo).map { z ->
+            val n = 1 shl z
+            TileId(z, WebMercator.lonToX(bounds.centerLon, z).toInt().mod(n), WebMercator.latToY(bounds.centerLat, z).toInt().coerceIn(0, n - 1))
+        }
+        val out = ArrayList<TileId>()
+        for (z in demMinZoom until demMinZoom + zoomCount) {
+            val cx = WebMercator.lonToX(bounds.centerLon, z)
+            val cy = WebMercator.latToY(bounds.centerLat, z)
+            out += WebMercator.tilesCovering(bounds, z).sortedBy { t ->
+                // Unwrapped column for boxes across the antimeridian, so distances stay local.
+                val x = if (t.x + 0.5 < cx - (1 shl z) / 2.0) t.x + (1 shl z) else t.x
+                val dx = x + 0.5 - cx
+                val dy = t.y + 0.5 - cy
+                dx * dx + dy * dy
+            }
+        }
+        val capped = if (out.size > maxTiles) out.subList(0, maxTiles).toList() else out
+        return capped + centres
     }
 
     /** The plan for tile z/x/y; see [ContourTilePlan]. */
@@ -288,6 +323,74 @@ class ContourTileStats(private val keepRecent: Int = 20) {
         },
         "recent" to recent.toList(),
     )
+
+    private fun round1(d: Double) = (d * 10).roundToLong() / 10.0
+}
+
+/**
+ * Progress of a background contour warm-up ([ContourTiles.warmupPlan]) for `/stats` (`warmup`):
+ * state, tiles planned and done (generated, found already cached, failed), time spent and time spent
+ * paused while the map's own tile requests were generating. Thread-safe.
+ */
+class ContourWarmupProgress(val zooms: List<Int>, val planned: Int) {
+    enum class State { RUNNING, DONE, STOPPED }
+
+    private val clock = TimeSource.Monotonic
+    private val started = clock.markNow()
+    private var state = State.RUNNING
+    private var finishedMs: Double? = null
+    private var generated = 0
+    private var cached = 0
+    private var failed = 0
+    private var pausedMs = 0.0
+    private var lastError: String? = null
+
+    val done: Int @Synchronized get() = generated + cached + failed
+
+    @Synchronized
+    fun generated() {
+        generated++
+    }
+
+    @Synchronized
+    fun cached() {
+        cached++
+    }
+
+    @Synchronized
+    fun failed(error: Throwable) {
+        failed++
+        lastError = error.toString()
+    }
+
+    @Synchronized
+    fun paused(ms: Double) {
+        pausedMs += ms
+    }
+
+    /** Ends the warm-up: [State.DONE] when every planned tile was handled, else [State.STOPPED]. */
+    @Synchronized
+    fun finish(stopped: Boolean) {
+        if (state != State.RUNNING) return
+        state = if (stopped) State.STOPPED else State.DONE
+        finishedMs = elapsedMs()
+    }
+
+    @Synchronized
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "state" to state.name.lowercase(),
+        "zooms" to zooms,
+        "planned" to planned,
+        "done" to done,
+        "generated" to generated,
+        "alreadyCached" to cached,
+        "failed" to failed,
+        "elapsedMs" to round1(finishedMs ?: elapsedMs()),
+        "pausedForMapMs" to round1(pausedMs),
+        "lastError" to lastError,
+    )
+
+    private fun elapsedMs() = started.elapsedNow().inWholeMicroseconds / 1000.0
 
     private fun round1(d: Double) = (d * 10).roundToLong() / 10.0
 }
