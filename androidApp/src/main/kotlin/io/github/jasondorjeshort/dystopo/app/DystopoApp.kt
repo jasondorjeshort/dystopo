@@ -21,11 +21,12 @@ class DystopoApp : Application() {
         super.onCreate()
         instance = this
         MapLibre.getInstance(this)
+        MapLibre.setConnected(true) // T38: every tile comes from our loopback server; MapLibre's own offline check would stop even those
         AppSettings.load(this)
         tiles = openTiles()
         io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)
-        server = LocalServer(BuildConfig.SERVER_PORT, threads = 4, handler = routes::handle)
+        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, handler = routes::handle)
         try {
             server.start()
         } catch (e: Exception) {

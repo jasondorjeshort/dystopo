@@ -2,6 +2,8 @@ package io.github.jasondorjeshort.dystopo.app
 
 import android.graphics.Bitmap
 import android.os.Process
+import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
@@ -120,6 +122,9 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     val contourCacheVersion = "v2-${contourOptions.units.symbol}-${contourOptions.tileSize}-$demIdentity"
     private val contourRoot = File(cacheDir, "contours")
     private val contourCache = File(contourRoot, contourCacheVersion).apply { mkdirs() }
+
+    /** T38: tiles the pack does not cover come from the configured server ([OnlineTiles]); null when none is set. */
+    val online: OnlineTiles? = OnlineService.get().tilesFor(packs, contourCacheVersion.removeSuffix("-$demIdentity"))
     val staleCacheFilesDeleted = AtomicLong()
 
     /** Tiles generating at once; the server pool is larger, so DEM and OSM requests are still served meanwhile. */
@@ -185,21 +190,27 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         val base = "http://127.0.0.1:$port"
         val osmPack = packs.osm
         val attribution = listOfNotNull(osmPack?.attribution, packs.dem?.attribution).filter { it.isNotEmpty() }.joinToString(" | ")
+        // T38: with a server the sources also span the server's zooms (the pack's own range is kept inside it).
+        val o = online
+        val demLo = if (o == null) demMinZoom else minOf(demMinZoom, OnlineTiles.DEM_MIN_ZOOM)
+        val demHi = if (o == null) demMaxZoom else packs.dem?.header?.maxZoom ?: OnlineTiles.DEM_MAX_ZOOM
+        // The online generation in the URLs makes MapLibre ask again for tiles it got blank while offline.
+        val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" } ?: "")
         return MapLibreStyle(
             MapLibreSources(
                 // The pack identity in the URL keeps MapLibre's own tile cache from serving a replaced pack's tiles.
-                demTiles = "$base/dem/{z}/{x}/{y}.png?v=$demIdentity",
-                demMinZoom = demMinZoom,
-                demMaxZoom = demMaxZoom,
-                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$demIdentity",
+                demTiles = "$base/dem/{z}/{x}/{y}.png?v=$v",
+                demMinZoom = demLo,
+                demMaxZoom = demHi,
+                contourTiles = "$base/contours/{z}/{x}/{y}.pbf?v=$v",
                 // Contour tile z has the levels of DEM zoom z+1 (512-px vector tiles), and overzoomed DEM is fine
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
-                contourMinZoom = (demMinZoom - 1).coerceAtLeast(0),
-                contourMaxZoom = demMaxZoom + 1,
-                osmTiles = osmPack?.let { "$base/osm/{z}/{x}/{y}.pbf" },
-                osmMinZoom = osmPack?.header?.minZoom ?: 0,
-                osmMaxZoom = osmPack?.header?.maxZoom ?: 14,
-                glyphs = Glyphs.styleUrl(packs.glyphDir, base),
+                contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
+                contourMaxZoom = demHi + 1,
+                osmTiles = if (osmPack != null || o != null) "$base/osm/{z}/{x}/{y}.pbf?v=$v" else null,
+                osmMinZoom = if (o == null) osmPack?.header?.minZoom ?: 0 else 0,
+                osmMaxZoom = if (o == null) osmPack?.header?.maxZoom ?: 14 else maxOf(osmPack?.header?.maxZoom ?: 0, OnlineTiles.OSM_MAX_ZOOM),
+                glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }, // T38: refetch after offline
                 attribution = attribution,
                 sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
             ),
@@ -208,6 +219,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     }
 
     fun demTile(z: Int, x: Int, y: Int): TileResult {
+        online?.takeUnless { it.packCoversDem(z, x, y) }?.let { return it.demTile(z, x, y) } // T38: online fallback
         val pack = packs.dem ?: return TileResult.notFound().also { dem.notFound.incrementAndGet() }
         val stored = pack.tile(z, x, y)
         if (stored != null) return ok(dem, "image/png", stored)
@@ -230,6 +242,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     }
 
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
+        online?.takeUnless { it.packCoversOsm(z, x, y) }?.let { return it.osmTile(z, x, y) } // T38: online fallback
         val pack = packs.osm ?: return TileResult.notFound().also { osm.notFound.incrementAndGet() }
         val bytes = pack.tile(z, x, y) ?: return TileResult.notFound().also { osm.notFound.incrementAndGet() }
         return ok(osm, "application/x-protobuf", bytes)
@@ -238,6 +251,10 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     fun contourTile(z: Int, x: Int, y: Int): TileResult {
         foregroundContours.incrementAndGet()
         try {
+            // T38: outside the pack, contours come from the online DEM through the same generation path (not the pack's cache).
+            online?.takeUnless { it.packCoversContour(z, x, y) }?.let { o ->
+                return ok(contours, "application/x-protobuf", o.contourTile(z, x, y) { p -> generateContourTile(p, z, x, y, null, contourGen) })
+            }
             val bytes = contourBytes(z, x, y, contourGen) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
             return ok(contours, "application/x-protobuf", bytes)
         } catch (e: Throwable) {
@@ -283,7 +300,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         }
     }
 
-    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, file: File, stats: ContourTileStats): ByteArray {
+    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, file: File?, stats: ContourTileStats): ByteArray {
         val requested = System.nanoTime()
         contourSlots.acquire()
         val concurrent = stats.begin()
@@ -294,10 +311,12 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             val sampled = System.nanoTime()
             val tile = ContourTiles.build(grid, plan, contourOptions)
             val done = System.nanoTime()
-            file.parentFile?.mkdirs()
-            val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().id}.tmp")
-            tmp.writeBytes(tile.bytes)
-            if (!tmp.renameTo(file)) tmp.delete()
+            if (file != null) {
+                file.parentFile?.mkdirs()
+                val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().id}.tmp")
+                tmp.writeBytes(tile.bytes)
+                if (!tmp.renameTo(file)) tmp.delete()
+            }
             // Generation time excludes waiting for a slot (reported separately as waitMs).
             stats.end(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, concurrent, (started - requested) / 1e6)
             return tile.bytes
@@ -358,6 +377,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             dir?.let { File(it, "$font/$range.pbf") }?.takeIf { f -> f.isFile && f.canonicalPath.startsWith(dir.canonicalPath) }
         }
         if (file == null) {
+            online?.glyph(fontstack, range)?.let { return if (it.status == 200) ok(glyphs, it.contentType, it.body) else it } // T38: from the server
             // An empty glyph set: the labels in this range draw without these characters instead of erroring.
             glyphs.notFound.incrementAndGet()
             return TileResult(200, "application/x-protobuf", ByteArray(0))

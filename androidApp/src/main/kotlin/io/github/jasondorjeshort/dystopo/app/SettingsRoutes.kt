@@ -23,8 +23,9 @@ class SettingsRoutes(private val app: DystopoApp) {
         val params = HashMap<String, Any?>(r.query)
         val body = r.bodyText.trim()
         if (body.startsWith("{")) params.putAll(MiniJson.parseObject(body))
-        val unknown = params.keys - setOf("textScale")
+        val unknown = params.keys - setOf("textScale", "server")
         if (unknown.isNotEmpty()) return Response.json(mapOf("error" to "unknown settings: ${unknown.sorted()}"), 400)
+        params["server"]?.let { OnlineRoutes.setServer(app, it.toString())?.let { e -> return Response.json(mapOf("error" to e), 400) } } // T38
         val raw = params["textScale"] ?: return Response.json(AppSettings.json())
         val scale = (raw as? Number)?.toDouble() ?: raw.toString().toDoubleOrNull()
         if (scale == null || !scale.isFinite()) return Response.json(mapOf("error" to "textScale must be a number"), 400)

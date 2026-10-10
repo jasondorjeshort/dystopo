@@ -68,6 +68,7 @@ class Routes(private val app: DystopoApp) {
         ContourLabelRoutes(app).handle(r)?.let { return it } // T36: GET /contour-labels
         PacksRoutes.handle(app, r)?.let { return it }
         SearchRoutes.handle(app, r)?.let { return it } // T39: /search, /search/status, /search/build, /search/ui, /search/select
+        OnlineRoutes.handle(app, r)?.let { return it } // T38: /online, /online/download
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

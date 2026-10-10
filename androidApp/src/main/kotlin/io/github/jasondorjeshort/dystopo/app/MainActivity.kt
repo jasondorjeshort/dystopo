@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
         app.map.attach(mapView, styleJson = { app.tiles.style() })
 
         setContent {
-            MapScreen(mapView, attribution(), if (tiles.packs.dem == null) NO_PACK else null)
+            MapScreen(mapView, attribution(), if (tiles.packs.dem == null && tiles.online == null) NO_PACK else null) // T38: no message in online mode
         }
 
         val wanted = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -131,6 +131,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
             )
         }
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
+        io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
         io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen
     }
