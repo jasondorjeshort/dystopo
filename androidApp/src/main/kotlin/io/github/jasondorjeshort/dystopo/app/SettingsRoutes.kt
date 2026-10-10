@@ -19,6 +19,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `trails`, `water`, `landcover`, `pois`, `boundaries` and `night` `=on|off`. A contour interval change
  *   reopens the tile service (contour tiles are cached per interval); every other option rebuilds the style
  *   (hillshade and slope switch to generated `/shade` tiles, cached per option set).
+ *   `onlineCacheMb` and `contourCacheMb` (T41) cap the online tile cache and the contour cache (all packs),
+ *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]).
  */
 class SettingsRoutes(private val app: DystopoApp) {
@@ -59,6 +61,8 @@ class SettingsRoutes(private val app: DystopoApp) {
         parsed.textScale?.let { AppSettings.setTextScale(it) }
         if (parsed.unitsGiven) AppSettings.setUnits(parsed.units)
         parsed.warmup?.let { AppSettings.setWarmup(it) }
+        parsed.onlineCacheMb?.let { AppSettings.setOnlineCacheMb(it); io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.resize(it * ContourCache.MB) } // T41
+        parsed.contourCacheMb?.let { AppSettings.setContourCacheMb(it); ContourCache.resize(it) }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -79,13 +83,25 @@ class SettingsRoutes(private val app: DystopoApp) {
             val warmup: Boolean?,
             /** T47: validated map option parameters ([MapOptions.KEYS]), applied over the current options. */
             val map: Map<String, Any?> = emptyMap(),
+            val onlineCacheMb: Long? = null, val contourCacheMb: Long? = null, // T41
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
 
     companion object {
+        /** T41: cache caps in MB, within [AppSettings.CACHE_MB_RANGE] (declared before [KEYS], which uses it). */
+        val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb")
+
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server") + MapOptions.KEYS
+        val KEYS = setOf("textScale", "units", "warmup", "server") + MapOptions.KEYS + CACHE_KEYS
+
+        private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
+            val raw = params[key] ?: return null to null
+            val v = (raw as? Number)?.toLong() ?: raw.toString().trim().toLongOrNull() ?: return null to "$key must be a whole number of MB"
+            val r = AppSettings.CACHE_MB_RANGE
+            if (v !in r) return null to "$key must be between ${r.first} and ${r.last} MB (got $v)"
+            return v to null
+        }
 
         /**
          * Validates a settings request without applying it (pure, unit-tested). A contour interval is checked
@@ -129,7 +145,11 @@ class SettingsRoutes(private val app: DystopoApp) {
                     return Parsed.Error(e.message ?: "bad map option")
                 }
             }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map)
+            val (online, onlineError) = cacheMb(params, "onlineCacheMb")
+            onlineError?.let { return Parsed.Error(it) }
+            val (contour, contourError) = cacheMb(params, "contourCacheMb")
+            contourError?.let { return Parsed.Error(it) }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour)
         }
     }
 }

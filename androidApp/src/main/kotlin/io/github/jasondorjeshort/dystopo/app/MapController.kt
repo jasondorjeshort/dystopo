@@ -190,7 +190,11 @@ class MapController {
             m.setMinZoomPreference(3.0)
             m.setMaxZoomPreference(18.0)
             m.addOnCameraMoveStartedListener { animating = true; lastCameraAt = SystemClock.elapsedRealtime() }
-            m.addOnCameraIdleListener { animating = false; lastCameraAt = SystemClock.elapsedRealtime() }
+            m.addOnCameraIdleListener {
+                animating = false
+                lastCameraAt = SystemClock.elapsedRealtime()
+                runCatching { onCameraIdle() } // T41: online mode retries negative-cached tiles, refreshes its credits
+            }
             loadStyle(styleJson(), onStyle)
         }
     }
@@ -433,14 +437,34 @@ class MapController {
         main.post { startDeviceLocation() }
     }
 
+    /** Called on the main thread when the camera comes to rest (T41; set by the online service). */
+    @Volatile var onCameraIdle: () -> Unit = {}
+
     /** Called (main thread) when a fix seeded the units preference and they changed; set by [DystopoApp]. */
     @Volatile var onUnitsSeeded: () -> Unit = {}
 
     private fun onFix(loc: Location) {
+        val shown = lastLocation
         lastLocation = loc
         if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
-        if (puck.installed) puck.show(loc)
+        // T41: the half-second redraw on a still map was this: GPS and network each report the same fix every
+        // second, and every update of the puck's source makes MapLibre draw a frame. Skip fixes that would not
+        // move the puck or change its halo.
+        if (puck.installed && (shown == null || movesPuck(shown, loc))) {
+            puck.show(loc)
+            puckUpdates++
+        } else {
+            puckUpdatesSkipped++
+        }
     }
+
+    @Volatile var puckUpdates = 0L
+        private set
+    @Volatile var puckUpdatesSkipped = 0L
+        private set
+
+    private fun movesPuck(a: Location, b: Location): Boolean =
+        a.distanceTo(b) >= PUCK_MOVE_M || kotlin.math.abs(a.accuracy - b.accuracy) >= PUCK_MOVE_M
 
     /** Device fixes from GPS and network providers (main thread). No-op without permission or while injecting. */
     private fun startDeviceLocation() {
@@ -502,6 +526,7 @@ class MapController {
         val l = lastLocation
         return mapOf(
             "puckInstalled" to puck.installed,
+            "puckUpdates" to puckUpdates, "puckUpdatesSkipped" to puckUpdatesSkipped, // T41: unchanged fixes skipped
             "puckLayerIndex" to layers,
             "permission" to hasLocationPermission(),
             "injected" to injectedLocation,
@@ -513,6 +538,9 @@ class MapController {
     companion object {
         /** How long everything must stay settled before the map counts as idle. */
         const val QUIET_MS = 500L
+
+        /** A fix closer than this to the shown one (and with an accuracy this close) does not redraw the puck (T41). */
+        const val PUCK_MOVE_M = 0.5f
 
         /** A partial frame with nothing pending and no new frame for this long gets a repaint ([kickRepaint]). */
         const val STUCK_MS = 2_000L

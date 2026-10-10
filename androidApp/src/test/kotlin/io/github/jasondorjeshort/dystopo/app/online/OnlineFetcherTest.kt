@@ -55,6 +55,24 @@ class OnlineFetcherTest {
     }
 
     @Test
+    fun aViewChangeRetriesOldNegativeEntriesOnly() {
+        var status = 404
+        val f = fetcher { HttpReply(status, byteArrayOf(1)) }
+        assertIs<Fetch.Missing>(f.get("dem", "9/1/1.png"))
+        status = 200
+        // Moments later (same view, a small pan): still remembered, no new request.
+        now += 5_000L
+        assertEquals(0, f.retryNegative())
+        assertIs<Fetch.Missing>(f.get("dem", "9/1/1.png"))
+        assertEquals(1, calls.get())
+        // Later, the view changes: the 404 is forgotten and the tile is asked for again.
+        now += 15_000L
+        assertEquals(1, f.retryNegative())
+        assertIs<Fetch.Hit>(f.get("dem", "9/1/1.png"))
+        assertEquals(2, calls.get())
+    }
+
+    @Test
     fun unreachableServerBacksOffAndRecovers() {
         var up = false
         val f = fetcher { if (up) HttpReply(200, byteArrayOf(7)) else throw ConnectFailed("connection refused") }

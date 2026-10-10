@@ -222,6 +222,29 @@ class OnlineFetcher(
         }
     }
 
+    /**
+     * T41: forgets the negative cache entries (404s and failed tiles) at least [minAgeMs] old, so a view the
+     * map moves to asks the server again instead of staying blank for up to ten minutes. Younger entries
+     * stay, so the tiles of one view are not re-requested on every small pan. Returns how many went.
+     */
+    fun retryNegative(minAgeMs: Long = NEGATIVE_RETRY_AGE_MS): Int {
+        val now = clock()
+        fun sweep(map: ConcurrentHashMap<String, Long>, ttl: Long): Int {
+            var n = 0
+            val it = map.entries.iterator()
+            while (it.hasNext()) {
+                val until = it.next().value
+                if (until <= now || now - (until - ttl) >= minAgeMs) { it.remove(); n++ }
+            }
+            return n
+        }
+        val n = sweep(missingUntil, missingTtlMs) + sweep(failedUntil, failureTtlMs)
+        negativeRetried.addAndGet(n.toLong())
+        return n
+    }
+
+    val negativeRetried = AtomicLong()
+
     /** Lets the next lookup try the network at once (connectivity came back). */
     fun retryNow() {
         downUntil = 0L
@@ -267,7 +290,7 @@ class OnlineFetcher(
             "server" to server, "state" to state, "generation" to generation,
             "requests" to requests.get(), "cacheHits" to cacheHits.get(), "fetches" to fetches.get(),
             "fetchedBytes" to fetchedBytes.get(), "notFound" to notFound.get(), "errors" to errors.get(),
-            "negativeCacheHits" to negativeHits.get(), "backoffSkips" to backoffSkips.get(), "sharedFetches" to sharedFetches.get(),
+            "negativeCacheHits" to negativeHits.get(), "negativeRetried" to negativeRetried.get(), "backoffSkips" to backoffSkips.get(), "sharedFetches" to sharedFetches.get(),
             "inFlight" to inFlight.size, "maxInFlight" to maxInFlight,
             "fetchMsAvg" to if (n == 0L) null else fetchMs.get() / n, "fetchMsMax" to maxFetchMs.get(),
             "negativeCache" to mapOf("missing" to missingUntil.count { it.value > now }, "failed" to failedUntil.count { it.value > now }),
@@ -280,6 +303,9 @@ class OnlineFetcher(
     }
 
     companion object {
+        /** Negative entries at least this old are retried when the view changes (T41). */
+        const val NEGATIVE_RETRY_AGE_MS = 15_000L
+
         /** A path-safe cache directory name for [server]: `http://10.0.2.2:8765` becomes `10.0.2.2_8765`. */
         fun keyFor(server: String): String =
             server.substringAfter("://").trimEnd('/').map { if (it.isLetterOrDigit() || it == '.' || it == '-') it else '_' }.joinToString("")

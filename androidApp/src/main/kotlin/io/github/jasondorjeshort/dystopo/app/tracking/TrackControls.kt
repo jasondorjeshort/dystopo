@@ -139,7 +139,11 @@ private fun BoxScope.Controls() {
     }
 
     Column(
-        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp),
+        // T41: above the credit line (its measured top), so the profile panel never covers it.
+        Modifier.align(Alignment.BottomCenter).let { m ->
+            val b = io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom
+            if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
+        },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ui.selectedWaypoint?.let { WaypointSheet(tracking, it) }
@@ -233,17 +237,21 @@ private fun ProfilePanel(tracking: Tracking, p: Tracking.ProfileView) {
             fun y(e: Double) = (size.height - (e - lo) / span * (size.height * 0.9) - size.height * 0.05).toFloat()
             val line = Path()
             val area = Path()
-            var started = false
+            // T41: one run per track segment, so a segment break is a gap, not a vertical step.
+            var runSegment: Int? = null
+            var runEndX = 0f
             for (smp in p.samples) {
                 val e = smp.eleM ?: continue
-                if (!started) {
+                if (runSegment != smp.segment) {
+                    if (runSegment != null) { area.lineTo(runEndX, size.height); area.close() }
                     line.moveTo(x(smp.distanceM), y(e))
                     area.moveTo(x(smp.distanceM), size.height)
-                    started = true
+                    runSegment = smp.segment
                 } else line.lineTo(x(smp.distanceM), y(e))
                 area.lineTo(x(smp.distanceM), y(e))
+                runEndX = x(smp.distanceM)
             }
-            area.lineTo(x(p.samples.last { it.eleM != null }.distanceM), size.height)
+            area.lineTo(runEndX, size.height)
             area.close()
             drawPath(area, Magenta.copy(alpha = 0.18f))
             drawPath(line, Magenta, style = Stroke(width = 2.5.dp.toPx()))

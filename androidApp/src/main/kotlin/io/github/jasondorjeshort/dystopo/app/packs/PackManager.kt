@@ -12,13 +12,19 @@ import io.github.jasondorjeshort.dystopo.packs.PackInfo
 import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.pmtiles.Compression
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.app.search.PlaceSearch
+import io.github.jasondorjeshort.dystopo.search.SearchIndex
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The region packs on the device: lists them (name, bounds, zooms, size, attribution from the PMTiles
- * headers and metadata), switches the active one (reopens the tile service, reloads the style, moves
- * the camera to the pack), deletes them, and owns the [PackDownloader] that adds new ones.
+ * headers and metadata), chooses the primary one (moves the camera to it), deletes them, and owns the
+ * [PackDownloader] that adds new ones.
+ *
+ * T41: every usable pack is on the map at once ([PackSet]); "active" in `/packs` is the primary pack
+ * (where the map starts, a tie-breaker in tile precedence), `inUse` lists every pack the map draws from.
+ * A finished download joins them without displacing the primary pack.
  */
 class PackManager private constructor(private val app: DystopoApp) {
     /** Where downloads land (the internal files dir; pushed packs may also sit in the external one). */
@@ -32,8 +38,11 @@ class PackManager private constructor(private val app: DystopoApp) {
 
     fun catalog(): List<PackFiles> = PackSet.catalog(roots())
 
-    /** The name of the pack the map shows now, or null. */
+    /** The name of the primary pack, or null. */
     fun activeName(): String? = app.tiles.packs.name
+
+    /** T41: every pack the map draws from now. */
+    fun inUse(): List<String> = app.tiles.packs.regions.map { it.name }
 
     /** Header and metadata of one archive, cached by path, size and mtime. Errors are reported, not thrown. */
     private fun archive(file: File?): Cached? {
@@ -68,22 +77,24 @@ class PackManager private constructor(private val app: DystopoApp) {
 
     fun json(): Map<String, Any?> {
         val active = activeName()
+        val used = inUse().toSet()
         val packs = list()
         return linkedMapOf(
             "active" to active,
+            "inUse" to app.tiles.packs.json(), // T41: in precedence order, with profile and ranks
             "dir" to packsDir.path,
             "roots" to roots().map { File(it, PackSet.PACKS_DIR).path },
             "count" to packs.size,
-            "packs" to packs.map { it.json(it.info.name == active) },
+            "packs" to packs.map { it.json(it.info.name == active) + mapOf("inUse" to (it.info.name in used)) },
             "downloads" to downloads.activeCount(),
-            "search" to io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.json(app), // T39: active pack search index (build progress)
+            "search" to io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.json(app), // T39, T41: every pack's search index (build progress)
             "routing" to io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.json(app), // T45: active pack trail graph (build progress)
         )
     }
 
     /**
-     * Makes [name] the active pack: stores the choice, reopens the packs and the style, and (when the
-     * map is up and [moveCamera]) fits the camera to the pack's bounds. Returns what happened.
+     * Makes [name] the primary pack: stores the choice, reopens the packs and the style (the other packs stay
+     * on the map), and (when the map is up and [moveCamera]) fits the camera to the pack's bounds.
      */
     @Synchronized
     fun activate(name: String, moveCamera: Boolean = true): Map<String, Any?> {
@@ -112,7 +123,10 @@ class PackManager private constructor(private val app: DystopoApp) {
         }
     }
 
-    /** Deletes a pack's files (and cancels its download). The active pack switches to another one. */
+    /**
+     * Deletes a pack's files (and cancels its download), its search index and its contour tiles. When it was
+     * the primary pack, another one becomes primary. The map closes the pack before its files go.
+     */
     @Synchronized
     fun delete(name: String): Map<String, Any?> {
         require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
@@ -120,30 +134,48 @@ class PackManager private constructor(private val app: DystopoApp) {
         val pack = catalog().firstOrNull { it.name == name }
         if (pack == null && !cancelled) throw NoSuchElementException("no pack '$name'")
         val wasActive = activeName() == name
+        val wasInUse = name in inUse()
         val files = pack?.files.orEmpty()
         if (wasActive) {
-            // Point the selection elsewhere first, so the reload below doesn't reopen the files being deleted.
+            // Point the selection elsewhere first, so the reload below picks another primary pack.
             val next = list().map { it.info }.firstOrNull { it.name != name && it.usable }?.name
             if (next != null) PackSet.storeActive(roots(), next) else File(packsDir, PackSet.ACTIVE_FILE).delete()
         }
-        val deleted = files.filter { it.delete() }.map { it.name }
-        if (wasActive) {
-            // Nothing left with this name, so the reload picks the stored pack, the legacy one, or none.
-            app.reload()
-            app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h)) }
-        }
+        // T41: close it first (the map keeps every other pack), then delete.
+        if (wasInUse) app.reload(skip = setOf(name))
+        // T41: the search index next to the vector archive goes too (T39 left it behind).
+        val index = pack?.vector?.let { v -> File(v.absoluteFile.parentFile, SearchIndex.fileNameFor(v.name)) }
+        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile })).filter { it.delete() }.map { it.name }
+        PlaceSearch.forget(name)
+        // T41: and its contour tiles (no DEM file on the device has that identity any more).
+        app.collectContourGarbage()
+        if (wasActive) app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h)) }
         files.forEach { archiveCache.remove(it.path) }
-        return linkedMapOf("deleted" to deleted, "downloadCancelled" to cancelled, "wasActive" to wasActive, "active" to activeName())
+        return linkedMapOf(
+            "deleted" to deleted, "downloadCancelled" to cancelled, "wasActive" to wasActive, "wasInUse" to wasInUse,
+            "active" to activeName(), "inUse" to inUse(),
+        )
     }
 
-    /** Called by the downloader when a pack's files are complete. */
-    internal fun onDownloaded(name: String, activate: Boolean) {
-        if (activate || activeName() == null) {
-            try {
-                activate(name)
-            } catch (e: Exception) {
-                Log.w(TAG, "activating downloaded pack $name failed", e)
+    /**
+     * Called by the downloader when a pack's files are complete: the pack joins the map (T41: the primary
+     * pack stays; the new one becomes primary only when there is none), and with [show] the camera moves to it.
+     */
+    internal fun onDownloaded(name: String, show: Boolean) {
+        // T41: a downloaded pack comes with the label glyphs and marker sprites (from the server, when one is set).
+        io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).fetcher?.server?.let { s ->
+            runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).installAssets(s) }
+        }
+        try {
+            if (activeName() == null) {
+                activate(name, moveCamera = show)
+                return
             }
+            app.reload()
+            if (show) find(name)?.info?.bounds?.let { jumpTo(it) }
+            Log.i(TAG, "downloaded pack $name is on the map (primary stays ${activeName()})")
+        } catch (e: Exception) {
+            Log.w(TAG, "opening downloaded pack $name failed", e)
         }
     }
 

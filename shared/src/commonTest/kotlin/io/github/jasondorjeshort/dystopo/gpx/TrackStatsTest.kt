@@ -95,6 +95,14 @@ class TrackStatsTest {
         val profile = TrackStats.profile(listOf(a, b), 3)
         close(s.distanceM, profile.last().distanceM, 1e-9)
         assertNull(profile[1].eleM)
+        // T41: samples say which segment they lie on, so a profile can leave a gap between segments.
+        val fine = TrackStats.profile(listOf(a, b), 9)
+        assertEquals(0, fine.first().segment)
+        assertEquals(1, fine.last().segment)
+        assertEquals(fine.map { it.segment }.sorted(), fine.map { it.segment })
+        val firstOfSecond = fine.indexOfFirst { it.segment == 1 }
+        // The first sample past the gap is at or beyond the first segment's length.
+        assertTrue(fine[firstOfSecond].distanceM >= TrackStats.distanceM(0.0, 0.0, 0.0, 0.01) - 1e-6)
     }
 
     @Test

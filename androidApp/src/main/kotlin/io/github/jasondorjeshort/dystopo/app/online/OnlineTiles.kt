@@ -55,12 +55,12 @@ class OnlineTiles(
     }
 
     /** True when the DEM pack answers tile z/x/y (stored, or synthesized from its ancestors). */
-    fun packCoversDem(z: Int, x: Int, y: Int): Boolean = packs.dem?.let { z >= it.header.minZoom && overlaps(it, z, x, y) } ?: false
+    fun packCoversDem(z: Int, x: Int, y: Int): Boolean = packs.demFor(z, x, y) != null // T41: any pack
 
-    fun packCoversOsm(z: Int, x: Int, y: Int): Boolean = packs.osm?.let { z >= it.header.minZoom && overlaps(it, z, x, y) } ?: false
+    fun packCoversOsm(z: Int, x: Int, y: Int): Boolean = packs.osmFor(z, x, y) != null // T41: any pack
 
     /** True when the contour tile lies wholly inside the DEM pack: the pack path (and its cache) makes it, as without a server. */
-    fun packCoversContour(z: Int, x: Int, y: Int): Boolean = packs.dem?.let { z >= it.header.minZoom - 1 && inside(it, z, x, y) } ?: false
+    fun packCoversContour(z: Int, x: Int, y: Int): Boolean = packs.demContains(z, x, y) // T41: wholly inside any pack
 
     // ---- tiles ----
 
@@ -106,7 +106,7 @@ class OnlineTiles(
 
     /** Encoded DEM tile for the pyramid: the pack's where it covers, else fetched; null when nobody has it. */
     private fun demBytes(z: Int, x: Int, y: Int): ByteArray? {
-        if (packCoversDem(z, x, y)) return packs.dem?.tile(z, x, y)
+        if (packCoversDem(z, x, y)) return packs.demFor(z, x, y)?.tile(z, x, y) // T41
         if (z !in DEM_MIN_ZOOM..DEM_MAX_ZOOM) return null
         return when (val f = fetcher.get("dem", "$z/$x/$y.png")) {
             is Fetch.Hit -> f.bytes
@@ -143,7 +143,7 @@ class OnlineTiles(
      */
     fun contourTile(z: Int, x: Int, y: Int, generate: (DemPyramid) -> ByteArray): ByteArray {
         // Tiles touching the pack mix pack and server DEM; they are not kept (a pack switch would make them stale).
-        val keep = packs.dem?.let { !overlaps(it, z, x, y) } ?: true
+        val keep = packs.demPacks.none { overlaps(it, z, x, y) } // T41: any pack
         val key = "${fetcher.serverKey}/contours-$contourVersion/$z/$x/$y.pbf"
         if (keep) service.cache.get(key)?.let {
             service.contourCacheHits.incrementAndGet()

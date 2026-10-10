@@ -10,6 +10,7 @@ import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
+import io.github.jasondorjeshort.dystopo.packs.PackRoleZooms
 import io.github.jasondorjeshort.dystopo.tiles.BitmapImageDecoder
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileStats
@@ -102,7 +103,13 @@ fun packIdentity(file: File): String {
  * tiles trace at once (one core is left to the map renderer), and a second request for a tile that
  * is being generated waits for the first instead of generating it again. The disk cache directory
  * is keyed on the DEM pack identity ([packIdentity]), so a pushed pack gets fresh contours without
- * `/cache/clear`; other directories under `contours/` are stale and deleted in the background.
+ * `/cache/clear`.
+ *
+ * T41: every usable pack is served at once. Each tile goes to the archive [PackSet.demFor] /
+ * [PackSet.osmFor] picks ([io.github.jasondorjeshort.dystopo.packs.PackPrecedence]); contour tiles are
+ * generated from the chosen pack's own [DemPyramid] (the last few used are kept) into that pack's
+ * directory of the shared [ContourCache] (kept across switches, one LRU cap). Cliff lines in vector tiles
+ * are turned so the ground falls to their right ([CliffSides]), the side the style draws ticks on.
  */
 class TileService(val packs: PackSet, private val cacheDir: File, private val port: Int) {
     val dem = SourceCounters()
@@ -121,17 +128,25 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     )
     private val intervalTag = contourOptions.interval?.let { "-i" + MapOptions.fmt(it) } ?: "" // T47
 
-    /** The DEM pack's identity, part of the contour cache key and of the tile URLs in the style. */
-    val demIdentity: String = packs.dem?.file?.let(::packIdentity) ?: "none"
+    /** T41: each DEM pack's identity, part of its contour cache directory. */
+    private val identities: Map<Pack, String> = packs.demPacks.associateWith { packIdentity(it.file) }
 
-    /** Cache version: bump the `v` when contour generation changes what it writes. */
-    val contourCacheVersion = "v2-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag-$demIdentity"
-    private val contourRoot = File(cacheDir, "contours")
-    private val contourCache = File(contourRoot, contourCacheVersion).apply { mkdirs() }
+    /** All DEM packs' identities together, in the style's tile URLs (MapLibre's own cache never serves a replaced pack's tiles). */
+    val demIdentity: String = when (identities.size) {
+        0 -> "none"
+        1 -> identities.values.first()
+        else -> "%08x".format(CRC32().apply { update(identities.values.sorted().joinToString(",").toByteArray()) }.value)
+    }
 
-    /** T38: tiles the pack does not cover come from the configured server ([OnlineTiles]); null when none is set. */
-    val online: OnlineTiles? = OnlineService.get().tilesFor(packs, contourCacheVersion.removeSuffix("-$demIdentity"))
-    val staleCacheFilesDeleted = AtomicLong()
+    /** The contour cache directory of [p]'s tiles in the current unit (see [ContourCache]). */
+    fun contourDir(p: Pack): String = ContourCache.dirName(contourOptions.units.symbol, contourOptions.tileSize, identities[p] ?: packIdentity(p.file), intervalTag)
+
+    /** The primary pack's contour cache directory (reported in `/stats`). */
+    val contourCacheVersion: String = packs.dem?.let(::contourDir) ?: ContourCache.dirName(contourOptions.units.symbol, contourOptions.tileSize, "none", intervalTag)
+    private val contourCache get() = ContourCache.get()
+
+    /** T38: tiles no pack covers come from the configured server ([OnlineTiles]); null when none is set. */
+    val online: OnlineTiles? = OnlineService.get().tilesFor(packs, "${ContourCache.VERSION}-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag")
 
     /** Tiles generating at once; the server pool is larger, so DEM and OSM requests are still served meanwhile. */
     val contourPermits = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 8)
@@ -139,15 +154,28 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     private val contourInFlight = ConcurrentHashMap<String, CompletableFuture<ByteArray?>>()
 
     /**
-     * Decoded DEM tiles shared by contour generation and DEM synthesis; thread-safe. 96 tiles (24 MB) hold
-     * a screenful of contour tiles with their halo neighbours: a 512-px tile plus halo touches up to 16 DEM tiles.
+     * Decoded DEM tiles per DEM pack, shared by contour generation, DEM synthesis and cliff sides; thread-safe.
+     * 96 tiles (24 MB) hold a screenful of contour tiles with their halo neighbours: a 512-px tile plus halo
+     * touches up to 16 DEM tiles. T41: one pyramid per pack, made on first use; only the [MAX_PYRAMIDS] most
+     * recently used are kept (a view rarely spans more packs than that).
      */
-    private val pyramid: DemPyramid? = packs.dem?.let { pack ->
-        DemPyramid(pack.header.minZoom, pack.header.maxZoom, BitmapImageDecoder, cacheTiles = 96) { z, x, y -> pack.tile(z, x, y) }
+    private val pyramids = object : LinkedHashMap<Pack, DemPyramid>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pack, DemPyramid>?) = size > MAX_PYRAMIDS
+    }
+    private val pyramidsMade = AtomicInteger()
+
+    private fun pyramid(pack: Pack): DemPyramid = synchronized(pyramids) {
+        pyramids.getOrPut(pack) {
+            pyramidsMade.incrementAndGet()
+            DemPyramid(pack.header.minZoom, pack.header.maxZoom, BitmapImageDecoder, cacheTiles = 96) { z, x, y -> pack.tile(z, x, y) }
+        }
     }
 
+    /** The primary pack's pyramid (warm-up); null without a DEM pack. */
+    private val pyramid: DemPyramid? get() = packs.dem?.let(::pyramid)
+
     /** T47: hillshade and slope raster tiles from the DEM for the map options ([ShadeService]). */
-    val shade = ShadeService(cacheDir, demIdentity, pyramid, online, contourPermits)
+    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let(::pyramid) }, online, contourPermits) // T41: the pack under each tile
 
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
@@ -161,27 +189,23 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     /** Progress of the background warm-up started with this service; null without a DEM pack. */
     val warmup: ContourWarmupProgress? = startWarmup()
 
-    init {
-        // Drop caches of other packs and older versions lazily, off the request path.
-        Thread({
-            contourRoot.listFiles()?.filter { it.isDirectory && it.name != contourCacheVersion }?.forEach { dir ->
-                dir.walkBottomUp().forEach { val isFile = it.isFile; if (it.delete() && isFile) staleCacheFilesDeleted.incrementAndGet() }
-            }
-        }, "contour-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
-    }
-
-    val demMinZoom get() = packs.dem?.header?.minZoom ?: 8
-    val demMaxZoom get() = packs.dem?.header?.maxZoom ?: 14
+    /** T41: the zooms over every DEM pack (the style's DEM and contour sources span them all). */
+    val demMinZoom get() = packs.demPacks.minOfOrNull { it.header.minZoom } ?: 8
+    val demMaxZoom get() = packs.demPacks.maxOfOrNull { it.header.maxZoom } ?: 14
 
     fun pyramidJson(): Map<String, Any?> {
-        val p = pyramid ?: return mapOf("loaded" to false)
+        val ps = synchronized(pyramids) { pyramids.entries.map { it.key to it.value } }
+        if (ps.isEmpty()) return mapOf("loaded" to false, "pyramidsMade" to pyramidsMade.get())
         return mapOf(
             "loaded" to true,
-            "cachedTiles" to p.cachedTiles,
-            "cachedTileBytes" to p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4,
-            "tilesDecoded" to p.tilesDecoded,
-            "duplicateDecodes" to p.duplicateDecodes,
-            "cacheHits" to p.cacheHits,
+            "pyramids" to ps.size,
+            "pyramidsMade" to pyramidsMade.get(),
+            "cachedTiles" to ps.sumOf { it.second.cachedTiles },
+            "cachedTileBytes" to ps.sumOf { (_, p) -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 },
+            "tilesDecoded" to ps.sumOf { it.second.tilesDecoded },
+            "duplicateDecodes" to ps.sumOf { it.second.duplicateDecodes },
+            "cacheHits" to ps.sumOf { it.second.cacheHits },
+            "packs" to ps.map { (k, p) -> mapOf("pack" to packs.packOf(k), "cachedTiles" to p.cachedTiles, "tilesDecoded" to p.tilesDecoded) },
         )
     }
 
@@ -190,19 +214,23 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         "permits" to contourPermits,
         "waitedForSameTile" to contourWaits.get(),
         "cacheVersion" to contourCacheVersion,
-        "demPack" to packs.dem?.file?.let { mapOf("bytes" to it.length(), "mtime" to it.lastModified(), "identity" to demIdentity) },
-        "staleCacheFilesDeleted" to staleCacheFilesDeleted.get(),
+        "demPack" to packs.dem?.let { p -> mapOf("bytes" to p.file.length(), "mtime" to p.file.lastModified(), "identity" to identities[p]) },
+        "demPacks" to packs.demPacks.map { mapOf("pack" to packs.packOf(it), "identity" to identities[it], "cacheDir" to contourDir(it)) }, // T41
+        "staleCacheFilesDeleted" to ContourCache.staleFilesDeleted.get(),
         "warmup" to (warmup?.json()?.plus("generation" to warmupGen.json()) ?: mapOf("state" to "off", "enabled" to AppSettings.warmup)),
     )
 
     fun style(): String {
         val base = "http://127.0.0.1:$port"
-        val osmPack = packs.osm
-        val attribution = listOfNotNull(osmPack?.attribution, packs.dem?.attribution).filter { it.isNotEmpty() }.joinToString(" | ")
+        // T41: every pack's archives (vector credits first, as before); the zooms span all of them.
+        val osmPacks = packs.osmPacks
+        val attribution = (osmPacks + packs.demPacks).map { it.attribution }.filter { it.isNotEmpty() }.distinct().joinToString(" | ")
         // T38: with a server the sources also span the server's zooms (the pack's own range is kept inside it).
         val o = online
         val demLo = if (o == null) demMinZoom else minOf(demMinZoom, OnlineTiles.DEM_MIN_ZOOM)
-        val demHi = if (o == null) demMaxZoom else packs.dem?.header?.maxZoom ?: OnlineTiles.DEM_MAX_ZOOM
+        val demHi = if (o == null) demMaxZoom else if (packs.demPacks.isNotEmpty()) demMaxZoom else OnlineTiles.DEM_MAX_ZOOM
+        val osmLo = osmPacks.minOfOrNull { it.header.minZoom } ?: 0
+        val osmHi = osmPacks.maxOfOrNull { it.header.maxZoom }
         // The online generation in the URLs makes MapLibre ask again for tiles it got blank while offline.
         val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" } ?: "")
         return MapLibreStyle(
@@ -216,9 +244,10 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
                 contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
                 contourMaxZoom = demHi + 1,
-                osmTiles = if (osmPack != null || o != null) "$base/osm/{z}/{x}/{y}.pbf?v=$v" else null,
-                osmMinZoom = if (o == null) osmPack?.header?.minZoom ?: 0 else 0,
-                osmMaxZoom = if (o == null) osmPack?.header?.maxZoom ?: 14 else maxOf(osmPack?.header?.maxZoom ?: 0, OnlineTiles.OSM_MAX_ZOOM),
+                // `c1`: cliff lines turned downhill-right (T41), so tiles cached before that are not reused.
+                osmTiles = if (osmPacks.isNotEmpty() || o != null) "$base/osm/{z}/{x}/{y}.pbf?v=$v-c1" else null,
+                osmMinZoom = if (o == null) osmLo else 0,
+                osmMaxZoom = if (o == null) osmHi ?: 14 else maxOf(osmHi ?: 0, OnlineTiles.OSM_MAX_ZOOM),
                 glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }, // T38: refetch after offline
                 attribution = attribution,
                 sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
@@ -234,15 +263,18 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
 
     fun demTile(z: Int, x: Int, y: Int): TileResult {
         online?.takeUnless { it.packCoversDem(z, x, y) }?.let { return it.demTile(z, x, y) } // T38: online fallback
-        val pack = packs.dem ?: return TileResult.notFound().also { dem.notFound.incrementAndGet() }
-        val stored = pack.tile(z, x, y)
-        if (stored != null) return ok(dem, "image/png", stored)
-        // Not in the pack: synthesize from the nearest ancestor so hillshade continues past a deep level's edge.
+        // T41: the packs that overlap the tile, best first; the first one storing it answers.
+        val candidates = packs.demCandidates(z, x, y)
+        if (candidates.isEmpty()) return TileResult.notFound().also { dem.notFound.incrementAndGet() }
+        for (pack in candidates) pack.tile(z, x, y)?.let { return ok(dem, "image/png", it) }
+        // Not stored: synthesize from the nearest ancestor so hillshade continues past a deep level's edge.
         val started = System.nanoTime()
-        val p = pyramid ?: return TileResult.notFound()
-        val ts = p.tileSize
-        val grid = if (!p.covers(z, x * ts, y * ts, ts, ts)) null else p.window(z, x * ts, y * ts, ts, ts)
-        if (grid == null || grid.values.all { it.isNaN() }) {
+        val grid = candidates.firstNotNullOfOrNull { pack ->
+            val p = pyramid(pack)
+            val ts = p.tileSize
+            if (!p.covers(z, x * ts, y * ts, ts, ts)) null else p.window(z, x * ts, y * ts, ts, ts).takeUnless { g -> g.values.all { it.isNaN() } }
+        }
+        if (grid == null) {
             dem.notFound.incrementAndGet()
             return TileResult.notFound()
         }
@@ -260,10 +292,19 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
 
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
         online?.takeUnless { it.packCoversOsm(z, x, y) }?.let { return it.osmTile(z, x, y) } // T38: online fallback
-        val pack = packs.osm ?: return TileResult.notFound().also { osm.notFound.incrementAndGet() }
-        val bytes = pack.tile(z, x, y) ?: return TileResult.notFound().also { osm.notFound.incrementAndGet() }
-        return ok(osm, "application/x-protobuf", bytes)
+        // T41: the best vector archive holding the tile (outdoors profile first, see PackPrecedence).
+        for (pack in packs.osmCandidates(z, x, y)) {
+            val bytes = pack.tile(z, x, y) ?: continue
+            return ok(osm, "application/x-protobuf", cliffs.orient(z, x, y, bytes))
+        }
+        return TileResult.notFound().also { osm.notFound.incrementAndGet() }
     }
+
+    /** T41: cliff ticks on the downhill side, from the DEM pack under the tile. */
+    val cliffs = CliffTiles(this::cliffPyramid)
+
+    /** The pyramid of the DEM pack that answers DEM tile z/x/y, for [cliffs]; null outside every pack. */
+    private fun cliffPyramid(z: Int, x: Int, y: Int): DemPyramid? = packs.demFor(z, x, y)?.let(::pyramid)
 
     fun contourTile(z: Int, x: Int, y: Int): TileResult {
         foregroundContours.incrementAndGet()
@@ -272,7 +313,9 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             online?.takeUnless { it.packCoversContour(z, x, y) }?.let { o ->
                 return ok(contours, "application/x-protobuf", o.contourTile(z, x, y) { p -> generateContourTile(p, z, x, y, null, contourGen) })
             }
-            val bytes = contourBytes(z, x, y, contourGen) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
+            // T41: the DEM pack that holds the tile (else the best one overlapping it) makes it, into its own cache directory.
+            val pack = packs.demFor(z, x, y, PackRoleZooms.CONTOUR) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
+            val bytes = contourBytes(pack, z, x, y, contourGen)
             return ok(contours, "application/x-protobuf", bytes)
         } catch (e: Throwable) {
             contours.errors.incrementAndGet()
@@ -283,18 +326,17 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
     }
 
     /**
-     * Contour tile bytes from the disk cache or generated (timed into [stats]); null without a DEM pack.
+     * Contour tile bytes of [pack] from the disk cache or generated (timed into [stats]).
      * One generation per tile: a second request for the same tile, from the map or the warm-up, waits
      * for the first.
      */
-    private fun contourBytes(z: Int, x: Int, y: Int, stats: ContourTileStats, onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() }): ByteArray? {
-        val file = File(contourCache, "$z/$x/$y.pbf")
-        if (file.isFile) {
+    private fun contourBytes(pack: Pack, z: Int, x: Int, y: Int, stats: ContourTileStats, onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() }): ByteArray {
+        val key = ContourCache.key(contourDir(pack), z, x, y)
+        contourCache.get(key)?.let {
             onCacheHit()
-            return file.readBytes()
+            return it
         }
-        val p = pyramid ?: return null
-        val key = "$z/$x/$y"
+        val p = pyramid(pack)
         val mine = CompletableFuture<ByteArray?>()
         val running = contourInFlight.putIfAbsent(key, mine)
         if (running != null) {
@@ -306,7 +348,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             }
         }
         try {
-            val bytes = generateContourTile(p, z, x, y, file, stats)
+            val bytes = generateContourTile(p, z, x, y, key, stats)
             mine.complete(bytes)
             return bytes
         } catch (e: Throwable) {
@@ -317,7 +359,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         }
     }
 
-    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, file: File?, stats: ContourTileStats): ByteArray {
+    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, cacheKey: String?, stats: ContourTileStats): ByteArray {
         val requested = System.nanoTime()
         contourSlots.acquire()
         val concurrent = stats.begin()
@@ -328,12 +370,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
             val sampled = System.nanoTime()
             val tile = ContourTiles.build(grid, plan, contourOptions)
             val done = System.nanoTime()
-            if (file != null) {
-                file.parentFile?.mkdirs()
-                val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().id}.tmp")
-                tmp.writeBytes(tile.bytes)
-                if (!tmp.renameTo(file)) tmp.delete()
-            }
+            if (cacheKey != null) contourCache.put(cacheKey, tile.bytes) // T41: the shared LRU cache (atomic rename inside)
             // Generation time excludes waiting for a slot (reported separately as waitMs).
             stats.end(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, concurrent, (started - requested) / 1e6)
             return tile.bytes
@@ -354,7 +391,8 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
      */
     private fun startWarmup(): ContourWarmupProgress? {
         if (!AppSettings.warmup) return null // T33: settings switch
-        val header = packs.dem?.header ?: return null
+        val warmPack = packs.dem ?: return null // T41: the primary pack
+        val header = warmPack.header
         if (pyramid == null || header.minLon >= header.maxLon || header.minLat >= header.maxLat) return null
         val bounds = BoundingBox(header.minLon, header.minLat, header.maxLon, header.maxLat)
         // The style's highest contour zoom is the pack's max + 1 (see style()).
@@ -371,7 +409,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
                 if (paused > WARMUP_POLL_MS * 500_000L) progress.paused(paused / 1e6)
                 try {
                     var hit = false
-                    contourBytes(t.z, t.x, t.y, warmupGen) { hit = true }
+                    contourBytes(packs.demFor(t.z, t.x, t.y, PackRoleZooms.CONTOUR) ?: warmPack, t.z, t.x, t.y, warmupGen) { hit = true }
                     if (hit) progress.cached() else progress.generated()
                 } catch (e: Throwable) {
                     if (closed) break
@@ -403,12 +441,8 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         return ok(glyphs, "application/x-protobuf", file.readBytes())
     }
 
-    /** Deletes this pack's cached contour tiles; returns how many files went. */
-    fun clearContourCache(): Int {
-        var n = 0
-        contourCache.walkBottomUp().forEach { if (it != contourCache && it.delete()) n++ }
-        return n
-    }
+    /** Deletes the cached contour tiles of every pack; returns how many files went. */
+    fun clearContourCache(): Int = ContourCache.clear() // T41: every pack's directory
 
     private fun ok(c: SourceCounters, type: String, bytes: ByteArray): TileResult {
         c.served.incrementAndGet()
@@ -421,5 +455,7 @@ class TileService(val packs: PackSet, private val cacheDir: File, private val po
         const val WARMUP_ZOOMS = 2
         const val WARMUP_MAX_TILES = 256
         const val WARMUP_POLL_MS = 50L
+        /** DEM pyramids kept at once (T41): 96 decoded tiles, 24 MB, each. */
+        const val MAX_PYRAMIDS = 2
     }
 }

@@ -76,6 +76,7 @@ fun PacksOverlay() {
 private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     var packs by remember { mutableStateOf<List<PackManager.Listed>>(emptyList()) }
     var active by remember { mutableStateOf<String?>(null) }
+    var used by remember { mutableStateOf<Set<String>>(emptySet()) }
     var jobs by remember { mutableStateOf<List<Map<String, Any?>>>(emptyList()) }
     var url by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
@@ -86,6 +87,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
             val (p, a, j) = withContext(Dispatchers.IO) { Triple(manager.list(), manager.activeName(), manager.downloads.snapshot()) }
             packs = p
             active = a
+            used = manager.inUse().toSet() // T41: every usable pack is on the map
             jobs = j
             delay(if (j.any { it["state"] == "running" || it["state"] == "queued" }) 500 else 2000)
         }
@@ -114,7 +116,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
         }
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(packs, key = { it.info.name }) { p ->
-                PackRow(p, isActive = p.info.name == active,
+                PackRow(p, isActive = p.info.name == active, onMap = p.info.name in used,
                     onShow = { background("Opening ${p.info.name}") { manager.activate(p.info.name); close() } },
                     onDelete = { background("Deleting ${p.info.name}") { manager.delete(p.info.name) } })
             }
@@ -135,19 +137,20 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
 }
 
 @Composable
-private fun PackRow(p: PackManager.Listed, isActive: Boolean, onShow: () -> Unit, onDelete: () -> Unit) {
+private fun PackRow(p: PackManager.Listed, isActive: Boolean, onMap: Boolean, onShow: () -> Unit, onDelete: () -> Unit) {
     val info = p.info
     val b = info.bounds
     Column(
         Modifier.fillMaxWidth()
             .border(if (isActive) 2.dp else 1.dp, if (isActive) Accent else Line, RoundedCornerShape(8.dp))
-            .clickable(enabled = info.usable && !isActive, onClick = onShow)
+            .clickable(enabled = info.usable, onClick = onShow) // T41: tap to go there (and make it primary)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(info.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold))
-            if (isActive) BasicText("SHOWING", style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+            if (isActive) BasicText("PRIMARY", style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+            else if (onMap) BasicText("ON MAP", style = TextStyle(color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
             Spacer(Modifier.width(10.dp))
             Chip("Delete", onClick = onDelete)
         }

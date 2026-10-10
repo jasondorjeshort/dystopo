@@ -115,9 +115,9 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
                 Thread.sleep(POLL_MS)
             }
             if (job != null && job.state != "done") throw IOException("download ${job.state}: ${job.error}")
-            // The downloader activates on its own thread just after it reports done.
+            // The downloader opens the pack on its own thread just after it reports done (T41: next to the others).
             val deadline = System.currentTimeMillis() + 10_000
-            while (packs.activeName() != packName && System.currentTimeMillis() < deadline) Thread.sleep(200)
+            while (packName !in packs.inUse() && System.currentTimeMillis() < deadline) Thread.sleep(200)
             state = "done"
         } catch (e: Exception) {
             if (cancelled) return
@@ -201,6 +201,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             "elapsedMs" to if (startedAt == 0L) null else (if (finishedAt != 0L) finishedAt else now) - startedAt,
             "buildMs" to if (builtAt == 0L) null else builtAt - startedAt,
             "activePack" to runCatching { PackManager.get(app).activeName() }.getOrNull(),
+            "packsInUse" to runCatching { PackManager.get(app).inUse() }.getOrNull(), // T41
         )
     }
 

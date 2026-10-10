@@ -38,20 +38,27 @@ class DystopoApp : Application() {
     /** Pack roots: internal files dir first (adb push + run-as), then the app-specific external dir. */
     fun packRoots() = listOfNotNull(filesDir, getExternalFilesDir(null))
 
-    private fun openTiles(): TileService {
-        val packs = PackSet.open(packRoots())
+    private fun openTiles(skip: Set<String> = emptySet()): TileService {
+        val packs = PackSet.open(packRoots(), skip) // T41: every usable pack
         // T33: the first pack opened seeds the units preference (once; see AppSettings.seedUnits).
         packs.dem?.header?.let { h -> AppSettings.seedUnits((h.minLat + h.maxLat) / 2, (h.minLon + h.maxLon) / 2, "pack:${packs.name ?: "default"}") }
+        collectContourGarbage()
         return TileService(packs, cacheDir, BuildConfig.SERVER_PORT)
     }
 
-    /** Reopens the packs (after pushing new ones) and reloads the map style. */
-    fun reload() {
+    /** T41: contour caches of every DEM file on the device stay (switches, restarts); only orphans go (background). */
+    fun collectContourGarbage() {
+        val identities = PackSet.catalog(packRoots()).mapNotNull { it.dem }.map(::packIdentity).toSet()
+        ContourCache.collectGarbage(this, identities)
+    }
+
+    /** Reopens the packs (after pushing new ones) and reloads the map style. [skip]: packs to leave closed (being deleted). */
+    @Synchronized
+    fun reload(skip: Set<String> = emptySet()) {
         val old = tiles
-        tiles = openTiles()
+        tiles = openTiles(skip)
         old.close() // T35: stop the old service's contour warm-up before its packs close
-        old.packs.dem?.close()
-        old.packs.osm?.close()
+        old.packs.close()
         map.onMain { map.loadStyle(tiles.style()) }
     }
 

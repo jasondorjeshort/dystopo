@@ -154,7 +154,7 @@ class Routes(private val app: DystopoApp) {
             "app" to mapOf("version" to BuildConfig.VERSION_NAME, "debug" to BuildConfig.DEBUG, "sdk" to Build.VERSION.SDK_INT, "device" to Build.MODEL),
             "server" to mapOf("port" to BuildConfig.SERVER_PORT) + app.server.stats(),
             "uptimeMs" to SystemClock.elapsedRealtime() - app.startedAt,
-            "packs" to mapOf("dem" to packJson(t.packs.dem), "osm" to packJson(t.packs.osm), "glyphs" to t.packs.glyphDir?.path),
+            "packs" to mapOf("dem" to packJson(t.packs.dem), "osm" to packJson(t.packs.osm), "glyphs" to t.packs.glyphDir?.path, "primary" to t.packs.name, "inUse" to t.packs.json()), // T41: every pack on the map
             "map" to mapOf(
                 "attached" to (m.mapView != null), "ready" to (m.map != null), "styleLoaded" to m.styleLoaded,
                 "styleError" to m.styleError, "framesRendered" to m.framesRendered,
@@ -169,8 +169,6 @@ class Routes(private val app: DystopoApp) {
         val mi = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
         val am = app.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val sys = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
-        val cacheDir = File(app.cacheDir, "contours")
-        val cached = cacheDir.walkTopDown().filter { it.isFile }.toList()
         return mapOf(
             "tiles" to mapOf(
                 "dem" to t.dem.json() + mapOf("synthesizedFromAncestor" to t.demSynthesized.get(), "synthesis" to t.demSynthesis.json()),
@@ -180,7 +178,8 @@ class Routes(private val app: DystopoApp) {
             ),
             "contourGeneration" to t.contourJson(),
             "shadeGeneration" to t.shade.json(), // T47
-            "contourDiskCache" to mapOf("tiles" to cached.size, "bytes" to cached.sumOf { it.length() }),
+            "contourDiskCache" to ContourCache.json().let { c -> c + mapOf("tiles" to c["entries"]) }, // T41: one LRU over every pack
+            "cliffs" to t.cliffs.json(), // T41: cliff lines turned downhill-right
             "demDecodeCache" to t.pyramidJson(),
             "memory" to mapOf(
                 "javaHeapUsedBytes" to rt.totalMemory() - rt.freeMemory(),
@@ -196,7 +195,7 @@ class Routes(private val app: DystopoApp) {
             ),
             "footprint" to mapOf(
                 "apkBytes" to File(app.applicationInfo.sourceDir).length(),
-                "packBytes" to listOfNotNull(t.packs.dem, t.packs.osm).sumOf { it.file.length() },
+                "packBytes" to t.packs.archives.sumOf { it.file.length() },
             ),
             "server" to mapOf("requests" to app.server.requests.get()),
         )

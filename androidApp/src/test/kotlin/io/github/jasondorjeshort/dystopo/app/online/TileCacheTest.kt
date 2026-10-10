@@ -34,6 +34,24 @@ class TileCacheTest {
     }
 
     @Test
+    fun oneCapOverSeveralDirectoriesAndResize() {
+        // T41: the contour cache keeps one directory per pack under one LRU cap.
+        val c = cache(1000)
+        c.put("v2-ft-512-aaaa/12/1/1.pbf", ByteArray(300))
+        c.put("v2-ft-512-bbbb/12/1/1.pbf", ByteArray(300))
+        c.put("v2-m-512-aaaa/12/1/1.pbf", ByteArray(300))
+        now += 1000
+        c.get("v2-ft-512-aaaa/12/1/1.pbf") // the first pack's tile is the most recently used now
+        assertEquals(setOf("v2-ft-512-aaaa", "v2-ft-512-bbbb", "v2-m-512-aaaa"), c.byPrefix().keys)
+        c.resize(700)
+        assertEquals(700L, c.maxBytes)
+        assertTrue(c.contains("v2-ft-512-aaaa/12/1/1.pbf"), "recently used stays")
+        assertFalse(c.contains("v2-ft-512-bbbb/12/1/1.pbf"), "least recently used went")
+        assertEquals(2, c.clear("v2-"))
+        assertEquals(0L, c.bytes)
+    }
+
+    @Test
     fun evictsLeastRecentlyUsedFirst() {
         val c = cache(300)
         c.put("a", ByteArray(100))

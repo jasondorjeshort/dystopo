@@ -23,7 +23,14 @@ data class StatsOptions(
 )
 
 /** One sample of an elevation profile: [distanceM] along the track, interpolated position and elevation. */
-data class ProfileSample(val distanceM: Double, val eleM: Double?, val lat: Double, val lon: Double)
+data class ProfileSample(
+    val distanceM: Double,
+    val eleM: Double?,
+    val lat: Double,
+    val lon: Double,
+    /** Index of the track segment the sample lies on (T41: a profile draws a gap, not a step, where it changes). */
+    val segment: Int = 0,
+)
 
 /**
  * Derived numbers for a track or route. Distances in meters, times in seconds (epoch millis for
@@ -225,9 +232,11 @@ data class TrackStats(
             val pts = segments.flatten()
             if (pts.isEmpty() || n < 2) return emptyList()
             val cum = DoubleArray(pts.size)
+            val segOf = IntArray(pts.size)
             var k = 0
-            for (seg in segments) {
+            for ((si, seg) in segments.withIndex()) {
                 for ((i, p) in seg.withIndex()) {
+                    segOf[k] = si
                     cum[k] = when {
                         k == 0 -> 0.0
                         i == 0 -> cum[k - 1] // segment gap: no distance
@@ -257,7 +266,7 @@ data class TrackStats(
                     val es = cum[i1] - cum[i0]
                     if (es > 0 && d > cum[i0]) e0 + (e1 - e0) * ((d - cum[i0]) / es).coerceIn(0.0, 1.0) else e0
                 }
-                out += ProfileSample(d, ele, a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
+                out += ProfileSample(d, ele, a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t, segOf[j])
             }
             return out
         }

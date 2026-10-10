@@ -11,7 +11,17 @@ import java.util.concurrent.atomic.AtomicLong
  * and a hit touches the file's mtime (at most once a minute per entry) so the order survives a restart.
  * Writes go to a temporary file renamed into place, so a reader never sees half a tile. Thread-safe.
  */
-class TileCache(val dir: File, val maxBytes: Long, private val clock: () -> Long = System::currentTimeMillis) {
+class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = System::currentTimeMillis) {
+    /** The cap; [resize] changes it (a setting, T41). */
+    @Volatile var maxBytes: Long = maxBytes
+        private set
+
+    /** Sets the cap and evicts the least recently used entries over it at once. */
+    fun resize(bytes: Long) {
+        maxBytes = bytes
+        trim()
+    }
+
     private class Entry(val file: File, val bytes: Long, @Volatile var touchedAt: Long)
 
     // Access order: iteration starts at the least recently used entry.
@@ -70,6 +80,17 @@ class TileCache(val dir: File, val maxBytes: Long, private val clock: () -> Long
     }
 
     fun contains(key: String): Boolean = synchronized(this) { index.containsKey(key) }
+
+    /** Entries and bytes per first key segment (`<prefix>/...`), for reports. */
+    fun byPrefix(): Map<String, Pair<Int, Long>> = synchronized(this) {
+        val out = LinkedHashMap<String, Pair<Int, Long>>()
+        for ((k, e) in index) {
+            val p = k.substringBefore('/')
+            val (n, b) = out[p] ?: (0 to 0L)
+            out[p] = (n + 1) to (b + e.bytes)
+        }
+        out
+    }
 
     /** Stores [bytes] under [key] (replacing an earlier value) and evicts the oldest entries over [maxBytes]. */
     fun put(key: String, bytes: ByteArray) {

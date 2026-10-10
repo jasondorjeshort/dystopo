@@ -7,10 +7,10 @@ import io.github.jasondorjeshort.dystopo.search.PlaceKind
 
 /**
  * Debug routes for place search (T39; registered with one line in [Routes]):
- * - `GET /search?q=&lat=&lon=[&limit=][&kind=peak,hut]`: hits from the active pack's index, ranked
+ * - `GET /search?q=&lat=&lon=[&limit=][&kind=peak,hut]`: hits from every pack's index (T41; each hit names its `pack`), ranked
  *   around lat/lon (default: the camera centre). 503 while the index is still loading or building.
- * - `GET /search/status`: index state for the active pack (status, build progress, timings, entries).
- * - `POST /search/build`: rebuild the active pack's index (progress in `/search/status` and `/packs`).
+ * - `GET /search/status`: index state per pack on the map (status, build progress, timings, entries).
+ * - `POST /search/build`: rebuild every pack index (progress in `/search/status` and `/packs`).
  * - `POST /search/ui?q=`: type [q] into the search box (opens the result list), as a user would.
  * - `POST /search/select?q=[&i=0]`: choose result i for q, as a tap does: camera move and marker.
  * - `POST /search/clear`: clear the box, the results and the marker.
@@ -33,7 +33,7 @@ object SearchRoutes {
                 ))
             }
             "GET" to "/search/status" -> Response.json(status(app))
-            "POST" to "/search/build" -> Response.json(PlaceSearch.ensure(app, rebuild = true)?.json() ?: mapOf("error" to "active pack has no vector archive"))
+            "POST" to "/search/build" -> Response.json(PlaceSearch.ensure(app, rebuild = true).takeIf { it.isNotEmpty() }?.let { l -> mapOf("packs" to l.map { it.json() }) } ?: mapOf("error" to "no pack on the map has a vector archive"))
             "POST" to "/search/ui" -> {
                 val q = r.query["q"].orEmpty()
                 app.map.onMain { SearchUi.query = q; SearchUi.open = q.isNotBlank(); SearchUi.refresh() }
@@ -61,8 +61,9 @@ object SearchRoutes {
         val ui = app.map.onMain {
             linkedMapOf(
                 "query" to SearchUi.query, "open" to SearchUi.open, "status" to SearchUi.status,
-                "hits" to SearchUi.hits.map { it.entry.name }, "selected" to SearchUi.selected?.json(),
+                "hits" to SearchUi.hits.map { it.hit.entry.name }, "selected" to SearchUi.selected?.json(),
                 "markerInstalled" to SearchMarker.installed(app.map.map?.style),
+                "labelInstalled" to SearchMarker.labelInstalled(app.map.map?.style), // T41
             )
         }
         return linkedMapOf("index" to PlaceSearch.json(app), "ui" to ui)

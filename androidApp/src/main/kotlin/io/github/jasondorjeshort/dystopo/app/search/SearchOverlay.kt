@@ -38,7 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.search.SearchHit
+import io.github.jasondorjeshort.dystopo.search.PackHit
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -52,21 +52,23 @@ private val Accent = Color(0xFF7A4E2D)
 /** Search box state (main thread; the debug routes change it through `onMain`). */
 object SearchUi {
     var query by mutableStateOf("")
-    var hits by mutableStateOf<List<SearchHit>>(emptyList())
+    var hits by mutableStateOf<List<PackHit>>(emptyList())
     /** The result list is open (typing opens it, choosing a result closes it). */
     var open by mutableStateOf(false)
     var status by mutableStateOf<String?>(null)
-    var selected by mutableStateOf<SearchHit?>(null)
+    var selected by mutableStateOf<PackHit?>(null)
 
-    /** Runs the query against the active pack's index, centred on the camera. Main thread. */
+    /** Runs the query against every pack's index (T41), centred on the camera. Main thread. */
     fun refresh() {
         val q = query.trim()
-        val state = PlaceSearch.ensure()
+        val states = PlaceSearch.ensure()
+        val building = states.filter { it.status == "building" }
         status = when {
-            state == null -> "No map data in this pack to search"
-            state.status == "building" -> "Indexing places" + if (state.total > 0) " ${state.done * 100 / state.total}%" else "..."
-            state.status == "error" -> "Search index failed: ${state.error}"
-            state.index == null -> "Loading search index..."
+            states.isEmpty() -> "No map data in these packs to search"
+            building.isNotEmpty() -> "Indexing places" + building.sumOf { it.total }.let { t -> if (t > 0) " ${building.sumOf { it.done } * 100 / t}%" else "..." } +
+                if (building.size > 1) " (${building.size} packs)" else ""
+            states.all { it.status == "error" } -> "Search index failed: ${states.first().error}"
+            states.none { it.index != null } -> "Loading search index..."
             else -> null
         }
         if (q.isEmpty()) { hits = emptyList(); return }
@@ -78,13 +80,13 @@ object SearchUi {
      * Shows [hit]: moves the camera there at the zoom its kind calls for (never zooming out of a closer
      * view), drops the marker and closes the list. Any thread.
      */
-    fun select(hit: SearchHit): Map<String, Any?> {
+    fun select(hit: PackHit): Map<String, Any?> {
         val app = DystopoApp.instance
-        val e = hit.entry
+        val e = hit.hit.entry
         val zoom = maxOf(e.kind.zoom, app.map.map?.let { m -> app.map.onMain { m.cameraPosition.zoom } } ?: 0.0).coerceAtMost(16.0)
         val camera = app.map.setCamera(e.lat, e.lon, zoom, null, null)
         app.map.onMain {
-            app.map.map?.style?.let { SearchMarker.show(it, e.lat, e.lon) }
+            app.map.map?.style?.let { SearchMarker.show(it, e.lat, e.lon, e.name) } // T41: with its name
             selected = hit
             open = false
         }
@@ -111,11 +113,10 @@ fun SearchOverlay() {
     val ui = SearchUi
     val focus = LocalFocusManager.current
     LaunchedEffect(Unit) {
-        // Starts the index for the active pack (and follows pack switches); cheap once it is ready.
+        // Starts the indexes of the packs on the map (and follows pack changes); cheap once they are ready.
         while (true) {
-            val before = PlaceSearch.current?.index
             ui.refresh()
-            delay(if (PlaceSearch.current?.index == null || before == null) 500 else 2000)
+            delay(if (PlaceSearch.status() == "ready") 2000 else 500)
         }
     }
     LaunchedEffect(ui.query) { ui.refresh() }
@@ -174,7 +175,8 @@ fun SearchOverlay() {
 }
 
 @Composable
-private fun ResultRow(h: SearchHit, first: Boolean, onClick: () -> Unit) {
+private fun ResultRow(p: PackHit, first: Boolean, onClick: () -> Unit) {
+    val h = p.hit
     val e = h.entry
     Column(
         Modifier.fillMaxWidth().clickable(onClick = onClick).let { if (first) it else it.border(0.5.dp, Line) }.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -185,6 +187,7 @@ private fun ResultRow(h: SearchHit, first: Boolean, onClick: () -> Unit) {
             e.alt,
             e.ele?.let { UnitFormat.elevation(it.toDouble(), AppSettings.units) },
             h.distanceKm?.let { UnitFormat.distance(it * 1000, AppSettings.units) },
+            p.pack.takeIf { PlaceSearch.states.size > 1 }, // T41: which pack, when there are several
         )
         BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

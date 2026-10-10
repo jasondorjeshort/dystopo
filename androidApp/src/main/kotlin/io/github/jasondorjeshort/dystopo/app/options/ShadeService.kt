@@ -29,7 +29,8 @@ import java.util.concurrent.atomic.AtomicLong
 class ShadeService(
     cacheDir: File,
     private val demIdentity: String,
-    private val pyramid: DemPyramid?,
+    /** T41: the DEM pyramid of the pack under DEM tile z/x/y (several packs at once), or null. */
+    private val pyramidFor: (Int, Int, Int) -> DemPyramid?,
     private val online: OnlineTiles?,
     val permits: Int,
 ) {
@@ -67,7 +68,7 @@ class ShadeService(
         val o = options ?: return notFound()
         try {
             val bytes = if (packCovers || online == null) {
-                val p = pyramid ?: return notFound()
+                val p = pyramidFor(z, x, y) ?: return notFound()
                 cachedOrGenerate(p, o, z, x, y)
             } else {
                 generate(online.pyramid(), o, z, x, y, null)

@@ -82,10 +82,11 @@ class MainActivity : ComponentActivity() {
 
     private fun attribution(tiles: TileService): String {
         val packs = tiles.packs
-        // Pack metadata holds HTML (`&copy; OpenStreetMap`); the overlay shows plain text.
-        return listOfNotNull(packs.osm?.attribution, packs.dem?.attribution)
+        // Pack metadata holds HTML (`&copy; OpenStreetMap`); the overlay shows plain text. T41: every pack on the map.
+        return (packs.osmPacks + packs.demPacks).map { it.attribution }
             .map(RequestChecks::htmlToText)
             .filter { it.isNotEmpty() }
+            .distinct()
             .joinToString(" | ")
             .ifEmpty { "Dystopo" }
     }

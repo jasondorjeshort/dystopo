@@ -69,6 +69,40 @@ object AppSettings {
         warmup = p.getBoolean(KEY_WARMUP, true)
         mapOptions = loadMapOptions(p)
         server = p.getString(KEY_SERVER, null) ?: defaultServer()
+        loadCaches(p) // T41
+    }
+
+    // ---- T41: cache caps ----
+
+    private const val KEY_ONLINE_CACHE_MB = "onlineCacheMb"
+    private const val KEY_CONTOUR_CACHE_MB = "contourCacheMb"
+    const val DEFAULT_ONLINE_CACHE_MB = 256L
+    const val DEFAULT_CONTOUR_CACHE_MB = 256L
+    /** Allowed range of either cap, in MB. */
+    val CACHE_MB_RANGE = 16L..8192L
+
+    /** Cap of the online tile cache (fetched DEM, OSM, glyphs and online contours), MB. */
+    @Volatile var onlineCacheMb: Long = DEFAULT_ONLINE_CACHE_MB
+        private set
+
+    /** Cap of the contour tile cache over every pack's directory, MB. */
+    @Volatile var contourCacheMb: Long = DEFAULT_CONTOUR_CACHE_MB
+        private set
+
+    private fun loadCaches(p: SharedPreferences) {
+        onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+        contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+    }
+
+    /** Sets and persists a cap (the caller checked the range and resizes the cache). */
+    fun setOnlineCacheMb(mb: Long) {
+        onlineCacheMb = mb
+        prefs?.edit()?.putLong(KEY_ONLINE_CACHE_MB, mb)?.apply()
+    }
+
+    fun setContourCacheMb(mb: Long) {
+        contourCacheMb = mb
+        prefs?.edit()?.putLong(KEY_CONTOUR_CACHE_MB, mb)?.apply()
     }
 
     /**
@@ -166,5 +200,7 @@ object AppSettings {
         "unitsSet" to (unitPreference.units != null),
         "unitsSource" to (unitPreference.source ?: "locale default (not set yet)"),
         "warmup" to warmup,
+        "onlineCacheMb" to onlineCacheMb, // T41
+        "contourCacheMb" to contourCacheMb,
     ) + mapOptions.json(units) // T47
 }
