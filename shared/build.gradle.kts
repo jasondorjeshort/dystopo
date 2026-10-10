@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.sqldelight)
 }
 
 // Android target (T10): only when an SDK is installed (see settings.gradle.kts), so SDK-less machines still build.
@@ -49,12 +50,30 @@ kotlin {
     sourceSets {
         commonMain {
             kotlin.srcDir(generateSourcesJson)
+            dependencies { api(libs.sqldelight.runtime) }
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+        jvmTest.dependencies {
+            implementation(libs.sqldelight.sqlite.driver)
+        }
     }
 }
+
+// The durable TrackStore (T31): schema in src/commonMain/sqldelight, generated code in commonMain.
+sqldelight {
+    databases {
+        create("TrackDb") {
+            packageName.set("io.github.jasondorjeshort.dystopo.store.db")
+        }
+    }
+}
+
+// No migrations yet (schema version 1). SQLDelight's verify-migration task loads sqlite-jdbc's native
+// library inside the Gradle daemon, whose temp dir resolved to C:\Windows here (AccessDeniedException
+// unpacking the DLL). Re-enable it with the first .sqm migration (and point org.sqlite.tmpdir at build/).
+tasks.matching { it.name.startsWith("verify") && it.name.endsWith("Migration") }.configureEach { enabled = false }
 
 if (androidSdk) {
     extensions.configure<com.android.build.api.dsl.LibraryExtension>("android") {

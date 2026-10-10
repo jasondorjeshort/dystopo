@@ -1,0 +1,99 @@
+-- Durable TrackStore schema (T31). One row per track, per recorded point, per waypoint.
+-- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
+-- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
+
+CREATE TABLE track (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    -- 1 while a recorder is appending to it.
+    recording INTEGER NOT NULL DEFAULT 0,
+    description TEXT,
+    comment TEXT,
+    source TEXT,
+    type TEXT,
+    extensions TEXT
+);
+
+CREATE TABLE track_point (
+    track_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    segment INTEGER NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    ele REAL,
+    time INTEGER,
+    extensions TEXT,
+    PRIMARY KEY (track_id, seq)
+);
+
+CREATE TABLE waypoint (
+    id TEXT NOT NULL PRIMARY KEY,
+    -- The track the waypoint was marked on, or NULL for a free-standing waypoint.
+    track_id TEXT,
+    seq INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    ele REAL,
+    time INTEGER,
+    description TEXT,
+    comment TEXT,
+    symbol TEXT,
+    type TEXT,
+    extensions TEXT
+);
+
+CREATE INDEX waypoint_track ON waypoint(track_id, seq);
+
+insertTrack:
+INSERT INTO track(id, name, created_at, updated_at, recording, description, comment, source, type, extensions)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectTracks:
+SELECT t.*,
+    (SELECT count(*) FROM track_point p WHERE p.track_id = t.id) AS point_count,
+    (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count
+FROM track t ORDER BY t.created_at, t.id;
+
+selectTrack:
+SELECT t.*,
+    (SELECT count(*) FROM track_point p WHERE p.track_id = t.id) AS point_count,
+    (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count
+FROM track t WHERE t.id = ?;
+
+setRecording:
+UPDATE track SET recording = ?, updated_at = ? WHERE id = ?;
+
+touchTrack:
+UPDATE track SET updated_at = ? WHERE id = ?;
+
+renameTrack:
+UPDATE track SET name = ?, updated_at = ? WHERE id = ?;
+
+deleteTrack:
+DELETE FROM track WHERE id = ?;
+
+deleteTrackPoints:
+DELETE FROM track_point WHERE track_id = ?;
+
+deleteTrackWaypoints:
+DELETE FROM waypoint WHERE track_id = ?;
+
+insertPoint:
+INSERT INTO track_point(track_id, seq, segment, lat, lon, ele, time, extensions)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+lastPoint:
+SELECT seq, segment FROM track_point WHERE track_id = ? ORDER BY seq DESC LIMIT 1;
+
+selectPoints:
+SELECT segment, lat, lon, ele, time, extensions FROM track_point WHERE track_id = ? ORDER BY seq;
+
+insertWaypoint:
+INSERT INTO waypoint(id, track_id, seq, name, lat, lon, ele, time, description, comment, symbol, type, extensions)
+VALUES (?, ?, (SELECT coalesce(max(seq), -1) + 1 FROM waypoint), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectWaypoints:
+SELECT * FROM waypoint WHERE track_id = ? ORDER BY seq;

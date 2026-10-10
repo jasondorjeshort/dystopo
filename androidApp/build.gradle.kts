@@ -70,4 +70,5 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.activity.compose)
     implementation(libs.maplibre.android)
+    implementation(libs.sqldelight.android.driver)
 }

@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
 private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+        io.github.jasondorjeshort.dystopo.app.tracking.TrackControls() // T31: record/stop, tracks list, track overlay
         if (message != null) {
             BasicText(
                 message,

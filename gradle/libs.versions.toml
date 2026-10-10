@@ -16,6 +16,9 @@ compose-bom = "2025.05.01"
 activity-compose = "1.10.1"
 # MapLibre Native for Android (BSD-2-Clause), OpenGL ES backend.
 maplibre-android = "11.13.5"
+# SQLDelight (Apache-2.0): the durable TrackStore (T31). Runtime in shared commonMain; the SQLite JDBC driver
+# (sqlite-jdbc, Apache-2.0) only for JVM tests; the Android driver (AndroidX SQLite, Apache-2.0) in the app.
+sqldelight = "2.1.0"
 
 [libraries]
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
@@ -28,6 +31,9 @@ compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 maplibre-android = { module = "org.maplibre.gl:android-sdk", version.ref = "maplibre-android" }
+sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
@@ -37,3 +43,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "android-gradle-plugin" }
 android-library = { id = "com.android.library", version.ref = "android-gradle-plugin" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
