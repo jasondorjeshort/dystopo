@@ -164,7 +164,7 @@
     },
     "mount-robson": {
       "bbox": [-119.24, 53.07, -119.09, 53.14],
-      "description": "Mount Robson (3954 m, summit 53.1105N 119.1566W), Canadian Rockies, British Columbia: the Emperor Face, Robson and Mist glaciers, Kinney Lake. NRCan HRDEM where lidar was flown, Copernicus elsewhere.",
+      "description": "Mount Robson (3954 m, summit 53.1105N 119.1566W), Canadian Rockies, British Columbia: the Emperor Face, Robson and Mist glaciers, Kinney Lake. Copernicus only: NRCan HRDEM has no lidar here (the nearest is about 25 km west); HRDEM is exercised at garibaldi.",
       "expectedElevation": [980, 3954],
       "tags": ["world"]
     },
