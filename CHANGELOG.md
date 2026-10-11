@@ -7,6 +7,10 @@ each release gets a section here.
 
 ## Unreleased
 
+### 2026-10-11
+
+- T81: Release realism sweep (#77)
+
 (nothing yet)
 
 ## v0.1.2-alpha (2026-10-10), the first published alpha
