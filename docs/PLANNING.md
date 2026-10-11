@@ -433,6 +433,8 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-10-11: sweeps on main after T83 (1f62b55, then 9e2cc5b).** Full sweep with `-Matrix`, 2558 s: 21 of 22 parts green including the new `update` part (lower version quiet, wrong checksum and wrong certificate refused, good update installed by taps with data intact) and the matrix (API 26 phone, font scale 2.0, dark mode, German tablet); the one failure was the feature pass's settings step expecting "Hillshade" on screen after T83's Updates section pushed the map options below the fold (the screenshot showed a healthy sheet); the step now checks the sheet's first screen (Sources, Updates, Units, Text size) and the feature pass re-ran 11/11 on a fresh emulator. Tagged `v0.1.4-alpha` on 9e2cc5b.
 
+**2026-10-11: v0.1.4-alpha published.** Third public build and the first that can offer the next one: the in-app updater (T83), mobile data allowed by default (owner's no-Wi-Fi-gates rule), one universal APK (owner's alpha policy), `version.json` beside the APK for the updater. Built by the release workflow (Actions runs again since the repo went public), verified from the draft: certificate 47:31:38:10..., version 0.1.4-alpha with code 233, SHA-256 matching both `SHA256SUMS.txt` and `version.json`. Phones on 0.1.3 will not be prompted (that build has no updater); from 0.1.4 on, each alpha prompts for the next.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 
 ## Agent-driven development

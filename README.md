@@ -21,7 +21,7 @@ a server and a desktop tool come with it, iOS later.
 <img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
 </p>
 
-**Status (October 2026): alpha, [v0.1.3-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.3-alpha) (Android APKs, server and devtool zips). No server needed: the phone reads public elevation sources itself on Wi-Fi. Tested on emulators (Android 8 and 15) and one real phone.** No version has been published; the APKs that
+**Status (October 2026): alpha, [v0.1.4-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.4-alpha) (one universal APK, server and devtool zips). No server needed, and the app offers each new alpha itself. Tested on emulators (Android 8 and 15) and one real phone.** No version has been published; the APKs that
 a release will carry can be built from source today (below). Expect rough edges.
 
 ## Features
