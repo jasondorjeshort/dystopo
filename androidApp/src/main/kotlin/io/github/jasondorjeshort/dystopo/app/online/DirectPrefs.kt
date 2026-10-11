@@ -16,8 +16,12 @@ object DirectPrefs {
 
     fun sessionMb(c: Context): Long = prefs(c).getLong("sessionMb", DirectSources.DEFAULT_SESSION_MB)
 
-    /** Whether the phone may read the sources over mobile data (default off: a fresh view is 75 to 100 MB). */
-    fun onMobileData(c: Context): Boolean = prefs(c).getBoolean("onMobileData", false)
+    /**
+     * Whether the phone may read the sources over mobile data. On by default since T83 (owner's rule, 2026-10-11: nothing
+     * in the app is gated on Wi-Fi; the per-session limit [sessionMb] is the visible brake on a 75 to 100 MB fresh view).
+     * The setting stays for a user who wants it off.
+     */
+    fun onMobileData(c: Context): Boolean = prefs(c).getBoolean("onMobileData", true)
 
     fun setOnMobileData(c: Context, on: Boolean) {
         prefs(c).edit().putBoolean("onMobileData", on).apply()

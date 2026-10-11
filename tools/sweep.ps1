@@ -28,6 +28,10 @@
 #   background   recording through forced doze with the app in the background
 #   network      the emulator throttled, the server killed mid-download and (through a stall proxy) mid-sync,
 #                then retries once it is back
+#   update       T83, the in-app update: the previous published release with data, then this build over it pointed at
+#                a mock releases API (127.0.0.1:-BasePort+7): a lower release quiet, a wrong SHA256SUMS.txt and a
+#                debug-signed APK refused, a second build of this commit (versionCode +1, built here) offered on the
+#                map and installed through the system installer by taps, data intact; the real GitHub API read only
 #   matrix       (-Matrix only) font scale 2.0 and dark mode on the sweep's emulator, then fresh emulators per
 #                -MatrixDevices entry (default: the minimum API 26 phone, an API 35 tablet in German), each
 #                checked with android-ui.py matrix and deleted afterwards
@@ -95,9 +99,9 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
 $allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour',
-    'routes', 'search', 'probe', 'release', 'apk-strings', 'first-run', 'features', 'upgrade', 'permissions', 'background', 'network', 'matrix')
+    'routes', 'search', 'probe', 'release', 'apk-strings', 'first-run', 'features', 'upgrade', 'permissions', 'background', 'network', 'update', 'matrix')
 $deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'release', 'first-run', 'features', 'upgrade', 'permissions',
-    'background', 'network', 'matrix')
+    'background', 'network', 'update', 'matrix')
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $LiveViews = @($LiveViews | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -126,7 +130,7 @@ $serial = "emulator-$EmuPort"
 # --- ports: never the coordinator's, never one already in use ----------------------------------------------
 $reserved = @(8765, 8686, 8687)
 $ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2; 'firstrun-server' = $BasePort + 3
-    'ui-server' = $BasePort + 4; 'network-server' = $BasePort + 5; 'network-proxy' = $BasePort + 6 }
+    'ui-server' = $BasePort + 4; 'network-server' = $BasePort + 5; 'network-proxy' = $BasePort + 6; 'update-mock' = $BasePort + 7 }
 if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1 }
 $listening = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | ForEach-Object { $_.Port })
 foreach ($k in $ports.Keys) {
@@ -444,9 +448,10 @@ try {
             if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
             if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
             $abi = "$(& (Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }) 'platform-tools\adb.exe') -s $serial shell getprop ro.product.cpu.abi)".Trim()
-            $c = Run 'gh' @('release', 'download', $tag, '-p', "*-$abi.apk", '-D', $prevDir, '--clobber') (Join-Path $ui 'previous.log') (Join-Path $ui 'previous.err.log')
-            $prev = Get-ChildItem $prevDir -Filter "*-$abi.apk" | Select-Object -First 1
-            if ($c -ne 0 -or -not $prev) { throw "could not download the $abi APK of $tag" }
+            # Alpha releases since v0.1.4 ship only the universal APK (owner's policy 2026-10-11); older ones have per-ABI files too.
+            $c = Run 'gh' @('release', 'download', $tag, '-p', "*-$abi.apk", '-p', '*-universal.apk', '-D', $prevDir, '--clobber') (Join-Path $ui 'previous.log') (Join-Path $ui 'previous.err.log')
+            $prev = @(Get-ChildItem $prevDir -Filter "*-$abi.apk") + @(Get-ChildItem $prevDir -Filter '*-universal.apk') | Select-Object -First 1
+            if ($c -ne 0 -or -not $prev) { throw "could not download the $abi or universal APK of $tag" }
             Run $py (@('-I', 'tools/android-ui.py', 'upgrade', '--serial', $serial, '--prev-apk', $prev.FullName, '--dem', $dem, '--osm', $osm,
                     '--label', $tag, '--out', (Join-Path $ui 'upgrade')) + $knownArgs) (Join-Path $Out 'upgrade.json') (Join-Path $Out 'upgrade.err.log')
         }
@@ -461,6 +466,31 @@ try {
             $cfg = Server-Config (Join-Path $ui 'network-server') ($BasePort + 5) @($dem, $osm)
             Run $py (@('-I', 'tools/android-ui.py', 'network', '--serial', $serial, '--server', "http://$(Lan-Address):$($BasePort + 6)",
                     '--proxy-port', "$($BasePort + 6)", '--server-config', $cfg, '--out', (Join-Path $ui 'network')) + $knownArgs) (Join-Path $Out 'network.json') (Join-Path $Out 'network.err.log')
+        }
+        $null = Part 'update' {
+            # T83: this build (A) and a second build of the same commit with versionCode +1 (B), both with this machine's
+            # release key, and the previous published release's universal APK (the start of the user's path).
+            Build-Release
+            $udir = Join-Path $ui 'update'
+            New-Item -ItemType Directory -Force $udir | Out-Null
+            $apkDir = Join-Path $repo 'androidApp\build\outputs\apk\release'
+            Copy-Item (Join-Path $apkDir 'androidApp-universal-release.apk') (Join-Path $udir 'current.apk') -Force
+            $count = [int]"$(& git rev-list --count HEAD 2>$null)".Trim()
+            $desc = "$(& git describe --tags --always 2>$null)".Trim() -replace '^v', ''
+            $c = Run $gradle @(':androidApp:assembleRelease', "-PdystopoVersion=$desc-sweep-next", "-PdystopoVersionCode=$($count + 1)") (Join-Path $udir 'assemble-next.log') (Join-Path $udir 'assemble-next.err.log')
+            if ($c -ne 0) { throw 'assembleRelease of the next build failed (see update\assemble-next.err.log)' }
+            Copy-Item (Join-Path $apkDir 'androidApp-universal-release.apk') (Join-Path $udir 'next.apk') -Force
+            $tag = $PrevRelease
+            if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
+            if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
+            $prevDir = Join-Path $udir 'previous'
+            New-Item -ItemType Directory -Force $prevDir | Out-Null
+            $c = Run 'gh' @('release', 'download', $tag, '-p', '*-universal.apk', '-D', $prevDir, '--clobber') (Join-Path $udir 'previous.log') (Join-Path $udir 'previous.err.log')
+            $prev = Get-ChildItem $prevDir -Filter '*-universal.apk' | Select-Object -First 1
+            if ($c -ne 0 -or -not $prev) { throw "could not download the universal APK of $tag" }
+            Run $py (@('-I', 'tools/android-ui.py', 'update', '--serial', $serial, '--prev-apk', $prev.FullName, '--apk', (Join-Path $udir 'current.apk'),
+                    '--new-apk', (Join-Path $udir 'next.apk'), '--mock-port', "$($BasePort + 7)", '--dem', $dem, '--osm', $osm,
+                    '--label', $tag, '--out', $udir) + $knownArgs) (Join-Path $Out 'update.json') (Join-Path $Out 'update.err.log')
         }
         $null = Part 'matrix' {
             Build-Release

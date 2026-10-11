@@ -14,6 +14,9 @@
     <!-- T57: the Share screen's QR scanner (asked for when the scanner opens; the app works without it). -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- T83: in-app updates hand a verified APK from GitHub Releases to the system installer (update/UpdateInstaller.kt);
+         the user confirms every install and allows installs from Dystopo once. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".DystopoApp"
@@ -49,5 +52,7 @@
             android:name=".tracking.TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- T83: the system installer's answers for an update session (only its PendingIntent reaches it). -->
+        <receiver android:name=".update.UpdateResultReceiver" android:exported="false" />
     </application>
 </manifest>

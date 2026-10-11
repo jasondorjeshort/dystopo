@@ -95,6 +95,7 @@ fun SettingsSheet() {
                 Option("Close", false) { SettingsUi.visible = false }
             }
             SourcesSection() // T79: first, so a fresh install finds the server field at once
+            io.github.jasondorjeshort.dystopo.app.update.UpdateRow() // T83: version, Check for updates, Install
             Setting("Units", if (AppSettings.unitPreference.units == null) "from your region until you choose" else null) {
                 Option("Feet", units == ContourUnits.FEET) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.FEET, null)) }
                 Option("Metres", units == ContourUnits.METERS) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.METERS, null)) }

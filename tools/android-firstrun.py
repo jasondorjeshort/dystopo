@@ -30,6 +30,8 @@ T80, --direct (no --server): the release install with no server and no pack read
   show-rainier     geo fix at Rainier, launch, the card, "Show the map around me": seconds to the first contours and
                    to a settled screen (`firstContoursS`, `settledS`); over --direct-budget (90 s) fails the step
   show-mont-blanc  the same at Mont Blanc (Copernicus and swissALTI3D) after a restart (the card is back)
+  mobile-data      T83 (no Wi-Fi gates): wifi off, mobile data on, "Show the map around me" at Paradise renders from
+                   the sources, and no screen text asks for Wi-Fi or mentions mobile data; wifi back on
   download         "Download the map around me" at --download-at: the phone builds the pack itself
   offline          wifi and mobile data off, restart: the downloaded place renders with contours; network back on
 """
@@ -391,7 +393,7 @@ def timed_map(dev, name, contour_min, timeout, t0):
 
 
 # T80: the places the direct-sources flow shows (public areas from areas.json).
-DIRECT_PLACES = {"rainier": (46.853, -121.76), "mont-blanc": (45.8326, 6.8652)}
+DIRECT_PLACES = {"rainier": (46.853, -121.76), "mont-blanc": (45.8326, 6.8652), "paradise": (46.7864, -121.7366)}
 
 
 def run_direct(args):
@@ -458,6 +460,39 @@ def run_direct(args):
             return r
         return fn
 
+    def mobile_data():
+        # T83 (owner's rule: no Wi-Fi gates): Wi-Fi off, mobile data on, a third place shown straight from the sources.
+        # Before T83 the map said "Online map needs Wi-Fi" here and fetched nothing.
+        dev.shell("svc", "wifi", "disable", check_ok=False)
+        dev.shell("svc", "data", "enable", check_ok=False)
+        time.sleep(6)
+        try:
+            # API 35 x86_64 emulators have only wlan0: with Wi-Fi off there is no network at all, and the map would
+            # pass from its cache without proving anything. Then the step says so instead of passing.
+            conn = dev.shell("dumpsys", "connectivity", check_ok=False)
+            m = re.search(r"Active default network: (\S+)", conn)
+            if not m or m.group(1) == "none":
+                return {"ok": True, "skipped": "no cellular network on this device with Wi-Fi off (emulator images since API 30 have only wlan0); run on a phone with a SIM"}
+            lat, lon = DIRECT_PLACES["paradise"]
+            dev.adb("emu", "geo", "fix", str(lon), str(lat))
+            dev.shell("am", "force-stop", PACKAGE)
+            time.sleep(1)
+            dev.shell("am", "start", "-n", ACTIVITY)
+            n, nodes = dev.wait_for("No map on this phone yet", 25)
+            if not n:
+                return {"ok": False, "error": "no first-run card", "texts": dev.texts(nodes)[:30]}
+            time.sleep(2)
+            dev.tap_text("^Show the map around me$")
+            t0 = time.time()
+            r = timed_map(dev, "mobile-data", args.contour_min, args.direct_timeout, t0)
+            gated = [t for t in dev.texts() if "Wi-Fi" in t or "mobile data" in t.lower()]
+            r.update(place="paradise", network="mobile data only (wifi disabled)", gateMessages=gated)
+            if gated:
+                r.update(ok=False, error=f"a network-type message on mobile data: {gated[0]}")
+            return r
+        finally:
+            network(True)
+
     def download():
         lat, lon = DIRECT_PLACES[args.download_at]
         dev.adb("emu", "geo", "fix", str(lon), str(lat))
@@ -499,7 +534,7 @@ def run_direct(args):
             network(True)
 
     flow = [("install", install), ("show-rainier", show("rainier", True)), ("show-mont-blanc", show("mont-blanc", False)),
-            ("download", download), ("offline", offline)]
+            ("mobile-data", mobile_data), ("download", download), ("offline", offline)]
     ok = all(step(n, fn) for n, fn in flow)
     report["ok"] = ok and all(s["ok"] for s in steps)
     report["screenshots"] = [s.get("png") for s in steps if s.get("png")]

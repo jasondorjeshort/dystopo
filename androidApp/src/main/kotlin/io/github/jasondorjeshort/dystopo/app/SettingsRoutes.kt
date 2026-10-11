@@ -20,7 +20,7 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   reopens the tile service (contour tiles are cached per interval); every other option rebuilds the style
  *   (hillshade and slope switch to generated `/shade` tiles, cached per option set).
  *   T80 `directSessionMb` (1..100000, default 300: what the phone may download from the public sources per session
- *   when no server is set) and `directOnMobileData` (1/0, default 0: Wi-Fi only); also in Settings › Sources.
+ *   when no server is set) and `directOnMobileData` (1/0, default 1 since T83: no Wi-Fi gates); also in Settings › Sources.
  *   `onlineCacheMb` and `contourCacheMb` (T41) cap the online tile cache and the contour cache (all packs),
  *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]).

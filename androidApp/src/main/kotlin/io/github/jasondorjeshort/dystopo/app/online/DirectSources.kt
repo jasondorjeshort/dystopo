@@ -53,10 +53,10 @@ class SourceCapReached(message: String) : RuntimeException(message)
 class DirectSources(private val context: android.content.Context, private val cacheRoot: File, private val cache: TileCache) : HttpGet {
     val http = PhoneSourceHttp(this)
 
-    /** Mobile data allowed (setting `directOnMobileData`, default off). */
-    @Volatile var onMobileData: Boolean = false
+    /** Mobile data allowed (setting `directOnMobileData`; on by default since T83: nothing in the app is gated on Wi-Fi, the session limit is the brake). */
+    @Volatile var onMobileData: Boolean = true
 
-    /** When the session cap ([sessionCapBytes]) or the Wi-Fi-only rule last stopped a request (0: never); the map shows a message. */
+    /** When the session cap ([sessionCapBytes]) or the user's "mobile data off" choice last stopped a request (0: never); the map shows a message. */
     @Volatile var capReachedAt = 0L
     @Volatile var blockedOnMobileAt = 0L
 
@@ -68,12 +68,12 @@ class DirectSources(private val context: android.content.Context, private val ca
             !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) && !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
     }.getOrDefault(false)
 
-    /** Reading is held back now: on mobile data without permission. */
+    /** Reading is held back now: on mobile data with mobile data turned off by the user (Settings › Sources). */
     fun blockedOnMobile(): Boolean = !onMobileData && onCellular()
 
     /** The message the map and the card show, or null. */
     fun notice(): String? = when {
-        blockedOnMobile() -> NEEDS_WIFI
+        blockedOnMobile() -> MOBILE_DATA_OFF
         http.bytes.get() >= sessionCapBytes -> capMessage()
         else -> null
     }
@@ -455,7 +455,8 @@ class DirectSources(private val context: android.content.Context, private val ca
         /** How long a map request waits for a tile being rendered before it is told to come back (OnlineTiles.answerWithinMs). */
         const val ANSWER_WITHIN_MS = 8_000L
 
-        val NEEDS_WIFI = "Online map needs Wi-Fi, or allow mobile data in ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SOURCES}."
+        /** T83: shown only when the user turned mobile data off for the online map (the default is on). */
+        val MOBILE_DATA_OFF = "Online map paused: mobile data is turned off for it in ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SOURCES}."
 
         const val DEFAULT_SESSION_MB = 300L
         const val DEFAULT_SOURCE_CACHE_MB = 512L
@@ -498,7 +499,7 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
         }
         if (owner.blockedOnMobile()) {
             owner.blockedOnMobileAt = System.currentTimeMillis()
-            throw SourceOffline(DirectSources.NEEDS_WIFI, null)
+            throw SourceOffline(DirectSources.MOBILE_DATA_OFF, null)
         }
         val queued = System.nanoTime()
         permits.acquire()

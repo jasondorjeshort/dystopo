@@ -93,6 +93,12 @@ jobs:
           if [ -f docs/images/android-tour-sheet.png ]; then
             cp docs/images/android-tour-sheet.png "out/release/dystopo-$TAG-device-tour.png"
           fi
+          # T83: what the app's update check reads without unpacking the APK: the tag, the versionCode the build
+          # got (the commit count, as above) and the universal APK's SHA-256 (also in SHA256SUMS.txt; they must agree).
+          universal="out/release/dystopo-$TAG-universal$suffix.apk"
+          printf '{"tag": "%s", "versionCode": %s, "versionName": "%s", "apk": "%s", "sha256": "%s"}\n' \
+            "$TAG" "$(git rev-list --count HEAD)" "${TAG#v}" "$(basename "$universal")" "$(sha256sum "$universal" | cut -d' ' -f1)" > out/release/version.json
+          cat out/release/version.json
           (cd out/release && sha256sum * > SHA256SUMS.txt)
           ls -l out/release
 
@@ -130,7 +136,7 @@ jobs:
             esac
             echo "- \`dystopo-server-$TAG.zip\`: the standalone server (\`bin/server\`; Java 21). Configuration: docs/SERVER.md."
             echo "- \`dystopo-devtool-$TAG.zip\`: the command-line tool (\`bin/devtool\`; Java 21), run from a checkout of the repo."
-            echo "- \`NOTICES.md\`: third-party licences; \`SHA256SUMS.txt\`: checksums."
+            echo "- \`NOTICES.md\`: third-party licences; \`SHA256SUMS.txt\`: checksums; \`version.json\`: tag, versionCode and the universal APK's checksum (the app's update check reads it)."
             echo "- \`dystopo-$TAG-world-tour.png\`: world tour contact sheet rendered by this workflow (z9; exit status ${TOUR_STATUS:-not run})."
             if [ -f "out/release/dystopo-$TAG-device-tour.png" ]; then
               echo "- \`dystopo-$TAG-device-tour.png\`: device tour contact sheet from an emulator (committed in docs/images)."

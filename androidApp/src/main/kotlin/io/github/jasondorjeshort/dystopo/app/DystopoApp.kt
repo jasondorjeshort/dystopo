@@ -45,6 +45,7 @@ class DystopoApp : Application() {
             Log.e(LocalServer.TAG, "server failed to start on port ${BuildConfig.SERVER_PORT}", e)
         }
         if (BuildConfig.DEBUG_ENDPOINTS) startDebugServer(routes)
+        io.github.jasondorjeshort.dystopo.app.update.Updater.start(this) // T83: daily update check (release builds), a verified download kept across restarts
     }
 
     /** T57: the debug server (null with [fixedDebugPort] or in release builds). */

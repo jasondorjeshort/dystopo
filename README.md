@@ -107,8 +107,9 @@ first start has no map yet and says so, with ways to get one, all in the app:
   (Copernicus worldwide, USGS 3DEP in the US, the Swiss, Austrian, Norwegian, Canadian and New Zealand national
   models) and the map from OpenFreeMap, and draws hillshade and contours on the phone. "Show the map around me" goes
   to your location; "Download the map around me" saves a 16 km box as a pack on the phone, which then works with no
-  network. A first view of a new place downloads tens of megabytes and takes about a minute, so this works on Wi-Fi only unless you allow mobile data in Settings › Sources, where
-  the per-session limit (300 MB by default) is set too. Glyphs and map icons come with the app.
+  network. It works on any network, mobile data included: a first view of a new place downloads tens of megabytes
+  and takes about a minute, and the per-session limit in Settings › Sources (300 MB by default) is the brake; mobile
+  data can be turned off for it there. Glyphs and map icons come with the app.
 - **Set your server, then download.** Run the server on a computer at home (above), open Settings › Sources on the
   phone, type its address, for example `http://192.168.1.20:8080` (the computer's address on your Wi-Fi), tap Save
   and Test: Test shows how many packs the server has. Then "Download the map around me" (your location; the server
@@ -129,8 +130,19 @@ Rainier pack in one step.
 
 - **Get the APK** from the [releases page](https://github.com/jasondorjeshort/dystopo/releases): during alpha there is one file, `dystopo-<version>-universal.apk`. Open it on the phone and allow installs from your browser when asked. New alphas install over old ones and keep your tracks, trips and settings; every build is signed with the same key.
 - **"Google doesn't know this publisher" / blocked by Play Protect:** tap *More details*, then *Install anyway*. That is a one-time choice for this app. The durable fix, registering the publisher and signing key with Google's developer verification, is on the owner's list; until then expect the dialog on first install.
-- **Updates:** nothing is automatic yet. The simplest route today is [Obtainium](https://github.com/ImranR98/Obtainium): add this repository, turn on *include pre-releases*, and filter the asset name on `universal`; it tells you when a new alpha is out and installs it with one tap. An in-app update check is planned (T83 on the board).
-- **Map data:** first launch offers *Show the map around me* and *Download the map around me* (Wi-Fi, no server needed), a server under Settings › Sources, or importing pack files.
+- **Updates, in the app:** once a day (and when you tap *Check for updates* in Settings) the app looks at this
+  repository's releases, on Wi-Fi or mobile data. When a newer alpha is out it downloads the universal APK, checks it
+  against the release's `SHA256SUMS.txt` and checks that it is signed with the same key as the app you have (it refuses
+  and says why otherwise), then shows *Update to <version>* on the map and as a notification. *Install* opens
+  Android's installer; the first time, Android asks you to allow installs from Dystopo (*Settings*, switch on, back),
+  then *Update*. Your tracks, trips, packs and settings stay. *Not now* (or cancelling the installer) skips that
+  version until you check by hand. Android never lets a sideloaded app update itself silently, so the one tap is the
+  minimum.
+- **Updates, without the app's check:** [Obtainium](https://github.com/ImranR98/Obtainium) works too: add this
+  repository, turn on *include pre-releases*, and filter the asset name on `universal`. Or download the new APK from
+  the releases page and open it; it installs over the old one.
+- **Map data:** first launch offers *Show the map around me* and *Download the map around me* (any network, no server
+  needed), a server under Settings › Sources, or importing pack files.
 
 ## Documentation
 

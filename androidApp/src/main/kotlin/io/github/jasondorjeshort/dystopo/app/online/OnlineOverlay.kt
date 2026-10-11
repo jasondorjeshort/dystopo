@@ -93,7 +93,7 @@ fun OnlineOverlay() {
                 Box(Modifier.size(9.dp).background(dot, CircleShape))
                 BasicText("$label · $source", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
             }
-            // T80: why the phone is not reading the sources (no Wi-Fi, or the session's download limit).
+            // T80: why the phone is not reading the sources (the session's download limit, or mobile data turned off by the user; T83).
             ui.notice?.let { Small(it, Red) {} }
             val d = ui.download
             when {

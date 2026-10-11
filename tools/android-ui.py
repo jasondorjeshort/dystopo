@@ -20,6 +20,14 @@ Parts:
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
                pack (no first-run card, contours drawn) and the setting survived. The new APK must carry a higher
                versionCode: the sweep builds it with -PdystopoVersionCode=<commit count> as release.yml does.
+  update       (T83) the in-app update by taps: --prev-apk (the published release) with the pack, a track and metric
+               units; then --apk (this build) over it, pointed at a mock releases API (update-api.txt in the app's
+               external files dir; the mock on 127.0.0.1:--mock-port is 10.0.2.2 to the emulator). A lower release
+               stays quiet (the start-up check asks the mock, no offer, Settings says "Up to date"); a wrong
+               SHA256SUMS.txt and a debug-signed APK are refused with the reason; a good one (--new-apk, a higher
+               versionCode, the release key) is offered on the map ("Update to <version>"), Install goes through the
+               system installer (allowing installs from Dystopo the first time), and the new build runs with the
+               track, the units and the pack; finally Check for updates against the real GitHub API (read only) is quiet.
   permissions  fresh installs with no permission granted in advance: location allowed (the dialog's "While using
                the app") and denied ("Don't allow": the app keeps working, "Download the map around me" says why it
                cannot), then notifications at the first recording (API 33+): allowed (the recording notification is
@@ -42,6 +50,7 @@ Privacy: only areas.json places are used (the Rainier pack and the views around 
 contents beyond the counts PrivacyCheck prints.
 """
 import argparse
+import hashlib
 import importlib.util
 import io
 import json
@@ -1440,8 +1449,362 @@ def part_matrix(args):
     return run.report(config=config, knownDefects=known_defects)
 
 
+# --- in-app update (T83) -----------------------------------------------------------------------------------------
+
+RELEASES_PATH = "/repos/jasondorjeshort/dystopo/releases"
+UPDATE_API_FILE = f"{EXTERNAL}/update-api.txt"
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def apk_badging(apk):
+    """(versionCode, versionName) through aapt from the newest build-tools."""
+    tools = build_tools()
+    aapt = os.path.join(tools, "aapt.exe" if os.name == "nt" else "aapt")
+    out = subprocess.run([aapt, "dump", "badging", apk], capture_output=True, text=True, timeout=120).stdout
+    m = re.search(r"versionCode='(\d+)' versionName='([^']*)'", out)
+    return (int(m.group(1)), m.group(2)) if m else (None, None)
+
+
+def build_tools():
+    sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or os.path.join(os.path.expanduser("~"), "Android", "sdk")
+    root = os.path.join(sdk, "build-tools")
+    versions = sorted((v for v in os.listdir(root) if re.match(r"^\d+\.\d+\.\d+$", v)), key=lambda v: [int(x) for x in v.split(".")])
+    if not versions:
+        raise RuntimeError(f"no build-tools under {root}")
+    return os.path.join(root, versions[-1])
+
+
+def debug_signed_copy(apk, out_dir):
+    """The same APK re-signed with the debug key (~/.android/debug.keystore): a wrong certificate for the release app."""
+    ks = os.path.join(os.path.expanduser("~"), ".android", "debug.keystore")
+    if not os.path.isfile(ks):
+        raise RuntimeError(f"no debug keystore at {ks} (build any debug APK once)")
+    dst = os.path.join(out_dir, "debug-signed.apk")
+    signer = os.path.join(build_tools(), "apksigner.bat" if os.name == "nt" else "apksigner")
+    p = subprocess.run([signer, "sign", "--ks", ks, "--ks-pass", "pass:android", "--ks-key-alias", "androiddebugkey",
+                        "--key-pass", "pass:android", "--out", dst, apk], capture_output=True, text=True, timeout=300)
+    if p.returncode != 0:
+        raise RuntimeError(f"apksigner: {(p.stderr or p.stdout).strip()[-300:]}")
+    return dst
+
+
+class MockReleases:
+    """A stand-in for the GitHub releases API on 127.0.0.1:<port> (the emulator reaches it as 10.0.2.2): one release
+    at a time, in the API's shape, with its assets (the APK, SHA256SUMS.txt, optionally version.json) served from
+    here. Requests are counted per path so a part can tell whether the app asked and what it downloaded."""
+
+    def __init__(self, port):
+        import http.server
+        import threading
+        self.port = port
+        self.release = None
+        self.hits = {}
+        mock = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                path = urllib.parse.urlsplit(self.path).path
+                mock.hits[path] = mock.hits.get(path, 0) + 1
+                body, ctype = mock.answer(path)
+                if body is None:
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body) if isinstance(body, bytes) else os.path.getsize(body)))
+                self.end_headers()
+                if isinstance(body, bytes):
+                    self.wfile.write(body)
+                else:
+                    with open(body, "rb") as f:
+                        while True:
+                            chunk = f.read(1 << 20)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def api(self):
+        return f"http://10.0.2.2:{self.port}{RELEASES_PATH}"
+
+    def announce(self, tag, apk, code=None, sums_sha=None, version_json=True):
+        """One published pre-release `tag` whose universal APK is [apk]; SHA256SUMS.txt says [sums_sha] (default: the
+        file's real hash); version.json (when [version_json]) says [code] and the real hash."""
+        real = sha256_file(apk)
+        name = f"dystopo-{tag}-universal.apk"
+        sums = f"{sums_sha or real} *{name}\n{'0' * 64} *NOTICES.md\n".encode()
+        files = {name: (apk, "application/vnd.android.package-archive"), "SHA256SUMS.txt": (sums, "text/plain")}
+        if version_json:
+            files["version.json"] = (json.dumps({"tag": tag, "versionCode": code, "versionName": tag[1:], "apk": name, "sha256": real}).encode(), "application/json")
+        self.release = {"tag": tag, "files": files, "apk": name}
+        self.hits = {}
+        return {"tag": tag, "apk": os.path.basename(apk), "sha256": real[:12], "sumsSha": (sums_sha or real)[:12], "versionJson": version_json, "code": code}
+
+    def answer(self, path):
+        r = self.release
+        if path == RELEASES_PATH:
+            if not r:
+                return b"[]", "application/json"
+            assets = [{"name": n, "size": len(b) if isinstance(b, bytes) else os.path.getsize(b),
+                       "browser_download_url": f"http://10.0.2.2:{self.port}/dl/{r['tag']}/{n}"} for n, (b, _) in r["files"].items()]
+            return json.dumps([{"tag_name": r["tag"], "draft": False, "prerelease": True, "assets": assets}]).encode(), "application/json"
+        if r and path.startswith(f"/dl/{r['tag']}/"):
+            f = r["files"].get(path.rsplit("/", 1)[-1])
+            if f:
+                return f
+        return None, None
+
+    def downloaded_apk(self):
+        r = self.release
+        return bool(r) and self.hits.get(f"/dl/{r['tag']}/{r['apk']}", 0) > 0
+
+    def asked(self):
+        return self.hits.get(RELEASES_PATH, 0)
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|Update check failed.*|No release with an APK.*)$"
+
+
+def check_for_updates(dev, timeout=240):
+    """Settings > Updates > Check for updates; returns the result line once the check has finished."""
+    nodes = open_settings(dev)
+    btn = dev.find("^Check for updates$", nodes)
+    for _ in range(3):
+        if btn:
+            break
+        w, h, _d = screen(dev)
+        dev.shell("input", "swipe", str(w // 2), str(h * 3 // 4), str(w // 2), str(h // 3), "400")
+        time.sleep(1)
+        btn = dev.find("^Check for updates$")
+    if not btn:
+        raise RuntimeError(f"no Check for updates in Settings (texts: {dev.texts()[:30]})")
+    dev.tap(btn)
+    time.sleep(2)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        nodes = dev.nodes()
+        if not dev.find("^Checking\\.\\.\\.$", nodes):
+            n = dev.find(UPDATE_LINE, nodes)
+            if n:
+                return n["text"], dev.screencap("updates-row")[0]
+        time.sleep(2)
+    raise RuntimeError(f"no update result within {timeout} s (texts: {dev.texts()[:30]})")
+
+
+def installs_allowed(dev):
+    """Whether "install unknown apps" is on for Dystopo (the app op the Settings switch sets)."""
+    out = dev.shell("appops", "get", PACKAGE, "REQUEST_INSTALL_PACKAGES", check_ok=False)
+    return "allow" in out.lower() and "default" not in out.lower()
+
+
+def system_install(dev, want_code, timeout=240):
+    """Answers the system installer like a user: allow installs from this app the first time (Settings, the switch,
+    back), then Update / Install; returns the taps once the package has want_code."""
+    taps = []
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        code, _ = version_of(dev)
+        if code == want_code:
+            return taps
+        nodes = dev.nodes()
+        texts = dev.texts(nodes)
+        switch = dev.find(r"^Allow from this source$", nodes)
+        if switch:
+            # The Settings page for this app's "install unknown apps". Switch it on once (never off again), then go back
+            # only if the page is still up: Android may return to the installer by itself, and Back there cancels it.
+            if not installs_allowed(dev):
+                toggle = next((n for n in nodes if n["cls"].endswith("Switch") and n["bounds"]), None)
+                dev.tap(toggle or switch)
+                taps.append("Allow from this source")
+                time.sleep(2.5)
+            if installs_allowed(dev) and dev.find(r"^Allow from this source$"):
+                dev.shell("input", "keyevent", "KEYCODE_BACK")
+                taps.append("back")
+                time.sleep(2.5)
+            continue
+        for pat in (r"^(Update|UPDATE)$", r"^(Install|INSTALL)$", r"^(Settings|SETTINGS)$", r"^(Install anyway|INSTALL ANYWAY)$"):
+            n = dev.find(pat, nodes)
+            if n and n["pkg"] != PACKAGE:
+                dev.tap(n)
+                taps.append(n["text"])
+                time.sleep(2)
+                break
+        else:
+            time.sleep(2)
+    raise RuntimeError(f"the update was not installed within {timeout} s (taps {taps}; texts {dev.texts()[:20]})")
+
+
+def update_banner(dev, timeout=20):
+    n, nodes = dev.wait_for(r"^Update to .*", timeout)
+    return n, nodes
+
+
+def part_update(args):
+    """T83: the app's own update path on the release build, by taps. Builds A (--apk) and B (--new-apk, higher
+    versionCode, same key) of this branch; the published release (--prev-apk) first, with data on it."""
+    for k in ("prev_apk", "new_apk"):
+        if not getattr(args, k) or not os.path.isfile(getattr(args, k)):
+            return fail(f"--{k.replace('_', '-')} not found: {getattr(args, k)!r}")
+    dev = device(args, "")
+    run = Run(dev)
+    apk = args.apk or default_apk(dev)
+    new_code, new_name = apk_badging(args.new_apk)
+    cur_code, cur_name = apk_badging(apk)
+    prev_code, prev_name = apk_badging(args.prev_apk)
+    if not (new_code and cur_code and new_code > cur_code):
+        return fail(f"--new-apk must have a higher versionCode than --apk ({new_code} vs {cur_code})")
+    bad_apk = debug_signed_copy(args.new_apk, dev.out)
+    mock = MockReleases(args.mock_port)
+    st = {}
+
+    def previous():
+        release_with_pack(dev, args, apk=args.prev_apk)
+        st["prev"] = version_of(dev)
+        r = map_settled(dev, "prev-map")
+        return {"ok": r["ok"], "version": st["prev"], "png": r.get("png"), **({"error": r.get("error")} if not r["ok"] else {})}
+
+    def data():
+        set_units(dev, "Metres")
+        record_track(dev, walk(*PARADISE, 46.7950, -121.7330, 8))
+        tracks = track_rows(dev)
+        close_tracks(dev)
+        st["tracks"] = tracks
+        return {"ok": bool(tracks), "tracks": tracks, **({} if tracks else {"error": "no track recorded"})}
+
+    def current():
+        # The mock is quiet first (an older release), so the build's own first check (15 s after start) finds nothing.
+        st["lower"] = mock.announce("v0.1.2-alpha", args.prev_apk, code=prev_code)
+        local = os.path.join(dev.out, "update-api.txt")
+        with open(local, "w", encoding="ascii", newline="\n") as f:
+            f.write(mock.api + "\n")
+        dev.adb("push", local, UPDATE_API_FILE)
+        dev.shell("chmod", "a+r", UPDATE_API_FILE, check_ok=False)
+        out = dev.adb("install", "-r", "-g", apk, timeout=300, check_ok=False)
+        if "Success" not in out:
+            return fail(f"install -r: {out.strip()[-200:]}")
+        st["cur"] = version_of(dev)
+        open_map(dev, *PARADISE, 13, cold=True)
+        return {"version": st["cur"], "ok": st["cur"][0] == cur_code}
+
+    def lower_quiet():
+        t0 = time.time()
+        while time.time() - t0 < 60 and not mock.asked():
+            time.sleep(2)
+        auto = mock.asked()
+        time.sleep(3)
+        banner, _ = dev.wait_for(r"^Update to ", 3)
+        png = dev.screencap("lower-map")[0]
+        line, row_png = check_for_updates(dev)
+        close_sheet(dev)
+        ok = auto > 0 and banner is None and line.startswith("Up to date") and not mock.downloaded_apk()
+        return {"ok": ok, "announced": st["lower"], "dailyCheckAsked": auto, "banner": bool(banner), "line": line, "png": png, "rowPng": row_png,
+                **({} if ok else {"error": "the lower version was not quiet" if banner or not line.startswith("Up to date") else "the start-up check never asked the mock API"})}
+
+    def wrong_checksum():
+        # No version.json: the tag decides (v0.1.9 > this build's 0.1.x); SHA256SUMS.txt lies about the APK.
+        ann = mock.announce("v0.1.9-alpha", args.new_apk, sums_sha="f" * 64, version_json=False)
+        line, png = check_for_updates(dev)
+        close_sheet(dev)
+        banner, _ = dev.wait_for(r"refused", 6)
+        map_png = dev.screencap("checksum-map")[0]
+        ok = "refused" in line and "checksum" in line and mock.downloaded_apk()
+        if banner:
+            dev.tap_text("^OK$", timeout=5)
+        return {"ok": ok, "announced": ann, "line": line, "rowPng": png, "png": map_png, "mapMessage": bool(banner),
+                **({} if ok else {"error": f"not refused for the checksum: {line}"})}
+
+    def wrong_certificate():
+        ann = mock.announce("v0.1.10-alpha", bad_apk, code=new_code)
+        line, png = check_for_updates(dev)
+        close_sheet(dev)
+        banner, _ = dev.wait_for(r"refused", 6)
+        map_png = dev.screencap("certificate-map")[0]
+        ok = "refused" in line and "certificate" in line and mock.downloaded_apk()
+        if banner:
+            dev.tap_text("^OK$", timeout=5)
+        return {"ok": ok, "announced": ann, "line": line, "rowPng": png, "png": map_png, "mapMessage": bool(banner),
+                **({} if ok else {"error": f"not refused for the certificate: {line}"})}
+
+    def offer():
+        ann = mock.announce("v0.1.11-alpha", args.new_apk, code=new_code)
+        line, png = check_for_updates(dev)
+        close_sheet(dev)
+        banner, nodes = update_banner(dev)
+        map_png = dev.screencap("offer-map")[0]
+        notified = "Update to" in dev.shell("dumpsys", "notification", "--noredact", check_ok=False)
+        ok = "is ready" in line and banner is not None and dev.find("^Install$", nodes) is not None
+        st["offer"] = ann
+        return {"ok": ok, "announced": ann, "line": line, "rowPng": png, "png": map_png, "banner": banner["text"] if banner else None,
+                "notification": notified, **({} if ok else {"error": f"no update offer on the map ({line})"})}
+
+    def install_step():
+        dev.tap_text("^Install$")
+        taps = system_install(dev, new_code)
+        st["new"] = version_of(dev)
+        return {"taps": taps, "version": st["new"], "ok": st["new"][0] == new_code}
+
+    def survived():
+        open_map(dev, *PARADISE, 13, cold=True)
+        card, _ = dev.wait_for(FIRST_RUN, 6)
+        r = map_settled(dev, "new-map")
+        tracks = track_rows(dev)
+        close_tracks(dev)
+        nodes = open_settings(dev)
+        metric = dev.find("^Metres$", nodes) is not None
+        version_line = dev.find(r"^This build: ", nodes)
+        close_sheet(dev)
+        checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": tracks[:1] == st["tracks"][:1],
+                  "runningNew": bool(version_line and new_name in version_line["text"])}
+        ok = all(checks.values())
+        return {"ok": ok, "checks": checks, "tracks": tracks, "png": r.get("png"), "versionLine": version_line["text"] if version_line else None,
+                **({} if ok else {"error": "after the update: " + ", ".join(k for k, v in checks.items() if not v)})}
+
+    def real_api():
+        # The real GitHub API, read only: nothing newer than this branch's build is published, so it is quiet.
+        dev.shell("rm", "-f", UPDATE_API_FILE, check_ok=False)
+        line, png = check_for_updates(dev, timeout=120)
+        close_sheet(dev)
+        banner, _ = dev.wait_for(r"^Update to ", 3)
+        ok = line.startswith("Up to date") and banner is None
+        return {"ok": ok, "line": line, "rowPng": png, **({} if ok else {"error": f"real API: {line}"})}
+
+    try:
+        for name, fn in (("install-previous", previous), ("create-data", data), ("install-current", current),
+                         ("lower-quiet", lower_quiet), ("wrong-checksum", wrong_checksum), ("wrong-certificate", wrong_certificate),
+                         ("offer", offer), ("install", install_step), ("survived", survived), ("real-api", real_api)):
+            if not run.step(name, fn):
+                break
+        run.step("alive", lambda: alive_and_clean(dev))
+    finally:
+        mock.close()
+        dev.shell("rm", "-f", UPDATE_API_FILE, check_ok=False)
+    return run.report(previous=os.path.basename(args.prev_apk), apk=os.path.basename(apk), newApk=os.path.basename(args.new_apk),
+                      versions={"previous": [prev_code, prev_name], "current": [cur_code, cur_name], "new": [new_code, new_name]})
+
+
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,
-         "upgrade": part_upgrade, "network": part_network, "matrix": part_matrix, "permissions": part_permissions, "background": part_background}
+         "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions, "background": part_background}
 
 
 def main():
@@ -1449,7 +1812,9 @@ def main():
     ap.add_argument("part", choices=sorted(PARTS))
     ap.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""))
     ap.add_argument("--apk", default="", help="the release APK (default: the build's split for the device's ABI; universal for strings)")
-    ap.add_argument("--prev-apk", default="", help="upgrade: the previous published release's APK")
+    ap.add_argument("--prev-apk", default="", help="upgrade, update: the previous published release's APK")
+    ap.add_argument("--new-apk", default="", help="update: a build of this branch with a higher versionCode than --apk (same key)")
+    ap.add_argument("--mock-port", type=int, default=9171, help="update: port of the mock releases API on 127.0.0.1 (the emulator's 10.0.2.2)")
     ap.add_argument("--dem", default=os.path.join(REPO, "out", "rainier-dem.pmtiles"))
     ap.add_argument("--osm", default=os.path.join(REPO, "out", "rainier-outdoors.pmtiles"))
     ap.add_argument("--server", default="", help="a Dystopo server URL the emulator reaches (the host's LAN address)")

@@ -28,7 +28,7 @@ import kotlin.concurrent.thread
 
 /**
  * T80: the rows of Settings › Sources about the phone's own source reading (no server set): mobile data on or off
- * (off by default: a fresh view is 75 to 100 MB) and the per-session download limit. The same settings are
+ * (on by default since T83: nothing is gated on Wi-Fi, the limit is the brake) and the per-session download limit. The same settings are
  * `directOnMobileData` and `directSessionMb` in `POST /settings`.
  */
 @Composable
@@ -40,7 +40,7 @@ fun DirectSourcesRows() {
         BasicText("With no server the phone reads the public sources itself.", style = TextStyle(color = Muted, fontSize = 11.sp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             BasicText("Mobile data", style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
-            for ((label, value) in listOf("Wi-Fi only" to false, "Allow" to true)) {
+            for ((label, value) in listOf("Use" to true, "Off" to false)) {
                 Choice(label, mobile == value) {
                     mobile = value
                     thread(name = "dystopo-direct-setting") { OnlineService.get(app).setDirect(null, value) }
