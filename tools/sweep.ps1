@@ -16,6 +16,23 @@
 #                server (the standalone server on -BasePort+3, bound to all interfaces), Test shows the catalog count,
 #                "Download the map around me" at a mock fix at Rainier, a map with contours; then a second fresh
 #                install imports the Rainier pair through the system file picker. Screenshots in first-run\.
+# T81, release realism (tools/android-ui.py; everything on the RELEASE build by taps unless noted):
+#   routes       (debug build, after the device tour) tools/routing-tour.txt: public routes, distance, ascent, trails
+#   search       (debug build) tools/search-tour.txt: each query's expected top hit
+#   apk-strings  (no device) every string in the release APK through PrivacyCheck: no private term or local pair
+#   features     search, a route kept as a trip, the Routes list, a recorded track, GPX export, sync with the sweep's
+#                server, the sync sheet, the Share screen, Settings; no crash
+#   upgrade      the previous published release (-PrevRelease, default the latest on GitHub) with a track, a trip,
+#                the pack and metric units, then this build installed over it: all of it survives
+#   permissions  location denied and allowed from the system dialog, notifications at the first recording
+#   background   recording through forced doze with the app in the background
+#   network      the emulator throttled, the server killed mid-download and (through a stall proxy) mid-sync,
+#                then retries once it is back
+#   matrix       (-Matrix only) font scale 2.0 and dark mode on the sweep's emulator, then fresh emulators per
+#                -MatrixDevices entry (default: the minimum API 26 phone, an API 35 tablet in German), each
+#                checked with android-ui.py matrix and deleted afterwards
+# The release build is made once with -PdystopoVersion=<describe>-sweep -PdystopoVersionCode=<commit count>, as
+# release.yml does, so it installs over the published release (a versionCode 1 build cannot).
 # and writes out\sweep-<date>\: steps.tsv, each part's log and JSON, summary.json and sheet.png (a contact
 # sheet of the contact sheets) through tools/sweep-summary.py. Exit 1 when any part failed.
 #
@@ -49,6 +66,14 @@ param(
     [int]$DeviceTourRuns = 2,
     [switch]$KeepEmulator,
     [string]$DataDir = '',
+    # T81: the published release the upgrade part starts from ('' = the latest on GitHub, through gh).
+    [string]$PrevRelease = '',
+    # T81: the device matrix (slow: one boot per entry). Entries are api:device[:locale].
+    [switch]$Matrix,
+    [string[]]$MatrixDevices = @('26:pixel_6', '35:pixel_tablet:de-DE'),
+    [int]$MatrixEmuPort = 0,
+    # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
+    [string]$Known = 'overlap:search/Settings',
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
     [string]$Channel = 'chrome',
     # One view per elevation source for the live part; labels are public places from areas.json.
@@ -69,11 +94,14 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-$allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour', 'probe', 'release', 'first-run')
-$deviceParts = @('device-boot', 'device-tour', 'probe', 'release', 'first-run')
+$allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour',
+    'routes', 'search', 'probe', 'release', 'apk-strings', 'first-run', 'features', 'upgrade', 'permissions', 'background', 'network', 'matrix')
+$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'release', 'first-run', 'features', 'upgrade', 'permissions',
+    'background', 'network', 'matrix')
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $LiveViews = @($LiveViews | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+$MatrixDevices = @($MatrixDevices | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 foreach ($p in $Skip + $Only) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
 
 # --- environment -------------------------------------------------------------------------------------------
@@ -97,7 +125,8 @@ $serial = "emulator-$EmuPort"
 
 # --- ports: never the coordinator's, never one already in use ----------------------------------------------
 $reserved = @(8765, 8686, 8687)
-$ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2; 'firstrun-server' = $BasePort + 3 }
+$ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2; 'firstrun-server' = $BasePort + 3
+    'ui-server' = $BasePort + 4; 'network-server' = $BasePort + 5; 'network-proxy' = $BasePort + 6 }
 if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1 }
 $listening = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | ForEach-Object { $_.Port })
 foreach ($k in $ports.Keys) {
@@ -106,10 +135,13 @@ foreach ($k in $ports.Keys) {
     if ($listening -contains $p) { throw "$k port $p is already in use; pick another -BasePort/-Port" }
 }
 if (-not $NoDevice -and $EmuPort -eq 5554) { throw "-EmuPort 5554 is the coordinator's emulator; pick another" }
+if (-not $MatrixEmuPort) { $MatrixEmuPort = $EmuPort + 2 }
+if ($Matrix -and $MatrixEmuPort -eq 5554) { throw "-MatrixEmuPort 5554 is the coordinator's emulator; pick another" }
 
 $script:bootImplied = $false
 function Want([string]$part) {
     if ($part -eq 'device-boot' -and $script:bootImplied) { return -not $NoDevice } # T79: implied by device parts
+    if ($part -eq 'matrix' -and -not $Matrix -and $Only -notcontains 'matrix') { return $false } # T81: opt-in
     if ($Only.Count -and $Only -notcontains $part) { return $false }
     if ($Skip -contains $part) { return $false }
     if ($NoDevice -and $deviceParts -contains $part) { return $false }
@@ -141,7 +173,7 @@ function Run([string]$exe, [string[]]$argv, [string]$stdout, [string]$stderr) {
 }
 
 function Part([string]$name, [scriptblock]$body) {
-    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } else { 'not selected' }); return $false }
+    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } else { 'not selected' }); return $false }
     $t0 = Get-Date
     $note = ''
     try {
@@ -181,6 +213,42 @@ function Stop-Server([string]$name) {
     # The recorded PID and its children (devtool.bat -> java), nothing matched by name.
     & taskkill.exe /PID $id /T /F 2>&1 | Out-Null
     $script:servers.Remove($name)
+}
+
+# T81: the release APK, built once per sweep with a derived version (as release.yml does), so it installs over the
+# published release; android-release.ps1 and android-firstrun.py then use it as it is.
+$script:releaseBuilt = $false
+function Build-Release {
+    if ($script:releaseBuilt) { return }
+    $count = "$(& git rev-list --count HEAD 2>$null)".Trim()
+    $desc = "$(& git describe --tags --always 2>$null)".Trim() -replace '^v', ''
+    $code = Run $gradle @(':androidApp:assembleRelease', "-PdystopoVersion=$desc-sweep", "-PdystopoVersionCode=$count") (Join-Path $Out 'assemble-release.log') (Join-Path $Out 'assemble-release.err.log')
+    if ($code -ne 0) { throw "assembleRelease failed (see assemble-release.err.log)" }
+    $script:releaseBuilt = $true
+}
+
+# T81: a standalone server config on all interfaces (the emulator reaches it at the host's LAN address).
+function Server-Config([string]$dir, [int]$port, [string[]]$withPacks = @()) {
+    New-Item -ItemType Directory -Force $dir, (Join-Path $dir 'out') | Out-Null
+    foreach ($f in $withPacks) { Copy-Item -LiteralPath $f -Destination (Join-Path $dir 'out') -Force }
+    $tbHome = @((Join-Path $repo 'tilebuild\build\install\tilebuild'), (Join-Path $mainCheckout 'tilebuild\build\install\tilebuild')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $cfg = [ordered]@{ bind = '0.0.0.0'; port = $port; cacheDir = $(if ($env:DYSTOPO_CACHE) { $env:DYSTOPO_CACHE } else { Join-Path $repo 'cache' })
+        outDir = (Join-Path $dir 'out'); logRequests = $false }
+    if ($tbHome) { $cfg.tilebuildHome = $tbHome }
+    $path = Join-Path $dir 'server.json'
+    $cfg | ConvertTo-Json | Set-Content -Encoding ascii $path
+    $path
+}
+
+$script:lan = ''
+function Lan-Address {
+    if ($script:lan) { return $script:lan }
+    $script:lan = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
+            $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.PrefixOrigin -in @('Dhcp', 'Manual') } |
+        Sort-Object { if (Get-NetRoute -InterfaceIndex $_.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue) { 0 } else { 1 } } |
+        Select-Object -First 1).IPAddress
+    if (-not $script:lan) { throw 'no LAN IPv4 address on this host' }
+    $script:lan
 }
 
 $py = 'python'
@@ -294,12 +362,20 @@ try {
             }
             $worst
         }
+        # T81: the routing and search tours, on the debug build the device tour left running.
+        $null = Part 'routes' {
+            Run $py @('-I', 'tools/android-ui.py', 'routes', '--port', "$Port", '--serial', $serial, '--out', (Join-Path $Out 'ui\routes')) (Join-Path $Out 'routes.json') (Join-Path $Out 'routes.err.log')
+        }
+        $null = Part 'search' {
+            Run $py @('-I', 'tools/android-ui.py', 'search', '--port', "$Port", '--serial', $serial, '--out', (Join-Path $Out 'ui\search')) (Join-Path $Out 'search.json') (Join-Path $Out 'search.err.log')
+        }
         $null = Part 'probe' {
             Run $py @('-I', 'tools/android-probe.py', '--port', "$Port", '--serial', $serial) (Join-Path $dev 'probe.json') (Join-Path $dev 'probe.err.log')
         }
         $null = Part 'release' {
             # After the debug parts: it uninstalls the debug build (signed with the other key).
-            Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-release.ps1', '-Serial', $serial, '-Build',
+            Build-Release
+            Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-release.ps1', '-Serial', $serial,
                 '-Port', "$($Port + 1)", '-Dem', $dem, '-Osm', $osm, '-Out', (Join-Path $Out 'release')) (Join-Path $Out 'release.log') (Join-Path $Out 'release.err.log')
         }
         $null = Part 'first-run' {
@@ -313,12 +389,7 @@ try {
                 $c = Run $gradle @(':server:installDist') (Join-Path $fdir 'server-install.log') (Join-Path $fdir 'server-install.err.log')
                 if ($c -ne 0) { throw ':server:installDist failed' }
             }
-            $apkDir = Join-Path $repo 'androidApp\build\outputs\apk\release'
-            if (-not (Want 'release') -or -not (Get-ChildItem $apkDir -Filter 'androidApp-*-release.apk' -ErrorAction SilentlyContinue)) {
-                # The release part builds it (signed with tools\release.properties when present); build here when it did not run.
-                $c = Run $gradle @(':androidApp:assembleRelease') (Join-Path $fdir 'assemble.log') (Join-Path $fdir 'assemble.err.log')
-                if ($c -ne 0) { throw 'assembleRelease failed' }
-            }
+            Build-Release # T81: once per sweep, with the derived version
             $lan = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
                     $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.PrefixOrigin -in @('Dhcp', 'Manual') } |
                 Sort-Object { if (Get-NetRoute -InterfaceIndex $_.InterfaceIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue) { 0 } else { 1 } } |
@@ -336,8 +407,103 @@ try {
                     '--import', "$dem,$osm") (Join-Path $Out 'first-run.json') (Join-Path $Out 'first-run.err.log')
             } finally { Stop-Server 'firstrun-server' }
         }
+
+        # --- T81: release realism (tools/android-ui.py) ---------------------------------------------------------
+        $ui = Join-Path $Out 'ui'
+        $knownArgs = if ($Known) { @('--known', $Known) } else { @() }
+        $uiNeedsServer = @('features', 'permissions') | Where-Object { Want $_ }
+        if ($uiNeedsServer) {
+            try {
+                Build-Release
+                if (-not (Test-Path (Join-Path $repo 'server\build\install\server\bin\server.bat'))) {
+                    $c = Run $gradle @(':server:installDist') (Join-Path $Out 'ui-server-install.log') (Join-Path $Out 'ui-server-install.err.log')
+                    if ($c -ne 0) { throw ':server:installDist failed' }
+                }
+                $cfg = Server-Config (Join-Path $ui 'server') ($BasePort + 4)
+                Start-Server 'ui-server' (Join-Path $repo 'server\build\install\server\bin\server.bat') @('--config', $cfg) ($BasePort + 4) '/healthz' 180
+                $uiServer = "http://$(Lan-Address):$($BasePort + 4)"
+            } catch { Write-Host "[sweep] ui server: $($_.Exception.Message)"; $uiServer = '' }
+        }
+        try {
+            $null = Part 'features' {
+                if (-not $uiServer) { throw 'the sweep server for the UI parts did not start' }
+                Run $py (@('-I', 'tools/android-ui.py', 'features', '--serial', $serial, '--server', $uiServer, '--dem', $dem, '--osm', $osm,
+                        '--out', (Join-Path $ui 'features')) + $knownArgs) (Join-Path $Out 'features.json') (Join-Path $Out 'features.err.log')
+            }
+            $null = Part 'permissions' {
+                if (-not $uiServer) { throw 'the sweep server for the UI parts did not start' }
+                Run $py (@('-I', 'tools/android-ui.py', 'permissions', '--serial', $serial, '--server', $uiServer,
+                        '--out', (Join-Path $ui 'permissions')) + $knownArgs) (Join-Path $Out 'permissions.json') (Join-Path $Out 'permissions.err.log')
+            }
+        } finally { Stop-Server 'ui-server' }
+        $null = Part 'upgrade' {
+            Build-Release
+            $prevDir = Join-Path $ui 'previous'
+            New-Item -ItemType Directory -Force $prevDir | Out-Null
+            $tag = $PrevRelease
+            if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
+            if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
+            $abi = "$(& (Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }) 'platform-tools\adb.exe') -s $serial shell getprop ro.product.cpu.abi)".Trim()
+            $c = Run 'gh' @('release', 'download', $tag, '-p', "*-$abi.apk", '-D', $prevDir, '--clobber') (Join-Path $ui 'previous.log') (Join-Path $ui 'previous.err.log')
+            $prev = Get-ChildItem $prevDir -Filter "*-$abi.apk" | Select-Object -First 1
+            if ($c -ne 0 -or -not $prev) { throw "could not download the $abi APK of $tag" }
+            Run $py (@('-I', 'tools/android-ui.py', 'upgrade', '--serial', $serial, '--prev-apk', $prev.FullName, '--dem', $dem, '--osm', $osm,
+                    '--label', $tag, '--out', (Join-Path $ui 'upgrade')) + $knownArgs) (Join-Path $Out 'upgrade.json') (Join-Path $Out 'upgrade.err.log')
+        }
+        $null = Part 'background' {
+            Build-Release
+            Run $py (@('-I', 'tools/android-ui.py', 'background', '--serial', $serial, '--dem', $dem, '--osm', $osm,
+                    '--out', (Join-Path $ui 'background')) + $knownArgs) (Join-Path $Out 'background.json') (Join-Path $Out 'background.err.log')
+        }
+        $null = Part 'network' {
+            Build-Release
+            # The part starts, kills and restarts this server itself (by PID); the phone talks to the stall proxy.
+            $cfg = Server-Config (Join-Path $ui 'network-server') ($BasePort + 5) @($dem, $osm)
+            Run $py (@('-I', 'tools/android-ui.py', 'network', '--serial', $serial, '--server', "http://$(Lan-Address):$($BasePort + 6)",
+                    '--proxy-port', "$($BasePort + 6)", '--server-config', $cfg, '--out', (Join-Path $ui 'network')) + $knownArgs) (Join-Path $Out 'network.json') (Join-Path $Out 'network.err.log')
+        }
+        $null = Part 'matrix' {
+            Build-Release
+            $worst = 0
+            $mdir = Join-Path $ui 'matrix'
+            New-Item -ItemType Directory -Force $mdir | Out-Null
+            # On the sweep's own emulator (API 35 phone): system font scale 2.0, then dark mode.
+            foreach ($v in @(@('--font-scale', '2.0', '--label', 'phone-font2'), @('--dark', '--label', 'phone-dark'))) {
+                $c = Run $py (@('-I', 'tools/android-ui.py', 'matrix', '--serial', $serial, '--out', $mdir) + $v + $knownArgs) (Join-Path $mdir "$($v[-1]).json") (Join-Path $mdir "$($v[-1]).err.log")
+                if ($c -ne 0) { $worst = $c }
+            }
+            # Fresh emulators: one per -MatrixDevices entry, deleted afterwards.
+            $i = -1
+            foreach ($entry in $MatrixDevices) {
+                $i++
+                $fields = @($entry -split ':')
+                $api = $fields[0]; $devName = $fields[1]; $loc = if ($fields.Count -gt 2) { $fields[2] } else { '' }
+                $label = "api$api-$devName" + $(if ($loc) { "-$loc" } else { '' })
+                $mAvd = "$Avd-m$i"; $mPort = $MatrixEmuPort + 2 * $i; $mSerial = "emulator-$mPort"
+                $mArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $mAvd, '-EmuPort', "$mPort", '-Port', "$($Port + 2 + $i)",
+                    '-Api', $api, '-Device', $devName, '-BootOnly')
+                if ([int]$api -lt 30) { $mArgs += @('-Feature', 'GLESDynamicVersion') } # images before 30 offer only GLES 2 otherwise
+                if ($loc) { $mArgs += @('-Locale', $loc) }
+                if ($AvdHome) { $mArgs += @('-AvdHome', $AvdHome) }
+                try {
+                    $c = Run 'powershell.exe' $mArgs (Join-Path $mdir "$label-emu.log") (Join-Path $mdir "$label-emu.err.log")
+                    if ($c -ne 0) { $worst = $c; continue }
+                    $c = Run $py (@('-I', 'tools/android-ui.py', 'matrix', '--serial', $mSerial, '--dem', $dem, '--osm', $osm, '--label', $label, '--out', $mdir) + $knownArgs) (Join-Path $mdir "$label.json") (Join-Path $mdir "$label.err.log")
+                    if ($c -ne 0) { $worst = $c }
+                } finally {
+                    $null = Run 'powershell.exe' ($mArgs[0..7] + @('-Stop', '-Delete') + $(if ($AvdHome) { @('-AvdHome', $AvdHome) } else { @() })) (Join-Path $mdir "$label-stop.log") (Join-Path $mdir "$label-stop.err.log")
+                }
+            }
+            $worst
+        }
     } else {
-        foreach ($p in @('device-tour', 'probe', 'release', 'first-run')) { if (Want $p) { Step $p 'error' 0 $deviceSkipNote } else { Skipped $p 'not selected' } }
+        foreach ($p in @($deviceParts | Where-Object { $_ -ne 'device-boot' })) { if (Want $p) { Step $p 'error' 0 $deviceSkipNote } else { Skipped $p 'not selected' } }
+    }
+    # T81: the release APK's strings through PrivacyCheck (no device; builds the APK when no device part did).
+    $null = Part 'apk-strings' {
+        Build-Release
+        Run $py @('-I', 'tools/android-ui.py', 'strings', '--apk', (Join-Path $repo 'androidApp\build\outputs\apk\release\androidApp-universal-release.apk'),
+            '--out', (Join-Path $Out 'ui\strings')) (Join-Path $Out 'apk-strings.json') (Join-Path $Out 'apk-strings.err.log')
     }
 } finally {
     foreach ($name in @($script:servers.Keys)) { Stop-Server $name }

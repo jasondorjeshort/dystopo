@@ -471,7 +471,7 @@ class MapController {
     private fun startDeviceLocation() {
         if (injectedLocation || deviceListener != null || !hasLocationPermission()) return
         val lm = activity?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-        val listener = LocationListener { if (!injectedLocation) onFix(it) }
+        val listener = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { if (!injectedLocation) onFix(it) }
         val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).filter {
             runCatching { lm.isProviderEnabled(it) }.getOrDefault(false)
         }

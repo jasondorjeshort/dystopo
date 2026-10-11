@@ -23,6 +23,17 @@
 # or a host port already forwarded to another device, stops the run instead of being reused. Without
 # -EmuPort it reuses the running instance of -Avd, or boots on the first free even port from 5554.
 #
+# T81, device matrix and network: -Api <n> boots the google_apis x86_64 image of that API level (installed with
+# sdkmanager when missing; the minimum supported is 26), -Device a hardware profile (pixel_tablet for a tablet),
+# -Locale de-DE the system locale (emulator -change-locale, at boot), -FontScale 2.0 and -Dark the system font
+# scale and night mode (applied after boot, every run), -NetSpeed/-NetDelay the emulator's network throttling
+# (gsm edge umts hsdpa lte full, gprs edge umts none; at boot, and also set on a running emulator through its
+# console). -BootOnly stops after the boot and those settings: no build, install, push or debug forward (the
+# release parts in tools/android-ui.py install their own APK).
+#
+#   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo26-T81 -EmuPort 5662 -Port 9055 -Api 26 -BootOnly -AvdHome E:\dystopo-avd
+#   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-tab -EmuPort 5664 -Port 9056 -Device pixel_tablet -Locale de-DE -BootOnly
+#
 # Needs tools\android-sdk.ps1 first. The AVD lives under -AvdHome (default ANDROID_AVD_HOME, else <sdk>\avd);
 # each takes about 6 GB, so put several on a big disk. -Stop -Delete removes the AVD after stopping it.
 # The emulator needs CPU virtualization: Windows Hypervisor Platform (WHPX) or the Android Emulator
@@ -65,7 +76,23 @@ param(
     [int]$Cores = 4,
     # Use a connected device (a phone with USB debugging) instead of an emulator; -Serial picks one of several.
     [switch]$NoEmulator,
-    [string]$Serial = ''
+    [string]$Serial = '',
+    # T81: API level of the system image (overrides -SystemImage); 0 keeps -SystemImage.
+    [int]$Api = 0,
+    # T81: system locale at boot (BCP 47, e.g. de-DE); '' leaves the image's.
+    [string]$Locale = '',
+    # T81: system font scale after boot (0 leaves it; 1.0 resets).
+    [double]$FontScale = 0,
+    # T81: system night mode after boot.
+    [switch]$Dark,
+    # T81: emulator network speed and latency ('' leaves them).
+    [string]$NetSpeed = '',
+    [string]$NetDelay = '',
+    # T81: boot (and apply the settings above) only.
+    [switch]$BootOnly,
+    # T81: emulator feature flags at boot (-feature X), e.g. GLESDynamicVersion: older images otherwise offer only
+    # OpenGL ES 2 and MapLibre (ES 3) crashes in its render thread.
+    [string[]]$Feature = @()
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -79,6 +106,7 @@ $env:ANDROID_SDK_ROOT = $sdk
 if ($AvdHome) { $env:ANDROID_AVD_HOME = [IO.Path]::GetFullPath($AvdHome) }
 elseif (-not $env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME = Join-Path $sdk 'avd' }
 if ($Delete -and -not $Stop) { throw '-Delete goes with -Stop' }
+if ($Api -gt 0) { $SystemImage = "system-images;android-$Api;google_apis;x86_64" }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 $emulator = Join-Path $sdk 'emulator\emulator.exe'
 $package = 'io.github.jasondorjeshort.dystopo'
@@ -250,9 +278,17 @@ if ($Build) {
     Write-Host ("built in {0:n0} s" -f ((Get-Date) - $buildStarted).TotalSeconds)
 }
 $apkPath = if ([IO.Path]::IsPathRooted($Apk)) { $Apk } else { Join-Path $repoRoot $Apk }
-if (-not (Test-Path $apkPath)) { throw "APK not found: $apkPath (use -Build)" }
+if (-not $BootOnly -and -not (Test-Path $apkPath)) { throw "APK not found: $apkPath (use -Build)" }
 
 New-Item -ItemType Directory -Force $env:ANDROID_AVD_HOME | Out-Null
+$imageDir = Join-Path $sdk (($SystemImage -split ';') -join '\')
+if (-not $NoEmulator -and -not (Test-Path (Join-Path $imageDir 'system.img'))) {
+    # T81: the matrix's other API levels. About 1 to 3 GB each under the SDK; remove with sdkmanager --uninstall.
+    Write-Host "installing $SystemImage (sdkmanager)"
+    $sdkmanager = Join-Path $sdk 'cmdline-tools\latest\bin\sdkmanager.bat'
+    ('y' + "`n") * 20 | Native $sdkmanager "--sdk_root=$sdk" ('"' + $SystemImage + '"') | Select-Object -Last 2 | ForEach-Object { "  $_" }
+    if (-not (Test-Path (Join-Path $imageDir 'system.img'))) { throw "sdkmanager did not install $SystemImage" }
+}
 if (-not $NoEmulator -and -not (Test-Path (Join-Path $env:ANDROID_AVD_HOME "$Avd.ini"))) {
     Write-Host "creating AVD $Avd ($SystemImage, $Device)"
     $avdmanager = Join-Path $sdk 'cmdline-tools\latest\bin\avdmanager.bat'
@@ -323,6 +359,10 @@ if ($NoEmulator) {
         }
         $emuArgs = @('-avd', $Avd, '-port', $consolePort, '-no-window', '-gpu', $Gpu, '-no-audio', '-no-boot-anim', '-no-snapshot-save',
             '-memory', "$Memory", '-cores', "$Cores") + $accelArgs
+        if ($Locale) { $emuArgs += @('-change-locale', $Locale) }
+        if ($NetSpeed) { $emuArgs += @('-netspeed', $NetSpeed) }
+        if ($NetDelay) { $emuArgs += @('-netdelay', $NetDelay) }
+        foreach ($f in @($Feature | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) { $emuArgs += @('-feature', $f) }
         Write-Host ("starting emulator " + ($emuArgs -join ' ') + "  (log: $log)")
         $proc = Start-Process -FilePath $emulator -ArgumentList $emuArgs -RedirectStandardOutput $log -RedirectStandardError "$log.err" -WindowStyle Hidden -PassThru
     }
@@ -356,6 +396,18 @@ foreach ($k in 'window_animation_scale', 'transition_animation_scale', 'animator
 Adb shell svc power stayon true | Out-Null
 Adb shell input keyevent KEYCODE_WAKEUP | Out-Null
 Adb shell wm dismiss-keyguard | Out-Null
+# T81: matrix and network settings (every run, so a reused emulator gets them too).
+if ($FontScale -gt 0) { Adb shell settings put system font_scale ([string]$FontScale) | Out-Null; Write-Host "font scale $FontScale" }
+if ($Dark) { Adb shell cmd uimode night yes | Out-Null; Write-Host 'night mode on' }
+if (-not $NoEmulator) {
+    if ($NetSpeed) { Adb emu network speed $NetSpeed | Out-Null; Write-Host "network speed $NetSpeed" }
+    if ($NetDelay) { Adb emu network delay $NetDelay | Out-Null; Write-Host "network delay $NetDelay" }
+}
+if ($Locale) { Write-Host ("locale: " + ((Adb shell getprop persist.sys.locale) -join '').Trim()) }
+if ($BootOnly) {
+    Write-Host "ANDROID_SERIAL=$script:serial (boot only: nothing installed)"
+    exit 0
+}
 
 # 3. Install (-g grants the location permission, so the app shows no dialog), push the pack, launch.
 Write-Host "installing $Apk"

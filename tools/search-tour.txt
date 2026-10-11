@@ -1,0 +1,13 @@
+# Dystopo search tour (T81): queries against the Rainier pack's place index (debug build, GET /search).
+#   python -I tools/android-ui.py search --port <debug forward> --serial <serial> [--search-file tools/search-tour.txt]
+# query@lat,lon:label|top=<expected first hit>|kind=<its kind>|withinKm=<max distance of the first hit>
+Mount Rainier@46.85,-121.75:rainier|top=Mount Rainier|kind=volcano
+Columbia Crest@46.85,-121.75:summit|top=Columbia Crest|kind=peak
+Camp Muir@46.85,-121.75:camp-muir|top=Camp Muir|kind=campsite
+Panorama@46.85,-121.75:prefix|top=Panorama Point|kind=peak
+Paradise@46.85,-121.75:paradise|top=Paradise|kind=hamlet
+Reflection@46.85,-121.75:reflection|top=Reflection Lakes|kind=lake
+Comet Falls@46.85,-121.75:comet-falls|top=Comet Falls|kind=waterfall
+Frozen Lake@46.85,-121.75:frozen-lake|top=Frozen Lake|kind=lake
+Mowich@46.85,-121.75:mowich|top=Mowich Lake Trailhead|kind=trailhead
+Spray Park@46.85,-121.75:spray-park|top=Spray Park|kind=locality

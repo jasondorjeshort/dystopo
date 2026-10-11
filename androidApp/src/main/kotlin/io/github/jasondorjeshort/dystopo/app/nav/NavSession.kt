@@ -277,11 +277,11 @@ object NavSession {
         if (app.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
         val lm = app.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         if (!lm.allProviders.contains(LocationManager.GPS_PROVIDER)) return
-        val l = LocationListener { loc ->
+        val l = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { loc ->
             // Injected fixes and replays win (the emulator reports its own position every second).
             if (app.map.injectedLocation || Tracking.of(app).replay.running) {
                 ignored++
-                return@LocationListener
+                return@locationListener
             }
             val fix = GpsLocationSource.toFix(loc)
             val course = if (loc.hasBearing() && loc.hasSpeed() && loc.speed > 0.7f) loc.bearing.toDouble() else null

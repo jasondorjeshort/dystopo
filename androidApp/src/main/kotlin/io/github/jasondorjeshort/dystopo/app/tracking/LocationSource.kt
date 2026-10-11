@@ -66,7 +66,7 @@ class GpsLocationSource(private val context: Context) : LocationSource {
         if (!hasPermission()) return false
         val m = manager
         if (!m.allProviders.contains(LocationManager.GPS_PROVIDER)) return false
-        val l = LocationListener { loc -> listener(toFix(loc)) }
+        val l = locationListener { loc -> listener(toFix(loc)) }
         m.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, l, Looper.getMainLooper())
         this.listener = l
         return true
@@ -90,4 +90,17 @@ class GpsLocationSource(private val context: Context) : LocationSource {
             )
         }
     }
+}
+
+/**
+ * A [LocationListener] for every API level: onStatusChanged, onProviderEnabled and onProviderDisabled became default
+ * methods only in API 30, so a lambda (a SAM conversion that implements onLocationChanged alone) throws
+ * AbstractMethodError on Android 8 to 10 when GPS starts, stops or is switched off (found by T81's device matrix).
+ */
+fun locationListener(onFix: (android.location.Location) -> Unit): LocationListener = object : LocationListener {
+    override fun onLocationChanged(location: android.location.Location) = onFix(location)
+    @Deprecated("Deprecated in API 29; still called below it")
+    override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+    override fun onProviderEnabled(provider: String) {}
+    override fun onProviderDisabled(provider: String) {}
 }

@@ -85,6 +85,12 @@ private fun BoxScope.Controls() {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) Thread { importUri(tracking, uri) }.start()
     }
+    // T81: POST_NOTIFICATIONS (Android 13+), asked once at the first recording; when allowed, the running
+    // recording's notification is posted at once. Refused: recording goes on without it.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notificationAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) TrackingService.instance?.update(tracking.ui)
+    }
 
     val density = androidx.compose.ui.platform.LocalDensity.current
     Column(
@@ -110,7 +116,9 @@ private fun BoxScope.Controls() {
                 }
                 Chip("Tracks") { listOpen = !listOpen }
                 Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
+                    val starting = !tracking.ui.recording
                     Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
+                    if (starting && NotificationPrompt.shouldAsk(context)) notificationAsk.launch(NotificationPrompt.PERMISSION)
                 }
                 Chip("\u00D7") { barOpen = false; listOpen = false }
             }

@@ -9,7 +9,9 @@ hand. The folder holds steps.tsv, one line per part the sweep ran or skipped:
 
 and each part's own outputs under fixed names (the table PARTS below). The summary keeps per part `ok`,
 `seconds`, the exit code and the few numbers the dated sweep log entries quote (tour passed/failed, demo
-views ok, live DEM sources, sync convergence, device views, probe count, release timings, the first-run steps); `ok` overall is
+views ok, live DEM sources, sync convergence, device views, probe count, release timings, the first-run steps, and T81's
+release realism parts: routing and search tours, APK string scan, features, upgrade, permissions, background, network,
+the device matrix with any known defects); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -185,7 +187,90 @@ def first_run(d, part):
     return out
 
 
+def ui_steps(r):
+    """T81: an android-ui.py report: per step ok, the known defects (filed follow-ups) and the first error."""
+    steps = [s for s in r.get("steps") or [] if isinstance(s, dict)]
+    out = {"steps": {s.get("step"): s.get("ok") for s in steps}}
+    if r.get("knownDefects"):
+        out["knownDefects"] = r["knownDefects"]
+    bad = next((s for s in steps if not s.get("ok")), None)
+    if bad or r.get("error"):
+        out["error"] = f"{bad.get('step')}: {bad.get('error')}" if bad else r.get("error")
+    return out
+
+
+def ui_part(d, part):
+    r = load_last_json(os.path.join(d, part + ".json"))
+    if not isinstance(r, dict):
+        return {}
+    out = ui_steps(r)
+    steps = {s.get("step"): s for s in r.get("steps") or [] if isinstance(s, dict)}
+    if part == "features":
+        out["route"] = (steps.get("route") or {}).get("card")
+        out["sync"] = (steps.get("sync") or {}).get("result")
+    elif part == "upgrade":
+        out["from"] = (steps.get("install-new") or {}).get("from")
+        out["to"] = (steps.get("install-new") or {}).get("to")
+        out["survived"] = (steps.get("survived") or {}).get("checks")
+    elif part == "background":
+        st = steps.get("return-stop") or {}
+        out.update({k: st.get(k) for k in ("fixesFed", "gained")})
+    elif part == "network":
+        out["downloadKilledAt"] = (steps.get("download-killed") or {}).get("killedAt")
+        out["downloadMessage"] = (steps.get("download-killed") or {}).get("message")
+        out["syncMessage"] = (steps.get("sync-killed") or {}).get("message")
+    elif part == "permissions":
+        out["api"] = r.get("api")
+    return out
+
+
+def tour_part(d, part):
+    """T81: routes and search tours (debug build)."""
+    r = load_last_json(os.path.join(d, part + ".json"))
+    if not isinstance(r, dict):
+        return {}
+    if part == "routes":
+        out = {"ok": r.get("routesOk"), "of": r.get("routesTotal")}
+        bad = [x.get("label") for x in r.get("routes") or [] if not x.get("ok")]
+    else:
+        out = {"ok": r.get("queriesOk"), "of": r.get("queriesTotal")}
+        bad = [x.get("label") for x in r.get("queries") or [] if not x.get("ok")]
+    if bad:
+        out["failed"] = bad
+    if r.get("error"):
+        out["error"] = r["error"]
+    return {"passed": out}
+
+
+def apk_strings(d, part):
+    r = load_last_json(os.path.join(d, "apk-strings.json"))
+    if not isinstance(r, dict):
+        return {}
+    scan = r.get("scan") or {}
+    return {"apk": r.get("apk"), "strings": r.get("strings"), "privateFile": r.get("privateFile"),
+            **{k: scan.get(k) for k in ("termHits", "coordinatePairHits", "coordinateValueHits")}, **({"error": r["error"]} if r.get("error") else {})}
+
+
+def matrix(d, part):
+    out = {}
+    for p in sorted(glob.glob(os.path.join(d, "ui", "matrix", "*.json"))):
+        r = load_last_json(p)
+        if isinstance(r, dict):
+            label = os.path.splitext(os.path.basename(p))[0]
+            out[label] = {"ok": r.get("ok"), "config": r.get("config"), **ui_steps(r)}
+    return {"configs": out} if out else {}
+
+
 PARTS = {
+    "routes": tour_part,
+    "search": tour_part,
+    "apk-strings": apk_strings,
+    "features": ui_part,
+    "upgrade": ui_part,
+    "permissions": ui_part,
+    "background": ui_part,
+    "network": ui_part,
+    "matrix": matrix,
     "tour": tour,
     "demo-static": demo,
     "demo-serve": demo,
@@ -233,6 +318,10 @@ def sheet_images(d):
     add("Device tour", os.path.join("device", "tour*-sheet.png"))
     add("Release smoke tour", os.path.join("release", "*.png"))
     add("First run (release, by taps)", os.path.join("first-run", "*.png"))
+    for part, title in (("features", "Release features (by taps)"), ("upgrade", "Upgrade in place"), ("permissions", "Permissions"),
+                        ("background", "Background recording under doze"), ("network", "Network: throttled, server killed")):
+        add(title, os.path.join("ui", part, "*.png"))
+    add("Device matrix", os.path.join("ui", "matrix", "*", "*.png"))
     for part, title in (("live", "Live views (serve --live)"), ("demo-static", "Demo tour, static page"),
                         ("demo-serve", "Demo tour, devtool serve")):
         add(title, os.path.join(part, "*.png"), shot_labels(d, part))

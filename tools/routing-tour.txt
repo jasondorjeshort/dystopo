@@ -1,0 +1,14 @@
+# Dystopo routing tour (T81): public routes in the Rainier pack (areas.json "rainier"), planned on the phone's
+# trail graph through the debug build's POST /route. Run by the sweep after the device tour:
+#   python -I tools/android-ui.py routes --port <debug forward> --serial <serial> [--routes-file tools/routing-tour.txt]
+# from;to:label|mode=hike|bike|dist=<m>|distTol=0.1%|ascent=<m>|ascentTol=2%|via=<trail>+<trail>|expect=422|msg=<text>
+# Expected numbers are what main gave on 2026-10-10 (before T76's tiled graph, which must stay within 0.1%):
+# distance and ascent are RouteSummary's (the card's numbers), via the named trails in travel order.
+46.7864,-121.7366;46.8024,-121.7289:paradise-panorama-hike|mode=hike|dist=2953.3|ascent=401.6|via=Skyline Trail+Alta Vista Trail
+46.7864,-121.7366;46.8024,-121.7289:paradise-panorama-bike|mode=bike|dist=3006.7|ascent=401.6|via=Skyline Trail+Dead Horse Creek Trail
+46.9145,-121.6425;46.9185,-121.6630:sunrise-frozen-lake|mode=hike|dist=1874|ascent=127.9|via=Sourdough Ridge Trail
+46.7686,-121.7295;46.7570,-121.7330:reflection-pinnacle|mode=hike|dist=2412.8|ascent=421|via=Wonderland Trail+Pinnacle Peak Trail
+46.9317,-121.8619;46.9187,-121.8312:mowich-spray-park|mode=hike|dist=5184.6|ascent=446.2|via=Wonderland Trail+Spray Park Trail
+46.853,-121.760;46.7864,-121.7366:summit-paradise|mode=hike|dist=11669.6|ascent=38.9|ascentTol=25|via=Disappointment Cleaver Route+Camp Muir Route+Skyline Trail
+# Off the network on purpose: the start is 0.25 mi from the nearest trail, beyond the 300 m snap.
+46.7856,-121.7754;46.7995,-121.7716:comet-falls-off-network|mode=hike|expect=422|msg=Van Trump Trail
