@@ -1,9 +1,6 @@
 # Changelog
 
-Dystopo has no tagged release yet. Until the first one, this lists the work merged so far, one line per task
-(seeded from the Phase 0 log in [docs/PLANNING.md](docs/PLANNING.md), which has the measurements and findings
-behind each line; task goals are in [docs/TASKS.md](docs/TASKS.md)). Newest first. From the first release on,
-each release gets a section here.
+One line per merged task, newest first, grouped by release (the Phase 0 log in [docs/PLANNING.md](docs/PLANNING.md) has the measurements and findings behind each line; task goals are in [docs/TASKS.md](docs/TASKS.md)). Releases are tag-driven drafts published by hand after verification (CLAUDE.md › Publishing); alphas ship on GitHub Releases.
 
 ## Unreleased
 
