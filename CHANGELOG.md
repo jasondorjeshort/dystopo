@@ -6,6 +6,12 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 (nothing yet)
 
+## v0.1.4-alpha (2026-10-11)
+
+Built-in updates from the releases page (checksum and certificate verified, one tap); mobile data allowed by default, no Wi-Fi gates; alpha releases ship the universal APK only.
+
+(nothing yet)
+
 ## v0.1.3-alpha (2026-10-11)
 
 The phone reads the elevation sources itself (no server needed), the Android 8 to 10 location crash and the missing notification prompt fixed, tiled routing across pack borders, bundled fonts and icons, server metrics and limits, the release-realism sweep.
