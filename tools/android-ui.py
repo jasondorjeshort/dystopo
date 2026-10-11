@@ -798,7 +798,8 @@ def part_features(args):
         close_tracks(dev)
         nodes = open_settings(dev)
         texts = dev.texts(nodes)
-        want = ["Sources", "Units", "Text size", "Hillshade"]
+        # The first screen of the sheet; the map options (Hillshade) sit below the fold since T83 added Updates.
+        want = ["Sources", "Updates", "Units", "Text size"]
         missing = [w for w in want if w not in texts]
         png = dev.screencap("settings")[0]
         close_sheet(dev)
