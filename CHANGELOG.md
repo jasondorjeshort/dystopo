@@ -15,6 +15,7 @@ Everything from the start of the project to the first-run fix (T79), plus the ap
 
 ### 2026-10-10
 
+- T76: Tiled routing graph and cross-pack routes (#74)
 - T79: First run on a real phone (#73)
 - T71: One-command sweeps (#72)
 - T66: Desktop and server leftover sweep 5 (#70)
