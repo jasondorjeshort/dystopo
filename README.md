@@ -100,8 +100,7 @@ without admin rights and writes `local.properties`).
 ./gradlew :androidApp:assembleRelease      # one APK per CPU type in androidApp/build/outputs/apk/release/
 ```
 
-**On a real phone.** Install the APK for its CPU (`androidApp-arm64-v8a-release.apk` on almost every phone made
-since 2017, or the universal one): copy it over and open it (allow installs from that app), or `adb install`. The
+**On a real phone.** During alpha the release page offers one file, the universal APK, which runs on every phone; a local build also writes one APK per CPU type (`androidApp-arm64-v8a-release.apk` fits almost every phone made since 2017). Install it: copy it over and open it (allow installs from that app), or `adb install`. The
 first start has no map yet and says so, with ways to get one, all in the app:
 
 - **No server: straight from the public sources.** With no server set the phone reads the elevation data itself

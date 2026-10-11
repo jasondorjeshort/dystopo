@@ -80,8 +80,11 @@ jobs:
           mkdir -p out/release
           suffix=""
           if [ "$SIGNING" = debug ]; then suffix="-debugsigned"; fi
+          # Owner's policy (2026-10-11): alpha releases ship only the universal APK; per-ABI files return
+          # at beta or when a server picks the ABI automatically.
           for apk in androidApp/build/outputs/apk/release/androidApp-*-release.apk; do
             abi=$(basename "$apk" | sed -e 's/^androidApp-//' -e 's/-release\.apk$//')
+            case "$TAG" in *-alpha*) [ "$abi" = universal ] || continue ;; esac
             cp "$apk" "out/release/dystopo-$TAG-$abi$suffix.apk"
           done
           (cd server/build/install && zip -qr "../../../out/release/dystopo-server-$TAG.zip" server)
@@ -121,7 +124,10 @@ jobs:
             fi
             echo
             echo "## Files"
-            echo "- \`dystopo-$TAG-<abi>.apk\`: the Android app. Most phones want \`arm64-v8a\`; \`universal\` runs everywhere and is larger."
+            case "$TAG" in
+              *-alpha*) echo "- \`dystopo-$TAG-universal.apk\`: the Android app (one file for every phone during alpha)." ;;
+              *) echo "- \`dystopo-$TAG-<abi>.apk\`: the Android app. Most phones want \`arm64-v8a\`; \`universal\` runs everywhere and is larger." ;;
+            esac
             echo "- \`dystopo-server-$TAG.zip\`: the standalone server (\`bin/server\`; Java 21). Configuration: docs/SERVER.md."
             echo "- \`dystopo-devtool-$TAG.zip\`: the command-line tool (\`bin/devtool\`; Java 21), run from a checkout of the repo."
             echo "- \`NOTICES.md\`: third-party licences; \`SHA256SUMS.txt\`: checksums."
