@@ -72,7 +72,7 @@ class RainierRoutingTest {
         se / sw
     }
 
-    private fun graph(): RoutingGraph {
+    fun graph(): RoutingGraph {
         val path = WayAttrs(WayClass.PATH, Surface.UNPAVED, sac = 1)
         fun l(pts: List<Pair<Double, Double>>, a: WayAttrs = path) = WayLine.of(a, *pts.toTypedArray())
         fun named(n: String) = path.copy(name = n) // T49: trail names

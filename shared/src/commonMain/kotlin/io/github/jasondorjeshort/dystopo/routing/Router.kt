@@ -149,6 +149,11 @@ data class PlannedRoute(
      * metres on each (stretches under [Router.MIN_VIA_M] left out): the trails a route follows.
      */
     val via: List<Pair<String, Double>> = emptyList(),
+    /**
+     * T76: what the search held: `tiles` (graph tiles it read), `graphBytes` ([RoutingGraph.approxBytes]
+     * of those tiles), `searchBytes` and `searchNodes` (its own per-node arrays).
+     */
+    val memory: Map<String, Any?> = emptyMap(),
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -158,6 +163,7 @@ data class PlannedRoute(
         "start" to snapJson(start), "end" to snapJson(end),
         "metersByClass" to metersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) },
         "via" to via.map { (n, m) -> linkedMapOf("name" to n, "distanceM" to r1(m)) }, // T49: trail names
+        "memory" to memory.ifEmpty { null }, // T76
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
     )
 
@@ -183,55 +189,114 @@ sealed class RouteResult {
     }
 }
 
+
 /**
- * A* over a [RoutingGraph]. Both ends snap to the nearest point on an edge (within `maxSnapM`); the
- * search starts from a virtual node on the start edge and ends at one on the end edge, so routes
- * begin and end mid-edge. The heuristic is the great-circle distance to the end times the cost
- * model's smallest weight (admissible, so routes are optimal for the model). Ends on different
- * connected components fail at once with [RouteFailure.NOT_CONNECTED] instead of searching.
+ * Plans routes (T45; an interface since T76, PLANNING › Routing). [TileRouter] is the offline
+ * implementation, A* over graph tiles; a remote router or a hierarchy for long routes (T77) is
+ * another implementation of the same two calls. `Router(graph)` routes on one in-memory graph.
  */
-class Router(val graph: RoutingGraph) {
+interface Router {
+    /**
+     * A route from ([fromLat], [fromLon]) to ([toLat], [toLon]) in [mode]. Both ends snap onto the
+     * nearest line within [maxSnapM]; the route starts and ends at those snapped points, mid-edge.
+     */
     fun route(
         fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
         mode: TravelMode = TravelMode.HIKE,
         maxSnapM: Double = DEFAULT_SNAP_M,
         name: String = "Route",
         ids: UuidGenerator = UuidGenerator(),
-    ): RouteResult {
-        val g = graph
-        if (g.edgeCount == 0) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the pack has no trails or roads to route on")
-        val s = g.nearest(fromLat, fromLon, maxSnapM) ?: return offNetwork(RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
-        val t = g.nearest(toLat, toLon, maxSnapM) ?: return offNetwork(RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
-        val cs = g.component[g.edgeFrom[s.edge]]
-        val ct = g.component[g.edgeFrom[t.edge]]
-        if (cs != ct) {
-            val ls = g.componentLengthM[cs]
-            val lt = g.componentLengthM[ct]
-            return RouteResult.Failed(
-                RouteFailure.NOT_CONNECTED,
-                "no trail connects start and end in this pack: they are on separate networks " +
-                    "(${km(ls)} km of trail and road around the start, ${km(lt)} km around the end)",
-                linkedMapOf("startNetworkKm" to km(ls), "endNetworkKm" to km(lt), "networks" to g.componentLengthM.size),
-            )
-        }
-        val model = CostModel(mode)
-        return search(model, s, t, name, ids)
+    ): RouteResult
+
+    /** The nearest point on any line within [maxDistanceM], with the line's name and class; null when none is that close. */
+    fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap?
+
+    companion object {
+        /** How far a tapped point may be from the nearest trail or road. */
+        const val DEFAULT_SNAP_M = 300.0
+        /** How far an off-network failure looks for the nearest line, to say how far it is. */
+        const val FAR_SEARCH_M = 10_000.0
+        const val PROFILE_SAMPLES = 100
+        /** T49: named stretches shorter than this are left out of [PlannedRoute.via] (a crossing, a junction stub). */
+        const val MIN_VIA_M = 30.0
+
+        fun km(m: Double) = (m / 100).roundToLong() / 10.0
+    }
+}
+
+/** A [TileRouter] over one in-memory graph (no tiles): tests, tools, and the T60 editor's single-graph callers. */
+fun Router(graph: RoutingGraph): Router = TileRouter(WholeGraph(graph))
+
+/**
+ * Bidirectional A* over graph tiles (T76; T45's unidirectional A* before). Tiles come from [tiles]
+ * as the search reaches them, so a route reads only the tiles around it, and boundary nodes join
+ * the pieces of neighbouring tiles and of other packs ([GraphPiece.twin]), so a route crosses pack
+ * borders.
+ *
+ * Both searches run on the same reduced edge costs: with h_t(v) the great-circle distance to the end
+ * and h_s(v) from the start, both times the cost model's smallest weight, the forward search keys a
+ * node by d_f(v) + p(v) and the backward one by d_r(v) - p(v), where p = (h_t - h_s) / 2 (the
+ * average potentials of Goldberg and Harrelson, consistent for both). The search stops once the two
+ * smallest keys add up to the best start-to-end cost found, so the route is optimal for the
+ * [CostModel], like the unidirectional search was. Costs are direction aware (ascent one way is
+ * descent the other); the backward search prices each edge in the direction of travel. Ends on
+ * separate networks fail when either search runs out of nodes, which takes as long as the smaller
+ * of the two networks.
+ */
+class TileRouter(val tiles: GraphPieces) : Router {
+    /** A snapped end: the piece it lies in and the snap on that piece's graph. */
+    private class End(val piece: GraphPiece, val snap: EdgeSnap)
+
+    /** One traversal of edge [e] of [piece] from fraction [f0] to [f1] of its length. */
+    private class Step(val piece: GraphPiece, val e: Int, val f0: Double, val f1: Double)
+
+    /**
+     * The pieces one route has asked for, each tile looked up once: the search holds these objects
+     * whatever the shared cache evicts meanwhile, so a node is never met again in a reloaded copy.
+     */
+    private class View(val tiles: GraphPieces) {
+        private val memo = HashMap<Long, List<GraphPiece>>()
+        fun pieces(x: Int, y: Int): List<GraphPiece> = memo.getOrPut((y.toLong() shl 32) or (x.toLong() and 0xFFFFFFFFL)) { tiles.pieces(x, y) }
     }
 
-    private fun offNetwork(reason: RouteFailure, which: String, lat: Double, lon: Double, maxSnapM: Double): RouteResult.Failed {
-        val nearest = graph.nearestDistanceM(lat, lon, FAR_SEARCH_M)
-        val where = if (nearest == null) "none within ${km(FAR_SEARCH_M)} km" else "the nearest is ${nearest.roundToLong()} m away"
+    override fun route(
+        fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
+        mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
+    ): RouteResult {
+        if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the pack has no trails or roads to route on")
+        val view = View(tiles)
+        val s = snap(view, fromLat, fromLon, maxSnapM) ?: return offNetwork(view, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
+        val t = snap(view, toLat, toLon, maxSnapM) ?: return offNetwork(view, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
+        return Search(view, CostModel(mode), s, t).run(name, ids)
+    }
+
+    override fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = snap(View(tiles), lat, lon, maxDistanceM)?.let { e ->
+        e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
+    }
+
+    private fun snap(view: View, lat: Double, lon: Double, maxM: Double): End? {
+        val box = TiledGraph.around(lat, lon, maxM)
+        var best: End? = null
+        for ((x, y) in tiles.tilesIn(box[0], box[1], box[2], box[3])) {
+            for (p in view.pieces(x, y)) {
+                val s = p.graph.nearest(lat, lon, maxM) ?: continue
+                if (best == null || s.distanceM < best.snap.distanceM) best = End(p, s)
+            }
+        }
+        return best
+    }
+
+    private fun offNetwork(view: View, reason: RouteFailure, which: String, lat: Double, lon: Double, maxSnapM: Double): RouteResult.Failed {
+        val nearest = snap(view, lat, lon, Router.FAR_SEARCH_M)?.snap?.distanceM
+        val where = if (nearest == null) "none within ${Router.km(Router.FAR_SEARCH_M)} km" else "the nearest is ${nearest.roundToLong()} m away"
         return RouteResult.Failed(
             reason, "no trail or road within ${maxSnapM.roundToLong()} m of the $which point ($where)",
             linkedMapOf("maxSnapM" to maxSnapM, "nearestM" to nearest?.let { PlannedRoute.r1(it) }),
         )
     }
 
-    /** One traversal of edge [e] from fraction [f0] to [f1] of its length. */
-    private class Step(val e: Int, val f0: Double, val f1: Double)
-
-    private fun stepCost(model: CostModel, e: Int, f0: Double, f1: Double): Double {
-        val g = graph
+    private fun stepCost(model: CostModel, p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
+        val g = p.graph
         val part = abs(f1 - f0)
         if (part == 0.0) return 0.0
         val len = g.edgeLength[e] * part
@@ -241,74 +306,237 @@ class Router(val graph: RoutingGraph) {
         return len * model.weight(g, e) + model.slopePenalty(len, up, down)
     }
 
-    private fun search(model: CostModel, s: EdgeSnap, t: EdgeSnap, name: String, ids: UuidGenerator): RouteResult {
-        val g = graph
-        val n = g.nodeCount
-        val start = n
-        val goal = n + 1
-        val best = DoubleArray(n + 2) { Double.POSITIVE_INFINITY }
-        val parent = IntArray(n + 2) { -1 }
-        val parentStep = arrayOfNulls<Step>(n + 2)
-        val closed = BooleanArray(n + 2)
-        val heap = Heap()
-        val hw = model.minWeight
-        fun h(v: Int): Double = if (v >= n) 0.0 else hw * TrackStats.distanceM(g.nodeLat[v] / E6, g.nodeLon[v] / E6, t.lat, t.lon)
-        fun relax(u: Int, v: Int, step: Step) {
-            val c = best[u] + stepCost(model, step.e, step.f0, step.f1)
-            if (c < best[v]) {
-                best[v] = c
-                parent[v] = u
-                parentStep[v] = step
-                heap.push(c + h(v), v)
+    /**
+     * One search. Nodes have dense ids: 0 is the start, 1 the end, and each piece the search touches
+     * gets a block of ids (its base plus the node's index in the piece). Per node and direction: the
+     * best cost, the parent and how it was reached ([via]: `edge * 2 + reversed` for an edge
+     * travelled from the parent, -1 for a step to a twin, -2/-3 for the partial edge of an end).
+     */
+    private inner class Search(val view: View, val model: CostModel, val s: End, val t: End) {
+        private val pieces = ArrayList<GraphPiece>()
+        private val bases = IntList()
+        private val baseOf = HashMap<GraphPiece, Int>()
+        private var size = 2
+        private var cap = 0
+        private var dist = arrayOf(DoubleArray(0), DoubleArray(0))
+        private var parent = arrayOf(IntArray(0), IntArray(0))
+        private var via = arrayOf(IntArray(0), IntArray(0))
+        private var closed = arrayOf(BooleanArray(0), BooleanArray(0))
+        private var pot = DoubleArray(0)
+        private val heaps = arrayOf(Heap(), Heap())
+        private val networkM = DoubleArray(2)
+        private val hw = model.minWeight
+        private val st = TrackStats.distanceM(s.snap.lat, s.snap.lon, t.snap.lat, t.snap.lon)
+        var expanded = 0
+
+        init {
+            grow(2)
+            pot[START] = hw * st / 2
+            pot[GOAL] = -hw * st / 2
+        }
+
+        private fun grow(n: Int) {
+            if (n <= cap) return
+            val c = maxOf(n, cap * 2, 64)
+            for (d in 0..1) {
+                val old = cap
+                dist[d] = dist[d].copyOf(c).also { it.fill(Double.POSITIVE_INFINITY, old, c) }
+                parent[d] = parent[d].copyOf(c).also { it.fill(-1, old, c) }
+                via[d] = via[d].copyOf(c)
+                closed[d] = closed[d].copyOf(c)
+            }
+            pot = pot.copyOf(c).also { it.fill(Double.NaN, cap, c) }
+            cap = c
+        }
+
+        /** The id block of [p], added on first touch. */
+        fun base(p: GraphPiece): Int = baseOf.getOrPut(p) {
+            val b = size
+            size += p.graph.nodeCount
+            grow(size)
+            pieces += p
+            bases.add(b)
+            b
+        }
+
+        /** Index into [pieces] of node [v] (not the start or end). */
+        private fun pieceIndex(v: Int): Int {
+            var lo = 0
+            var hi = bases.size - 1
+            while (lo < hi) {
+                val mid = (lo + hi + 1) / 2
+                if (bases[mid] <= v) lo = mid else hi = mid - 1
+            }
+            return lo
+        }
+
+        private fun potential(v: Int): Double {
+            val p = pot[v]
+            if (!p.isNaN()) return p
+            val pi = pieceIndex(v)
+            val g = pieces[pi].graph
+            val n = v - bases[pi]
+            val lat = g.nodeLat[n] / E6
+            val lon = g.nodeLon[n] / E6
+            val toEnd = TrackStats.distanceM(lat, lon, t.snap.lat, t.snap.lon)
+            val fromStart = TrackStats.distanceM(s.snap.lat, s.snap.lon, lat, lon)
+            return (hw * (toEnd - fromStart) / 2).also { pot[v] = it }
+        }
+
+        private var mu = Double.POSITIVE_INFINITY
+        private var meet = -1
+        private var direct = false
+
+        /** Offers cost [c] for node [v] in direction [d] (0 forward, 1 backward), reached from [from] by [how]. */
+        private fun relax(d: Int, v: Int, c: Double, from: Int, how: Int) {
+            if (closed[d][v] || c >= dist[d][v]) return
+            dist[d][v] = c
+            parent[d][v] = from
+            via[d][v] = how
+            heaps[d].push(if (d == 0) c + potential(v) else c - potential(v), v)
+            val other = dist[1 - d][v]
+            if (other < Double.POSITIVE_INFINITY && c + other < mu) {
+                mu = c + other
+                meet = v
+                direct = false
             }
         }
-        best[start] = 0.0
-        heap.push(h(start), start)
-        var expanded = 0
-        while (heap.size > 0) {
-            val u = heap.pop()
-            if (closed[u]) continue
-            closed[u] = true
-            expanded++
-            if (u == goal) break
-            if (u == start) {
-                relax(start, g.edgeFrom[s.edge], Step(s.edge, s.fraction, 0.0))
-                relax(start, g.edgeTo[s.edge], Step(s.edge, s.fraction, 1.0))
-                if (s.edge == t.edge) relax(start, goal, Step(s.edge, s.fraction, t.fraction))
-                continue
+
+        private fun expandEnd(d: Int) {
+            val e = if (d == 0) s else t
+            val b = base(e.piece)
+            val g = e.piece.graph
+            val f = e.snap.fraction
+            val edge = e.snap.edge
+            // Forward: from the start along its edge to either end. Backward: from either end of the end's edge to the end.
+            if (d == 0) {
+                relax(0, b + g.edgeFrom[edge], stepCost(model, e.piece, edge, f, 0.0), START, -2)
+                relax(0, b + g.edgeTo[edge], stepCost(model, e.piece, edge, f, 1.0), START, -3)
+            } else {
+                relax(1, b + g.edgeFrom[edge], stepCost(model, e.piece, edge, 0.0, f), GOAL, -2)
+                relax(1, b + g.edgeTo[edge], stepCost(model, e.piece, edge, 1.0, f), GOAL, -3)
             }
-            if (u == g.edgeFrom[t.edge]) relax(u, goal, Step(t.edge, 0.0, t.fraction))
-            if (u == g.edgeTo[t.edge]) relax(u, goal, Step(t.edge, 1.0, t.fraction))
-            for (i in g.adjStart[u] until g.adjStart[u + 1]) {
+            closed[d][if (d == 0) START else GOAL] = true
+        }
+
+        private fun expand(d: Int, u: Int) {
+            val pi = pieceIndex(u)
+            val p = pieces[pi]
+            val g = p.graph
+            val b = bases[pi]
+            val lu = u - b
+            val du = dist[d][u]
+            for (i in g.adjStart[lu] until g.adjStart[lu + 1]) {
                 val a = g.adjEdge[i]
                 val e = a shr 1
-                val forward = a and 1 == 0
-                val v = if (forward) g.edgeTo[e] else g.edgeFrom[e]
-                if (closed[v]) continue
-                relax(u, v, if (forward) Step(e, 0.0, 1.0) else Step(e, 1.0, 0.0))
+                val atFrom = a and 1 == 0 // u is the edge's `from` node
+                val v = b + if (atFrom) g.edgeTo[e] else g.edgeFrom[e]
+                networkM[d] += g.edgeLength[e] / 2.0
+                if (closed[d][v]) continue
+                // Travel order is u -> v forward and v -> u backward.
+                val rev = if (d == 0) !atFrom else atFrom
+                val c = if (rev) stepCost(model, p, e, 1.0, 0.0) else stepCost(model, p, e, 0.0, 1.0)
+                relax(d, v, du + c, u, e * 2 + if (rev) 1 else 0)
+            }
+            if (p.boundary[lu]) {
+                val lon = g.nodeLon[lu]
+                val lat = g.nodeLat[lu]
+                for (q in neighbourPieces(lon, lat)) {
+                    if (q === p) continue
+                    val lq = q.twin(lon, lat, tolerant = q.archive != p.archive)
+                    if (lq >= 0) relax(d, base(q) + lq, du, u, -1)
+                }
             }
         }
-        if (!closed[goal]) {
-            return RouteResult.Failed(RouteFailure.NOT_CONNECTED, "no trail connects start and end in this pack", mapOf("expanded" to expanded))
+
+        /** Pieces of every tile within [GraphPieces.JOIN_M] of the point. */
+        private fun neighbourPieces(lonE6: Int, latE6: Int): List<GraphPiece> {
+            val box = TiledGraph.around(latE6 / E6, lonE6 / E6, GraphPieces.JOIN_M * 2)
+            val tl = tiles.tilesIn(box[0], box[1], box[2], box[3])
+            return if (tl.size == 1) view.pieces(tl[0].first, tl[0].second) else tl.flatMap { (x, y) -> view.pieces(x, y) }
         }
-        val steps = ArrayList<Step>()
-        var v = goal
-        while (v != start) {
-            steps += parentStep[v]!!
-            v = parent[v]
+
+        fun run(name: String, ids: UuidGenerator): RouteResult {
+            if (s.piece === t.piece && s.snap.edge == t.snap.edge) {
+                mu = stepCost(model, s.piece, s.snap.edge, s.snap.fraction, t.snap.fraction)
+                direct = true
+            }
+            dist[0][START] = 0.0
+            dist[1][GOAL] = 0.0
+            expandEnd(0)
+            expandEnd(1)
+            expanded = 2
+            var exhausted = -1
+            while (true) {
+                val f = heaps[0]
+                val r = heaps[1]
+                if (f.size == 0 || r.size == 0) {
+                    exhausted = if (f.size == 0) 0 else 1
+                    break
+                }
+                if (f.peekKey() + r.peekKey() >= mu) break
+                val d = if (f.size <= r.size) 0 else 1
+                val u = heaps[d].pop()
+                if (closed[d][u]) continue
+                closed[d][u] = true
+                expanded++
+                expand(d, u)
+            }
+            if (mu == Double.POSITIVE_INFINITY) {
+                val startKm = Router.km(networkM[0])
+                val endKm = Router.km(networkM[1])
+                val (sAt, eAt) = if (exhausted == 0) "$startKm" to "at least $endKm" else "at least $startKm" to "$endKm"
+                return RouteResult.Failed(
+                    RouteFailure.NOT_CONNECTED,
+                    "no trail connects start and end: they are on separate networks " +
+                        "($sAt km of trail and road around the start, $eAt km around the end)",
+                    linkedMapOf("startNetworkKm" to startKm, "endNetworkKm" to endKm, "exhausted" to if (exhausted == 0) "start" else "end", "expanded" to expanded),
+                )
+            }
+            val steps = ArrayList<Step>()
+            if (direct) {
+                steps += Step(s.piece, s.snap.edge, s.snap.fraction, t.snap.fraction)
+            } else {
+                var v = meet
+                while (v != START) { step(0, v)?.let { steps += it }; v = parent[0][v] }
+                steps.reverse()
+                v = meet
+                while (v != GOAL) { step(1, v)?.let { steps += it }; v = parent[1][v] }
+            }
+            val memory = linkedMapOf<String, Any?>(
+                "tiles" to pieces.size, "graphBytes" to pieces.sumOf { it.graph.approxBytes() },
+                "searchBytes" to cap.toLong() * SEARCH_BYTES_PER_NODE, "searchNodes" to size,
+            )
+            return RouteResult.Found(plan(model, steps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory))
         }
-        steps.reverse()
-        return RouteResult.Found(plan(model, steps.filter { it.f0 != it.f1 }, best[goal], s, t, expanded, name, ids))
+
+        /** The step that reached [v] in direction [d], in travel order; null for a twin. */
+        private fun step(d: Int, v: Int): Step? {
+            val how = via[d][v]
+            if (how == -1) return null
+            val end = if (d == 0) s else t
+            if (how == -2 || how == -3) {
+                val f = end.snap.fraction
+                val tip = if (how == -2) 0.0 else 1.0
+                return if (d == 0) Step(end.piece, end.snap.edge, f, tip) else Step(end.piece, end.snap.edge, tip, f)
+            }
+            val p = pieces[pieceIndex(v)]
+            val e = how shr 1
+            return if (how and 1 == 1) Step(p, e, 1.0, 0.0) else Step(p, e, 0.0, 1.0)
+        }
     }
 
-    private fun plan(model: CostModel, steps: List<Step>, cost: Double, s: EdgeSnap, t: EdgeSnap, expanded: Int, name: String, ids: UuidGenerator): PlannedRoute {
-        val g = graph
+    private fun plan(
+        model: CostModel, steps: List<Step>, cost: Double, s: End, t: End, expanded: Int, name: String, ids: UuidGenerator,
+        memory: Map<String, Any?>,
+    ): PlannedRoute {
         val pts = ArrayList<RoutePoint>()
         var ascent = 0.0
         var descent = 0.0
         val byClass = LinkedHashMap<WayClass, Double>()
         val runs = ArrayList<Pair<String?, Double>>() // T49: consecutive stretches by way name
         for (st in steps) {
+            val g = st.piece.graph
             val nm = g.name(st.e)
             val metres = g.edgeLength[st.e] * abs(st.f1 - st.f0)
             if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else runs += nm to metres
@@ -317,33 +545,33 @@ class Router(val graph: RoutingGraph) {
             ascent += (if (fwd) g.edgeAscent[st.e] else g.edgeDescent[st.e]) * part
             descent += (if (fwd) g.edgeDescent[st.e] else g.edgeAscent[st.e]) * part
             byClass[g.wayClass(st.e)] = (byClass[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part
-            for (p in subPoints(st.e, st.f0, st.f1)) {
+            for (p in subPoints(g, st.e, st.f0, st.f1)) {
                 val last = pts.lastOrNull()
                 if (last != null && last.lat == p.lat && last.lon == p.lon) continue
                 pts += p
             }
         }
-        if (pts.isEmpty()) pts += RoutePoint(s.lat, s.lon)
+        if (pts.isEmpty()) pts += RoutePoint(s.snap.lat, s.snap.lon)
         if (pts.size == 1) pts += pts[0]
         val track = listOf(pts.map { TrackPoint(it.lat, it.lon, it.ele) })
         val distance = TrackStats.of(track).distanceM
         val hasEle = pts.any { it.ele != null }
         val time = model.timeS(distance, if (hasEle) ascent else 0.0)
-        val via = runs.filter { it.first != null && it.second >= MIN_VIA_M }.map { it.first!! to it.second }
+        val via = runs.filter { it.first != null && it.second >= Router.MIN_VIA_M }.map { it.first!! to it.second }
             .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
-        val desc = "${km(distance)} km" + (if (hasEle) ", +${ascent.roundToLong()} m / -${descent.roundToLong()} m" else "") +
+        val desc = "${Router.km(distance)} km" + (if (hasEle) ", +${ascent.roundToLong()} m / -${descent.roundToLong()} m" else "") +
             ", about ${PlannedRoute.hm(time)}" + (if (via.isNotEmpty()) " via " + via.take(3).joinToString(", ") { it.first } else "") +
             " (${model.mode.label}; planned offline by Dystopo)"
         val route = Route(ids.next(), name, pts, description = desc, type = model.mode.label)
+        fun named(e: End) = e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
         return PlannedRoute(
             route, model.mode, distance, if (hasEle) ascent else null, if (hasEle) descent else null, time,
-            TrackStats.profile(track, PROFILE_SAMPLES), cost, steps.size, s, t, expanded, byClass, via,
+            TrackStats.profile(track, Router.PROFILE_SAMPLES), cost, steps.size, named(s), named(t), expanded, byClass, via, memory,
         )
     }
 
     /** The points of edge [e] between fractions [f0] and [f1] of its length, in travel order, ends interpolated. */
-    private fun subPoints(e: Int, f0: Double, f1: Double): List<RoutePoint> {
-        val g = graph
+    private fun subPoints(g: RoutingGraph, e: Int, f0: Double, f1: Double): List<RoutePoint> {
         val cum = g.cumulative(e)
         val total = cum.last()
         val n = cum.size
@@ -387,6 +615,8 @@ class Router(val graph: RoutingGraph) {
         var size = 0
             private set
 
+        fun peekKey(): Double = pri[0]
+
         fun push(p: Double, v: Int) {
             if (size == pri.size) { pri = pri.copyOf(size * 2); node = node.copyOf(size * 2) }
             var i = size++
@@ -420,16 +650,11 @@ class Router(val graph: RoutingGraph) {
         }
     }
 
-    companion object {
-        /** How far a tapped point may be from the nearest trail or road. */
-        const val DEFAULT_SNAP_M = 300.0
-        /** How far an off-network failure looks for the nearest line, to say how far it is. */
-        const val FAR_SEARCH_M = 10_000.0
-        const val PROFILE_SAMPLES = 100
-        /** T49: named stretches shorter than this are left out of [PlannedRoute.via] (a crossing, a junction stub). */
-        const val MIN_VIA_M = 30.0
-        private const val E6 = 1e6
-
-        fun km(m: Double) = (m / 100).roundToLong() / 10.0
+    private companion object {
+        const val START = 0
+        const val GOAL = 1
+        const val E6 = 1e6
+        /** Two directions of cost (8), parent (4), how (4) and closed (1), plus the potential (8). */
+        const val SEARCH_BYTES_PER_NODE = 42L
     }
 }

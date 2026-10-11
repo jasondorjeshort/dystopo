@@ -104,7 +104,7 @@ object Trips {
 
     /** An editor on the active pack's graph (waits up to [waitMs] for it to load or build; straight legs without one). */
     fun editor(waitMs: Long = 120_000): RouteEditor {
-        val graph = try { RoutePlanner.graph(waitMs) } catch (e: RoutePlanner.NotReady) { null }
+        val graph = try { RoutePlanner.router(waitMs) } catch (e: RoutePlanner.NotReady) { null }
         return RouteEditor(graph, elevation())
     }
 

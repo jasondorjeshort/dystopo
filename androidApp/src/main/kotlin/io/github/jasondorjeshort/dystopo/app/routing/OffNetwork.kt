@@ -5,7 +5,6 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
-import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.routing.WayClass
 import kotlin.math.PI
 import kotlin.math.atan2
@@ -55,7 +54,7 @@ object OffNetwork {
     fun snapUp(m: Double, max: Double): Double = minOf(max, kotlin.math.ceil(m / 100.0) * 100.0)
 
     /** [failed] with the message and details naming the nearest line; other failures unchanged. */
-    fun explain(g: RoutingGraph, failed: RouteResult.Failed, from: Pair<Double, Double>, to: Pair<Double, Double>, snapM: Double, maxSnapM: Double, units: ContourUnits): RouteResult.Failed {
+    fun explain(g: Router, failed: RouteResult.Failed, from: Pair<Double, Double>, to: Pair<Double, Double>, snapM: Double, maxSnapM: Double, units: ContourUnits): RouteResult.Failed {
         val which = when (failed.reason) {
             RouteFailure.START_OFF_NETWORK -> "start"
             RouteFailure.END_OFF_NETWORK -> "end"
@@ -63,11 +62,11 @@ object OffNetwork {
         }
         val (lat, lon) = if (which == "start") from else to
         val snap = g.nearest(lat, lon, Router.FAR_SEARCH_M)
-        val line = snap?.let { lineName(g.name(it.edge), g.wayClass(it.edge)) }
+        val line = snap?.let { lineName(it.name, it.wayClass ?: WayClass.PATH) }
         val dir = snap?.let { direction(lat, lon, it.lat, it.lon) }
         val details = LinkedHashMap(failed.details) + linkedMapOf(
             "maxSnapM" to snapM, "snapSettingMaxM" to maxSnapM,
-            "nearestName" to snap?.let { g.name(it.edge) }, "nearestLine" to line, "nearestDirection" to dir,
+            "nearestName" to snap?.name, "nearestLine" to line, "nearestDirection" to dir,
             "nearestAt" to snap?.let { listOf(Math.round(it.lat * 1e6) / 1e6, Math.round(it.lon * 1e6) / 1e6) },
         )
         return RouteResult.Failed(failed.reason, message(which, snapM, maxSnapM, line, snap?.distanceM, dir, units), details)

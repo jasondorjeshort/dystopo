@@ -48,7 +48,7 @@ commands, endpoints and the agent workflow are in [CLAUDE.md](../CLAUDE.md); one
 | MVT encoder/decoder | `shared/.../mvt/` | hand-written protobuf |
 | GPX 1.1 with `dystopo:id` | `shared/.../gpx/` | hand-written XML, extensions preserved |
 | Search index `*-search.idx` | `shared/.../search/` | versioned, checksummed, pack fingerprint |
-| Routing graph `*-graph.idx` | `shared/.../routing/` | `DYSG` v2, trail names, both pack fingerprints |
+| Routing graph `*-graph.idx` | `shared/.../routing/` | `DYSG` v3 (T76): tile directory, then one body per z11 graph tile (nodes, edges, trail names), both pack fingerprints; tiles load on demand |
 | Sync bundle `DSYNC` | `shared/.../sync/` | v1 whole, v2 paged; gzip; one exception type on bad input |
 | Encrypted frame `DSEAL`, relay reply `DRLY` | `shared/.../sync/EncryptedBundle.kt`, `sync/crypto/` | ChaCha20-Poly1305 under HKDF(share code, per-frame salt); LAN link and server relay (T72) |
 | Track database | `shared/src/commonMain/sqldelight/` | schema versions frozen under `databases/`, migrations verified by a JVM test |

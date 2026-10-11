@@ -15,9 +15,18 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
+import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
+import io.github.jasondorjeshort.dystopo.routing.GraphTileCache
+import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
+import io.github.jasondorjeshort.dystopo.routing.GraphTiler
+import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
+import io.github.jasondorjeshort.dystopo.routing.TileRouter
+import io.github.jasondorjeshort.dystopo.routing.TiledGraph
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import io.github.jasondorjeshort.dystopo.sync.Delete
 import io.github.jasondorjeshort.dystopo.sync.EntityKind
@@ -45,11 +54,14 @@ import java.util.concurrent.atomic.AtomicLong
  * - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike][&pack=<name>][&snap=m]`
  *   (or `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points (each snapped onto a trail
  *   within `snap` metres, default 300 as on the phone; legs along trails, straight where no trail
- *   connects). The pack is `pack=` (a catalog id: `<name>` of `out/<name>-dem.pmtiles` plus its
- *   vector archive), else the first pack whose vector archive holds both ends (then the start). Its
- *   graph is built on first use into `<vector archive>-graph.idx` next to the pack (the phone's and
- *   `devtool route`'s file name), reused while both archives are unchanged. Straight legs take their
- *   elevation every 25 m from the DEM (packs first, else the live `best` source).
+ *   connects). The reported pack is `pack=` (a catalog id: `<name>` of `out/<name>-dem.pmtiles` plus
+ *   its vector archive; 400 when unknown), else the first pack whose vector archive holds both ends
+ *   (then the start). T76: the route runs over that pack and every other pack whose box comes within
+ *   [RoutePlanner.NEAR_M] of the points, one tiled network, so it crosses pack borders. Each pack's
+ *   graph is built on first use into `<vector archive>-graph.idx` next to it (the phone's and
+ *   `devtool route`'s file name, z11 graph tiles read on demand into one LRU), reused while both
+ *   archives are unchanged. Straight legs take their elevation every 25 m from the DEM (packs first,
+ *   else the live `best` source).
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
@@ -59,7 +71,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   trail/straight/fixed, `points`, `coordinates` as [lon, lat, ele]), `summary` ([RouteSummary]:
  *   distance, ascent, descent, hike-model time, metres on straight legs, 100-sample profile),
  *   `notes` (why legs are straight: `start_off_network`, `not_connected`, `no_graph`, ...), `graph`
- *   (`loaded`, `built` or `cached`, with timings) and `ms`. Bad input is a 400 with `error`.
+ *   (`loaded`, `built` or `cached`, with timings: the reported pack's, every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
  * - `POST /route/gpx` with JSON `{"path", "name", "id"}`: the route as GPX ([RouteGpx]: one `rte`,
  *   via marks, our ids), byte for byte what the phone exports for the same trip.
  * - `POST /route/bundle` with JSON `{"device": "<uuid>", "ops": [...]}`: the browser's own replica
@@ -70,7 +82,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   "delete", "id"}`; a `path` or `waypoints` value must decode. The bundle's base is empty and it
  *   holds every op the page sends, so a push is idempotent.
  * - `GET /route/packs`: packs with a vector archive (`name`, files, `bounds`, graph state);
- *   `GET /route/status`: request counts, graph builds and timings.
+ *   `GET /route/status`: request counts, graph builds and timings, `tileCache` (T76: graph tiles in memory, loads, hits, evictions) and `lastRouteMemory` (the last route's tiles, their bytes, the search's own).
  * - `GET /trips.js` (also `/tools/demo/trips.js`): the page's trip editor script, `tools/demo/trips.js`
  *   next to the served page.
  */
@@ -185,7 +197,8 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     /** A pack the planner can route on: its vector archive (the graph's source) and DEM. */
     class Pack(val name: String, val vector: File, val dem: File?, val bounds: BoundingBox)
 
-    private class Loaded(val graph: RoutingGraph, val key: String, val info: Map<String, Any?>)
+    /** A pack's open graph file (T76: tiles read on demand) and how it was obtained. */
+    private class Loaded(val archive: GraphTileArchive, val key: String, val info: Map<String, Any?>)
 
     private val graphs = ConcurrentHashMap<String, Loaded>()
     private val locks = ConcurrentHashMap<String, Any>()
@@ -194,6 +207,10 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     private val requests = ConcurrentHashMap<String, AtomicLong>()
     val errors = AtomicLong()
     @Volatile private var lastMs: Long = 0
+    @Volatile private var lastMemory: Map<String, Any?>? = null
+
+    /** T76: decoded graph tiles of every pack, shared by all requests (least recently used dropped past the cap). */
+    val tileCache = GraphTileCache(GraphTileCache.DEFAULT_MAX_BYTES) { block -> synchronized(this) { block() } }
 
     /** Packs in [outDir] with a vector archive, by name ([PackNames]: the outdoors archive over `-osm`). */
     fun packs(): List<Pack> {
@@ -215,21 +232,37 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         return all.firstOrNull { has(it, points.first()) && has(it, points.last()) } ?: all.firstOrNull { has(it, points.first()) }
     }
 
+    /**
+     * T76: every pack a route through [points] may use: those whose box comes within [NEAR_M] of the
+     * points' box, [first] (the reported pack) leading. A route crosses from one pack into the next.
+     */
+    fun packsNear(first: Pack?, points: List<Pair<Double, Double>>): List<Pack> {
+        if (points.isEmpty()) return listOfNotNull(first)
+        val lat0 = points.minOf { it.first }; val lat1 = points.maxOf { it.first }
+        val lon0 = points.minOf { it.second }; val lon1 = points.maxOf { it.second }
+        val dLat = NEAR_M / 111_195.0
+        val dLon = NEAR_M / (111_195.0 * Math.cos(Math.toRadians((lat0 + lat1) / 2)).coerceAtLeast(0.01))
+        val near = packs().filter { p ->
+            p.bounds.east >= lon0 - dLon && p.bounds.west <= lon1 + dLon && p.bounds.north >= lat0 - dLat && p.bounds.south <= lat1 + dLat
+        }
+        return (listOfNotNull(first) + near).distinctBy { it.vector.absolutePath }
+    }
+
     private fun stamp(f: File?): String = if (f == null) "-" else "${f.length()}:${f.lastModified()}"
 
-    /** The pack's graph: in memory, else `<vector archive>-graph.idx` when it matches both archives, else built and written there. */
-    fun graph(pack: Pack): Pair<RoutingGraph, Map<String, Any?>> {
+    /** The pack's graph file: open in memory, else `<vector archive>-graph.idx` when it matches both archives, else built and written there. */
+    fun graph(pack: Pack): Pair<GraphTileArchive, Map<String, Any?>> {
         val key = stamp(pack.vector) + "|" + stamp(pack.dem)
         val id = pack.vector.absolutePath
-        graphs[id]?.takeIf { it.key == key }?.let { return it.graph to mapOf("action" to "cached", "file" to it.info["file"]) }
+        graphs[id]?.takeIf { it.key == key }?.let { return it.archive to mapOf("action" to "cached", "file" to it.info["file"]) }
         synchronized(locks.computeIfAbsent(id) { Any() }) {
-            graphs[id]?.takeIf { it.key == key }?.let { return it.graph to mapOf("action" to "cached", "file" to it.info["file"]) }
+            graphs[id]?.takeIf { it.key == key }?.let { return it.archive to mapOf("action" to "cached", "file" to it.info["file"]) }
             building += pack.name
             try {
-                val (g, info) = openOrBuild(pack)
-                graphs[id] = Loaded(g, key, info)
+                val (a, info) = openOrBuild(pack)
+                graphs.put(id, Loaded(a, key, info))?.let { tileCache.forget(it.archive) }
                 failures.remove(pack.name)
-                return g to info
+                return a to info
             } catch (e: IllegalArgumentException) {
                 failures[pack.name] = e.message ?: e.toString()
                 throw IllegalArgumentException("routing graph for pack ${pack.name} failed: ${e.message}")
@@ -241,42 +274,70 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
 
     private fun reader(f: File): PmtilesReader = PmtilesReader.open(FileRangeSource(f), Gzip.decompressors)
 
-    private fun openOrBuild(pack: Pack): Pair<RoutingGraph, Map<String, Any?>> {
+    /** Opens the graph file through ranged reads (only the header now; tiles as routes reach them). */
+    private fun open(file: File): GraphTileArchive {
+        val src = FileRangeSource(file)
+        return GraphTileFile.open { offset, length -> src.read(offset, length) }
+    }
+
+    private fun openOrBuild(pack: Pack): Pair<GraphTileArchive, Map<String, Any?>> {
         val file = File(pack.vector.absoluteFile.parentFile, RoutingGraph.fileNameFor(pack.vector.name))
         val fingerprint = RoutingGraphBuilder.fingerprint(reader(pack.vector).header)
         val demFp = pack.dem?.let { RoutingGraphBuilder.fingerprint(reader(it).header) }.orEmpty()
         var reason = "missing"
         if (file.isFile) {
             val t0 = System.nanoTime()
-            val g = runCatching { RoutingGraph.decode(file.readBytes()) }
+            val a = runCatching { open(file) }
             val ms = (System.nanoTime() - t0) / 1_000_000
-            g.onSuccess {
-                if (it.source.fingerprint == fingerprint && it.source.demFingerprint == demFp) {
-                    return it to linkedMapOf("action" to "loaded", "file" to file.path, "bytes" to file.length(), "loadMs" to ms)
+            a.onSuccess {
+                if (it.source.fingerprint == fingerprint && it.source.demFingerprint == demFp && it.tileZoom == GraphTiler.ZOOM) {
+                    return it to linkedMapOf("action" to "loaded", "file" to file.path, "bytes" to file.length(), "loadMs" to ms, "tiles" to it.entries.size)
                 }
             }
-            reason = g.exceptionOrNull()?.message ?: "stale (pack changed)"
+            reason = a.exceptionOrNull()?.message ?: "stale (pack changed)"
         }
         val t0 = System.nanoTime()
         // A small cache, as on the phone and in `devtool route`: the builder samples in tile order.
         val pyramid = pack.dem?.let { dem -> val r = reader(dem); val h = r.header; DemPyramid(h.minZoom, h.maxZoom, demDecoder, 32) { z, x, y -> synchronized(r) { r.tile(z, x, y) } } }
         val builder = RoutingGraphBuilder(pyramid?.let { DemElevation(it) }, demFp).withClock { System.nanoTime() / 1_000_000 }
         val graph = builder.build(reader(pack.vector), pack.vector.name, System.currentTimeMillis())
-        val bytes = graph.encode()
+        val bytes = GraphTileFile.encode(graph)
         val tmp = File(file.path + ".tmp")
         tmp.writeBytes(bytes)
         if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
-        return graph to linkedMapOf(
+        val archive = open(file)
+        return archive to linkedMapOf(
             "action" to "built", "file" to file.path, "bytes" to bytes.size, "buildMs" to (System.nanoTime() - t0) / 1_000_000,
-            "rebuildReason" to reason, "nodes" to graph.nodeCount, "demTilesDecoded" to pyramid?.tilesDecoded,
+            "rebuildReason" to reason, "nodes" to graph.nodeCount, "tiles" to archive.entries.size, "demTilesDecoded" to pyramid?.tilesDecoded,
         )
     }
 
     private fun count(op: String) = requests.computeIfAbsent(op) { AtomicLong() }.incrementAndGet()
 
-    private fun editor(pack: Pack?, snapM: Double): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
-        val (g, info) = pack?.let { graph(it) } ?: (null to null)
-        return Triple(RouteEditor(g, elevation, snapM), info, pack)
+    /**
+     * An editor over the graphs of [pack] and every other pack near [points] (T76: one tiled network,
+     * so legs cross pack borders); the reported graph info is [pack]'s, with every pack's under `graphs`.
+     */
+    private fun editor(pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
+        val used = packsNear(pack, points)
+        val opened = used.map { p -> p to runCatching { graph(p) } }
+        // The reported pack's own failure is the request's error, as before; another pack's only drops it from the network.
+        opened.firstOrNull { it.first === pack }?.second?.exceptionOrNull()?.let { throw it }
+        val ok = opened.mapNotNull { (p, r) -> r.getOrNull()?.let { p to it } }
+        if (ok.isEmpty()) return Triple(RouteEditor(null, elevation, snapM), null, pack)
+        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache)))
+        val info = ok.firstOrNull { it.first === pack }?.second?.second ?: ok.first().second.second
+        val all = info + ("graphs" to ok.map { (p, r) -> linkedMapOf("pack" to p.name, "action" to r.second["action"]) })
+        return Triple(RouteEditor(router, elevation, snapM), all, pack)
+    }
+
+    /** Remembers the memory figures of the last route found (`GET /route/status` `lastRouteMemory`). */
+    private inner class MeasuredRouter(private val inner: Router) : Router by inner {
+        override fun route(
+            fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
+        ): RouteResult = inner.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids).also { r ->
+            if (r is RouteResult.Found) lastMemory = r.plan.memory
+        }
     }
 
     /** A new route through [points] in [mode] (T60's `RouteEditor.create`). */
@@ -285,7 +346,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         require(points.size in 2..MAX_POINTS) { "2 to $MAX_POINTS points" }
         requireMode(mode)
         count("plan")
-        val (ed, info, pack) = editor(choosePack(packName, points), snapM)
+        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM)
         val path = ed.create(points, mode)
         return reply(pack, path, ed.takeNotes(), info, t0)
     }
@@ -304,7 +365,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         val first = path.via.firstOrNull()?.let { it.lat to it.lon }
         val last = path.via.lastOrNull()?.let { it.lat to it.lon }
         val anchor = listOfNotNull(first ?: (body["lat"] as? Number)?.let { lat() to lon() }, last)
-        val (ed, info, pack) = editor(choosePack(body["pack"] as? String, anchor), snap)
+        val (ed, info, pack) = editor(choosePack(body["pack"] as? String, anchor), path.via.map { it.lat to it.lon } + anchor + listOfNotNull((body["lat"] as? Number)?.let { lat() to lon() }), snap)
         count(op)
         var added: Int? = null
         val out = when (op) {
@@ -417,7 +478,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
                     else -> "none"
                 },
                 "file" to file.name, "bytes" to file.takeIf { it.isFile }?.length(),
-                "nodes" to loaded?.graph?.nodeCount, "error" to failures[p.name], "info" to loaded?.info,
+                "nodes" to loaded?.archive?.nodeCount, "tiles" to loaded?.archive?.entries?.size, "error" to failures[p.name], "info" to loaded?.info,
             ),
         )
     }
@@ -425,11 +486,14 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     fun status(): Map<String, Any?> = linkedMapOf(
         "outDir" to outDir.path, "requests" to requests.mapValues { it.value.get() }.toSortedMap(), "errors" to errors.get(),
         "lastMs" to lastMs, "building" to building.toList(), "graphs" to graphs.values.map { it.info },
+        "tileCache" to tileCache.json(), "lastRouteMemory" to lastMemory, // T76
     )
 
     companion object {
         const val MAX_POINTS = 50
         const val MAX_OPS = 20_000
+        /** T76: packs whose box comes this close to a route's points join its network. */
+        const val NEAR_M = 5_000.0
 
         /** The `waypoints` value of a route without waypoints (what the page writes on save). */
         val EMPTY_WAYPOINTS: String = RouteWaypoints.encode(emptyList())

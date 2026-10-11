@@ -298,21 +298,24 @@ The browser map plans routes on the server with the phone's shared code (`RouteR
 route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each pack in
 `outDir` with a vector archive gets a trail graph on first use, written next to it as
 `<vector archive>-graph.idx` (the phone's and `devtool route`'s file name, e.g. `rainier-outdoors-graph.idx`;
-reused while both archives are unchanged; the Rainier graph builds in about 1.5 s). The routes are open (no
-token): they read packs and write nothing but the graph files.
+reused while both archives are unchanged; the Rainier graph builds in about 1.5 s). Since T76 the file holds z11
+graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every pack
+whose box comes within 5 km of its points, so it crosses from one pack into the next (docs/PLANNING.md ›
+Routing). The routes are open (no token): they read packs and write nothing but the graph files.
 
 - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike][&pack=<name>][&snap=m]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
   metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
-  elevation every 25 m, from the packs or else the live `best` source). The pack is `pack=` (a catalog id), else
-  the first pack holding both ends, else the start; outside every pack the route is straight (`notes: ["no_graph"]`).
+  elevation every 25 m, from the packs or else the live `best` source). The reported pack is `pack=` (a catalog
+  id; 400 when unknown), else the first pack holding both ends, else the start; the route uses it and every other
+  pack near the points; outside every pack the route is straight (`notes: ["no_graph"]`).
 - `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
   `show`. Only the legs next to a moved, added or removed point are rerouted.
 - Both answer `pack`, `mode`, `path` (the encoded route: the `path` field value a trip stores in the sync log),
   `via`, `legs` (`kind` trail/straight/fixed, `coordinates` as `[lon, lat, ele]`), `summary` (distance, ascent,
   descent, hike-model time, `straightM`, a 100-sample profile), `notes` (why a leg is straight), `graph`
-  (`built`, `loaded` or `cached`) and `ms`. Bad input is a 400 with `error`.
+  (`built`, `loaded` or `cached`, the reported pack's; every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
 - `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
   what the phone exports for the same trip.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one

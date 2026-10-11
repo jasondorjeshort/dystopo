@@ -37,7 +37,7 @@ class RoutePlanTest {
         ),
         GraphSource("test", "fp", "", 14, 0),
     )
-    private val editor = RouteEditor(graph, slope)
+    private val editor = RouteEditor(io.github.jasondorjeshort.dystopo.routing.Router(graph), slope)
     private val ids = UuidGenerator(Random(60))
 
     @Test

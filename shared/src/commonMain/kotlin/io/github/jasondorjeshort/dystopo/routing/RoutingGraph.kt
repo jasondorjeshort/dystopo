@@ -37,6 +37,9 @@ data class EdgeSnap(
     val lon: Double,
     /** Distance from the query point, meters. */
     val distanceM: Double,
+    /** T76: the edge's way name and class, filled by [Router.nearest] (edge ids are local to a graph tile). */
+    val name: String? = null,
+    val wayClass: WayClass? = null,
 )
 
 /**
@@ -44,7 +47,11 @@ data class EdgeSnap(
  * intermediate vertices, length, class, surface, name (T49) and the ascent and descent from `from` to `to`.
  * Coordinates are stored as integer microdegrees (about 0.1 m), elevations in metres (NaN: no DEM)
  * rounded to decimetres, lengths, ascents and descents to decimetres, so a decoded graph is equal to
- * the one that was encoded. Pure Kotlin; the file format ([encode]/[decode]) is ours:
+ * the one that was encoded. Pure Kotlin. A graph is one pack's whole network while it is built, one
+ * graph tile once loaded from the graph file ([GraphTileFile], version 3 since T76: a directory and one
+ * [writeBody] per tile), or a stitched whole ([GraphTileArchive.whole]). [encode]/[decode] keep the
+ * single-graph layout, which was the graph file up to T76 (version 2; the file readers now refuse it
+ * and rebuild):
  *
  * ```
  * "DYSG" u8 version(=2; 1 is read too, without names)
@@ -139,7 +146,9 @@ class RoutingGraph(
     /** Edges touching node n are adjEdge[adjStart[n] until adjStart[n + 1]], each `edge * 2 + (0 forward, 1 reverse)`. */
     val adjStart: IntArray get() = adjacency.first
     val adjEdge: IntArray get() = adjacency.second
-    private val adjacency: Pair<IntArray, IntArray> by lazy { buildAdjacency() }
+    private val adjacency: Pair<IntArray, IntArray> by lazy { buildAdjacency().also { adjacencyDerived = true } }
+    private var adjacencyDerived = false // for approxBytes only
+    private var gridDerived = false
 
     private fun buildAdjacency(): Pair<IntArray, IntArray> {
         val deg = IntArray(nodeCount + 1)
@@ -185,7 +194,7 @@ class RoutingGraph(
         out
     }
 
-    private val grid: SegmentGrid by lazy { SegmentGrid(this) }
+    private val grid: SegmentGrid by lazy { SegmentGrid(this).also { gridDerived = true } }
 
     /** The nearest point on any edge within [maxDistanceM] of ([lat], [lon]), or null. */
     fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = grid.nearest(lat, lon, maxDistanceM)
@@ -220,6 +229,29 @@ class RoutingGraph(
         w.str(source.demFingerprint)
         w.u8(source.zoom)
         w.u64(source.builtAtMs)
+        writeBody(w)
+        val body = w.toByteArray()
+        val out = ByteWriter(body.size + 4)
+        out.bytes(body)
+        out.u32(fnv1a(body, body.size).toLong() and 0xFFFFFFFFL)
+        return out.toByteArray()
+    }
+
+    /**
+     * About how many bytes of heap this graph holds: its arrays, plus the adjacency lists and the
+     * nearest-edge grid once they have been derived (T76: what a route keeps in memory per tile).
+     */
+    fun approxBytes(): Long {
+        var b = 4L * (nodeLon.size + nodeLat.size + nodeEle.size) +
+            4L * (edgeFrom.size + edgeTo.size + edgeLength.size + edgeAscent.size + edgeDescent.size + edgeName.size + geomStart.size) +
+            3L * edgeCount + 4L * (geomLon.size + geomLat.size + geomEle.size) + names.sumOf { 40L + 2L * it.length }
+        if (adjacencyDerived) b += 4L * (nodeCount + 1 + 2 * edgeCount)
+        if (gridDerived) b += grid.approxBytes()
+        return b
+    }
+
+    /** Nodes, edges and names, without source or checksum: one tile's body in the graph file ([GraphTileFile]). */
+    internal fun writeBody(w: ByteWriter) {
         w.varint(nodeCount.toLong())
         var pLon = 0
         var pLat = 0
@@ -254,11 +286,6 @@ class RoutingGraph(
         w.varint(names.size.toLong())
         for (s in names) w.str(s)
         for (e in 0 until edgeCount) w.varint(edgeName[e].toLong())
-        val body = w.toByteArray()
-        val out = ByteWriter(body.size + 4)
-        out.bytes(body)
-        out.u32(fnv1a(body, body.size).toLong() and 0xFFFFFFFFL)
-        return out.toByteArray()
     }
 
     override fun equals(other: Any?): Boolean = other is RoutingGraph && source == other.source &&
@@ -294,13 +321,25 @@ class RoutingGraph(
         /** Reads a graph written by [encode]; throws IllegalArgumentException on a bad, truncated or newer file. */
         fun decode(bytes: ByteArray): RoutingGraph {
             require(bytes.size >= 9 && bytes.copyOfRange(0, 4).contentEquals(MAGIC)) { "not a routing graph" }
+            require(bytes[4].toInt() != GraphTileFile.VERSION) { "a tiled graph file (version ${GraphTileFile.VERSION}); read it with GraphTileFile" }
             val stored = ByteReader(bytes, bytes.size - 4).u32().toInt()
             require(stored == fnv1a(bytes, bytes.size - 4)) { "routing graph checksum mismatch (truncated or corrupt)" }
             val r = ByteReader(bytes.copyOfRange(0, bytes.size - 4), 4)
             try {
                 val version = r.u8()
-                require(version == VERSION || version == 1) { "routing graph version $version, expected $VERSION" }
+                require(version == VERSION || version == 1) {
+                    if (version == GraphTileFile.VERSION) "a tiled graph file (version $version); read it with GraphTileFile" else "routing graph version $version, expected $VERSION"
+                }
                 val source = GraphSource(r.str(), r.str(), r.str(), r.u8(), r.u64())
+                return readBody(r, source, withNames = version >= 2)
+            } catch (e: IllegalStateException) {
+                throw IllegalArgumentException("corrupt routing graph: ${e.message}", e)
+            }
+        }
+
+        /** Reads what [writeBody] wrote; throws IllegalStateException or IllegalArgumentException on bad data. */
+        internal fun readBody(r: ByteReader, source: GraphSource, withNames: Boolean = true): RoutingGraph {
+            run {
                 val n = r.count()
                 val nodeLon = IntArray(n)
                 val nodeLat = IntArray(n)
@@ -351,7 +390,7 @@ class RoutingGraph(
                 // T49: way names (version 2).
                 val names = ArrayList<String>()
                 val edgeName = IntArray(m)
-                if (version >= 2) {
+                if (withNames) {
                     repeat(r.count()) { names += r.str() }
                     for (e in 0 until m) edgeName[e] = r.count().also { require(it <= names.size) { "edge name out of range" } }
                 }
@@ -360,8 +399,6 @@ class RoutingGraph(
                     source, nodeLon, nodeLat, nodeEle.requantize(), from, to, len.requantizeLen(), asc.requantizeLen(), desc.requantizeLen(),
                     cls, attrs, flags, geomStart, gLon.toArray(), gLat.toArray(), gEle.toArray().requantize(), edgeName, names,
                 )
-            } catch (e: IllegalStateException) {
-                throw IllegalArgumentException("corrupt routing graph: ${e.message}", e)
             }
         }
 
@@ -388,21 +425,21 @@ class RoutingGraph(
         private fun zz(v: Int): Long = ((v shl 1) xor (v shr 31)).toLong() and 0xFFFFFFFFL
         private fun unzz(v: Long): Int = ((v ushr 1) xor -(v and 1)).toInt()
 
-        private fun ByteWriter.str(s: String) {
+        internal fun ByteWriter.str(s: String) {
             val b = s.encodeToByteArray()
             varint(b.size.toLong())
             bytes(b)
         }
 
-        private fun ByteReader.str(): String = bytes(count()).decodeToString()
+        internal fun ByteReader.str(): String = bytes(count()).decodeToString()
 
-        private fun ByteReader.count(): Int {
+        internal fun ByteReader.count(): Int {
             val v = varint()
             require(v in 0..Int.MAX_VALUE.toLong()) { "bad count $v" }
             return v.toInt()
         }
 
-        private fun fnv1a(b: ByteArray, n: Int): Int {
+        internal fun fnv1a(b: ByteArray, n: Int): Int {
             var h = 0x811C9DC5.toInt()
             for (i in 0 until n) {
                 h = h xor (b[i].toInt() and 0xFF)
@@ -425,6 +462,10 @@ private class SegmentGrid(private val g: RoutingGraph) {
     private val cells = HashMap<Long, IntList>()
     private val segEdge: IntArray
     private val segK: IntArray
+    private var refs = 0L
+
+    /** Segment arrays, cell lists (with their slack) and about 100 bytes of map entry per cell. */
+    fun approxBytes(): Long = 8L * segEdge.size + 8L * refs + 100L * cells.size
 
     init {
         lat0 = if (g.nodeCount == 0) 0.0 else (g.nodeLat.min().toDouble() + g.nodeLat.max()) / 2 / RoutingGraph.E6
@@ -443,7 +484,7 @@ private class SegmentGrid(private val g: RoutingGraph) {
                 val cx1 = floor(maxOf(x1, x2) / CELL_M).toInt()
                 val cy0 = floor(minOf(y1, y2) / CELL_M).toInt()
                 val cy1 = floor(maxOf(y1, y2) / CELL_M).toInt()
-                for (cy in cy0..cy1) for (cx in cx0..cx1) cells.getOrPut(key(cx, cy)) { IntList(4) }.add(id)
+                for (cy in cy0..cy1) for (cx in cx0..cx1) { cells.getOrPut(key(cx, cy)) { IntList(4) }.add(id); refs++ }
             }
         }
         segEdge = se.toArray()

@@ -5,7 +5,6 @@ import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
-import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -25,7 +24,7 @@ import kotlin.math.sqrt
  * editor returns is exactly what the store keeps.
  */
 class RouteEditor(
-    private val graph: RoutingGraph?,
+    private val graph: Router?, // T76: a router (tiles, several packs); Router(graph) for one graph
     private val elevation: ElevationSampler? = null,
     val snapM: Double = Router.DEFAULT_SNAP_M,
 ) {
@@ -49,7 +48,7 @@ class RouteEditor(
             return straight(a, b)
         }
         val travel = TravelMode.of(mode) ?: TravelMode.HIKE
-        return when (val r = Router(g).route(a.lat, a.lon, b.lat, b.lon, travel, snapM)) {
+        return when (val r = g.route(a.lat, a.lon, b.lat, b.lon, travel, snapM)) {
             is RouteResult.Found -> {
                 val pts = r.plan.route.points.toMutableList()
                 // The router starts and ends on its own snap of the via points: pin the ends to them exactly.

@@ -216,7 +216,7 @@ internal object RouteGraphs {
             val builder = RoutingGraphBuilder(sampler, demFingerprint(dem)).withClock { System.nanoTime() / 1_000_000 }
             val graph = builder.build(reader(pack), pack.name, System.currentTimeMillis())
             val t1 = System.nanoTime()
-            val bytes = graph.encode()
+            val bytes = io.github.jasondorjeshort.dystopo.routing.GraphTileFile.encode(graph) // T76: the tiled graph file
             out.absoluteFile.parentFile?.mkdirs()
             out.writeBytes(bytes)
             val t2 = System.nanoTime()
@@ -239,7 +239,7 @@ internal object RouteGraphs {
         var reason = "missing"
         if (f.isFile) {
             val t0 = System.nanoTime()
-            val g = runCatching { RoutingGraph.decode(f.readBytes()) }
+            val g = runCatching { io.github.jasondorjeshort.dystopo.routing.GraphTileFile.open(f.readBytes()).whole() }
             val ms = (System.nanoTime() - t0) / 1_000_000
             g.onSuccess {
                 if (it.source.fingerprint == fingerprint && it.source.demFingerprint == demFp) {
