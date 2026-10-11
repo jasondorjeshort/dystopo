@@ -7,6 +7,12 @@ each release gets a section here.
 
 ## Unreleased
 
+(nothing yet)
+
+## v0.1.3-alpha (2026-10-11)
+
+The phone reads the elevation sources itself (no server needed), the Android 8 to 10 location crash and the missing notification prompt fixed, tiled routing across pack borders, bundled fonts and icons, server metrics and limits, the release-realism sweep.
+
 ### 2026-10-11
 
 - T81: Release realism sweep (#77)
