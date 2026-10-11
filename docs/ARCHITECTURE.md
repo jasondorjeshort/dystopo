@@ -4,7 +4,7 @@ A map of the system as built, with pointers to where each piece is documented in
 measurements are in [PLANNING.md](PLANNING.md) (the dated development log at the end records every merged task);
 the task board with ownership and follow-ups is [TASKS.md](TASKS.md); the server is in [SERVER.md](SERVER.md);
 commands, endpoints and the agent workflow are in [CLAUDE.md](../CLAUDE.md); one line per merged task is in
-[CHANGELOG.md](../CHANGELOG.md).
+[CHANGELOG.md](../CHANGELOG.md). Releases: tag-driven drafts from `.github/workflows/release.yml`, verified from the draft and published by hand per the Publishing paragraph in CLAUDE.md; the first public build was v0.1.2-alpha (2026-10-10).
 
 ## Modules
 
