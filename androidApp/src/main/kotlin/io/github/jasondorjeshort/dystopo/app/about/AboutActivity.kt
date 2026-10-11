@@ -98,7 +98,7 @@ private fun AboutScreen(credits: Credits, onBack: () -> Unit, open: (String) -> 
         }
 
         Heading("Credits")
-        for (c in credits.sources) {
+        for (c in credits.sources.distinctBy { it.source.attribution }) { // T80: GEOID18 and GEOID12B share one credit text
             val s = c.source
             CardColumn {
                 BasicText(s.name, style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))

@@ -44,7 +44,7 @@ private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
 private val Red = Color(0xFFB0302A)
 
-private class CardUi(val noPack: Boolean, val server: String, val progress: String?, val importing: Boolean)
+private class CardUi(val noPack: Boolean, val server: String, val progress: String?, val importing: Boolean, val direct: Boolean, val notice: String? = null)
 
 /**
  * T79: the first-run card over the map while no pack is installed: what is missing and the three ways to
@@ -70,13 +70,13 @@ fun FirstRunCard(fallback: String?) {
         val imp = manager.importState
         val progress = when {
             manager.importRunning -> "Importing: ${mb((imp["bytesDone"] as? Number)?.toLong() ?: 0L)}" + ((imp["bytesTotal"] as? Number)?.toLong()?.let { " of ${mb(it)}" } ?: "")
-            region.running -> String.format(Locale.US, "%s %s: %.0f%%", if (r["state"] == "building") "Building on the server" else "Downloading", r["name"], (r["percent"] as? Number)?.toDouble() ?: 0.0)
+            region.running -> String.format(Locale.US, "%s %s: %.0f%%", if (r["state"] != "building") "Downloading" else if (OnlineService.get(app).isDirect) "Building on this phone" else "Building on the server", r["name"], (r["percent"] as? Number)?.toDouble() ?: 0.0)
             r["state"] == "failed" -> "Download failed: ${r["error"]}"
             FirstRun.aroundMe == "locating" -> "Finding your location..."
             manager.downloads.activeCount() > 0 -> "Downloading a pack..."
             else -> null
         }
-        CardUi(FirstRun.noPack(app), AppSettings.server, progress, manager.importRunning)
+        OnlineService.get(app).let { o -> CardUi(FirstRun.noPack(app), AppSettings.server, progress, manager.importRunning, o.isDirect, if (o.isDirect) o.direct.notice() else null) }
     }
     val show = ui.noPack && !FirstRun.dismissed && !PacksUi.visible && !SettingsUi.visible
     FirstRunCardState.visible = show
@@ -98,12 +98,17 @@ fun FirstRunCard(fallback: String?) {
         ) {
             BasicText("No map on this phone yet", style = TextStyle(color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold))
             BasicText(
-                if (ui.server.isEmpty()) "No server set. Set one in ${Screens.SETTINGS} › ${Screens.SOURCES} to download maps, or import pack files you have."
-                else "Server: ${ui.server}",
+                when {
+                    ui.server.isNotEmpty() -> "Server: ${ui.server}"
+                    ui.direct && ui.notice != null -> ui.notice
+                    ui.direct -> "The map comes straight from public sources (OpenStreetMap via OpenFreeMap, Copernicus, USGS and national surveys). Download the area around you to use it offline. A Dystopo server in ${Screens.SETTINGS} › ${Screens.SOURCES} is faster."
+                    else -> "No server set. Set one in ${Screens.SETTINGS} › ${Screens.SOURCES} to download maps, or import pack files you have."
+                },
                 style = TextStyle(color = Muted, fontSize = 13.sp),
             )
             CardButton("Download the map around me", primary = true) { FirstRun.message = null; FirstRun.downloadAroundMe() }
-            CardButton("Choose from server") { FirstRun.message = null; FirstRun.chooseFromServer() }
+            if (ui.direct || ui.server.isNotEmpty()) CardButton("Show the map around me") { FirstRun.message = null; FirstRun.showAroundMe() } // T80
+            if (ui.server.isNotEmpty() || !ui.direct) CardButton("Choose from server") { FirstRun.message = null; FirstRun.chooseFromServer() }
             CardButton("Import pack files") { FirstRun.message = null; ImportPicker.request() }
             ui.progress?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Download failed")) Red else Accent, fontSize = 13.sp)) }
             FirstRun.message?.let { BasicText(it, style = TextStyle(color = if (it.contains("failed") || it.contains("permission")) Red else Accent, fontSize = 13.sp)) }

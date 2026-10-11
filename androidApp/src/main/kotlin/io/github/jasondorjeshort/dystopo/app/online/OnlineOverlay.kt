@@ -43,7 +43,7 @@ private val Grey = Color(0xFF9A8F84)
 private val Red = Color(0xFFB0302A)
 
 /** What the overlay shows, refreshed once a second on the main thread. */
-private class OnlineUi(val state: String, val view: OnlineView?, val download: Map<String, Any?>, val running: Boolean, val credit: String)
+private class OnlineUi(val state: String, val view: OnlineView?, val download: Map<String, Any?>, val running: Boolean, val credit: String, val notice: String? = null)
 
 /**
  * The online indicator over the map (top left): online / offline with the source of the current view
@@ -63,7 +63,7 @@ fun OnlineOverlay() {
         }
     }
     val ui = remember(tick) {
-        OnlineUi(service.state(), OnlineView.currentOnMain(app), service.region.json(), service.region.running, service.attribution())
+        OnlineUi(service.state(), OnlineView.currentOnMain(app), service.region.json(), service.region.running, service.attribution(), if (service.isDirect) service.direct.notice() else null)
     }
     if (ui.state == "none" && !ui.running) return io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsHidden() // T57
     Box(Modifier.fillMaxSize()) {
@@ -81,7 +81,7 @@ fun OnlineOverlay() {
             }
             val source = when (ui.view?.source) {
                 OnlineTiles.PACK -> "pack"
-                OnlineService.ONLINE -> "live from server"
+                OnlineService.ONLINE -> if (OnlineService.get().isDirect) "live from public sources" else "live from server" // T80
                 OnlineService.CACHED -> "from cache"
                 else -> "no data here"
             }
@@ -93,11 +93,13 @@ fun OnlineOverlay() {
                 Box(Modifier.size(9.dp).background(dot, CircleShape))
                 BasicText("$label · $source", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
             }
+            // T80: why the phone is not reading the sources (no Wi-Fi, or the session's download limit).
+            ui.notice?.let { Small(it, Red) {} }
             val d = ui.download
             when {
                 ui.running -> {
                     val pct = (d["percent"] as? Number)?.toDouble() ?: 0.0
-                    val phase = if (d["state"] == "building") "Building on server" else "Downloading"
+                    val phase = if (d["state"] != "building") "Downloading" else if (OnlineService.get().isDirect) "Building on this phone" else "Building on server" // T80
                     // T64: which vector profile the server is making (outdoors from an extract or Overpass, or the fallback).
                     val kind = d["packLabel"]?.let { " ($it)" } ?: ""
                     Small(String.format(Locale.US, "%s %s%s: %.0f%%", phase, d["name"], kind, pct)) { message = null; thread { service.region.cancel() } }

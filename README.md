@@ -102,8 +102,14 @@ without admin rights and writes `local.properties`).
 
 **On a real phone.** Install the APK for its CPU (`androidApp-arm64-v8a-release.apk` on almost every phone made
 since 2017, or the universal one): copy it over and open it (allow installs from that app), or `adb install`. The
-first start has no map yet and says so, with three ways to get one, all in the app:
+first start has no map yet and says so, with ways to get one, all in the app:
 
+- **No server: straight from the public sources.** With no server set the phone reads the elevation data itself
+  (Copernicus worldwide, USGS 3DEP in the US, the Swiss, Austrian, Norwegian, Canadian and New Zealand national
+  models) and the map from OpenFreeMap, and draws hillshade and contours on the phone. "Show the map around me" goes
+  to your location; "Download the map around me" saves a 16 km box as a pack on the phone, which then works with no
+  network. A first view of a new place downloads tens of megabytes and takes about a minute, so this works on Wi-Fi only unless you allow mobile data in Settings › Sources, where
+  the per-session limit (300 MB by default) is set too. Glyphs and map icons come with the app.
 - **Set your server, then download.** Run the server on a computer at home (above), open Settings › Sources on the
   phone, type its address, for example `http://192.168.1.20:8080` (the computer's address on your Wi-Fi), tap Save
   and Test: Test shows how many packs the server has. Then "Download the map around me" (your location; the server
@@ -111,8 +117,7 @@ first start has no map yet and says so, with three ways to get one, all in the a
   (10.x, 172.16-31.x, 192.168.x, 169.254.x, `.local` names); a server reachable from the internet needs `https://`
   (TLS in front of it: docs/SERVER.md).
 - **Import pack files.** Copy `<name>-dem.pmtiles` (and `<name>-outdoors.pmtiles`, the trails and names) to the
-  phone, tap "Import pack files" and pick both. Labels need the fonts, which the app fetches from a server once one
-  is set.
+  phone, tap "Import pack files" and pick both.
 - **Push from a computer** (developers): `tools\android-release.ps1 -Serial <serial> -Name <pack>` installs the
   release build and pushes `out\<pack>-dem.pmtiles` and its glyphs and sprites; `tools\android-push-pack.ps1` does
   the same for the debug build.

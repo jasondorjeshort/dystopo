@@ -43,6 +43,12 @@ class OnlineService private constructor(private val app: DystopoApp) {
 
     val region = RegionDownload(this, app)
 
+    /**
+     * T80: the phone's own readers of the elevation sources and OpenFreeMap, used when no server is set
+     * ([DirectSources]); made on first use; declared before the init block that may use it (it points the shared readers' cache and HTTP at the app).
+     */
+    val direct: DirectSources by lazy { DirectSources(app, app.cacheDir, cache).also { it.sessionCapBytes = DirectPrefs.sessionMb(app) * 1024 * 1024; it.maxZoom = DirectPrefs.maxZoom(app); it.onMobileData = DirectPrefs.onMobileData(app) } }
+
     /** `/live/info` of the server (zooms, attribution), from the last successful check. */
     @Volatile var info: Map<String, Any?>? = null
         private set
@@ -77,21 +83,50 @@ class OnlineService private constructor(private val app: DystopoApp) {
     init {
         configure(AppSettings.server)
         probeThread.schedule(::probeLoop, 1, TimeUnit.SECONDS)
+        probeThread.scheduleWithFixedDelay(::refreshWhenRendered, 2, 1, TimeUnit.SECONDS) // T80
         app.map.onCameraIdle = ::onViewChanged // T41
     }
 
-    /** Uses [server] ("" = offline only) from now on; the caller reloads the tiles and style. */
+
+    /**
+     * T80: the two user settings of the phone's own source reading (`directSessionMb`, `directOnMobileData`, from
+     * `POST /settings` or Settings › Sources): stored and applied at once. Returns an error message or null.
+     */
+    fun setDirect(sessionMb: Long?, onMobileData: Boolean?): String? {
+        if (sessionMb != null && sessionMb !in DirectPrefs.SESSION_MB_RANGE) return "directSessionMb must be ${DirectPrefs.SESSION_MB_RANGE.first}..${DirectPrefs.SESSION_MB_RANGE.last} (got $sessionMb)"
+        DirectPrefs.set(app, sessionMb = sessionMb)
+        onMobileData?.let { DirectPrefs.setOnMobileData(app, it) }
+        if (isDirect) {
+            sessionMb?.let { direct.sessionCapBytes = it * 1024 * 1024 }
+            onMobileData?.let { direct.onMobileData = it }
+            fetcher?.retryNow() // a raised limit or allowed mobile data takes effect for the next tile
+        }
+        return null
+    }
+
+    /** True when tiles no pack covers come from the phone's own readers rather than a server. */
+    val isDirect: Boolean get() = fetcher?.server == DirectSources.SERVER
+
+    /**
+     * Uses [server] from now on; "" means the phone reads the sources itself (T80, unless turned off with
+     * `POST /firstrun/direct?on=0`, then offline only). The caller reloads the tiles and style.
+     */
     @Synchronized
     fun configure(server: String) {
-        if (fetcher?.server == server) return
-        fetcher = if (server.isEmpty()) null else OnlineFetcher(server, cache)
+        val target = server.ifEmpty { if (DirectPrefs.enabled(app)) DirectSources.SERVER else "" }
+        if ((fetcher?.server ?: "") == target) return
+        fetcher = when (target) {
+            "" -> null
+            DirectSources.SERVER -> OnlineFetcher(DirectSources.SERVER, cache, http = direct, maxInFlight = DirectSources.FETCHER_IN_FLIGHT)
+            else -> OnlineFetcher(server, cache)
+        }
         info = null
-        Log.i(TAG, "server: ${server.ifEmpty { "(none)" }}")
+        Log.i(TAG, "server: ${target.ifEmpty { "(none)" }}")
     }
 
     /** The online half of a tile service over [packs], or null without a server. */
     fun tilesFor(packs: PackSet, contourVersion: String): OnlineTiles? =
-        fetcher?.let { OnlineTiles(packs, it, this, TileService.demDecoder(), contourVersion) } // T42: decoder choice
+        fetcher?.let { OnlineTiles(packs, it, this, TileService.demDecoder(), contourVersion, answerWithinMs = if (it.server == DirectSources.SERVER) DirectSources.ANSWER_WITHIN_MS else null) } // T42: decoder choice
 
     fun prefetch(block: () -> Fetch): CompletableFuture<Fetch> = CompletableFuture.supplyAsync(block, prefetchPool)
 
@@ -130,6 +165,30 @@ class OnlineService private constructor(private val app: DystopoApp) {
             Log.w(TAG, "probe failed", e)
         } finally {
             probeThread.schedule(::probeLoop, next, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    @Volatile private var notReadySeen = 0L
+    val renderRefreshes = AtomicLong()
+
+    /**
+     * T80: tiles answered "not ready" (503, [OnlineTiles.answerWithinMs]) are not asked for again by MapLibre until
+     * the map moves; once the phone has finished rendering (nothing in flight for a second), reload the style so
+     * they load, now from the cache.
+     */
+    private fun refreshWhenRendered() {
+        try {
+            if (!isDirect) return
+            val online = app.tiles.online ?: return
+            val n = online.notReady.get()
+            if (n == notReadySeen) return
+            if (direct.rendering.get() > 0 || System.currentTimeMillis() - direct.lastRenderDoneAt < 1_000) return
+            notReadySeen = n
+            renderRefreshes.incrementAndGet()
+            val style = app.tiles.style()
+            app.map.onMain { app.map.loadStyle(style) }
+        } catch (e: Throwable) {
+            Log.w(TAG, "refresh after rendering failed", e)
         }
     }
 
@@ -206,8 +265,13 @@ class OnlineService private constructor(private val app: DystopoApp) {
      * the last online view (before the first report: what the live server uses by default). Empty when no
      * server is set or nothing has been shown from it this session.
      */
-    fun credits(): List<PackMetadata> {
+    fun credits(all: Boolean = false): List<PackMetadata> {
         val f = fetcher ?: return emptyList()
+        if (all && f.server == DirectSources.SERVER) {
+            // T80: the About screen credits every source the phone can read on its own, with its licence.
+            val ids = io.github.jasondorjeshort.dystopo.sources.elevation.BestSource().registryIds + DirectSources.OSM_IDS
+            return creditsFor("this phone", ids, 1, 1, info?.get("osmAttribution") as? String)
+        }
         if (lastViewSource == OnlineTiles.PACK) return emptyList() // the view is all pack: its own credits apply
         return creditsFor(
             f.server, viewSourceIds, routes.getValue("dem").hits.get(), routes.getValue("osm").hits.get(),
@@ -216,7 +280,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
     }
 
     private fun installAssetsOnce(f: OnlineFetcher) {
-        if (assetsTried) return
+        if (assetsTried || f.server == DirectSources.SERVER) return // T80: the APK brings them (BundledAssets)
         assetsTried = true
         val r = installAssets(f.server)
         if ((r["installed"] as? Int ?: 0) > 0) app.reload() // the style now points at the files (file:// glyphs, sprite sheet)
@@ -229,6 +293,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
      * per session when online without them. Returns what happened (`/online` reports it as `assets`).
      */
     fun installAssets(server: String): Map<String, Any?> {
+        if (server == DirectSources.SERVER) return linkedMapOf("server" to server, "installed" to 0, "bundled" to true) // T80
         val http = UrlConnectionGet()
         val root = app.filesDir
         var installed = 0
@@ -278,6 +343,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "viewSourceIds" to viewSourceIds,
         "credits" to credits().map { mapOf("role" to it.role, "provenance" to it.metadata["provenance"]) },
         "assets" to lastAssets,
+        "direct" to if (isDirect) direct.json() + mapOf("notReadyAnswered" to app.tiles.online?.notReady?.get(), "refreshesAfterRendering" to renderRefreshes.get()) else null, // T80
     )
 
     companion object {

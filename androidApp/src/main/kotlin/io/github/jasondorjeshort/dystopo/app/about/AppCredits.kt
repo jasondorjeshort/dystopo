@@ -37,7 +37,7 @@ object AppCredits {
     }
 
     fun compose(app: DystopoApp = DystopoApp.instance, view: PackBounds? = null): Credits =
-        compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits() }.getOrDefault(emptyList()), view)
+        compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view) // T80: the About screen lists every source the phone reads
 
     /** T49: the map's credit line, for the packs in the current view ([MapViewport]). */
     fun mapLine(app: DystopoApp = DystopoApp.instance): Credits = compose(app, MapViewport.bounds)

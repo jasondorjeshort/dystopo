@@ -476,6 +476,8 @@ class TileService(
             val pack = packs.demFor(z, x, y, PackRoleZooms.CONTOUR) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
             val bytes = contourBytes(pack, z, x, y, contourGen)
             return ok(contours, "application/x-protobuf", bytes)
+        } catch (e: io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.NotReady) {
+            return TileResult(503, "text/plain", "${e.message}\n".toByteArray()) // T80: MapLibre retries a 503 with backoff
         } catch (e: Throwable) {
             contours.errors.incrementAndGet()
             throw e
@@ -617,13 +619,15 @@ class TileService(
         val dir = packs.glyphDir
         // MapLibre asks for comma-separated font stacks; serve the first font we have.
         val file = fontstack.split(",").map { it.trim() }.firstNotNullOfOrNull { font ->
-            dir?.let { File(it, "$font/$range.pbf") }?.takeIf { f -> f.isFile && f.canonicalPath.startsWith(dir.canonicalPath) }
+            dir?.let { File(it, "$font/$range.pbf") }?.takeIf { f -> f.isFile && f.length() > 0 && f.canonicalPath.startsWith(dir.canonicalPath) } // T80: an empty file is a miss
         }
         if (file == null) {
             online?.glyph(fontstack, range)?.let { return if (it.status == 200) ok(glyphs, it.contentType, it.body) else it } // T38: from the server
             // An empty glyph set: the labels in this range draw without these characters instead of erroring.
+            // T80: a valid PBF with no glyphs, not zero bytes (MapLibre fails an empty 200 and never reports loaded).
             glyphs.notFound.incrementAndGet()
-            return TileResult(200, "application/x-protobuf", ByteArray(0))
+            val font = fontstack.split(",").first().trim()
+            return TileResult(200, "application/x-protobuf", io.github.jasondorjeshort.dystopo.app.firstrun.EmptyGlyphs.pbf(font, range))
         }
         return ok(glyphs, "application/x-protobuf", file.readBytes())
     }

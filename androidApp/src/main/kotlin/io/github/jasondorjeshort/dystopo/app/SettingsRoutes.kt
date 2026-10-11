@@ -19,6 +19,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `trails`, `water`, `landcover`, `pois`, `boundaries` and `night` `=on|off`. A contour interval change
  *   reopens the tile service (contour tiles are cached per interval); every other option rebuilds the style
  *   (hillshade and slope switch to generated `/shade` tiles, cached per option set).
+ *   T80 `directSessionMb` (1..100000, default 300: what the phone may download from the public sources per session
+ *   when no server is set) and `directOnMobileData` (1/0, default 0: Wi-Fi only); also in Settings › Sources.
  *   `onlineCacheMb` and `contourCacheMb` (T41) cap the online tile cache and the contour cache (all packs),
  *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]).
@@ -33,7 +35,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         }
         if (r.path != "/settings") return null
         return when (r.method) {
-            "GET" -> Response.json(AppSettings.json())
+            "GET" -> Response.json(AppSettings.json() + io.github.jasondorjeshort.dystopo.app.online.DirectPrefs.json(app)) // T80: directSessionMb, directOnMobileData
             "POST" -> post(r)
             else -> Response.json(mapOf("error" to "GET or POST"), 405)
         }
@@ -49,8 +51,12 @@ class SettingsRoutes(private val app: DystopoApp) {
         }
         params["server"]?.let { OnlineRoutes.setServer(app, it.toString())?.let { e -> return Response.json(mapOf("error" to e), 400) } } // T38
         params["decoder"]?.let { TileService.setDecoder(app, it.toString())?.let { e -> return Response.json(mapOf("error" to e), 400) } } // T42
+        // T80: the phone's own source reading (no server): per-session download limit and mobile data.
+        val directMb = params["directSessionMb"]?.let { it.toString().toDoubleOrNull()?.toLong() ?: return Response.json(mapOf("error" to "directSessionMb must be a number of MB (got $it)"), 400) }
+        val directMobile = params["directOnMobileData"]?.let { raw -> when (raw.toString()) { "1", "true", "on" -> true; "0", "false", "off" -> false; else -> return Response.json(mapOf("error" to "directOnMobileData must be 1 or 0 (got $raw)"), 400) } }
+        io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).setDirect(directMb, directMobile)?.let { return Response.json(mapOf("error" to it), 400) }
         apply(parsed)
-        return Response.json(AppSettings.json())
+        return Response.json(AppSettings.json() + io.github.jasondorjeshort.dystopo.app.online.DirectPrefs.json(app))
     }
 
     /** Sets, persists and applies validated settings (also used by the settings sheet; call off the main thread). */
@@ -98,7 +104,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb")
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort") + MapOptions.KEYS + CACHE_KEYS // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
+        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData") + MapOptions.KEYS + CACHE_KEYS // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null

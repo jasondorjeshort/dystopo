@@ -24,6 +24,14 @@ Flow (each step is one entry in the JSON report, with the screenshot it took):
 With --import (files on the host): uninstall and install again, push the files to the phone's Download folder,
 tap "Import pack files" on the card, pick them in the system file picker, and wait for the map the same way
 (`import` and `import-map` steps). Exit 0 when every step passed; one JSON object on stdout.
+
+T80, --direct (no --server): the release install with no server and no pack reads the public sources itself.
+  install          fresh install (network on)
+  show-rainier     geo fix at Rainier, launch, the card, "Show the map around me": seconds to the first contours and
+                   to a settled screen (`firstContoursS`, `settledS`); over --direct-budget (90 s) fails the step
+  show-mont-blanc  the same at Mont Blanc (Copernicus and swissALTI3D) after a restart (the card is back)
+  download         "Download the map around me" at --download-at: the phone builds the pack itself
+  offline          wifi and mobile data off, restart: the downloaded place renders with contours; network back on
 """
 import argparse
 import importlib.util
@@ -360,10 +368,152 @@ def run(args):
     return report
 
 
+def timed_map(dev, name, contour_min, timeout, t0):
+    """Like settle_map, timed from [t0] (the tap): seconds to the first contours and to a settled screen with contours."""
+    deadline = t0 + timeout
+    prev = None
+    first = None
+    last = None
+    while time.time() < deadline:
+        path, raw = dev.screencap(name)
+        raster = check.decode_png(raw)
+        share = contour_share(raster)
+        changed = check.changed_share(prev, raster) if prev is not None else 1.0
+        now = round(time.time() - t0, 1)
+        if share >= contour_min and first is None:
+            first = now
+        last = {"png": path, "contourShare": round(share, 4), "changed": round(changed, 4)}
+        if share >= contour_min and changed < 0.002:
+            return dict(ok=True, firstContoursS=first, settledS=now, **last)
+        prev = raster
+        time.sleep(1)
+    return dict(ok=False, error=f"no settled map with contours within {timeout} s", firstContoursS=first, **(last or {}))
+
+
+# T80: the places the direct-sources flow shows (public areas from areas.json).
+DIRECT_PLACES = {"rainier": (46.853, -121.76), "mont-blanc": (45.8326, 6.8652)}
+
+
+def run_direct(args):
+    """T80: a release install with no server and no pack, by taps only: the map read straight from the public
+    sources at Rainier (3DEP) and Mont Blanc (Copernicus, swissALTI3D), then "Download the map around me" at
+    --download-at and the same place again with the network off (wifi and mobile data disabled)."""
+    out = os.path.abspath(args.out)
+    os.makedirs(out, exist_ok=True)
+    dev = Device(args.serial, out)
+    steps = []
+    report = {"serial": args.serial, "mode": "direct", "steps": steps, "out": out}
+
+    def step(name, fn):
+        t0 = time.time()
+        try:
+            r = fn() or {}
+            r.setdefault("ok", True)
+        except Exception as e:
+            r = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            try:
+                r["png"] = dev.screencap(name + "-failed")[0]
+            except Exception:
+                pass
+        r = {"step": name, "s": round(time.time() - t0, 1), **r}
+        steps.append(r)
+        print(f"[firstrun] {name}: {'ok' if r['ok'] else 'FAILED ' + str(r.get('error'))}", file=sys.stderr)
+        return r["ok"]
+
+    apk = args.apk or default_apk(dev)
+    report["apk"] = apk
+
+    def network(on):
+        for what in ("wifi", "data"):
+            dev.shell("svc", what, "enable" if on else "disable", check_ok=False)
+        time.sleep(3 if on else 2)
+
+    def install():
+        network(True)
+        fresh_install(dev, apk)
+        return {"apk": os.path.basename(apk)}
+
+    def show(place, first):
+        def fn():
+            lat, lon = DIRECT_PLACES[place]
+            dev.adb("emu", "geo", "fix", str(lon), str(lat))
+            if not first:
+                dev.shell("am", "force-stop", PACKAGE)
+                time.sleep(1)
+            launched = launch(dev) if first else (dev.shell("am", "start", "-n", ACTIVITY) and False)
+            n, nodes = dev.wait_for("No map on this phone yet", 25)
+            if not n:
+                return {"ok": False, "error": "no first-run card", "texts": dev.texts(nodes)[:30]}
+            card_png = dev.screencap(f"{place}-card")[0]
+            texts = dev.texts(nodes)
+            if any("server" in t.lower() and "No server set" in t for t in texts):
+                return {"ok": False, "error": "the card asks for a server (no direct sources)", "texts": texts[:20]}
+            time.sleep(2)  # a fix to arrive after the location dialog
+            dev.tap_text("^Show the map around me$")
+            t0 = time.time()
+            r = timed_map(dev, place, args.contour_min, args.direct_timeout, t0)
+            r.update(place=place, cardPng=card_png, permissionDialog=launched)
+            if r["ok"] and r.get("settledS") is not None and r["settledS"] > args.direct_budget:
+                r.update(ok=False, error=f"settled after {r['settledS']} s, over the {args.direct_budget} s budget")
+            return r
+        return fn
+
+    def download():
+        lat, lon = DIRECT_PLACES[args.download_at]
+        dev.adb("emu", "geo", "fix", str(lon), str(lat))
+        dev.shell("am", "force-stop", PACKAGE)
+        time.sleep(1)
+        dev.shell("am", "start", "-n", ACTIVITY)
+        n, nodes = dev.wait_for("No map on this phone yet", 25)
+        if not n:
+            return {"ok": False, "error": "no first-run card", "texts": dev.texts(nodes)[:30]}
+        time.sleep(2)
+        dev.tap_text("^Download the map around me$")
+        t0 = time.time()
+        seen = []
+        while time.time() - t0 < args.timeout:
+            texts = dev.texts()
+            prog = [t for t in texts if re.match(r"^(Building on this phone|Building on the server|Downloading|Finding your location|Download failed)", t)]
+            for p in prog:
+                if not seen or seen[-1] != p:
+                    seen.append(p)
+            fail = next((t for t in texts if t.startswith("Download failed") or "permission is off" in t or t.startswith("No location yet")), None)
+            if fail:
+                return {"ok": False, "error": fail, "progress": seen[-12:], "png": dev.screencap("download-failed")[0]}
+            if "No map on this phone yet" not in texts and not prog:
+                return {"progress": seen[-12:], "waitS": round(time.time() - t0, 1), "png": dev.screencap("downloaded")[0]}
+            time.sleep(2)
+        return {"ok": False, "error": f"the card was still up after {args.timeout} s", "progress": seen[-12:], "png": dev.screencap("download-timeout")[0]}
+
+    def offline():
+        network(False)
+        try:
+            dev.shell("am", "force-stop", PACKAGE)
+            time.sleep(1)
+            dev.shell("am", "start", "-n", ACTIVITY)
+            t0 = time.time()
+            r = timed_map(dev, "offline", args.contour_min, args.settle_timeout, t0)
+            r["network"] = "wifi and data disabled"
+            return r
+        finally:
+            network(True)
+
+    flow = [("install", install), ("show-rainier", show("rainier", True)), ("show-mont-blanc", show("mont-blanc", False)),
+            ("download", download), ("offline", offline)]
+    ok = all(step(n, fn) for n, fn in flow)
+    report["ok"] = ok and all(s["ok"] for s in steps)
+    report["screenshots"] = [s.get("png") for s in steps if s.get("png")]
+    return report
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--serial", required=True)
-    ap.add_argument("--server", required=True, help="the server URL typed into Settings > Sources (use the host's LAN address, not 10.0.2.2)")
+    ap.add_argument("--server", default="", help="the server URL typed into Settings > Sources (use the host's LAN address, not 10.0.2.2)")
+    ap.add_argument("--direct", action="store_true", help="T80: no server: the map straight from the sources, then a download and the network off")
+    ap.add_argument("--direct-budget", type=float, default=90, help="seconds from the tap to a settled map with contours (--direct); T80 measured 60 to 70 s cold on an emulator (docs/PLANNING.md)")
+    ap.add_argument("--direct-timeout", type=float, default=120)
+    ap.add_argument("--download-at", choices=sorted(DIRECT_PLACES), default="rainier")
     ap.add_argument("--apk", default="")
     ap.add_argument("--lat", type=float, default=46.786)
     ap.add_argument("--lon", type=float, default=-121.736)
@@ -376,7 +526,9 @@ def main():
     ap.add_argument("--contour-min", type=float, default=0.002)
     ap.add_argument("--out", default=os.path.join("out", "firstrun"))
     args = ap.parse_args()
-    report = run(args)
+    if not args.direct and not args.server:
+        ap.error("--server is required unless --direct")
+    report = run_direct(args) if args.direct else run(args)
     print(json.dumps(report, indent=1))
     sys.exit(0 if report["ok"] else 1)
 

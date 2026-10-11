@@ -36,7 +36,24 @@ class OnlineTiles(
     /** The contour disk-cache version without the pack identity (online contours do not depend on the pack). */
     private val contourVersion: String,
     private val contourOptions: ContourTileOptions = ContourTileOptions(units = io.github.jasondorjeshort.dystopo.app.AppSettings.units), // T33: units preference
+    /**
+     * T80: answer within this long or say "not yet" (503). With the phone rendering terrain itself a cold DEM or
+     * contour tile can take longer than MapLibre waits; a timed-out request counts as a connection error, which
+     * MapLibre retries only when the network changes, so the tile stayed blank. A 503 is a server error, which it
+     * retries with backoff, by then from the cache (the work goes on in the background). Null: wait as before.
+     */
+    private val answerWithinMs: Long? = null,
 ) {
+    /** A tile whose data is still being fetched or rendered ([answerWithinMs]); the loopback server answers 503. */
+    class NotReady(message: String) : RuntimeException(message)
+
+    /** Requests answered 503 because their tile was not ready within [answerWithinMs]. */
+    val notReady = java.util.concurrent.atomic.AtomicLong()
+
+    private fun notReady(what: String): Nothing {
+        notReady.incrementAndGet()
+        throw NotReady("$what is still being made; try again")
+    }
     // ---- coverage ----
 
     private fun overlaps(p: Pack, z: Int, x: Int, y: Int): Boolean {
@@ -66,7 +83,15 @@ class OnlineTiles(
 
     fun demTile(z: Int, x: Int, y: Int): TileResult {
         if (z !in DEM_MIN_ZOOM..DEM_MAX_ZOOM) return TileResult.notFound()
-        return when (val f = fetcher.get("dem", "$z/$x/$y.png")) {
+        val f = answerWithinMs?.let { ms ->
+            val job = service.prefetch { fetcher.get("dem", "$z/$x/$y.png") }
+            try {
+                job.get(ms, TimeUnit.MILLISECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                return TileResult(503, "text/plain", "DEM $z/$x/$y is still being made; try again\n".toByteArray()).also { notReady.incrementAndGet() }
+            }
+        } ?: fetcher.get("dem", "$z/$x/$y.png")
+        return when (f) {
             is Fetch.Hit -> {
                 service.recordDem(z, x, y, if (f.cached) OnlineService.CACHED else OnlineService.ONLINE)
                 service.served("dem", f)
@@ -171,12 +196,13 @@ class OnlineTiles(
         val tiles = demTilesFor(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize).filter { (tz, tx, ty) -> !packCoversDem(tz, tx, ty) }
         if (tiles.size <= 1) return
         val futures = tiles.map { (tz, tx, ty) -> service.prefetch { fetcher.get("dem", "$tz/$tx/$ty.png") } }
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(answerWithinMs ?: 30_000)
         for (f in futures) {
             val left = deadline - System.nanoTime()
             if (left <= 0) break
             runCatching { f.get(left, TimeUnit.NANOSECONDS) }
         }
+        if (answerWithinMs != null && futures.any { !it.isDone }) notReady("contour tile $z/$x/$y")
     }
 
     // ---- indicator ----

@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.server.*
+import io.github.jasondorjeshort.dystopo.sources.elevation.ElevationSource // T80: nested Result needs the class, not the alias
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context

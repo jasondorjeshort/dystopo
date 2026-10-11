@@ -1,8 +1,6 @@
 package io.github.jasondorjeshort.dystopo.server
 
-import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
-import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
-import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
+import io.github.jasondorjeshort.dystopo.sources.elevation.SourceIo
 import io.github.jasondorjeshort.dystopo.tiff.ByteRangeSource
 import java.io.File
 import java.net.URI
@@ -12,76 +10,13 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.time.Duration
 
-/** Something that can fill a Web Mercator window with elevations (meters, NAVD88/EGM-ish orthometric heights). */
-interface ElevationSource {
-    val id: String
+/** T80: the interface lives in shared (`...dystopo.sources.elevation`); the server keeps its name. */
+typealias ElevationSource = io.github.jasondorjeshort.dystopo.sources.elevation.ElevationSource
 
-    /** Data source registry ids (`sources.json`) this source can draw on, including geoids used for datum conversion. */
-    val registryIds: List<String>
+typealias FeatheredSource = io.github.jasondorjeshort.dystopo.sources.elevation.FeatheredSource
 
-    /** Credit for everything this source can draw on, composed from the registry. */
-    val attribution: String get() = SourceRegistry.builtIn.attribution(registryIds)
-
-    /**
-     * [counters] carries source-specific numbers for the JSON report (tiles fetched, nodata cells...).
-     * [provenance] lists the registry ids that actually contributed data to [grid], in registry order.
-     * It is required, and validated: every id must be in the registry, and a grid with any data must
-     * name at least one id (an empty list would silently fall back to crediting everything). Empty is
-     * only valid for an all-NaN grid; [ElevationSource.provenanceIfData] builds the usual value.
-     */
-    data class Result(val grid: ElevationGrid, val counters: Map<String, Long>, val provenance: List<String>) {
-        init {
-            for (id in provenance) require(id in SourceRegistry.builtIn) { "provenance id '$id' is not in sources.json" }
-            require(provenance.isNotEmpty() || grid.values.all { it.isNaN() }) {
-                "result has elevation data but empty provenance; set it to the registry ids that contributed"
-            }
-        }
-
-        /** Credit for what contributed; falls back to [source]'s full credit when nothing did. */
-        fun attribution(source: ElevationSource): String =
-            if (provenance.isEmpty()) source.attribution else SourceRegistry.builtIn.attribution(provenance)
-    }
-
-    fun fetch(window: MercatorWindow): Result
-
-    companion object {
-        val ids = listOf("best", "copernicus", "terrarium", "3dep", "3dep-1m", "3dep-best", "swissalti3d", "kartverket", "bev", "hrdem", "linz")
-
-        fun byId(id: String): ElevationSource = when (id) {
-            "best" -> BestSource()
-            "copernicus" -> CopernicusSource()
-            "terrarium" -> TerrariumSource()
-            "3dep" -> ThreeDepSource()
-            "3dep-1m" -> LidarSource()
-            "3dep-best" -> ThreeDepBestSource()
-            "swissalti3d" -> SwissAltiSource()
-            "kartverket" -> NorwaySource()
-            "bev" -> AustriaSource()
-            "hrdem" -> CanadaSource()
-            "linz" -> NewZealandSource()
-            else -> throw IllegalArgumentException("unknown source '$id'; known: ${ids.joinToString()}")
-        }
-
-        /** [ids] if [grid] has any data, else nothing: provenance for a single-dataset source. */
-        fun provenanceIfData(grid: ElevationGrid, ids: List<String>): List<String> =
-            if (grid.values.any { !it.isNaN() }) ids else emptyList()
-
-        /** Union of provenance lists, deduplicated in registry order. */
-        fun mergeProvenance(vararg lists: List<String>): List<String> = SourceRegistry.builtIn.ordered(lists.flatMap { it })
-    }
-}
-
-/**
- * A source that blends layers at coverage edges. The blend band is sized in cells from a ground
- * cell size; [ElevationSource.fetch] uses the window's own. Tile exports pass one reference cell
- * size for a whole zoom level (see `TileWindows.referenceCellSizeMeters`) so adjacent tiles, whose
- * windows sit at slightly different latitudes, weight the same cell identically.
- */
-interface FeatheredSource : ElevationSource {
-    fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result
-
-    override fun fetch(window: MercatorWindow): ElevationSource.Result = fetch(window, window.cellSizeMeters)
-}
+/** An HTTP error status (shared with the elevation readers, which throw it too). */
+typealias HttpStatusException = io.github.jasondorjeshort.dystopo.sources.elevation.HttpStatusException
 
 object Http {
     val client: HttpClient = HttpClient.newBuilder()
@@ -90,10 +25,15 @@ object Http {
         .build()
 
     /**
-     * Called with the URL before every network request ([download], [range], [get], Overpass); `tour
-     * --offline-ok` throws there to stay cache-only, and tests use it to count or forbid requests.
+     * Called with the URL before every network request ([download], [range], [get], Overpass, and the elevation
+     * readers in shared, whose hook this is: [SourceIo.beforeNetwork]); `tour --offline-ok` throws there to
+     * stay cache-only, and tests use it to count or forbid requests.
      */
-    @Volatile var beforeNetwork: ((String) -> Unit)? = null
+    var beforeNetwork: ((String) -> Unit)?
+        get() = SourceIo.beforeNetwork
+        set(value) {
+            SourceIo.beforeNetwork = value
+        }
 
     private fun request(url: String) = HttpRequest.newBuilder(URI(url))
         .header("User-Agent", "dystopo-devtool/0.1")
@@ -194,8 +134,6 @@ object Http {
     }
 }
 
-/** An HTTP error status. An [IllegalStateException], as `check` threw before, so existing handlers still match. */
-class HttpStatusException(val status: Int, url: String) : IllegalStateException("HTTP $status for $url")
 
 /**
  * HTTP range reads with an on-disk cache per (offset, length), so re-running a render

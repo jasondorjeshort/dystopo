@@ -106,6 +106,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
     }
 
     private fun run(server: String, packName: String, box: PackBounds, z: IntRange) {
+        if (server == DirectSources.SERVER) return runLocal(packName, box, z)
         try {
             buildOnServer(server, packName, box, z)
             if (cancelled) return
@@ -134,6 +135,37 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         } catch (e: Exception) {
             if (cancelled) return
             Log.w(OnlineService.TAG, "region download $packName failed", e)
+            error = e.message ?: e.javaClass.simpleName
+            state = "failed"
+        } finally {
+            if (finishedAt == 0L) finishedAt = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * T80: no server: the phone builds the pack itself ([LocalPackBuild]) from the DEM tiles it renders and the
+     * OpenFreeMap tiles it fetches (both through the online fetcher, so tiles already seen come from its cache),
+     * then installs it like an imported pack: a pinned, immutable area that works with the network off.
+     */
+    private fun runLocal(packName: String, box: PackBounds, z: IntRange) {
+        try {
+            val f = service.fetcher ?: throw IOException("no online source")
+            val local = LocalPackBuild(service.direct, f, app.cacheDir, packName, box, z) { cancelled }
+            build = local.json()
+            val result = local.run { build = it }
+            if (cancelled) return
+            builtAt = System.currentTimeMillis()
+            state = "downloading" // installing: the archives are copied into the packs dir and opened
+            build = result
+            PackManager.get(app).importFiles(local.outputs().map { file ->
+                PackManager.ImportSource(file.name, file.length()) { file.inputStream() }
+            }, packName)
+            local.cleanUp()
+            note = "built on this phone from public sources"
+            state = "done"
+        } catch (e: Exception) {
+            if (cancelled) return
+            Log.w(OnlineService.TAG, "local region build $packName failed", e)
             error = e.message ?: e.javaClass.simpleName
             state = "failed"
         } finally {

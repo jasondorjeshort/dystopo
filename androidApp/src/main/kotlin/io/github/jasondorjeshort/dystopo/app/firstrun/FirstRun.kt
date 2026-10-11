@@ -25,8 +25,10 @@ import kotlin.math.cos
  * first-run card ([FirstRunCard]) with the three ways to get a map, each reachable through the UI alone:
  * - "Download the map around me": the phone's location (the last fix, else the last known location, else
  *   waiting up to [LOCATION_WAIT_MS] for one) and a box of [HALF_SIDE_KM] around it handed to T38's region
- *   download from the configured server (`POST /build`, then the pack downloader); without a server it opens
- *   Settings › Sources first.
+ *   download from the configured server (`POST /build`, then the pack downloader); T80: without a server the
+ *   phone builds the pack itself from the public sources ([io.github.jasondorjeshort.dystopo.app.online.LocalPackBuild]).
+ * - T80 "Show the map around me" ([showAroundMe]): the camera to the location, the map read live from the
+ *   sources (or the server), nothing saved.
  * - "Choose from server": the pack list with T53's "From server" section open.
  * - "Import pack files": the system file picker ([ImportPicker]) for a `-dem.pmtiles` and an optional
  *   `-outdoors.pmtiles` ([PackManager.importFiles]).
@@ -58,12 +60,14 @@ object FirstRun {
     /** Starts "Download the map around me" on a background thread ([lat]/[lon]: debug override of the fix). */
     fun downloadAroundMe(lat: Double? = null, lon: Double? = null): Map<String, Any?> {
         val app = DystopoApp.instance
-        if (AppSettings.server.isEmpty()) {
+        val online = OnlineService.get(app)
+        if (online.fetcher == null) {
+            // T80: only when the phone's own source reading is off (no server and direct sources disabled).
             message = "Set your Dystopo server in ${Screens.SETTINGS} › ${Screens.SOURCES} first, then tap Download again."
             app.map.onMain { SettingsUi.visible = true }
             return json()
         }
-        val region = OnlineService.get(app).region
+        val region = online.region
         if (region.running || aroundMe == "locating") return json()
         aroundMe = "locating"
         message = "Finding your location..."
@@ -87,6 +91,37 @@ object FirstRun {
         }, "dystopo-firstrun").apply { isDaemon = true }.start()
         return json()
     }
+
+    /**
+     * T80: "Show the map around me": the camera goes to the phone's location at [SHOW_ZOOM] and the card steps
+     * aside for the session; with no server and no pack the map there comes straight from the public sources
+     * ([io.github.jasondorjeshort.dystopo.app.online.DirectSources]), nothing is saved for offline use.
+     */
+    fun showAroundMe(lat: Double? = null, lon: Double? = null): Map<String, Any?> {
+        val app = DystopoApp.instance
+        if (aroundMe == "locating") return json()
+        aroundMe = "locating"
+        message = "Finding your location..."
+        Thread({
+            try {
+                val fix = if (lat != null && lon != null) Triple(lat, lon, "given") else waitForFix(app)
+                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or import pack files.")
+                lastFix = mapOf("lat" to fix.first, "lon" to fix.second, "source" to fix.third)
+                app.map.setCamera(fix.first, fix.second, SHOW_ZOOM, 0.0, 0.0)
+                aroundMe = "shown"
+                message = null
+                app.map.onMain { dismissed = true }
+            } catch (e: Exception) {
+                Log.w(PackManager.TAG, "show around me failed", e)
+                aroundMe = "failed"
+                message = e.message ?: e.javaClass.simpleName
+            }
+        }, "dystopo-firstrun-show").apply { isDaemon = true }.start()
+        return json()
+    }
+
+    /** Map zoom of "Show the map around me" (DEM tiles one zoom deeper: 3DEP 1 m lidar is read from z13 tiles). */
+    const val SHOW_ZOOM = 12.0
 
     fun chooseFromServer() {
         // Without a server the pack list's "From server" status says so and links to Settings › Sources.
@@ -133,12 +168,14 @@ object FirstRun {
             "dismissed" to dismissed,
             "cardVisible" to FirstRunCardState.visible,
             "server" to AppSettings.server.ifEmpty { null },
+            "direct" to OnlineService.get(app).isDirect, // T80: no server, the phone reads the sources itself
             "message" to message,
             "aroundMe" to aroundMe, "fix" to lastFix,
             "box" to lastBox?.let { listOf(it.minLon, it.minLat, it.maxLon, it.maxLat) },
             "region" to OnlineService.get(app).region.json(),
             "import" to m.importState,
             "serverTest" to Sources.test,
+            "assets" to BundledAssets.last, // T80
             "packs" to m.list().map { it.info.name },
         )
     }

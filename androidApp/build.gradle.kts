@@ -1,6 +1,10 @@
 // Dystopo for Android (phase 1 shell, T10): MapLibre over a local region pack, with contour tiles
 // generated on the device by the shared module, and a loopback tile server that also carries the
 // debug endpoints in debug builds. Only included when an Android SDK is installed (settings.gradle.kts).
+import java.net.HttpURLConnection
+import java.net.URI
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import java.util.Properties
 
 plugins {
@@ -91,6 +95,94 @@ android {
         disable += setOf("PropertyEscape", "GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "OldTargetApi")
     }
 }
+
+// T80: label glyphs and the marker sprite sheet are bundled in the APK (assets glyphs/ and sprites/, copied into the
+// files dir on first start by firstrun/BundledAssets.kt), so an install never lacks labels or icons. The glyph PBFs
+// (Noto Sans, SIL OFL 1.1) come from the shared download cache, fetched once from protomaps' basemaps-assets as
+// tools/android-push-pack.ps1 does; the sprite sheet is drawn by `devtool sprite`. The fonts must equal
+// MapLibreStyle.FONTS. Every range of the Basic Multilingual Plane is bundled, MapLibreStyle.GLYPH_RANGES among
+// them: MapLibre asks for whatever range a label's characters fall in, and a range the fonts lack is a valid empty
+// glyph PBF (an empty 200 makes MapLibre log "Failed to load glyph range" and the map never counts as loaded).
+// BundledAssetsTest checks that every bundled file is a non-empty, parseable glyph PBF.
+val glyphFonts = listOf("Noto Sans Regular", "Noto Sans Italic", "Noto Sans Medium")
+val glyphRanges = (0 until 65536 step 256).map { "$it-${it + 255}" }
+
+/** A valid glyph PBF with no glyphs: `glyphs { stacks { name, range } }`. Mirrors firstrun/EmptyGlyphs.kt. */
+fun emptyGlyphPbf(font: String, range: String): ByteArray {
+    fun field(tag: Int, bytes: ByteArray) = byteArrayOf(tag.toByte()) + varint(bytes.size) + bytes
+    val stack = field(0x0A, font.toByteArray()) + field(0x12, range.toByteArray())
+    return field(0x0A, stack)
+}
+fun varint(v: Int): ByteArray {
+    val out = ArrayList<Byte>()
+    var x = v
+    while (x >= 0x80) { out += ((x and 0x7F) or 0x80).toByte(); x = x ushr 7 }
+    out += x.toByte()
+    return out.toByteArray()
+}
+val mapAssetsDir = layout.buildDirectory.dir("generated/mapAssets")
+val bundleMapAssets by tasks.registering {
+    group = "build"
+    description = "Collects the label glyphs and draws the sprite sheet into the APK's assets."
+    dependsOn(":devtool:installDist")
+    val out = mapAssetsDir
+    val devtoolHome = rootProject.layout.projectDirectory.dir("devtool/build/install/devtool")
+    val cacheRoot = (System.getenv("DYSTOPO_CACHE")?.takeIf { it.isNotBlank() }?.let { File(it) } ?: rootProject.file("cache"))
+    val repoRoot = rootProject.projectDir
+    inputs.property("fonts", glyphFonts)
+    inputs.property("ranges", glyphRanges)
+    inputs.files(fileTree(rootProject.file("shared/src/commonMain/kotlin/io/github/jasondorjeshort/dystopo/style")))
+    outputs.dir(out)
+    doLast {
+        val root = out.get().asFile
+        root.deleteRecursively()
+        val pool = Executors.newFixedThreadPool(16)
+        try {
+            glyphFonts.flatMap { font -> glyphRanges.map { range -> font to range } }.map { (font, range) ->
+                pool.submit(Callable<Unit> {
+                    val cached = File(cacheRoot, "glyphs/$font/$range.pbf")
+                    if (!cached.isFile || cached.length() == 0L) {
+                        cached.parentFile.mkdirs()
+                        val conn = URI("https", "protomaps.github.io", "/basemaps-assets/fonts/$font/$range.pbf", null).toURL().openConnection() as HttpURLConnection
+                        conn.connectTimeout = 20_000
+                        conn.readTimeout = 60_000
+                        val bytes = when (val status = conn.responseCode) {
+                            200 -> conn.inputStream.use { it.readBytes() }
+                            404 -> ByteArray(0)
+                            else -> error("glyph range $font/$range: HTTP $status")
+                        }
+                        conn.disconnect()
+                        val tmp = File(cached.parentFile, "$range.pbf.${Thread.currentThread().id}.part")
+                        tmp.writeBytes(if (bytes.isEmpty()) emptyGlyphPbf(font, range) else bytes)
+                        check(tmp.renameTo(cached) || cached.isFile) { "could not store $cached" }
+                    }
+                    cached.copyTo(File(root, "glyphs/$font/$range.pbf"), overwrite = true)
+                    Unit
+                })
+            }.forEach { it.get() }
+        } finally {
+            pool.shutdown()
+        }
+        val windows = System.getProperty("os.name").startsWith("Windows")
+        val script = devtoolHome.file(if (windows) "bin/devtool.bat" else "bin/devtool").asFile
+        val sprites = File(root, "sprites")
+        val proc = ProcessBuilder(script.absolutePath, "sprite", "--out", sprites.absolutePath)
+            .directory(repoRoot).redirectErrorStream(true)
+            .apply { environment()["JAVA_HOME"] = System.getProperty("java.home") }
+            .start()
+        val log = proc.inputStream.bufferedReader().readText()
+        check(proc.waitFor() == 0) { "devtool sprite failed: $log" }
+        for (f in listOf("sprite.json", "sprite.png", "sprite@2x.json", "sprite@2x.png")) check(File(sprites, f).isFile) { "devtool sprite wrote no $f" }
+    }
+}
+android.sourceSets.getByName("main").assets.srcDir(bundleMapAssets) // the task's output dir, with the task as its builder
+tasks.withType<Test>().configureEach {
+    dependsOn(bundleMapAssets)
+    systemProperty("dystopo.mapAssets", mapAssetsDir.get().asFile.path) // BundledAssetsTest reads the bundled glyphs
+}
+// Lint reads the asset dirs too.
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") || it.name.startsWith("generate") && it.name.endsWith("Assets") || it.name.contains("lint", ignoreCase = true) }
+    .configureEach { dependsOn(bundleMapAssets) }
 
 kotlin {
     jvmToolchain(21)

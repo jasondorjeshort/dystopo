@@ -3,6 +3,8 @@ package io.github.jasondorjeshort.dystopo.app.firstrun
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
+import io.github.jasondorjeshort.dystopo.app.online.DirectPrefs
+import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 
 /**
@@ -12,6 +14,11 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  *   card's message, the "around me" step (`aroundMe`, `fix`, `box`), the region download, the last import
  *   and the last server test.
  * - `POST /firstrun/download[?lat=&lon=]`: "Download the map around me" (the device's fix unless given).
+ * - T80 `POST /firstrun/show[?lat=&lon=]`: "Show the map around me" (camera to the fix, card aside, nothing saved).
+ * - T80 `GET /firstrun/direct`: the phone's own source reading (`enabled`, `active`, session bytes and cap, requests,
+ *   DEM tiles rendered and their ms, OpenFreeMap tiles, the source cache). `POST /firstrun/direct?on=0|1&sessionMb=`:
+ *   turn it off (no server: offline only) or on, set the per-session download budget, `maxZoom` the deepest DEM zoom rendered (8..15; deeper is synthesized). `POST /firstrun/direct/trim`: trim
+ *   `cache/sources/` to its cap now.
  * - `POST /firstrun/test[?server=]`: Settings › Sources › Test (the saved server unless given; not saved):
  *   `state` ok with `packs`, or failed with `error`. 502 when it failed.
  * - `POST /firstrun/dismiss[?undo=1]`: "Not now" (or bring the card back).
@@ -28,6 +35,26 @@ object FirstRunRoutes {
             when (r.method to p) {
                 "GET" to "/firstrun" -> Response.json(FirstRun.json())
                 "POST" to "/firstrun/download" -> Response.json(FirstRun.downloadAroundMe(r.query["lat"]?.toDoubleOrNull(), r.query["lon"]?.toDoubleOrNull()), 202)
+                "POST" to "/firstrun/show" -> Response.json(FirstRun.showAroundMe(r.query["lat"]?.toDoubleOrNull(), r.query["lon"]?.toDoubleOrNull()), 202)
+                "GET" to "/firstrun/direct" -> Response.json(directJson(app))
+                "POST" to "/firstrun/direct" -> {
+                    val on = r.query["on"]?.let { it == "1" || it == "true" }
+                    val mb = r.query["sessionMb"]?.let { it.toLongOrNull()?.takeIf { v -> v in 1..100_000 } ?: throw IllegalArgumentException("sessionMb must be 1..100000") }
+                    val maxZoom = r.query["maxZoom"]?.let { it.toIntOrNull()?.takeIf { v -> v in 8..15 } ?: throw IllegalArgumentException("maxZoom must be 8..15") }
+                    DirectPrefs.set(app, on, mb, maxZoom)
+                    val online = OnlineService.get(app)
+                    if (mb != null && online.isDirect) online.direct.sessionCapBytes = mb * 1024 * 1024
+                    if (maxZoom != null && online.isDirect) {
+                        online.direct.maxZoom = maxZoom
+                        online.cache.clear("${io.github.jasondorjeshort.dystopo.app.online.DirectSources.KEY}/") // tiles made at the old depth
+                    }
+                    if (on != null) {
+                        online.configure(io.github.jasondorjeshort.dystopo.app.AppSettings.server)
+                        app.reload()
+                    }
+                    Response.json(directJson(app))
+                }
+                "POST" to "/firstrun/direct/trim" -> Response.json(OnlineService.get(app).direct.trimSourceCache())
                 "POST" to "/firstrun/test" -> {
                     val t = Sources.test(r.query["server"])
                     Response.json(t, if (t["state"] == "ok") 200 else 502)
@@ -54,5 +81,10 @@ object FirstRunRoutes {
         } catch (e: java.io.IOException) {
             Response.json(mapOf("error" to e.message), 500)
         }
+    }
+    private fun directJson(app: DystopoApp): Map<String, Any?> {
+        val online = OnlineService.get(app)
+        return linkedMapOf<String, Any?>("enabled" to DirectPrefs.enabled(app), "active" to online.isDirect, "sessionMb" to DirectPrefs.sessionMb(app), "maxZoomSetting" to DirectPrefs.maxZoom(app)) +
+            (if (online.isDirect) online.direct.json() else emptyMap())
     }
 }

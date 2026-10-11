@@ -23,7 +23,7 @@ import java.util.zip.ZipFile
  * the chosen countries' polygons, clipped to a box, as the even-odd rings [BorderMask] reads (T66).
  *
  * ```
- * devtool borders --countries SWE,FIN,RUS --clip 3.5,57.5,35,72 --out serverlib/src/main/resources/borders/norway-neighbours.json
+ * devtool borders --countries SWE,FIN,RUS --clip 3.5,57.5,35,72 --out shared/src/commonMain/resources/borders/norway-neighbours.json
  * ```
  */
 class BordersCommand : CliktCommand(name = "borders") {
@@ -36,7 +36,7 @@ class BordersCommand : CliktCommand(name = "borders") {
     private val clip by option("--clip", help = "west,south,east,north to keep").default("3.5,57.5,35,72")
     private val name by option("--name", help = "mask name").default("norway-neighbours")
     private val tolerance by option("--tolerance", help = "drop vertices closer than this to their neighbours' line, degrees (0 keeps all)").double().default(0.0005)
-    private val out by option("--out", help = "output JSON").default("serverlib/src/main/resources/borders/norway-neighbours.json")
+    private val out by option("--out", help = "output JSON").default("shared/src/commonMain/resources/borders/norway-neighbours.json")
 
     override fun run() {
         val box = clip.split(',').map { it.trim().toDoubleOrNull() ?: throw UsageError("--clip must be west,south,east,north") }
