@@ -15,6 +15,7 @@ Everything from the start of the project to the first-run fix (T79), plus the ap
 
 ### 2026-10-10
 
+- T80: The phone reads the sources itself (no Dystopo server required) (#76)
 - T82: Server soak and operations (#75)
 - T76: Tiled routing graph and cross-pack routes (#74)
 - T79: First run on a real phone (#73)
