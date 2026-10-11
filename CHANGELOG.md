@@ -12,6 +12,7 @@ The phone reads the elevation sources itself (no server needed), the Android 8 t
 
 ### 2026-10-11
 
+- T83: In-app updates from GitHub Releases (#78)
 - T81: Release realism sweep (#77)
 
 (nothing yet)
