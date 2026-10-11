@@ -50,15 +50,21 @@ p = 'CHANGELOG.md'
 s = open(p, encoding='utf-8').read()
 if date:
     head = f'### {date}\n'
-    if head in s:
-        i = s.index(head) + len(head)
-        if s[i:i + 1] == '\n':
+    # Only the Unreleased section is edited: it runs from its heading to the next "## " heading.
+    u0 = s.index('## Unreleased\n')
+    nxt = s.find('\n## ', u0 + 1)
+    u1 = len(s) if nxt < 0 else nxt + 1
+    sec = s[u0:u1].replace('(nothing yet)\n\n', '').replace('(nothing yet)\n', '')
+    if head in sec:
+        i = sec.index(head) + len(head)
+        if sec[i:i + 1] == '\n':
             i += 1
-        s = s[:i] + line + '\n' + s[i:]
+        sec = sec[:i] + line + '\n' + sec[i:]
     else:
-        u = s.index('## Unreleased\n') + len('## Unreleased\n')
-        if s[u:u + 1] == '\n':
+        u = len('## Unreleased\n')
+        if sec[u:u + 1] == '\n':
             u += 1
-        s = s[:u] + head + '\n' + line + '\n\n' + s[u:]
+        sec = sec[:u] + head + '\n' + line + '\n\n' + sec[u:]
+    s = s[:u0] + sec + s[u1:]
     open(p, 'w', encoding='utf-8', newline='\n').write(s)
 print('ok', task, '| changelog:', line)

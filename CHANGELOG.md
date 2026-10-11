@@ -10,18 +10,16 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 Built-in updates from the releases page (checksum and certificate verified, one tap); mobile data allowed by default, no Wi-Fi gates; alpha releases ship the universal APK only.
 
-(nothing yet)
+- T83: In-app updates from GitHub Releases (#78)
 
 ## v0.1.3-alpha (2026-10-11)
 
 The phone reads the elevation sources itself (no server needed), the Android 8 to 10 location crash and the missing notification prompt fixed, tiled routing across pack borders, bundled fonts and icons, server metrics and limits, the release-realism sweep.
 
-### 2026-10-11
-
-- T83: In-app updates from GitHub Releases (#78)
 - T81: Release realism sweep (#77)
-
-(nothing yet)
+- T80: The phone reads the sources itself (no Dystopo server required) (#76)
+- T82: Server soak and operations (#75)
+- T76: Tiled routing graph and cross-pack routes (#74)
 
 ## v0.1.2-alpha (2026-10-10), the first published alpha
 
@@ -29,9 +27,6 @@ Everything from the start of the project to the first-run fix (T79), plus the ap
 
 ### 2026-10-10
 
-- T80: The phone reads the sources itself (no Dystopo server required) (#76)
-- T82: Server soak and operations (#75)
-- T76: Tiled routing graph and cross-pack routes (#74)
 - T79: First run on a real phone (#73)
 - T71: One-command sweeps (#72)
 - T66: Desktop and server leftover sweep 5 (#70)
