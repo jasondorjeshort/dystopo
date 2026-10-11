@@ -125,6 +125,13 @@ Build packs with the live viewer's "Build pack here", the server's `/build`, or 
 (see CLAUDE.md). `tools\android-emu.ps1 -Build` boots a headless emulator, installs the debug app and pushes the
 Rainier pack in one step.
 
+## Installing on a phone
+
+- **Get the APK** from the [releases page](https://github.com/jasondorjeshort/dystopo/releases): during alpha there is one file, `dystopo-<version>-universal.apk`. Open it on the phone and allow installs from your browser when asked. New alphas install over old ones and keep your tracks, trips and settings; every build is signed with the same key.
+- **"Google doesn't know this publisher" / blocked by Play Protect:** tap *More details*, then *Install anyway*. That is a one-time choice for this app. The durable fix, registering the publisher and signing key with Google's developer verification, is on the owner's list; until then expect the dialog on first install.
+- **Updates:** nothing is automatic yet. The simplest route today is [Obtainium](https://github.com/ImranR98/Obtainium): add this repository, turn on *include pre-releases*, and filter the asset name on `universal`; it tells you when a new alpha is out and installs it with one tap. An in-app update check is planned (T83 on the board).
+- **Map data:** first launch offers *Show the map around me* and *Download the map around me* (Wi-Fi, no server needed), a server under Settings › Sources, or importing pack files.
+
 ## Documentation
 
 - [docs/PLANNING.md](docs/PLANNING.md): design, decisions and the development log with measurements.
