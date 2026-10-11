@@ -1,5 +1,11 @@
 # Dystopo — notes for agents
 
+Where work stands right now (coordinator state; subagents follow their brief, not this):
+
+@docs/HANDOFF.md
+
+**Process base.** The working method here (coordinator session, agents do all coding, debug interface for every feature, usage gating, waves of owned tasks with a verifier per PR) is shared with the Hatchery base repository (https://github.com/jasondorjeshort/hatchery), which distils it for new projects; Dystopo is its first build-phase test. Rules that differ here are recorded in the "Process base" entry of `docs/PLANNING.md`; when a rule proves wrong in practice, fix it in the same sitting and say why in the commit message, and carry the fix back to Hatchery.
+
 Open-source, offline-first topographic maps. System map and where each topic is documented: `docs/ARCHITECTURE.md`. Design, decisions, and findings: `docs/PLANNING.md` (read it before making architectural changes). Work breakdown: `docs/TASKS.md`.
 
 ## Layout
