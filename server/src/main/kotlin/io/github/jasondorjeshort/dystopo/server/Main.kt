@@ -94,10 +94,12 @@ fun main(args: Array<String>) {
         log.error("config_invalid", mapOf("file" to configFile?.path, "errors" to it))
         exitProcess(2)
     }
+    // T82: the log cap. With log.file the log goes to that file and rotates; the config errors above still went to stdout.
+    val serverLog = config.log.file?.let { JsonLog(file = File(it), maxBytes = config.log.maxMb.toLong() shl 20, keep = config.log.keep) } ?: log
     val server = try {
-        Server(config, configFile, log).also { it.start() }
+        Server(config, configFile, serverLog).also { it.start() }
     } catch (e: java.net.BindException) {
-        log.error("bind_failed", mapOf("bind" to config.bind, "port" to config.port, "error" to e.message))
+        serverLog.error("bind_failed", mapOf("bind" to config.bind, "port" to config.port, "error" to e.message))
         exitProcess(1)
     }
     Runtime.getRuntime().addShutdownHook(Thread({ server.stop("signal") }, "shutdown"))
@@ -138,6 +140,9 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
     private lateinit var http: HttpServer
     private lateinit var executor: ExecutorService
     lateinit var live: LiveTiles
+        private set
+    /** T82: `GET /metrics` (null when `metrics.enabled` is false). */
+    var metrics: Metrics? = null
         private set
 
     /** T67: the sync users and tokens the gate checks (changed at run time by `/admin/users`). */
@@ -182,11 +187,13 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
             },
         )
         val token = config.effectiveToken()
-        val gate = Gate(users, config.corsOrigins, log, config.logRequests)
+        metrics = if (config.metrics.enabled) Metrics(cacheDir, outDir, config.metrics.diskScanMinutes) else null
+        val gate = Gate(users, config.corsOrigins, log, config.logRequests, metrics, config.relay.maxBlobBytes.toLong())
         val fallbackBase = config.publicUrl?.trimEnd('/') ?: "http://127.0.0.1:${config.port}"
         val base: (com.sun.net.httpserver.HttpExchange) -> String =
             if (config.publicUrl != null) { _ -> fallbackBase } else { ex -> LiveTiles.requestBase(ex, fallbackBase) }
 
+        applyHttpLimits(config.http)
         http = HttpServer.create(InetSocketAddress(config.bind, config.port), 256)
         executor = Executors.newFixedThreadPool(config.threads) { r -> Thread(r, "http").apply { isDaemon = true } }
         http.executor = executor
@@ -198,6 +205,17 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
             ex.sendResponseHeaders(if (stopping) 503 else 200, body.size.toLong())
             ex.responseBody.use { it.write(body) }
         }.filters += gate
+        metrics?.let { m ->
+            http.createContext("/metrics") { ex ->
+                val prom = ex.requestURI.rawQuery?.split('&')?.contains("format=prometheus") == true
+                val body = if (prom) m.prometheus(prometheusExtra()).toByteArray() else (JsonWriter.write(m.json(metricsExtra())) + "\n").toByteArray()
+                ex.responseHeaders.add("Content-Type", if (prom) "text/plain; version=0.0.4; charset=utf-8" else "application/json")
+                ex.responseHeaders.add("Cache-Control", "no-store")
+                ex.sendResponseHeaders(200, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }.filters += gate
+            m.start()
+        }
         // T67: user administration (the gate lets only the admin token through).
         http.createContext("/admin") { ex -> UserAdmin.handle(ex, users, configFile) }.filters += gate
         http.start()
@@ -238,6 +256,37 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         "shareLinks" to SyncRoutes.shares.count(),
     )
 
+    /** T82: the server's own sections of `/metrics`: the log, live tiles, the relay, sync replicas, the catalog. */
+    private fun metricsExtra(): Map<String, Any?> {
+        val st = live.stats()
+        return linkedMapOf(
+            "status" to if (stopping) "stopping" else "ok",
+            "log" to log.stats(),
+            "live" to linkedMapOf(
+                "errors" to st["errors"], "inflight" to st["inflight"],
+                "liveDemRendered" to st["liveDemRendered"], "openfreemap" to st["openfreemap"],
+            ),
+            "relay" to RelayRoutes.relay.status(),
+            "replicas" to SyncRoutes.replicaFiles().size,
+            "shareLinks" to SyncRoutes.shares.count(),
+            "catalog" to live.catalog.warmState(),
+        )
+    }
+
+    private fun prometheusExtra(): Map<String, Number?> {
+        val st = live.stats()
+        val inflight = st["inflight"] as? Map<*, *> ?: emptyMap<String, Any?>()
+        return linkedMapOf(
+            "tile_errors_total" to st["errors"] as Number?,
+            "live_dem_rendered_total" to st["liveDemRendered"] as Number?,
+            "live_inflight_dem" to inflight["dem"] as Number?, "live_inflight_osm" to inflight["osm"] as Number?,
+            "log_lines_total" to log.lines.get(), "log_bytes_total" to log.bytes.get(), "log_rotations_total" to log.rotations.get(),
+            "log_write_errors_total" to log.writeErrors.get(),
+            "sync_replicas" to SyncRoutes.replicaFiles().size,
+            "stopping" to if (stopping) 1 else 0,
+        )
+    }
+
     /** Stops accepting requests, lets those in flight finish (up to the grace period), cancels builds. */
     fun stop(reason: String) = synchronized(this) {
         if (stopping) return
@@ -246,10 +295,12 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         log.info("stopping", mapOf("reason" to reason, "graceSeconds" to config.shutdownGraceSeconds))
         val grace = config.shutdownGraceSeconds
         val cancelled = live.cancelBuilds(grace * 1000L / 2)
+        metrics?.stop()
         http.stop(maxOf(0, grace / 2))
         executor.shutdown()
         executor.awaitTermination(1, TimeUnit.SECONDS)
         log.info("stopped", mapOf("reason" to reason, "buildsCancelled" to cancelled, "ms" to (System.nanoTime() - started) / 1_000_000))
+        log.close()
         stopped.countDown()
     }
 
@@ -286,6 +337,19 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
     }
 
     companion object {
+        /**
+         * T82: the JDK listener's limits are system properties read once, when the first listener is made: a
+         * request must arrive within `maxReqTime` seconds, idle keep-alive connections close after
+         * `idleInterval`, and `jdk.httpserver.maxConnections` caps open connections. A value already set
+         * (`JAVA_OPTS=-Dsun.net.httpserver.maxReqTime=...`) wins.
+         */
+        fun applyHttpLimits(h: ServerConfig.HttpConfig) {
+            fun set(k: String, v: Any) { if (System.getProperty(k) == null) System.setProperty(k, v.toString()) }
+            set("sun.net.httpserver.maxReqTime", h.maxRequestSeconds)
+            set("sun.net.httpserver.idleInterval", h.idleSeconds)
+            set("jdk.httpserver.maxConnections", h.maxConnections)
+        }
+
         /** The ranges the style's text needs (Basic Latin, Latin-1, Latin Extended-A/B, punctuation). */
         val GLYPH_RANGES = listOf("0-255", "256-511", "8192-8447")
 

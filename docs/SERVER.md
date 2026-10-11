@@ -4,7 +4,7 @@ The always-on peer as a program you can deploy: the routes of `devtool serve --l
 else rendered live; pack builds; pack downloads; the sync peer; attribution) plus a config file, JSON
 logs, `/healthz`, a pack catalog, an optional bearer token, a CORS allowlist and a graceful shutdown.
 
-Code: `server/` (the program: `Main.kt`, `ServerConfig.kt`, `Gate.kt`, `JsonLog.kt`) over `serverlib/`
+Code: `server/` (the program: `Main.kt`, `ServerConfig.kt`, `Gate.kt`, `JsonLog.kt`, `Metrics.kt`) over `serverlib/`
 (the routes and sources, shared with `devtool serve`: `LiveTiles`, `BuildRoutes`, `ServeStatic`,
 `SyncRoutes`, `PackCatalog`, the elevation sources). Both modules use the Kotlin package
 `io.github.jasondorjeshort.dystopo.server` (T58 renamed `serverlib` from `...devtool`).
@@ -160,6 +160,14 @@ key with its default.
 | `relay.requestsPerMinute` | `120` | Relay requests per client address per minute (token bucket; 429 with `Retry-After`). A phone polls every 5 s. |
 | `extractDownloads.urls` | `[]` | Geofabrik regions the server may download into `extractsDir` when an outdoors build needs one (T66, below), e.g. `["https://download.geofabrik.de/europe/alps"]` (a `-latest.osm.pbf` or `.poly` URL works too). `devtool serve` reads `DYSTOPO_EXTRACT_DOWNLOADS` (comma-separated) instead. |
 | `extractDownloads.maxMb` | `4096` | Largest extract downloaded (by `Content-Length`, checked again while streaming). |
+| `log.file` | `null` | T82: write the JSON log to this file instead of stdout, rotating it (below, Operations). Null: stdout (cap it in journald or Docker). |
+| `log.maxMb` | `64` | Rotate the log file at this size. |
+| `log.keep` | `5` | Rotated files kept (`server.log.1` .. `.5`); the log never takes more than about `(keep + 1) * maxMb`. |
+| `metrics.enabled` | `true` | `GET /metrics` (below). |
+| `metrics.diskScanMinutes` | `10` | How often `/metrics` re-measures `cacheDir` and `outDir` (a walk of every file, in the background, at low priority); `0` turns it off. |
+| `http.maxRequestSeconds` | `60` | A client must send its whole request (headers and body) within this time, else the connection is closed. Bounds slow-header clients; a sync push slower than this fails (behind a proxy that buffers requests it only bounds the proxy's hop). |
+| `http.idleSeconds` | `30` | Idle keep-alive connections are closed after this. |
+| `http.maxConnections` | `1000` | Open connections at once; beyond, new ones are closed at once. |
 
 ## Routes
 
@@ -179,6 +187,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   between phones (below). Open, without the token.
 - `GET /catalog` (also `/catalog.json`): the pack catalog, below. `POST /catalog/refresh`: rehash every
   file (token-protected).
+- `GET /metrics` (T82; `?format=prometheus` for the Prometheus text format): what to watch on a long-running
+  server, open like `/healthz` (no secrets, no user ids). Below, Operations.
 - `GET /healthz`: `status` (`ok`, or `stopping` with a 503), `uptimeS`, `packs`, `outDirWritable`,
   `cacheDirWritable`, `glyphs` (fonts present), `errors` (tile route exceptions so far), `catalog` (the
   startup hash pass: `state` `cold`, `warming` or `ready`, `files`, `hashed`, `hashesComputed`, `ms`).
@@ -470,15 +480,218 @@ fields.
 - `started`: bind, port, config file, directories, packs found, whether a token is set (never the token),
   CORS origins, whether tilebuild is available.
 - `request`: `method`, `path` (no query string), `status`, `ms`, `bytes`, `remote` (`X-Forwarded-For`
-  first), `source` for tile routes (`pack`, `live-3dep`, `live-copernicus`, `openfreemap`, ...). 5xx at
-  `error`, 401/403/429 at `warn`.
+  first), `source` for tile routes (`pack`, `live-3dep`, `live-copernicus`, `openfreemap`, ...), `outcome`
+  when the gate answered itself (`unauthorized`, `refused`, `preflight`, `tooLarge`, `connectionLost`,
+  `exception`). 5xx at `error`, 401/403/413/429 at `warn`.
+- `connection_lost` (warn, T82): the client went away mid-answer, or `http.maxRequestSeconds` closed a slow
+  upload. Not a server error; the request line keeps the status that was actually sent.
 - `glyphs_fetched`, `request_failed`, `config_invalid`, `bind_failed`, `stopping`, `stopped`.
+- T82: every string field is cut at 512 characters (`...(N chars)` says how long it was) and lists at 100
+  items, so a client cannot make one request write kilobytes of log.
 
 ## Shutdown
 
 On SIGTERM (or Ctrl+C) the JVM's shutdown hook: `/healthz` turns 503, queued and running builds are
 cancelled (their partial `*.building` files are deleted), the listener stops accepting and in-flight
 requests get up to half of `shutdownGraceSeconds` to finish; then `stopped` is logged with how long it took.
+
+## Operations (T82)
+
+Running the server for weeks rather than for a sweep. Everything here was checked against a 12-hour soak of
+the installed server (`tools/server-soak.ps1`, numbers at the end of this section).
+
+### A service unit
+
+systemd, with the distribution unpacked in `/opt/dystopo` and the data in `/var/lib/dystopo`
+(`useradd --system --home-dir /var/lib/dystopo dystopo` first):
+
+```
+# /etc/systemd/system/dystopo.service
+[Unit]
+Description=Dystopo map server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dystopo
+WorkingDirectory=/var/lib/dystopo
+Environment=JAVA_OPTS=-Xmx4g
+EnvironmentFile=-/etc/dystopo/env              # DYSTOPO_SERVER_TOKEN=..., DYSTOPO_ADMIN_TOKEN=...
+ExecStart=/opt/dystopo/bin/server --config /etc/dystopo/server.json
+# SIGTERM runs the graceful shutdown (builds cancelled, requests drained); give it shutdownGraceSeconds.
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dystopo /etc/dystopo   # /etc/dystopo only if /admin/users should persist users
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl enable --now dystopo`, logs with `journalctl -u dystopo` (journald caps its own size:
+`SystemMaxUse=` in `journald.conf`). In `/etc/dystopo/server.json` set `"bind": "127.0.0.1"` and put a
+reverse proxy in front (above).
+
+Docker Compose, with Caddy terminating TLS (the server is not published on the host at all):
+
+```
+# compose.yaml
+services:
+  dystopo:
+    image: dystopo-server                    # docker build -f server/Dockerfile -t dystopo-server .
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      JAVA_OPTS: -Xmx4g
+      DYSTOPO_SERVER_TOKEN: ${DYSTOPO_SERVER_TOKEN}
+    volumes:
+      - ./server.json:/opt/dystopo/config/server.json:ro
+      - cache:/data/cache
+      - out:/data/out
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }   # the log cap when the log goes to stdout
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    command: caddy reverse-proxy --from maps.example.org --to dystopo:8080
+    volumes:
+      - caddy-data:/data
+volumes: { cache: {}, out: {}, caddy-data: {} }
+```
+
+### The reverse proxy is part of the defence
+
+The JDK HTTP listener reads a request's headers on a worker thread (`threads`, 32). The probe's slowloris
+test (64 connections that send one header line a second) stalled `/healthz` for exactly
+`http.maxRequestSeconds` (60 s), when the listener closed them; with the JDK default (no limit) it never
+answered and the connections were never closed. nginx and Caddy read the whole request before they forward
+it (nginx: `proxy_request_buffering on`, the default), so behind them a slow client costs the proxy a
+connection, not the server a thread. Expose the server directly only on a trusted network. Request bodies
+are capped by the server whatever the proxy does: 256 MiB on `/sync*` (a whole-log push), the relay's
+`relay.maxBlobBytes`, 16 MiB elsewhere (the route planner's own cap is 8 MiB); a declared `Content-Length`
+over the cap is a 413 before anything is read, a chunked body is cut at the cap while it is read.
+
+### Backups
+
+| What | Where | How |
+| --- | --- | --- |
+| Sync replicas (users' tracks, routes, settings) | `out/sync/*.db` (`syncDb`'s directory) | SQLite files: `sqlite3 out/sync/alice.db ".backup '/backup/alice.db'"` is safe while the server runs (the online backup API); a plain `cp` is safe only with the server stopped. |
+| Share links | `out/sync/shares.json` | A small JSON file, rewritten whole on each change: copy it. |
+| Config and tokens | `server.json` (and `DYSTOPO_*_TOKEN` in the environment file) | With the replicas: a replica without its user's token cannot be reached. `/admin/users` writes the file when it adds or removes a user. |
+| Packs | `out/*.pmtiles` | Optional: they can be rebuilt (`/build`) or re-copied; their `.sha256` sidecars are recomputed when missing. |
+| Cache | `cacheDir` | Never: everything in it is downloaded or rendered again on demand. |
+
+Restore with the server stopped: put the files back, start it. A replica restored from an older backup
+is not a problem for sync: devices push what the server lacks on their next sync (the log is an operation
+log; see docs/PLANNING.md, Sync), so restoring loses nothing a device still holds. Without the replicas,
+users keep their data on their devices and push it again.
+
+### What to monitor
+
+`GET /healthz` for liveness (an orchestrator restarts on a non-200), `GET /metrics` for everything else
+(scrape `?format=prometheus` every minute, or poll the JSON):
+
+- `jvm.heapUsedBytes` against `heapMaxBytes`, and the trend of `heapAfterGcBytes` (what survived the last
+  collection): a steady climb over hours is a leak; the soak's numbers below say what is expected.
+- `requests.<route>.status.5xx` (`dystopo_requests_total{status="5xx"}`): any rise; `live.errors` counts tile
+  route exceptions.
+- `requests.<route>.p95Ms` for `dem`, `osm`, `contours`, `shade`: pack tiles answer in tens of
+  milliseconds; live tiles of a place nobody viewed take seconds (10 to 30 s at worst).
+- `disk.freeBytes`, and the growth of `disk.cacheDir.bytes` (per directory under `children`): the cache
+  has no cap yet (T74), so it grows with every new place viewed; `out` grows with builds and replicas.
+- `jvm.openFiles` (Linux) or the process handle count (Windows), `jvm.threads`: flat under steady load.
+- `log.writeErrors` (the log file could not be written: disk full) and `log.rotations`.
+- `relay.bytes` and `relay.refused` (`full`, `rateLimited`) for the relay.
+
+Prometheus, scraping through the private address (the proxy need not expose `/metrics`):
+
+```
+scrape_configs:
+  - job_name: dystopo
+    metrics_path: /metrics
+    params: { format: [prometheus] }
+    static_configs: [{ targets: ["127.0.0.1:8080"] }]
+```
+
+`/metrics` is unauthenticated, like `/healthz`: anyone who reaches the server can read it. It carries no
+tokens, user ids or slot ids, but it does expose the log file's path, the cache and out directories'
+sizes per top-level directory, the free disk space, request counts per route and the JVM's memory, which
+an operator may not want public. Restrict it at the reverse proxy (`location = /metrics { allow 127.0.0.1;
+deny all; }` in nginx, `respond /metrics 403` in Caddy) and scrape it on the private address, or turn it
+off with `metrics.enabled: false`. Share-link tokens are never logged: `/s/<token>` and
+`/sync/share/<token>` appear in the request log as `/s/…` and `/sync/share/…`.
+
+### The log cap
+
+On stdout (the default) the collector caps the log: journald's `SystemMaxUse`, Docker's
+`--log-opt max-size=50m --log-opt max-file=5`. With `log.file` the server rotates it itself at
+`log.maxMb` (64), keeping `log.keep` (5) old files, so the log takes at most about 384 MB. Every string
+field is cut at 512 characters. At `logRequests: true` each request is one line of about 190 bytes: a
+server answering 10 requests a second writes about 160 MB a day, so either cap matters; `logRequests: false`
+keeps only errors, refusals, startup and shutdown.
+
+### Soak and probe
+
+```
+python -I tools/server-probe.py --port 8080 --token <token> [--admin-token <admin>] [--quick]   # bad input on every route family: JSON, exit 0 when all answered as expected and the server stayed up
+powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -Hours 12 -Port 9090 -Root E:\soak -Packs out\rainier-dem.pmtiles,out\rainier-outdoors.pmtiles -HeapMb 6144
+powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -ChartOnly -Root E:\soak         # redraw soak.svg and summary.json, also while it runs
+```
+
+The probe sends malformed tile coordinates, map options, traversal attempts on `/out/`, `/glyphs/` and
+`/s/`, broken ranges, bad JSON and deep nesting, malformed relay frames, wrong and missing tokens, an
+over-long request line, 10 000 headers, a 1 MB header, lying, negative and duplicate `Content-Length`,
+declared and chunked bodies over the cap, a gzip bomb to `/sync/push`, non-HTTP bytes, a slow header drip,
+a 64-connection slowloris and 300 idle connections, and checks `/healthz` after each. The soak starts its
+own server (own cache and out directories under `-Root`, ports 9090 to 9099, stopped by its PID), walks the
+pack's tiles at z8 to z14 with styles, glyphs, `/out/` ranges, routes, sync, relay posts, a trip saved
+every 10 minutes, a build every hour, the quick probe every hour and a new live tile column every two
+minutes, samples `/metrics`, the OS process and a class histogram (a full GC, so the live heap is exact)
+every 10 minutes into `soak.jsonl`, and ends with the full probe, `soak.svg` and `summary.json`. The
+nightly workflow runs a 20-minute version (`server-soak` job) on a pack it builds itself.
+
+### Measured (T82, October 2026)
+
+Two soaks side by side on one Windows machine (JDK 21, `-Xmx6g`, about 2.5 requests a second each: 12 pack
+tiles of each kind per 20-second round plus the rest of the mix), sampled every 10 minutes; the numbers
+below are from the first hours (the PR carries the final 12-hour charts):
+
+- **Heap: one unbounded cache, in serverlib.** With the Rainier pack and the live column, the live heap
+  (after a full GC) was 2.45 GB after 30 minutes and then grew about 0.15 GB an hour. A heap dump put
+  2.19 GB of it in `Geoids.offsetCache`: the NAVD88-to-EGM2008 offsets (one `FloatArray`, about 0.73 MB)
+  of every US live window ever rendered with 3DEP or lidar, 3023 of them, never evicted (the map's bins
+  had also turned into trees: `MercatorWindow` keys collide). The edge of a US pack fills it fastest: the
+  first walk over the Rainier pack's 921 tiles at z8 to z14 with `-Xmx1g` ran out of memory within two
+  minutes. Until that cache is bounded, give a server that renders US live tiles 4 GB of heap or more, or
+  restart it daily. Away from the US (the Mont Blanc pack, no live column) the live heap stayed at about
+  145 MB.
+- **Threads.** Up to 407 on the US soak, 287 of them `ForkJoinPool.commonPool` workers: `RemoteTiff.prefetch`
+  runs blocking range reads in a parallel stream, and the common pool adds compensation threads up to its
+  cap (its parallelism plus 256). They idle out after a minute; the Mont Blanc soak held 81 threads.
+  Handles (Windows): about 3 300 on the US soak, 1 090 on the other; flat after the first half hour.
+- **Disk.** The cache has no cap yet (T74): with one new live column every two minutes it grew 1.45 GB in
+  the first 40 minutes (3DEP 1 m lidar range reads 0.52 GB, rendered live tiles 0.48 GB, 3DEP 1/3" 0.34 GB,
+  Copernicus 0.17 GB). `out/` grew only by the replicas and the rebuilt pack (a few MB).
+- **Latency.** Warm pack tiles p95 34 to 40 ms; while the first cycle rendered live tiles at the pack's
+  edges, p95 was 6 s and the slowest contour tile 21 s. `/metrics` answers in under a second.
+- **Errors.** 4 contour tiles answered 500 in the first 40 minutes (cold live renders whose upstream
+  reads failed; the two retried by hand answered 200). The quick probe passed every hour. The full probe
+  passes on Linux (CI) and Windows except one known answer: `/sync/push` inflates a gzipped bundle with no
+  cap on the inflated size, so 1 GiB of zeros in a 1 MB body is an `OutOfMemoryError` (a 500; the server
+  survives) with a 1 GB heap, and a 400 with 3 GB. The token keeps strangers out of `/sync/push`, so only a
+  user can do this.
+- **Log.** About 190 bytes a request at `logRequests: true`: 1.1 MB in 40 minutes at this rate.
 
 ## Limits
 

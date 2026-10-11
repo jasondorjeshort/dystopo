@@ -78,7 +78,42 @@ data class ServerConfig(
     val relay: RelayConfig = RelayConfig(),
     /** Geofabrik regions downloaded into the extracts directory when a build needs one (T66). */
     val extractDownloads: ExtractDownloadConfig = ExtractDownloadConfig(),
+    /** T82: where the JSON log goes and how much of it is kept. */
+    val log: LogConfig = LogConfig(),
+    /** T82: `GET /metrics` and its background disk scan. */
+    val metrics: MetricsConfig = MetricsConfig(),
+    /** T82: connection limits of the HTTP listener (slow clients, idle connections). */
+    val http: HttpConfig = HttpConfig(),
 ) {
+    /** T82: null [file] logs to stdout (cap it in the collector); a file rotates at [maxMb], keeping [keep] old files. */
+    @Serializable
+    data class LogConfig(
+        val file: String? = null,
+        val maxMb: Int = 64,
+        val keep: Int = 5,
+    )
+
+    /** T82: [diskScanMinutes] 0 turns the disk scan off (the cache can hold millions of tiles). */
+    @Serializable
+    data class MetricsConfig(
+        val enabled: Boolean = true,
+        val diskScanMinutes: Int = 10,
+    )
+
+    /**
+     * T82: [maxRequestSeconds] is how long a client may take to send a whole request, headers and body (a
+     * slow-header drip holds a worker thread until then; a sync push slower than this is cut off, so behind
+     * a reverse proxy, which buffers requests, it only bounds the proxy's hop); [idleSeconds] closes keep-alive connections nobody uses;
+     * [maxConnections] caps open connections (beyond it new ones are closed at once). Each sets the matching
+     * `sun.net.httpserver` / `jdk.httpserver` system property unless `JAVA_OPTS` already set it.
+     */
+    @Serializable
+    data class HttpConfig(
+        val maxRequestSeconds: Int = 60,
+        val idleSeconds: Int = 30,
+        val maxConnections: Int = 1000,
+    )
+
     /** T72: limits of the sync relay; it holds only ciphertext, in memory, for [ttlSeconds] after each write. */
     @Serializable
     data class RelayConfig(
@@ -165,6 +200,9 @@ data class ServerConfig(
         }
         if (extractDownloads.maxMb < 1) add("extractDownloads.maxMb must be at least 1")
         if (extractDownloads.urls.isNotEmpty() && extractsDir == "") add("extractDownloads needs an extracts directory (extractsDir is \"\")")
+        if (log.maxMb < 1 || log.keep < 0) add("log.maxMb must be at least 1 and log.keep at least 0")
+        if (metrics.diskScanMinutes < 0) add("metrics.diskScanMinutes must be >= 0 (0: off)")
+        if (http.maxRequestSeconds < 1 || http.idleSeconds < 1 || http.maxConnections < 1) add("http limits must be at least 1")
         if (corsOrigins.any { it != "*" && !Regex("https?://[^/\\s]+").matches(it) }) add("corsOrigins entries must be \"*\" or an origin like https://maps.example.org (no path)")
     }
 

@@ -43,5 +43,19 @@
   "extractDownloads": {
     "urls": [],
     "maxMb": 4096
+  },
+  "log": {
+    "file": null,
+    "maxMb": 64,
+    "keep": 5
+  },
+  "metrics": {
+    "enabled": true,
+    "diskScanMinutes": 10
+  },
+  "http": {
+    "maxRequestSeconds": 60,
+    "idleSeconds": 30,
+    "maxConnections": 1000
   }
 }

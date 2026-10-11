@@ -28,6 +28,10 @@ class Gate(
     corsOrigins: List<String>,
     private val log: JsonLog,
     private val logRequests: Boolean,
+    /** T82: per-route request counts and latencies for `/metrics` (null: not recorded). */
+    private val metrics: Metrics? = null,
+    /** T82: the relay's own blob cap (`relay.maxBlobBytes`); its bodies may be that large and no larger. */
+    private val relayMaxBody: Long = 16L shl 20,
 ) : Filter() {
     /** The T52 form: one token (or none) for everything. */
     constructor(token: String?, corsOrigins: List<String>, log: JsonLog, logRequests: Boolean) :
@@ -78,11 +82,20 @@ class Gate(
     override fun doFilter(raw: HttpExchange, chain: Chain) {
         val started = System.nanoTime()
         val origin = raw.requestHeaders.getFirst("Origin")
-        val ex = Exchange(raw, allowOrigin(origin), origin != null && origins.isNotEmpty() && !anyOrigin)
         val path = raw.requestURI.path
+        val cap = maxBody(path, relayMaxBody)
+        val ex = Exchange(raw, allowOrigin(origin), origin != null && origins.isNotEmpty() && !anyOrigin, cap)
         var outcome: String? = null
         try {
+            val declared = raw.requestHeaders.getFirst("Content-Length")?.trim()
             when {
+                // T82: a body over the route's cap is refused before any route reads it; a chunked body (no
+                // Content-Length) is cut off at the cap while the route reads it (BodyTooLarge: a 413 below, or
+                // the route's own 500 turned into a 413 by the exchange). Memory stays bounded by the cap.
+                declared != null && (declared.toLongOrNull() ?: -1) > cap -> {
+                    tooLarge(ex, cap)
+                    outcome = "tooLarge"
+                }
                 raw.requestMethod == "OPTIONS" && raw.requestHeaders.getFirst("Access-Control-Request-Method") != null -> {
                     // CORS preflight: answered here for every route (the routes' own OPTIONS answers lack Allow-Headers).
                     ex.responseHeaders.add("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
@@ -103,15 +116,33 @@ class Gate(
                 else -> chain.doFilter(ex)
             }
         } catch (e: Throwable) {
-            outcome = "exception"
-            log.error("request_failed", mapOf("method" to raw.requestMethod, "path" to path, "error" to e.toString()))
-            if (ex.status == 0) runCatching { ex.sendResponseHeaders(500, -1); ex.close() }
+            when {
+                e is BodyTooLarge || ex.bodyCapHit -> {
+                    // Over the cap while a route read it (or the route caught that and failed its own way): a 413.
+                    outcome = "tooLarge"
+                    if (ex.status == 0) runCatching { tooLarge(ex, cap) } else runCatching { raw.close() }
+                }
+                e is java.io.IOException -> {
+                    // T82: the connection, not the server: the client went away mid-answer or the listener's
+                    // request timeout (http.maxRequestSeconds) closed a slow upload. Not an error of ours.
+                    outcome = "connectionLost"
+                    log.warn("connection_lost", mapOf("method" to raw.requestMethod, "path" to logPath(path), "error" to e.toString(), "responseStarted" to (ex.status != 0)))
+                    if (ex.status == 0) runCatching { ex.sendResponseHeaders(500, -1); ex.close() } else runCatching { raw.close() }
+                }
+                else -> {
+                    outcome = "exception"
+                    log.error("request_failed", mapOf("method" to raw.requestMethod, "path" to logPath(path), "error" to e.toString()))
+                    if (ex.status == 0) runCatching { ex.sendResponseHeaders(500, -1); ex.close() }
+                }
+            }
         } finally {
             val status = ex.status
-            if (logRequests || status >= 500 || outcome == "unauthorized" || outcome == "refused") {
+            val ms = (System.nanoTime() - started) / 1e6
+            metrics?.request(path, status, ms, ex.length)
+            if (logRequests || status >= 500 || outcome == "unauthorized" || outcome == "refused" || outcome == "tooLarge") {
                 val fields = linkedMapOf<String, Any?>(
-                    "method" to raw.requestMethod, "path" to path, "status" to status,
-                    "ms" to Math.round((System.nanoTime() - started) / 1e5) / 10.0,
+                    "method" to raw.requestMethod, "path" to logPath(path), "status" to status,
+                    "ms" to Math.round(ms * 10) / 10.0,
                     "bytes" to ex.length.takeIf { it >= 0 },
                     "remote" to (raw.requestHeaders.getFirst("X-Forwarded-For")?.substringBefore(',')?.trim() ?: raw.remoteAddress?.address?.hostAddress),
                 )
@@ -119,7 +150,7 @@ class Gate(
                 outcome?.let { fields["outcome"] = it }
                 when {
                     status >= 500 -> log.error("request", fields)
-                    status == 401 || status == 403 || status == 429 -> log.warn("request", fields)
+                    status == 401 || status == 403 || status == 413 || status == 429 -> log.warn("request", fields)
                     else -> log.info("request", fields)
                 }
             }
@@ -130,11 +161,15 @@ class Gate(
      * The request's exchange with CORS fixed up at send time, and the status and length recorded for
      * the log. Everything else goes straight to [inner].
      */
-    private class Exchange(private val inner: HttpExchange, private val allow: String?, private val vary: Boolean) : HttpExchange() {
+    private class Exchange(private val inner: HttpExchange, private val allow: String?, private val vary: Boolean, private val cap: Long) : HttpExchange() {
         @Volatile var status = 0
         @Volatile var length = -1L
+        @Volatile var bodyCapHit = false
+        private val body: InputStream by lazy { CappedInput(inner.requestBody, cap) { bodyCapHit = true } }
 
-        override fun sendResponseHeaders(rCode: Int, responseLength: Long) {
+        override fun sendResponseHeaders(code: Int, responseLength: Long) {
+            // T82: a route that caught the cap's exception answers with its generic 500; the client is told 413.
+            val rCode = if (bodyCapHit && code >= 500) 413 else code
             val h = inner.responseHeaders
             h.remove("Access-Control-Allow-Origin")
             if (allow != null) {
@@ -142,9 +177,11 @@ class Gate(
                 h.set("Access-Control-Expose-Headers", "X-Dystopo-Source, Content-Range, Content-Length, ETag")
             }
             if (vary) h.add("Vary", "Origin")
+            inner.sendResponseHeaders(rCode, responseLength)
+            // Recorded once sent: a route that fails after its headers went out and tries a 500 does not
+            // turn the request into a 500 in the log and the metrics (the client got the first answer).
             status = rCode
             length = if (responseLength > 0) responseLength else if (responseLength == -1L) 0 else -1
-            inner.sendResponseHeaders(rCode, responseLength)
         }
 
         override fun getRequestHeaders(): Headers = inner.requestHeaders
@@ -153,7 +190,7 @@ class Gate(
         override fun getRequestMethod(): String = inner.requestMethod
         override fun getHttpContext(): HttpContext = inner.httpContext
         override fun close() = inner.close()
-        override fun getRequestBody(): InputStream = inner.requestBody
+        override fun getRequestBody(): InputStream = body
         override fun getResponseBody(): OutputStream = inner.responseBody
         override fun getResponseCode(): Int = inner.responseCode
         override fun getRemoteAddress(): InetSocketAddress = inner.remoteAddress
@@ -171,7 +208,59 @@ class Gate(
         override fun getPrincipal(): HttpPrincipal? = inner.principal
     }
 
+    private fun tooLarge(ex: HttpExchange, cap: Long) {
+        val body = (JsonWriter.write(mapOf("error" to "request body larger than $cap bytes", "status" to 413)) + "\n").toByteArray()
+        ex.responseHeaders.add("Content-Type", "application/json")
+        ex.responseHeaders.add("Connection", "close")
+        ex.sendResponseHeaders(413, body.size.toLong())
+        ex.responseBody.use { it.write(body) }
+    }
+
+    /** T82: thrown by a capped request body once more than the route's cap has been read. */
+    class BodyTooLarge(cap: Long) : java.io.IOException("request body larger than $cap bytes")
+
+    /** Reads at most [cap] bytes of [inner]; one more is a [BodyTooLarge]. */
+    private class CappedInput(private val inner: InputStream, private val cap: Long, private val onHit: () -> Unit) : InputStream() {
+        private var read = 0L
+        private fun count(n: Int): Int {
+            if (n > 0) {
+                read += n
+                if (read > cap) { onHit(); throw BodyTooLarge(cap) }
+            }
+            return n
+        }
+        override fun read(): Int = inner.read().also { if (it >= 0) count(1) }
+        override fun read(b: ByteArray, off: Int, len: Int): Int =
+            if (len == 0) 0 else count(inner.read(b, off, minOf(len.toLong(), cap + 1 - read).toInt()))
+        override fun available(): Int = inner.available()
+        override fun close() = inner.close()
+    }
+
     companion object {
+        /**
+         * T82: the path as logged. A share link's token is the secret that opens it (T67), so `/s/<token>`
+         * (and `.gpx`, `.json`) is logged as `/s/…` and `/sync/share/<token>` (a revocation) as `/sync/share/…`.
+         */
+        fun logPath(path: String): String = when {
+            path.startsWith("/s/") && path.length > 3 -> "/s/…"
+            path.startsWith("/sync/share/") && path.length > "/sync/share/".length -> "/sync/share/…"
+            else -> path
+        }
+
+        /** T82: the sync peer takes bundles up to 256 MiB (SyncRoutes), everything else far less. */
+        const val SYNC_MAX_BODY = 256L shl 20
+        const val MAX_BODY = 16L shl 20
+
+        /**
+         * The largest request body [path] accepts; the routes' own caps are lower where they have one. The
+         * relay's is its blob cap (`relay.maxBlobBytes`, which the config may raise).
+         */
+        fun maxBody(path: String, relayMaxBody: Long = 16L shl 20): Long = when {
+            isRelay(path) -> relayMaxBody
+            path == "/sync" || path.startsWith("/sync/") -> SYNC_MAX_BODY
+            else -> MAX_BODY
+        }
+
         /** T67: user administration, admin token only. */
         fun isAdmin(path: String): Boolean = path == "/admin" || path.startsWith("/admin/")
 

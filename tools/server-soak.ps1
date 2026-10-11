@@ -1,0 +1,541 @@
+<#
+.SYNOPSIS
+  T82: soak the standalone server for hours under a steady mixed load and record how it ages.
+
+.DESCRIPTION
+  Starts the installed server (./gradlew :server:installDist, copied under -Root so a rebuild cannot touch
+  the running jars) on -Port with its own cache and out directories under -Root, then loops until -Hours
+  have passed:
+    - a round of tile requests every -RoundSeconds through curl (parallel): DEM, vector, contour and
+      hillshade tiles walked across the served pack at z8 to z14 (so new keys keep arriving and the walk
+      wraps every few hours), the style with map options, glyphs, sprites, the catalog, /healthz,
+      /out/ range reads of the pack, a route, the sync status and a pull, relay status and relay posts
+      of well-formed sealed frames under random slots (they expire after the relay TTL);
+    - with -LiveEvery N, one new live tile column (DEM, contours, OSM) every N rounds outside the packs
+      (the cache grows by those; polite to the upstreams);
+    - every -TripMinutes a planned route saved as a trip (route -> /route/bundle -> /sync/push as the
+      soak user) and, every hour, a share link for it (the replica and shares.json grow);
+    - every -BuildMinutes a small /build (same name, overwrite=1) that replaces a pack under out/;
+    - every -ProbeMinutes tools/server-probe.py --quick --no-bomb (the error paths, again and again).
+  Every -SampleMinutes it appends one JSON line to <Root>/soak.jsonl: /metrics (heap, heap after GC,
+  threads, GC, disk under cache/ and out/, log), the OS view of the process (working set, private bytes,
+  handles, threads, CPU seconds) and the client side of the interval (requests, statuses, p50/p95/max per
+  group). At the end: a full probe, a class histogram, <Root>/soak.svg (the chart), <Root>/summary.json
+  (first, last and per-hour growth of each series), and the server is stopped by its PID.
+
+  -ChartOnly redraws soak.svg and summary.json from an existing soak.jsonl (also while a soak runs).
+  Refuses the coordinator's and the phone's ports (8765, 8686, 8687). Stops only the server it started.
+
+.EXAMPLE
+  # A detached 12-hour soak (Windows): the PID of the soak script goes to out\soak\soak-script.pid.
+  $p = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList '-ExecutionPolicy','Bypass','-File','tools\server-soak.ps1','-Hours','12','-Port','9090'
+  $p.Id | Out-File out\soak\soak-script.pid
+
+.EXAMPLE
+  pwsh tools/server-soak.ps1 -Minutes 20 -SampleMinutes 2 -Port 9090 -Root out/soak-ci -BuildPack   # CI: no pack on disk, build one first
+#>
+param(
+    [int]$Port = 9090,
+    [double]$Hours = 0,
+    [int]$Minutes = 0,
+    [int]$SampleMinutes = 10,
+    [string]$Root = "out/soak",
+    [int]$RoundSeconds = 20,
+    [int]$Parallel = 6,
+    [int]$LiveEvery = 6,
+    [int]$TripMinutes = 10,
+    [int]$BuildMinutes = 60,
+    [int]$ProbeMinutes = 60,
+    [int]$HeapMb = 2048,
+    [switch]$NoFullGc,            # skip the class histogram (a full GC) at every sample
+    [string]$Packs = "",          # comma-separated .pmtiles to copy into <Root>/out when it has none
+    [switch]$BuildPack,           # no pack on disk (CI): build a small one through /build first
+    [switch]$NoBuild,             # use the install already under <Root>/install
+    [switch]$ChartOnly,
+    [string]$Python = ""
+)
+
+$ErrorActionPreference = "Stop"
+$repo = Split-Path -Parent $PSScriptRoot
+Set-Location $repo
+$onWindows = ($PSVersionTable.PSEdition -ne "Core") -or $IsWindows
+$sep = [IO.Path]::DirectorySeparatorChar
+$Root = if ([IO.Path]::IsPathRooted($Root)) { [IO.Path]::GetFullPath($Root) } else { [IO.Path]::GetFullPath((Join-Path $repo $Root)) }
+New-Item -ItemType Directory -Force $Root | Out-Null
+$logFile = Join-Path $Root "soak.jsonl"
+if (-not $Python) { $Python = if ($onWindows) { "python" } else { "python3" } }
+$curl = if ($onWindows) { "curl.exe" } else { "curl" }
+
+function Write-Json($obj) { $obj | ConvertTo-Json -Depth 12 -Compress }
+
+# ---------------------------------------------------------------- chart and summary (pure PowerShell, SVG)
+function Get-Path($o, [string]$path) {
+    $v = $o
+    foreach ($k in $path.Split('.')) { if ($null -eq $v) { return $null }; $v = $v.$k }
+    return $v
+}
+
+function Write-Chart {
+    if (-not (Test-Path $logFile)) { Write-Host "no $logFile"; return }
+    $rows = @(Get-Content $logFile | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.kind -eq "sample" })
+    if ($rows.Count -lt 1) { Write-Host "no samples yet"; return }
+    $t0 = [double]$rows[0].epochS
+    $mb = 1048576.0
+    # panel title, unit, series (label, path, scale, colour)
+    $panels = @(
+        @{ title = "JVM heap"; unit = "MB"; series = @(
+            @("used", "metrics.jvm.heapUsedBytes", $mb, "#9aa7b8"),
+            @("after last GC", "metrics.jvm.heapAfterGcBytes", $mb, "#93c5fd"),
+            @("live after full GC (leak signal)", "liveHeap.bytes", $mb, "#1d4ed8")) },
+        @{ title = "Process memory (OS)"; unit = "MB"; series = @(
+            @("working set", "process.workingSetBytes", $mb, "#0f766e"),
+            @("private / RSS", "process.privateBytes", $mb, "#b45309")) },
+        @{ title = "Handles and threads"; unit = "count"; series = @(
+            @("OS handles / open files", "process.handles", 1, "#7c3aed"),
+            @("JVM threads", "metrics.jvm.threads", 1, "#db2777")) },
+        @{ title = "Disk"; unit = "MB"; series = @(
+            @("cache/", "metrics.disk.cacheDir.bytes", $mb, "#2563eb"),
+            @("out/", "metrics.disk.outDir.bytes", $mb, "#b45309"),
+            @("log", "logBytesOnDisk", $mb, "#6b7280")) },
+        @{ title = "Client latency p95 per interval"; unit = "ms"; series = @(
+            @("pack tiles", "client.groups.pack.p95Ms", 1, "#0f766e"),
+            @("live tiles", "client.groups.live.p95Ms", 1, "#b45309"),
+            @("other routes", "client.groups.other.p95Ms", 1, "#6b7280")) },
+        @{ title = "Requests and failures per interval"; unit = "count"; series = @(
+            @("requests", "client.requests", 1, "#2563eb"),
+            @("5xx + failed", "client.failures", 1, "#dc2626")) }
+    )
+    $W = 1100; $ph = 210; $pad = 56; $gap = 28; $top = 70
+    $H = $top + $panels.Count * ($ph + $gap) + 20
+    $hoursSpan = [math]::Max(0.01, ([double]$rows[-1].epochS - $t0) / 3600.0)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("<svg xmlns='http://www.w3.org/2000/svg' width='$W' height='$H' viewBox='0 0 $W $H' font-family='Segoe UI, Arial, sans-serif'>")
+    [void]$sb.Append("<rect width='100%' height='100%' fill='#ffffff'/>")
+    $title = "Dystopo server soak: {0:N1} h, {1} samples, port {2}" -f $hoursSpan, $rows.Count, $rows[0].port
+    [void]$sb.Append("<text x='$pad' y='30' font-size='18' font-weight='600' fill='#111827'>$title</text>")
+    $sub = "started {0} UTC; heap max {1:N0} MB" -f $rows[0].ts, ((Get-Path $rows[0] "metrics.jvm.heapMaxBytes") / $mb)
+    [void]$sb.Append("<text x='$pad' y='50' font-size='12' fill='#4b5563'>$sub</text>")
+    $i = 0
+    foreach ($p in $panels) {
+        $y0 = $top + $i * ($ph + $gap); $i++
+        $x0 = $pad; $x1 = $W - 220
+        $max = 0.0
+        foreach ($s in $p.series) { foreach ($r in $rows) { $v = Get-Path $r $s[1]; if ($null -ne $v) { $v = [double]$v / $s[2]; if ($v -gt $max) { $max = $v } } } }
+        if ($max -le 0) { $max = 1 }
+        $max = $max * 1.1
+        [void]$sb.Append("<rect x='$x0' y='$y0' width='$($x1 - $x0)' height='$ph' fill='#f9fafb' stroke='#d1d5db'/>")
+        [void]$sb.Append("<text x='$x0' y='$($y0 - 6)' font-size='13' font-weight='600' fill='#111827'>$($p.title) ($($p.unit))</text>")
+        foreach ($f in 0, 0.5, 1) {
+            $yy = $y0 + $ph - $f * $ph
+            [void]$sb.Append("<line x1='$x0' x2='$x1' y1='$yy' y2='$yy' stroke='#e5e7eb'/>")
+            [void]$sb.Append(("<text x='{0}' y='{1}' font-size='10' fill='#6b7280' text-anchor='end'>{2:G4}</text>" -f ($x0 - 4), ($yy + 3), ($max * $f)))
+        }
+        foreach ($h in 0..([math]::Ceiling($hoursSpan))) {
+            if ($h -gt $hoursSpan) { break }
+            $xx = $x0 + ($h / $hoursSpan) * ($x1 - $x0)
+            [void]$sb.Append(("<text x='{0:F1}' y='{1}' font-size='10' fill='#6b7280' text-anchor='middle'>{2}h</text>" -f $xx, ($y0 + $ph + 12), $h))
+        }
+        $li = 0
+        foreach ($s in $p.series) {
+            $pts = @()
+            foreach ($r in $rows) {
+                $v = Get-Path $r $s[1]
+                if ($null -eq $v) { continue }
+                $x = $x0 + (([double]$r.epochS - $t0) / 3600.0 / $hoursSpan) * ($x1 - $x0)
+                $y = $y0 + $ph - ([double]$v / $s[2] / $max) * $ph
+                $pts += ("{0:F1},{1:F1}" -f $x, $y)
+            }
+            if ($pts.Count -gt 0) {
+                [void]$sb.Append("<polyline fill='none' stroke='$($s[3])' stroke-width='2' points='$($pts -join ' ')'/>")
+                if ($pts.Count -eq 1) { $xy = $pts[0].Split(','); [void]$sb.Append("<circle cx='$($xy[0])' cy='$($xy[1])' r='3' fill='$($s[3])'/>") }
+            }
+            $last = Get-Path $rows[-1] $s[1]
+            $lastTxt = if ($null -ne $last) { "{0:G4}" -f ([double]$last / $s[2]) } else { "-" }
+            $ly = $y0 + 16 + $li * 18; $li++
+            [void]$sb.Append("<rect x='$($x1 + 12)' y='$($ly - 9)' width='12' height='4' fill='$($s[3])'/>")
+            [void]$sb.Append("<text x='$($x1 + 30)' y='$ly' font-size='11' fill='#111827'>$($s[0]): $lastTxt</text>")
+        }
+    }
+    [void]$sb.Append("</svg>")
+    $svg = Join-Path $Root "soak.svg"
+    [IO.File]::WriteAllText($svg, $sb.ToString())
+
+    # summary: first, last, max and the growth per hour (least squares over the second half, after warm-up)
+    $series = [ordered]@{
+        liveHeapMb = @("liveHeap.bytes", $mb); heapAfterGcMb = @("metrics.jvm.heapAfterGcBytes", $mb); heapUsedMb = @("metrics.jvm.heapUsedBytes", $mb)
+        workingSetMb = @("process.workingSetBytes", $mb); privateMb = @("process.privateBytes", $mb)
+        handles = @("process.handles", 1); threads = @("metrics.jvm.threads", 1)
+        cacheMb = @("metrics.disk.cacheDir.bytes", $mb); cacheFiles = @("metrics.disk.cacheDir.files", 1)
+        outMb = @("metrics.disk.outDir.bytes", $mb); logMbOnDisk = @("logBytesOnDisk", $mb)
+        packP95Ms = @("client.groups.pack.p95Ms", 1); liveP95Ms = @("client.groups.live.p95Ms", 1); otherP95Ms = @("client.groups.other.p95Ms", 1)
+    }
+    $sum = [ordered]@{ hours = [math]::Round($hoursSpan, 2); samples = $rows.Count; startedAt = $rows[0].ts; lastSampleAt = $rows[-1].ts
+        requests = ($rows | ForEach-Object { [double](Get-Path $_ "client.requests") } | Measure-Object -Sum).Sum
+        failures = ($rows | ForEach-Object { [double](Get-Path $_ "client.failures") } | Measure-Object -Sum).Sum
+        statuses = @{}; series = [ordered]@{} }
+    foreach ($r in $rows) { $st = Get-Path $r "client.status"; if ($st) { foreach ($pp in $st.PSObject.Properties) { $sum.statuses[$pp.Name] = [double]$sum.statuses[$pp.Name] + [double]$pp.Value } } }
+    foreach ($k in $series.Keys) {
+        $pts = @($rows | ForEach-Object { $v = Get-Path $_ $series[$k][0]; if ($null -ne $v) { , @((([double]$_.epochS - $t0) / 3600.0), ([double]$v / $series[$k][1])) } })
+        if ($pts.Count -eq 0) { continue }
+        $half = @($pts | Where-Object { $_[0] -ge ($hoursSpan / 2) })
+        if ($half.Count -lt 3) { $half = $pts }
+        $n = $half.Count; $sx = 0; $sy = 0; $sxx = 0; $sxy = 0
+        foreach ($q in $half) { $sx += $q[0]; $sy += $q[1]; $sxx += $q[0] * $q[0]; $sxy += $q[0] * $q[1] }
+        $den = $n * $sxx - $sx * $sx
+        $slope = if ($n -ge 2 -and [math]::Abs($den) -gt 1e-9) { ($n * $sxy - $sx * $sy) / $den } else { $null }
+        $sum.series[$k] = [ordered]@{ first = [math]::Round($pts[0][1], 2); last = [math]::Round($pts[-1][1], 2)
+            min = [math]::Round(($pts | ForEach-Object { $_[1] } | Measure-Object -Minimum).Minimum, 2)
+            max = [math]::Round(($pts | ForEach-Object { $_[1] } | Measure-Object -Maximum).Maximum, 2)
+            perHourSecondHalf = if ($null -ne $slope) { [math]::Round($slope, 3) } else { $null } }
+    }
+    $extra = Join-Path $Root "summary-extra.json"
+    if (Test-Path $extra) { $sum.end = Get-Content $extra -Raw | ConvertFrom-Json }
+    (Write-Json $sum) | Out-File -Encoding utf8 (Join-Path $Root "summary.json")
+    Write-Host "chart: $svg"
+    return $sum
+}
+
+if ($ChartOnly) { $s = Write-Chart; Write-Json $s; exit 0 }
+
+# ---------------------------------------------------------------- setup
+if ($Port -in 8765, 8686, 8687) { throw "port $Port belongs to the coordinator or the phone; pick 9090..9099" }
+$span = if ($Minutes -gt 0) { $Minutes * 60 } elseif ($Hours -gt 0) { [int]($Hours * 3600) } else { 12 * 3600 }
+$busy = $false
+try { $c = New-Object Net.Sockets.TcpClient; $c.Connect("127.0.0.1", $Port); $c.Close(); $busy = $true } catch { }
+if ($busy) { throw "port $Port is in use" }
+
+$install = Join-Path $Root "install"
+if (-not $NoBuild) {
+    $gradlew = if ($onWindows) { Join-Path $repo "gradlew.bat" } else { Join-Path $repo "gradlew" }
+    & $gradlew -q :server:installDist
+    if ($LASTEXITCODE -ne 0) { throw "installDist failed" }
+    if (Test-Path $install) { Remove-Item -Recurse -Force $install }
+    Copy-Item -Recurse (Join-Path $repo "server/build/install/server") $install
+}
+$cacheDir = Join-Path $Root "cache"; $outDir = Join-Path $Root "out"; $logDir = Join-Path $Root "logs"
+New-Item -ItemType Directory -Force $cacheDir, $outDir, $logDir | Out-Null
+if ($Packs) {
+    foreach ($f in $Packs.Split(',')) { if (-not (Test-Path (Join-Path $outDir (Split-Path -Leaf $f)))) { Copy-Item $f $outDir } }
+}
+
+$token = "soak-legacy-token-" + [guid]::NewGuid().ToString("N")
+$userToken = "soak-user-token-" + [guid]::NewGuid().ToString("N")
+$adminToken = "soak-admin-token-" + [guid]::NewGuid().ToString("N")
+$config = [ordered]@{
+    bind = "127.0.0.1"; port = $Port; cacheDir = $cacheDir; outDir = $outDir
+    token = $token; users = @(@{ id = "soak"; token = $userToken }); adminToken = $adminToken
+    log = @{ file = (Join-Path $logDir "server.log"); maxMb = 16; keep = 3 }
+    metrics = @{ diskScanMinutes = [math]::Max(1, $SampleMinutes) }
+    build = @{ maxTiles = 4000 }
+}
+$configFile = Join-Path $Root "server.json"
+(Write-Json $config) | Out-File -Encoding ascii $configFile
+
+$javaHome = $env:JAVA_HOME
+$java = if ($javaHome) { Join-Path $javaHome ("bin" + $sep + "java") } else { "java" }
+$cpSep = if ($onWindows) { ";" } else { ":" }
+$cp = (Get-ChildItem (Join-Path $install "lib") -Filter *.jar | ForEach-Object { $_.FullName }) -join $cpSep
+$cpFile = Join-Path $Root "classpath.txt"
+[IO.File]::WriteAllText($cpFile, "-cp `"" + $cp.Replace('\', '\\') + "`"")
+$jvmArgs = @("-Xmx$($HeapMb)m", "-Djava.awt.headless=true", "-Dstdout.encoding=UTF-8",
+    "@$cpFile", "io.github.jasondorjeshort.dystopo.server.MainKt", "--config", $configFile)
+$srv = Start-Process -FilePath $java -ArgumentList $jvmArgs -WorkingDirectory $Root -PassThru -NoNewWindow `
+    -RedirectStandardOutput (Join-Path $logDir "stdout.txt") -RedirectStandardError (Join-Path $logDir "stderr.txt")
+$srvPid = $srv.Id
+$srvPid | Out-File -Encoding ascii (Join-Path $Root "server.pid")
+$base = "http://127.0.0.1:$Port"
+Write-Host "server pid $srvPid on $base; root $Root; $([math]::Round($span / 3600.0, 2)) h"
+
+function Invoke-Curl([string[]]$curlArgs) {
+    $out = & $curl -s @curlArgs 2>$null
+    return $out
+}
+function Get-JsonUrl([string]$path, [string]$auth = "") {
+    $a = @("--max-time", "60")
+    if ($auth) { $a += @("-H", "Authorization: Bearer $auth") }
+    $t = Invoke-Curl ($a + @("$base$path"))
+    if (-not $t) { return $null }
+    try { return ($t -join "`n") | ConvertFrom-Json } catch { return $null }
+}
+$deadline = (Get-Date).AddSeconds(90)
+while ((Get-Date) -lt $deadline) {
+    $h = Get-JsonUrl "/healthz"
+    if ($h -and $h.status -eq "ok") { break }
+    if ($srv.HasExited) { throw "server exited at startup (see $logDir)" }
+    Start-Sleep 1
+}
+
+# ---------------------------------------------------------------- the pack and the walk
+function Get-Pack {
+    $cat = Get-JsonUrl "/catalog"
+    if ($cat -and $cat.packs) { return @($cat.packs | Where-Object { -not $_.single -and $_.id -ne "soakbuild" } | Select-Object -First 1)[0] }
+    return $null
+}
+$events = New-Object System.Collections.ArrayList
+function Add-Event($e) { $e.ts = (Get-Date).ToUniversalTime().ToString("o"); [void]$events.Add($e); (Write-Json ([ordered]@{ kind = "event" } + $e)) | Add-Content -Encoding utf8 $logFile }
+
+function Invoke-Build([string]$name, [string]$bbox, [int]$minZ, [int]$maxZ) {
+    $t0 = Get-Date
+    $r = Invoke-Curl @("-X", "POST", "--max-time", "60", "-H", "Authorization: Bearer $userToken", "$base/build?name=$name&bbox=$bbox&minZoom=$minZ&maxZoom=$maxZ&overwrite=1")
+    try { $job = ($r -join "") | ConvertFrom-Json } catch { return @{ type = "build"; ok = $false; error = "$r" } }
+    $id = $job.id
+    $state = $job.status
+    if (-not $id) { return @{ type = "build"; ok = $false; error = ("$r" -replace '\s+', ' ') } }
+    while ($state -in "queued", "running" -and ((Get-Date) - $t0).TotalSeconds -lt 1800) {
+        Start-Sleep 3
+        $j = Get-JsonUrl "/build/$id" $userToken
+        if ($j) { $state = $j.status }
+    }
+    return @{ type = "build"; name = $name; id = $id; state = $state; ok = ($state -eq "done"); seconds = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1) }
+}
+
+$pack = Get-Pack
+if (-not $pack -and $BuildPack) {
+    # Paradise, Mount Rainier (a public area): a small DEM + OpenFreeMap pack built through the server itself.
+    $e = Invoke-Build "soakpack" "-121.80,46.76,-121.68,46.84" 8 13
+    Add-Event $e
+    $pack = Get-Pack
+}
+if (-not $pack) { throw "no pack to walk: pass -Packs out/rainier-dem.pmtiles,out/rainier-outdoors.pmtiles or -BuildPack" }
+$b = $pack.bounds
+$west = [double]$b[0]; $south = [double]$b[1]; $east = [double]$b[2]; $north = [double]$b[3]
+$minZ = [math]::Max(8, [int]$pack.minZoom); $maxZ = [math]::Min(14, [int]$pack.maxZoom)
+function Tile-X([double]$lon, [int]$z) { [int][math]::Floor(($lon + 180.0) / 360.0 * [math]::Pow(2, $z)) }
+function Tile-Y([double]$lat, [int]$z) { $r = $lat * [math]::PI / 180; [int][math]::Floor((1 - [math]::Log([math]::Tan($r) + 1 / [math]::Cos($r)) / [math]::PI) / 2 * [math]::Pow(2, $z)) }
+$walk = New-Object System.Collections.ArrayList
+foreach ($z in $minZ..$maxZ) {
+    $x0 = Tile-X $west $z; $x1 = Tile-X $east $z; $y0 = Tile-Y $north $z; $y1 = Tile-Y $south $z
+    for ($y = $y0; $y -le $y1; $y++) { for ($x = $x0; $x -le $x1; $x++) { [void]$walk.Add("$z/$x/$y") } }
+}
+# Interleave zooms so every round touches several (a deterministic shuffle).
+$rng = New-Object System.Random 82
+$walk = @($walk | Sort-Object { $rng.Next() })
+Write-Host "walking $($walk.Count) tiles of pack '$($pack.id)' z$minZ..z$maxZ"
+Add-Event @{ type = "start"; pid = $srvPid; port = $Port; pack = $pack.id; walkTiles = $walk.Count; heapMb = $HeapMb; hours = [math]::Round($span / 3600.0, 2) }
+
+# Live: columns of z12 tiles walked northwards outside the packs (3DEP and OpenFreeMap),
+# one step every -LiveEvery rounds. The first visit of each is a cold render; it is cached afterwards.
+$liveLon = -120.5; $liveLat = 45.6
+$liveStep = 0
+
+$cxx = 0
+$unitsCycle = @("m", "ft")
+$mapOptions = @("", "hillshade=multi", "slope=on", "contourInterval=40", "night=on", "hillshade=off&trails=off")
+$paradise = "46.7864,-121.7366"; $panorama = "46.8024,-121.7289"
+
+function New-Round([int]$round) {
+    $lines = New-Object System.Collections.ArrayList
+    function add([string]$group, [string]$path, [string[]]$hdr = @()) {
+        $ln = "url = `"$base$path`"`noutput = `"" + ($(if ($onWindows) { "NUL" } else { "/dev/null" })) + "`"`n"
+        foreach ($hh in $hdr) { $ln += "header = `"$hh`"`n" }
+        [void]$lines.Add(@{ group = $group; text = $ln; url = "$base$path" })
+    }
+    for ($k = 0; $k -lt 12; $k++) {
+        $t = $walk[($script:cxx++) % $walk.Count]
+        $u = $unitsCycle[$script:cxx % 2]
+        add "pack" "/dem/$t.png"
+        add "pack" "/osm/$t.pbf"
+        add "pack" "/contours/$t.pbf?units=$u"
+        if ($k % 4 -eq 0) { add "pack" "/shade/$t.png?hillshade=multi" }
+    }
+    $opt = $mapOptions[$round % $mapOptions.Count]
+    add "other" "/style.json?units=$($unitsCycle[$round % 2])$(if ($opt) { "&$opt" })"
+    add "other" "/healthz"
+    add "other" "/catalog"
+    add "other" "/glyphs/Noto%20Sans%20Regular/0-255.pbf"
+    add "other" "/sprite.json"
+    add "other" "/stats"
+    $off = ($round * 7919) % 100000000
+    add "other" "/out/$($pack.files[0].file)" @("Range: bytes=$off-$($off + 65535)")
+    if ($round % 3 -eq 0) { add "other" "/route?from=$paradise&to=$panorama" }
+    add "other" "/sync/status" @("Authorization: Bearer $userToken")
+    if ($round % 5 -eq 0) { add "other" "/sync/pull" @("Authorization: Bearer $userToken") }
+    add "other" "/sync/relay/status"
+    if ($LiveEvery -gt 0 -and $round % $LiveEvery -eq 0) {
+        # 23 steps north (45.6 to 46.9), then the next column 0.1 degrees east: eastern Washington and Oregon.
+        $lat = $script:liveLat + ($script:liveStep % 23) * 0.06
+        $lon = $script:liveLon + [math]::Floor($script:liveStep / 23) * 0.1
+        $script:liveStep++
+        $z = 12; $x = Tile-X $lon $z; $y = Tile-Y $lat $z
+        add "live" "/dem/$z/$x/$y.png"
+        add "live" "/contours/$z/$x/$y.pbf"
+        add "live" "/osm/$z/$x/$y.pbf"
+        add "live" "/dem/$($z + 1)/$(2 * $x)/$(2 * $y).png"
+    }
+    return $lines
+}
+
+# Relay posts: a well-formed sealed frame (DSEAL v1, purpose relay, random salt and bytes); the server keeps
+# it for the TTL without being able to read it, like a phone's.
+$frameFile = Join-Path $Root "relay-frame.bin"
+$frame = New-Object byte[] 2048
+(New-Object System.Random 7).NextBytes($frame)
+$magic = [Text.Encoding]::ASCII.GetBytes("DSEAL"); [Array]::Copy($magic, $frame, 5); $frame[5] = 1; $frame[6] = 1
+[IO.File]::WriteAllBytes($frameFile, $frame)
+
+# ---------------------------------------------------------------- the loop
+$client = @{}
+function Reset-Client { $script:client = @{ requests = 0; failures = 0; status = @{}; groups = @{} } }
+Reset-Client
+function Add-Result([string]$group, [string]$code, [double]$ms) {
+    $c = $script:client
+    $c.requests++
+    $c.status[$code] = 1 + [int]$c.status[$code]
+    if ($code -eq "000" -or $code.StartsWith("5")) { $c.failures++ }
+    if (-not $c.groups.ContainsKey($group)) { $c.groups[$group] = New-Object System.Collections.ArrayList }
+    [void]$c.groups[$group].Add($ms)
+}
+function Get-Pct($list, [double]$q) { if ($list.Count -eq 0) { return $null }; $s = @($list | Sort-Object); return [math]::Round($s[[math]::Min($s.Count - 1, [int][math]::Ceiling($q * $s.Count) - 1)], 1) }
+
+# The live heap: GC.class_histogram runs a full GC first, so its total is what the heap really holds
+# (the robust leak signal; heap-used saws with allocation). Also the five biggest classes.
+function Get-LiveHeap([string]$label = "") {
+    $jcmd = if ($javaHome) { Join-Path $javaHome ("bin" + $sep + "jcmd") } else { "jcmd" }
+    try {
+        $h = @(& $jcmd $srvPid GC.class_histogram 2>$null)
+        if ($label) { [IO.File]::WriteAllLines((Join-Path $Root "histogram-$label.txt"), [string[]]@($h | Select-Object -First 30)) }
+        $total = $h | Where-Object { $_ -match '^Total\s' } | Select-Object -First 1
+        $top = @($h | Where-Object { $_ -match '^\s*\d+:\s+\d+\s+\d+\s' } | Select-Object -First 5 | ForEach-Object {
+            $f = ($_.Trim() -split '\s+'); [ordered]@{ cls = $f[3]; instances = [long]$f[1]; bytes = [long]$f[2] } })
+        if (-not $total) { return $null }
+        $tf = $total.Trim() -split '\s+'
+        return [ordered]@{ bytes = [long]$tf[2]; instances = [long]$tf[1]; top = $top }
+    } catch { return $null }
+}
+
+function Get-Sample {
+    $live = if ($NoFullGc) { $null } else { Get-LiveHeap }
+    $m = Get-JsonUrl "/metrics"
+    $p = Get-Process -Id $srvPid -ErrorAction SilentlyContinue
+    $proc = $null
+    if ($p) {
+        $p.Refresh()
+        $proc = [ordered]@{ workingSetBytes = $p.WorkingSet64; privateBytes = $p.PrivateMemorySize64; handles = $p.HandleCount; threads = $p.Threads.Count; cpuSeconds = [math]::Round($p.TotalProcessorTime.TotalSeconds, 1) }
+        if (-not $onWindows) {
+            $fdDir = "/proc/$srvPid/fd"
+            if (Test-Path $fdDir) { $proc.handles = @(Get-ChildItem $fdDir -ErrorAction SilentlyContinue).Count }
+            $proc.privateBytes = $p.WorkingSet64
+        }
+    }
+    $groups = [ordered]@{}
+    foreach ($g in $script:client.groups.Keys) {
+        $l = $script:client.groups[$g]
+        $groups[$g] = [ordered]@{ count = $l.Count; p50Ms = (Get-Pct $l 0.5); p95Ms = (Get-Pct $l 0.95); maxMs = (Get-Pct $l 1.0) }
+    }
+    $logBytes = (Get-ChildItem $logDir -Filter "server.log*" -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+    $s = [ordered]@{ kind = "sample"; ts = (Get-Date).ToUniversalTime().ToString("o"); epochS = [math]::Round(((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds, 1)
+        port = $Port; alive = [bool]($p -and -not $srv.HasExited); process = $proc; metrics = $m; liveHeap = $live; logBytesOnDisk = $logBytes; logFiles = @(Get-ChildItem $logDir -Filter "server.log*").Count
+        client = [ordered]@{ requests = $script:client.requests; failures = $script:client.failures; status = $script:client.status; groups = $groups } }
+    (Write-Json $s) | Add-Content -Encoding utf8 $logFile
+    Reset-Client
+    return $s
+}
+
+function Save-Histogram([string]$label) { [void](Get-LiveHeap $label) }
+
+function Invoke-Probe([switch]$Full) {
+    $out = Join-Path $Root ("probe-" + $(if ($Full) { "final" } else { "quick" }) + ".json")
+    $a = @("-I", (Join-Path $repo "tools/server-probe.py"), "--port", "$Port", "--token", $userToken, "--user-token", $userToken, "--admin-token", $adminToken, "--out", $out)
+    if (-not $Full) { $a += @("--quick", "--no-bomb") }
+    & $Python @a | Out-Null
+    $code = $LASTEXITCODE
+    $r = try { Get-Content $out -Raw | ConvertFrom-Json } catch { $null }
+    return @{ type = $(if ($Full) { "probeFinal" } else { "probe" }); exit = $code; ok = ($code -eq 0); unexpected = $r.unexpected; known = @($r.known.PSObject.Properties | ForEach-Object { $_.Name }); probes = $r.probes }
+}
+
+$start = Get-Date
+$end = $start.AddSeconds($span)
+$nextSample = $start
+$nextTrip = $start.AddMinutes(1)
+$nextBuild = $start.AddMinutes([math]::Min(5, $BuildMinutes))
+$nextProbe = $start.AddMinutes([math]::Min(15, $ProbeMinutes))
+$nextShare = $start.AddMinutes(30)
+$histAt = $start.AddHours(1)
+$round = 0
+$trips = New-Object System.Collections.ArrayList
+$deviceId = [guid]::NewGuid().ToString()
+$wall = 0L; $counter = 0
+function Get-Hlc { $now = [long]((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds; if ($now -gt $script:wall) { $script:wall = $now; $script:counter = 0 } else { $script:counter++ }; return ("{0:x12}.{1:x6}.{2}" -f $script:wall, $script:counter, $deviceId) }
+$tmpBody = Join-Path $Root "trip-ops.json"; $tmpBundle = Join-Path $Root "trip.dsync"
+$curlCfg = Join-Path $Root "round.curl"
+
+Save-Histogram "start"
+[void](Get-Sample)
+$nextSample = $start.AddMinutes($SampleMinutes)
+while ((Get-Date) -lt $end) {
+    if ($srv.HasExited) { Add-Event @{ type = "serverExited"; exitCode = $srv.ExitCode }; break }
+    $round++
+    $lines = New-Round $round
+    [IO.File]::WriteAllText($curlCfg, (($lines | ForEach-Object { $_.text }) -join ""))
+    # curl --parallel reports in completion order, so each line names its URL; the group comes from the URL.
+    $res = Invoke-Curl @("--parallel", "--parallel-max", "$Parallel", "--max-time", "120", "-w", "%{http_code} %{time_total} %{url_effective}\n", "-K", $curlCfg)
+    $groupOf = @{}
+    foreach ($l in $lines) { $groupOf[$l.url] = $l.group }
+    $seen = 0
+    foreach ($o in @($res | Where-Object { $_ -match '^\d{3} ' })) {
+        $parts = $o.Split(' ', 3)
+        $g = $groupOf[$parts[2]]
+        if (-not $g) { $g = "other" }
+        Add-Result $g $parts[0] ([double]$parts[1] * 1000)
+        $seen++
+    }
+    for ($k = $seen; $k -lt $lines.Count; $k++) { Add-Result "other" "000" 0 }
+    # relay: two sides of one random slot post, then forget one; the other expires with the TTL
+    $slot = [guid]::NewGuid().ToString("N"); $side = [guid]::NewGuid().ToString("N").Substring(0, 16)
+    $code = Invoke-Curl @("-o", $(if ($onWindows) { "NUL" } else { "/dev/null" }), "-w", "%{http_code} %{time_total}", "-X", "POST", "--data-binary", "@$frameFile", "$base/sync/relay?slot=$slot&side=$side")
+    if ($code) { $pp = "$code".Split(' '); Add-Result "relay" $pp[0] ([double]$pp[1] * 1000) }
+
+    $now = Get-Date
+    if ($now -ge $nextTrip) {
+        $nextTrip = $now.AddMinutes($TripMinutes)
+        $route = Get-JsonUrl "/route?from=$paradise&to=$panorama"
+        if ($route -and $route.path) {
+            $id = [guid]::NewGuid().ToString()
+            $ops = @(
+                [ordered]@{ hlc = (Get-Hlc); type = "put"; id = $id; name = "Soak trip $($trips.Count + 1)" },
+                [ordered]@{ hlc = (Get-Hlc); type = "set"; id = $id; field = "path"; value = $route.path })
+            (Write-Json @{ device = $deviceId; ops = $ops }) | Out-File -Encoding ascii $tmpBody
+            $bc = Invoke-Curl @("-o", $tmpBundle, "-w", "%{http_code}", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@$tmpBody", "$base/route/bundle")
+            $pc = Invoke-Curl @("-o", $(if ($onWindows) { "NUL" } else { "/dev/null" }), "-w", "%{http_code}", "-X", "POST", "-H", "Authorization: Bearer $userToken", "-H", "Content-Type: application/octet-stream", "--data-binary", "@$tmpBundle", "$base/sync/push")
+            Add-Result "sync" "$pc" 0
+            if ("$pc" -eq "200") { [void]$trips.Add($id) } else { Add-Event @{ type = "tripPush"; ok = $false; bundle = "$bc"; push = "$pc" } }
+        }
+    }
+    if ($now -ge $nextShare -and $trips.Count -gt 0) {
+        $nextShare = $now.AddMinutes(60)
+        $sc = Invoke-Curl @("-o", $(if ($onWindows) { "NUL" } else { "/dev/null" }), "-w", "%{http_code}", "-X", "POST", "-H", "Authorization: Bearer $userToken", "$base/sync/share?route=$($trips[-1])")
+        Add-Result "sync" "$sc" 0
+    }
+    if ($BuildMinutes -gt 0 -and $now -ge $nextBuild) {
+        $nextBuild = $now.AddMinutes($BuildMinutes)
+        Add-Event (Invoke-Build "soakbuild" "-121.76,46.77,-121.72,46.80" 8 12)
+    }
+    if ($ProbeMinutes -gt 0 -and $now -ge $nextProbe) {
+        $nextProbe = $now.AddMinutes($ProbeMinutes)
+        Add-Event (Invoke-Probe)
+    }
+    if ($now -ge $histAt) { $histAt = $end.AddDays(1); Save-Histogram "1h" }
+    if ($now -ge $nextSample) {
+        $nextSample = $nextSample.AddMinutes($SampleMinutes)
+        $s = Get-Sample
+        Write-Host ("{0} live heap {1:N0} MB, ws {2:N0} MB, handles {3}, cache {4:N0} MB, round {5}" -f $s.ts, ((Get-Path $s "liveHeap.bytes") / 1MB), ((Get-Path $s "process.workingSetBytes") / 1MB), (Get-Path $s "process.handles"), ((Get-Path $s "metrics.disk.cacheDir.bytes") / 1MB), $round)
+        [void](Write-Chart)
+    }
+    $sleep = $RoundSeconds - ((Get-Date) - $now).TotalSeconds
+    if ($sleep -gt 0) { Start-Sleep -Milliseconds ([int]($sleep * 1000)) }
+}
+
+# ---------------------------------------------------------------- the end
+[void](Get-Sample)
+Save-Histogram "end"
+$alive = -not $srv.HasExited
+$final = if ($alive) { Invoke-Probe -Full } else { @{ type = "probeFinal"; ok = $false; error = "server not running" } }
+Add-Event $final
+$aliveAfterProbe = -not $srv.HasExited
+$ooms = @(Select-String -Path (Join-Path $logDir "server.log*") -Pattern "OutOfMemoryError" -SimpleMatch -ErrorAction SilentlyContinue).Count
+(Write-Json ([ordered]@{ aliveAtEnd = $alive; aliveAfterProbe = $aliveAfterProbe; finalProbe = $final; events = $events.Count; outOfMemoryLinesInKeptLogs = $ooms })) | Out-File -Encoding utf8 (Join-Path $Root "summary-extra.json")
+$summary = Write-Chart
+if (-not $srv.HasExited) { Stop-Process -Id $srvPid -Force }
+Write-Json $summary
+$failed = (-not $alive) -or (-not $aliveAfterProbe) -or (-not $final.ok) -or ($summary.failures -gt 0)
+exit $(if ($failed) { 1 } else { 0 })
