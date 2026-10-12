@@ -4,7 +4,9 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
-(nothing yet)
+### 2026-10-12
+
+- T73: Drive mode: to the trailhead and between trailheads (#79)
 
 ## v0.1.4-alpha (2026-10-11)
 
