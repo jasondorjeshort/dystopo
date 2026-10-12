@@ -2,6 +2,12 @@ package io.github.jasondorjeshort.dystopo.app.online
 
 import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.areas.Areas
+import io.github.jasondorjeshort.dystopo.areas.AreaManifest
+import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
+import io.github.jasondorjeshort.dystopo.areas.AreaShape
+import io.github.jasondorjeshort.dystopo.packs.PackCatalog
+import io.github.jasondorjeshort.dystopo.packs.PackRole
 import io.github.jasondorjeshort.dystopo.app.packs.PackDownloader
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
@@ -31,8 +37,21 @@ import kotlin.math.floor
  * Phases ([state]): `idle`, `building` (server), `downloading` (device), `done`, `failed`, `cancelled`.
  * A name the server already built is downloaded without building again; a pack already on the device is
  * just activated.
+ *
+ * T75: this is the box case of an area of interest. With a server that has `POST /area`, the build is asked for
+ * through it (the same `/build` job underneath) and the finished pack comes with each archive's SHA-256 and size,
+ * so the download is verified like a catalog download ([PackDownloader.startCatalog]); an older server gets the
+ * plain `/build` path as before. Either way (and for a pack built on the phone) the result is recorded in
+ * [Areas] as a pinned, pack-backed area, and the phone builds the search index and trail graph from it.
  */
 class RegionDownload(private val service: OnlineService, private val app: DystopoApp) {
+    init {
+        Areas.attach(service) // T75: pinned areas' tiles are skipped by the tile cache's eviction
+    }
+
+    /** T75: the area this job downloads (the box and zooms) and the server's manifest once it is ready. */
+    @Volatile private var area: AreaOfInterest? = null
+    @Volatile private var manifest: AreaManifest? = null
     @Volatile var state = "idle"
         private set
     @Volatile var name: String? = null
@@ -85,6 +104,8 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         note = null
         cancelled = false
         this.profile = wanted
+        area = AreaOfInterest(AreaShape.Box(box.minLon, box.minLat, box.maxLon, box.maxLat), lo, hi, packName)
+        manifest = null
         startedAt = System.currentTimeMillis()
         builtAt = 0L
         finishedAt = 0L
@@ -108,14 +129,22 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
     private fun run(server: String, packName: String, box: PackBounds, z: IntRange) {
         if (server == DirectSources.SERVER) return runLocal(packName, box, z)
         try {
-            buildOnServer(server, packName, box, z)
+            // T75: through the server's area manifest when it has one (hashes for every archive), else plain /build.
+            val m = buildWithArea(server, packName, box, z)
+            if (m == null) buildOnServer(server, packName, box, z)
             if (cancelled) return
             builtAt = System.currentTimeMillis()
             state = "downloading"
             val packs = PackManager.get(app)
             // T29's downloader does the rest (resume, verification); activation moves the camera to the pack.
             val job = try {
-                packs.downloads.start("$server/out/$packName-dem.pmtiles", packName, activate = true)
+                if (m != null) {
+                    val files = m.packs.mapNotNull { f ->
+                        val role = PackRole.entries.firstOrNull { it.label == f.role } ?: return@mapNotNull null
+                        role to Triple(PackCatalog.resolveUrl(server, f.url), f.sha256, f.bytes)
+                    }.toMap()
+                    packs.downloads.startCatalog(packName, files, emptySet(), update = false, activate = true, catalog = linkedMapOf("server" to server, "id" to packName, "area" to m.id))
+                } else packs.downloads.start("$server/out/$packName-dem.pmtiles", packName, activate = true)
             } catch (e: IllegalArgumentException) {
                 if (packs.find(packName) == null) throw e
                 note = "already on the device; activated"
@@ -131,6 +160,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             // The downloader opens the pack on its own thread just after it reports done (T41: next to the others).
             val deadline = System.currentTimeMillis() + 10_000
             while (packName !in packs.inUse() && System.currentTimeMillis() < deadline) Thread.sleep(200)
+            recordArea(server, packName)
             state = "done"
         } catch (e: Exception) {
             if (cancelled) return
@@ -162,6 +192,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             }, packName)
             local.cleanUp()
             note = "built on this phone from public sources"
+            recordArea(DirectSources.SERVER, packName)
             state = "done"
         } catch (e: Exception) {
             if (cancelled) return
@@ -170,6 +201,76 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             state = "failed"
         } finally {
             if (finishedAt == 0L) finishedAt = System.currentTimeMillis()
+        }
+    }
+
+    /** T75: records the finished pack as a pinned area and starts the search index and trail graph builds. */
+    private fun recordArea(source: String, packName: String) {
+        val a = area ?: return
+        val bytes = runCatching { PackManager.get(app).find(packName)?.files?.files?.sumOf { it.length() } }.getOrNull() ?: 0L
+        Areas.put(
+            Areas.Record(
+                id = a.id, name = packName, area = a, createdAt = startedAt, pinned = true, state = "done", source = source, pack = packName,
+                bytes = bytes, estimateBytes = manifest?.bytes ?: bytes, downloadMs = System.currentTimeMillis() - startedAt,
+            ),
+        )
+        Thread({
+            runCatching { io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.ensure(app) }
+            runCatching { io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.ensure(app) }
+        }, "area-products").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * T75: `POST /area` for the box: follows the `/build` job it starts (or finds) and asks again once it is done,
+     * returning the ready manifest with the archives' URLs, sizes and SHA-256. Null when the server has no `/area`.
+     */
+    private fun buildWithArea(server: String, packName: String, box: PackBounds, z: IntRange): AreaManifest? {
+        val q = "name=${enc(packName)}&pack=1&fallback=1&profile=" + (if (profile == PROFILE_OUTDOORS) PROFILE_OUTDOORS else PROFILE_OPENMAPTILES)
+        val body = MiniJson.encode(AreaOfInterest(AreaShape.Box(box.minLon, box.minLat, box.maxLon, box.maxLat), z.first, z.last, packName).json())
+        var (status, doc) = http("POST", "$server/area?$q&retry=1", body)
+        if (status == 404 || status == 405) return null
+        var waited = false
+        while (true) {
+            if (cancelled) return null
+            when (status) {
+                200 -> {
+                    val m = AreaManifest.parse(doc)
+                    if (m.status == AreaManifest.STATUS_FAILED) throw IOException("server build failed: ${m.notes.joinToString("; ")}")
+                    manifest = m
+                    if (!waited) note = "already built on the server"
+                    return m
+                }
+                202 -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val job = doc["build"] as? Map<String, Any?> ?: throw IOException("server answered building without a job")
+                    val id = job["id"]?.toString() ?: throw IOException("server returned no build id")
+                    buildId = id
+                    build = job
+                    waited = true
+                    followBuild(server, id)
+                    if (cancelled) return null
+                    val again = http("POST", "$server/area?$q", body)
+                    status = again.first
+                    doc = again.second
+                }
+                else -> throw IOException("server refused the area (HTTP $status): ${doc["error"] ?: doc}")
+            }
+        }
+    }
+
+    /** Polls `GET /build/{id}` until the job is done; throws when it failed or was cancelled. */
+    private fun followBuild(server: String, id: String) {
+        while (true) {
+            if (cancelled) return
+            Thread.sleep(POLL_MS)
+            val (s, job) = http("GET", "$server/build/$id")
+            if (s != 200) throw IOException("build status HTTP $s")
+            build = job
+            when (job["status"]) {
+                "done" -> return
+                "failed" -> throw IOException("server build failed: ${job["error"]}")
+                "cancelled" -> throw IOException("server build was cancelled")
+            }
         }
     }
 
@@ -217,7 +318,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
     }
 
     /** One JSON request to the server: status and the parsed object (empty when the body is not JSON). */
-    private fun http(method: String, url: String): Pair<Int, Map<String, Any?>> {
+    private fun http(method: String, url: String, body: String? = null): Pair<Int, Map<String, Any?>> {
         val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url) // T79: plain http only to home-network hosts
         conn.requestMethod = method
         conn.connectTimeout = 5_000
@@ -225,8 +326,10 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         try {
             if (method == "POST") {
                 conn.doOutput = true
-                conn.setFixedLengthStreamingMode(0)
-                conn.outputStream.close()
+                val bytes = body?.toByteArray() ?: ByteArray(0)
+                if (body != null) conn.setRequestProperty("Content-Type", "application/json") // T75: the area
+                conn.setFixedLengthStreamingMode(bytes.size)
+                conn.outputStream.use { it.write(bytes) }
             }
             val status = conn.responseCode
             val text = (if (status < 400) conn.inputStream else conn.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
@@ -259,6 +362,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             "buildMs" to if (builtAt == 0L) null else builtAt - startedAt,
             "activePack" to runCatching { PackManager.get(app).activeName() }.getOrNull(),
             "packsInUse" to runCatching { PackManager.get(app).inUse() }.getOrNull(), // T41
+            "area" to area?.let { a -> linkedMapOf("id" to a.id, "manifest" to manifest?.summary()) }, // T75
         )
     }
 

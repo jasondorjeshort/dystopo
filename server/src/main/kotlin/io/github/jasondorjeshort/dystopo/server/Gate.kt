@@ -275,7 +275,7 @@ class Gate(
         fun isRelay(path: String): Boolean = path == "/sync/relay" || path.startsWith("/sync/relay/")
 
         fun isProtected(path: String): Boolean = !isRelay(path) && ( // T72: the relay holds only ciphertext and is open
-            path == "/build" || path.startsWith("/build/") || path == "/sync" || path.startsWith("/sync/") ||
+            path == "/build" || path.startsWith("/build/") || path == "/area" || path == "/sync" || path.startsWith("/sync/") || // T75: /area starts builds
                 path == "/catalog/refresh") // T58: rehashes every pack file, so not for anyone
     }
 }

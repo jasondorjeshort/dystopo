@@ -197,6 +197,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 - `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
 - `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
+- `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`) or a route
+  corridor (tile lists); `GET /area` for the parameters. Below, Areas of interest. Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`: the sync peer
   (docs/PLANNING.md, Sync). Token-protected.
 - `POST /sync/relay?slot=&side=[&after=][&forget=1]`, `GET /sync/relay/status`: the encrypted relay
@@ -309,6 +311,115 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
 
 `devtool serve` (both modes) answers `/catalog` and `/catalog/refresh` too (no token there).
 
+## Areas of interest (T75)
+
+"Tell us where you are going": a box or a route corridor with a zoom range, expanded to a **manifest** of
+everything the map needs there offline, with sizes. The phone downloads it item by item, verifies what it
+gets, and pins the result so its caches do not evict it (docs/PLANNING.md, Design goals, principle 4). The
+format is the one a phone will publish to other phones on a trip (T78), so it is versioned and documented
+field by field here. Code: `shared/.../areas/` (`AreaOfInterest`, `AreaManifest`, `TileCover`, `AreaPins`),
+the server side in `BuildRoutes.kt`.
+
+```
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data '{"kind":"corridor","line":[[-121.7356,46.7859],[-121.7355,46.8016],[-121.7268,46.8037]],"bufferM":500,"minZoom":8,"maxZoom":15}' \
+  https://maps.example.org/area
+curl -X POST -H "Authorization: Bearer $TOKEN" "https://maps.example.org/area?bbox=-121.76,46.77,-121.70,46.80&minZoom=8&maxZoom=14&name=paradise"
+```
+
+`POST /area` takes the area as a JSON body (the area object below, or `{"area": {...}, "pack": 0}`) or as
+query parameters (`bbox=w,s,e,n` or `line=lat,lon;lat,lon;...` with latitude first, `bufferM`, `minZoom`,
+`maxZoom`, `name`). Options (query or body): `pack=1|0` (default: 1 for a box, 0 for a corridor), `profile`,
+`fallback`, `source` (as for `/build`), `retry=1` (build again after a failed build). It is token-protected
+like `/build`, because a box starts a build. `GET /area` lists the parameters and limits.
+
+- **A box** (or `pack=1`) is a region pack built through the same jobs as `POST /build` (name: `name`, else
+  the area's name when it is a valid pack name, else `area-<12 hex digits of the id>`; the outdoors profile
+  with `fallback=1` when tilebuild is installed, else OpenMapTiles). While the job runs the answer is
+  **202** with `status: building` and the job under `build`; poll `GET /build/{id}` and ask again when it is
+  done; then **200** with each archive as a `pack` item (URL, bytes, SHA-256 from the catalog's sidecar). A
+  finished pack of that name is answered at once, without a build. A failed build answers 200 with
+  `status: failed` and the reason in `notes` until asked again with `retry=1`.
+- **A corridor** (or `pack=0`) is the DEM and vector tiles within the buffer, listed per zoom, with
+  estimated sizes, answered at once (200). DEM tiles start at z6 whatever `minZoom` is (contour tiles sample
+  zooms coarser than they show) and stop at z15; vector tiles run from `minZoom` to z14; one tile of margin
+  around the corridor at every zoom (contour tiles sample past their edges). At most `DYSTOPO_AREA_MAX_TILES`
+  (200000) tiles, else 413 with what to change. A corridor does not build a pack: the tiles come from the
+  same `/dem` and `/osm` routes as the map's (packs on the server first, else live), so a corridor needs no
+  build time and costs only the tiles it touches; it has no trail graph or search index (those are built from
+  vector packs; download a box for them).
+
+### The manifest, field by field (version 1)
+
+```
+{"version": 1, "id": "affd2044dcca0ad24", "name": "Planned: Paradise to Panorama Point", "status": "ready",
+ "source": null, "generatedAt": "2026-10-12T18:00:00Z",
+ "area": {"kind": "corridor", "line": [[-121.7365, 46.7865], ...], "bufferM": 550, "minZoom": 8, "maxZoom": 15, "name": "..."},
+ "bounds": [-121.7437, 46.7816, -121.7218, 46.8098], "lengthM": 2482.3,
+ "bytes": 29570000, "bytesExact": false, "tiles": 236,
+ "items": [
+   {"kind": "tiles", "route": "dem", "ext": "png", "url": "/dem/{z}/{x}/{y}.png", "zooms": [6, 15], "count": 143,
+    "perZoom": {"6": 9, ..., "14": 19, "15": 32}, "bytes": 22880000, "estimated": true, "fetchedBytes": null,
+    "tiles": {"6": [[22, 9, 11], [23, 9, 11], [24, 9, 11]], ..., "15": [[...]]}},
+   {"kind": "tiles", "route": "osm", "ext": "pbf", "url": "/osm/{z}/{x}/{y}.pbf", ...},
+   {"kind": "pack", "role": "dem", "pack": "paradise", "file": "paradise-dem.pmtiles", "url": "/out/paradise-dem.pmtiles",
+    "bytes": 5234567, "sha256": "<64 hex>", "tileType": "png", "minZoom": 8, "maxZoom": 14, "bounds": [w, s, e, n]},
+   {"kind": "glyphs", "url": "/glyphs/{fontstack}/{range}.pbf", "files": 768, "bytes": 0, "fileBytes": 11079256, "bundled": true, "names": ["Noto Sans Italic", ...]},
+   {"kind": "sprite", "url": "/{file}", "files": 4, "bytes": 0, "fileBytes": 61000, "bundled": true, "names": ["sprite.json", ...]},
+   {"kind": "contours", "onDevice": true, "from": "dem", "available": true, "note": "..."},
+   {"kind": "graph", "onDevice": true, "from": "paradise-outdoors.pmtiles", "available": true, "note": "..."},
+   {"kind": "search", "onDevice": true, "from": "paradise-outdoors.pmtiles", "available": true, "note": "..."}],
+ "build": null, "notes": ["..."], "pack": "paradise"}
+```
+
+- `version`: the format version (1). A reader refuses a newer major version rather than misreading it.
+- `id`: the area's content id, `a` + 16 hex digits of the SHA-256 of the geometry (coordinates rounded to
+  1e-6 degrees, the buffer) and the zoom range. The name is not part of it, so the same area asked twice (or by
+  two phones) has the same id; the phone keys its area records by it.
+- `name`: the area's name, else the pack name (box) or the id.
+- `status`: `ready` (every item can be fetched now), `building` (HTTP 202: a pack is being built; `build`
+  is the `/build` job, ask again when it is done) or `failed` (`notes` says why).
+- `source`: who made the manifest when it is not the server answering (`phone`, `phone (public sources)`;
+  a phone publishing to another phone puts its address here). Null from the server.
+- `generatedAt`: ISO-8601 UTC.
+- `area`: the request, normalised. Box: `{"kind": "box", "bbox": [west, south, east, north], "minZoom", "maxZoom",
+  "name"}` (west < east: no antimeridian crossing; split such boxes). Corridor: `{"kind": "corridor", "line":
+  [[lon, lat], ...]` (GeoJSON order, 1e-7 degrees), `"bufferM"` (10 to 20000, metres on each side), zooms, name}.
+  Zooms 0 to 16.
+- `bounds`: the rectangle holding the area (a corridor's line grown by its buffer), `[w, s, e, n]`.
+  `lengthM`: a corridor's line length in metres (great circle).
+- `bytes`: the sum of the items' `bytes`; `bytesExact`: false while any item's size is an estimate.
+  `tiles`: the number of tiles in `tiles` items.
+- `items`: what to fetch or make, each with a `kind`:
+  - `tiles`: tiles of one route of the source (`route`: `dem` Terrarium PNG, `osm` Mapbox Vector Tile),
+    `url` the template relative to the source, `ext` the file extension, `zooms` the first and last zoom,
+    `count` and `perZoom` the tile counts, `tiles` the tiles themselves: per zoom a list of rows
+    `[y, x0, x1]` meaning tiles x0 to x1 (inclusive) of row y, sorted. `bytes` is an estimate
+    (`estimated: true`) from typical tile sizes (DEM 160 kB, the Rainier pack's mountain average; vector
+    800 kB at z7 and below falling to 10 kB at z13 and z14) until a client fills `fetchedBytes`.
+  - `pack`: one archive of a region pack: `role` (`dem` or `outdoors`, the vector half), `pack` (the pack
+    name), `file`, `url` (relative to the source, or absolute), `bytes`, `sha256` (64 lowercase hex digits;
+    the client refuses a file whose hash differs), `tileType`, `minZoom`, `maxZoom`, `bounds`.
+  - `glyphs`, `sprite`: style assets: `url` template, `files`, `fileBytes` on the source, `bundled` (the app
+    ships them, so a client fetches them only when it lacks them, and `bytes`, what to transfer, is 0),
+    `names` (font stacks, or sprite files).
+  - `contours`, `graph`, `search`: products the client makes itself (`onDevice: true`) from `from` (the DEM
+    route, or the vector archive); `available: false` when this area cannot have one (a corridor has no
+    trail graph: graphs come from vector packs), with the reason in `note`.
+- `build`: the `/build` job (as `GET /build/{id}` answers it) while `status` is `building` or `failed`.
+- `notes`: plain sentences about choices made (fallbacks, the DEM start zoom).
+- `pack` (server, box only): the pack name, so a client can find it in `/catalog` later.
+
+Measured (T75, 2026-10-12, emulator against `devtool serve --live` on the same host): the Paradise to Panorama
+Point trip (the route of `skyline-loop.gpx`, 2.5 km, 550 m buffer, z8 to z15) is 236 tiles estimated at 29.6 MB;
+the phone fetched 180 of them (18.1 MB, 56 were already cached) in 19 s.
+
+How the phone uses it: CLAUDE.md, Android (areas of interest); in short, `pack` items go through the
+catalog downloader (resumable, SHA-256 checked, installed only when every archive verifies), `tiles` items
+through the online tile fetcher into the tile cache (tiles already cached or in a pack are skipped, so a
+second run resumes; a DEM tile that is not a PNG is dropped and counted), and the area's tiles are pinned
+there until the user unpins it.
+
 ## The sync peer
 
 The server is the always-on peer of the sync protocol (docs/PLANNING.md, Sync): its replica is a SQLite
@@ -409,7 +520,7 @@ curl http://localhost:8080/sync/relay/status
 
 ## The token
 
-With `token` (or `DYSTOPO_SERVER_TOKEN`) set, `/build`, `/build/*`, `/sync` and `/sync/*` (except the
+With `token` (or `DYSTOPO_SERVER_TOKEN`) set, `/build`, `/build/*`, `/area` (T75), `/sync` and `/sync/*` (except the
 relay, `/sync/relay`) need `Authorization: Bearer <token>`; anything else (tiles, `/out/`, `/catalog`, `/healthz`) stays open. A
 missing or wrong token is a 401 with `WWW-Authenticate: Bearer`, logged at `warn`. The comparison is
 constant-time. CORS preflights are answered without the token. `POST /catalog/refresh` needs it too.

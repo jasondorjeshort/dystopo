@@ -207,6 +207,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             BasicText("Region packs", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
+            Chip("Offline areas") { close(); io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true } // T75
             Chip("Close") { close() }
         }
         message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 13.sp)) }

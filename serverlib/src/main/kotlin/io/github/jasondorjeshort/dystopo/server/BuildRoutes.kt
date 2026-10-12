@@ -1,6 +1,13 @@
 package io.github.jasondorjeshort.dystopo.server
 
 import com.sun.net.httpserver.HttpExchange
+import io.github.jasondorjeshort.dystopo.areas.AreaManifest
+import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
+import io.github.jasondorjeshort.dystopo.areas.AreaShape
+import io.github.jasondorjeshort.dystopo.areas.AssetItem
+import io.github.jasondorjeshort.dystopo.areas.FileItem
+import io.github.jasondorjeshort.dystopo.areas.LocalItem
+import io.github.jasondorjeshort.dystopo.areas.ManifestItem
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.geo.TileId
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
@@ -66,6 +73,17 @@ import kotlin.math.floor
  * - `DELETE /build/{id}` or `POST /build/{id}/cancel`: stops the job; no new tile is requested after
  *   that (the few in flight finish into the cache), partial files are deleted.
  *
+ * - `POST /area` (T75): the manifest of an area of interest (`io.github.jasondorjeshort.dystopo.areas.AreaManifest`;
+ *   field by field in docs/SERVER.md, Areas of interest): the area as a JSON body (`{"kind": "box"|"corridor", ...}`,
+ *   or `{"area": {...}, "pack": 1}`) or as query parameters (`bbox=w,s,e,n` or `line=lat,lon;lat,lon`, `bufferM`,
+ *   `minZoom`, `maxZoom`, `name`). A box (or `pack=1`) is a pack pair built through the same jobs as `POST /build`
+ *   (outdoors profile with fallback when tilebuild is installed): 202 with `status: building` and the job under
+ *   `build` while it runs (ask again when `GET /build/{id}` says done), then 200 with each archive's URL, size and
+ *   SHA-256. A corridor (or `pack=0`) is the DEM and vector tiles within its buffer, as rows per zoom, with
+ *   estimated sizes ([maxAreaTiles] at most, `DYSTOPO_AREA_MAX_TILES`). Both list the glyphs and sprites
+ *   (bundled in the app) and what the phone builds itself (trail graph and search index, from a vector pack).
+ *   `GET /area` describes the parameters and limits.
+ *
  * A box across the antimeridian (west > east, e.g. `bbox=179.2,-17.2,-179.8,-16.4`) is split at 180°
  * into two jobs, `<name>-e` (west..180) and `<name>-w` (-180..east), each a normal rectangular pack
  * pair; the 202 answer is the first job, and both carry `antimeridian` with the other's id.
@@ -95,6 +113,8 @@ class BuildRoutes(
     /** Tiles requested ahead of the one being written (DEM renders run on the live pool). */
     private val demWindow: Int = 8,
     private val osmWindow: Int = 8,
+    /** T75: tiles a corridor manifest may list, DEM and vector together. */
+    val maxAreaTiles: Int = env("DYSTOPO_AREA_MAX_TILES")?.toIntOrNull() ?: 200_000,
 ) {
     enum class Status(val label: String) { QUEUED("queued"), RUNNING("running"), DONE("done"), FAILED("failed"), CANCELLED("cancelled") }
 
@@ -650,12 +670,144 @@ class BuildRoutes(
         )
     }
 
+    // ---- areas of interest (T75) ----
+
+    /** `GET /area`: what `POST /area` takes. */
+    fun areaHelp(): Map<String, Any?> = linkedMapOf(
+        "post" to "POST /area with a JSON body {\"kind\": \"box\", \"bbox\": [w, s, e, n], \"minZoom\": 8, \"maxZoom\": 14} or " +
+            "{\"kind\": \"corridor\", \"line\": [[lon, lat], ...], \"bufferM\": 500, \"minZoom\": 8, \"maxZoom\": 15}, or query parameters " +
+            "bbox= or line=lat,lon;lat,lon, bufferM, minZoom, maxZoom, name; options pack=1|0, profile, fallback, source, retry=1",
+        "manifestVersion" to AreaManifest.VERSION, "maxAreaTiles" to maxAreaTiles, "maxZoom" to AreaOfInterest.MAX_ZOOM,
+        "bufferM" to listOf(AreaOfInterest.MIN_BUFFER_M, AreaOfInterest.MAX_BUFFER_M), "build" to limits(),
+    )
+
+    /**
+     * `POST /area`: the manifest of the area in [params] or [body] (see the class comment). Returns the HTTP status
+     * (200 ready or failed, 202 building) and the manifest JSON; throws [Refused] for a bad area or one over a limit.
+     */
+    fun area(params: Map<String, String>, body: String): Pair<Int, Map<String, Any?>> {
+        val doc = body.trim().takeIf { it.startsWith("{") }?.let {
+            try {
+                MiniJson.parseObject(it)
+            } catch (e: IllegalArgumentException) {
+                throw Refused(400, "body: ${e.message}")
+            }
+        }
+        @Suppress("UNCHECKED_CAST")
+        val areaDoc = (doc?.get("area") as? Map<String, Any?>) ?: doc?.takeIf { it["kind"] != null || it["bbox"] != null || it["line"] != null }
+        val opts = params + doc.orEmpty().filterKeys { it in AREA_OPTIONS }.mapValues { it.value.toString() }
+        val area = try {
+            if (areaDoc != null) AreaOfInterest.parse(areaDoc) else AreaOfInterest.fromQuery(params)
+        } catch (e: IllegalArgumentException) {
+            throw Refused(400, e.message ?: "bad area")
+        }
+        val wantPack = opts["pack"]?.let { it == "1" || it == "true" } ?: (area.shape is AreaShape.Box)
+        val name = opts["name"]?.trim()?.ifEmpty { null } ?: area.name?.takeIf { PackNames.isValidName(it) } ?: ("area-" + area.id.drop(1).take(12))
+        val items = ArrayList<ManifestItem>()
+        val notes = ArrayList<String>()
+        var status = AreaManifest.STATUS_READY
+        var build: Map<String, Any?>? = null
+        if (wantPack) {
+            if (!PackNames.isValidName(name)) throw Refused(400, "name must be 1 to 64 letters, digits, '.', '_' or '-' (got '$name')")
+            val (active, last) = synchronized(jobs) { jobs.values.lastOrNull { it.name == name && it.active } to jobs.values.lastOrNull { it.name == name } }
+            val files = PackRole.entries.map { File(outDir, PackNames.fileName(name, it)) to it }.filter { it.first.isFile }
+            when {
+                active != null -> {
+                    status = AreaManifest.STATUS_BUILDING
+                    build = active.json()
+                }
+                files.any { it.second == PackRole.DEM } -> items += files.map { (f, role) -> packItem(name, f, role) }
+                last != null && last.status == Status.FAILED && opts["retry"] != "1" -> {
+                    status = AreaManifest.STATUS_FAILED
+                    build = last.json()
+                    notes += "the build of $name failed: ${last.error}; ask again with retry=1"
+                }
+                else -> {
+                    val b = area.bounds
+                    val outdoors = tilebuild.unavailable() == null
+                    val profile = opts["profile"] ?: if (outdoors) PROFILE_OUTDOORS else PROFILE_OPENMAPTILES
+                    if (!outdoors && opts["profile"] == null) notes += "tilebuild is not installed here: the vector pack is OpenMapTiles from OpenFreeMap"
+                    val job = submit(
+                        mapOf(
+                            "name" to name, "bbox" to listOf(b.minLon, b.minLat, b.maxLon, b.maxLat).joinToString(",") { String.format(Locale.ROOT, "%.6f", it) },
+                            "minZoom" to "${area.minZoom}", "maxZoom" to "${minOf(area.maxZoom, LiveTiles.LIVE_MAX_ZOOM)}",
+                            "profile" to profile, "fallback" to (opts["fallback"] ?: "1"), "source" to (opts["source"] ?: SOURCE_AUTO),
+                            "overwrite" to "1",
+                        ),
+                    )
+                    status = AreaManifest.STATUS_BUILDING
+                    build = job.json()
+                }
+            }
+            val vector = PackNames.fileName(name, PackRole.VECTOR)
+            items += LocalItem(ManifestItem.KIND_GRAPH, vector, true, "the phone builds the trail graph tiles (z11) from the vector pack on first use")
+            items += LocalItem(ManifestItem.KIND_SEARCH, vector, true, "the phone builds the place search index from the vector pack")
+        } else {
+            val demZooms = LiveTiles.LIVE_MIN_ZOOM..minOf(maxOf(area.maxZoom, LiveTiles.LIVE_MIN_ZOOM), LiveTiles.LIVE_MAX_ZOOM)
+            val osmZooms = (area.minZoom..minOf(area.maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
+            val tiles = AreaManifest.tileItems(area, demZooms, osmZooms)
+            val count = tiles.sumOf { it.count }
+            if (count > maxAreaTiles) {
+                throw Refused(413, "the area needs $count tiles at z${area.minZoom}-${area.maxZoom}; the limit is $maxAreaTiles (DYSTOPO_AREA_MAX_TILES): lower maxZoom, narrow the buffer or split the route")
+            }
+            items += tiles
+            items += LocalItem(ManifestItem.KIND_CONTOURS, "dem", true, "contour, hillshade and cliff tiles are made on the phone from the DEM tiles")
+            items += LocalItem(ManifestItem.KIND_GRAPH, null, false, "a corridor is tiles in the phone's cache; the trail graph is built from vector packs (download a box for it)")
+            notes += "DEM tiles from z${demZooms.first} (contours sample coarser zooms than they show) and one tile of margin around the corridor at every zoom"
+        }
+        items += glyphItem()
+        items += spriteItem()
+        val manifest = AreaManifest(
+            id = area.id, name = area.name ?: name, area = area, status = status, items = items,
+            generatedAt = java.time.Instant.now().toString(), build = build, notes = notes,
+        )
+        val json = manifest.json() + (if (wantPack) mapOf("pack" to name) else emptyMap())
+        return (if (status == AreaManifest.STATUS_BUILDING) 202 else 200) to json
+    }
+
+    private fun packItem(name: String, file: File, role: PackRole): FileItem {
+        val d = describe(file)
+        return FileItem(
+            role = role.label, pack = name, file = file.name, url = "/out/${file.name}", bytes = file.length(),
+            sha256 = live.catalog.sha256(file), tileType = d["tileType"]?.toString(),
+            minZoom = (d["minZoom"] as? Number)?.toInt(), maxZoom = (d["maxZoom"] as? Number)?.toInt(),
+            bounds = (d["bounds"] as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() },
+        )
+    }
+
+    private fun glyphItem(): AssetItem {
+        val files = Caches.dir("glyphs").walkTopDown().filter { it.isFile && it.name.endsWith(".pbf") }.toList()
+        return AssetItem(
+            ManifestItem.KIND_GLYPHS, "/glyphs/{fontstack}/{range}.pbf", files.size, files.sumOf { it.length() }, bundled = true,
+            names = files.mapNotNull { it.parentFile?.name }.distinct().sorted(),
+        )
+    }
+
+    private fun spriteItem(): AssetItem {
+        val files = SPRITE_FILES.map { File(outDir, it) }
+        return AssetItem(ManifestItem.KIND_SPRITE, "/{file}", files.size, files.filter { it.isFile }.sumOf { it.length() }, bundled = true, names = SPRITE_FILES)
+    }
+
     // ---- HTTP ----
 
-    /** Answers `/build` and `/build/{id}[/cancel]`. */
+    /** Answers `/build` and `/build/{id}[/cancel]`, and (T75) `/area`. */
     fun handle(ex: HttpExchange, path: String) {
         try {
             val method = ex.requestMethod
+            if (path == "/area") {
+                when (method) {
+                    "OPTIONS" -> reply(ex, 204, null)
+                    "POST" -> {
+                        val body = ex.requestBody.use { it.readNBytes(MAX_AREA_BODY + 1) }
+                        if (body.size > MAX_AREA_BODY) throw Refused(413, "the area body is over ${MAX_AREA_BODY / 1024} KiB; simplify the line")
+                        val (status, manifest) = area(query(ex), body.decodeToString())
+                        reply(ex, status, manifest)
+                    }
+                    "GET" -> reply(ex, 200, areaHelp())
+                    else -> throw Refused(405, "POST /area with a JSON body or bbox= / line=; GET /area for the parameters")
+                }
+                return
+            }
             val parts = path.removePrefix("/build").trim('/').split('/').filter { it.isNotEmpty() }
             when {
                 method == "OPTIONS" -> reply(ex, 204, null)
@@ -715,6 +867,11 @@ class BuildRoutes(
         fun extractProvenance(e: OsmExtract): Map<String, Any?> = linkedMapOf(
             "id" to "osm", "name" to e.name, "file" to e.file.name, "date" to e.date, "dateSource" to e.dateSource,
         )
+
+        /** T75: `POST /area` options read from a JSON body as well as the query. */
+        private val AREA_OPTIONS = setOf("pack", "name", "profile", "fallback", "source", "retry")
+        const val MAX_AREA_BODY = 2 shl 20
+        private val SPRITE_FILES = listOf("sprite.json", "sprite.png", "sprite@2x.json", "sprite@2x.png")
 
         /** Registry id credited for an extract fetched from the Overpass API. */
         const val OVERPASS_ID = "overpass"

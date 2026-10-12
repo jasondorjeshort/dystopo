@@ -756,7 +756,7 @@ class LiveTiles(
         if (RelayRoutes.handle(ex)) return // T72: /sync/relay (encrypted relay; before the sync peer)
         if (SyncRoutes.handle(ex)) return // T44: /sync/* (the always-on sync peer)
         if (RouteRoutes.handle(ex, this, demoPage)) return // T68: /route* (route planning in the browser), /trips.js
-        if (path == "/build" || path.startsWith("/build/")) return builds.handle(ex, path)
+        if (path == "/build" || path.startsWith("/build/") || path == "/area") return builds.handle(ex, path) // T75: /area
         catalog.route(path, ex.requestMethod)?.let { (status, body) -> return reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
         SpriteSheets.route(path, outDir)?.let { (bytes, type) -> return reply(ex, bytes, type) }

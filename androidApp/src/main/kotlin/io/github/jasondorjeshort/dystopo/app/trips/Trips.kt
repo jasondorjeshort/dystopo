@@ -245,6 +245,31 @@ object Trips {
         return runCatching { done.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrDefault(false)
     }
 
+    /**
+     * T75: "Download for offline": the route's corridor (500 m each side, z8 to z15) as an area of interest, fetched
+     * into the tile cache and pinned ([io.github.jasondorjeshort.dystopo.app.areas.AreaDownload]); progress in the
+     * card's message line and `GET /areas/download`.
+     */
+    fun downloadOffline(id: String): Map<String, Any?> {
+        val (tripId, area) = io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.tripArea(id)
+        val r = io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.start(area, area.name, tripId)
+        ui { message = "Downloading the route for offline use…" }
+        Thread({
+            while (true) {
+                Thread.sleep(1000)
+                val j = io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.job ?: break
+                val done = !j.running
+                val text = if (!done) "Offline download: ${j.done.get()} of ${j.planned.get()} tiles" else when (j.state) {
+                    "done" -> "Ready offline: ${j.planned.get()} tiles, ${String.format(java.util.Locale.US, "%.1f", j.bytes.get() / 1_048_576.0)} MB fetched"
+                    else -> "Offline download ${j.state}" + (j.error?.let { ": $it" } ?: "")
+                }
+                ui { if (editingId == tripId) message = text }
+                if (done) break
+            }
+        }, "trip-offline-progress").apply { isDaemon = true }.start()
+        return r
+    }
+
     /** Writes the route's GPX to `files/exports/`. */
     fun export(id: String): File? {
         val p = plan(id) ?: return null

@@ -93,6 +93,7 @@ class Routes(private val app: DystopoApp) {
         ShareRoutes.handle(app, r)?.let { return it } // T54: /share/start, /share/stop, /share/status, /share/connect, /share/qr
         RouteRoutes.handle(app, r)?.let { return it } // T45: /route, /route/status, /route/build, /route/longpress, /route/save, /route/gpx
         io.github.jasondorjeshort.dystopo.app.update.UpdateRoutes.handle(app, r)?.let { return it } // T83: /update, /update/check, /update/install
+        io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.handle(app, r)?.let { return it } // T75: /areas, /areas/download, /areas/trim, /areas/prefetch
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

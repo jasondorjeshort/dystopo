@@ -185,6 +185,7 @@ private fun TripCard(modifier: Modifier) {
                 for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }
             }
             Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrip(p.id) }.start() } // T65: navigate this route
+            Action("Offline") { Trips.background { Trips.downloadOffline(p.id) } } // T75: download the route's corridor
             Action("GPX") { Trips.background { Trips.export(p.id) } }
             Action("Share link") { Trips.background { Trips.shareLink(p.id) } } // T67: a read-only link from the sync server
             Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }

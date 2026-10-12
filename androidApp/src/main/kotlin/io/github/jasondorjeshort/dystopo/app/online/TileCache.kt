@@ -16,6 +16,9 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     @Volatile var maxBytes: Long = maxBytes
         private set
 
+    /** T75 hook: entries it says to keep (tiles of pinned areas of interest, `areas/Areas.kt`) are skipped by eviction. */
+    @Volatile var keep: (String) -> Boolean = { io.github.jasondorjeshort.dystopo.app.areas.Areas.isPinned(it) }
+
     /** Sets the cap and evicts the least recently used entries over it at once. */
     fun resize(bytes: Long) {
         maxBytes = bytes
@@ -142,7 +145,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         synchronized(this) {
             val it = index.entries.iterator()
             while (total > maxBytes && it.hasNext()) {
-                val e = it.next().value
+                val e = it.next().takeUnless { n -> keep(n.key) }?.value ?: continue // T75: pinned areas stay
                 it.remove()
                 total -= e.bytes
                 victims += e.file
