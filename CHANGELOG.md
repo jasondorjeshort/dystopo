@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-12
 
+- T75: Areas of interest: manifests, corridors, pinning, prefetch (#81)
 - T74: Cache coherence and storage budgets (#80)
 - T73: Drive mode: to the trailhead and between trailheads (#79)
 
