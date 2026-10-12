@@ -21,6 +21,8 @@ import io.github.jasondorjeshort.dystopo.pmtiles.TileType
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitRegions
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
+import io.github.jasondorjeshort.dystopo.style.AssetManifest
+import io.github.jasondorjeshort.dystopo.style.Sprites
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
@@ -63,6 +65,11 @@ import kotlin.math.min
  * `/` serves the browser demo (`tools/demo/index.html`) in live mode, `/phone` the phone style
  * ([MapLibreStyle] over these routes), `/live/sources` which source each tile in a box came from (the
  * demo's status box), `/stats` per-route, per-source counts and timings.
+ *
+ * T74: `/version` names each route's content version (also the `X-Dystopo-Version` header of `/dem` and `/osm`
+ * tiles), which phones key their caches on; `/assets/manifest.json` lists glyphs and sprites with their hashes
+ * ([AssetManifest]). Every tile store is byte-capped with LRU eviction ([BoundedCache]: `live/`, `openfreemap/`,
+ * and `derived/` for contour and shade tiles, which the server now keeps).
  */
 class LiveTiles(
     demPacks: List<File>,
@@ -84,7 +91,51 @@ class LiveTiles(
         val urls = System.getenv("DYSTOPO_EXTRACT_DOWNLOADS")?.split(',')?.map { u -> u.trim() }?.filter { u -> u.isNotEmpty() }.orEmpty()
         BuildRoutes(it, it.outDir, extracts = Extracts(dir = dir), downloads = urls.takeIf { u -> u.isNotEmpty() }?.let { u -> ExtractDownloads(u, dir) })
     },
+    /**
+     * T74: where rendered and fetched tiles are kept (`live/`, `openfreemap/`, `derived/`), apart from the source
+     * downloads under [cacheRoot]; `DYSTOPO_TILE_CACHE` or the server's `cache.tileDir`, default [cacheRoot].
+     */
+    tileCacheRoot: File = cacheRoot,
+    /** T74: the byte caps of those three stores (`devtool serve` reads [CacheCaps.fromEnv]: `DYSTOPO_CACHE_CAPS=live=4096,openfreemap=2048,derived=1024`). */
+    caps: CacheCaps = CacheCaps(),
 ) {
+    /** T74: byte caps in MB of the live DEM tiles, the OpenFreeMap tiles and the derived (contour, shade) tiles. */
+    data class CacheCaps(val liveMb: Long = 4096, val openfreemapMb: Long = 2048, val derivedMb: Long = 1024) {
+        companion object {
+            /** From `DYSTOPO_CACHE_CAPS` (`live=200,openfreemap=100,derived=50`, any subset), else the defaults. */
+            fun fromEnv(env: String? = System.getenv("DYSTOPO_CACHE_CAPS")): CacheCaps = parse(env.orEmpty())
+
+            fun parse(text: String): CacheCaps {
+                var c = CacheCaps()
+                for (part in text.split(',').map { it.trim() }.filter { it.isNotEmpty() }) {
+                    val k = part.substringBefore('=').trim()
+                    val v = part.substringAfter('=', "").trim().toLongOrNull()
+                    require(v != null && v > 0) { "cache cap '$part' must be <store>=<MB>" }
+                    c = when (k) {
+                        "live" -> c.copy(liveMb = v)
+                        "openfreemap" -> c.copy(openfreemapMb = v)
+                        "derived" -> c.copy(derivedMb = v)
+                        else -> throw IllegalArgumentException("unknown cache '$k' (live, openfreemap, derived)")
+                    }
+                }
+                return c
+            }
+        }
+    }
+
+    private val tileRoot: File = tileCacheRoot
+
+    /** T74: the live DEM tiles of this [CACHE_VERSION] (older versions are pruned whole, [pruneStaleDemCaches]). */
+    val liveCache = BoundedCache("live", File(tileRoot, "live"), caps.liveMb * MB, exclude = { !it.startsWith("$CACHE_VERSION/") || it.endsWith(".part") })
+
+    /** T74: OpenFreeMap tiles of every planet build (old builds are never read again, so they go first); not the TileJSON. */
+    val ofmCache = BoundedCache("openfreemap", File(tileRoot, "openfreemap"), caps.openfreemapMb * MB, exclude = { '/' !in it || it.endsWith(".part") })
+
+    /** T74: contour and shade tiles, keyed like the phone's (`contours-<version>-<unit>-<options>-<dem version>/`, `shade1-<options>-<dem version>/`). */
+    val derivedCache = BoundedCache("derived", File(tileRoot, "derived"), caps.derivedMb * MB)
+    private val derivedHits = AtomicLong()
+    private val derivedMade = AtomicLong()
+
     /** One rendered live DEM tile: Terrarium PNG bytes plus the registry ids that contributed. */
     class LiveDem(val png: ByteArray, val provenance: List<String>)
 
@@ -153,6 +204,65 @@ class LiveTiles(
     private val dems = CopyOnWriteArrayList(demPacks.map { Pack(it, BestSource().registryIds) })
     private val osms = CopyOnWriteArrayList(osmPacks.map { Pack(it, OSM_PACK_REGISTRY_IDS) })
 
+    // ---- T74: content versions ----
+
+    private fun packsHash(list: List<Pack>): String = hash8(list.joinToString("|") { "${it.file.name}:${it.file.length()}:${it.file.lastModified()}" })
+
+    /**
+     * What a DEM tile from this server depends on: the live rendering version and the DEM packs in front of it.
+     * Phones key their cached tiles on it (`/version`, the `X-Dystopo-Version` header), so a server whose DEM
+     * changed invalidates their copies at the next check; the server's own contour and shade tiles are keyed on
+     * it too. A pack added by `/build` changes it.
+     */
+    @Volatile var demVersion: String = "$CACHE_VERSION.${packsHash(dems)}"
+        private set
+
+    @Volatile private var osmPacksHash: String = packsHash(osms)
+
+    private fun packsChanged() {
+        demVersion = "$CACHE_VERSION.${packsHash(dems)}"
+        osmPacksHash = packsHash(osms)
+    }
+
+    /** What a vector tile depends on: the OpenFreeMap planet build (once known) and the vector packs; null before the build is known. */
+    fun osmVersion(resolve: Boolean = false): String? {
+        val build = ofmBuild ?: if (resolve) runCatching { ofm.second }.getOrNull() else null
+        return build?.let { "$it.$osmPacksHash" }
+    }
+
+    /** `GET /version`: the content version per route a phone keys its cache on (T74); a route left out is unknown for now. */
+    fun versions(glyphDir: File?): Map<String, Any?> = linkedMapOf<String, Any?>("dem" to demVersion).also { m ->
+        osmVersion(resolve = true)?.let { m["osm"] = it }
+        glyphDir?.let { m["assets"] = assetManifest(it).version }
+    }
+
+    @Volatile private var manifestCache: Pair<Long, AssetManifest.Manifest>? = null
+
+    /**
+     * T74: the style assets this server offers with their hashes ([AssetManifest]): every glyph range of the style's
+     * fonts present in [glyphDir] (a missing or empty file is left out) and the four sprite files (written into
+     * [outDir] first when missing or stale, as `/sprite*` does). Recomputed at most every 30 s.
+     */
+    fun assetManifest(glyphDir: File): AssetManifest.Manifest {
+        val now = System.currentTimeMillis()
+        manifestCache?.takeIf { now - it.first < 30_000 }?.let { return it.second }
+        val files = ArrayList<AssetManifest.Entry>()
+        for (font in MapLibreStyle.FONTS) for (range in MapLibreStyle.GLYPH_RANGES) {
+            val f = File(glyphDir, "$font/$range.pbf")
+            if (!f.isFile || f.length() == 0L) continue
+            val bytes = runCatching { f.readBytes() }.getOrNull() ?: continue
+            val url = "/glyphs/" + java.net.URLEncoder.encode(font, StandardCharsets.UTF_8).replace("+", "%20") + "/$range.pbf"
+            files += AssetManifest.Entry(AssetManifest.glyphPath(font, range), url, sha256(bytes), bytes.size.toLong())
+        }
+        for (name in Sprites.FILES) {
+            val bytes = runCatching { SpriteSheets.route("/$name", outDir)?.first }.getOrNull() ?: continue
+            files += AssetManifest.Entry(AssetManifest.spritePath(name), "/$name", sha256(bytes), bytes.size.toLong())
+        }
+        val m = AssetManifest.of(files)
+        manifestCache = now to m
+        return m
+    }
+
     /** Serves [file] (a DEM or vector PMTiles) from now on, replacing a pack already open from the same path. */
     fun addPack(file: File) {
         val probe = Pack(file)
@@ -162,12 +272,13 @@ class LiveTiles(
         val path = file.canonicalPath
         val at = list.indexOfFirst { it.file.canonicalPath == path }
         if (at >= 0) list[at] = pack else list += pack
+        packsChanged() // T74: a new pack changes the content version the phones key their caches on
         // Tiles remembered from the live path would keep reporting their live source over the new pack.
         synchronized(memory) { memory.clear() }
         sourceOf.clear()
         provenanceOf.clear()
     }
-    private val demCacheDir = File(cacheRoot, "live/$CACHE_VERSION")
+    private val demCacheDir = File(tileRoot, "live/$CACHE_VERSION")
     /** Stale live DEM cache directories deleted (or being deleted) by [pruneStaleDemCaches]: name to files and bytes removed. */
     private val pruned = LinkedHashMap<String, Map<String, Any?>>()
 
@@ -177,7 +288,7 @@ class LiveTiles(
      * directories found; progress and totals appear under `staleCachePrune` in `/stats`.
      */
     fun pruneStaleDemCaches(): List<File> {
-        val stale = staleDemCaches(File(cacheRoot, "live"))
+        val stale = staleDemCaches(File(tileRoot, "live"))
         if (stale.isEmpty()) return stale
         Thread({
             for (dir in stale) {
@@ -313,14 +424,18 @@ class LiveTiles(
     private fun readDemCache(id: TileId): Tile? {
         val png = demFile(id)
         if (!png.isFile) return null
+        // T74: the cap may evict the tile between the check and the read: a miss then.
+        val bytes = try { png.readBytes() } catch (_: java.io.IOException) { return null }
+        liveCache.touch(png)
         val side = File(png.path.removeSuffix(".png") + ".src")
         val provenance = readProvenance(id)
-        return Tile(png.readBytes(), if (side.isFile) labelFor(provenance) else "live", true, provenance.filter { it in SourceRegistry.builtIn })
+        return Tile(bytes, if (side.isFile) labelFor(provenance) else "live", true, provenance.filter { it in SourceRegistry.builtIn })
     }
 
     private fun readProvenance(id: TileId): List<String> {
         val side = File(demFile(id).path.removeSuffix(".png") + ".src")
-        return if (side.isFile) side.readText().split(',').map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
+        val text = try { if (side.isFile) side.readText() else "" } catch (_: java.io.IOException) { "" }
+        return text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
     }
 
     private fun renderLive(id: TileId): Tile {
@@ -334,6 +449,8 @@ class LiveTiles(
         val side = File(png.path.removeSuffix(".png") + ".src")
         Http.partFile(side).also { it.writeText(dem.provenance.joinToString(",")) }.let { Http.publish(it, side) }
         Http.partFile(png).also { it.writeBytes(dem.png) }.let { Http.publish(it, png) }
+        liveCache.added(side)
+        liveCache.added(png)
         val t = Tile(dem.png, labelFor(dem.provenance), false, dem.provenance)
         remember(id, t)
         return t
@@ -350,6 +467,9 @@ class LiveTiles(
         if (!valid(z, x, y)) return null
         val u = units ?: UnitRegions.contourUnitsAt(WebMercator.yToLat(y + 0.5, z), WebMercator.xToLon(x + 0.5, z))
         val options = ServeMapOptions.contourOptions(if (u == this.options.units) this.options else this.options.copy(units = u), query) // T50: ?interval=
+        // T74: kept in the derived cache under every input: generation version, options (units, interval, ...), DEM content.
+        val cached = derivedCache.file("contours-$CONTOUR_CACHE_VERSION-${u.symbol}-${hash8(options.toString())}-${demVersion}/$z/$x/$y.pbf")
+        readDerived(cached)?.let { return it }
         val plan = ContourTiles.plan(z, x, y, options)
         val window = intArrayOf(plan.windowX, plan.windowY, plan.windowSize, plan.windowSize)
         val needed = demTilesFor(plan.sampleZoom, window, LIVE_MAX_ZOOM)
@@ -357,7 +477,28 @@ class LiveTiles(
         val tile = ContourTiles.build(ContourTiles.sample(pyramid, plan), plan, options)
         val sources = fetched.filterNotNull().groupingBy { it.source }.eachCount()
         val source = sources.maxByOrNull { it.value }?.key ?: "none"
+        writeDerived(cached, tile.bytes)
         return Tile(tile.bytes, source, fetched.all { it?.cached != false })
+    }
+
+    /** T74: a derived tile from the disk cache (null: not there, or evicted while reading). */
+    private fun readDerived(file: File): Tile? {
+        if (!file.isFile) return null
+        val bytes = try { file.readBytes() } catch (_: java.io.IOException) { return null }
+        derivedCache.touch(file)
+        derivedHits.incrementAndGet()
+        return Tile(bytes, DERIVED_CACHE, true)
+    }
+
+    private fun writeDerived(file: File, bytes: ByteArray) {
+        derivedMade.incrementAndGet()
+        try {
+            file.parentFile.mkdirs()
+            Http.partFile(file).also { it.writeBytes(bytes) }.let { Http.publish(it, file) }
+            derivedCache.added(file)
+        } catch (e: java.io.IOException) {
+            errors.incrementAndGet() // a full disk: the tile is still served
+        }
     }
 
     private val shadeStats = ShadeTileStats()
@@ -369,11 +510,14 @@ class LiveTiles(
     fun shade(z: Int, x: Int, y: Int, query: Map<String, String>): Tile? {
         if (!valid(z, x, y)) return null
         val options = ServeMapOptions.shadeOptions(query)
+        val cached = derivedCache.file("$SHADE_CACHE_VERSION-${options.key.replace(Regex("[^A-Za-z0-9]"), "_")}-${demVersion}/$z/$x/$y.png")
+        readDerived(cached)?.let { return it }
         val plan = ShadeTiles.plan(z, x, y, LIVE_MAX_ZOOM)
         val needed = if (plan.sampleZoom < LIVE_MIN_ZOOM) emptyList() else demTilesFor(plan.sampleZoom, intArrayOf(plan.windowX, plan.windowY, plan.windowSize, plan.windowSize), LIVE_MAX_ZOOM)
         val fetched = needed.map { demAsync(it.z, it.x, it.y) }.map { join(it) }
         val png = ServeMapOptions.shadePng(pyramid, z, x, y, options, shadeStats)
         val source = fetched.filterNotNull().groupingBy { it.source }.eachCount().maxByOrNull { it.value }?.key ?: "none"
+        writeDerived(cached, png)
         return Tile(png, source, fetched.all { it?.cached != false })
     }
 
@@ -387,7 +531,7 @@ class LiveTiles(
 
     /** The OpenFreeMap tile URL template and its build id, from the TileJSON (cached a day on disk; a stale copy is used offline). */
     private fun resolveOfm(): Pair<String, String> {
-        val file = File(cacheRoot, "openfreemap/planet.json")
+        val file = File(tileRoot, "openfreemap/planet.json")
         val fresh = file.isFile && System.currentTimeMillis() - file.lastModified() < 24 * 3600_000L
         val text = if (fresh) file.readText() else try {
             ofmTileJson().also { t ->
@@ -429,7 +573,7 @@ class LiveTiles(
     /** The OpenFreeMap build id and its TileJSON (`vector_layers` etc.), as cached for the live route. */
     fun openFreeMapTileJson(): Pair<String, Map<String, Any?>> {
         val build = ofm.second
-        return build to MiniJson.parseObject(File(cacheRoot, "openfreemap/planet.json").readText())
+        return build to MiniJson.parseObject(File(tileRoot, "openfreemap/planet.json").readText())
     }
 
     /**
@@ -441,8 +585,15 @@ class LiveTiles(
         require(valid(z, x, y) && z <= OSM_MAX_ZOOM) { "no OpenFreeMap tile $z/$x/$y" }
         val (template, build) = ofm
         val id = TileId(z, x, y)
-        val file = File(cacheRoot, "openfreemap/$build/$z/$x/$y.pbf")
-        if (file.isFile) return Tile(file.readBytes(), "openfreemap", true, OSM_REGISTRY_IDS)
+        val file = File(tileRoot, "openfreemap/$build/$z/$x/$y.pbf")
+        if (file.isFile) {
+            // T74: evicted between the check and the read: fetched again below.
+            val bytes = try { file.readBytes() } catch (_: java.io.IOException) { null }
+            if (bytes != null) {
+                ofmCache.touch(file)
+                return Tile(bytes, "openfreemap", true, OSM_REGISTRY_IDS)
+            }
+        }
         val f = osmInflight.computeIfAbsent(id) { key ->
             CompletableFuture.supplyAsync({
                 val url = template.replace("{z}", "$z").replace("{x}", "$x").replace("{y}", "$y")
@@ -454,6 +605,7 @@ class LiveTiles(
                 val bytes = raw?.let { gunzipIfNeeded(it) } ?: ByteArray(0)
                 file.parentFile.mkdirs()
                 Http.partFile(file).also { it.writeBytes(bytes) }.let { Http.publish(it, file) }
+                ofmCache.added(file)
                 Tile(bytes, "openfreemap", false, OSM_REGISTRY_IDS)
             }, ofmPool).also { fut -> fut.whenComplete { _, _ -> osmInflight.remove(key) } }
         }
@@ -493,7 +645,7 @@ class LiveTiles(
         val osm = count("osm", oz) { t ->
             val whole = osms.firstOrNull { it.complete(t.z, t.x, t.y) && it.has(t.z, t.x, t.y) }
             val part = osms.filter { it.has(t.z, t.x, t.y) }
-            val ofmCached = ofmBuild?.let { File(cacheRoot, "openfreemap/$it/${t.z}/${t.x}/${t.y}.pbf").isFile } == true
+            val ofmCached = ofmBuild?.let { File(tileRoot, "openfreemap/$it/${t.z}/${t.x}/${t.y}.pbf").isFile } == true
             when {
                 whole != null -> "pack" to whole.registryIds
                 ofmCached && part.isNotEmpty() -> "pack+openfreemap" to OSM_REGISTRY_IDS + part.flatMap { it.registryIds }
@@ -608,6 +760,8 @@ class LiveTiles(
         catalog.route(path, ex.requestMethod)?.let { (status, body) -> return reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
         if (path.startsWith("/out/")) return ServeStatic.serve(ex, outDir, path.removePrefix("/out/"))
         SpriteSheets.route(path, outDir)?.let { (bytes, type) -> return reply(ex, bytes, type) }
+        if (path == "/version") return reply(ex, JsonWriter.write(versions(glyphDir)).toByteArray(), "application/json") // T74
+        if (path == AssetManifest.ROUTE) return reply(ex, assetManifest(glyphDir).json().toByteArray(), "application/json") // T74
         tileRe.matchEntire(path)?.let { m ->
             val (kind, zs, xs, ys) = m.destructured
             val z = zs.toInt(); val x = xs.toInt(); val y = ys.toInt()
@@ -616,18 +770,30 @@ class LiveTiles(
                 "dem" -> dem(z, x, y)
                 "osm" -> osm(z, x, y)
                 "shade" -> shade(z, x, y, query(ex))
-                else -> query(ex).let { q -> contours(z, x, y, parseUnits(q["units"]), q) }
+                else -> query(ex).let { q -> contours(z, x, y, unitsParam(q), q) }
             }
             record(kind, TileId(z, x, y), tile, started)
             val type = if (kind == "dem" || kind == "shade") "image/png" else "application/x-protobuf"
             ex.responseHeaders.add("X-Dystopo-Source", tile?.source ?: "none")
+            // T74: the content version the phone keys this route's cache on (it re-checks `/version` when it changes).
+            when (kind) {
+                "dem" -> demVersion
+                "osm" -> osmVersion()
+                else -> null
+            }?.let { ex.responseHeaders.add(VERSION_HEADER, it) }
             reply(ex, tile?.bytes, type)
             return
         }
         glyphRe.matchEntire(path)?.let { m ->
-            val file = URLDecoder.decode(m.groupValues[1], StandardCharsets.UTF_8).split(",")
-                .map { File(glyphDir, "${it.trim()}/${m.groupValues[2]}.pbf") }.firstOrNull { it.isFile }
-            reply(ex, file?.readBytes() ?: ByteArray(0), "application/x-protobuf")
+            // T74: a real range file or a 404, never an empty 200 (MapLibre counts zero bytes as a failed glyph load and the
+            // map never reports loaded; a 404 is an empty range to it).
+            // A range our fonts lack (no file for one of the style's fonts) is a valid PBF without glyphs, as the phone bundles them.
+            val stack = URLDecoder.decode(m.groupValues[1], StandardCharsets.UTF_8).split(",").map { it.trim() }
+            val range = m.groupValues[2]
+            val file = stack.map { File(glyphDir, "$it/$range.pbf") }.firstOrNull { it.isFile && it.length() > 0 }
+            val bytes = file?.let { runCatching { it.readBytes() }.getOrNull() }?.takeIf { it.isNotEmpty() }
+                ?: stack.firstOrNull { it in MapLibreStyle.FONTS }?.takeIf { validGlyphRange(range) }?.let { emptyGlyphRange(it, range) }
+            reply(ex, bytes, "application/x-protobuf")
             return
         }
         when (path) {
@@ -656,10 +822,16 @@ class LiveTiles(
 
     /** `units=ft|m` when given, else the default at `lat`/`lon` ([UnitRegions]), else feet (the default view is Rainier). */
     private fun unitsFor(q: Map<String, String>): ContourUnits {
-        parseUnits(q["units"])?.let { return it }
+        unitsParam(q)?.let { return it }
         val lat = q["lat"]?.toDoubleOrNull()
         val lon = q["lon"]?.toDoubleOrNull()
         return if (lat != null && lon != null && lat.isFinite() && lon.isFinite()) UnitRegions.contourUnitsAt(lat, lon) else ContourUnits.FEET
+    }
+
+    /** T74: `units=` when given (an unknown value is a 400, not the default), else null. */
+    private fun unitsParam(q: Map<String, String>): ContourUnits? {
+        val raw = q["units"] ?: return null
+        return parseUnits(raw.trim()) ?: throw IllegalArgumentException("units must be ft or m (got '$raw')")
     }
 
     private val demAttributionHtml: String get() = SourceRegistry.builtIn.attributionHtml(BestSource().registryIds)
@@ -674,6 +846,7 @@ class LiveTiles(
         "osmAttribution" to osmAttributionHtml,
         "demPacks" to dems.map { it.describe() },
         "osmPacks" to osms.map { it.describe() },
+        "versions" to linkedMapOf<String, Any?>("dem" to demVersion).also { v -> osmVersion()?.let { v["osm"] = it } }, // T74
     )
 
     /** The demo page with the live settings injected ahead of its module script, so it needs no extra request to know it is live. */
@@ -698,11 +871,18 @@ class LiveTiles(
             "errors" to errors.get(),
             "shadeGeneration" to shadeStats.json(),
             "staleCachePrune" to synchronized(pruned) { pruned.toMap() },
+            // T74: each tile store with its cap; `peakBytes` is the most it held after a trim.
+            "caches" to linkedMapOf(
+                "live" to liveCache.json(), "openfreemap" to ofmCache.json(),
+                "derived" to derivedCache.json() + mapOf("hits" to derivedHits.get(), "made" to derivedMade.get()),
+            ),
+            "versions" to linkedMapOf<String, Any?>("dem" to demVersion, "osm" to osmVersion()),
             "inflight" to mapOf("dem" to demInflight.size, "osm" to osmInflight.size),
             "recent" to recent.toList(),
             "demPacks" to dems.map { it.describe() },
             "osmPacks" to osms.map { it.describe() },
             "cache" to cacheRoot.path,
+            "tileCache" to tileRoot.path,
         )
     }
 
@@ -731,6 +911,46 @@ class LiveTiles(
         const val OSM_MAX_ZOOM = 14
         /** Bump when the live DEM rendering changes, so old cached tiles are not served. v2: one overview level and blend band per zoom. */
         const val CACHE_VERSION = "best-v2"
+
+        /** T74: bump when contour generation changes what it writes (the server's derived contour tiles; the phone's is `ContourCache.VERSION`). */
+        const val CONTOUR_CACHE_VERSION = "v2"
+        /** T74: bump when shade rendering changes (the phone's is `ContourCache.SHADE_VERSION`). */
+        const val SHADE_CACHE_VERSION = "shade1"
+        /** T74: the source label of a contour or shade tile answered from the derived cache. */
+        const val DERIVED_CACHE = "derived-cache"
+        /** T74: the response header carrying a tile route's content version ([versions]). */
+        const val VERSION_HEADER = "X-Dystopo-Version"
+        const val MB = 1024L * 1024
+
+        /** T74: `DYSTOPO_TILE_CACHE` (where `devtool serve` keeps rendered and fetched tiles), else [Caches.root]. */
+        fun tileCacheFromEnv(): File = System.getenv("DYSTOPO_TILE_CACHE")?.takeIf { it.isNotBlank() }?.let { File(it) } ?: Caches.root
+
+        /** T74: `<start>-<end>` of one 256-codepoint glyph block of the BMP (`0-255` ... `65280-65535`). */
+        fun validGlyphRange(range: String): Boolean {
+            val a = range.substringBefore('-').toIntOrNull() ?: return false
+            val b = range.substringAfter('-').toIntOrNull() ?: return false
+            return a >= 0 && a % 256 == 0 && b == a + 255 && b <= 65535
+        }
+
+        /** T74: a glyph range with no glyphs as a valid PBF (`glyphs { stacks { name, range } }`), as the phone's `EmptyGlyphs`. */
+        fun emptyGlyphRange(font: String, range: String): ByteArray {
+            fun field(tag: Int, bytes: ByteArray): ByteArray {
+                val out = ByteArrayOutputStream()
+                out.write(tag)
+                var x = bytes.size
+                while (x >= 0x80) { out.write((x and 0x7F) or 0x80); x = x ushr 7 }
+                out.write(x)
+                out.write(bytes)
+                return out.toByteArray()
+            }
+            return field(0x0A, field(0x0A, font.toByteArray()) + field(0x12, range.toByteArray()))
+        }
+
+        /** 8 hex digits of SHA-256 over [text] (cache directory names). */
+        fun hash8(text: String): String = sha256(text.toByteArray()).take(8)
+
+        fun sha256(bytes: ByteArray): String =
+            java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
         /** Live DEM cache directories under [liveDir] from other versions than [CACHE_VERSION] (`best-v<n>`). */
         fun staleDemCaches(liveDir: File): List<File> =

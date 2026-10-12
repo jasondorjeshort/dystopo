@@ -81,11 +81,11 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
 
     fun contains(key: String): Boolean = synchronized(this) { index.containsKey(key) }
 
-    /** Entries and bytes per first key segment (`<prefix>/...`), for reports. */
-    fun byPrefix(): Map<String, Pair<Int, Long>> = synchronized(this) {
+    /** Entries and bytes per first key segment (`<prefix>/...`; T74: the first [depth] segments), for reports. */
+    fun byPrefix(depth: Int = 1): Map<String, Pair<Int, Long>> = synchronized(this) {
         val out = LinkedHashMap<String, Pair<Int, Long>>()
         for ((k, e) in index) {
-            val p = k.substringBefore('/')
+            val p = k.split('/').take(depth).joinToString("/")
             val (n, b) = out[p] ?: (0 to 0L)
             out[p] = (n + 1) to (b + e.bytes)
         }
@@ -121,6 +121,16 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     fun clear(prefix: String = ""): Int {
         val gone = synchronized(this) {
             val keys = index.keys.filter { it.startsWith(prefix) }
+            keys.mapNotNull { k -> index.remove(k)?.also { total -= it.bytes } }
+        }
+        gone.forEach { it.file.delete() }
+        return gone.size
+    }
+
+    /** T74: deletes every entry whose key [matches] (a source's tiles of an old content version); returns how many went. */
+    fun clearWhere(matches: (String) -> Boolean): Int {
+        val gone = synchronized(this) {
+            val keys = index.keys.filter(matches)
             keys.mapNotNull { k -> index.remove(k)?.also { total -= it.bytes } }
         }
         gone.forEach { it.file.delete() }

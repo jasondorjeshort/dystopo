@@ -88,6 +88,7 @@ class Routes(private val app: DystopoApp) {
         PacksRoutes.handle(app, r)?.let { return it }
         SearchRoutes.handle(app, r)?.let { return it } // T39: /search, /search/status, /search/build, /search/ui, /search/select
         OnlineRoutes.handle(app, r)?.let { return it } // T38: /online, /online/download
+        io.github.jasondorjeshort.dystopo.app.storage.StorageRoutes.handle(app, r)?.let { return it } // T74: /storage, /storage/clear, /storage/ui
         SyncRoutes.handle(app, r)?.let { return it } // T44: POST /sync?with=, /sync/status, /sync/settings, /sync/field
         ShareRoutes.handle(app, r)?.let { return it } // T54: /share/start, /share/stop, /share/status, /share/connect, /share/qr
         RouteRoutes.handle(app, r)?.let { return it } // T45: /route, /route/status, /route/build, /route/longpress, /route/save, /route/gpx

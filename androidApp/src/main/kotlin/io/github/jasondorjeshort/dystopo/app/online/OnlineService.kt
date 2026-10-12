@@ -12,6 +12,7 @@ import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.sources.SourceKind
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
+import io.github.jasondorjeshort.dystopo.style.AssetManifest
 import io.github.jasondorjeshort.dystopo.style.Sprites
 import java.net.URLEncoder
 import java.util.Locale
@@ -56,6 +57,12 @@ class OnlineService private constructor(private val app: DystopoApp) {
     val contourCacheHits = AtomicLong()
     val contoursMade = AtomicLong()
     val contourIncomplete = AtomicLong()
+    /** T74: online shade tiles (hillshade, slope) made, answered from the disk cache, and made while a DEM tile was missing (not kept). */
+    val shadeCacheHits = AtomicLong()
+    val shadeMade = AtomicLong()
+    val shadeIncomplete = AtomicLong()
+    /** T74: style reloads because a source's content version changed. */
+    val versionReloads = AtomicLong()
     /** Tile requests answered 404 because the server could not be reached. */
     val unavailableServed = AtomicLong()
     @Volatile private var refreshedAtUnavailable = 0L
@@ -118,9 +125,11 @@ class OnlineService private constructor(private val app: DystopoApp) {
         fetcher = when (target) {
             "" -> null
             DirectSources.SERVER -> OnlineFetcher(DirectSources.SERVER, cache, http = direct, maxInFlight = DirectSources.FETCHER_IN_FLIGHT)
-            else -> OnlineFetcher(server, cache)
-        }
+            // T74: a list of sources (the server now; T78 adds peer phones), content versions kept across restarts.
+            else -> OnlineFetcher(listOf(server), cache, versionFile = File(app.cacheDir, VERSIONS_FILE))
+        }?.also { f -> f.onVersionChange = { onVersionChange(f, it) } }
         info = null
+        assetsVersion = null
         Log.i(TAG, "server: ${target.ifEmpty { "(none)" }}")
     }
 
@@ -159,13 +168,40 @@ class OnlineService private constructor(private val app: DystopoApp) {
                 }
                 if (f.state != "online") next = PROBE_OFFLINE_MS
                 refreshAfterReconnect(f)
-                if (f.state == "online") installAssetsOnce(f) // T41: glyphs and sprites when the device has none
+                if (f.state == "online" && f.server != DirectSources.SERVER) f.checkVersions() // T74: a changed server is seen without tile traffic
+                if (f.state == "online") installAssetsOnce(f) // T41: glyphs and sprites when the device has none; T74: and when the server's changed
             }
         } catch (e: Throwable) {
             Log.w(TAG, "probe failed", e)
         } finally {
             probeThread.schedule(::probeLoop, next, TimeUnit.MILLISECONDS)
         }
+    }
+
+    @Volatile private var reloadPending = false
+
+    /**
+     * T74: a source's content version changed (seen by `/version` or a tile's header): its old tiles are gone from
+     * the cache; reload the style (its tile URLs carry the versions, so MapLibre asks again) once, shortly after,
+     * and fetch the style assets again when those changed.
+     */
+    private fun onVersionChange(f: OnlineFetcher, source: String) {
+        Log.i(TAG, "content version of $source changed: ${f.json()["versions"]}")
+        if (reloadPending) return
+        reloadPending = true
+        probeThread.schedule({
+            reloadPending = false
+            try {
+                if (fetcher === f) {
+                    versionReloads.incrementAndGet()
+                    installAssetsOnce(f)
+                    val style = app.tiles.style()
+                    app.map.onMain { app.map.loadStyle(style) }
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "reload after a version change failed", e)
+            }
+        }, 300, TimeUnit.MILLISECONDS)
     }
 
     @Volatile private var notReadySeen = 0L
@@ -223,6 +259,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
     val viewChanges = AtomicLong()
     val sourceRefreshes = AtomicLong()
     @Volatile private var lastAssets: Map<String, Any?>? = null
+    /** T74: the server's asset version the files dir was last brought up to (null: not this session). */
+    @Volatile private var assetsVersion: String? = null
     @Volatile private var assetsTried = false
     /** Where the last view at rest got its terrain ([OnlineView.source]); online credits show only when it is not all pack. */
     @Volatile var lastViewSource: String? = null
@@ -279,10 +317,18 @@ class OnlineService private constructor(private val app: DystopoApp) {
         )
     }
 
+    /**
+     * Once per session, and again whenever the server's `assets` version changes (T74), brings the files dir's glyphs
+     * and sprites up to the server's ([installAssets]); reloads the map when anything was written.
+     */
+    @Synchronized
     private fun installAssetsOnce(f: OnlineFetcher) {
-        if (assetsTried || f.server == DirectSources.SERVER) return // T80: the APK brings them (BundledAssets)
+        if (f.server == DirectSources.SERVER) return // T80: the APK brings them (BundledAssets)
+        val v = f.version("assets")
+        if (assetsTried && (v == null || v == assetsVersion)) return
         assetsTried = true
         val r = installAssets(f.server)
+        if (r["failed"].let { it is List<*> && it.isEmpty() }) assetsVersion = (r["version"] as? String) ?: v
         if ((r["installed"] as? Int ?: 0) > 0) app.reload() // the style now points at the files (file:// glyphs, sprite sheet)
     }
 
@@ -295,6 +341,10 @@ class OnlineService private constructor(private val app: DystopoApp) {
     fun installAssets(server: String): Map<String, Any?> {
         if (server == DirectSources.SERVER) return linkedMapOf("server" to server, "installed" to 0, "bundled" to true) // T80
         val http = UrlConnectionGet()
+        // T74: a server with an asset manifest: every file whose hash differs is fetched again (a changed sprite sheet or glyph range).
+        val manifest = runCatching { http.get(server.trimEnd('/') + AssetManifest.ROUTE) }.getOrNull()
+            ?.takeIf { it.status == 200 }?.let { runCatching { AssetManifest.parse(it.body.decodeToString()) }.getOrNull() }
+        if (manifest != null) return installFromManifest(server, manifest, http, app.filesDir).also { lastAssets = it; Log.i(TAG, "assets from $server: $it") }
         val root = app.filesDir
         var installed = 0
         var present = 0
@@ -335,6 +385,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "contours" to mapOf(
             "made" to contoursMade.get(), "cacheHits" to contourCacheHits.get(), "incompleteNotCached" to contourIncomplete.get(),
         ),
+        "shade" to mapOf("made" to shadeMade.get(), "cacheHits" to shadeCacheHits.get(), "incompleteNotCached" to shadeIncomplete.get()), // T74
+        "versionReloads" to versionReloads.get(),
+        "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
         "styleRefreshesAfterReconnect" to refreshes.get(),
         "serverInfo" to info?.let { mapOf("demMinZoom" to it["demMinZoom"], "demMaxZoom" to it["demMaxZoom"], "osmMaxZoom" to it["osmMaxZoom"]) },
@@ -352,6 +405,50 @@ class OnlineService private constructor(private val app: DystopoApp) {
         const val CACHED = "cached"
         const val PROBE_ONLINE_MS = 30_000L
         const val PROBE_OFFLINE_MS = 5_000L
+        /** T74: the content versions of every source, kept across restarts (outside the tile cache directory). */
+        const val VERSIONS_FILE = "online/versions.json"
+
+        fun sha256(bytes: ByteArray): String =
+            java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+        /**
+         * T74: brings [root] (the files dir) up to [manifest]: a file that is missing or whose SHA-256 differs is
+         * downloaded from [server], checked against the manifest's hash and moved into place; nothing else is touched.
+         * Paths were checked by [AssetManifest.parse] (only under `glyphs/` and `sprites/`).
+         */
+        fun installFromManifest(server: String, manifest: AssetManifest.Manifest, http: HttpGet, root: File): Map<String, Any?> {
+            var installed = 0
+            var present = 0
+            val replaced = ArrayList<String>()
+            val failed = ArrayList<String>()
+            val base = server.trimEnd('/')
+            for (e in manifest.files) {
+                if (!AssetManifest.safePath(e.path)) { failed += "${e.path}: unsafe path"; continue }
+                val target = File(root, e.path)
+                val had = target.isFile && target.length() > 0
+                if (had && runCatching { sha256(target.readBytes()) }.getOrNull() == e.sha256) { present++; continue }
+                try {
+                    val reply = http.get(base + e.url)
+                    if (reply.status != 200 || reply.body.isEmpty()) { failed += "${e.path}: HTTP ${reply.status}"; continue }
+                    if (sha256(reply.body) != e.sha256) { failed += "${e.path}: hash differs from the manifest"; continue }
+                    target.parentFile?.mkdirs()
+                    val tmp = File(target.parentFile, target.name + ".tmp")
+                    tmp.writeBytes(reply.body)
+                    if (!tmp.renameTo(target)) {
+                        target.delete()
+                        if (!tmp.renameTo(target)) { tmp.delete(); failed += "${e.path}: rename"; continue }
+                    }
+                    installed++
+                    if (had) replaced += e.path
+                } catch (ex: Exception) {
+                    failed += "${e.path}: ${ex.javaClass.simpleName}"
+                }
+            }
+            return linkedMapOf(
+                "server" to server, "manifest" to true, "version" to manifest.version, "files" to manifest.files.size,
+                "installed" to installed, "replaced" to replaced.size, "replacedFiles" to replaced.take(8), "present" to present, "failed" to failed.take(8),
+            )
+        }
         /** What the live server serves by default (`best` DEM, OpenFreeMap base map), until it reports a view's sources. */
         val DEFAULT_ONLINE_IDS = listOf("copernicus", "3dep", "osm", "openfreemap", "openmaptiles")
 

@@ -1,19 +1,21 @@
 package io.github.jasondorjeshort.dystopo.app.online
 
+import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.GZIPInputStream
 
-/** One HTTP response: status and body (empty for errors). */
-class HttpReply(val status: Int, val body: ByteArray)
+/** One HTTP response: status, body (empty for errors) and (T74) the response headers the fetcher reads, lower-case names. */
+class HttpReply(val status: Int, val body: ByteArray, val headers: Map<String, String> = emptyMap())
 
 /** The server could not be reached at all (no network, refused, connect timeout): the whole server backs off. */
 class ConnectFailed(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -38,7 +40,8 @@ class UrlConnectionGet(private val connectTimeoutMs: Int = 3_000, private val re
             }
             val status = conn.responseCode
             val body = if (status in 200..299) conn.inputStream.use { it.readBytes() } else ByteArray(0)
-            return HttpReply(status, body)
+            val headers = conn.getHeaderField(OnlineFetcher.VERSION_HEADER)?.let { mapOf(OnlineFetcher.VERSION_HEADER.lowercase() to it) } ?: emptyMap()
+            return HttpReply(status, body, headers)
         } finally {
             conn.disconnect()
         }
@@ -56,46 +59,106 @@ sealed class Fetch {
 }
 
 /**
- * Fetches tiles from one Dystopo server (`devtool serve --live` or anything with the same routes)
- * through a [TileCache], so a tile is downloaded once and served from disk afterwards, also offline.
+ * Fetches tiles from a list of sources (T74: Dystopo servers, `devtool serve --live` or anything with the same
+ * routes; the first is the primary, and T78 adds peer phones) through a [TileCache], so a tile is downloaded once
+ * and served from disk afterwards, also offline. A tile comes from the first source that has it: the cache of each
+ * source in order, then each source over the network in order (one that is backing off or remembers a 404 for the
+ * tile is skipped).
  *
  * - Short timeouts and at most [maxInFlight] requests at once; concurrent requests for one tile share a fetch.
- * - A negative cache: a 404 is remembered for [missingTtlMs], any other failure of one tile for
- *   [failureTtlMs]. When the server cannot be reached at all every lookup fails fast for a backoff
- *   period (5 s doubling to 60 s), so a dead server or no network does not stall each tile on a timeout.
+ * - A negative cache per source: a 404 is remembered for [missingTtlMs], any other failure of one tile for
+ *   [failureTtlMs]. When a source cannot be reached at all every lookup skips it for a backoff period
+ *   (5 s doubling to 60 s), so a dead server or no network does not stall each tile on a timeout.
+ * - T74, content versions: a source's `GET /version` names what each route's tiles depend on (`dem`, `osm`,
+ *   `assets`); cache keys carry it (`<source>/dem@<version>/z/x/y.png`), so a server whose DEM changed is
+ *   seen at the next check (at most every [versionCheckMs], on a tile request or the probe) or at once from a
+ *   fetched tile's `X-Dystopo-Version` header, and its old tiles are dropped while pack-derived caches are
+ *   untouched. A source without `/version` (an older server, the phone's own readers) keeps unversioned keys.
+ *   Known versions are kept in [versionFile], so cached tiles are found again offline after a restart.
+ * - T74: an empty 200 for a glyph range is a miss, not cached (MapLibre fails an empty range).
  * - [state] says online / offline for the indicator; [generation] counts offline-to-online transitions
  *   (the map refreshes then, so tiles left blank while offline load).
  */
 class OnlineFetcher(
-    val server: String,
+    val sources: List<String>,
     private val cache: TileCache,
     private val http: HttpGet = UrlConnectionGet(),
     private val maxInFlight: Int = 6,
     private val missingTtlMs: Long = 10 * 60_000L,
     private val failureTtlMs: Long = 30_000L,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val versionFile: File? = null,
+    private val versionCheckMs: Long = VERSION_CHECK_MS,
 ) {
-    /** Cache key prefix for this server: its address with path separators flattened. */
-    val serverKey: String = keyFor(server)
+    constructor(
+        server: String, cache: TileCache, http: HttpGet = UrlConnectionGet(), maxInFlight: Int = 6,
+        missingTtlMs: Long = 10 * 60_000L, failureTtlMs: Long = 30_000L, clock: () -> Long = System::currentTimeMillis,
+        versionFile: File? = null, versionCheckMs: Long = VERSION_CHECK_MS,
+    ) : this(listOf(server), cache, http, maxInFlight, missingTtlMs, failureTtlMs, clock, versionFile, versionCheckMs)
+
+    init {
+        require(sources.isNotEmpty()) { "at least one source" }
+    }
+
+    /** Called (on the thread that noticed it) when a source's content version changed: the map should reload. */
+    @Volatile var onVersionChange: ((String) -> Unit)? = null
+
+    /** One source: its address, cache key, content versions, reachability and negative cache. */
+    inner class Source(val url: String) {
+        val key: String = keyFor(url)
+        val versions = ConcurrentHashMap<String, String>()
+        val missingUntil = ConcurrentHashMap<String, Long>()
+        val failedUntil = ConcurrentHashMap<String, Long>()
+        @Volatile var downUntil = 0L
+        @Volatile var backoffMs = 0L
+        @Volatile var reachable: Boolean? = null
+        @Volatile var lastOkAt = 0L
+        @Volatile var lastFailAt = 0L
+        @Volatile var generation = 0
+        @Volatile var versionCheckedAt = 0L
+        /** False once `/version` answered 404 (asked again every [VERSION_UNSUPPORTED_RECHECK_MS]). */
+        @Volatile var versionsSupported: Boolean? = null
+        val versionChecking = AtomicBoolean()
+        val versionChanges = AtomicLong()
+
+        fun base() = url.trimEnd('/')
+
+        /** The cache key prefix of [route] (`<key>/<route>[@<version>]`). */
+        fun prefix(route: String): String {
+            val v = VERSION_OF[route]?.let { versions[it] }
+            return if (v == null) "$key/$route" else "$key/$route@$v"
+        }
+
+        fun json(now: Long): Map<String, Any?> = linkedMapOf(
+            "url" to url, "key" to key,
+            "state" to when (reachable) { null -> "unknown"; true -> "online"; false -> "offline" },
+            "versions" to versions.toSortedMap(), "versionsSupported" to versionsSupported,
+            "msSinceVersionCheck" to if (versionCheckedAt == 0L) null else now - versionCheckedAt,
+            "versionChanges" to versionChanges.get(),
+            "backoffMs" to backoffMs, "retryInMs" to (downUntil - now).coerceAtLeast(0),
+            "negativeCache" to mapOf("missing" to missingUntil.count { it.value > now }, "failed" to failedUntil.count { it.value > now }),
+        )
+    }
+
+    val sourceList: List<Source> = sources.map { Source(it) }
+    private val primary: Source get() = sourceList.first()
+
+    /** The primary source's address (the configured server; [DirectSources.SERVER] for the phone's own readers). */
+    val server: String get() = primary.url
+
+    /** Cache key prefix of the primary source: its address with path separators flattened. */
+    val serverKey: String get() = primary.key
 
     private val permits = Semaphore(maxInFlight)
     private val inFlight = ConcurrentHashMap<String, CompletableFuture<Fetch>>()
-    private val missingUntil = ConcurrentHashMap<String, Long>()
-    private val failedUntil = ConcurrentHashMap<String, Long>()
 
-    @Volatile private var downUntil = 0L
-    @Volatile private var backoffMs = 0L
-    @Volatile var lastOkAt = 0L
-        private set
-    @Volatile var lastFailAt = 0L
-        private set
+    val lastOkAt: Long get() = sourceList.maxOf { it.lastOkAt }
+    val lastFailAt: Long get() = sourceList.maxOf { it.lastFailAt }
     @Volatile var lastError: String? = null
         private set
-    @Volatile private var reachable: Boolean? = null
 
-    /** Offline-to-online transitions so far. */
-    @Volatile var generation = 0
-        private set
+    /** Offline-to-online transitions so far, over every source. */
+    val generation: Int get() = sourceList.sumOf { it.generation }
 
     val requests = AtomicLong()
     val cacheHits = AtomicLong()
@@ -106,40 +169,77 @@ class OnlineFetcher(
     val negativeHits = AtomicLong()
     val backoffSkips = AtomicLong()
     val sharedFetches = AtomicLong()
+    val emptyAsMissing = AtomicLong()
+    val versionChecks = AtomicLong()
     private val fetchMs = AtomicLong()
     private val maxFetchMs = AtomicLong()
     private val recentErrors = ArrayDeque<String>()
 
-    /** `online`, `offline` (the server could not be reached recently) or `unknown` (nothing tried yet). */
+    init {
+        loadVersions()
+    }
+
+    /** `online` (some source answered), `offline` (none could be reached recently) or `unknown` (nothing tried yet). */
     val state: String
-        get() = when (reachable) {
-            null -> "unknown"
-            true -> "online"
-            false -> "offline"
+        get() = when {
+            sourceList.any { it.reachable == true } -> "online"
+            sourceList.all { it.reachable == null } -> "unknown"
+            else -> "offline"
         }
 
-    fun urlFor(route: String, path: String) = "${server.trimEnd('/')}/$route/$path"
+    fun urlFor(route: String, path: String) = "${primary.base()}/$route/$path"
+
+    /** The content version [name] (`dem`, `osm`, `assets`) of the primary source, when known. */
+    fun version(name: String): String? = primary.versions[name]
+
+    /** A short tag of the primary source's content versions, for URLs that must change with them (MapLibre's own cache). */
+    val contentTag: String
+        get() = primary.versions.toSortedMap().entries.joinToString(",") { "${it.key}=${it.value}" }.let { if (it.isEmpty()) "" else Integer.toHexString(it.hashCode()) }
+
+    /** The cache key prefix for tiles made on the phone from the primary source's DEM (`<key>/<derived>[@<dem version>]`). */
+    fun derivedPrefix(derived: String): String {
+        maybeCheckVersions(primary) // so a tile made before the first tile fetch is not keyed without the version
+        return primary.versions["dem"]?.let { "${primary.key}/$derived@$it" } ?: "${primary.key}/$derived"
+    }
 
     /**
-     * The tile at `<server>/<route>/<path>` (e.g. `dem`, `12/654/1431.png`): from the disk cache, else
+     * The tile at `<source>/<route>/<path>` (e.g. `dem`, `12/654/1431.png`): from the disk cache, else
      * fetched (unless the negative cache or the backoff says not to try now) and cached.
      */
     fun get(route: String, path: String, transform: (ByteArray) -> ByteArray = { it }): Fetch {
         requests.incrementAndGet()
-        val key = "$serverKey/$route/$path"
-        cache.get(key)?.let {
-            cacheHits.incrementAndGet()
-            return Fetch.Hit(it, cached = true)
+        for (s in sourceList) maybeCheckVersions(s)
+        for (s in sourceList) {
+            cache.get("${s.prefix(route)}/$path")?.let {
+                if (!(it.isEmpty() && route in EMPTY_IS_MISS)) {
+                    cacheHits.incrementAndGet()
+                    return Fetch.Hit(it, cached = true)
+                }
+            }
         }
+        var unavailable: Fetch.Unavailable? = null
+        for (s in sourceList) {
+            when (val f = getFrom(s, route, path, transform)) {
+                is Fetch.Hit -> return f
+                Fetch.Missing -> {}
+                is Fetch.Unavailable -> if (unavailable == null) unavailable = f
+            }
+        }
+        return unavailable ?: Fetch.Missing
+    }
+
+    private fun getFrom(s: Source, route: String, path: String, transform: (ByteArray) -> ByteArray): Fetch {
+        val tile = "$route/$path"
         val now = clock()
-        missingUntil[key]?.let { if (now < it) { negativeHits.incrementAndGet(); return Fetch.Missing } else missingUntil.remove(key) }
-        failedUntil[key]?.let { if (now < it) { negativeHits.incrementAndGet(); return Fetch.Unavailable("failed recently") } else failedUntil.remove(key) }
-        if (now < downUntil) {
+        s.missingUntil[tile]?.let { if (now < it) { negativeHits.incrementAndGet(); return Fetch.Missing } else s.missingUntil.remove(tile) }
+        s.failedUntil[tile]?.let { if (now < it) { negativeHits.incrementAndGet(); return Fetch.Unavailable("failed recently") } else s.failedUntil.remove(tile) }
+        if (now < s.downUntil) {
             backoffSkips.incrementAndGet()
-            return Fetch.Unavailable("server unreachable (retry in ${(downUntil - now) / 1000 + 1} s): $lastError")
+            return Fetch.Unavailable("server unreachable (retry in ${(s.downUntil - now) / 1000 + 1} s): $lastError")
         }
+        val flightKey = "${s.key}/$tile"
         val mine = CompletableFuture<Fetch>()
-        val running = inFlight.putIfAbsent(key, mine)
+        val running = inFlight.putIfAbsent(flightKey, mine)
         if (running != null) {
             sharedFetches.incrementAndGet()
             return try {
@@ -151,54 +251,64 @@ class OnlineFetcher(
             }
         }
         try {
-            val result = fetch(key, urlFor(route, path), transform)
+            val result = fetch(s, route, path, transform)
             mine.complete(result)
             return result
         } catch (e: Throwable) {
             mine.completeExceptionally(e)
             throw e
         } finally {
-            inFlight.remove(key, mine)
+            inFlight.remove(flightKey, mine)
         }
     }
 
-    private fun fetch(key: String, url: String, transform: (ByteArray) -> ByteArray): Fetch {
+    private fun fetch(s: Source, route: String, path: String, transform: (ByteArray) -> ByteArray): Fetch {
+        val tile = "$route/$path"
+        val url = "${s.base()}/$route/$path"
         permits.acquire()
         val started = System.nanoTime()
         try {
             // Another thread may have gone offline while this one waited for a permit.
-            if (clock() < downUntil) {
+            if (clock() < s.downUntil) {
                 backoffSkips.incrementAndGet()
                 return Fetch.Unavailable("server unreachable: $lastError")
             }
             val reply = http.get(url)
-            noteReachable()
+            noteReachable(s)
             return when (reply.status) {
                 in 200..299 -> {
                     fetches.incrementAndGet()
                     fetchedBytes.addAndGet(reply.body.size.toLong())
+                    // T74: a fetched tile names its route's content version; a new one drops the source's older tiles.
+                    reply.headers[VERSION_HEADER.lowercase()]?.let { v -> VERSION_OF[route]?.let { name -> applyVersions(s, mapOf(name to v)) } }
+                    if (reply.body.isEmpty() && route in EMPTY_IS_MISS) {
+                        // T74: an empty 200 for a glyph range is a broken answer (MapLibre fails it), not a range: a miss, not cached.
+                        emptyAsMissing.incrementAndGet()
+                        s.missingUntil[tile] = clock() + missingTtlMs
+                        return Fetch.Missing
+                    }
                     val bytes = transform(reply.body)
-                    cache.put(key, bytes)
+                    cache.put("${s.prefix(route)}/$path", bytes)
                     Fetch.Hit(bytes, cached = false)
                 }
                 404, 410 -> {
                     notFound.incrementAndGet()
-                    missingUntil[key] = clock() + missingTtlMs
+                    s.missingUntil[tile] = clock() + missingTtlMs
                     Fetch.Missing
                 }
                 else -> {
-                    noteError("HTTP ${reply.status} for $url")
-                    failedUntil[key] = clock() + failureTtlMs
+                    noteError(s, "HTTP ${reply.status} for $url")
+                    s.failedUntil[tile] = clock() + failureTtlMs
                     Fetch.Unavailable("HTTP ${reply.status}")
                 }
             }
         } catch (e: ConnectFailed) {
-            noteUnreachable(e.message ?: "connect failed")
+            noteUnreachable(s, e.message ?: "connect failed")
             return Fetch.Unavailable("server unreachable: ${e.message}")
         } catch (e: IOException) {
             // Connected, then the read failed or timed out: this tile is the problem, not the whole server.
-            noteError("${e.javaClass.simpleName}: ${e.message} for $url")
-            failedUntil[key] = clock() + failureTtlMs
+            noteError(s, "${e.javaClass.simpleName}: ${e.message} for $url")
+            s.failedUntil[tile] = clock() + failureTtlMs
             return Fetch.Unavailable(e.message ?: e.javaClass.simpleName)
         } finally {
             val ms = (System.nanoTime() - started) / 1_000_000
@@ -208,16 +318,110 @@ class OnlineFetcher(
         }
     }
 
-    /** A cheap request that only checks the server answers (`/live/info`); updates [state]. Returns the body or null. */
+    // ---- T74: content versions ----
+
+    /** Asks [s] for `/version` when the last answer is older than [versionCheckMs] (one thread at a time; others go on). */
+    private fun maybeCheckVersions(s: Source, force: Boolean = false) {
+        val every = if (s.versionsSupported == false) VERSION_UNSUPPORTED_RECHECK_MS else versionCheckMs
+        if (!force && clock() - s.versionCheckedAt < every) return
+        if (clock() < s.downUntil) return
+        if (!s.versionChecking.compareAndSet(false, true)) return
+        try {
+            if (!force && clock() - s.versionCheckedAt < every) return
+            s.versionCheckedAt = clock()
+            versionChecks.incrementAndGet()
+            val reply = http.get("${s.base()}/version")
+            noteReachable(s)
+            when (reply.status) {
+                200 -> {
+                    s.versionsSupported = true
+                    val m = runCatching { MiniJson.parseObject(reply.body.decodeToString()) }.getOrNull() ?: return
+                    applyVersions(s, m.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap())
+                }
+                404, 410 -> s.versionsSupported = false
+            }
+        } catch (e: ConnectFailed) {
+            noteUnreachable(s, "version: ${e.message}")
+        } catch (_: IOException) {
+            // A slow answer: keep the versions we have and ask again at the next interval.
+        } finally {
+            s.versionChecking.set(false)
+        }
+    }
+
+    /** Asks every source for its versions now (the probe; `POST /online/retry`). */
+    fun checkVersions() = sourceList.forEach { maybeCheckVersions(it, force = true) }
+
+    /** Takes [found] versions of [s]; a changed one drops the source's tiles of the old version (and, for `dem`, what was derived from them). */
+    private fun applyVersions(s: Source, found: Map<String, String>) {
+        var changed = false
+        synchronized(s) {
+            for ((name, v) in found) {
+                if (name !in VERSION_NAMES || !SAFE_VERSION.matches(v)) continue
+                val old = s.versions.put(name, v)
+                if (old == v) continue
+                changed = true
+                if (old != null) s.versionChanges.incrementAndGet()
+                dropOld(s, name, old)
+            }
+        }
+        if (changed) {
+            saveVersions()
+            onVersionChange?.invoke(s.url)
+        }
+    }
+
+    /**
+     * Deletes [s]'s cached tiles of content [name] at version [old] (null: the keys from before versions were
+     * known): `<key>/<route>@<old>/...` for the routes that depend on it, and for `dem` also the tiles derived
+     * on the phone (`<key>/contours-...@<old>/`, `<key>/shade-...@<old>/`).
+     */
+    private fun dropOld(s: Source, name: String, old: String?) {
+        val routes = VERSION_OF.filterValues { it == name }.keys
+        cache.clearWhere { k ->
+            val parts = k.split('/', limit = 3)
+            if (parts.size < 3 || parts[0] != s.key) return@clearWhere false
+            val seg = parts[1]
+            val route = seg.substringBefore('@')
+            val depends = route in routes || (name == "dem" && DERIVED_FROM_DEM.any { route.startsWith(it) })
+            depends && (if (old == null) '@' !in seg else seg.substringAfter('@', "") == old)
+        }
+    }
+
+    private fun loadVersions() {
+        val f = versionFile ?: return
+        val all = runCatching { MiniJson.parseObject(f.readText()) }.getOrNull() ?: return
+        for (s in sourceList) {
+            (all[s.key] as? Map<*, *>)?.forEach { (k, v) -> if (k is String && v is String && k in VERSION_NAMES && SAFE_VERSION.matches(v)) s.versions[k] = v }
+        }
+    }
+
+    @Synchronized
+    private fun saveVersions() {
+        val f = versionFile ?: return
+        try {
+            val all = HashMap<String, Any?>(runCatching { MiniJson.parseObject(f.readText()) }.getOrNull().orEmpty())
+            for (s in sourceList) all[s.key] = s.versions.toSortedMap()
+            f.parentFile?.mkdirs()
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(MiniJson.encode(all))
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        } catch (_: Exception) {
+            // Only a convenience for offline restarts.
+        }
+    }
+
+    /** A cheap request that only checks the primary source answers (`/live/info`); updates [state]. Returns the body or null. */
     fun probe(path: String = "live/info"): ByteArray? {
+        val s = primary
         // No backoff check: the probe is what notices the network coming back while the map is quiet.
         return try {
-            val reply = http.get("${server.trimEnd('/')}/$path")
-            noteReachable()
+            val reply = http.get("${s.base()}/$path")
+            noteReachable(s)
             reply.body.takeIf { reply.status in 200..299 }
         } catch (e: IOException) {
             // `/live/info` is instant on a working server: any failure (refused, timeout) means unreachable.
-            noteUnreachable("probe: ${e.javaClass.simpleName}: ${e.message}")
+            noteUnreachable(s, "probe: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -238,7 +442,7 @@ class OnlineFetcher(
             }
             return n
         }
-        val n = sweep(missingUntil, missingTtlMs) + sweep(failedUntil, failureTtlMs)
+        val n = sourceList.sumOf { sweep(it.missingUntil, missingTtlMs) + sweep(it.failedUntil, failureTtlMs) }
         negativeRetried.addAndGet(n.toLong())
         return n
     }
@@ -247,35 +451,37 @@ class OnlineFetcher(
 
     /** Lets the next lookup try the network at once (connectivity came back). */
     fun retryNow() {
-        downUntil = 0L
-        failedUntil.clear()
-    }
-
-    private fun noteReachable() {
-        lastOkAt = clock()
-        backoffMs = 0L
-        downUntil = 0L
-        if (reachable == false) {
-            generation++
-            failedUntil.clear()
+        for (s in sourceList) {
+            s.downUntil = 0L
+            s.failedUntil.clear()
         }
-        reachable = true
     }
 
-    private fun noteUnreachable(message: String) {
+    private fun noteReachable(s: Source) {
+        s.lastOkAt = clock()
+        s.backoffMs = 0L
+        s.downUntil = 0L
+        if (s.reachable == false) {
+            s.generation++
+            s.failedUntil.clear()
+        }
+        s.reachable = true
+    }
+
+    private fun noteUnreachable(s: Source, message: String) {
         // Several requests failing together count once: the backoff grows per attempt, not per thread.
         val now = clock()
-        if (now >= downUntil) {
-            backoffMs = if (backoffMs == 0L) 5_000L else minOf(backoffMs * 2, 60_000L)
-            downUntil = now + backoffMs
+        if (now >= s.downUntil) {
+            s.backoffMs = if (s.backoffMs == 0L) 5_000L else minOf(s.backoffMs * 2, 60_000L)
+            s.downUntil = now + s.backoffMs
         }
-        reachable = false
-        noteError("unreachable: $message")
+        s.reachable = false
+        noteError(s, "unreachable: $message")
     }
 
-    private fun noteError(message: String) {
+    private fun noteError(s: Source, message: String) {
         errors.incrementAndGet()
-        lastFailAt = clock()
+        s.lastFailAt = clock()
         lastError = message
         synchronized(recentErrors) {
             recentErrors.addLast(message)
@@ -286,15 +492,19 @@ class OnlineFetcher(
     fun json(): Map<String, Any?> {
         val now = clock()
         val n = fetches.get() + notFound.get()
+        val p = primary
         return linkedMapOf(
             "server" to server, "state" to state, "generation" to generation,
+            "sources" to sourceList.map { it.json(now) }, // T74
+            "versions" to p.versions.toSortedMap(),
             "requests" to requests.get(), "cacheHits" to cacheHits.get(), "fetches" to fetches.get(),
             "fetchedBytes" to fetchedBytes.get(), "notFound" to notFound.get(), "errors" to errors.get(),
             "negativeCacheHits" to negativeHits.get(), "negativeRetried" to negativeRetried.get(), "backoffSkips" to backoffSkips.get(), "sharedFetches" to sharedFetches.get(),
+            "emptyAnswersAsMissing" to emptyAsMissing.get(), "versionChecks" to versionChecks.get(), // T74
             "inFlight" to inFlight.size, "maxInFlight" to maxInFlight,
             "fetchMsAvg" to if (n == 0L) null else fetchMs.get() / n, "fetchMsMax" to maxFetchMs.get(),
-            "negativeCache" to mapOf("missing" to missingUntil.count { it.value > now }, "failed" to failedUntil.count { it.value > now }),
-            "backoffMs" to backoffMs, "retryInMs" to (downUntil - now).coerceAtLeast(0),
+            "negativeCache" to mapOf("missing" to sourceList.sumOf { s -> s.missingUntil.count { it.value > now } }, "failed" to sourceList.sumOf { s -> s.failedUntil.count { it.value > now } }),
+            "backoffMs" to p.backoffMs, "retryInMs" to (p.downUntil - now).coerceAtLeast(0),
             "msSinceOk" to if (lastOkAt == 0L) null else now - lastOkAt,
             "msSinceFailure" to if (lastFailAt == 0L) null else now - lastFailAt,
             "lastError" to lastError,
@@ -305,6 +515,27 @@ class OnlineFetcher(
     companion object {
         /** Negative entries at least this old are retried when the view changes (T41). */
         const val NEGATIVE_RETRY_AGE_MS = 15_000L
+
+        /** T74: how often a tile request may ask a source for `/version`. */
+        const val VERSION_CHECK_MS = 15_000L
+
+        /** T74: a source without `/version` is asked again this rarely. */
+        const val VERSION_UNSUPPORTED_RECHECK_MS = 10 * 60_000L
+
+        /** T74: the response header with a tile route's content version (the server's `LiveTiles.VERSION_HEADER`). */
+        const val VERSION_HEADER = "X-Dystopo-Version"
+
+        /** T74: which content version a route's tiles depend on. */
+        val VERSION_OF = mapOf("dem" to "dem", "osm" to "osm", "glyphs" to "assets")
+        private val VERSION_NAMES = setOf("dem", "osm", "assets")
+
+        /** T74: cache directories made on the phone from a source's DEM (contours, shade): dropped with its old DEM version. */
+        val DERIVED_FROM_DEM = listOf("contours-", "shade-")
+
+        /** Routes where an empty 200 is a broken answer, not content (an empty vector tile is open ocean; an empty glyph range is an error). */
+        private val EMPTY_IS_MISS = setOf("glyphs")
+
+        private val SAFE_VERSION = Regex("[A-Za-z0-9._-]{1,64}")
 
         /** A path-safe cache directory name for [server]: `http://10.0.2.2:8765` becomes `10.0.2.2_8765`. */
         fun keyFor(server: String): String =

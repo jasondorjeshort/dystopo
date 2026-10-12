@@ -128,7 +128,7 @@ key with its default.
 | `bind` | `"0.0.0.0"` | Address to listen on. `127.0.0.1` behind a local proxy. |
 | `port` | `8080` | Port (0 picks a free one; the `started` log line says which). |
 | `publicUrl` | `null` | Base URL for the absolute URLs in `/style.json`, e.g. `"https://maps.example.org"`. Null: from each request's `X-Forwarded-*` / `Host` headers. |
-| `cacheDir` | `"cache"` | Downloads and generated tiles (`live/`, `openfreemap/`, `copernicus30/`, `3dep13/`, `3dep1m/`, `overpass/`, `glyphs/`, ...). |
+| `cacheDir` | `"cache"` | Downloads and generated tiles (`live/`, `openfreemap/`, `derived/`, `copernicus30/`, `3dep13/`, `3dep1m/`, `overpass/`, `glyphs/`, ...). The tile stores are capped (`cache.*`); the source downloads are not. |
 | `outDir` | `"out"` | Region packs: served as packs, under `/out/`, listed by `/catalog`, written by `/build`. |
 | `glyphsDir` | `null` | Glyph PBFs (`<font>/<range>.pbf`); null: `<cacheDir>/glyphs`. |
 | `fetchGlyphs` | `true` | At startup, download the glyph ranges the style uses (Noto Sans, SIL OFL) when missing. |
@@ -168,6 +168,10 @@ key with its default.
 | `http.maxRequestSeconds` | `60` | A client must send its whole request (headers and body) within this time, else the connection is closed. Bounds slow-header clients; a sync push slower than this fails (behind a proxy that buffers requests it only bounds the proxy's hop). |
 | `http.idleSeconds` | `30` | Idle keep-alive connections are closed after this. |
 | `http.maxConnections` | `1000` | Open connections at once; beyond, new ones are closed at once. |
+| `cache.tileDir` | `null` | T74: where the tile stores live (`live/`, `openfreemap/`, `derived/`); null: `cacheDir`. `devtool serve` reads `DYSTOPO_TILE_CACHE`. |
+| `cache.liveMb` | `4096` | Byte cap of the live DEM tiles (`live/best-v2/`), least recently used evicted first. |
+| `cache.openfreemapMb` | `2048` | Byte cap of the OpenFreeMap tiles (`openfreemap/<build>/`, every planet build; old builds go first). |
+| `cache.derivedMb` | `1024` | Byte cap of the contour and shade tiles the server keeps (`derived/`). `devtool serve` reads all three from `DYSTOPO_CACHE_CAPS=live=4096,openfreemap=2048,derived=1024`. |
 
 ## Routes
 
@@ -178,6 +182,18 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 - `/dem/{z}/{x}/{y}.png`, `/contours/{z}/{x}/{y}.pbf?units=`, `/osm/{z}/{x}/{y}.pbf`: packs first, else
   live (`X-Dystopo-Source` says which; live OpenFreeMap tiles below z10 come without glacier polygons, which
   OpenMapTiles cuts at tile edges there, T66). `/glyphs/{fontstack}/{range}.pbf`, `/sprite*.json|png`.
+  T74: an unknown `units=` is a 400 (it fell back to the default before). A glyph range is the file, a valid
+  range without glyphs for one of the style's fonts when the file is missing (MapLibre counts zero bytes as a
+  failed load and never reports the map loaded), or a 404 (another font, a range that is not a 256-codepoint
+  block); never an empty 200. Contour and shade tiles are kept in `derived/` (below, Tile caches).
+- `GET /version` (T74): the content version per route a phone keys its cached tiles on: `dem` (the live
+  rendering version and the DEM packs, `best-v2.<hash>`; a `/build` pack changes it), `osm` (the OpenFreeMap
+  planet build and the vector packs) and `assets` (the asset manifest's version). `/dem` and `/osm` tiles
+  carry theirs in an `X-Dystopo-Version` header, and `/live/info` lists `versions` too.
+- `GET /assets/manifest.json` (T74): the style assets with their SHA-256: every glyph range of the style's
+  fonts present in `glyphsDir` and the four sprite files, as `{"version", "files": [{"path", "url",
+  "sha256", "bytes"}]}`. A phone fetches every file whose hash differs from its copy, so a changed sprite
+  sheet or glyph range reaches installs that already had the old one.
 - `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
 - `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
@@ -301,6 +317,25 @@ file (`syncDb`, default `out/sync/peer.db`), created on the first sync request. 
 can read and write its log, so on a server reachable from the internet set a token: with one, `/sync/*`
 needs `Authorization: Bearer <token>` (the phone sends the token from its sync settings,
 `POST /sync/settings?token=`; `devtool sync with --token`).
+
+A push (T74) is inflated with a cap before it is merged: at most 64 MiB inflated and 100,000 operations
+(the largest page a pull hands out); past either it is a 413 ("push in pages"), and something that is not
+a bundle is a 400. Phones push pages of 2,000 operations, a few MB at most. Before, a 1 MB gzip of zeros
+inflated to 1 GiB in memory behind a valid token (the T82 probe's gzip bomb).
+
+### Tile caches (T74)
+
+Three stores under `cache.tileDir` (default `cacheDir`), each with a byte cap and least-recently-used
+eviction: `live/` (live DEM tiles and their `.src` provenance sidecars, which go together), `openfreemap/`
+(OpenFreeMap tiles of every planet build; the TileJSON is kept) and `derived/` (contour tiles keyed
+`contours-v2-<unit>-<options hash>-<dem version>/z/x/y.pbf`, shade tiles `shade1-<options>-<dem version>/`,
+the same inputs the phone keys its own on). At start each store indexes what is on disk in the background
+(oldest modification time first) and evicts down to its cap once that is done; a hit sets the file's mtime
+at most once a minute, so the order survives a restart. A reader that loses a race with eviction treats it
+as a miss and renders or fetches again. `/stats` `caches` has per store `bytes`, `maxBytes`, `entries`,
+`hits`, `adds`, `evictions`, `evictedBytes`, `peakBytes` (the most it held after a trim), `indexed` and
+`indexMs`; `versions` has the content versions. The source downloads (`3dep13/`, `copernicus30/`, ...)
+are not capped yet.
 
 ## Route planning (T68)
 
@@ -608,8 +643,9 @@ users keep their data on their devices and push it again.
   route exceptions.
 - `requests.<route>.p95Ms` for `dem`, `osm`, `contours`, `shade`: pack tiles answer in tens of
   milliseconds; live tiles of a place nobody viewed take seconds (10 to 30 s at worst).
-- `disk.freeBytes`, and the growth of `disk.cacheDir.bytes` (per directory under `children`): the cache
-  has no cap yet (T74), so it grows with every new place viewed; `out` grows with builds and replicas.
+- `disk.freeBytes`, and the growth of `disk.cacheDir.bytes` (per directory under `children`): the tile
+  stores stay under `cache.*` (T74; `/stats` `caches`), the source downloads still grow with every new
+  place viewed; `out` grows with builds and replicas.
 - `jvm.openFiles` (Linux) or the process handle count (Windows), `jvm.threads`: flat under steady load.
 - `log.writeErrors` (the log file could not be written: disk full) and `log.rotations`.
 - `relay.bytes` and `relay.refused` (`full`, `rateLimited`) for the relay.
@@ -652,7 +688,8 @@ powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -ChartOnly -Root 
 The probe sends malformed tile coordinates, map options, traversal attempts on `/out/`, `/glyphs/` and
 `/s/`, broken ranges, bad JSON and deep nesting, malformed relay frames, wrong and missing tokens, an
 over-long request line, 10 000 headers, a 1 MB header, lying, negative and duplicate `Content-Length`,
-declared and chunked bodies over the cap, a gzip bomb to `/sync/push`, non-HTTP bytes, a slow header drip,
+declared and chunked bodies over the cap, a gzip bomb to `/sync/push` (413 since T74), unknown `units=`
+and glyph ranges (400 and 404, strict since T74), `/version` and the asset manifest, non-HTTP bytes, a slow header drip,
 a 64-connection slowloris and 300 idle connections, and checks `/healthz` after each. The soak starts its
 own server (own cache and out directories under `-Root`, ports 9090 to 9099, stopped by its PID), walks the
 pack's tiles at z8 to z14 with styles, glyphs, `/out/` ranges, routes, sync, relay posts, a trip saved

@@ -130,6 +130,54 @@ object SyncRoutes {
 
     private const val MAX_BODY = 256L shl 20
 
+    /** T74: the most a pushed bundle may inflate to (a phone pushes pages of 2,000 operations, a few MB at most). */
+    const val MAX_PUSH_INFLATED_BYTES = 64L shl 20
+
+    /** T74: the most operations one push may carry (`SyncServer.MAX_PAGE_OPS`, the largest page a pull hands out). */
+    const val MAX_PUSH_OPS = 100_000
+
+    sealed class PushCheck {
+        /** The bundle uncompressed, ready for the merge. */
+        class Ok(val raw: ByteArray, val ops: Int) : PushCheck()
+        class Refused(val status: Int, val message: String) : PushCheck()
+    }
+
+    /**
+     * T74: inflates a pushed body (gzip or raw) without ever holding more than [maxInflated] bytes and counts its
+     * operations: 413 past either cap, 400 for something that is not a bundle.
+     */
+    fun checkPush(body: ByteArray, maxInflated: Long = MAX_PUSH_INFLATED_BYTES, maxOps: Int = MAX_PUSH_OPS): PushCheck {
+        val raw = if (io.github.jasondorjeshort.dystopo.sync.Bundle.isRaw(body)) {
+            if (body.size > maxInflated) return PushCheck.Refused(413, "bundle larger than $maxInflated bytes; push in pages")
+            body
+        } else {
+            try {
+                java.util.zip.GZIPInputStream(body.inputStream()).use { input ->
+                    val out = java.io.ByteArrayOutputStream(minOf(maxInflated, body.size.toLong() * 4 + 1024).toInt())
+                    val buf = ByteArray(64 shl 10)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > maxInflated) return PushCheck.Refused(413, "bundle inflates past $maxInflated bytes; push in pages")
+                        out.write(buf, 0, n)
+                    }
+                    out.toByteArray()
+                }
+            } catch (e: java.io.IOException) {
+                return PushCheck.Refused(400, "not a sync bundle (gzip: ${e.javaClass.simpleName}: ${e.message})")
+            }
+        }
+        val bundle = try {
+            io.github.jasondorjeshort.dystopo.sync.Bundle.decode(raw)
+        } catch (e: IllegalArgumentException) {
+            return PushCheck.Refused(400, e.message ?: "not a sync bundle")
+        }
+        if (bundle.ops.size > maxOps) return PushCheck.Refused(413, "bundle has ${bundle.ops.size} operations, more than $maxOps; push in pages")
+        return PushCheck.Ok(raw, bundle.ops.size)
+    }
+
     /** Answers a `/sync` or `/s/` request and returns true, or returns false for any other path. */
     fun handle(ex: HttpExchange): Boolean {
         val path = ex.requestURI.path
@@ -162,7 +210,15 @@ object SyncRoutes {
                 path == "/sync/routes" && ex.requestMethod == "GET" ->
                     return reply(ex, 200, "application/json", JsonWriter.write(mapOf("user" to user, "routes" to store.routeList().map { it.json() })).toByteArray())
             }
-            val r = rep.server.handle(ex.requestMethod, path, query, body)!!
+            // T74: a push is inflated with a cap and its operations counted before the merge (a 1 MB gzip of zeros
+            // inflated to 1 GiB and ran the server out of memory behind a valid token, T82).
+            val input = if (path == "/sync/push" && ex.requestMethod == "POST" && body.isNotEmpty()) {
+                when (val checked = checkPush(body)) {
+                    is PushCheck.Refused -> return reply(ex, checked.status, "application/json", (JsonWriter.write(mapOf("error" to checked.message)) + "\n").toByteArray())
+                    is PushCheck.Ok -> checked.raw
+                }
+            } else body
+            val r = rep.server.handle(ex.requestMethod, path, query, input)!!
             val bytes = if (path == "/sync/status" && r.status == 200) {
                 // Add whose replica it is, where it lives and whether its tables match its log.
                 val extra = ",\"user\":" + JsonWriter.write(user) + ",\"db\":" + JsonWriter.write(dbFile.path) + ",\"tablesMatchLog\":" + (store.snapshot() == store.snapshotFromLog()) + "}"

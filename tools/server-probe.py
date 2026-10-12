@@ -10,8 +10,8 @@ thousands of headers, a 1 MB header, a lying Content-Length, a chunked body past
 non-HTTP bytes, a slow header drip, a slowloris burst, hundreds of idle connections) and checks after each
 that `GET /healthz` still answers 200. Prints one JSON object: per probe the HTTP status seen (or the
 connection outcome: reset, closed, timeout), the statuses the server is supposed to give, whether it was
-alive afterwards, and the time. Answers that pass but are lenient rather than right (an empty 200 for a
-missing glyph range, unknown units falling back to the default, the gzip bomb refused only after inflating)
+alive afterwards, and the time. Answers that pass but are lenient rather than right (an
+unreadable bbox ignored, a DELETE on a read-only route; T74 made the empty glyph range, unknown units and the gzip bomb strict)
 are listed under `lenient` with `lenientCount` and printed to stderr; they do not change the exit code. A few wrong answers are known and filed (`known` in the JSON); they fail
 the run only with --strict. Exit 0 when every probe got an expected answer and the server survived;
 1 when the server died or never answered; 2 when it survived but some probe got an unexpected answer.
@@ -30,6 +30,8 @@ import json
 import socket
 import sys
 import time
+import urllib.error
+import urllib.request
 import zlib
 
 HOST = "127.0.0.1"
@@ -178,6 +180,16 @@ def slowloris(n, seconds):
     return ("ok" if isinstance(answered, float) else str(answered)), {"connections": len(socks), "healthAfterS": answered, "closedByServer": closed}
 
 
+def glyph_not_empty(path):
+    """T74: a glyph range the fonts lack is a valid PBF with no glyphs (or a 404), never a 200 with zero bytes."""
+    try:
+        r = urllib.request.urlopen(f"http://{HOST}:{PORT}{path}", timeout=30)
+        body = r.read()
+        return ("ok" if len(body) > 0 else "empty-200"), {"status": r.status, "bytes": len(body)}
+    except urllib.error.HTTPError as e:
+        return ("ok" if e.code == 404 else f"http-{e.code}"), {"status": e.code}
+
+
 def idle_burst(n):
     """n connections that send nothing; /healthz must answer while they hang."""
     socks = []
@@ -233,16 +245,20 @@ def main():
         ("tile-huge-digits", lambda: get(f"/dem/{big}/{big}/{big}.png"), bad, None),
         ("tile-x-out-of-range", lambda: get("/osm/3/8/0.pbf"), nosuch, None),
         ("tile-int-overflow", lambda: get("/contours/24/2147483648/0.pbf"), bad, None),
-        # Lenient by design: an unknown value falls back to the default instead of a 400.
-        ("contours-bad-units", lambda: get("/contours/12/655/1431.pbf?units=parsecs"), {200, 204, 400}, None),
+        # T74: an unknown value is a 400 (it fell back to the default before).
+        ("contours-bad-units", lambda: get("/contours/12/655/1431.pbf?units=parsecs"), bad, None),
         ("contours-interval-zero", lambda: get("/contours/12/655/1431.pbf?interval=0"), bad, None),
         ("contours-interval-nan", lambda: get("/contours/12/655/1431.pbf?interval=NaN"), bad, None),
         ("shade-bad-intensity", lambda: get("/shade/12/655/1431.png?hillshade=multi&hillshadeIntensity=7"), bad, None),
         ("style-bad-option", lambda: get("/style.json?hillshade=purple"), bad, None),
-        ("style-bad-units", lambda: get("/style.json?units=furlongs"), {200, 400}, None),  # lenient, as above
+        ("style-bad-units", lambda: get("/style.json?units=furlongs"), bad, None),  # T74: strict
         ("glyphs-traversal", lambda: get("/glyphs/..%2F..%2Fserver.json/0-255.pbf"), {400, 404}, None),
-        # A missing glyph range is an empty 200 (MapLibre then draws no glyphs rather than failing the style).
-        ("glyphs-bad-range", lambda: get("/glyphs/Noto%20Sans%20Regular/99999999999999-1.pbf"), {200, 400, 404}, None),
+        # T74: a range that is not a glyph block is a 404, never an empty 200 (MapLibre fails an empty range).
+        ("glyphs-bad-range", lambda: get("/glyphs/Noto%20Sans%20Regular/99999999999999-1.pbf"), {400, 404}, None),
+        ("glyphs-unknown-font", lambda: get("/glyphs/No%20Such%20Font/0-255.pbf"), {404}, None),
+        ("glyphs-range-not-empty", lambda: glyph_not_empty("/glyphs/Noto%20Sans%20Regular/5120-5375.pbf"), {"ok"}, None),
+        ("version", lambda: get("/version"), {200}, None),
+        ("asset-manifest", lambda: get("/assets/manifest.json"), {200}, None),
         ("live-sources-bad-bbox", lambda: get("/live/sources?bbox=a,b,c,d"), {200, 400}, None),  # lenient: no bbox
         ("out-traversal-dots", lambda: get("/out/../server.json"), {400, 403, 404}, None),
         ("out-traversal-encoded", lambda: get("/out/%2e%2e/%2e%2e/build.gradle.kts"), {400, 403, 404}, None),
@@ -302,8 +318,8 @@ def main():
     if not a.no_bomb:
         bomb = gzip_bomb(1024)
         probes += [
-            # 1 GiB of zeros in about 1 MB: a push must be refused, not inflated into memory.
-            ("sync-push-gzip-bomb", lambda: raw(req("POST", "/sync/push", body=bomb, headers={"Content-Type": "application/octet-stream"}, auth=T), timeout=120), {400, 413} | gone, "token"),
+            # 1 GiB of zeros in about 1 MB: a push must be refused, not inflated into memory (T74: 413 past 64 MiB inflated).
+            ("sync-push-gzip-bomb", lambda: raw(req("POST", "/sync/push", body=bomb, headers={"Content-Type": "application/octet-stream"}, auth=T), timeout=120), {413} | gone, "token"),
             ("sync-push-chunked-300mb", lambda: chunked_body("/sync/push", 300 << 20, auth=T), {413} | gone, "token"),
         ]
     if not a.quick:
@@ -316,11 +332,7 @@ def main():
     need = {"token": T, "user": U, "admin": A}
     # Known answers outside the expected set, each a filed follow-up (not this script's to fix): reported
     # under `known` and not failing the run unless --strict. The server must still survive them.
-    known = {
-        # T82 follow-up: Sync.unpack inflates the whole bundle with no cap on the inflated size. With a 1 GB heap
-        # this 1 MB body is an OutOfMemoryError (500; the server survives); with 3 GB it inflates and is a 400.
-        "sync-push-gzip-bomb": "the sync peer inflates a pushed bundle without a size cap (OutOfMemoryError on a small heap)",
-    }
+    known = {}  # T74 closed the last one (the gzip bomb: pushes inflate with a cap now)
     results, skipped = [], []
     alive = True
     only = set(filter(None, a.only.split(",")))
@@ -357,9 +369,6 @@ def main():
     # are listed, so a run never hides them. A probe with an entry here is lenient when it got one of the listed
     # statuses.
     lenient_rules = {
-        "glyphs-bad-range": ({200}, "a missing glyph range is an empty 200, not a 404"),
-        "contours-bad-units": ({200, 204}, "unknown units= falls back to the default instead of a 400"),
-        "style-bad-units": ({200}, "unknown units= falls back to the default instead of a 400"),
         "live-sources-bad-bbox": ({200}, "an unreadable bbox is ignored instead of a 400"),
         "method-not-allowed": ({200}, "DELETE on a read-only route answers 200 instead of 405"),
         "bad-version": ({200}, "the JDK listener accepts any HTTP version"),
@@ -367,7 +376,6 @@ def main():
         "tile-negative-z": ({404}, "out-of-range tile coordinates are 404 (the phone answers 400)"),
         "tile-huge-z": ({404}, "out-of-range tile coordinates are 404 (the phone answers 400)"),
         "tile-x-out-of-range": ({404}, "out-of-range tile coordinates are 404 (the phone answers 400)"),
-        "sync-push-gzip-bomb": ({400}, "refused only after inflating 1 GiB: it passes because the heap is large (no inflated-size cap)"),
     }
     lenient = [{"probe": r["probe"], "status": r["status"], "why": lenient_rules[r["probe"]][1]}
                for r in results if r["probe"] in lenient_rules and r["status"] in lenient_rules[r["probe"]][0]]

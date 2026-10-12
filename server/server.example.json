@@ -57,5 +57,11 @@
     "maxRequestSeconds": 60,
     "idleSeconds": 30,
     "maxConnections": 1000
+  },
+  "cache": {
+    "tileDir": null,
+    "liveMb": 4096,
+    "openfreemapMb": 2048,
+    "derivedMb": 1024
   }
 }

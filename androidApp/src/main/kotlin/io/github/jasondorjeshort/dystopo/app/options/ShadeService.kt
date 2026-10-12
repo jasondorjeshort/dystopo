@@ -76,7 +76,7 @@ class ShadeService(
     val options: ShadeOptions? get() = AppSettings.mapOptions.shade
 
     /** The `v` of the style's shade URL: changes whenever the pack or the shade options do, so MapLibre never shows stale tiles. */
-    fun urlVersion(): String = "$demIdentity-${options?.key ?: "none"}"
+    fun urlVersion(): String = "$demIdentity-${options?.key ?: "none"}" + (online?.fetcher?.contentTag?.takeIf { it.isNotEmpty() }?.let { "-$it" } ?: "") // T74: the server's content version
 
     /**
      * Shade tile z/x/y as PNG: the pack's (cached) where its DEM covers the tile, else the online DEM's, else
@@ -89,7 +89,7 @@ class ShadeService(
                 val (p, identity) = pyramidFor(z, x, y) ?: return notFound()
                 cachedOrGenerate(p, identity, o, z, x, y)
             } else {
-                generate(online.pyramid(), o, z, x, y)
+                online.shadeTile(o.key, z, x, y) { generate(it, o, z, x, y) } // T74: disk-cached like online contours
             }
             served.served.incrementAndGet()
             served.bytes.addAndGet(bytes.size.toLong())

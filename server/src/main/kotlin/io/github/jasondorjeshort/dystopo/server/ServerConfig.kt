@@ -84,7 +84,18 @@ data class ServerConfig(
     val metrics: MetricsConfig = MetricsConfig(),
     /** T82: connection limits of the HTTP listener (slow clients, idle connections). */
     val http: HttpConfig = HttpConfig(),
+    /** T74: byte caps (LRU) of the tile stores and where they live. */
+    val cache: CacheConfig = CacheConfig(),
 ) {
+    /** T74: [tileDir] holds `live/`, `openfreemap/` and `derived/` (null: [cacheDir]); each store is capped in MB. */
+    @Serializable
+    data class CacheConfig(
+        val tileDir: String? = null,
+        val liveMb: Long = 4096,
+        val openfreemapMb: Long = 2048,
+        val derivedMb: Long = 1024,
+    )
+
     /** T82: null [file] logs to stdout (cap it in the collector); a file rotates at [maxMb], keeping [keep] old files. */
     @Serializable
     data class LogConfig(

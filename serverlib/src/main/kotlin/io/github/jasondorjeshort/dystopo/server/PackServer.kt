@@ -130,8 +130,9 @@ class PackServer(
                     return@createContext
                 }
                 glyphRe.matchEntire(path)?.let { m ->
-                    val file = m.groupValues[1].split(",").map { File(glyphDir, "${it.trim()}/${m.groupValues[2]}.pbf") }.firstOrNull { it.isFile }
-                    reply(ex, file?.readBytes() ?: ByteArray(0), "application/x-protobuf")
+                    val file = m.groupValues[1].split(",").map { File(glyphDir, "${it.trim()}/${m.groupValues[2]}.pbf") }.firstOrNull { it.isFile && it.length() > 0 }
+                    // T74: never an empty 200 (MapLibre fails it): the file, a valid empty range for one of the style's fonts, or a 404.
+                    reply(ex, file?.readBytes() ?: m.groupValues[1].split(",").map { it.trim() }.firstOrNull { it in MapLibreStyle.FONTS }?.takeIf { LiveTiles.validGlyphRange(m.groupValues[2]) }?.let { LiveTiles.emptyGlyphRange(it, m.groupValues[2]) }, "application/x-protobuf")
                     return@createContext
                 }
                 when (path) {

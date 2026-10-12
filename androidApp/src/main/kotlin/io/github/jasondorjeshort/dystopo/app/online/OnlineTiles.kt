@@ -169,7 +169,8 @@ class OnlineTiles(
     fun contourTile(z: Int, x: Int, y: Int, generate: (DemPyramid) -> ByteArray): ByteArray {
         // Tiles touching the pack mix pack and server DEM; they are not kept (a pack switch would make them stale).
         val keep = packs.demPacks.none { overlaps(it, z, x, y) } // T41: any pack
-        val key = "${fetcher.serverKey}/contours-$contourVersion/$z/$x/$y.pbf"
+        // T74: keyed on the source's DEM content version too, so a server whose DEM changed never serves old contours.
+        val key = "${fetcher.derivedPrefix("contours-$contourVersion")}/$z/$x/$y.pbf"
         if (keep) service.cache.get(key)?.let {
             service.contourCacheHits.incrementAndGet()
             return it
@@ -187,6 +188,33 @@ class OnlineTiles(
             service.cache.put(key, bytes)
         }
         service.contoursMade.incrementAndGet()
+        return bytes
+    }
+
+    /**
+     * T74: shade tile z/x/y (hillshade, slope; option set [optionsKey]) for an area no pack covers, made by
+     * [generate] over [pyramid], disk-cached like online contours: in the online cache under the source and its
+     * DEM version (`<source>/shade-<options>@<dem version>/z/x/y.png`), kept only when every DEM tile it needed
+     * was there and no pack overlaps it.
+     */
+    fun shadeTile(optionsKey: String, z: Int, x: Int, y: Int, generate: (DemPyramid) -> ByteArray): ByteArray {
+        val keep = packs.demPacks.none { overlaps(it, z, x, y) }
+        val key = "${fetcher.derivedPrefix("shade-" + optionsKey.replace(Regex("[^A-Za-z0-9]"), "_"))}/$z/$x/$y.png"
+        if (keep) service.cache.get(key)?.let {
+            service.shadeCacheHits.incrementAndGet()
+            return it
+        }
+        incomplete.set(false)
+        val bytes = generate(pyramid())
+        val missed = incomplete.get() == true
+        incomplete.remove()
+        if (missed) {
+            service.shadeIncomplete.incrementAndGet()
+            if (fetcher.state == "online") dropPyramid()
+        } else if (keep) {
+            service.cache.put(key, bytes)
+        }
+        service.shadeMade.incrementAndGet()
         return bytes
     }
 

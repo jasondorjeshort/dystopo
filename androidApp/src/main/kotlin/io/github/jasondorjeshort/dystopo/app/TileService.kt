@@ -366,7 +366,7 @@ class TileService(
         val osmLo = osmPacks.minOfOrNull { it.header.minZoom } ?: 0
         val osmHi = osmPacks.maxOfOrNull { it.header.maxZoom }
         // The online generation in the URLs makes MapLibre ask again for tiles it got blank while offline.
-        val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" } ?: "")
+        val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" + it.fetcher.contentTag.let { c -> if (c.isEmpty()) "" else "-$c" } } ?: "") // T74: and its content versions
         return MapLibreStyle(
             MapLibreSources(
                 // The pack identity in the URL keeps MapLibre's own tile cache from serving a replaced pack's tiles.

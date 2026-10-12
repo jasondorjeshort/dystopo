@@ -170,6 +170,8 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         val extractsDir = when (config.extractsDir) { null -> File(cacheDir, Extracts.DIR_NAME); "" -> null; else -> File(config.extractsDir) }
         live = LiveTiles(
             dems, osms, cacheRoot = cacheDir, outDir = outDir,
+            tileCacheRoot = config.cache.tileDir?.let { File(it) } ?: cacheDir, // T74
+            caps = LiveTiles.CacheCaps(config.cache.liveMb, config.cache.openfreemapMb, config.cache.derivedMb),
             threads = config.liveThreads ?: Runtime.getRuntime().availableProcessors().coerceIn(4, 16),
             makeBuilds = { lt ->
                 BuildRoutes(
