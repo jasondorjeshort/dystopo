@@ -24,6 +24,15 @@ describe the same schema; a test fails if a layer or attribute is missing here.
   `route_network`). A separate trail layer would have hidden every trail from OpenMapTiles styles.
 - **New layers** only for data OpenMapTiles does not have: `outdoor_poi` (huts, shelters, campsites,
   trailheads, springs, viewpoints, ...) and `natural_line` (cliffs, ridges, aretes).
+- **Road data for drive mode (version 2, T73).** Roads and tracks carry `oneway` (as OpenMapTiles: 1 or
+  -1; roundabouts and motorways are one-way unless tagged otherwise), `motor_access` (`no`, `private` or
+  `destination`, from the most specific of `motorcar`, `motor_vehicle`, `vehicle`, `access`; agricultural,
+  forestry and emergency-only roads count as no, `permit` as private, `customers` and `delivery` as
+  destination) and `maxspeed` (km/h) from z12. The routing graph reads them at z14, where lines are never
+  merged, so a line keeps its OSM direction and `oneway` means what it says; below z14 merging may reverse a
+  merged line, so do not route on those zooms. Conditional tags (seasonal closures such as a park road shut
+  in winter), turn restrictions and lane data are not carried. `dystopo:profile_version` in the metadata is
+  `2` from this version on; the phone's router refuses drive mode on graphs of older packs.
 - **Trails from z10.** Paths and tracks appear at every zoom from 10; sidewalks and crossings only at z14.
   Below z14 trail segments with equal attributes are merged, and the attributes that vary most
   (`surface_detail`, `operator`, `name`, ...) only appear from z12/z13 so the merging works.
@@ -124,9 +133,12 @@ Line, z4-14. Roads, tracks, trails, railways, ferries and aerialways. Trails and
 | `mtb_scale` | OSM `mtb:scale` (z13+) |
 | `tracktype` | OSM `tracktype`: grade1-grade5 (tracks, z12+) |
 | `access` | no or private when access/foot forbids walking (tracks and trails, z12+) |
+| `oneway` | 1 when vehicles may travel only in the line's direction (oneway=yes, roundabouts, motorways), -1 only against it (oneway=-1); roads and tracks, z12+ |
+| `motor_access` | no, private or destination when cars may not use the road, or only to reach a place on it (motorcar, motor_vehicle, vehicle, access, most specific first; roads and tracks, z12+) |
+| `maxspeed` | OSM `maxspeed` in whole km/h (mph converted; roads and tracks, z12+) |
 | `operator` | OSM `operator` on tracks and trails (z13+) |
-| `name` | OSM `name` on tracks and trails (z13+; roads carry names in transportation_name) |
-| `ref` | OSM `ref` on tracks and trails (z13+) |
+| `name` | OSM `name` on tracks and trails (z13+) and roads (z14 only, for route descriptions; labels use transportation_name) |
+| `ref` | OSM `ref` on tracks and trails (z13+) and roads (z14 only) |
 | `route_network` | best hiking route network the trail belongs to: iwn, nwn, rwn, lwn (z10+) |
 | `route_name` | names of the hiking/foot route relations the trail belongs to, ';'-separated (z12+) |
 

@@ -7,7 +7,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
 
 /**
  * Debug routes for offline route planning (T45; registered with one line in [Routes]):
- * - `POST /route?from=lat,lon&to=lat,lon[&mode=hike|bike][&name=][&wait=ms][&profile=1]`: plans on the
+ * - `POST /route?from=lat,lon&to=lat,lon[&mode=hike|bike|drive][&name=][&wait=ms][&profile=1]`: plans on the
  *   active pack's trail graph (building it on first use; waits up to `wait`, default 120000 ms) and
  *   shows it on the map like a long-press pair would. 200 with the route, 422 with `error` and
  *   `message` when there is none (off the network, not connected), 503 while the graph is not ready.
@@ -15,7 +15,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `GET /route/status`: the graph for the active pack (status, build progress, timings, size).
  * - `POST /route/build`: rebuild the graph (progress in `/route/status` and `/packs`).
  * - `POST /route/longpress?lat=&lon=`: what a long-press on the map does (start, then end).
- * - `POST /route/mode?mode=hike|bike`: switch mode and plan again; T49: answers after the new route is
+ * - `POST /route/mode?mode=hike|bike|drive`: switch mode and plan again; T49: answers after the new route is
  *   planned and shown (the card state, plus `route` like `GET /route`).
  * Route results list the named trails they follow (`via`, T49); `GET /route` has the last camera fit
  * (`ui.lastFit`) and where the bottom panels sit (`ui.layout`: route card, track panels, `overlap`).
@@ -39,7 +39,7 @@ object RouteRoutes {
             "POST" to "/route" -> {
                 val (fromLat, fromLon) = latLon(r.query["from"]) ?: return bad("from=lat,lon required")
                 val (toLat, toLon) = latLon(r.query["to"]) ?: return bad("to=lat,lon required")
-                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be hike or bike") } ?: TravelMode.HIKE
+                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be hike, bike or drive") } ?: TravelMode.HIKE
                 val wait = r.query["wait"]?.toLongOrNull()?.coerceIn(0, 300_000) ?: RouteSession.WAIT_MS
                 val t0 = System.nanoTime()
                 val result = try {
@@ -63,7 +63,7 @@ object RouteRoutes {
                 Response.json(RouteSession.json())
             }
             "POST" to "/route/mode" -> {
-                val mode = TravelMode.of(r.query["mode"]) ?: return bad("mode must be hike or bike")
+                val mode = TravelMode.of(r.query["mode"]) ?: return bad("mode must be hike, bike or drive")
                 RouteSession.changeMode(mode, wait = true)
                 app.map.onMain { } // T49: the UI updates posted by the plan have run
                 Response.json(current(app, r.query["profile"] == "1"))

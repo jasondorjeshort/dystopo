@@ -51,7 +51,7 @@ import java.util.concurrent.atomic.AtomicLong
  * page holds the route as its encoded `path` value (T60's [RoutePath.encode], the value a trip
  * stores in the sync log) and sends it back with each edit.
  *
- * - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike][&pack=<name>][&snap=m]`
+ * - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m]`
  *   (or `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points (each snapped onto a trail
  *   within `snap` metres, default 300 as on the phone; legs along trails, straight where no trail
  *   connects). The reported pack is `pack=` (a catalog id: `<name>` of `out/<name>-dem.pmtiles` plus
@@ -70,7 +70,9 @@ import java.util.concurrent.atomic.AtomicLong
  *   Both answer `pack`, `mode`, `path` (the encoded value), `via` ([lat, lon] each), `legs` (`kind`
  *   trail/straight/fixed, `points`, `coordinates` as [lon, lat, ele]), `summary` ([RouteSummary]:
  *   distance, ascent, descent, hike-model time, metres on straight legs, 100-sample profile),
- *   `notes` (why legs are straight: `start_off_network`, `not_connected`, `no_graph`, ...), `graph`
+ *   `notes` (why legs are straight: `start_off_network`, `not_connected`, `no_graph`, `drive_unsupported`, ...),
+ *   `messages` (T73: the router's message for each note), `notice` (T73: for `mode=drive`, that it follows
+ *   the packs' roads to and between trailheads and is not a road navigator), `graph`
  *   (`loaded`, `built` or `cached`, with timings: the reported pack's, every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
  * - `POST /route/gpx` with JSON `{"path", "name", "id"}`: the route as GPX ([RouteGpx]: one `rte`,
  *   via marks, our ids), byte for byte what the phone exports for the same trip.
@@ -348,7 +350,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         count("plan")
         val (ed, info, pack) = editor(choosePack(packName, points), points, snapM)
         val path = ed.create(points, mode)
-        return reply(pack, path, ed.takeNotes(), info, t0)
+        return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages())
     }
 
     /** One editor operation on an encoded path (see [RouteRoutes]). */
@@ -382,12 +384,12 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             else -> throw IllegalArgumentException("unknown op '$op' (move, insert, add, remove, mode, reroute, show)")
         }
         require(out.via.size <= MAX_POINTS) { "at most $MAX_POINTS via points" }
-        return reply(pack, out, ed.takeNotes(), info, t0) + listOfNotNull(added?.let { "index" to it }).toMap()
+        return reply(pack, out, ed.takeNotes(), info, t0, ed.takeMessages()) + listOfNotNull(added?.let { "index" to it }).toMap()
     }
 
-    private fun requireMode(mode: String) = require(mode == "hike" || mode == "bike") { "mode must be hike or bike" }
+    private fun requireMode(mode: String) = require(TravelMode.of(mode) != null) { "mode must be hike, bike or drive" }
 
-    private fun reply(pack: Pack?, path: RoutePath, notes: List<String>, graph: Map<String, Any?>?, t0: Long): Map<String, Any?> {
+    private fun reply(pack: Pack?, path: RoutePath, notes: List<String>, graph: Map<String, Any?>?, t0: Long, messages: Map<String, String> = emptyMap()): Map<String, Any?> {
         val ms = (System.nanoTime() - t0) / 1_000_000
         lastMs = ms
         return linkedMapOf(
@@ -398,6 +400,8 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             },
             "summary" to RouteSummary.of(path, emptyList()).json(),
             "notes" to notes.distinct(),
+            "messages" to messages, // T73: the router's words for each note (drive_unsupported names the pack to rebuild)
+            "notice" to if (path.mode == "drive") Router.DRIVE_NOTICE else null,
             "waypointsValue" to EMPTY_WAYPOINTS,
             "graph" to graph, "ms" to ms,
         )

@@ -22,7 +22,8 @@ class GraphTile(val z: Int, val x: Int, val y: Int, val graph: RoutingGraph) {
  * integer microdegree position, so the router steps from one tile into the next by matching positions
  * ([GraphPiece.twin]). Edges that stay inside one tile keep their length, ascent and descent exactly;
  * a cut edge's parts share its length, ascent and descent in proportion to their length, so each part
- * keeps the edge's average grade and the parts cost exactly what the edge did (the router already
+ * keeps the edge's average grade and the parts cost exactly what the edge did; the parts run in the
+ * edge's direction, so a one-way (T73) stays one-way the same way (the router already
  * treats an edge as one even grade when a route starts or ends on it). Graphs built from a vector pack already end every line at the z14 tile borders
  * (the builder clips per tile), so at [ZOOM] there are normally no cuts at all.
  */
@@ -51,7 +52,7 @@ object GraphTiler {
             val m = list.size
             val from = IntArray(m); val to = IntArray(m)
             val len = FloatArray(m); val asc = FloatArray(m); val desc = FloatArray(m)
-            val cls = ByteArray(m); val attrs = ByteArray(m); val flags = ByteArray(m)
+            val cls = ByteArray(m); val attrs = ByteArray(m); val flags = ByteArray(m); val speed = ByteArray(m)
             val gs = IntArray(m + 1)
             val gLon = IntList(); val gLat = IntList(); val gEle = FloatList()
             val names = ArrayList<String>()
@@ -60,7 +61,7 @@ object GraphTiler {
             list.forEachIndexed { i, p ->
                 from[i] = node(p.from); to[i] = node(p.to)
                 len[i] = p.length; asc[i] = p.ascent; desc[i] = p.descent
-                cls[i] = g.edgeClass[p.edge]; attrs[i] = g.edgeAttrs[p.edge]; flags[i] = g.edgeFlags[p.edge]
+                cls[i] = g.edgeClass[p.edge]; attrs[i] = g.edgeAttrs[p.edge]; flags[i] = g.edgeFlags[p.edge]; speed[i] = g.edgeSpeed[p.edge]
                 for (k in p.lon.indices) { gLon.add(p.lon[k]); gLat.add(p.lat[k]); gEle.add(p.ele[k]) }
                 gs[i + 1] = gLon.size
                 edgeName[i] = g.name(p.edge)?.let { nm -> nameIds.getOrPut(nm) { names += nm; names.size } } ?: 0
@@ -69,7 +70,7 @@ object GraphTiler {
                 zoom, (key and 0xFFFFFFFFL).toInt(), (key shr 32).toInt(),
                 RoutingGraph(
                     g.source, nLon.toArray(), nLat.toArray(), nEle.toArray(), from, to, len, asc, desc, cls, attrs, flags,
-                    gs, gLon.toArray(), gLat.toArray(), gEle.toArray(), edgeName, names,
+                    gs, gLon.toArray(), gLat.toArray(), gEle.toArray(), edgeName, names, speed,
                 ),
             )
         }
@@ -175,20 +176,25 @@ object GraphTiler {
  * into tiles ([GraphTiler]) behind a small directory, so a reader loads only the tiles a route touches.
  *
  * ```
- * "DYSG" u8 version(=3) u32 headerLength          (bytes from here to the end of the header checksum)
- * str sourceFile, str fingerprint, str demFingerprint, u8 sourceZoom, u64 builtAtMs, u8 tileZoom
+ * "DYSG" u8 version(=4) u32 headerLength          (bytes from here to the end of the header checksum)
+ * str sourceFile, str fingerprint, str demFingerprint, u8 sourceZoom, u64 builtAtMs, u8 tileZoom,
+ * u8 capabilities (1: drive, [GraphSource.drive]; version 4, T73)
  * varint tileCount, per tile (rows north to south, west to east):
  *     varint x, varint y, varint bodyLength, varint nodes, varint edges
  * u32 FNV-1a of every header byte before it (from the magic)
  * tile bodies, in directory order: RoutingGraph.writeBody (nodes, edges, names; the version 2 layout
- *     without its source fields) followed by u32 FNV-1a of the body
+ *     without its source fields; version 4: then u8 speedKmh per edge) followed by u32 FNV-1a of the body
  * ```
- * Version 2 files (one graph per pack, before T76) are refused with a message saying so; the phone,
- * the server and `devtool route` then rebuild the file. The directory is all a reader keeps in memory
+ * Edge flags carry the T73 drive bits ([WayAttrs.ONEWAY], [WayAttrs.MOTOR_NO], ...) relative to the
+ * edge's from -> to direction. Version 2 files (one graph per pack, before T76) and version 3 files
+ * (before T73: no speed limits, no drive flag) are refused with a message saying so; the phone, the
+ * server and `devtool route` then rebuild the file. The directory is all a reader keeps in memory
  * besides the tiles it loads; tile offsets are the sums of the body lengths before them.
  */
 object GraphTileFile {
-    const val VERSION = 3
+    const val VERSION = 4
+    /** Header capability bit: the graph supports drive mode ([GraphSource.drive]). */
+    private const val CAP_DRIVE = 1
     private val MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x47) // "DYSG", as RoutingGraph
 
     /** [graph] cut at [zoom] and written as a graph file. */
@@ -207,6 +213,7 @@ object GraphTileFile {
         val h = ByteWriter(256 + sorted.size * 12)
         h.str(source.file); h.str(source.fingerprint); h.str(source.demFingerprint); h.u8(source.zoom); h.u64(source.builtAtMs)
         h.u8(zoom)
+        h.u8(if (source.drive) CAP_DRIVE else 0)
         h.varint(sorted.size.toLong())
         sorted.forEachIndexed { i, t ->
             h.varint(t.x.toLong()); h.varint(t.y.toLong()); h.varint(bodies[i].size.toLong())
@@ -226,14 +233,15 @@ object GraphTileFile {
     /**
      * Opens a graph file through [read] (offset, length) -> bytes, reading only its header; tiles are
      * read by [GraphTileArchive.tile]. Throws IllegalArgumentException for anything but a valid
-     * version 3 file (a version 2 file says so, so callers can name the rebuild's reason).
+     * version 4 file (an older file says so, so callers can name the rebuild's reason).
      */
     fun open(read: (Long, Int) -> ByteArray): GraphTileArchive {
         val first = read(0, 9)
         require(first.size == 9 && first.copyOfRange(0, 4).contentEquals(MAGIC)) { "not a routing graph" }
         val version = first[4].toInt() and 0xFF
         require(version == VERSION) {
-            if (version < VERSION) "routing graph version $version (one graph per pack, before T76), expected $VERSION: rebuild as tiles"
+            if (version < 3) "routing graph version $version (one graph per pack, before T76), expected $VERSION: rebuild as tiles"
+            else if (version < VERSION) "routing graph version $version (before T73's drive data), expected $VERSION: rebuild"
             else "routing graph version $version, expected $VERSION"
         }
         val headerLength = ByteReader(first, 5).u32()
@@ -245,8 +253,9 @@ object GraphTileFile {
         require(stored == fnv1a(all, all.size - 4)) { "routing graph header checksum mismatch (truncated or corrupt)" }
         try {
             val r = ByteReader(all.copyOfRange(0, all.size - 4), 9)
-            val source = GraphSource(r.str(), r.str(), r.str(), r.u8(), r.u64())
+            val base = GraphSource(r.str(), r.str(), r.str(), r.u8(), r.u64())
             val zoom = r.u8()
+            val source = base.copy(drive = r.u8() and CAP_DRIVE != 0)
             val n = r.count()
             var offset = all.size.toLong()
             val entries = ArrayList<GraphTileArchive.Entry>(n)
@@ -313,7 +322,7 @@ class GraphTileArchive internal constructor(
         val at = HashMap<Long, Pair<Int, Int>>() // position -> (node, tile index)
         val from = IntList(); val to = IntList()
         val len = FloatList(); val asc = FloatList(); val desc = FloatList()
-        val cls = IntList(); val attrs = IntList(); val flags = IntList()
+        val cls = IntList(); val attrs = IntList(); val flags = IntList(); val speed = IntList()
         val gs = IntList().apply { add(0) }
         val gLon = IntList(); val gLat = IntList(); val gEle = FloatList()
         val names = ArrayList<String>(); val nameIds = HashMap<String, Int>(); val edgeName = IntList()
@@ -330,7 +339,7 @@ class GraphTileArchive internal constructor(
             for (e in 0 until g.edgeCount) {
                 from.add(map[g.edgeFrom[e]]); to.add(map[g.edgeTo[e]])
                 len.add(g.edgeLength[e]); asc.add(g.edgeAscent[e]); desc.add(g.edgeDescent[e])
-                cls.add(g.edgeClass[e].toInt()); attrs.add(g.edgeAttrs[e].toInt()); flags.add(g.edgeFlags[e].toInt())
+                cls.add(g.edgeClass[e].toInt()); attrs.add(g.edgeAttrs[e].toInt()); flags.add(g.edgeFlags[e].toInt()); speed.add(g.edgeSpeed[e].toInt())
                 for (k in g.geomStart[e] until g.geomStart[e + 1]) { gLon.add(g.geomLon[k]); gLat.add(g.geomLat[k]); gEle.add(g.geomEle[k]) }
                 gs.add(gLon.size)
                 edgeName.add(g.name(e)?.let { nm -> nameIds.getOrPut(nm) { names += nm; names.size } } ?: 0)
@@ -340,13 +349,13 @@ class GraphTileArchive internal constructor(
         return RoutingGraph(
             source, nLon.toArray(), nLat.toArray(), nEle.toArray(), from.toArray(), to.toArray(), len.toArray(), asc.toArray(), desc.toArray(),
             ByteArray(m) { cls[it].toByte() }, ByteArray(m) { attrs[it].toByte() }, ByteArray(m) { flags[it].toByte() },
-            gs.toArray(), gLon.toArray(), gLat.toArray(), gEle.toArray(), edgeName.toArray(), names,
+            gs.toArray(), gLon.toArray(), gLat.toArray(), gEle.toArray(), edgeName.toArray(), names, ByteArray(m) { speed[it].toByte() },
         )
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "file" to source.file, "fingerprint" to source.fingerprint, "demFingerprint" to source.demFingerprint.ifEmpty { null },
-        "sourceZoom" to source.zoom, "builtAtMs" to source.builtAtMs, "tileZoom" to tileZoom, "tiles" to entries.size,
+        "sourceZoom" to source.zoom, "builtAtMs" to source.builtAtMs, "drive" to source.drive, "tileZoom" to tileZoom, "tiles" to entries.size,
         "nodes" to nodeCount, "edges" to edgeCount, "bytes" to fileBytes,
     )
 

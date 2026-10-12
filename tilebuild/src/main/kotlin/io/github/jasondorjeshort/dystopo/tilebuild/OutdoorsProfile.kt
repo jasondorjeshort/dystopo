@@ -52,6 +52,9 @@ class OutdoorsProfile(
             "country", "state", "city", "town", "village", "suburb", "hamlet", "locality", "isolated_dwelling",
         ).withIndex().associate { (i, c) -> c to i }
 
+        /** T73: the tags that say whether cars may use a road, most specific first. */
+        private val MOTOR_ACCESS_KEYS = listOf("motorcar", "motor_vehicle", "vehicle", "access")
+
         /** Hiking route networks, most important first. */
         private val ROUTE_NETWORKS = listOf("iwn", "nwn", "rwn", "lwn")
 
@@ -133,7 +136,8 @@ class OutdoorsProfile(
         "Dystopo outdoors vector tiles (trails, land cover, peaks, backcountry POIs) of OpenStreetMap extract '$extract', " +
             "built by Dystopo tilebuild with Planetiler. Data © OpenStreetMap contributors, ODbL 1.0."
 
-    override fun extraArchiveMetadata(): Map<String, String> = extra + ("dystopo:layers" to OutdoorsSchema.metadataJson())
+    override fun extraArchiveMetadata(): Map<String, String> =
+        extra + ("dystopo:layers" to OutdoorsSchema.metadataJson()) + ("dystopo:profile_version" to OutdoorsSchema.VERSION)
 
     override fun preprocessOsmRelation(relation: OsmElement.Relation): List<OsmRelationInfo>? {
         if (relation.hasTag("type", "route") && relation.hasTag("route", "hiking", "foot")) {
@@ -238,6 +242,18 @@ class OutdoorsProfile(
         if (highway.endsWith("_link")) line.setAttr("ramp", 1)
         brunnel(f)?.let { line.setAttrWithMinzoom("brunnel", it, 12) }
         surfaceClass(f.getString("surface"))?.let { line.setAttrWithMinzoom("surface", it, 12) }
+
+        if (road != null || isTrack) {
+            // T73: what drive mode needs (the routing graph reads these at z14).
+            oneway(f, highway)?.let { line.setAttrWithMinzoom("oneway", it, 12) }
+            motorAccess(f)?.let { line.setAttrWithMinzoom("motor_access", it, 12) }
+            maxspeedKmh(f.getString("maxspeed"))?.let { line.setAttrWithMinzoom("maxspeed", it, 12) }
+            if (road != null) {
+                // T73: names at z14 only (no merging there), so a drive route can say which roads it follows.
+                f.getString("name")?.let { line.setAttrWithMinzoom("name", it, 14) }
+                f.getString("ref")?.let { line.setAttrWithMinzoom("ref", it, 14) }
+            }
+        }
 
         if (isTrack || isTrail) {
             f.getString("sac_scale")?.takeIf { it in SAC_SCALES }?.let { line.setAttr("sac_scale", it) }
@@ -512,6 +528,49 @@ class OutdoorsProfile(
         val foot = f.getString("foot")
         if (foot in setOf("yes", "designated", "permissive")) return null
         return listOf(foot, f.getString("access")).firstOrNull { it == "no" || it == "private" }
+    }
+
+    /**
+     * T73: `oneway` as OpenMapTiles has it, 1 (only in the line's direction) or -1 (only against it), from
+     * OSM `oneway` (yes/true/1, -1/reverse), else implied by roundabouts (`junction=roundabout|circular`)
+     * and motorways; null for two-way, `oneway=no` and reversible roads.
+     */
+    private fun oneway(f: SourceFeature, highway: String): Int? = when (f.getString("oneway")?.trim()?.lowercase()) {
+        "yes", "true", "1" -> 1
+        "-1", "reverse" -> -1
+        "no", "false", "0", "reversible", "alternating" -> null
+        else -> if (f.hasTag("junction", "roundabout", "circular") || highway == "motorway" || highway == "motorway_link") 1 else null
+    }
+
+    /**
+     * T73: whether cars may use the road: `no`, `private` or `destination`, null when they may. The most
+     * specific tag decides (`motorcar`, then `motor_vehicle`, `vehicle`, `access`); `agricultural`,
+     * `forestry`, `emergency` and the like count as no, `permit` as private, `customers` and `delivery` as
+     * destination. Conditional restrictions (seasonal closures) are not read.
+     */
+    private fun motorAccess(f: SourceFeature): String? {
+        if (f.hasTag("service", "emergency_access")) return "no"
+        for (key in MOTOR_ACCESS_KEYS) {
+            val v = f.getString(key)?.trim()?.lowercase()?.substringBefore(';') ?: continue
+            return when (v) {
+                "yes", "permissive", "designated", "official", "discouraged" -> null
+                "destination", "customers", "delivery" -> "destination"
+                "private", "permit" -> "private"
+                "no", "agricultural", "forestry", "emergency", "military", "use_sidepath", "dismount" -> "no"
+                else -> continue
+            }
+        }
+        return null
+    }
+
+    /** T73: OSM `maxspeed` in whole km/h (`50`, `35 mph`, `50 km/h`; the first of several), null when not a speed. */
+    internal fun maxspeedKmh(value: String?): Int? {
+        val v = value?.substringBefore(';')?.trim()?.lowercase() ?: return null
+        if (v == "walk") return 5
+        val m = Regex("""^(\d+(?:\.\d+)?)\s*(mph|km/h|kmh|kph)?$""").find(v) ?: return null
+        val n = m.groupValues[1].toDouble()
+        val kmh = if (m.groupValues[2] == "mph") n * 1.609344 else n
+        return kmh.roundToInt().takeIf { it in 1..250 }
     }
 
     private fun surfaceClass(surface: String?): String? = when (surface) {

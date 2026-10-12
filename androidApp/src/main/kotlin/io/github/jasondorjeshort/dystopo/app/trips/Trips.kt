@@ -308,8 +308,15 @@ object Trips {
 
     private fun note(what: String, t0: Long, ed: RouteEditor) {
         val notes = ed.takeNotes()
-        lastEdit = linkedMapOf("what" to what, "ms" to (System.nanoTime() - t0) / 1_000_000, "straightBecause" to notes, "at" to System.currentTimeMillis())
-        ui { message = if (notes.isEmpty()) null else "No trail for ${notes.size} leg(s): drawn straight" }
+        val messages = ed.takeMessages()
+        lastEdit = linkedMapOf(
+            "what" to what, "ms" to (System.nanoTime() - t0) / 1_000_000, "straightBecause" to notes, "messages" to messages,
+            "at" to System.currentTimeMillis(),
+        )
+        // T73: a pack built before the road data says so (rebuild it), not "no trail".
+        val text = messages["drive_unsupported"]
+            ?: if (notes.isEmpty()) null else "No trail for ${notes.size} leg(s): drawn straight"
+        ui { message = text }
     }
 
     private fun fitCamera(p: RoutePlan) {

@@ -6,6 +6,8 @@
 // connects), click again to add a via point (into the nearest leg when it passes close, else as the new end), drag a
 // numbered point to move it (only its two legs are rerouted), right-click a point to remove it. The card shows
 // distance, climb, the hike-model time and the elevation profile (hover it to see the place on the map).
+// Mode drive (T73) follows the packs' roads (one-ways, roads closed to cars) to and between trailheads; the card says
+// it is not a road navigator, and a pack built before the road data says it must be rebuilt (the server's messages).
 //
 // "Save as trip" writes the route into this browser's own sync replica: an operation log in localStorage
 // (dystopo.trips: a device id, a hybrid logical clock and route ops, the same put + path + waypoints ops the phone
@@ -81,7 +83,7 @@ export function install({ map, base, units, panel, token }) {
   box.open = true;
   box.innerHTML = `<summary>Plan a trip</summary>
     <button id="trip-plan" type="button" aria-pressed="false">Plan route</button>
-    <label style="display:inline">Mode <select id="trip-mode"><option value="hike">hike</option><option value="bike">bike</option></select></label>
+    <label style="display:inline">Mode <select id="trip-mode"><option value="hike">hike</option><option value="bike">bike</option><option value="drive">drive</option></select></label>
     <div class="hint">Click the start and the end; click again to add a point, drag a numbered point to move it, right-click it to remove it.</div>
     <div id="trip-status"></div>
     <div><b>Saved trips</b> <button id="trip-push" type="button" title="Send this browser's trips to the server's sync peer">Send to server</button><button id="trip-dsync" type="button" title="The same as a .dsync file a phone can sync with">.dsync</button></div>
@@ -149,9 +151,13 @@ export function install({ map, base, units, panel, token }) {
     $("trip-up").textContent = signed("+", s.ascentM);
     $("trip-down").textContent = signed("−", s.descentM);
     const notes = [];
-    if (s.straightM > 0) notes.push(fmtDist(s.straightM) + " off trail (dashed)");
+    if (s.straightM > 0) notes.push(fmtDist(s.straightM) + (reply.mode === "drive" ? " off road (dashed)" : " off trail (dashed)"));
     if (reply.notes.includes("no_graph")) notes.push("no trail data here: straight lines");
     if (!reply.pack) notes.push("outside every pack");
+    const msgs = reply.messages || {};
+    if (msgs.drive_unsupported) notes.push(msgs.drive_unsupported); // T73: the pack predates the road data
+    else if (reply.mode === "drive" && reply.notes.length) for (const n of reply.notes) if (msgs[n]) notes.push(msgs[n]);
+    if (reply.notice) notes.push(reply.notice);
     $("trip-notes").textContent = notes.join("; ");
     drawProfile(s.profile);
     card.hidden = false;
@@ -356,7 +362,7 @@ export function install({ map, base, units, panel, token }) {
     state: () => ({
       planning: st.planning, mode: st.mode, pending: st.pending.length, id: st.id, edits: st.edits, busy: st.busy, error: st.error,
       saved: !!st.id && st.savedPath === (st.reply && st.reply.path), lastPush: st.lastPush,
-      route: st.reply && { pack: st.reply.pack, via: st.reply.via, legs: st.reply.legs.map(l => l.kind), notes: st.reply.notes, path: st.reply.path,
+      route: st.reply && { pack: st.reply.pack, via: st.reply.via, legs: st.reply.legs.map(l => l.kind), notes: st.reply.notes, messages: st.reply.messages, notice: st.reply.notice, mode: st.reply.mode, path: st.reply.path,
                            summary: Object.fromEntries(Object.entries(st.reply.summary).filter(([k]) => k !== "profile")), profileSamples: st.reply.summary.profile.length,
                            middle: middle(st.reply) },
       markers: markers.map(m => { const p = m.getLngLat(); return [p.lat, p.lng]; }),

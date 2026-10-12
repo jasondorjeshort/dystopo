@@ -10,7 +10,8 @@ import kotlinx.serialization.json.Json
  */
 object OutdoorsSchema {
     const val NAME = "dystopo-outdoors"
-    const val VERSION = "1"
+    /** 2 (T73): `oneway`, `motor_access` and `maxspeed` on roads and tracks, for drive-mode routing. */
+    const val VERSION = "2"
 
     @Serializable
     data class Layer(
@@ -95,9 +96,12 @@ object OutdoorsSchema {
                 "mtb_scale" to "OSM `mtb:scale` (z13+)",
                 "tracktype" to "OSM `tracktype`: grade1-grade5 (tracks, z12+)",
                 "access" to "no or private when access/foot forbids walking (tracks and trails, z12+)",
+                "oneway" to "1 when vehicles may travel only in the line's direction (oneway=yes, roundabouts, motorways), -1 only against it (oneway=-1); roads and tracks, z12+",
+                "motor_access" to "no, private or destination when cars may not use the road, or only to reach a place on it (motorcar, motor_vehicle, vehicle, access, most specific first; roads and tracks, z12+)",
+                "maxspeed" to "OSM `maxspeed` in whole km/h (mph converted; roads and tracks, z12+)",
                 "operator" to "OSM `operator` on tracks and trails (z13+)",
-                "name" to "$NAME_ATTR on tracks and trails (z13+; roads carry names in transportation_name)",
-                "ref" to "OSM `ref` on tracks and trails (z13+)",
+                "name" to "$NAME_ATTR on tracks and trails (z13+) and roads (z14 only, for route descriptions; labels use transportation_name)",
+                "ref" to "OSM `ref` on tracks and trails (z13+) and roads (z14 only)",
                 "route_network" to "best hiking route network the trail belongs to: iwn, nwn, rwn, lwn (z10+)",
                 "route_name" to "names of the hiking/foot route relations the trail belongs to, ';'-separated (z12+)",
             ),

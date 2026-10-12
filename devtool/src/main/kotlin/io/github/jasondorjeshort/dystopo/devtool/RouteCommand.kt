@@ -46,7 +46,7 @@ import kotlin.math.cos
 
 /**
  * Offline route planning over a pack's trail network (T45):
- * - `route --pack out/rainier-outdoors.pmtiles --from 46.7865,-121.7365 --to 46.8025,-121.7290 [--mode hike|bike]
+ * - `route --pack out/rainier-outdoors.pmtiles --from 46.7865,-121.7365 --to 46.8025,-121.7290 [--mode hike|bike|drive]
  *   [--osm out/rainier-outdoors.pmtiles] [--gpx out/route.gpx]`: opens `<archive>-graph.idx` next to the pack
  *   (the archive's whole file name, T49: `rainier-outdoors-graph.idx`)
  *   (building it first when missing or stale), plans the route, renders it over the DEM pack's terrain
@@ -69,7 +69,7 @@ class RouteCommand : CliktCommand(name = "route") {
     private val dem by option("--dem", help = "DEM pack for elevation and the render (default: <name>-dem.pmtiles next to --pack)").file(mustExist = true, canBeDir = false)
     private val from by option("--from", help = "Start lat,lon")
     private val to by option("--to", help = "End lat,lon")
-    private val mode by option("--mode", help = "hike (default) or bike").choice("hike", "bike").default("hike")
+    private val mode by option("--mode", help = "hike (default), bike or drive (T73: the pack's roads, to and between trailheads)").choice("hike", "bike", "drive").default("hike")
     private val snap by option("--snap", help = "How far (m) a point may be from the nearest trail or road").double().default(Router.DEFAULT_SNAP_M)
     private val name by option("--name", help = "Route name").default("Route")
     private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()

@@ -134,7 +134,7 @@ LAYERS_JS = """() => { const out = {}; for (const l of map.getStyle().layers) {
      const n = map.queryRenderedFeatures({layers: [l.id]}).length; out[l.id] = n; } return out; }"""
 
 
-def check_route(page, spec, shot, timeout):
+def check_route(page, spec, shot, timeout, mode=""):
     """T68: drive the trip editor (tools/demo/trips.js, live mode) with the real mouse. `spec` is
     `lat,lon;lat,lon[;lat,lon]`: click the start and the end with "Plan route" on, wait for the route, click the
     middle of the route to add a via point, drag that point's marker to the third place (default: 300 m east of
@@ -149,6 +149,8 @@ def check_route(page, spec, shot, timeout):
         page.evaluate("""([a, b]) => map.fitBounds([[Math.min(a[1], b[1]), Math.min(a[0], b[0])], [Math.max(a[1], b[1]), Math.max(a[0], b[0])]],
                          { padding: { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
         page.wait_for_timeout(800)
+        if mode:  # T73: plan in this mode (hike, bike, drive) through the page's Mode select
+            page.select_option("#trip-mode", mode)
         page.click("#trip-plan")
         box = page.evaluate("() => { const r = map.getCanvas().getBoundingClientRect(); return [r.left, r.top]; }")
         px = lambda p: [v + o for v, o in zip(page.evaluate("p => { const q = map.project([p[1], p[0]]); return [q.x, q.y]; }", list(p)), box)]
@@ -160,7 +162,10 @@ def check_route(page, spec, shot, timeout):
         r = s["route"]
         if not r:
             raise RuntimeError("no route after two clicks: " + str(s.get("error")))
-        step("plan", seconds=round(time.time() - t0, 2), pack=r["pack"], legs=r["legs"], notes=r["notes"], summary=r["summary"])
+        step("plan", seconds=round(time.time() - t0, 2), pack=r["pack"], mode=r.get("mode"), legs=r["legs"], notes=r["notes"], notice=r.get("notice"),
+             cardNotes=page.inner_text("#trip-notes"), summary=r["summary"])
+        if mode and r.get("mode") != mode:
+            raise RuntimeError("planned in %s, not %s" % (r.get("mode"), mode))
         out["planned"] = r["summary"]
         # Add a via point on the route (a click on the line inserts it into that leg), then drag its marker.
         page.mouse.click(*px(r["middle"]))
@@ -233,6 +238,7 @@ def main() -> int:
                     help="when a view is not idle after --timeout, jump to it again and wait again, this many times (default 1); "
                          "each miss is listed under notIdle, and a view that never goes idle still fails")
     ap.add_argument("--channel", default="chrome", help="playwright browser channel; use '' for bundled chromium")
+    ap.add_argument("--route-mode", default="", choices=["", "hike", "bike", "drive"], help="T73: the trip editor's mode for --route (default: the page's, hike)")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
 
@@ -370,7 +376,7 @@ def main() -> int:
             report["ok"] = ok
             reports.append(dict(report))
         if args.route:
-            route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout)
+            route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout, args.route_mode)
             errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
             reports[-1].update(route=route, ok=reports[-1]["ok"] and route["ok"] and not errors)
         browser.close()

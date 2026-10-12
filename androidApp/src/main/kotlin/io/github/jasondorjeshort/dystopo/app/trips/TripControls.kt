@@ -163,7 +163,8 @@ private fun TripCard(modifier: Modifier) {
                 " · " + RouteSummary.hm(s.timeS) + " " + s.mode,
             style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold),
         )
-        if (s.straightM > 0) BasicText(UnitFormat.distance(s.straightM, u) + " off trail (dashed)", style = TextStyle(color = Ink, fontSize = 12.sp))
+        if (s.straightM > 0) BasicText(UnitFormat.distance(s.straightM, u) + (if (s.mode == "drive") " off road (dashed)" else " off trail (dashed)"), style = TextStyle(color = Ink, fontSize = 12.sp))
+        if (s.mode == "drive") BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T73
         Profile(s.profile, s.waypoints, Modifier.fillMaxWidth().height(84.dp))
         if (s.waypoints.isNotEmpty()) {
             BasicText(
@@ -176,7 +177,7 @@ private fun TripCard(modifier: Modifier) {
             for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
                 Toggle(label, Trips.tool == t) { Trips.tool = t }
             }
-            for (m in listOf("hike", "bike")) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } }
+            for (m in listOf("hike", "bike", "drive")) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
             if (p.path.via.size > 2) {

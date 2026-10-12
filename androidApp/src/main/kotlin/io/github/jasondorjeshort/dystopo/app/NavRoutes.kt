@@ -12,7 +12,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `POST /nav/start?route=current|<kept route id or id prefix>|<saved route id, id prefix or file>` (T45's plan on
  *   the map; T65: a route kept in the trip store, as `GET /routes` lists them; else a route in `files/routes/`), `?track=<id>` (a stored track), `?file=<name>` (a GPX in `files/tracks|routes|exports`),
  *   or a GPX body (its route, or its track with `prefer=track`). Options: `offRouteM` (50), `offRouteS` (10),
- *   `backOnRouteM` (30), `arriveM` (30), `mode=hike|bike` (the plan's mode for `route=current`),
+ *   `backOnRouteM` (30), `arriveM` (30), `mode=hike|bike|drive` (the plan's mode for `route=current`),
  *   `camera=follow|heading|free` (follow), `zoom` (15; `zoom=keep`), `sound=0`, `vibrate=0`. Answers like `GET /nav`.
  * - `GET /nav`: the path (length, climb, planned time, waypoints), the latest state (progress, distance off
  *   the line, next waypoint and end with distance, climb, time, ETA; the rejoin hint), heading and its
@@ -87,7 +87,7 @@ object NavRoutes {
                 r.body.isNotEmpty() -> NavSources.gpx(r.bodyText, preferTrack, q["name"])
                 else -> return bad("route=, track=, file= or a GPX body required")
             }
-            val mode = q["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be hike or bike") } ?: res.mode ?: TravelMode.HIKE
+            val mode = q["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be hike, bike or drive") } ?: res.mode ?: TravelMode.HIKE
             val defaults = NavOptions()
             val opts = NavOptions(
                 offRouteM = d("offRouteM") ?: defaults.offRouteM,

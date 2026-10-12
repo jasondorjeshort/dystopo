@@ -69,12 +69,12 @@ class RouteRoutesTest {
         return doubleArrayOf(west, south, east, north)
     }
 
-    private fun write(file: File, type: TileType, tiles: Map<Triple<Int, Int, Int>, ByteArray>, minZoom: Int) {
+    private fun write(file: File, type: TileType, tiles: Map<Triple<Int, Int, Int>, ByteArray>, minZoom: Int, metadata: String = "{}") {
         val w = PmtilesWriter(type, staging = MemoryTileStaging())
         for ((t, b) in tiles) w.addTile(t.first, t.second, t.third, b)
         val (west, south, east, north) = bounds().toList()
         file.outputStream().buffered().use { os ->
-            w.finish(ByteSink { os.write(it) }, "{}", west, south, east, north, centerZoom = z, minZoom = minZoom, maxZoom = z,
+            w.finish(ByteSink { os.write(it) }, metadata, west, south, east, north, centerZoom = z, minZoom = minZoom, maxZoom = z,
                 centerLon = (west + east) / 2, centerLat = (south + north) / 2)
         }
     }
@@ -125,6 +125,38 @@ class RouteRoutesTest {
         // A fresh planner (a server restart) loads the file instead of building again.
         @Suppress("UNCHECKED_CAST")
         assertEquals("loaded", (RoutePlanner(dir, flat).plan(listOf(at(420, 2048), at(3580, 2048)), "hike")["graph"] as Map<String, Any?>)["action"])
+    }
+
+    @Test
+    fun driveModeNeedsAPackWithRoadData() {
+        // T73: the test pack says nothing about its profile, like a pack built before the road data.
+        val p = RoutePlanner(packs(), flat)
+        val old = p.plan(listOf(at(420, 2048), at(3580, 2048)), "drive")
+        assertEquals("drive", old["mode"])
+        assertEquals(listOf("straight"), kinds(old))
+        assertEquals(listOf("drive_unsupported"), old["notes"])
+        @Suppress("UNCHECKED_CAST")
+        val msg = (old["messages"] as Map<String, String>).getValue("drive_unsupported")
+        assertTrue("t-outdoors.pmtiles was built before it" in msg, msg)
+        assertTrue((old["notice"] as String).contains("not a road navigator"))
+        assertEquals(null, p.plan(listOf(at(420, 2048), at(3580, 2048)), "hike")["notice"])
+        assertFailsWith<IllegalArgumentException> { p.plan(listOf(at(420, 2048), at(3580, 2048)), "car") }
+        // An outdoors pack from profile 2 on: the road is driven, the trail beside it is not.
+        val road = Feature(
+            null, mapOf("class" to Value.StringValue("minor"), "name" to Value.StringValue("Park Road")),
+            Geometry.Lines(listOf(listOf(TilePoint(400, 2400), TilePoint(3600, 2400)))),
+        )
+        val tile = VectorTile(listOf(Layer("transportation", listOf(line("Main Trail", 400 to 2048, 3600 to 2048), road)))).encode()
+        File(dir, "t-outdoors-graph.idx").delete()
+        write(File(dir, "t-outdoors.pmtiles"), TileType.MVT, mapOf(Triple(z, tx, ty) to tile), z, """{"dystopo:profile":"outdoors","dystopo:profile_version":"2"}""")
+        val r = RoutePlanner(dir, flat).plan(listOf(at(420, 2400), at(3580, 2400)), "drive")
+        assertEquals(listOf("trail"), kinds(r))
+        assertEquals(emptyList<String>(), r["notes"])
+        // A tap on the trail snaps onto the road for a car.
+        val tap = RoutePlanner(dir, flat).plan(listOf(at(420, 2048), at(3580, 2048)), "drive")
+        @Suppress("UNCHECKED_CAST")
+        val via = tap["via"] as List<List<Double>>
+        assertTrue(kotlin.math.abs(via[0][0] - at(420, 2400).first) < 1e-4, "start snapped to the road: ${via[0]}")
     }
 
     @Test

@@ -11,9 +11,13 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-/** How the route is travelled; picks the [CostModel]. */
+/**
+ * How the route is travelled; picks the [CostModel]. [DRIVE] (T73) is for getting to a trailhead and
+ * between trailheads inside the packs: it follows the packs' roads (one-ways, motor access, speed
+ * limits) and is not a road navigator (no turn restrictions, no traffic, no long distance).
+ */
 enum class TravelMode(val label: String) {
-    HIKE("hike"), BIKE("bike");
+    HIKE("hike"), BIKE("bike"), DRIVE("drive");
 
     companion object {
         fun of(label: String?): TravelMode? = entries.firstOrNull { it.label == label?.lowercase() }
@@ -34,10 +38,19 @@ enum class TravelMode(val label: String) {
  * primary 2.5, paths 1.6, bridleways 1.8, footways 2.0, steps 25; unpaved 1.3; SAC 2 and up 1.5, 3 up 3,
  * 4 up 10. Slope: 12 m per metre of ascent, plus extra over 8 % up and 12 % down.
  *
- * Private access costs 5x in both modes (passable, but only when nothing else goes).
+ * Private access costs 5x in both modes (passable, but only when nothing else goes). Trunks and
+ * motorways (in the graph since T73) are closed to both. Hike and bike ignore one-ways and motor access.
+ *
+ * Drive (T73): travel time, as metres at [DRIVE_REF_KMH]: `length x DRIVE_REF_KMH / speed`, with the
+ * edge's tagged `maxspeed` (clamped to 5..[DRIVE_REF_KMH]) or the class speed ([driveSpeedKmh]:
+ * motorway 105, trunk 85, primary 75, secondary 65, tertiary 55, minor 40, service 20, track 15 km/h);
+ * unpaved 1.25x. Paths, footways, cycleways, bridleways and steps are closed, so are lines whose
+ * motor access is no or private; one-ways only the way they go ([allows]); `destination` roads only at
+ * a route's ends (the router's destination zones). No slope penalty.
  */
 class CostModel(val mode: TravelMode) {
     fun classWeight(c: WayClass): Double = when (mode) {
+        TravelMode.DRIVE -> driveSpeedKmh(c).let { if (it > 0) DRIVE_REF_KMH / it else Double.POSITIVE_INFINITY }
         TravelMode.HIKE -> when (c) {
             WayClass.PATH, WayClass.FOOTWAY -> 1.0
             WayClass.TRACK, WayClass.BRIDLEWAY, WayClass.STEPS -> 1.1
@@ -47,6 +60,7 @@ class CostModel(val mode: TravelMode) {
             WayClass.TERTIARY -> 2.5
             WayClass.SECONDARY -> 4.0
             WayClass.PRIMARY -> 6.0
+            WayClass.TRUNK, WayClass.MOTORWAY -> Double.POSITIVE_INFINITY
         }
         TravelMode.BIKE -> when (c) {
             WayClass.CYCLEWAY -> 0.9
@@ -59,12 +73,19 @@ class CostModel(val mode: TravelMode) {
             WayClass.BRIDLEWAY -> 1.8
             WayClass.FOOTWAY -> 2.0
             WayClass.STEPS -> 25.0
+            WayClass.TRUNK, WayClass.MOTORWAY -> Double.POSITIVE_INFINITY
         }
     }
 
-    fun surfaceWeight(s: Surface): Double = if (mode == TravelMode.BIKE && s == Surface.UNPAVED) 1.3 else 1.0
+    fun surfaceWeight(s: Surface): Double = when {
+        s != Surface.UNPAVED -> 1.0
+        mode == TravelMode.BIKE -> 1.3
+        mode == TravelMode.DRIVE -> 1.25
+        else -> 1.0
+    }
 
     fun sacWeight(sac: Int): Double = when (mode) {
+        TravelMode.DRIVE -> 1.0
         TravelMode.HIKE -> when {
             sac <= 2 -> 1.0
             sac == 3 -> 1.2
@@ -81,6 +102,7 @@ class CostModel(val mode: TravelMode) {
     }
 
     fun flagWeight(flags: Int): Double {
+        if (mode == TravelMode.DRIVE) return if (flags and WayAttrs.MOTOR_NO != 0) Double.POSITIVE_INFINITY else 1.0
         var w = 1.0
         if (flags and WayAttrs.PRIVATE != 0) w *= 5.0
         if (flags and WayAttrs.INFORMAL != 0) w *= if (mode == TravelMode.HIKE) 1.3 else 1.5
@@ -88,12 +110,41 @@ class CostModel(val mode: TravelMode) {
         return w
     }
 
-    /** The multiplier on edge [e]'s length. */
-    fun weight(g: RoutingGraph, e: Int): Double =
-        classWeight(g.wayClass(e)) * surfaceWeight(g.surface(e)) * sacWeight(g.sac(e)) * flagWeight(g.flags(e))
+    /** The multiplier on edge [e]'s length; infinite when this mode may not use the edge at all. */
+    fun weight(g: RoutingGraph, e: Int): Double {
+        val c = if (mode == TravelMode.DRIVE) {
+            val cls = g.wayClass(e)
+            if (driveSpeedKmh(cls) <= 0) return Double.POSITIVE_INFINITY
+            DRIVE_REF_KMH / speedKmh(g, e)
+        } else classWeight(g.wayClass(e))
+        return c * surfaceWeight(g.surface(e)) * sacWeight(g.sac(e)) * flagWeight(g.flags(e))
+    }
+
+    /** Whether this mode may use edge [e] at all (in some direction): a finite [weight]. */
+    fun usable(g: RoutingGraph, e: Int): Boolean = !weight(g, e).isInfinite()
+
+    /**
+     * Whether edge [e] may be travelled from its `from` node to its `to` node ([forward]) or back: drive
+     * mode keeps to one-ways (T73); hiking and cycling go both ways.
+     */
+    fun allows(g: RoutingGraph, e: Int, forward: Boolean): Boolean {
+        if (mode != TravelMode.DRIVE) return true
+        val f = g.flags(e)
+        return if (forward) f and WayAttrs.ONEWAY_REVERSE == 0 else f and WayAttrs.ONEWAY == 0
+    }
+
+    /** T73: the speed drive mode assumes on edge [e], km/h: its tagged limit, else the class speed. */
+    fun speedKmh(g: RoutingGraph, e: Int): Double {
+        val tagged = g.speedKmh(e)
+        return if (tagged > 0) tagged.toDouble().coerceIn(5.0, DRIVE_REF_KMH) else driveSpeedKmh(g.wayClass(e))
+    }
+
+    /** T73: seconds to drive [metres] of edge [e] ([speedKmh]; unpaved slower). */
+    fun edgeTimeS(g: RoutingGraph, e: Int, metres: Double): Double =
+        metres / (speedKmh(g, e) / 3.6) * surfaceWeight(g.surface(e))
 
     /** The smallest [weight] any edge can have: the A* heuristic's factor (keeps it admissible). */
-    val minWeight: Double get() = WayClass.entries.minOf { classWeight(it) }
+    val minWeight: Double get() = if (mode == TravelMode.DRIVE) 1.0 else WayClass.entries.minOf { classWeight(it) }
 
     /** Penalty in equivalent metres for climbing [ascentM] and descending [descentM] over [lengthM]. */
     fun slopePenalty(lengthM: Double, ascentM: Double, descentM: Double): Double {
@@ -103,16 +154,41 @@ class CostModel(val mode: TravelMode) {
         return when (mode) {
             TravelMode.HIKE -> 8 * ascentM + ascentM * max(0.0, up - 0.25) * 20 + descentM * max(0.0, down - 0.15) * 10
             TravelMode.BIKE -> 12 * ascentM + ascentM * max(0.0, up - 0.08) * 80 + descentM * max(0.0, down - 0.12) * 30
+            TravelMode.DRIVE -> 0.0
         }
     }
 
     /**
-     * Moving time in seconds. Hike: Naismith's rule, 5 km/h plus an hour per 600 m of ascent. Bike:
-     * 16 km/h plus an hour per 500 m of ascent (a touring pace; descents are not credited).
+     * Moving time in seconds from distance and ascent alone (the trip summary's model, [RouteSummary]).
+     * Hike: Naismith's rule, 5 km/h plus an hour per 600 m of ascent. Bike: 16 km/h plus an hour per
+     * 500 m of ascent (a touring pace; descents are not credited). Drive: [DRIVE_SUMMARY_KMH] (the
+     * router itself adds up each road's speed, [edgeTimeS]; a summary has only the points).
      */
     fun timeS(distanceM: Double, ascentM: Double): Double = when (mode) {
         TravelMode.HIKE -> distanceM / 5000.0 * 3600 + ascentM / 600.0 * 3600
         TravelMode.BIKE -> distanceM / 16000.0 * 3600 + ascentM / 500.0 * 3600
+        TravelMode.DRIVE -> distanceM / (DRIVE_SUMMARY_KMH * 1000.0) * 3600
+    }
+
+    companion object {
+        /** Drive costs are metres at this speed; also the largest speed drive mode assumes. */
+        const val DRIVE_REF_KMH = 130.0
+
+        /** The average speed a drive route's summary assumes (mountain and park roads to trailheads). */
+        const val DRIVE_SUMMARY_KMH = 45.0
+
+        /** T73: the speed drive mode assumes on an untagged line of class [c], km/h; 0 when cars may not use it. */
+        fun driveSpeedKmh(c: WayClass): Double = when (c) {
+            WayClass.MOTORWAY -> 105.0
+            WayClass.TRUNK -> 85.0
+            WayClass.PRIMARY -> 75.0
+            WayClass.SECONDARY -> 65.0
+            WayClass.TERTIARY -> 55.0
+            WayClass.MINOR -> 40.0
+            WayClass.SERVICE -> 20.0
+            WayClass.TRACK -> 15.0
+            WayClass.PATH, WayClass.FOOTWAY, WayClass.CYCLEWAY, WayClass.BRIDLEWAY, WayClass.STEPS -> 0.0
+        }
     }
 }
 
@@ -122,6 +198,8 @@ enum class RouteFailure(val code: String) {
     START_OFF_NETWORK("start_off_network"),
     END_OFF_NETWORK("end_off_network"),
     NOT_CONNECTED("not_connected"),
+    /** T73: drive mode on a pack built before its road data (one-ways, motor access, speed limits). */
+    DRIVE_UNSUPPORTED("drive_unsupported"),
 }
 
 /** A route found by [Router]: the [Route] (T24 model) and its numbers. */
@@ -133,7 +211,7 @@ data class PlannedRoute(
     /** From the graph's DEM samples along each edge; null when the graph has no elevation. */
     val ascentM: Double?,
     val descentM: Double?,
-    /** [CostModel.timeS]: Naismith for hiking. */
+    /** [CostModel.timeS]: Naismith for hiking; for driving the sum of each road's time ([CostModel.edgeTimeS]). */
     val timeS: Double,
     /** T24's profile sampling ([TrackStats.profile]) of the route's points. */
     val profile: List<ProfileSample>,
@@ -211,6 +289,9 @@ interface Router {
     /** The nearest point on any line within [maxDistanceM], with the line's name and class; null when none is that close. */
     fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap?
 
+    /** [nearest] among the lines [mode] may use (T73: drive mode only roads open to cars, in graphs with the road data). */
+    fun nearest(lat: Double, lon: Double, maxDistanceM: Double, mode: TravelMode): EdgeSnap? = nearest(lat, lon, maxDistanceM)
+
     companion object {
         /** How far a tapped point may be from the nearest trail or road. */
         const val DEFAULT_SNAP_M = 300.0
@@ -219,6 +300,10 @@ interface Router {
         const val PROFILE_SAMPLES = 100
         /** T49: named stretches shorter than this are left out of [PlannedRoute.via] (a crossing, a junction stub). */
         const val MIN_VIA_M = 30.0
+
+        /** T73: what the trip editors say whenever drive mode is chosen. */
+        const val DRIVE_NOTICE = "Drive follows the roads in your map packs, to and between trailheads. " +
+            "It is not a road navigator: no turn restrictions, traffic or seasonal closures."
 
         fun km(m: Double) = (m / 100).roundToLong() / 10.0
     }
@@ -265,28 +350,51 @@ class TileRouter(val tiles: GraphPieces) : Router {
     ): RouteResult {
         if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the pack has no trails or roads to route on")
         val view = View(tiles)
-        val s = snap(view, fromLat, fromLon, maxSnapM) ?: return offNetwork(view, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
-        val t = snap(view, toLat, toLon, maxSnapM) ?: return offNetwork(view, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
-        return Search(view, CostModel(mode), s, t).run(name, ids)
+        val model = CostModel(mode)
+        // T73: drive mode snaps only onto roads cars may use, in graphs built with the road data.
+        val accept: ((GraphPiece, Int) -> Boolean)? = if (mode == TravelMode.DRIVE) { p, e -> p.graph.source.drive && model.usable(p.graph, e) } else null
+        val s = snap(view, fromLat, fromLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
+        val t = snap(view, toLat, toLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
+        return Search(view, model, s, t).run(name, ids)
     }
 
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = snap(View(tiles), lat, lon, maxDistanceM)?.let { e ->
         e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
     }
 
-    private fun snap(view: View, lat: Double, lon: Double, maxM: Double): End? {
+    override fun nearest(lat: Double, lon: Double, maxDistanceM: Double, mode: TravelMode): EdgeSnap? {
+        if (mode != TravelMode.DRIVE) return nearest(lat, lon, maxDistanceM)
+        val model = CostModel(mode)
+        return snap(View(tiles), lat, lon, maxDistanceM) { p, e -> p.graph.source.drive && model.usable(p.graph, e) }?.let { e ->
+            e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
+        }
+    }
+
+    /** The nearest point within [maxM] on an edge [accept] takes (any edge when null). */
+    private fun snap(view: View, lat: Double, lon: Double, maxM: Double, accept: ((GraphPiece, Int) -> Boolean)? = null): End? {
         val box = TiledGraph.around(lat, lon, maxM)
         var best: End? = null
         for ((x, y) in tiles.tilesIn(box[0], box[1], box[2], box[3])) {
             for (p in view.pieces(x, y)) {
-                val s = p.graph.nearest(lat, lon, maxM) ?: continue
+                val s = (if (accept == null) p.graph.nearest(lat, lon, maxM) else p.graph.nearest(lat, lon, maxM) { e -> accept(p, e) }) ?: continue
                 if (best == null || s.distanceM < best.snap.distanceM) best = End(p, s)
             }
         }
         return best
     }
 
-    private fun offNetwork(view: View, reason: RouteFailure, which: String, lat: Double, lon: Double, maxSnapM: Double): RouteResult.Failed {
+    private fun offNetwork(view: View, model: CostModel, reason: RouteFailure, which: String, lat: Double, lon: Double, maxSnapM: Double): RouteResult.Failed {
+        if (model.mode == TravelMode.DRIVE) {
+            // A pack built before the drive data is here: say so instead of "no road" (its roads cannot be trusted for cars).
+            val old = snap(view, lat, lon, maxSnapM) { p, _ -> !p.graph.source.drive }
+            if (old != null) return driveUnsupported(old.piece.graph.source.file)
+            val nearest = snap(view, lat, lon, Router.FAR_SEARCH_M) { p, e -> p.graph.source.drive && model.usable(p.graph, e) }?.snap?.distanceM
+            val where = if (nearest == null) "none within ${Router.km(Router.FAR_SEARCH_M)} km" else "the nearest is ${nearest.roundToLong()} m away"
+            return RouteResult.Failed(
+                reason, "no road open to cars within ${maxSnapM.roundToLong()} m of the $which point ($where)",
+                linkedMapOf("maxSnapM" to maxSnapM, "nearestM" to nearest?.let { PlannedRoute.r1(it) }),
+            )
+        }
         val nearest = snap(view, lat, lon, Router.FAR_SEARCH_M)?.snap?.distanceM
         val where = if (nearest == null) "none within ${Router.km(Router.FAR_SEARCH_M)} km" else "the nearest is ${nearest.roundToLong()} m away"
         return RouteResult.Failed(
@@ -295,15 +403,25 @@ class TileRouter(val tiles: GraphPieces) : Router {
         )
     }
 
+    private fun driveUnsupported(file: String) = RouteResult.Failed(
+        RouteFailure.DRIVE_UNSUPPORTED,
+        "drive mode needs a map pack built with road data (one-way streets, roads closed to cars, speed limits); " +
+            "$file was built before it. Download or build the pack again to drive here; hiking and cycling work as before",
+        linkedMapOf("file" to file),
+    )
+
     private fun stepCost(model: CostModel, p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
         val g = p.graph
         val part = abs(f1 - f0)
         if (part == 0.0) return 0.0
-        val len = g.edgeLength[e] * part
         val fwd = f1 > f0
+        if (!model.allows(g, e, fwd)) return Double.POSITIVE_INFINITY
+        val w = model.weight(g, e)
+        if (w.isInfinite()) return Double.POSITIVE_INFINITY
+        val len = g.edgeLength[e] * part
         val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
         val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
-        return len * model.weight(g, e) + model.slopePenalty(len, up, down)
+        return len * w + model.slopePenalty(len, up, down)
     }
 
     /**
@@ -327,12 +445,60 @@ class TileRouter(val tiles: GraphPieces) : Router {
         private val networkM = DoubleArray(2)
         private val hw = model.minWeight
         private val st = TrackStats.distanceM(s.snap.lat, s.snap.lon, t.snap.lat, t.snap.lon)
+        private val drive = model.mode == TravelMode.DRIVE
+        /** T73: `destination` edges drive mode may use (those joined to an end through other destination edges), by [key]. */
+        private val destOk = HashSet<Long>()
         var expanded = 0
 
         init {
             grow(2)
             pot[START] = hw * st / 2
             pot[GOAL] = -hw * st / 2
+            if (drive) { destinationZone(s); destinationZone(t) }
+        }
+
+        private fun key(p: GraphPiece, i: Int): Long = (base(p).toLong() shl 32) or (i.toLong() and 0xFFFFFFFFL)
+
+        /** [stepCost], and for drive mode infinite on a `destination` edge outside the ends' zones. */
+        private fun cost(p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
+            if (drive && p.graph.flags(e) and WayAttrs.MOTOR_DESTINATION != 0 && key(p, e) !in destOk) return Double.POSITIVE_INFINITY
+            return stepCost(model, p, e, f0, f1)
+        }
+
+        /**
+         * T73: `motor_access=destination` roads are for reaching a place on them, so a drive route may use
+         * them at its start and its end only: when an end lies on one, every destination edge joined to it
+         * through other destination edges (up to [MAX_DESTINATION_EDGES]) is usable; any other is not.
+         */
+        private fun destinationZone(end: End) {
+            val g0 = end.piece.graph
+            val e0 = end.snap.edge
+            if (g0.flags(e0) and WayAttrs.MOTOR_DESTINATION == 0) return
+            destOk += key(end.piece, e0)
+            val queue = ArrayDeque<Pair<GraphPiece, Int>>()
+            val seen = HashSet<Long>()
+            queue.addLast(end.piece to g0.edgeFrom[e0]); queue.addLast(end.piece to g0.edgeTo[e0])
+            var added = 0
+            while (queue.isNotEmpty() && added < MAX_DESTINATION_EDGES) {
+                val (p, n) = queue.removeFirst()
+                if (!seen.add(key(p, n))) continue
+                val g = p.graph
+                for (i in g.adjStart[n] until g.adjStart[n + 1]) {
+                    val e = g.adjEdge[i] shr 1
+                    if (g.flags(e) and WayAttrs.MOTOR_DESTINATION == 0 || !model.usable(g, e)) continue
+                    if (destOk.add(key(p, e))) {
+                        added++
+                        queue.addLast(p to g.edgeFrom[e]); queue.addLast(p to g.edgeTo[e])
+                    }
+                }
+                if (p.boundary[n]) {
+                    for (q in neighbourPieces(g.nodeLon[n], g.nodeLat[n])) {
+                        if (q === p || !q.graph.source.drive) continue
+                        val lq = q.twin(g.nodeLon[n], g.nodeLat[n], tolerant = q.archive != p.archive)
+                        if (lq >= 0) queue.addLast(q to lq)
+                    }
+                }
+            }
         }
 
         private fun grow(n: Int) {
@@ -410,11 +576,11 @@ class TileRouter(val tiles: GraphPieces) : Router {
             val edge = e.snap.edge
             // Forward: from the start along its edge to either end. Backward: from either end of the end's edge to the end.
             if (d == 0) {
-                relax(0, b + g.edgeFrom[edge], stepCost(model, e.piece, edge, f, 0.0), START, -2)
-                relax(0, b + g.edgeTo[edge], stepCost(model, e.piece, edge, f, 1.0), START, -3)
+                relax(0, b + g.edgeFrom[edge], cost(e.piece, edge, f, 0.0), START, -2)
+                relax(0, b + g.edgeTo[edge], cost(e.piece, edge, f, 1.0), START, -3)
             } else {
-                relax(1, b + g.edgeFrom[edge], stepCost(model, e.piece, edge, 0.0, f), GOAL, -2)
-                relax(1, b + g.edgeTo[edge], stepCost(model, e.piece, edge, 1.0, f), GOAL, -3)
+                relax(1, b + g.edgeFrom[edge], cost(e.piece, edge, 0.0, f), GOAL, -2)
+                relax(1, b + g.edgeTo[edge], cost(e.piece, edge, 1.0, f), GOAL, -3)
             }
             closed[d][if (d == 0) START else GOAL] = true
         }
@@ -431,18 +597,18 @@ class TileRouter(val tiles: GraphPieces) : Router {
                 val e = a shr 1
                 val atFrom = a and 1 == 0 // u is the edge's `from` node
                 val v = b + if (atFrom) g.edgeTo[e] else g.edgeFrom[e]
-                networkM[d] += g.edgeLength[e] / 2.0
-                if (closed[d][v]) continue
                 // Travel order is u -> v forward and v -> u backward.
                 val rev = if (d == 0) !atFrom else atFrom
-                val c = if (rev) stepCost(model, p, e, 1.0, 0.0) else stepCost(model, p, e, 0.0, 1.0)
+                val c = if (rev) cost(p, e, 1.0, 0.0) else cost(p, e, 0.0, 1.0)
+                if (c < Double.POSITIVE_INFINITY) networkM[d] += g.edgeLength[e] / 2.0
+                if (closed[d][v]) continue
                 relax(d, v, du + c, u, e * 2 + if (rev) 1 else 0)
             }
             if (p.boundary[lu]) {
                 val lon = g.nodeLon[lu]
                 val lat = g.nodeLat[lu]
                 for (q in neighbourPieces(lon, lat)) {
-                    if (q === p) continue
+                    if (q === p || (drive && !q.graph.source.drive)) continue
                     val lq = q.twin(lon, lat, tolerant = q.archive != p.archive)
                     if (lq >= 0) relax(d, base(q) + lq, du, u, -1)
                 }
@@ -458,8 +624,8 @@ class TileRouter(val tiles: GraphPieces) : Router {
 
         fun run(name: String, ids: UuidGenerator): RouteResult {
             if (s.piece === t.piece && s.snap.edge == t.snap.edge) {
-                mu = stepCost(model, s.piece, s.snap.edge, s.snap.fraction, t.snap.fraction)
-                direct = true
+                mu = cost(s.piece, s.snap.edge, s.snap.fraction, t.snap.fraction)
+                direct = mu < Double.POSITIVE_INFINITY // a one-way travelled backwards is not direct (T73)
             }
             dist[0][START] = 0.0
             dist[1][GOAL] = 0.0
@@ -488,8 +654,13 @@ class TileRouter(val tiles: GraphPieces) : Router {
                 val (sAt, eAt) = if (exhausted == 0) "$startKm" to "at least $endKm" else "at least $startKm" to "$endKm"
                 return RouteResult.Failed(
                     RouteFailure.NOT_CONNECTED,
-                    "no trail connects start and end: they are on separate networks " +
-                        "($sAt km of trail and road around the start, $eAt km around the end)",
+                    if (drive) {
+                        "no road open to cars connects start and end (one-way streets and roads closed to cars count; " +
+                            "drive mode only knows the roads in the map packs): $sAt km of road reachable from the start, $eAt km to the end"
+                    } else {
+                        "no trail connects start and end: they are on separate networks " +
+                            "($sAt km of trail and road around the start, $eAt km around the end)"
+                    },
                     linkedMapOf("startNetworkKm" to startKm, "endNetworkKm" to endKm, "exhausted" to if (exhausted == 0) "start" else "end", "expanded" to expanded),
                 )
             }
@@ -535,10 +706,12 @@ class TileRouter(val tiles: GraphPieces) : Router {
         var descent = 0.0
         val byClass = LinkedHashMap<WayClass, Double>()
         val runs = ArrayList<Pair<String?, Double>>() // T49: consecutive stretches by way name
+        var driveS = 0.0 // T73
         for (st in steps) {
             val g = st.piece.graph
             val nm = g.name(st.e)
             val metres = g.edgeLength[st.e] * abs(st.f1 - st.f0)
+            if (model.mode == TravelMode.DRIVE) driveS += model.edgeTimeS(g, st.e, metres.toDouble())
             if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else runs += nm to metres
             val part = abs(st.f1 - st.f0)
             val fwd = st.f1 > st.f0
@@ -556,12 +729,13 @@ class TileRouter(val tiles: GraphPieces) : Router {
         val track = listOf(pts.map { TrackPoint(it.lat, it.lon, it.ele) })
         val distance = TrackStats.of(track).distanceM
         val hasEle = pts.any { it.ele != null }
-        val time = model.timeS(distance, if (hasEle) ascent else 0.0)
+        val time = if (model.mode == TravelMode.DRIVE) driveS else model.timeS(distance, if (hasEle) ascent else 0.0)
         val via = runs.filter { it.first != null && it.second >= Router.MIN_VIA_M }.map { it.first!! to it.second }
             .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
         val desc = "${Router.km(distance)} km" + (if (hasEle) ", +${ascent.roundToLong()} m / -${descent.roundToLong()} m" else "") +
             ", about ${PlannedRoute.hm(time)}" + (if (via.isNotEmpty()) " via " + via.take(3).joinToString(", ") { it.first } else "") +
-            " (${model.mode.label}; planned offline by Dystopo)"
+            if (model.mode == TravelMode.DRIVE) " (drive; planned offline by Dystopo on the map packs' roads, not a road navigator)"
+            else " (${model.mode.label}; planned offline by Dystopo)"
         val route = Route(ids.next(), name, pts, description = desc, type = model.mode.label)
         fun named(e: End) = e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
         return PlannedRoute(
@@ -656,5 +830,7 @@ class TileRouter(val tiles: GraphPieces) : Router {
         const val E6 = 1e6
         /** Two directions of cost (8), parent (4), how (4) and closed (1), plus the potential (8). */
         const val SEARCH_BYTES_PER_NODE = 42L
+        /** T73: how many `destination` edges one end's zone may hold (a gated area's streets, a long private drive). */
+        const val MAX_DESTINATION_EDGES = 5000
     }
 }

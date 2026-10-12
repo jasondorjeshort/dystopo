@@ -72,5 +72,5 @@ object RouteGpx {
         return RoutePlan(route.id, route.name, path, waypoints, route.description, route.comment, route.type, ext)
     }
 
-    private fun modeOfType(type: String?): String? = type?.lowercase()?.takeIf { it == "hike" || it == "bike" }
+    private fun modeOfType(type: String?): String? = type?.lowercase()?.takeIf { it == "hike" || it == "bike" || it == "drive" }
 }

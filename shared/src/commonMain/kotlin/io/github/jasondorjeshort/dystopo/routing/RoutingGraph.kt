@@ -24,6 +24,12 @@ data class GraphSource(
     val zoom: Int,
     /** Build time, epoch milliseconds (from the caller; commonMain has no clock). */
     val builtAtMs: Long,
+    /**
+     * T73: the vector archive carries what drive mode needs (one-ways, motor access, speed limits): the
+     * outdoors profile from version [RoutingGraphBuilder.DRIVE_PROFILE_VERSION], or the OpenMapTiles
+     * schema. Graphs of older packs refuse drive mode ([RouteFailure.DRIVE_UNSUPPORTED]).
+     */
+    val drive: Boolean = false,
 )
 
 /** Where a point snapped onto the network: edge, segment, and position along the edge. */
@@ -64,6 +70,10 @@ data class EdgeSnap(
  * edges: varint name                                        (0 unnamed, else 1 + index into names)
  * u32 FNV-1a of every byte before it
  * ```
+ * This single-graph layout has no speed limits and no drive flag (T73): only graph files keep those
+ * ([GraphTileFile] version 4 adds `edges: u8 speedKmh` after the names of each tile body).
+ * ```
+ * ```
  * `ele` is a varint: 0 for no elevation, else zigzag(decimetres - previous decimetres) + 1. Strings
  * are varint byte length + UTF-8; integers little-endian.
  *
@@ -91,6 +101,8 @@ class RoutingGraph(
     /** T49: edge e's way name is names[edgeName[e] - 1]; 0 for none. */
     val edgeName: IntArray = IntArray(edgeFrom.size),
     val names: List<String> = emptyList(),
+    /** T73: edge e's speed limit in km/h (unsigned byte), 0 when not tagged. */
+    val edgeSpeed: ByteArray = ByteArray(edgeFrom.size),
 ) {
     val nodeCount: Int get() = nodeLon.size
     val edgeCount: Int get() = edgeFrom.size
@@ -98,7 +110,11 @@ class RoutingGraph(
     init {
         require(geomStart.size == edgeCount + 1) { "geomStart must have edgeCount + 1 entries" }
         require(edgeName.size == edgeCount) { "edgeName must have edgeCount entries" }
+        require(edgeSpeed.size == edgeCount) { "edgeSpeed must have edgeCount entries" }
     }
+
+    /** T73: edge [e]'s tagged speed limit in km/h, 0 when not tagged. */
+    fun speedKmh(e: Int): Int = edgeSpeed[e].toInt() and 0xFF
 
     /** The way name of edge [e] (T49), or null. */
     fun name(e: Int): String? = edgeName[e].takeIf { it > 0 }?.let { names[it - 1] }
@@ -197,10 +213,13 @@ class RoutingGraph(
     private val grid: SegmentGrid by lazy { SegmentGrid(this).also { gridDerived = true } }
 
     /** The nearest point on any edge within [maxDistanceM] of ([lat], [lon]), or null. */
-    fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = grid.nearest(lat, lon, maxDistanceM)
+    fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = grid.nearest(lat, lon, maxDistanceM, null)
+
+    /** The nearest point within [maxDistanceM] on an edge [accept] takes (T73: drive mode snaps onto roads only), or null. */
+    fun nearest(lat: Double, lon: Double, maxDistanceM: Double, accept: (Int) -> Boolean): EdgeSnap? = grid.nearest(lat, lon, maxDistanceM, accept)
 
     /** Distance to the nearest edge, searching up to [limitM]; null when none is that close. */
-    fun nearestDistanceM(lat: Double, lon: Double, limitM: Double): Double? = grid.nearest(lat, lon, limitM)?.distanceM
+    fun nearestDistanceM(lat: Double, lon: Double, limitM: Double): Double? = grid.nearest(lat, lon, limitM, null)?.distanceM
 
     fun json(): Map<String, Any?> {
         val byClass = LinkedHashMap<String, Double>()
@@ -210,7 +229,7 @@ class RoutingGraph(
         val total = comps.sum()
         return linkedMapOf(
             "file" to source.file, "fingerprint" to source.fingerprint, "demFingerprint" to source.demFingerprint.ifEmpty { null },
-            "zoom" to source.zoom, "builtAtMs" to source.builtAtMs,
+            "zoom" to source.zoom, "builtAtMs" to source.builtAtMs, "drive" to source.drive,
             "nodes" to nodeCount, "edges" to edgeCount, "points" to geomLon.size,
             "km" to (total / 100).roundToLong() / 10.0,
             "kmByClass" to byClass.filterValues { it > 0 }.mapValues { (it.value / 100).roundToLong() / 10.0 },
@@ -229,7 +248,7 @@ class RoutingGraph(
         w.str(source.demFingerprint)
         w.u8(source.zoom)
         w.u64(source.builtAtMs)
-        writeBody(w)
+        writeBody(w, withSpeeds = false)
         val body = w.toByteArray()
         val out = ByteWriter(body.size + 4)
         out.bytes(body)
@@ -244,14 +263,17 @@ class RoutingGraph(
     fun approxBytes(): Long {
         var b = 4L * (nodeLon.size + nodeLat.size + nodeEle.size) +
             4L * (edgeFrom.size + edgeTo.size + edgeLength.size + edgeAscent.size + edgeDescent.size + edgeName.size + geomStart.size) +
-            3L * edgeCount + 4L * (geomLon.size + geomLat.size + geomEle.size) + names.sumOf { 40L + 2L * it.length }
+            4L * edgeCount + 4L * (geomLon.size + geomLat.size + geomEle.size) + names.sumOf { 40L + 2L * it.length }
         if (adjacencyDerived) b += 4L * (nodeCount + 1 + 2 * edgeCount)
         if (gridDerived) b += grid.approxBytes()
         return b
     }
 
-    /** Nodes, edges and names, without source or checksum: one tile's body in the graph file ([GraphTileFile]). */
-    internal fun writeBody(w: ByteWriter) {
+    /**
+     * Nodes, edges and names, without source or checksum: one tile's body in the graph file ([GraphTileFile]);
+     * [withSpeeds] (graph file version 4, T73) adds a byte per edge with its speed limit.
+     */
+    internal fun writeBody(w: ByteWriter, withSpeeds: Boolean = true) {
         w.varint(nodeCount.toLong())
         var pLon = 0
         var pLat = 0
@@ -286,6 +308,7 @@ class RoutingGraph(
         w.varint(names.size.toLong())
         for (s in names) w.str(s)
         for (e in 0 until edgeCount) w.varint(edgeName[e].toLong())
+        if (withSpeeds) for (e in 0 until edgeCount) w.u8(edgeSpeed[e].toInt() and 0xFF)
     }
 
     override fun equals(other: Any?): Boolean = other is RoutingGraph && source == other.source &&
@@ -294,7 +317,8 @@ class RoutingGraph(
         edgeLength.contentEquals(other.edgeLength) && edgeAscent.contentEquals(other.edgeAscent) && edgeDescent.contentEquals(other.edgeDescent) &&
         edgeClass.contentEquals(other.edgeClass) && edgeAttrs.contentEquals(other.edgeAttrs) && edgeFlags.contentEquals(other.edgeFlags) &&
         geomStart.contentEquals(other.geomStart) && geomLon.contentEquals(other.geomLon) && geomLat.contentEquals(other.geomLat) &&
-        sameFloats(geomEle, other.geomEle) && edgeName.contentEquals(other.edgeName) && names == other.names
+        sameFloats(geomEle, other.geomEle) && edgeName.contentEquals(other.edgeName) && names == other.names &&
+        edgeSpeed.contentEquals(other.edgeSpeed)
 
     override fun hashCode(): Int = source.hashCode() * 31 + nodeCount * 17 + edgeCount
 
@@ -331,14 +355,14 @@ class RoutingGraph(
                     if (version == GraphTileFile.VERSION) "a tiled graph file (version $version); read it with GraphTileFile" else "routing graph version $version, expected $VERSION"
                 }
                 val source = GraphSource(r.str(), r.str(), r.str(), r.u8(), r.u64())
-                return readBody(r, source, withNames = version >= 2)
+                return readBody(r, source, withNames = version >= 2, withSpeeds = false)
             } catch (e: IllegalStateException) {
                 throw IllegalArgumentException("corrupt routing graph: ${e.message}", e)
             }
         }
 
         /** Reads what [writeBody] wrote; throws IllegalStateException or IllegalArgumentException on bad data. */
-        internal fun readBody(r: ByteReader, source: GraphSource, withNames: Boolean = true): RoutingGraph {
+        internal fun readBody(r: ByteReader, source: GraphSource, withNames: Boolean = true, withSpeeds: Boolean = true): RoutingGraph {
             run {
                 val n = r.count()
                 val nodeLon = IntArray(n)
@@ -394,10 +418,13 @@ class RoutingGraph(
                     repeat(r.count()) { names += r.str() }
                     for (e in 0 until m) edgeName[e] = r.count().also { require(it <= names.size) { "edge name out of range" } }
                 }
+                // T73: speed limits (graph file version 4).
+                val speed = ByteArray(m)
+                if (withSpeeds) for (e in 0 until m) speed[e] = r.u8().toByte()
                 // Decimetre values were written from floats rounded to decimetres; divide the same way the builder rounds.
                 return RoutingGraph(
                     source, nodeLon, nodeLat, nodeEle.requantize(), from, to, len.requantizeLen(), asc.requantizeLen(), desc.requantizeLen(),
-                    cls, attrs, flags, geomStart, gLon.toArray(), gLat.toArray(), gEle.toArray().requantize(), edgeName, names,
+                    cls, attrs, flags, geomStart, gLon.toArray(), gLat.toArray(), gEle.toArray().requantize(), edgeName, names, speed,
                 )
             }
         }
@@ -495,7 +522,7 @@ private class SegmentGrid(private val g: RoutingGraph) {
     private fun y(latE6: Int) = (latE6 / RoutingGraph.E6 - lat0) * mPerLat
     private fun key(cx: Int, cy: Int): Long = (cx.toLong() shl 32) xor (cy.toLong() and 0xFFFFFFFFL)
 
-    fun nearest(lat: Double, lon: Double, maxM: Double): EdgeSnap? {
+    fun nearest(lat: Double, lon: Double, maxM: Double, accept: ((Int) -> Boolean)?): EdgeSnap? {
         val px = (lon - lon0) * mPerLon
         val py = (lat - lat0) * mPerLat
         val cx = floor(px / CELL_M).toInt()
@@ -513,6 +540,7 @@ private class SegmentGrid(private val g: RoutingGraph) {
                 for (i in 0 until list.size) {
                     val s = list[i]
                     val e = segEdge[s]
+                    if (accept != null && !accept(e)) continue
                     val k = segK[s]
                     val ax = x(g.pointLonE6(e, k)); val ay = y(g.pointLatE6(e, k))
                     val bx = x(g.pointLonE6(e, k + 1)); val by = y(g.pointLatE6(e, k + 1))

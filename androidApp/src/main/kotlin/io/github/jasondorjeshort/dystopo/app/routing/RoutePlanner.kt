@@ -257,7 +257,7 @@ object RoutePlanner {
         val router = router(waitMs, listOf(fromLat to fromLon, toLat to toLon))
         val r = router.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM = snapM, name = name)
         if (r !is RouteResult.Failed) return r
-        return OffNetwork.explain(router, r, fromLat to fromLon, toLat to toLon, snapM, AppSettings.ROUTE_SNAP_RANGE.last.toDouble(), AppSettings.units)
+        return OffNetwork.explain(router, r, fromLat to fromLon, toLat to toLon, snapM, AppSettings.ROUTE_SNAP_RANGE.last.toDouble(), AppSettings.units, mode)
     }
 
     /**

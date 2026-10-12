@@ -262,7 +262,7 @@ class RouterTest {
         assertEquals(WayClass.CYCLEWAY, WayClass.classify("path", "cycleway"))
         assertEquals(WayClass.TRACK, WayClass.classify("track", null))
         assertEquals(WayClass.MINOR, WayClass.classify("minor", null))
-        assertEquals(null, WayClass.classify("motorway", null))
+        assertEquals(WayClass.MOTORWAY, WayClass.classify("motorway", null)) // T73: in the graph, for drive mode only
         assertEquals(null, WayClass.classify("path", "via_ferrata"))
         assertEquals(null, WayClass.classify("rail", "rail"))
         val a = assertNotNull(WayAttrs.of(s("class" to "path", "sac_scale" to "alpine_hiking", "access" to "private", "brunnel" to "bridge")))

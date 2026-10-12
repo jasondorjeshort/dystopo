@@ -59,7 +59,7 @@ class RainierRoutingTest {
     )
 
     /** Inverse-distance-weighted elevation from [known] (a stand-in for the DEM pack). */
-    private val cone = ElevationSampler { lat, lon ->
+    internal val cone = ElevationSampler { lat, lon ->
         var sw = 0.0
         var se = 0.0
         for ((a, b, e) in known) {
@@ -72,17 +72,19 @@ class RainierRoutingTest {
         se / sw
     }
 
-    fun graph(): RoutingGraph {
+    /** The fixture's lines (T73: [DriveRoutingTest] adds drive-only data to them). */
+    fun lines(): List<WayLine> {
         val path = WayAttrs(WayClass.PATH, Surface.UNPAVED, sac = 1)
         fun l(pts: List<Pair<Double, Double>>, a: WayAttrs = path) = WayLine.of(a, *pts.toTypedArray())
         fun named(n: String) = path.copy(name = n) // T49: trail names
-        val lines = listOf(
+        return listOf(
             l(skylineWest, named("Skyline Trail")), l(upperSkyline, named("Skyline Trail")), l(lowerSkyline, named("Skyline Trail")),
             l(goldenGate, named("Golden Gate Trail")), l(altaVista, named("Alta Vista Trail")), l(sunrise),
             l(road, WayAttrs(WayClass.SECONDARY, Surface.PAVED)), l(trailheadSpur, WayAttrs(WayClass.FOOTWAY, Surface.PAVED)),
         )
-        return RoutingGraphBuilder(cone).build(lines, GraphSource("paradise", "fixture", "idw", 14, 0))
     }
+
+    fun graph(): RoutingGraph = RoutingGraphBuilder(cone).build(lines(), GraphSource("paradise", "fixture", "idw", 14, 0))
 
     private fun length(pts: List<Pair<Double, Double>>) = pts.zipWithNext().sumOf { (a, b) -> TrackStats.distanceM(a.first, a.second, b.first, b.second) }
 

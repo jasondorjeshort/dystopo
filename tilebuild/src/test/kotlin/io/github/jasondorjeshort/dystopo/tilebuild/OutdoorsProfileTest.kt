@@ -121,7 +121,8 @@ class OutdoorsProfileTest {
 
         val road = process(line(mapOf("highway" to "secondary", "name" to "Paradise Road", "surface" to "asphalt")))
         assertEquals(9, road.layer("transportation").minZoom)
-        assertNull(road.layer("transportation").getAttrsAtZoom(14)["name"], "road names live in transportation_name")
+        assertNull(road.layer("transportation").getAttrsAtZoom(13)["name"], "road labels live in transportation_name")
+        assertEquals("Paradise Road", road.layer("transportation").getAttrsAtZoom(14)["name"], "T73: z14 names for route descriptions")
         assertEquals("paved", road.layer("transportation").getAttrsAtZoom(12)["surface"])
         assertEquals(11, road.layer("transportation_name").minZoom)
 
@@ -292,6 +293,7 @@ class OutdoorsProfileTest {
         parksAndWilderness()
         outdoorPoisAndPlaces()
         relationsAttachRoutesAndAdminLevels()
+        roadsCarryDriveData()
         val docs = OutdoorsSchema.LAYERS.associateBy { it.name }
         assertTrue(emitted.size > 30)
         for (f in emitted) {
@@ -329,11 +331,43 @@ class OutdoorsProfileTest {
         assertTrue("OpenStreetMap" in profile.attribution())
         assertTrue("ODbL" in profile.attribution())
         assertEquals("dystopo-outdoors", profile.name())
+        assertEquals("2", meta["dystopo:profile_version"]) // T73: packs with drive data
 
         val extra = Attribution.extraMetadata("washington", null, Attribution.OUTDOORS_SOURCE_IDS, Attribution.OUTDOORS_SCHEMA)
         assertEquals("osm,osm-water-polygons,natural-earth,openmaptiles", extra["dystopo:provenance"])
         assertFalse("lake centerlines" in extra.getValue("dystopo:sources"))
         assertTrue(extra.getValue("dystopo:schema").startsWith("Dystopo outdoors"))
+    }
+
+    @Test
+    fun roadsCarryDriveData() {
+        fun road(tags: Map<String, Any>) = process(line(tags)).layer("transportation")
+        // T73: one-way, motor access and speed limit from z12; below that the line merges as before.
+        val oneway = road(mapOf("highway" to "tertiary", "oneway" to "yes", "maxspeed" to "35 mph"))
+        assertEquals(mapOf("class" to "tertiary", "oneway" to 1, "maxspeed" to 56), oneway.getAttrsAtZoom(14).filterKeys { it != "surface" })
+        assertNull(oneway.getAttrsAtZoom(11)["oneway"])
+        assertEquals(-1, road(mapOf("highway" to "residential", "oneway" to "-1")).getAttrsAtZoom(12)["oneway"])
+        assertEquals(1, road(mapOf("highway" to "secondary", "junction" to "roundabout")).getAttrsAtZoom(12)["oneway"])
+        assertEquals(1, road(mapOf("highway" to "motorway")).getAttrsAtZoom(12)["oneway"])
+        assertNull(road(mapOf("highway" to "motorway", "oneway" to "no")).getAttrsAtZoom(12)["oneway"])
+        assertNull(road(mapOf("highway" to "primary", "maxspeed" to "50")).getAttrsAtZoom(12)["oneway"])
+        assertEquals(50, road(mapOf("highway" to "primary", "maxspeed" to "50")).getAttrsAtZoom(12)["maxspeed"])
+        // Motor access: the most specific tag wins.
+        assertEquals("private", road(mapOf("highway" to "service", "access" to "private")).getAttrsAtZoom(14)["motor_access"])
+        assertNull(road(mapOf("highway" to "service", "access" to "private", "motor_vehicle" to "yes")).getAttrsAtZoom(14)["motor_access"])
+        assertEquals("no", road(mapOf("highway" to "track", "motor_vehicle" to "forestry")).getAttrsAtZoom(12)["motor_access"])
+        assertEquals("destination", road(mapOf("highway" to "unclassified", "motor_vehicle" to "destination")).getAttrsAtZoom(12)["motor_access"])
+        assertEquals("no", road(mapOf("highway" to "service", "service" to "emergency_access")).getAttrsAtZoom(14)["motor_access"])
+        // Trails do not get them (hike and bike are unchanged).
+        val trail = road(mapOf("highway" to "path", "oneway" to "yes", "motor_vehicle" to "no"))
+        assertNull(trail.getAttrsAtZoom(14)["oneway"])
+        assertNull(trail.getAttrsAtZoom(14)["motor_access"])
+        assertEquals(56, profile.maxspeedKmh("35 mph"))
+        assertEquals(80, profile.maxspeedKmh("80 km/h"))
+        assertEquals(30, profile.maxspeedKmh("30;50"))
+        assertEquals(5, profile.maxspeedKmh("walk"))
+        assertNull(profile.maxspeedKmh("none"))
+        assertNull(profile.maxspeedKmh("RU:urban"))
     }
 
     @Test

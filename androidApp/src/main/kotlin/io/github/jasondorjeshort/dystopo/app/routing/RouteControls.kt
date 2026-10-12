@@ -130,7 +130,8 @@ fun RouteControls() {
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            // T73: the mode chips (hike, bike, drive) on a row of their own, so the actions keep room on a phone.
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 for (m in TravelMode.entries) {
                     val on = RouteSession.mode == m
                     BasicText(
@@ -140,6 +141,11 @@ fun RouteControls() {
                             .clickable { RouteSession.changeMode(m) }.padding(horizontal = 10.dp, vertical = 4.dp),
                     )
                 }
+            }
+            if (RouteSession.mode == TravelMode.DRIVE) {
+                BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (phase == "route") {
                     Action("Save") { Thread { RouteSession.save() }.start() }
                     Action("GPX") { Thread { RouteSession.exportGpx() }.start() }

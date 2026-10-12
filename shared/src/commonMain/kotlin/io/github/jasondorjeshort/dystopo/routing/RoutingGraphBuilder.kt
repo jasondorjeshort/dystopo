@@ -3,6 +3,8 @@ package io.github.jasondorjeshort.dystopo.routing
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.mvt.Geometry
 import io.github.jasondorjeshort.dystopo.mvt.MvtDecoder
+import io.github.jasondorjeshort.dystopo.packs.PackPrecedence
+import io.github.jasondorjeshort.dystopo.packs.VectorProfile
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesHeader
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.pmtiles.TileIds
@@ -64,7 +66,8 @@ data class GraphBuildStats(
 
 /**
  * Builds a [RoutingGraph] from the routable lines of a vector pack ([WayAttrs.of]: paths, footways,
- * cycleways, tracks, service and minor roads up to primary; outdoors or OpenMapTiles schema):
+ * cycleways, tracks, service and minor roads up to primary, and since T73 trunks and motorways for
+ * drive mode; outdoors or OpenMapTiles schema):
  *
  * 1. Every tile at the archive's max zoom (capped at 14, where both schemas hold every line unmerged)
  *    is decoded; each line is clipped to its tile's exact square (tiles repeat a buffer around their
@@ -72,8 +75,12 @@ data class GraphBuildStats(
  * 2. Vertices within [SNAP_M] of each other become one, which joins those pieces, shared OSM nodes
  *    and lines that merely end at the same spot.
  * 3. Where two segments cross or touch without a shared vertex, a vertex is added to both, so the
- *    junction exists; not for bridges and tunnels, which pass over or under what they cross.
- * 4. Lines are split into edges at every vertex used more than once and at line ends.
+ *    junction exists; not for bridges and tunnels, which pass over or under what they cross, and not
+ *    between a trunk or motorway and anything but another road (T73: a trail crossing a highway does
+ *    not join it, so hike and bike graphs keep their edges).
+ * 4. Lines are split into edges at every vertex used more than once and at line ends. Edges run in
+ *    the line's direction, so one-way flags (T73) keep their meaning; a line drawn twice (the same
+ *    vertices) is one edge whose drive flags allow what either copy allowed.
  * 5. Elevation from [elevation] (when given) is sampled at every vertex, and the edge's ascent and
  *    descent from samples every [SAMPLE_M] along it.
  *
@@ -104,6 +111,8 @@ class RoutingGraphBuilder(
         val h = reader.header
         require(h.tileType == TileType.MVT) { "not a vector archive (tile type ${h.tileType.label})" }
         val z = min(h.maxZoom, MAX_ZOOM)
+        val metadata = runCatching { reader.metadata() }.getOrDefault(emptyMap())
+        val openMapTiles = PackPrecedence.vectorProfile(metadata) == VectorProfile.OPENMAPTILES
         val ids = timed("directory") { tileIdsAt(reader, z) }
         val acc = Accumulator(z, (h.minLat + h.maxLat) / 2)
         var errors = 0
@@ -120,7 +129,7 @@ class RoutingGraphBuilder(
                             val scale = UNITS.toDouble() / layer.extent
                             for (f in layer.features) {
                                 val g = f.geometry as? Geometry.Lines ?: continue
-                                val attrs = WayAttrs.of(f.properties) ?: continue
+                                val attrs = WayAttrs.of(f.properties, openMapTiles) ?: continue
                                 features++
                                 for (line in g.lines) {
                                     val xs = DoubleArray(line.size) { t.x * UNITS + line[it].x * scale }
@@ -136,7 +145,7 @@ class RoutingGraphBuilder(
                 progress(i + 1, ids.size)
             }
         }
-        return assemble(acc, GraphSource(fileName, fingerprint(h), demFingerprint, z, builtAtMs), ids.size, errors, features)
+        return assemble(acc, GraphSource(fileName, fingerprint(h), demFingerprint, z, builtAtMs, drive = driveCapable(metadata)), ids.size, errors, features)
     }
 
     /** Builds a graph from lon/lat lines (tests; any non-pack source), snapping in the zoom-14 frame. */
@@ -272,13 +281,14 @@ class RoutingGraphBuilder(
             if (nodeOf[v] < 0) { nodeOf[v] = nodeVerts.size; nodeVerts.add(v) }
             return nodeOf[v]
         }
-        val eFrom = IntList(); val eTo = IntList(); val eCls = IntList(); val eAttrs = IntList(); val eFlags = IntList()
+        val eFrom = IntList(); val eTo = IntList(); val eCls = IntList(); val eAttrs = IntList(); val eFlags = IntList(); val eSpeed = IntList()
         val eName = IntList() // T49: 0 = unnamed, else 1 + index into names
         val names = ArrayList<String>()
         val nameIds = HashMap<String, Int>()
         val geomStart = IntList(); geomStart.add(0)
         val geomVerts = IntList()
-        val seen = HashSet<String>()
+        // Canonical vertex list -> (edge index, or -1 for a dropped zero-length edge; whether the edge runs the canonical way).
+        val seen = HashMap<String, Pair<Int, Boolean>>()
         var duplicates = 0
         timed("split") {
             for ((li, l) in crossed.withIndex()) {
@@ -291,16 +301,19 @@ class RoutingGraphBuilder(
                     // Edge from l[start] to l[k].
                     val from = l[start]
                     val mid = (start + 1 until k).map { l[it] }
-                    val key = run {
-                        val fwd = listOf(from) + mid + v
-                        val canon = if (fwd.first() < fwd.last() || (fwd.first() == fwd.last() && fwd.size > 2 && fwd[1] <= fwd[fwd.size - 2])) fwd else fwd.reversed()
-                        canon.joinToString(",")
-                    }
-                    if (!seen.add(key)) {
+                    val fwd = listOf(from) + mid + v
+                    val canonical = fwd.first() < fwd.last() || (fwd.first() == fwd.last() && fwd.size > 2 && fwd[1] <= fwd[fwd.size - 2])
+                    val key = (if (canonical) fwd else fwd.reversed()).joinToString(",")
+                    val prev = seen[key]
+                    if (prev != null) {
                         duplicates++
-                    } else if (!(from == v && mid.isEmpty())) {
+                        if (prev.first >= 0) eFlags[prev.first] = mergeDriveFlags(eFlags[prev.first], a.flags, sameDirection = prev.second == canonical)
+                    } else if (from == v && mid.isEmpty()) {
+                        seen[key] = -1 to canonical
+                    } else {
+                        seen[key] = eFrom.size to canonical
                         eFrom.add(node(from)); eTo.add(node(v))
-                        eCls.add(a.cls.code); eAttrs.add(a.packed); eFlags.add(a.flags)
+                        eCls.add(a.cls.code); eAttrs.add(a.packed); eFlags.add(a.flags); eSpeed.add(a.maxspeedKmh)
                         eName.add(a.name?.let { nm -> nameIds.getOrPut(nm) { names += nm; names.size } } ?: 0)
                         for (m in mid) geomVerts.add(m)
                         geomStart.add(geomVerts.size)
@@ -396,7 +409,7 @@ class RoutingGraphBuilder(
         val graph = RoutingGraph(
             source, nodeLon, nodeLat, nodeEle, eFrom.toArray(), eTo.toArray(), len, asc, desc,
             ByteArray(m) { eCls[it].toByte() }, ByteArray(m) { eAttrs[it].toByte() }, ByteArray(m) { eFlags[it].toByte() },
-            gs, gLon, gLat, gEle, eName.toArray(), names,
+            gs, gLon, gLat, gEle, eName.toArray(), names, ByteArray(m) { eSpeed[it].toByte() },
         )
         stats = GraphBuildStats(
             zoom = acc.z, tiles = tiles, tileErrors = errors, features = features, lines = acc.xs.size,
@@ -446,6 +459,7 @@ class RoutingGraphBuilder(
                     val l2 = lines[segLine[s2]]
                     val c = l2[segK[s2]]; val d = l2[segK[s2] + 1]
                     if (a == c || a == d || b == c || b == d) continue
+                    if (!mayJoin(attrs[segLine[s1]].cls, attrs[segLine[s2]].cls)) continue
                     val cxx = verts.x[c]; val cyy = verts.y[c]; val dx = verts.x[d]; val dy = verts.y[d]
                     val rx = bx - ax; val ry = by - ay
                     val sx = dx - cxx; val sy = dy - cyy
@@ -489,6 +503,54 @@ class RoutingGraphBuilder(
     }
 
     companion object {
+        /** T73: the first outdoors profile version whose packs carry one-ways, motor access and speed limits. */
+        const val DRIVE_PROFILE_VERSION = 2
+
+        /**
+         * T73: whether a vector archive with [metadata] carries what drive mode needs: the outdoors profile
+         * from [DRIVE_PROFILE_VERSION] (`dystopo:profile_version`, else `version`), or the OpenMapTiles schema
+         * (`oneway` on roads and `access=no`; no speed limits, so class speeds).
+         */
+        fun driveCapable(metadata: Map<String, Any?>): Boolean = when (PackPrecedence.vectorProfile(metadata)) {
+            VectorProfile.OPENMAPTILES -> true
+            VectorProfile.OUTDOORS -> {
+                val v = (metadata["dystopo:profile_version"] ?: metadata["version"])?.toString()?.trim()
+                (v?.substringBefore('.')?.toIntOrNull() ?: 0) >= DRIVE_PROFILE_VERSION
+            }
+            VectorProfile.UNKNOWN -> false
+        }
+
+        /** T73: trunks and motorways join only other roads where they cross without a shared vertex. */
+        private fun mayJoin(a: WayClass, b: WayClass): Boolean {
+            val ha = a == WayClass.TRUNK || a == WayClass.MOTORWAY
+            val hb = b == WayClass.TRUNK || b == WayClass.MOTORWAY
+            return (!ha && !hb) || (a.code >= WayClass.SERVICE.code && b.code >= WayClass.SERVICE.code)
+        }
+
+        /**
+         * T73: the drive flags of one edge drawn twice ([existing] kept, [dup] the other copy, [sameDirection]
+         * when it runs the same way): it may be driven wherever either copy may.
+         */
+        internal fun mergeDriveFlags(existing: Int, dup: Int, sameDirection: Boolean): Int {
+            fun dirs(f: Int, same: Boolean): Int { // bit 1: forward allowed, bit 2: backward allowed
+                val fwd = f and WayAttrs.ONEWAY_REVERSE == 0
+                val back = f and WayAttrs.ONEWAY == 0
+                val x = if (same) fwd else back
+                val y = if (same) back else fwd
+                return (if (x) 1 else 0) or (if (y) 2 else 0)
+            }
+            val d = dirs(existing, true) or dirs(dup, sameDirection)
+            var out = existing and WayAttrs.DRIVE_FLAGS.inv()
+            if (d == 1) out = out or WayAttrs.ONEWAY
+            if (d == 2) out = out or WayAttrs.ONEWAY_REVERSE
+            val motor = minOf(motorRank(existing), motorRank(dup))
+            if (motor == 1) out = out or WayAttrs.MOTOR_DESTINATION
+            if (motor == 2) out = out or WayAttrs.MOTOR_NO
+            return out
+        }
+
+        private fun motorRank(f: Int) = if (f and WayAttrs.MOTOR_NO != 0) 2 else if (f and WayAttrs.MOTOR_DESTINATION != 0) 1 else 0
+
         const val LAYER = "transportation"
         private val LAYERS = setOf(LAYER)
         /** Tile width in the snapping frame. */

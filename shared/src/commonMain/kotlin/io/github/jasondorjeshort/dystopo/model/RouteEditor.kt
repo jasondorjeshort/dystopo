@@ -31,12 +31,21 @@ class RouteEditor(
     /** Why legs built since the last [takeNotes] are straight (failure codes). */
     private val notes = ArrayList<String>()
 
+    /** The router's messages for those legs (T73: e.g. why drive mode is refused on an older pack), by code. */
+    private val messages = LinkedHashMap<String, String>()
+
     /** Reasons for straight legs from the last edit (`start_off_network`, `not_connected`, `no_graph`, ...), then cleared. */
     fun takeNotes(): List<String> = ArrayList(notes).also { notes.clear() }
 
+    /** The router's message for each reason in the last edit's notes (one per code), then cleared. */
+    fun takeMessages(): Map<String, String> = LinkedHashMap(messages).also { messages.clear() }
+
     /** [lat], [lon] snapped onto the trail network when one is within [snapM]. */
-    fun snap(lat: Double, lon: Double): ViaPoint {
-        val s = graph?.nearest(lat, lon, snapM) ?: return ViaPoint(lat, lon)
+    fun snap(lat: Double, lon: Double): ViaPoint = snap(lat, lon, "hike")
+
+    /** [lat], [lon] snapped onto the network [mode] travels (T73: roads open to cars for drive) when it is within [snapM]. */
+    fun snap(lat: Double, lon: Double, mode: String): ViaPoint {
+        val s = graph?.nearest(lat, lon, snapM, TravelMode.of(mode) ?: TravelMode.HIKE) ?: return ViaPoint(lat, lon)
         return ViaPoint(s.lat, s.lon)
     }
 
@@ -58,6 +67,7 @@ class RouteEditor(
             }
             is RouteResult.Failed -> {
                 notes += r.reason.code
+                messages.getOrPut(r.reason.code) { r.message }
                 straight(a, b)
             }
         }
@@ -80,7 +90,7 @@ class RouteEditor(
 
     /** A new path through [points] (snapped), every leg routed. */
     fun create(points: List<Pair<Double, Double>>, mode: String = "hike"): RoutePath {
-        val via = points.map { (lat, lon) -> snap(lat, lon) }
+        val via = points.map { (lat, lon) -> snap(lat, lon, mode) }
         return build(mode, via, List(max(0, via.size - 1)) { null })
     }
 
@@ -88,7 +98,7 @@ class RouteEditor(
     fun moveVia(path: RoutePath, index: Int, lat: Double, lon: Double): RoutePath {
         require(index in path.via.indices) { "no via point $index (the route has ${path.via.size})" }
         val via = path.via.toMutableList()
-        via[index] = snap(lat, lon)
+        via[index] = snap(lat, lon, path.mode)
         val keep = path.legs.mapIndexed { i, l -> l.takeIf { i != index - 1 && i != index } }
         return build(path.mode, via, keep)
     }
@@ -97,7 +107,7 @@ class RouteEditor(
     fun insertVia(path: RoutePath, index: Int, lat: Double, lon: Double): RoutePath {
         require(index in 0..path.via.size) { "insert index $index outside 0..${path.via.size}" }
         val via = path.via.toMutableList()
-        via.add(index, snap(lat, lon))
+        via.add(index, snap(lat, lon, path.mode))
         // Legs before the new point keep their place, legs after it shift by one; the one or two touching it are new.
         val keep = ArrayList<RouteLeg?>()
         for (i in 0 until via.size - 1) {

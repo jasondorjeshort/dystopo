@@ -15,7 +15,7 @@ import java.security.MessageDigest
  * same [Trips] calls as the UI, so through the store's operation log and sync.
  * - `GET /routes`: the Routes list (summary numbers) and the editor state (open route, tool, last edit,
  *   overlay with drag counts).
- * - `POST /routes?points=lat,lon;lat,lon[;...][&name=][&mode=hike|bike][&wait=ms]` (or `from=`/`to=`):
+ * - `POST /routes?points=lat,lon;lat,lon[;...][&name=][&mode=hike|bike|drive][&wait=ms]` (or `from=`/`to=`):
  *   creates a route through those via points (snapped to trails, legs routed, straight where there is
  *   no trail), stores it and opens it in the editor. `POST /routes/keep[?name=]`: keeps the current
  *   long-press route (T45 card) as a trip.
@@ -61,7 +61,7 @@ object TripRoutes {
                     ?: throw IllegalArgumentException("points=lat,lon;lat,lon or from= and to= required")
                 require(pts.size in 2..50) { "2 to 50 points" }
                 val mode = q["mode"] ?: "hike"
-                require(mode == "hike" || mode == "bike") { "mode must be hike or bike" }
+                require(mode == "hike" || mode == "bike" || mode == "drive") { "mode must be hike, bike or drive" }
                 val wait = q["wait"]?.toLongOrNull()?.coerceIn(0, 300_000) ?: 120_000
                 val p = Trips.create(pts, q["name"] ?: "Route", mode, wait)
                 return Response.json(planJson(p, q["profile"] == "1") + mapOf("edit" to Trips.lastEdit))
@@ -147,7 +147,7 @@ object TripRoutes {
             r.method == "DELETE" && suffix.startsWith("/waypoint/") -> return Response.json(mapOf("deleted" to Trips.removeWaypoint(id, suffix.removePrefix("/waypoint/").lowercase())))
             r.method == "POST" && suffix == "/mode" -> {
                 val mode = q["mode"]
-                require(mode == "hike" || mode == "bike") { "mode must be hike or bike" }
+                require(mode == "hike" || mode == "bike" || mode == "drive") { "mode must be hike, bike or drive" }
                 return Response.json(planJson(Trips.setMode(id, mode!!), false))
             }
             r.method == "POST" && suffix == "/reroute" -> return Response.json(planJson(Trips.reroute(id), false) + mapOf("edit" to Trips.lastEdit))

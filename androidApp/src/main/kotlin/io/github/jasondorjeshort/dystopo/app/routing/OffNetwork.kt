@@ -5,6 +5,7 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.routing.WayClass
 import kotlin.math.PI
 import kotlin.math.atan2
@@ -38,8 +39,8 @@ object OffNetwork {
      * The message for a point [which] ("start" or "end") with no line within [snapM]; [nearestM] is null when
      * nothing is within [Router.FAR_SEARCH_M].
      */
-    fun message(which: String, snapM: Double, maxSnapM: Double, line: String?, nearestM: Double?, direction: String?, units: ContourUnits): String {
-        val head = "No trail or road within ${UnitFormat.distance(snapM, units)} of the $which"
+    fun message(which: String, snapM: Double, maxSnapM: Double, line: String?, nearestM: Double?, direction: String?, units: ContourUnits, drive: Boolean = false): String {
+        val head = (if (drive) "No road open to cars" else "No trail or road") + " within ${UnitFormat.distance(snapM, units)} of the $which"
         if (line == null || nearestM == null) return "$head (none within ${UnitFormat.distance(Router.FAR_SEARCH_M, units)})."
         val where = "Nearest: $line, ${UnitFormat.distance(nearestM, units)} to the $direction."
         val hint = when {
@@ -53,15 +54,21 @@ object OffNetwork {
     /** The next snap setting step (100 m) that reaches [m], capped at [max]. */
     fun snapUp(m: Double, max: Double): Double = minOf(max, kotlin.math.ceil(m / 100.0) * 100.0)
 
-    /** [failed] with the message and details naming the nearest line; other failures unchanged. */
-    fun explain(g: Router, failed: RouteResult.Failed, from: Pair<Double, Double>, to: Pair<Double, Double>, snapM: Double, maxSnapM: Double, units: ContourUnits): RouteResult.Failed {
+    /**
+     * [failed] with the message and details naming the nearest line; other failures unchanged. T73: in drive
+     * mode ([mode]) the nearest road open to cars.
+     */
+    fun explain(
+        g: Router, failed: RouteResult.Failed, from: Pair<Double, Double>, to: Pair<Double, Double>, snapM: Double, maxSnapM: Double, units: ContourUnits,
+        mode: TravelMode = TravelMode.HIKE,
+    ): RouteResult.Failed {
         val which = when (failed.reason) {
             RouteFailure.START_OFF_NETWORK -> "start"
             RouteFailure.END_OFF_NETWORK -> "end"
             else -> return failed
         }
         val (lat, lon) = if (which == "start") from else to
-        val snap = g.nearest(lat, lon, Router.FAR_SEARCH_M)
+        val snap = g.nearest(lat, lon, Router.FAR_SEARCH_M, mode)
         val line = snap?.let { lineName(it.name, it.wayClass ?: WayClass.PATH) }
         val dir = snap?.let { direction(lat, lon, it.lat, it.lon) }
         val details = LinkedHashMap(failed.details) + linkedMapOf(
@@ -69,6 +76,6 @@ object OffNetwork {
             "nearestName" to snap?.name, "nearestLine" to line, "nearestDirection" to dir,
             "nearestAt" to snap?.let { listOf(Math.round(it.lat * 1e6) / 1e6, Math.round(it.lon * 1e6) / 1e6) },
         )
-        return RouteResult.Failed(failed.reason, message(which, snapM, maxSnapM, line, snap?.distanceM, dir, units), details)
+        return RouteResult.Failed(failed.reason, message(which, snapM, maxSnapM, line, snap?.distanceM, dir, units, drive = mode == TravelMode.DRIVE), details)
     }
 }

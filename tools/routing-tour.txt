@@ -10,5 +10,7 @@
 46.7686,-121.7295;46.7570,-121.7330:reflection-pinnacle|mode=hike|dist=2412.8|ascent=421|via=Wonderland Trail+Pinnacle Peak Trail
 46.9317,-121.8619;46.9187,-121.8312:mowich-spray-park|mode=hike|dist=5184.6|ascent=446.2|via=Wonderland Trail+Spray Park Trail
 46.853,-121.760;46.7864,-121.7366:summit-paradise|mode=hike|dist=11669.6|ascent=38.9|ascentTol=25|via=Disappointment Cleaver Route+Camp Muir Route+Skyline Trail
+# T73 drive mode: Paradise to the Sunrise visitor centre on the park roads, never the Wonderland Trail.
+46.7864,-121.7366;46.9145,-121.6425:paradise-sunrise-drive|mode=drive|dist=81937.1|via=Stevens Canyon Road+Mather Memorial Parkway+Sunrise Park Road
 # Off the network on purpose: the start is 0.25 mi from the nearest trail, beyond the 300 m snap.
 46.7856,-121.7754;46.7995,-121.7716:comet-falls-off-network|mode=hike|expect=422|msg=Van Trump Trail
