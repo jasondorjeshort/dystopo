@@ -4,6 +4,7 @@
 # Usage: bash tools/push-verified.sh [remote] [branch]   (defaults: origin, current branch)
 # Exit 0 only when origin/<branch> equals HEAD after the fetch; 1 otherwise, with both SHAs printed.
 set -u
+echo "repo   $(git rev-parse --show-toplevel)"
 remote="${1:-origin}"
 branch="${2:-$(git rev-parse --abbrev-ref HEAD)}"
 if [ "$branch" = "HEAD" ]; then echo "push-verified: detached HEAD; name the branch" >&2; exit 2; fi
