@@ -34,7 +34,11 @@ sizes or hashes in advance.
   sample coarser zooms than they show, and one tile of margin), fetched through the online fetcher
   into the tile cache and **pinned there**: the cache's eviction asks a spatial predicate (`AreaPins`)
   whether a key's z/x/y lies in a pinned area's cover, so DEM, vector and contour tiles of any source
-  and any settings are kept by one rule, with no key lists.
+  and any settings are kept by one rule, with no key lists. **Known gap (critic review
+  `../proposals/0027-critic-review.md`, 2026-10-13):** a source content-version change drops every
+  old-version tile through `TileCache.clearWhere` without the pin check, and lookups use the current
+  version, so a pinned corridor does not survive a server rebuild today; T95 fixes it by keying a
+  pinned area's tiles to the version in its manifest until the area is refreshed.
 - **Ahead on the route:** during navigation the next 3 km of the line (1 km segments, 300 m buffer,
   z12 to z15) are fetched while online and pinned until navigation stops.
 
