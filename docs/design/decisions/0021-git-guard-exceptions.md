@@ -1,7 +1,7 @@
 # 0021. git-guard with the exceptions the wave workflow needs
 
 Date: 2026-10-12
-Status: accepted
+Status: accepted; since T94 (2026-10-13) the exceptions are also written as policy, in the `git` block of `.claude/hooks/policy.json`, to be superseded when `git-guard.js` comes from the base and reads it
 
 Record: Hatchery's `git-guard.js` and its specification (Hatchery ADR 0002 companion "hook
 specifications", section 1); Hatchery proposal 0003 item 2 (rules 3 and 4 keyed off the phase or
@@ -60,7 +60,28 @@ exception id in a comment. Run against Hatchery's own unmodified harness (copy t
 | G08, GX08 commit from `coder` | deny rule 4 | allow | E2: the base harness runs outside any repository, so no branch is read; in a repository on `main` it is denied (this harness, G08) |
 | P01, PX06 cap message | "... the pusher will refuse to push." | "... Split by topic before the PR." | No pusher agent here |
 | P02 handoff cap message | "... docs/backlog.md ..." | "... a finding or docs/TASKS.md." | No backlog file here (ADR 0020) |
-| U01 to U07 | the base gate (50%, 80%, override file) | allow | This project's gate is its own: 75%, `usage.json`, `DYSTOPO_GATE_OVERRIDE`; this harness tests it (U01 to U07 here) |
+| U01 to U07 | the base gate (50%, 80%, override file) | as the base | Since T94 the gate is the base's under this project's policy (Usage gate, below); this harness tests it as U01 to U15, S01 to S05 |
+
+### Usage gate
+
+Since T94 (2026-10-13) `.claude/hooks/usage-gate.js`, `policy.js` and `.claude/statusline.js` are
+the Hatchery base's (its ADR 0006), the gate's deny text aside, which points here. The status line
+writes `~/.claude/usage-state.json` and the gate reads it. `.claude/hooks/policy.json` holds this
+project's numbers: HOLD at 75% on each meter, deny at 100%, data older than two hours allowed with a
+note. The owner lifts HOLD in two ways, never the deny line: the override file
+`~/.claude/usage-gate-override.json`, `{"until": <epoch seconds>, "reason": "<the owner's words>",
+"meters": ["7d"]}` (`meters` is `"5h"`, `"7d"` or both, both when absent; an unknown name lifts
+nothing), written only on the owner's word and machine-wide; or `DYSTOPO_GATE_OVERRIDE=1` in the
+environment of a session started for in-flight relaunches (`usage.overrideEnv`). Because deny is
+100, the file can lift both limits, as the owner asked ("we should have the opportunity to remove
+both limits", 2026-10-13); to follow the session meter only, it names `7d`.
+
+The same `policy.json` carries this ADR's git exceptions: its `git` and `edit` blocks are
+Hatchery's `policy.examples/task-branches.json` unchanged, which encodes E1 to E5, A1 and A2
+(`task/*` pushes, no commit on `main` or `master`, lease-push and delete of `task/*` only after a
+merged PR, `core.hooksPath` fixed to `tools/git-hooks`). Today only the gate and the status line
+read the file; `git-guard.js` and `post-edit.js` keep these rules as constants until they are next
+taken from the base, and this ADR is superseded then.
 
 ### Not covered, by design
 

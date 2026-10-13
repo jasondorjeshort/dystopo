@@ -3,8 +3,9 @@
 // Test harness and debug interface for the hooks in this directory. From the Hatchery base
 // (its .claude/hooks/test-hooks.js); every base case is kept, and a case whose expectation
 // differs here names the exception it tests (E1 to E5, A1, A2:
-// docs/design/decisions/0021-git-guard-exceptions.md). The usage-gate cases test Dystopo's own
-// gate (75%, ~/.claude/usage.json, DYSTOPO_GATE_OVERRIDE), not the base's.
+// docs/design/decisions/0021-git-guard-exceptions.md). The usage-gate and status line cases run
+// the base's scripts under this project's policy (hold 75, deny 100, the override file per meter,
+// DYSTOPO_GATE_OVERRIDE): U01 to U15, S01 to S05, LIVE01 and LIVE02.
 // Each case runs a hook as a child process with JSON on stdin, exactly as Claude Code does,
 // and checks exit code and stdout.
 //
@@ -20,7 +21,7 @@
 //
 // Isolation: git-guard cases that depend on the current branch run against two scratch git
 // repositories (one on main, one on task/T1); post-edit cases run against a scratch docs tree;
-// usage-gate cases point HOME/USERPROFILE at a scratch dir. All in the OS temp dir, deleted at
+// usage-gate and status line cases point HOME/USERPROFILE at a scratch dir. All in the OS temp dir, deleted at
 // the end. The real docs/, the repository and ~/.claude are never touched.
 // Exit codes: 0 all pass, 1 any failure, 2 usage error.
 'use strict';
@@ -330,38 +331,132 @@ for (const [id, label, filePath, expect, rawOverride, fmt] of P) {
   if (ok && !opt.verbose) process.stdout.write(`     exit ${r.code}, stdout: ${r.stdout || '(empty)'}\n`);
 }
 
-// ---------- usage-gate (Dystopo's gate: 75%, ~/.claude/usage.json, DYSTOPO_GATE_OVERRIDE) ----------
+// ---------- usage-gate and status line (the Hatchery base's gate, this project's policy) ----------
+// Every case names its policy through HOOK_POLICY_FILE: DYSTOPO_USAGE below (LIVE02 checks that the
+// repository's policy.json says the same) or a scratch file. HOME/USERPROFILE point at a scratch
+// dir, and DYSTOPO_GATE_OVERRIDE is removed unless the case sets it (the coordinator's own session
+// may run with it).
 const home = path.join(scratch, 'home');
 fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-const HOLD_MSG = (f) => `Usage gate: 5h ${f}%, 7d 10%. At or above 75%: no new implementers (CLAUDE.md, Wave size). Finish work already in flight; a verifier for an already-launched task may be relaunched with DYSTOPO_GATE_OVERRIDE=1. Otherwise wait for the reset or the owner's word.`;
+const stateFile = path.join(home, '.claude', 'usage-state.json');
+const ovFile = path.join(home, '.claude', 'usage-gate-override.json');
 const nowSec = Math.floor(Date.now() / 1000);
-// [id, label, usage.json contents (object, string, or undefined for no file), expected deny reason or null, extra env]
+const DYSTOPO_USAGE = {
+  hold: 75, deny: 100, staleSeconds: 7200, whenStale: 'allow', overrideEnv: 'DYSTOPO_GATE_OVERRIDE',
+  holdAdvice: 'No new implementers (CLAUDE.md, Wave size). Finish work already in flight; a verifier for an already-launched task needs the owner\'s override. Otherwise wait for the reset or the owner\'s word.',
+};
+const writeScratch = (name, obj) => {
+  const f = path.join(scratch, name);
+  fs.writeFileSync(f, typeof obj === 'string' ? obj : JSON.stringify(obj));
+  return f;
+};
+const POLICY = writeScratch('policy-dystopo.json', { usage: DYSTOPO_USAGE });
+const BAD_POLICY = writeScratch('policy-bad.json', '[]');
+const envWith = (extra) => {
+  const env = Object.assign({}, process.env, { DYSTOPO_GATE_OVERRIDE: undefined }, extra);
+  for (const k of Object.keys(env)) if (env[k] === undefined) delete env[k];
+  return env;
+};
+const fresh = (five, seven, extra) => Object.assign({ updatedAt: nowSec, five_hour: { used_percentage: five }, seven_day: { used_percentage: seven } }, extra);
+const ov = (meters, until) => Object.assign({ until: until || nowSec + 3600, reason: 'test: owner' }, meters === undefined ? {} : { meters });
+const HOLD_TAIL = DYSTOPO_USAGE.holdAdvice;
+// [id, label, state (object, string, or null for no file), override (object or undefined), extra env,
+//  expected deny-reason prefix or null for allow, stderr must include, policy file]
 const U = [
-  ['U01', '80% denies', { ts: nowSec, five_hour: { used_percentage: 80 }, seven_day: { used_percentage: 10 } }, HOLD_MSG(80)],
-  ['U02', '75% denies', { ts: nowSec, five_hour: { used_percentage: 75 }, seven_day: { used_percentage: 10 } }, HOLD_MSG(75)],
-  ['U03', '74% allows', { ts: nowSec, five_hour: { used_percentage: 74 }, seven_day: { used_percentage: 10 } }, null],
-  ['U04', 'override allows at 90%', { ts: nowSec, five_hour: { used_percentage: 90 }, seven_day: { used_percentage: 10 } }, null, { DYSTOPO_GATE_OVERRIDE: '1' }],
-  ['U05', 'data 3 h old allows', { ts: nowSec - 3 * 3600, five_hour: { used_percentage: 90 }, seven_day: { used_percentage: 10 } }, null],
-  ['U06', 'no usage file allows', undefined, null],
-  ['U07', 'unparseable file allows', 'not json', null],
+  ['U01', 'hold on the 5h meter', fresh(75, 10), undefined, {}, `Usage gate: 5h 75%, 7d 10%. 5h at or above 75%: ${HOLD_TAIL}`],
+  ['U02', 'hold on the 7d meter (2026-10-13: 95% weekly)', fresh(16, 95), undefined, {}, `Usage gate: 5h 16%, 7d 95%. 7d at or above 75%: ${HOLD_TAIL}`],
+  ['U03', 'both under 75', fresh(74, 74), undefined, {}, null],
+  ['U04', 'override without meters lifts both', fresh(90, 95), ov(), {}, null, 'lifted on 5h and 7d'],
+  ['U05', 'expired override lifts nothing', fresh(16, 95), ov(undefined, nowSec - 1), {}, 'Usage gate: 5h 16%, 7d 95%. 7d at or above 75%'],
+  ['U06', 'override on 7d: weekly ignored, session followed', fresh(16, 95), ov(['7d']), {}, null, 'lifted on 7d'],
+  ['U07', 'override on 7d keeps a 5h hold', fresh(80, 95), ov(['7d']), {},
+    `Usage gate: 5h 80%, 7d 95%. 5h at or above 75%, 7d at or above 75%: ${HOLD_TAIL} The override in force lifts only 7d.`],
+  ['U08', 'the deny line at 100 is not lifted', fresh(16, 100), ov(), {}, 'Usage gate: 5h 16%, 7d 100%. 7d at or above 100%'],
+  ['U09', 'DYSTOPO_GATE_OVERRIDE=1 lifts hold for the session', fresh(90, 95), undefined, { DYSTOPO_GATE_OVERRIDE: '1' }, null, 'DYSTOPO_GATE_OVERRIDE=1'],
+  ['U10', 'DYSTOPO_GATE_OVERRIDE other than 1 does not', fresh(16, 95), undefined, { DYSTOPO_GATE_OVERRIDE: 'yes' }, 'Usage gate: 5h 16%, 7d 95%'],
+  ['U11', 'stale data allows with a note', fresh(90, 95, { updatedAt: nowSec - 3 * 3600 }), undefined, {}, null, '180 min old; allowing'],
+  ['U12', 'no state file allows (the old usage.json is not read)', null, undefined, {}, null, 'no usage data'],
+  ['U13', 'unparseable state file allows', 'not json', undefined, {}, null, 'no usage data'],
+  ['U14', 'a window past its reset no longer counts', fresh(16, 95, { seven_day: { used_percentage: 95, resets_at: nowSec - 60 } }), undefined, {}, null],
+  ['U15', 'malformed policy: base defaults (50)', fresh(55, 10), undefined, {}, 'Usage gate: 5h 55%, 7d 10%. 5h at or above 50%', 'using the base defaults', BAD_POLICY],
 ];
-for (const [id, label, state, expect, extraEnv] of U) {
+// The status line before T94 wrote ~/.claude/usage.json ({ ts, ... }); U12 puts one there at 99%.
+const legacyFile = path.join(home, '.claude', 'usage.json');
+for (const [id, label, state, override, extraEnv, expect, stderrHas, policy] of U) {
   if (!selected(id)) continue;
-  const file = path.join(home, '.claude', 'usage.json');
-  if (state === undefined) fs.rmSync(file, { force: true });
-  else fs.writeFileSync(file, typeof state === 'string' ? state : JSON.stringify(state));
-  const env = Object.assign({}, process.env, { HOME: home, USERPROFILE: home }, extraEnv || {});
-  if (!extraEnv) delete env.DYSTOPO_GATE_OVERRIDE;
-  const r = run('usage-gate', JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: {} }), env);
+  if (state === null) fs.rmSync(stateFile, { force: true });
+  else fs.writeFileSync(stateFile, typeof state === 'string' ? state : JSON.stringify(state));
+  if (id === 'U12') fs.writeFileSync(legacyFile, JSON.stringify({ ts: nowSec, five_hour: { used_percentage: 99 }, seven_day: { used_percentage: 99 } }));
+  if (override === undefined) fs.rmSync(ovFile, { force: true }); else fs.writeFileSync(ovFile, JSON.stringify(override));
+  const r = run('usage-gate', JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: {} }),
+    envWith(Object.assign({ HOME: home, USERPROFILE: home, HOOK_POLICY_FILE: policy || POLICY }, extraEnv)));
+  fs.rmSync(legacyFile, { force: true });
   let ok;
   let detail;
   if (expect === null) { ok = r.code === 0 && r.stdout === ''; detail = 'expected allow (exit 0, no stdout)'; }
   else {
     const d = parseDecision(r.stdout);
-    ok = r.code === 0 && !!d && d.decision === 'deny' && d.reason === expect;
-    detail = `expected reason ${JSON.stringify(expect)}`;
+    ok = r.code === 0 && !!d && d.decision === 'deny' && d.reason.startsWith(expect);
+    detail = `expected a reason starting ${JSON.stringify(expect)}`;
   }
+  if (ok && stderrHas && !r.stderr.includes(stderrHas)) { ok = false; detail = `stderr lacks ${JSON.stringify(stderrHas)}: ${r.stderr}`; }
   report(id, `usage gate: ${label} -> ${expect === null ? 'allow' : 'deny'}`, ok, detail, r.stdout);
+}
+fs.rmSync(ovFile, { force: true });
+
+// The status line (../statusline.js) keeps usage-state.json current: merged per window, never
+// overwritten by a refresh without rate_limits, flags by the same per-meter judgement as the gate.
+const slHome = path.join(scratch, 'sl-home');
+fs.mkdirSync(path.join(slHome, '.claude'), { recursive: true });
+const slFile = path.join(slHome, '.claude', 'usage-state.json');
+const readSl = () => { try { return fs.readFileSync(slFile, 'utf8'); } catch (_) { return null; } };
+function statusline(stdin) {
+  const r = spawnSync(NODE, [path.join(HOOKS, '..', 'statusline.js')], {
+    input: stdin, encoding: 'utf8', timeout: 30000, env: envWith({ HOME: slHome, USERPROFILE: slHome, HOOK_POLICY_FILE: POLICY }),
+  });
+  return { code: r.status, stdout: r.stdout || '' };
+}
+const rl = (five, seven) => JSON.stringify({ model: { display_name: 'M' }, rate_limits: Object.assign({},
+  five === null ? {} : { five_hour: { used_percentage: five, resets_at: nowSec + 3600 } },
+  seven === null ? {} : { seven_day: { used_percentage: seven, resets_at: nowSec + 86400 * 3 } }) });
+// [id, label, stdin, check(result, fileBefore, fileAfter) -> true or a failure detail]
+const S = [
+  ['S01', 'both windows written, 7d 95 flags HOLD', rl(16, 95), (r, b, a) => {
+    const j = JSON.parse(a);
+    return (j.five_hour.used_percentage === 16 && j.seven_day.used_percentage === 95 && typeof j.updatedAt === 'number' &&
+      r.stdout.includes('5h 16%') && r.stdout.endsWith(' HOLD')) || `file ${a}, line ${r.stdout}`;
+  }],
+  ['S02', 'no rate_limits: file untouched, cached numbers shown', JSON.stringify({ model: { display_name: 'M' } }),
+    (r, b, a) => (b === a && r.stdout.includes('5h 16%') && r.stdout.includes('7d 95%')) || `before ${b}, after ${a}, line ${r.stdout}`],
+  ['S03', 'one window: the other is kept', rl(null, 30), (r, b, a) => {
+    const j = JSON.parse(a);
+    return (j.five_hour.used_percentage === 16 && j.seven_day.used_percentage === 30 && !r.stdout.includes('HOLD')) || `file ${a}, line ${r.stdout}`;
+  }],
+  ['S04', 'malformed stdin: prints, writes nothing', 'not json',
+    (r, b, a) => (r.code === 0 && b === a && r.stdout.startsWith('? |')) || `exit ${r.code}, line ${r.stdout}`],
+  ['S05', '100 flags STOP', rl(10, 100), (r) => r.stdout.endsWith(' STOP') || r.stdout],
+];
+fs.rmSync(slFile, { force: true });
+for (const [id, label, stdin, check] of S) {
+  if (!selected(id)) continue;
+  const before = readSl();
+  const r = statusline(stdin);
+  const after = readSl();
+  let res;
+  try { res = check(r, before, after); } catch (e) { res = e.message; }
+  report(id, `status line: ${label}`, res === true, res, r.stdout);
+}
+
+// The repository's own policy.json loads and its usage block is the one tested above.
+{
+  const { load } = require('./policy');
+  const live = load(path.join(HOOKS, 'policy.json'));
+  if (selected('LIVE01')) report('LIVE01', 'policy.json loads', live.error === null && live.source !== null, live.error || 'file absent');
+  if (selected('LIVE02')) {
+    const want = load(POLICY).policy.usage;
+    report('LIVE02', 'policy.json usage block is the one these cases test', JSON.stringify(live.policy.usage) === JSON.stringify(want),
+      `policy.json ${JSON.stringify(live.policy.usage)} vs tested ${JSON.stringify(want)}`);
+  }
 }
 
 if (opt.keep) process.stdout.write(`scratch tree kept at ${scratch}\n`);

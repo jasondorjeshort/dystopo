@@ -1,0 +1,18 @@
+{
+  "$comment": "Project policy for the hooks in this directory, in the Hatchery base's format (its ADR 0006; the loader is policy.js). Today usage-gate.js and ../statusline.js read it; git-guard.js and post-edit.js still hold this project's rules as constants (ADR 0021) and will read the git and edit blocks when they are next updated from the base. Usage: hold 75 on both meters; deny 100, so the owner's override file lifts either meter or both; DYSTOPO_GATE_OVERRIDE=1 in a session's environment lifts HOLD for that session. Check with: node .claude/hooks/policy.js",
+  "git": {
+    "commit": { "subagents": "any", "protectedBranches": ["main", "master"] },
+    "push": { "subagents": "any", "branches": ["task/*"], "mainSession": true, "forceWithLease": ["task/*"] },
+    "branchDelete": { "branches": ["task/*"], "requireMergedPr": true },
+    "hooksPath": "tools/git-hooks"
+  },
+  "usage": {
+    "hold": 75,
+    "deny": 100,
+    "staleSeconds": 7200,
+    "whenStale": "allow",
+    "overrideEnv": "DYSTOPO_GATE_OVERRIDE",
+    "holdAdvice": "No new implementers (CLAUDE.md, Wave size). Finish work already in flight; a verifier for an already-launched task needs the owner's override. Otherwise wait for the reset or the owner's word."
+  },
+  "edit": { "capExempt": ["docs/PLANNING.md", "docs/TASKS.md", "docs/SERVER.md"], "formatters": {} }
+}

@@ -21,6 +21,7 @@ wins and this file gets fixed.
 | Android SDK | `C:\Users\Dorje\Android\sdk` (named in `local.properties`) |
 | AVDs | `E:\dystopo-avd` (`-AvdHome E:\dystopo-avd`, shared with the other account; each AVD about 6 GB; remove with `-Stop -Delete`) |
 | Node | 22 (`node .claude/hooks/test-hooks.js`) |
+| Usage files | `~/.claude/usage-state.json`, written by the project status line (`.claude/statusline.js`) and read by the usage gate; `~/.claude/usage-gate-override.json` when the owner lifts the gate. The account-wide status line (`~/.claude/usage-statusline.ps1`, writing `~/.claude/usage.json`) still runs in other projects; nothing here reads that file |
 | Hatchery base clone | `C:\Users\Dorje\Documents\src\hatchery` (read it; only its runner commits there) |
 | Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout only, and in the `RELEASE_*` Actions secrets (`.claude/skills/release/SKILL.md`) |
 | Private terms | `devtool.local.json` in this main checkout; the privacy hooks read it from the main checkout even in worktrees |

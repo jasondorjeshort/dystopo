@@ -1,4 +1,9 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "node .claude/statusline.js",
+    "refreshInterval": 60
+  },
   "permissions": {
     "allow": [
       "Bash(git status *)",

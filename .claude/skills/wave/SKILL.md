@@ -22,7 +22,10 @@ Hatchery's proposal 0003 describes the same workflow for the base.
    once, then `./gradlew :devtool:run --args="serve --live --port 8765"`, PID recorded in
    `out/coordinator-pids.txt`) so agents and the owner have the viewer (`docs/reference/live-server.md`).
    AVDs go under `E:\dystopo-avd`.
-4. Read the usage recorder before launching (`~/.claude/usage.json`); at 75% launch no new implementers.
+4. Read the usage before launching (the status line, or `~/.claude/usage-state.json`); at 75% of either
+   meter launch no new implementers. On the owner's word, and only then, write the override file
+   (`~/.claude/usage-gate-override.json`, ADR 0021, Usage gate) with the meters and the end time
+   the owner gave; delete it when the owner's period ends.
 
 ## Plan and launch
 
