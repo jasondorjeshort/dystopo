@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-13, at commit a75d2f9, by main session (session 7b335a00)
+Updated: 2026-10-13, at commit fdea46d, by main session (session 7b335a00)
 Resume: this file, then `docs/reference/machines.md` (the owner's account `Dorje` coordinates again:
 checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` skill; rewrite with the
 `handoff` skill at the end of every session and before any stop.
@@ -12,7 +12,9 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
   `DYSTOPO_GATE_OVERRIDE=1`, owner's word: weekly budget ignored, 5-hour window at 14% at launch):
   implementers T88 to T94 (Opus), a Haiku chore (rerun of CI run 38462712750, live viewer on 8765,
   PID to `out/coordinator-pids.txt`), a critic on ADRs 0027/0028 and Hatchery 0003/0005 (reviews
-  land uncommitted under `docs/design/proposals/` and in the Hatchery clone). No PR yet.
+  land uncommitted under `docs/design/proposals/` and in the Hatchery clone). T94 merged and logged
+  (PR #90, 21:41 UTC; its Hatchery PR #1 awaits the owner); the critic's reviews are committed, the
+  Hatchery ones left in its clone; T95 (pinned tiles vs. version bumps) waits for T90 and T91.
 
 ## Next
 
@@ -24,8 +26,9 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
 3. Wave 14 from the ideas folder, the owner's decided items first (recenter button with the tap rule,
    turn directions, scale bar and miles), and the doctrine ADRs (driving, alpha interface freedom,
    no other product names in user-visible text).
-4. Once T94 is merged, the next session needs no env var: the owner writes the override file T94
-   documents instead.
+4. The next session needs no env var: the owner writes `~/.claude/usage-gate-override.json`
+   (`until`, `reason`, optional `meters`; ADR 0021, Usage gate). This session still runs the old
+   status line, so the gate sees stale data and allows with a note: watch the 5-hour figure by hand.
 
 ## Waiting on user
 
