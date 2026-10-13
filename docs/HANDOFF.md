@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-13, at commit 498aaa1, by main session (session 7b335a00)
+Updated: 2026-10-13, at commit ea4d83c, by main session (session 7b335a00)
 Resume: this file, then `docs/reference/machines.md` (the owner's account `Dorje` coordinates again:
 checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` skill; rewrite with the
 `handoff` skill at the end of every session and before any stop.
@@ -12,23 +12,23 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
   weekly budget ignored): T88 to T94, a chore (live viewer on 8765, PID in `out/coordinator-pids.txt`),
   a critic. Merged and logged: T94 (PR #90; Hatchery PR #1 awaits the owner), T93 (PR #91). The
   critic reviews are in; T95 (pinned tiles vs. version bumps) waits for T90 and T91.
-- **Weekly limit hit ~22:30 UTC** (429): T91 and T92 died mid-task and were resumed by message
-  once the owner enabled extra usage. **The new gate's deny line (100) then blocked every launch**
-  (T89's verifier refused at 7d 100%): the owner applies `out/usage-gate-no-deny-line.patch`
-  (`deny: null`; the coordinator cannot edit hooks), then the T89 verifier launches (PR #92 open).
+- **Weekly limit hit ~22:30 UTC** (429; T91 and T92 resumed by message after the owner enabled
+  extra usage; the gate's deny line at 100 then refused new launches). **Owner's word 22:45 UTC:
+  hold at 100, no new agents; the running ones stop gracefully.** PRs #92 (T89), #93 (T92), #94
+  (T90) open and unverified; T88 and T91 asked to push WIP as draft PRs with a How to continue
+  section. `out/usage-gate-no-deny-line.patch` (`deny: null`) stays unapplied, an option only.
 
 ## Next
 
-1. As PRs arrive: a Sonnet verifier each (`brief` skill), then the merge sequence and the log; T93
-   first (T91 rebases over its blocks), T89 before T91 (the `trips/` drive-time lines). Read the
-   critic's four reviews; a serious objection becomes a task, the rest notes; commit the Dystopo
-   reviews, leave Hatchery's for its runner. T94's Hatchery PR is the owner's to merge.
+1. After the reset (Oct 16 00:00 New York): a Sonnet verifier per open PR (`brief` skill), then
+   the merge sequence and the log; T89 before T91 (`trips/` drive-time lines; T89's synced route
+   `path` v2 for timed drive legs is accepted). Draft PRs (T88, T91): a fresh Opus implementer
+   continues from the PR's How to continue section. T94's Hatchery PR #1 is the owner's to merge;
+   the Hatchery critic reviews sit uncommitted in its clone.
 2. After the last merge: the sweep, then `v0.1.6-alpha`.
-3. Wave 14 from the ideas folder, the owner's decided items first (recenter button with the tap rule,
-   turn directions, scale bar and miles), and the doctrine ADRs (driving, alpha interface freedom,
-   no other product names in user-visible text).
-4. The next session needs no env var: the owner writes `~/.claude/usage-gate-override.json`
-   (`until`, `reason`, optional `meters`; ADR 0021, Usage gate).
+3. Wave 14 from the ideas folder (the recentre tap rule, turn directions, scale bar and miles) and
+   the doctrine ADRs (driving, alpha interface freedom, no other product names).
+4. The owner lifts HOLD with `~/.claude/usage-gate-override.json` (ADR 0021, Usage gate); no env var.
 
 ## Waiting on user
 
