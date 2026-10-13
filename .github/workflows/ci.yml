@@ -39,6 +39,20 @@ jobs:
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
+      # T87: the APK bundles every glyph range of the three fonts (bundleMapAssets in androidApp/build.gradle.kts),
+      # fetched from protomaps.github.io into cache/glyphs. Cached between runs, keyed by the font and range
+      # lists, so a remote outage cannot fail a commit that changed nothing there (2026-10-13: a 503 failed a
+      # docs-only commit); the task also retries a failed range.
+      - name: Glyph cache key
+        id: glyphkey
+        run: echo "key=glyphs-v1-$(grep -E '^val glyph(Fonts|Ranges) ' androidApp/build.gradle.kts | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the glyph ranges
+        uses: actions/cache@v4
+        with:
+          path: cache/glyphs
+          key: ${{ steps.glyphkey.outputs.key }}
+
       # No font setup: the renderer draws labels with the Noto Sans TTFs bundled in serverlib (T50), so the
       # goldens match here without Arial or a fontconfig mapping.
       - name: Golden images first (fail fast)
