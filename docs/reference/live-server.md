@@ -1,6 +1,6 @@
 ---
 verified: 2026-10-13
-source: moved verbatim from CLAUDE.md in T84 (text as of 0547203); observed in the tasks named in each paragraph
+source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
 ---
 
 # The browser demo, live world mode and the JVM stand-in for the phone
