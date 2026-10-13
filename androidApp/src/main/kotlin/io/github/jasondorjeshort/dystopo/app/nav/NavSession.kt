@@ -10,9 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.WindowManager
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.MapController.CameraMode
@@ -71,8 +68,10 @@ object NavSession {
         val snoozed: String? = null,
     )
 
-    var ui by mutableStateOf<Ui?>(null)
-        private set
+    /** T86: backed by [NavUiState], so touching [NavSession] from a background thread never creates Compose state. */
+    var ui: Ui?
+        get() = NavUiState.ui
+        private set(v) { NavUiState.ui = v }
 
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-nav").apply { isDaemon = true } }
@@ -117,6 +116,9 @@ object NavSession {
     @Volatile private var hookedMap: Any? = null
 
     val active: Boolean get() = navigator != null
+
+    /** T86: creates the Compose state now; call on the main thread from `Application.onCreate`. */
+    fun prepare() = NavUiState.prepare()
 
     /** Starts navigating [path] (replacing any navigation); [src] says what it came from (for `/nav`). */
     fun start(

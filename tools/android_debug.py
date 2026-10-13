@@ -52,8 +52,55 @@ def app_pid(exe, serial):
     return out[0] if code == 0 and out and out[0].isdigit() else None
 
 
-def endpoint(exe, serial, timeout=30.0):
-    """(device port, token) from the app's logcat line, for its current process; waits up to `timeout` s."""
+class LaunchCrash(RuntimeError):
+    """T86: the app died with an uncaught exception (the message carries its first line from logcat)."""
+
+
+def device_now(exe, serial):
+    """The device clock in logcat's `-t` format, to pass as `since` to `launch_crash` (taken before a launch)."""
+    code, out = adb(exe, serial, "shell", "date", "+%m-%d %H:%M:%S.000", timeout=30)
+    return out.strip() if code == 0 and re.match(r"\d\d-\d\d \d\d:\d\d:\d\d", out.strip()) else None
+
+
+def launch_crash(exe, serial, since=None):
+    """The app's uncaught exception since `since` (from `device_now`), as "Type: message (Process: ..., PID n)", or None.
+
+    Reads logcat's crash buffer for a `FATAL EXCEPTION` of our package, so a launch that dies reports the
+    exception instead of "no loaded style" after a long wait.
+    """
+    args = ["logcat", "-d", "-b", "crash", "-v", "brief"]
+    if since:
+        args += ["-t", since]
+    _, out = adb(exe, serial, *args, timeout=60)
+    return parse_crash(out)
+
+
+def parse_crash(text):
+    """The first `FATAL EXCEPTION` of our package in logcat `-v brief` text, as "Type: message [Process: ..., PID n]"."""
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if "FATAL EXCEPTION" not in ln:
+            continue
+        block = [b.split("): ", 1)[-1].strip() for b in lines[i + 1:i + 40]]
+        proc = next((b for b in block if b.startswith("Process:")), "")
+        if PACKAGE not in proc:
+            continue
+        exc = next((b for b in block if re.match(r"[A-Za-z0-9_.$]+(Exception|Error)(?::|$)", b)), "uncaught exception")
+        return f"{exc} [{proc}]"
+    return None
+
+
+def raise_if_crashed(exe, serial, since=None):
+    crash = launch_crash(exe, serial, since)
+    if crash:
+        raise LaunchCrash(f"the app crashed: {crash}")
+
+
+def endpoint(exe, serial, timeout=30.0, since=None):
+    """(device port, token) from the app's logcat line, for its current process; waits up to `timeout` s.
+
+    T86: when the line never comes and the app crashed since `since`, raises `LaunchCrash` with the exception line.
+    """
     deadline = time.time() + timeout
     while True:
         pid = app_pid(exe, serial)
@@ -64,13 +111,14 @@ def endpoint(exe, serial, timeout=30.0):
                 port, token = found[-1]
                 return int(port), token
         if time.time() >= deadline:
+            raise_if_crashed(exe, serial, since)
             raise RuntimeError(f"no 'debug server on port' line in {serial}'s logcat for {PACKAGE} (pid {pid}) within {timeout:.0f} s")
         time.sleep(0.5)
 
 
-def bootstrap(exe, serial, host_port, timeout=30.0):
+def bootstrap(exe, serial, host_port, timeout=30.0, since=None):
     """Reads the endpoint and forwards host tcp:<host_port> to it; returns (device port, token)."""
-    port, token = endpoint(exe, serial, timeout)
+    port, token = endpoint(exe, serial, timeout, since)
     code, out = adb(exe, serial, "forward", f"tcp:{host_port}", f"tcp:{port}", timeout=30)
     if code != 0:
         raise RuntimeError(f"adb forward tcp:{host_port} tcp:{port} failed: {out.strip()}")

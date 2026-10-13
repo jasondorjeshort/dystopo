@@ -26,6 +26,7 @@ class DystopoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        io.github.jasondorjeshort.dystopo.app.nav.NavSession.prepare() // T86: its Compose state is made here, on the main thread, before any composition
         MapLibre.getInstance(this)
         MapLibre.setConnected(true) // T38: every tile comes from our loopback server; MapLibre's own offline check would stop even those
         AppSettings.load(this)

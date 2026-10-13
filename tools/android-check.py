@@ -177,6 +177,7 @@ forward_owner = android_debug.forward_owner
 
 
 def restart_app(exe, serial, server, timeout):
+    since = android_debug.device_now(exe, serial)
     adb(exe, serial, "shell", "am", "force-stop", PACKAGE)
     code, out = adb(exe, serial, "shell", "am", "start", "-W", "-n", ACTIVITY)
     if code != 0:
@@ -190,7 +191,9 @@ def restart_app(exe, serial, server, timeout):
                 return h
         except (urllib.error.URLError, OSError, ValueError, RuntimeError):
             server.reset()
+        android_debug.raise_if_crashed(exe, serial, since)  # T86: a launch crash is its own failure, with the exception line
         time.sleep(1)
+    android_debug.raise_if_crashed(exe, serial, since)
     raise RuntimeError(f"app did not report a loaded style within {timeout:.0f} s of a restart")
 
 

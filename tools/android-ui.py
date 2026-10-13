@@ -1845,10 +1845,19 @@ def main():
     if args.part not in ("strings",) and not args.serial:
         ap.error("--serial is required for device parts")
     t0 = time.time()
+    since = debug.device_now(debug.adb_path(), args.serial) if args.serial else None
     try:
         report = PARTS[args.part](args)
     except Exception as e:
         report = fail(f"{type(e).__name__}: {e}")
+    if args.serial and not report.get("ok"):
+        # T86: a launch that died is reported as that, with the exception line, not as "no settled map within N s".
+        try:
+            crash = debug.launch_crash(debug.adb_path(), args.serial, since)
+        except Exception:
+            crash = None
+        if crash:
+            report = {**report, "launchCrash": crash, "error": f"the app crashed: {crash}; " + str(report.get("error", ""))}
     report = {"part": args.part, **({"label": args.label} if args.label else {}), "seconds": round(time.time() - t0, 1), **report}
     print(json.dumps(report, indent=1))
     sys.exit(0 if report.get("ok") else 1)
