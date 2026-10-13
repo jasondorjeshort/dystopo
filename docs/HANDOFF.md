@@ -27,8 +27,7 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
    turn directions, scale bar and miles), and the doctrine ADRs (driving, alpha interface freedom,
    no other product names in user-visible text).
 4. Hook follow-up: a file-based owner override for the gate (`~/.claude/usage-override.json`) was
-   refused by the permission classifier as self-modification; the owner can apply it and carry it to
-   Hatchery.
+   refused by the permission classifier as self-modification; the owner applies it, then Hatchery.
 
 ## Waiting on user
 
