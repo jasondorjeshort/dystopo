@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-13
 
+- T78: Peer sources on a trip (#84)
 - T86: First-launch crash in the navigation overlay (#85)
 - T85: Contours from the hillshade zoom on the phone (T80 follow-ups) (#82)
 - T77: Long-distance routing (#83)
