@@ -22,6 +22,7 @@ Hatchery base, with this project's exemptions.
 5. The result of an investigation (a root cause, a measurement, a failed approach): `docs/findings/`
    (`finding` skill). When resolved, promote the durable part to `docs/reference/` or an ADR and set
    `promoted_to`.
+   A raw idea, bug or missing feature not yet triaged: `docs/ideas/` (one file each, see its README).
 6. What is happening now or next: `docs/HANDOFF.md` (`handoff` skill). Tasks: `docs/TASKS.md`.
    What a merged task did: the dated log in `docs/PLANNING.md` (the coordinator, `tools/merge-log.py`).
 
@@ -48,6 +49,8 @@ Hatchery base, with this project's exemptions.
 - `docs/findings/YYYY-MM-DD-<slug>.md`: required `date`, `status: open | resolved | superseded`,
   `area`; optional `supersedes: <file>`, `promoted_to: <path>`. Sections in order: Question, What was
   tried, Result, Next (Next may be omitted when resolved).
+- `docs/ideas/YYYY-MM-DD-<slug>.md`: required `date`, `kind: bug | feature | question | chore`,
+  `status: new | planned | done | dropped`, `pipeline` (a `T##` or `none`).
 - `docs/reference/<topic>.md`: required `verified: YYYY-MM-DD`, `source: <url or "observed">`. When a
   fact changes, fix it in place and bump `verified:`; do not append history.
 - `docs/design/decisions/NNNN-*.md` and `docs/design/proposals/NNNN-*.md`: no frontmatter; the `Date:`
