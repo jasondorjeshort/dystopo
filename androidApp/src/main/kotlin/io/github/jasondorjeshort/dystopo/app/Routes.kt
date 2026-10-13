@@ -25,6 +25,8 @@ import java.io.File
  *   `map.lastScreenshotIdle` says whether it settled, `map.lastScreenshot` how (rounds, changed share, ms).
  * Debug routes run on their own small thread pool, so they answer while tiles are generating ([LocalServer]).
  * - `GET /camera`; `POST /camera` with query parameters or a JSON body: lat, lon, zoom, bearing, tilt.
+ *   T93: `POST /camera/recenter` (the recentre button's tap) and the button's state in `GET /camera`
+ *   ([io.github.jasondorjeshort.dystopo.app.controls.ControlRoutes]).
  * - `GET /stats`: tiles served per source, contour generation timings (min/avg/max and recent tiles),
  *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes.
  * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; the puck shows it and the
@@ -94,11 +96,11 @@ class Routes(private val app: DystopoApp) {
         RouteRoutes.handle(app, r)?.let { return it } // T45: /route, /route/status, /route/build, /route/longpress, /route/save, /route/gpx
         io.github.jasondorjeshort.dystopo.app.update.UpdateRoutes.handle(app, r)?.let { return it } // T83: /update, /update/check, /update/install
         io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.handle(app, r)?.let { return it } // T75: /areas, /areas/download, /areas/trim, /areas/prefetch
+        io.github.jasondorjeshort.dystopo.app.controls.ControlRoutes.handle(app, r)?.let { return it } // T93: GET /camera, POST /camera/recenter
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
             "GET" to "/features", "GET" to "/features/text", "GET" to "/labels" -> FeatureRoutes(app).handle(r)
-            "GET" to "/camera" -> Response.json(app.map.camera())
             "POST" to "/camera" -> {
                 val p = params(r)
                 Response.json(app.map.setCamera(p.d("lat"), p.d("lon"), p.d("zoom"), p.d("bearing"), p.d("tilt")))

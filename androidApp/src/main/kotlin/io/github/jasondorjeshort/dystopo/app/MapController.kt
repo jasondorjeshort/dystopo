@@ -536,6 +536,46 @@ class MapController {
         )
     }
 
+    // ---- T93: recentre on the current fix (the map screen's bullseye button, POST /camera/recenter) ----
+    @Volatile var recenters = 0L
+        private set
+
+    /**
+     * Centres the camera on [lastLocation] at the current zoom, bearing and tilt (the orientation is never
+     * changed here; see controls/Recenter). [animateMs] 0 moves at once. [done] runs on the main thread once
+     * the camera is there (or the move was cancelled by a gesture). Returns the fix used, null when there is none.
+     */
+    fun recenter(animateMs: Int = 300, done: () -> Unit = {}): Location? {
+        val fix = lastLocation ?: return null
+        main.post {
+            val m = map ?: return@post done()
+            val update = CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder(m.cameraPosition).target(LatLng(fix.latitude, fix.longitude)).build(),
+            )
+            lastCameraAt = SystemClock.elapsedRealtime()
+            recenters++
+            if (animateMs <= 0) {
+                m.moveCamera(update)
+                done()
+            } else {
+                m.easeCamera(update, animateMs, object : MapLibreMap.CancelableCallback {
+                    override fun onFinish() = done()
+                    override fun onCancel() = done()
+                })
+            }
+        }
+        return fix
+    }
+
+    /** Screen distance (px) of the last fix from the map view's centre; null without a fix or a map. */
+    fun fixOffsetPx(): Double? = onMain {
+        val m = map ?: return@onMain null
+        val v = mapView ?: return@onMain null
+        val fix = lastLocation ?: return@onMain null
+        val p = m.projection.toScreenLocation(LatLng(fix.latitude, fix.longitude))
+        Math.hypot((p.x - v.width / 2f).toDouble(), (p.y - v.height / 2f).toDouble())
+    }
+
     // ---- T61: camera modes for navigation (driven by nav/NavSession) ----
     enum class CameraMode { FREE, FOLLOW, HEADING_UP }
 

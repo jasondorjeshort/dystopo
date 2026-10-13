@@ -2,7 +2,7 @@
 date: 2026-10-13
 kind: feature
 status: planned
-pipeline: T93 (the plain button, wave 13); the three-state logic is a later wave
+pipeline: T93 built the plain button (wave 13: `controls/Recenter.kt`, `RecenterButton.kt`; the seam is `Recenter.Orientation`, NORTH_UP only); the three-state logic is a later wave
 related: [2026-10-13-map-scale-bar.md, 2026-10-13-turn-directions.md]
 ---
 
