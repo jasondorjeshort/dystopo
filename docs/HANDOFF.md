@@ -38,4 +38,3 @@ the `handoff` skill at the end of every session and before any stop.
 ## Open findings
 
 - `docs/findings/2026-10-10-emulator-share-direct-connect.md` (T78 on real phones; the slow-path cut too).
-- `docs/findings/2026-10-13-inherited-pipe-handles.md` (resolved in T87; watch for other scripts).
