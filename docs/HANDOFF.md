@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-13, at commit 58d7a7f, by main session (session 7b335a00)
+Updated: 2026-10-13, at commit ca01726, by main session (session 7b335a00)
 Resume: this file, then `docs/reference/machines.md` (the owner's account `Dorje` coordinates again:
 checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` skill; rewrite with the
 `handoff` skill at the end of every session and before any stop.
@@ -15,6 +15,11 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
   land uncommitted under `docs/design/proposals/` and in the Hatchery clone). T94 merged and logged
   (PR #90; its Hatchery PR #1 awaits the owner) and T93 merged (PR #91, the bullseye button); the
   critic reviews are in; T95 (pinned tiles vs. version bumps) waits for T90 and T91.
+- **Weekly limit hit ~22:30 UTC (429, resets Oct 16 00:00 New York):** the T91 and T92 agents died
+  mid-task (work committed as they went in `dystopo-wt\T91` and `T92`, no PR yet; T91 was in the
+  sweep's upgrade part, T92 writing doc edits); T88, T89, T90 fail at their next call unless extra
+  usage (credits) is enabled on the account. Resume each dead agent by message, or relaunch a fresh
+  implementer on its worktree with "continue from the branch" in the brief.
 
 ## Next
 
