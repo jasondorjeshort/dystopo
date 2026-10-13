@@ -3,8 +3,9 @@
 A map of the system as built, with pointers to where each piece is documented in more depth. Design history and
 measurements are in [PLANNING.md](PLANNING.md) (the dated development log at the end records every merged task);
 the task board with ownership and follow-ups is [TASKS.md](TASKS.md); the server is in [SERVER.md](SERVER.md);
-commands, endpoints and the agent workflow are in [CLAUDE.md](../CLAUDE.md); one line per merged task is in
-[CHANGELOG.md](../CHANGELOG.md). Releases: tag-driven drafts from `.github/workflows/release.yml`, verified from the draft and published by hand per the Publishing paragraph in CLAUDE.md; the first public build was v0.1.2-alpha (2026-10-10).
+the agent workflow's rules are in [CLAUDE.md](../CLAUDE.md), commands and endpoints in [reference/](reference/README.md),
+decisions in [design/decisions/](design/decisions/README.md); one line per merged task is in
+[CHANGELOG.md](../CHANGELOG.md). Releases: tag-driven drafts from `.github/workflows/release.yml`, verified from the draft and published by hand per the `release` skill (`.claude/skills/release/`, policy in ADR 0024); the first public build was v0.1.2-alpha (2026-10-10).
 
 ## Modules
 
@@ -65,8 +66,15 @@ the release smoke tour through a deep link, and the sync simulator. CI runs the 
 
 ## Where each topic is documented
 
-- Commands and endpoints, agent workflow, privacy and licence rules: `CLAUDE.md`.
-- Design decisions and the dated log of every task with measurements: `docs/PLANNING.md`.
+- Rules for agents (workflow, privacy, licences, debugging before a PR), with pointers: `CLAUDE.md`.
+- Where work stands now and next: `docs/HANDOFF.md` (imported into every session).
+- Commands, debug routes, emulators, this machine's paths and ports, Windows quirks: `docs/reference/` (index `docs/reference/README.md`, one topic per file with a `verified:` date).
+- Decisions (ADRs, from 0020): `docs/design/decisions/` (index in its README); proposals for major choices before they become ADRs: `docs/design/proposals/` (created with the first one).
+- Investigation results and incidents behind rules, dated and status-tagged: `docs/findings/` (index in its README).
+- Procedures (task briefs, the wave and merge sequence, sweeps, releases, the handoff, proposals, ADRs, findings): skills in `.claude/skills/` (index in its README).
+- Conventions that load only when matching files are edited (docs caps and indexes, Kotlin, the track database): `.claude/rules/`.
+- Hooks (usage gate, `git-guard`, `post-edit` doc checks; `node .claude/hooks/test-hooks.js`): `.claude/hooks/`, exceptions in ADR 0021. The privacy and commit-message git hooks: `tools/git-hooks/`.
+- Design detail and the dated log of every task with measurements: `docs/PLANNING.md`.
 - Task board, ownership, done criteria, follow-ups: `docs/TASKS.md`.
 - Server deployment, config keys, catalog, token, Docker: `docs/SERVER.md`.
 - Outdoors profile layers and fields: `tilebuild/PROFILE.md`.

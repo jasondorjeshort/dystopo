@@ -54,7 +54,7 @@
 # Data: the Rainier packs (rainier-dem, rainier-outdoors, rainier-osm .pmtiles). In the main checkout they are
 # out\ itself; in a worktree they are copied (never linked) from -DataDir, default the main checkout's out\.
 # Only those three files are copied, so packs of other places in the main out\ never reach a worktree.
-# DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in CLAUDE.md.
+# DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in docs/reference/machines.md.
 param(
     [string]$Date = (Get-Date -Format 'yyyyMMdd-HHmm'),
     [string]$Out = '',

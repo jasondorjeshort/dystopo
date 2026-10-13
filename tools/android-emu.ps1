@@ -37,7 +37,7 @@
 # Needs tools\android-sdk.ps1 first. The AVD lives under -AvdHome (default ANDROID_AVD_HOME, else <sdk>\avd);
 # each takes about 6 GB, so put several on a big disk. -Stop -Delete removes the AVD after stopping it.
 # The emulator needs CPU virtualization: Windows Hypervisor Platform (WHPX) or the Android Emulator
-# hypervisor driver (AEHD); both need an administrator once (see CLAUDE.md > Android). Without either the
+# hypervisor driver (AEHD); both need an administrator once (see docs/reference/android-emulator.md). Without either the
 # script stops with instructions: x86_64 images under pure software emulation (-accel off) start QEMU but
 # never run the guest on emulator 37 (tested 2026-10), and ARM images are refused on x86_64 hosts.
 # -Accel off still tries, for experiments. -Gpu picks the emulator GPU at boot (default: host when there is a

@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
  * after an update, and checks nothing is lost.
  *
  * It also writes the current schema to `build/trackdb/<version>.sql`: before changing Track.sq,
- * copy that file to `src/commonMain/sqldelight/databases/` (see CLAUDE.md).
+ * copy that file to `src/commonMain/sqldelight/databases/` (see .claude/rules/trackdb.md).
  */
 class TrackDbMigrationTest {
     private val frozenDir = File("src/commonMain/sqldelight/databases")

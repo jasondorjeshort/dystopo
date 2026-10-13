@@ -4,6 +4,8 @@
 A topographic map and backcountry navigation system. Reference apps: BackCountry Navigator, Gaia GPS, CalTopo (app + web).
 Android first. Designed to grow into a full-stack system: a sync server, then desktop and iOS clients.
 
+**Where decisions and facts live (since T84, 2026-10-12).** This file keeps the design detail, the measurements and the dated log. Decisions are recorded as ADRs in [`design/decisions/`](design/decisions/README.md): the Hatchery alignment and why this file stays whole (0020), the git guard (0021), [Units](#units-decided-2026-10-10) (0022), no Wi-Fi gates (0023), publishing and the beta path (0024), the [Design goals](#design-goals-set-2026-10-10-one-data-path-online-and-offline-precaching-long-routes-sharing-on-a-trip) (0025), the coordinator's own hands (0026), T75's area manifest (0027) and T77's long-distance router (0028); a new decision gets an ADR and the section here points at it. Facts about commands, routes and this machine are in [`reference/`](reference/README.md), investigation results in [`findings/`](findings/README.md).
+
 ## Hard requirements
 - **Offline-first.** Everything works with no connection; going online only adds things (sync, fresh tiles, sharing).
 - **Distributed communication.** All modules (phone, server, future desktop and iOS clients) exchange data through one well-defined sync protocol. The server is a peer that is always on, not the single source of truth.

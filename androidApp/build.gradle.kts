@@ -30,7 +30,7 @@ android {
     }
 
     // T55: the release key comes from tools/release.properties (gitignored, like tools/release.keystore; the
-    // keytool command and the file's four keys are in CLAUDE.md > Release). Without it, release builds are
+    // keytool command and the file's four keys are in docs/reference/android-release.md). Without it, release builds are
     // signed with the debug key so `assembleRelease` still gives an installable APK on any machine.
     val releaseProps = rootProject.file("tools/release.properties").takeIf { it.isFile }?.let { f ->
         Properties().apply { f.inputStream().use { load(it) } }

@@ -90,7 +90,7 @@ sqldelight {
         create("TrackDb") {
             packageName.set("io.github.jasondorjeshort.dystopo.store.db")
             // Migrations (T40): `<n>.sqm` beside Track.sq upgrades schema version n to n + 1 (see
-            // CLAUDE.md, Track database migrations). SQLDelight checks a .sqm only against a frozen .db
+            // .claude/rules/trackdb.md). SQLDelight checks a .sqm only against a frozen .db
             // in the source set (impossible on Windows, below); with no .db it would see an empty
             // schema and reject every ALTER, so its check is off and TrackDbMigrationTest does the work.
             verifyMigrations.set(false)

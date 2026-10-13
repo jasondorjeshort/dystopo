@@ -30,8 +30,10 @@ the same for people:
 - **Merges are squashed**, and the maintainer records each one in the Phase 0 log in
   [docs/PLANNING.md](docs/PLANNING.md) with what was measured and what is left. [CHANGELOG.md](CHANGELOG.md) is
   the one-line-per-task summary of that log.
-- **Design decisions** live in [docs/PLANNING.md](docs/PLANNING.md); commands and conventions in
-  [CLAUDE.md](CLAUDE.md) (written for agents, useful for people).
+- **Design decisions** live in [docs/PLANNING.md](docs/PLANNING.md) and, as records, in
+  [docs/design/decisions/](docs/design/decisions/README.md); commands, routes and setup in
+  [docs/reference/](docs/reference/README.md); the rules in [CLAUDE.md](CLAUDE.md) (written for agents,
+  useful for people).
 
 ## Building and testing
 

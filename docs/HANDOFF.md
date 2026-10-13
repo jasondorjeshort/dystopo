@@ -2,6 +2,8 @@
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-10-12 (night), by main session
+Resume: this file, then `docs/reference/machines.md` (paths, ports, servers) and the `wave` skill;
+rewrite it with the `handoff` skill at the end of every session and before any stop.
 
 ## Now
 
@@ -31,10 +33,8 @@ Updated: 2026-10-12 (night), by main session
 
 ## Open findings
 
-- CI's build job downloads every glyph range from protomaps.github.io on each run (no cache step
-  for `cache/glyphs`; `androidApp/build.gradle.kts` lines 143-157), so a remote 503 fails CI on a
-  docs-only commit (b9aa668, 2026-10-13; rerun green). Next sweep task: an `actions/cache` step on
-  `cache/glyphs` keyed by the font and range list, or a retry in the task.
-- For the next sweep task too: Hawaii z9 contour tiles 500 on main (T74); the first-launch
-  `NavSession.getUi` snapshot crash (T75's verifier); Flevoland unfit as a contour check.
+- `docs/findings/2026-10-12-ci-glyph-download.md` (next sweep task: cache `cache/glyphs` in CI).
+- `docs/findings/2026-10-12-hawaii-z9-contours-500.md` (next sweep task; also Flevoland).
+- `docs/findings/2026-10-10-emulator-share-direct-connect.md` (matters for T78 on real phones).
+- The first-launch `NavSession.getUi` crash is T86 on the board.
 - Hatchery proposal 0003 (wave workflow) awaits a critic pass; see `../hatchery/docs/HANDOFF.md`.

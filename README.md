@@ -77,7 +77,7 @@ and output goes to `out/`.
 
 Then open http://localhost:8687/ for the live viewer: pan anywhere, and the elevation and base map are fetched
 and rendered on demand (the first view of a new place takes 10 to 30 s; after that it is cached). The panel builds
-a pack of the visible box. All commands: `./gradlew :devtool:run --args="--help"`, and [CLAUDE.md](CLAUDE.md).
+a pack of the visible box. All commands: `./gradlew :devtool:run --args="--help"`, and [docs/reference/devtool-commands.md](docs/reference/devtool-commands.md).
 
 ### Server
 
@@ -123,7 +123,7 @@ first start has no map yet and says so, with ways to get one, all in the app:
   the same for the debug build.
 
 Build packs with the live viewer's "Build pack here", the server's `/build`, or `devtool tiles` and `tilebuild`
-(see CLAUDE.md). `tools\android-emu.ps1 -Build` boots a headless emulator, installs the debug app and pushes the
+(see [docs/reference/](docs/reference/README.md)). `tools\android-emu.ps1 -Build` boots a headless emulator, installs the debug app and pushes the
 Rainier pack in one step.
 
 ## Installing on a phone
@@ -149,7 +149,7 @@ Rainier pack in one step.
 - [docs/PLANNING.md](docs/PLANNING.md): design, decisions and the development log with measurements.
 - [docs/TASKS.md](docs/TASKS.md): the task board.
 - [docs/SERVER.md](docs/SERVER.md): running the server.
-- [CLAUDE.md](CLAUDE.md): every command and convention (written for the coding agents that build most of Dystopo).
+- [CLAUDE.md](CLAUDE.md): the rules for the coding agents that build most of Dystopo; every command, route and setup step is in [docs/reference/](docs/reference/README.md), the decisions in [docs/design/decisions/](docs/design/decisions/README.md).
 - [CONTRIBUTING.md](CONTRIBUTING.md): how work is done here, privacy and licence rules.
 - [CHANGELOG.md](CHANGELOG.md): what has been merged.
 

@@ -414,7 +414,7 @@ Measured (T75, 2026-10-12, emulator against `devtool serve --live` on the same h
 Point trip (the route of `skyline-loop.gpx`, 2.5 km, 550 m buffer, z8 to z15) is 236 tiles estimated at 29.6 MB;
 the phone fetched 180 of them (18.1 MB, 56 were already cached) in 19 s.
 
-How the phone uses it: CLAUDE.md, Android (areas of interest); in short, `pack` items go through the
+How the phone uses it: docs/reference/android-debug-routes.md (Areas of interest); in short, `pack` items go through the
 catalog downloader (resumable, SHA-256 checked, installed only when every archive verifies), `tiles` items
 through the online tile fetcher into the tile cache (tiles already cached or in a pack are skipped, so a
 second run resumes; a DEM tile that is not a PNG is dropped and counted), and the area's tiles are pinned
