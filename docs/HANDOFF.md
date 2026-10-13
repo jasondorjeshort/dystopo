@@ -13,7 +13,8 @@ the `handoff` skill at the end of every session and before any stop.
   the workflow, verified from the draft: certificate, hashes, upgrade from 0.1.4, features).
 - Servers on this account: live viewer 8765 (installed distribution, no Gradle daemon) and the
   standalone server 8800 (no token, LAN 192.168.12.186); PIDs in `out/coordinator-pids.txt`.
-- Hatchery is two commits ahead of its origin (0ce6670, 3e55be3), unpushed by its rule.
+- Hatchery `main` is pushed (29728cd: the delegation rule, proposal 0005, the long-path
+  finding, and a review fix), verified from its remote on 2026-10-13.
 
 ## Next
 
@@ -29,8 +30,8 @@ the `handoff` skill at the end of every session and before any stop.
 
 ## Waiting on user
 
-- `gh auth refresh -h github.com -s workflow` on this account; the word to push Hatchery `main`;
-  copying `devtool.local.json` here; whether the two second-account commits on main get rewritten.
+- The `gh auth refresh -s workflow` device-code step in the browser; copying `devtool.local.json`
+  here; whether the two second-account commits on main get rewritten.
 - Google developer registration (publisher verification) before many people install.
 - A real walk with GPS on and the screen off on mobile data, on the owner's phone.
 
