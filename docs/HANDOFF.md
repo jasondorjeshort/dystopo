@@ -8,18 +8,13 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
 
 ## Now
 
-- Wave 13 launched 2026-10-13 ~21:00 UTC in one batch (session resumed with
-  `DYSTOPO_GATE_OVERRIDE=1`, owner's word: weekly budget ignored, 5-hour window at 14% at launch):
-  implementers T88 to T94 (Opus), a Haiku chore (rerun of CI run 38462712750, live viewer on 8765,
-  PID to `out/coordinator-pids.txt`), a critic on ADRs 0027/0028 and Hatchery 0003/0005 (reviews
-  land uncommitted under `docs/design/proposals/` and in the Hatchery clone). T94 merged and logged
-  (PR #90; its Hatchery PR #1 awaits the owner) and T93 merged (PR #91, the bullseye button); the
+- Wave 13 launched 2026-10-13 ~21:00 UTC in one batch (`DYSTOPO_GATE_OVERRIDE=1`, owner's word:
+  weekly budget ignored): T88 to T94, a chore (live viewer on 8765, PID in `out/coordinator-pids.txt`),
+  a critic. Merged and logged: T94 (PR #90; Hatchery PR #1 awaits the owner), T93 (PR #91). The
   critic reviews are in; T95 (pinned tiles vs. version bumps) waits for T90 and T91.
-- **Weekly limit hit ~22:30 UTC (429, resets Oct 16 00:00 New York):** the T91 and T92 agents died
-  mid-task (work committed as they went in `dystopo-wt\T91` and `T92`, no PR yet; T91 was in the
-  sweep's upgrade part, T92 writing doc edits); T88, T89, T90 fail at their next call unless extra
-  usage (credits) is enabled on the account. Resume each dead agent by message, or relaunch a fresh
-  implementer on its worktree with "continue from the branch" in the brief.
+- **Weekly limit hit ~22:30 UTC (429, resets Oct 16 00:00 New York):** T91 and T92 died mid-task
+  (6 and 9 commits on their branches in `dystopo-wt\`, no PR); T88, T89, T90 fail at their next call
+  unless extra usage is enabled. Resume a dead agent by message, or relaunch on its branch.
 
 ## Next
 
