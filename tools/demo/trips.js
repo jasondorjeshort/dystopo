@@ -17,7 +17,11 @@
 // only; "Send to server" retries, ".dsync" saves the same bundle as a file the phone can sync with. A phone syncing
 // with the server then has the trip in its Routes list.
 //
-// window.dystopoTrips is the scripting surface (tools/demo-check.py --route drives the real mouse and reads it).
+// Long drives (T77): the server plans across every pack near the route, searching the tiles away from the ends through
+// its drive overlay; the card then says how many packs the route crossed and how long the server took
+// (`longRoute` in state()). Before navigating such a route offline the phone downloads its corridor (T75).
+//
+// window.dystopoTrips is the scripting surface (tools/demo-check.py --route and --long-route drive the real mouse and read it).
 
 const KEY = "dystopo.trips";
 
@@ -158,6 +162,10 @@ export function install({ map, base, units, panel, token }) {
     if (msgs.drive_unsupported) notes.push(msgs.drive_unsupported); // T73: the pack predates the road data
     else if (reply.mode === "drive" && reply.notes.length) for (const n of reply.notes) if (msgs[n]) notes.push(msgs[n]);
     if (reply.notice) notes.push(reply.notice);
+    const long = longRoute(reply);
+    if (long && (long.packs.length > 1 || long.overlayTiles > 0)) // T77: a long route across packs
+      notes.push("planned by the server across " + long.packs.length + (long.packs.length === 1 ? " pack" : " packs") + " (" + long.packs.join(", ") + ") in " +
+                 (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? ", " + long.overlayTiles + " tiles through the drive overlay" : ""));
     $("trip-notes").textContent = notes.join("; ");
     drawProfile(s.profile);
     card.hidden = false;
@@ -364,10 +372,19 @@ export function install({ map, base, units, panel, token }) {
       saved: !!st.id && st.savedPath === (st.reply && st.reply.path), lastPush: st.lastPush,
       route: st.reply && { pack: st.reply.pack, via: st.reply.via, legs: st.reply.legs.map(l => l.kind), notes: st.reply.notes, messages: st.reply.messages, notice: st.reply.notice, mode: st.reply.mode, path: st.reply.path,
                            summary: Object.fromEntries(Object.entries(st.reply.summary).filter(([k]) => k !== "profile")), profileSamples: st.reply.summary.profile.length,
-                           middle: middle(st.reply) },
+                           middle: middle(st.reply), longRoute: longRoute(st.reply) },
       markers: markers.map(m => { const p = m.getLngLat(); return [p.lat, p.lng]; }),
     }),
   };
+  // T77: which packs the server planned over (those whose graphs it opened), its time, and the overlay tiles its searches used.
+  function longRoute(reply) {
+    const g = reply && reply.graph;
+    if (!g) return null;
+    const searches = g.searches || [];
+    return { packs: (g.graphs || []).map(x => x.pack), ms: reply.ms, searches: searches.length,
+             overlayTiles: searches.reduce((n, x) => n + (x.overlayTiles || 0), 0), searchMs: searches.reduce((n, x) => n + (x.ms || 0), 0),
+             tiles: searches.reduce((n, x) => n + (x.tiles || 0), 0), expanded: searches.reduce((n, x) => n + (x.expanded || 0), 0) };
+  }
   // The route's middle point [lat, lon] (by point count; for scripted clicks on the line).
   const middle = reply => { const all = reply.legs.flatMap(l => l.coordinates); const c = all[Math.floor(all.length / 2)]; return c ? [c[1], c[0]] : null; };
   const pushText = p => p.ok ? "sent to the server (" + p.applied + " new of " + p.received + " ops)" : "kept in this browser only: " + p.error;

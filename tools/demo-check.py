@@ -214,6 +214,63 @@ def check_route(page, spec, shot, timeout, mode=""):
     return out
 
 
+def check_long_route(page, spec, shot, timeout, mode="drive", max_ms=10000, min_packs=2):
+    """T77: a long route in the trip editor (live mode). `spec` is `lat,lon;lat,lon`: fit both on screen, click the
+    start and the end with "Plan route" on (mode `mode`, default drive), wait for the route, and check that every leg
+    follows the network (no straight leg, no notes), that the server planned it across at least `min_packs` packs
+    in under `max_ms` (its `ms`, which includes opening or building the packs' graphs), and that the line is drawn;
+    screenshot `shot`. Returns a report with `ok`."""
+    pts = [tuple(float(v) for v in p.split(",")) for p in spec.split(";") if p.strip()]
+    out = {"ok": False, "spec": spec, "mode": mode, "maxMs": max_ms, "minPacks": min_packs, "screenshot": shot}
+    try:
+        page.wait_for_function("() => window.dystopoTrips", timeout=timeout * 1000)
+        page.evaluate("() => window.dystopoTrips.clear && window.dystopoTrips.clear()")
+        a, b = pts[0], pts[1]
+        page.evaluate("""([a, b]) => map.fitBounds([[Math.min(a[1], b[1]), Math.min(a[0], b[0])], [Math.max(a[1], b[1]), Math.max(a[0], b[0])]],
+                         { padding: { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
+        page.wait_for_timeout(800)
+        page.select_option("#trip-mode", mode)
+        if not page.evaluate("() => window.dystopoTrips.state().planning"):
+            page.click("#trip-plan")
+        box = page.evaluate("() => { const r = map.getCanvas().getBoundingClientRect(); return [r.left, r.top]; }")
+        px = lambda p: [v + o for v, o in zip(page.evaluate("p => { const q = map.project([p[1], p[0]]); return [q.x, q.y]; }", list(p)), box)]
+        t0 = time.time()
+        for p in (a, b):
+            page.mouse.click(*px(p))
+            page.wait_for_timeout(150)
+        s = page.evaluate("() => window.dystopoTrips.idle()")
+        r = s["route"]
+        if not r:
+            raise RuntimeError("no route after two clicks: " + str(s.get("error")))
+        long = r.get("longRoute") or {}
+        out.update(seconds=round(time.time() - t0, 2), pack=r["pack"], legs=r["legs"], notes=r["notes"], messages=r.get("messages"),
+                   summary=r["summary"], longRoute=long, cardNotes=page.inner_text("#trip-notes"))
+        page.wait_for_timeout(1500)
+        page.screenshot(path=shot)
+        drawn = page.evaluate("() => map.queryRenderedFeatures({ layers: ['trip-line'] }).length")
+        out["drawn"] = drawn
+        problems = []
+        if r.get("mode") != mode:
+            problems.append("planned in %s" % r.get("mode"))
+        if any(k != "trail" for k in r["legs"]) or r["notes"]:
+            problems.append("a straight leg: %s" % (r.get("messages") or r["notes"]))
+        if len(long.get("packs") or []) < min_packs:
+            problems.append("planned over %s, fewer than %d packs" % (long.get("packs"), min_packs))
+        if (long.get("ms") or 0) > max_ms:
+            problems.append("the server took %s ms" % long.get("ms"))
+        if drawn == 0:
+            problems.append("no route line drawn")
+        out["problems"] = problems
+        out["ok"] = not problems
+    except Exception as e:  # report, do not crash the tour
+        out["error"] = str(e)[:500]
+        try:
+            page.screenshot(path=shot)
+        except Exception:
+            pass
+    return out
+
+
 def not_idle_because(state, v):
     """Why a view did not count as idle: the MapLibre flags that were false, or the zoom still moving."""
     if not state:
@@ -239,6 +296,10 @@ def main() -> int:
                          "each miss is listed under notIdle, and a view that never goes idle still fails")
     ap.add_argument("--channel", default="chrome", help="playwright browser channel; use '' for bundled chromium")
     ap.add_argument("--route-mode", default="", choices=["", "hike", "bike", "drive"], help="T73: the trip editor's mode for --route (default: the page's, hike)")
+    ap.add_argument("--long-route", default="", help="T77, live mode: after the views (and --route), plan lat,lon;lat,lon in the trip editor "
+                    "(--route-mode, default drive) and check it follows the network across at least --long-route-packs packs in under --long-route-ms (check_long_route)")
+    ap.add_argument("--long-route-ms", type=int, default=10000, help="T77: the server's time limit for --long-route, ms (default 10000)")
+    ap.add_argument("--long-route-packs", type=int, default=2, help="T77: how many packs --long-route must cross (default 2)")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
 
@@ -379,6 +440,11 @@ def main() -> int:
             route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout, args.route_mode)
             errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
             reports[-1].update(route=route, ok=reports[-1]["ok"] and route["ok"] and not errors)
+        if args.long_route:
+            lr = check_long_route(page, args.long_route, f"{stem}-long-route{ext}", args.timeout, args.route_mode or "drive",
+                                  args.long_route_ms, args.long_route_packs)
+            errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
+            reports[-1].update(longRoute=lr, ok=reports[-1]["ok"] and lr["ok"] and not errors)
         browser.close()
 
     if tour:

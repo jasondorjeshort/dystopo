@@ -18,13 +18,19 @@ import kotlin.math.min
  * [GraphPieces.JOIN_M] away.
  */
 class GraphPiece(
-    /** Which graph file the piece came from (index in the [GraphPieces] it was loaded by). */
+    /**
+     * Which graph file the piece came from: its index in the [GraphPieces] that first loaded it. A shared
+     * [GraphTileCache] hands the same piece to later routers whose lists may be ordered differently, so
+     * the router tells files apart by [RoutingGraph.source] (T77), not by this index.
+     */
     val archive: Int,
     val x: Int,
     val y: Int,
     val graph: RoutingGraph,
     /** Zoom of the borders whose nodes may continue elsewhere; negative for a piece that is the whole network. */
     private val joinZoom: Int,
+    /** T77: set on a [DriveOverlay] piece (its edges are shortcuts through the tile, priced and expanded by it). */
+    val overlay: DriveOverlay.Overlay? = null,
 ) {
     /** Nodes that may continue in another piece. */
     val boundary: BooleanArray by lazy {
@@ -97,6 +103,15 @@ interface GraphPieces {
 
     /** The pieces of tile ([x], [y]) from every graph that has one there (loads them; may be empty). */
     fun pieces(x: Int, y: Int): List<GraphPiece>
+
+    /**
+     * T77: which graphs have tile ([x], [y]), as (index, source), without loading it; null when this
+     * source cannot tell (then [pieces] is the way to know).
+     */
+    fun sources(x: Int, y: Int): List<Pair<Int, GraphSource>>? = null
+
+    /** T77: the piece of graph [index] at tile ([x], [y]), loading only that one; null when absent. */
+    fun piece(index: Int, x: Int, y: Int): GraphPiece? = pieces(x, y).firstOrNull { it.archive == index }
 
     /** Tiles at [tileZoom] that may hold network within the box, as (x, y). */
     fun tilesIn(west: Double, south: Double, east: Double, north: Double): List<Pair<Int, Int>> {
@@ -224,6 +239,10 @@ class TiledGraph(val archives: List<GraphTileArchive>, val cache: GraphTileCache
     override val isEmpty: Boolean get() = archives.all { it.entries.isEmpty() }
 
     override fun pieces(x: Int, y: Int): List<GraphPiece> = archives.withIndex().mapNotNull { (i, a) -> cache.get(a, i, x, y) }
+
+    override fun sources(x: Int, y: Int): List<Pair<Int, GraphSource>> = archives.withIndex().filter { (_, a) -> a.has(x, y) }.map { (i, a) -> i to a.source }
+
+    override fun piece(index: Int, x: Int, y: Int): GraphPiece? = archives.getOrNull(index)?.let { cache.get(it, index, x, y) }
 
     /** Whole-network figures: what keeping every tile in memory would take (the T76 comparison). */
     fun wholeBytes(): Long = archives.sumOf { a -> a.entries.sumOf { e -> a.tile(e.x, e.y)?.let { g -> g.adjStart; g.nearest(0.0, 0.0, 1.0); g.approxBytes() } ?: 0L } }

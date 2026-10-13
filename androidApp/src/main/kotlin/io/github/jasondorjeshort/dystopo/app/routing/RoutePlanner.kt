@@ -16,6 +16,9 @@ import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.pmtiles.Compression
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
+import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
+import io.github.jasondorjeshort.dystopo.routing.FallbackRouter
+import io.github.jasondorjeshort.dystopo.routing.RemoteRouter
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.GraphTileCache
 import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
@@ -47,6 +50,11 @@ import java.util.concurrent.TimeUnit
  * demand into one LRU ([tileCache]), so a route reads only the tiles around it and crosses from one
  * pack into the next where their trails meet. No pack is special: the primary pack only orders the
  * builds (it goes first) and names the state [ensure] returns.
+ *
+ * T77: drives of 40 km or more search the tiles away from their ends through the [driveOverlay]; and when
+ * a server is set (`server` setting), a route with an end beyond every pack on the device is asked of the
+ * server ([RemoteRouter] behind a [FallbackRouter]): the phone keeps the answer as geometry, and the trip's
+ * corridor download (T75) makes it work offline. Ends inside the packs never go to the server.
  *
  * Saved routes are GPX files in `files/routes/`, one route each, named after the route and its id.
  */
@@ -98,6 +106,33 @@ object RoutePlanner {
 
     /** T76: decoded graph tiles of every pack, least recently used dropped past the cap. */
     val tileCache = GraphTileCache(GraphTileCache.DEFAULT_MAX_BYTES) { block -> synchronized(this) { block() } }
+
+    /** T77: overlay cells for long drives over the packs on the device, built as drives reach them. */
+    val driveOverlay = DriveOverlay(lock = { block -> synchronized(tileCache) { block() } }, clock = { SystemClock.elapsedRealtime() })
+
+    /** T77: the server router for the configured server (null when none is set), rebuilt when the setting changes. */
+    @Volatile private var remote: RemoteRouter? = null
+
+    private fun remote(): RemoteRouter? {
+        val s = AppSettings.server.trim().trimEnd('/')
+        if (!s.startsWith("http://") && !s.startsWith("https://")) return null
+        remote?.takeIf { it.server == s }?.let { return it }
+        return RemoteRouter(s, ::httpGet) { SystemClock.elapsedRealtime() }.also { remote = it }
+    }
+
+    /** GET through the cleartext policy (T79: plain http only to home-network hosts), for [RemoteRouter]. */
+    private fun httpGet(url: String): Pair<Int, String> {
+        val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url)
+        conn.connectTimeout = 5_000
+        conn.readTimeout = 90_000 // a server builds a pack's graph on its first route there
+        try {
+            val status = conn.responseCode
+            val text = (if (status < 400) conn.inputStream else conn.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
+            return status to text
+        } finally {
+            conn.disconnect()
+        }
+    }
 
     /** The state the worker is loading or building now, else the last one it handled (the progress line). */
     @Volatile var current: State? = null
@@ -236,8 +271,16 @@ object RoutePlanner {
             if (s.archive == null && left > 0) s.finished.await(left, TimeUnit.MILLISECONDS)
         }
         val ready = wanted.filter { it.archive != null }
-        if (ready.isEmpty()) throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
-        return Measured(TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache)))
+        val server = remote()
+        if (ready.isEmpty()) {
+            // T77: no pack here (or none on the device): the server plans it when one is set.
+            if (server != null) return Measured(FallbackRouter(null, server) { _, _ -> false })
+            throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
+        }
+        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay)
+        if (server == null) return Measured(local)
+        val boxes = states.values.map { it.bounds }
+        return Measured(FallbackRouter(local, server) { lat, lon -> boxes.any { b -> lon in b[0]..b[2] && lat in b[1]..b[3] } })
     }
 
     /** Keeps the memory figures of the last route found, for `/route/status`. */
@@ -274,7 +317,15 @@ object RoutePlanner {
                 linkedMapOf("pack" to r.name, "status" to "idle", "file" to f.path, "bytes" to f.takeIf { it.isFile }?.length(), "decoder" to TileService.decoderName) // T57
             }
         }
-        return LinkedHashMap(each.first()) + linkedMapOf("packs" to each, "tileCache" to tileCache.json(), "lastRoute" to lastRoute)
+        return LinkedHashMap(each.first()) + linkedMapOf(
+            "packs" to each, "tileCache" to tileCache.json(), "lastRoute" to lastRoute,
+            "driveOverlay" to driveOverlay.json(), "remote" to remoteJson(), // T77
+        )
+    }
+
+    /** T77: the server router: which server, how many requests, the last one (URL, status or error, ms). */
+    fun remoteJson(): Map<String, Any?> = remote().let { r ->
+        linkedMapOf("server" to r?.server, "requests" to r?.requests, "last" to r?.last)
     }
 
     /**

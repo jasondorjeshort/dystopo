@@ -200,6 +200,8 @@ enum class RouteFailure(val code: String) {
     NOT_CONNECTED("not_connected"),
     /** T73: drive mode on a pack built before its road data (one-ways, motor access, speed limits). */
     DRIVE_UNSUPPORTED("drive_unsupported"),
+    /** T77: the server a [RemoteRouter] asked did not answer or could not plan. */
+    REMOTE_UNAVAILABLE("remote_unavailable"),
 }
 
 /** A route found by [Router]: the [Route] (T24 model) and its numbers. */
@@ -328,7 +330,11 @@ fun Router(graph: RoutingGraph): Router = TileRouter(WholeGraph(graph))
  * separate networks fail when either search runs out of nodes, which takes as long as the smaller
  * of the two networks.
  */
-class TileRouter(val tiles: GraphPieces) : Router {
+class TileRouter(
+    val tiles: GraphPieces,
+    /** T77: the long-drive overlay; drives of [DriveOverlay.MIN_DISTANCE_M] or more search it between their end areas. */
+    val overlay: DriveOverlay? = null,
+) : Router {
     /** A snapped end: the piece it lies in and the snap on that piece's graph. */
     private class End(val piece: GraphPiece, val snap: EdgeSnap)
 
@@ -339,9 +345,21 @@ class TileRouter(val tiles: GraphPieces) : Router {
      * The pieces one route has asked for, each tile looked up once: the search holds these objects
      * whatever the shared cache evicts meanwhile, so a node is never met again in a reloaded copy.
      */
-    private class View(val tiles: GraphPieces) {
+    private class View(val tiles: GraphPieces, val overlay: DriveOverlay? = null, val detail: Set<Long> = emptySet()) {
         private val memo = HashMap<Long, List<GraphPiece>>()
-        fun pieces(x: Int, y: Int): List<GraphPiece> = memo.getOrPut((y.toLong() shl 32) or (x.toLong() and 0xFFFFFFFFL)) { tiles.pieces(x, y) }
+        var overlayTiles = 0
+            private set
+        fun pieces(x: Int, y: Int): List<GraphPiece> = tileKey(x, y).let { k ->
+            memo.getOrPut(k) {
+                // T77: away from the ends a tile one pack alone covers is searched through its overlay.
+                if (overlay == null || k in detail) return@getOrPut tiles.pieces(x, y)
+                val src = tiles.sources(x, y)
+                val o = if (src == null) overlay.piece(x, y, tiles.pieces(x, y))
+                else if (src.size == 1) overlay.piece(x, y, src[0].first, src[0].second) { tiles.piece(src[0].first, x, y) }
+                else null
+                if (o != null) { overlayTiles++; listOf(o) } else tiles.pieces(x, y)
+            }
+        }
     }
 
     override fun route(
@@ -349,8 +367,27 @@ class TileRouter(val tiles: GraphPieces) : Router {
         mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
     ): RouteResult {
         if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the pack has no trails or roads to route on")
-        val view = View(tiles)
         val model = CostModel(mode)
+        val long = overlay != null && mode == TravelMode.DRIVE &&
+            TrackStats.distanceM(fromLat, fromLon, toLat, toLon) >= DriveOverlay.MIN_DISTANCE_M
+        if (long) {
+            // T77: the tiles around both ends in full, the rest through the overlay; if that finds nothing, everything in full.
+            val near = maxOf(DriveOverlay.DETAIL_M, maxSnapM * 2)
+            val detail = HashSet<Long>()
+            for ((lat, lon) in listOf(fromLat to fromLon, toLat to toLon)) {
+                val b = TiledGraph.around(lat, lon, near)
+                for ((x, y) in tiles.tilesIn(b[0], b[1], b[2], b[3])) detail += tileKey(x, y)
+            }
+            val r = route(View(tiles, overlay, detail), model, fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
+            if (r !is RouteResult.Failed || r.reason != RouteFailure.NOT_CONNECTED) return r
+        }
+        return route(View(tiles), model, fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
+    }
+
+    private fun route(
+        view: View, model: CostModel, fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
+        mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
+    ): RouteResult {
         // T73: drive mode snaps only onto roads cars may use, in graphs built with the road data.
         val accept: ((GraphPiece, Int) -> Boolean)? = if (mode == TravelMode.DRIVE) { p, e -> p.graph.source.drive && model.usable(p.graph, e) } else null
         val s = snap(view, fromLat, fromLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
@@ -411,6 +448,8 @@ class TileRouter(val tiles: GraphPieces) : Router {
     )
 
     private fun stepCost(model: CostModel, p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
+        // T77: a shortcut is only ever travelled whole and forwards (the ends lie in tiles searched in full).
+        p.overlay?.let { o -> return if (f0 == 0.0 && f1 == 1.0) o.cost(e) else Double.POSITIVE_INFINITY }
         val g = p.graph
         val part = abs(f1 - f0)
         if (part == 0.0) return 0.0
@@ -494,7 +533,7 @@ class TileRouter(val tiles: GraphPieces) : Router {
                 if (p.boundary[n]) {
                     for (q in neighbourPieces(g.nodeLon[n], g.nodeLat[n])) {
                         if (q === p || !q.graph.source.drive) continue
-                        val lq = q.twin(g.nodeLon[n], g.nodeLat[n], tolerant = q.archive != p.archive)
+                        val lq = q.twin(g.nodeLon[n], g.nodeLat[n], tolerant = q.graph.source != p.graph.source)
                         if (lq >= 0) queue.addLast(q to lq)
                     }
                 }
@@ -609,7 +648,7 @@ class TileRouter(val tiles: GraphPieces) : Router {
                 val lat = g.nodeLat[lu]
                 for (q in neighbourPieces(lon, lat)) {
                     if (q === p || (drive && !q.graph.source.drive)) continue
-                    val lq = q.twin(lon, lat, tolerant = q.archive != p.archive)
+                    val lq = q.twin(lon, lat, tolerant = q.graph.source != p.graph.source)
                     if (lq >= 0) relax(d, base(q) + lq, du, u, -1)
                 }
             }
@@ -678,7 +717,14 @@ class TileRouter(val tiles: GraphPieces) : Router {
                 "tiles" to pieces.size, "graphBytes" to pieces.sumOf { it.graph.approxBytes() },
                 "searchBytes" to cap.toLong() * SEARCH_BYTES_PER_NODE, "searchNodes" to size,
             )
-            return RouteResult.Found(plan(model, steps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory))
+            if (view.overlay != null) memory["overlayTiles"] = view.overlayTiles // T77
+            val expandedSteps = ArrayList<Step>(steps.size)
+            for (st in steps) {
+                val o = st.piece.overlay
+                if (o == null) expandedSteps += st
+                else for ((e, fwd) in o.unpack(st.e)) expandedSteps += if (fwd) Step(o.base, e, 0.0, 1.0) else Step(o.base, e, 1.0, 0.0)
+            }
+            return RouteResult.Found(plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory))
         }
 
         /** The step that reached [v] in direction [d], in travel order; null for a twin. */
@@ -830,6 +876,8 @@ class TileRouter(val tiles: GraphPieces) : Router {
         const val E6 = 1e6
         /** Two directions of cost (8), parent (4), how (4) and closed (1), plus the potential (8). */
         const val SEARCH_BYTES_PER_NODE = 42L
+
+        fun tileKey(x: Int, y: Int): Long = (y.toLong() shl 32) or (x.toLong() and 0xFFFFFFFFL)
         /** T73: how many `destination` edges one end's zone may hold (a gated area's streets, a long private drive). */
         const val MAX_DESTINATION_EDGES = 5000
     }

@@ -459,24 +459,37 @@ graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), 
 whose box comes within 5 km of its points, so it crosses from one pack into the next (docs/PLANNING.md ›
 Routing). The routes are open (no token): they read packs and write nothing but the graph files.
 
-- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike][&pack=<name>][&snap=m]` (or
+**Long drives (T77).** Drives whose ends are 40 km or more apart search the tiles away from their ends through a
+drive overlay (per graph tile of one pack: the border crossings of tertiary and larger roads and the cheapest
+in-tile drive between them), then expand it back into the pack's edges, so a drive across several packs plans in
+well under a second once the graphs are open (Seattle to Yakima over three Washington packs, 232 km: 0.66 s on a
+fresh server with the graph files on disk, 0.2 to 0.4 s warm; numbers in docs/PLANNING.md › Routing). Cells are
+built when a drive first reaches them, and every tile of a pack is built in the background once its graph opens
+(`GET /route/status` `driveOverlay`, `warm`); they are kept in memory, up to 65,536 cells, and built again after a
+restart. A phone with this server set asks it for routes whose ends lie beyond its own packs (the same
+`GET /route`), keeps the answer as a trip and downloads its corridor (`POST /area`, below) to navigate offline.
+
+- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
   metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
   elevation every 25 m, from the packs or else the live `best` source). The reported pack is `pack=` (a catalog
   id; 400 when unknown), else the first pack holding both ends, else the start; the route uses it and every other
-  pack near the points; outside every pack the route is straight (`notes: ["no_graph"]`).
+  pack near the points; outside every pack the route is straight (`notes: ["no_graph"]`). `overlay=0` plans a
+  long drive without the T77 overlay (for comparing).
 - `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
   `show`. Only the legs next to a moved, added or removed point are rerouted.
 - Both answer `pack`, `mode`, `path` (the encoded route: the `path` field value a trip stores in the sync log),
   `via`, `legs` (`kind` trail/straight/fixed, `coordinates` as `[lon, lat, ele]`), `summary` (distance, ascent,
   descent, hike-model time, `straightM`, a 100-sample profile), `notes` (why a leg is straight), `graph`
-  (`built`, `loaded` or `cached`, the reported pack's; every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
+  (`built`, `loaded` or `cached`, the reported pack's; every pack used under `graphs`; T77: `searches`, one per
+  leg searched, with `ms`, `tiles`, `overlayTiles`, `expanded` and the search's memory) and `ms`. Bad input is a 400 with `error`.
 - `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
   what the phone exports for the same trip.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one
   device, HLC-stamped) as a gzipped sync bundle, for `POST /sync/push` or a `.dsync` file.
-- `GET /route/packs` (packs and graph state), `GET /route/status` (request counts, builds, timings), and
+- `GET /route/packs` (packs and graph state), `GET /route/status` (request counts, builds, timings, `tileCache`,
+  `lastRouteMemory`, T77 `driveOverlay`: cells, builds, hits, border nodes, shortcuts and the per-pack `warm` state), and
   `GET /trips.js`, the page's editor script (`tools/demo/trips.js` next to the served page).
 
 **Save as trip.** The page keeps its trips in its own sync replica in the browser (localStorage

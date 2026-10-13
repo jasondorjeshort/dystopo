@@ -14,6 +14,7 @@ import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
+import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.GraphTileCache
@@ -61,7 +62,8 @@ import java.util.concurrent.atomic.AtomicLong
  *   graph is built on first use into `<vector archive>-graph.idx` next to it (the phone's and
  *   `devtool route`'s file name, z11 graph tiles read on demand into one LRU), reused while both
  *   archives are unchanged. Straight legs take their elevation every 25 m from the DEM (packs first,
- *   else the live `best` source).
+ *   else the live `best` source). T77: drives whose ends are 40 km or more apart search the tiles away from them
+ *   through [DriveOverlay] (`overlay=0` to compare without); the reply's `graph.searches` has each leg's search.
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
@@ -116,7 +118,7 @@ object RouteRoutes {
                 if (it.size > MAX_BODY) return reply(ex, 413, mapOf("error" to "body larger than $MAX_BODY bytes"))
             }.decodeToString()
             when {
-                path == "/route" && method == "GET" -> 200 to p.plan(points(q), q["mode"] ?: "hike", q["pack"], snapOf(q["snap"]))
+                path == "/route" && method == "GET" -> 200 to p.plan(points(q), q["mode"] ?: "hike", q["pack"], snapOf(q["snap"]), overlay = q["overlay"] != "0")
                 path == "/route/edit" && method == "POST" -> 200 to p.edit(MiniJson.parseObject(text.ifBlank { throw IllegalArgumentException("POST a JSON body") }))
                 path == "/route/gpx" && method == "POST" -> {
                     val gpx = p.gpx(MiniJson.parseObject(text.ifBlank { throw IllegalArgumentException("POST a JSON body") }))
@@ -214,6 +216,35 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     /** T76: decoded graph tiles of every pack, shared by all requests (least recently used dropped past the cap). */
     val tileCache = GraphTileCache(GraphTileCache.DEFAULT_MAX_BYTES) { block -> synchronized(this) { block() } }
 
+    /**
+     * T77: the long-drive overlay cells of every pack, built as drives reach them and kept (65,536 cells, about
+     * the contiguous US at z11). With [warmOverlay] every tile of a pack is built in the background once its
+     * graph is open, so the first long drive does not wait for them.
+     */
+    val driveOverlay = DriveOverlay(maxTiles = 65_536, lock = { block -> synchronized(tileCache) { block() } }, clock = { System.nanoTime() / 1_000_000 })
+    var warmOverlay = true
+    private val warmer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-overlay-warm").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+    private val warm = ConcurrentHashMap<String, Map<String, Any?>>()
+
+    /** Builds the overlay cell of every tile of [archive] on the warm-up thread (once per graph build). */
+    private fun warm(pack: Pack, archive: GraphTileArchive) {
+        if (!warmOverlay || !archive.source.drive) return
+        val key = pack.name + "|" + archive.source.builtAtMs
+        if (warm.putIfAbsent(key, mapOf("pack" to pack.name, "state" to "queued")) != null) return
+        warmer.execute {
+            val t0 = System.nanoTime()
+            var cells = 0
+            try {
+                for (e in archive.entries) {
+                    if (driveOverlay.piece(e.x, e.y, 0, archive.source) { tileCache.get(archive, 0, e.x, e.y) } != null) cells++
+                }
+                warm[key] = linkedMapOf("pack" to pack.name, "state" to "done", "tiles" to archive.entries.size, "cells" to cells, "ms" to (System.nanoTime() - t0) / 1_000_000)
+            } catch (e: Exception) {
+                warm[key] = linkedMapOf("pack" to pack.name, "state" to "failed", "error" to (e.message ?: e.toString()))
+            }
+        }
+    }
+
     /** Packs in [outDir] with a vector archive, by name ([PackNames]: the outdoors archive over `-osm`). */
     fun packs(): List<Pack> {
         val names = (outDir.list()?.toList() ?: emptyList()).filter { !it.startsWith(".") && File(outDir, it).isFile }
@@ -263,6 +294,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             try {
                 val (a, info) = openOrBuild(pack)
                 graphs.put(id, Loaded(a, key, info))?.let { tileCache.forget(it.archive) }
+                warm(pack, a) // T77
                 failures.remove(pack.name)
                 return a to info
             } catch (e: IllegalArgumentException) {
@@ -320,35 +352,42 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
      * An editor over the graphs of [pack] and every other pack near [points] (T76: one tiled network,
      * so legs cross pack borders); the reported graph info is [pack]'s, with every pack's under `graphs`.
      */
-    private fun editor(pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
+    private fun editor(pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double, overlay: Boolean = true): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
         val used = packsNear(pack, points)
         val opened = used.map { p -> p to runCatching { graph(p) } }
         // The reported pack's own failure is the request's error, as before; another pack's only drops it from the network.
         opened.firstOrNull { it.first === pack }?.second?.exceptionOrNull()?.let { throw it }
         val ok = opened.mapNotNull { (p, r) -> r.getOrNull()?.let { p to it } }
         if (ok.isEmpty()) return Triple(RouteEditor(null, elevation, snapM), null, pack)
-        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache)))
+        val legs = java.util.Collections.synchronizedList(ArrayList<Map<String, Any?>>())
+        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache), if (overlay) driveOverlay else null), legs)
         val info = ok.firstOrNull { it.first === pack }?.second?.second ?: ok.first().second.second
-        val all = info + ("graphs" to ok.map { (p, r) -> linkedMapOf("pack" to p.name, "action" to r.second["action"]) })
+        // T77: `searches` fills in as the editor routes: one entry per leg searched (ms, tiles, overlay tiles, nodes).
+        val all = info + ("graphs" to ok.map { (p, r) -> linkedMapOf("pack" to p.name, "action" to r.second["action"]) }) + ("searches" to legs)
         return Triple(RouteEditor(router, elevation, snapM), all, pack)
     }
 
     /** Remembers the memory figures of the last route found (`GET /route/status` `lastRouteMemory`). */
-    private inner class MeasuredRouter(private val inner: Router) : Router by inner {
+    private inner class MeasuredRouter(private val inner: Router, private val legs: MutableList<Map<String, Any?>>) : Router by inner {
         override fun route(
             fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
-        ): RouteResult = inner.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids).also { r ->
+        ): RouteResult {
+            val t0 = System.nanoTime()
+            val r = inner.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
+            val ms = (System.nanoTime() - t0) / 1_000_000
             if (r is RouteResult.Found) lastMemory = r.plan.memory
+            legs += linkedMapOf<String, Any?>("ms" to ms, "found" to (r is RouteResult.Found)) + ((r as? RouteResult.Found)?.plan?.let { p -> p.memory + ("expanded" to p.expanded) } ?: emptyMap())
+            return r
         }
     }
 
     /** A new route through [points] in [mode] (T60's `RouteEditor.create`). */
-    fun plan(points: List<Pair<Double, Double>>, mode: String, packName: String? = null, snapM: Double = Router.DEFAULT_SNAP_M): Map<String, Any?> {
+    fun plan(points: List<Pair<Double, Double>>, mode: String, packName: String? = null, snapM: Double = Router.DEFAULT_SNAP_M, overlay: Boolean = true): Map<String, Any?> {
         val t0 = System.nanoTime()
         require(points.size in 2..MAX_POINTS) { "2 to $MAX_POINTS points" }
         requireMode(mode)
         count("plan")
-        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM)
+        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay)
         val path = ed.create(points, mode)
         return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages())
     }
@@ -491,6 +530,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         "outDir" to outDir.path, "requests" to requests.mapValues { it.value.get() }.toSortedMap(), "errors" to errors.get(),
         "lastMs" to lastMs, "building" to building.toList(), "graphs" to graphs.values.map { it.info },
         "tileCache" to tileCache.json(), "lastRouteMemory" to lastMemory, // T76
+        "driveOverlay" to driveOverlay.json() + ("warm" to warm.values.toList()), // T77
     )
 
     companion object {
