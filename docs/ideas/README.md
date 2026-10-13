@@ -59,7 +59,7 @@ names (`CLAUDE.md`, Rules).
 | `2026-10-13-map-scale-bar.md` | feature | new | Scale bar on the phone map, own units by default, optional both. |
 | `2026-10-13-large-distance-units.md` | feature | new | Imperial distances switch to miles at large scales; inches someday. |
 | `2026-10-13-driving-is-in-scope.md` | question | planned | Doctrine: hike and bike first, driving kept as a first-class mode (tension with T73 wording). |
-| `2026-10-13-cannot-create-waypoints-android.md` | bug | new | No way to create a waypoint on the phone outside a recording. |
+| `2026-10-13-cannot-create-waypoints-android.md` | bug | planned | No way to create a waypoint on the phone outside a recording (T91, wave 13). |
 | `2026-10-13-turn-directions.md` | feature | new | "Turn left in 30 feet onto Trail F" in every mode; optional voice later. |
 | `2026-10-13-auto-download-when-zoomed-in.md` | feature | new | Keep topo and map data automatically when dwelling zoomed in (T75 is manual). |
 | `2026-10-13-routing-modes-crow-bushwhack.md` | feature | new | Crow (straight line) and bushwhack (trails, then gentlest cross-country) modes. |

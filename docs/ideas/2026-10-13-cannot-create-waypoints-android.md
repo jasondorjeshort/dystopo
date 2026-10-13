@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: bug
-status: new
-pipeline: none
+status: planned
+pipeline: T91
 related: [2026-10-13-route-waypoints-and-reroute.md]
 ---
 

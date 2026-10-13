@@ -1,15 +1,32 @@
 ---
-verified: 2026-10-12
-source: observed on this machine; the wave 12 second-half paragraph and the owner actions in docs/TASKS.md
+verified: 2026-10-13
+source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
 # Machines, accounts, paths and ports
 
-The development machine is one Windows PC with two user accounts that have both run the coordinator.
-Briefs name the account's paths explicitly; when this file and a brief disagree, the brief wins and
-this file gets fixed.
+The development machine is one Windows PC with two user accounts that have both run the coordinator
+(`Dorje`, the owner's, for waves 1 to 12 first half and from wave 13; `second` for the second half of
+wave 12). Briefs name the account's paths explicitly; when this file and a brief disagree, the brief
+wins and this file gets fixed.
 
-## This account (`second`, coordinator since 2026-10-12)
+## The owner's account (`Dorje`, coordinator from wave 13, 2026-10-13)
+
+| What | Where |
+|---|---|
+| Main checkout | `C:\Users\Dorje\Documents\src\dystopo` (named `android-app` until 2026-10-13; never edited by a task agent) |
+| Task worktrees | `C:\Users\Dorje\Documents\src\dystopo-wt\<task-id>`: `git -C C:\Users\Dorje\Documents\src\dystopo worktree add C:\Users\Dorje\Documents\src\dystopo-wt\<task-id> -b task/<task-id> origin/main`, then copy `local.properties` from the main checkout |
+| Shared download cache | `DYSTOPO_CACHE=C:\Users\Dorje\Documents\src\dystopo\cache` in every shell |
+| JDK 21 | `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot` (Git Bash: `/c/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot`); the git hooks need it too |
+| Android SDK | `C:\Users\Dorje\Android\sdk` (named in `local.properties`) |
+| AVDs | `E:\dystopo-avd` (`-AvdHome E:\dystopo-avd`, shared with the other account; each AVD about 6 GB; remove with `-Stop -Delete`) |
+| Node | 22 (`node .claude/hooks/test-hooks.js`) |
+| Hatchery base clone | `C:\Users\Dorje\Documents\src\hatchery` (read it; only its runner commits there) |
+| Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout only, and in the `RELEASE_*` Actions secrets (`.claude/skills/release/SKILL.md`) |
+| Private terms | `devtool.local.json` in this main checkout; the privacy hooks read it from the main checkout even in worktrees |
+| Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`) |
+
+## The other account (`second`, wave 12 second half)
 
 | What | Where |
 |---|---|
@@ -23,18 +40,6 @@ this file gets fixed.
 | Hatchery base clone | `~\Documents\src\hatchery` (read it; only its runner commits there) |
 | Private terms | none: there is no `devtool.local.json` on this account, so the privacy hooks have no private terms to check; use only `areas.json` names and public places in anything written down |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`), standalone server on 8800 (no token, binds the LAN address); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`, `server-8800 <pid>`) |
-
-## The other account (`Dorje`, waves 1 to 12 first half)
-
-| What | Where |
-|---|---|
-| Main checkout | `C:\Users\Dorje\Documents\src\android-app` (the folder name is historical; the project is Dystopo) |
-| Worktrees | `git worktree add ..\dystopo-wt\<task-id> -b task/<task-id>` beside it, or `.claude/worktrees/` for an agent launched with worktree isolation (rename or create the branch `task/<task-id>` there) |
-| Shared download cache | `DYSTOPO_CACHE=C:\Users\Dorje\Documents\src\android-app\cache` |
-| Android SDK | `C:\Users\Dorje\Android\sdk` |
-| AVDs | `E:\dystopo-avd` (set `ANDROID_AVD_HOME`), shared with this account |
-| Signing key | `tools\release.keystore` and `tools\release.properties` in that main checkout only, and in the `RELEASE_*` Actions secrets (`.claude/skills/release/SKILL.md`) |
-| Private terms | `devtool.local.json` in that main checkout; the privacy hooks read it from the main checkout even in worktrees |
 
 Neither account can read the other's folders. Shared data is read by absolute path within one account,
 or copied, or generated into the worktree's own `out/` (never a junction; `CLAUDE.md`).
