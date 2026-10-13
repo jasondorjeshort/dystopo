@@ -115,6 +115,16 @@ $devicePort = 8686
 foreach ($tool in @($adb, $emulator)) { if (-not (Test-Path $tool)) { throw "$tool missing; run tools\android-sdk.ps1" } }
 if ($EmuPort -ne 0 -and ($EmuPort % 2 -ne 0 -or $EmuPort -lt 5554 -or $EmuPort -gt 5682)) { throw "-EmuPort must be even, 5554-5682 (got $EmuPort)" }
 
+# T87: programs that outlive this script (the emulator, a Gradle daemon a build starts) are started through
+# ShellExecute (Start-Process without -NoNewWindow or redirection) with cmd writing their output to a log.
+# Started any other way they inherit this script's handles, among them the caller's stdout pipe, so a caller
+# reading the output (an agent's shell, `| Tee-Object`) waited until the emulator was stopped. Returns the cmd
+# process: it lives as long as the program and exits with its code.
+function Start-Detached([string]$exe, [string[]]$argv, [string]$log, [string]$dir = $repoRoot) {
+    $q = { param($s) if ($s -match '[\s"]') { '"' + ($s -replace '"', '\"') + '"' } else { $s } }
+    $line = ((@($exe) + $argv) | ForEach-Object { & $q $_ }) -join ' '
+    Start-Process -FilePath $env:ComSpec -ArgumentList "/d /s /c `"$line > `"$log`" 2>&1`"" -WorkingDirectory $dir -WindowStyle Hidden -PassThru
+}
 function Native {
     # Runs a native tool without PowerShell turning its stderr into terminating errors.
     $ErrorActionPreference = 'Continue'
@@ -272,8 +282,12 @@ if ($Build) {
     try {
         # Gradle's warnings arrive on stderr: Continue, so they are passed on as lines instead of stopping the script.
         $ErrorActionPreference = 'Continue'
-        & .\gradlew.bat :androidApp:assembleDebug --console=plain -q 2>&1 | ForEach-Object { "  $_" }
-        if ($LASTEXITCODE -ne 0) { throw 'assembleDebug failed' }
+        $buildLog = Join-Path $repoRoot 'out\android-emu-build.log'
+        New-Item -ItemType Directory -Force (Split-Path $buildLog) | Out-Null
+        $b = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':androidApp:assembleDebug', '--console=plain', '-q') $buildLog
+        $b.WaitForExit()
+        if (Test-Path $buildLog) { Get-Content $buildLog | ForEach-Object { "  $_" } }
+        if ($b.ExitCode -ne 0) { throw "assembleDebug failed (exit $($b.ExitCode)); see $buildLog" }
     } finally { Pop-Location; $ErrorActionPreference = 'Stop' }
     Write-Host ("built in {0:n0} s" -f ((Get-Date) - $buildStarted).TotalSeconds)
 }
@@ -364,7 +378,7 @@ if ($NoEmulator) {
         if ($NetDelay) { $emuArgs += @('-netdelay', $NetDelay) }
         foreach ($f in @($Feature | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) { $emuArgs += @('-feature', $f) }
         Write-Host ("starting emulator " + ($emuArgs -join ' ') + "  (log: $log)")
-        $proc = Start-Process -FilePath $emulator -ArgumentList $emuArgs -RedirectStandardOutput $log -RedirectStandardError "$log.err" -WindowStyle Hidden -PassThru
+        $proc = Start-Detached $emulator $emuArgs $log
     }
 }
 if (-not $proc -and -not $NoEmulator -and $PSBoundParameters.ContainsKey('Gpu')) {

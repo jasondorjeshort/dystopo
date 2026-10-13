@@ -51,9 +51,9 @@
 # coordinator's ports (8765 for the live viewer, 8686/8687, console 5554) and any host port already listening.
 # The default AVD is new each day (dystopo35-sweep-<yyyyMMdd>) and is deleted afterwards (-KeepEmulator keeps it).
 #
-# Data: the Rainier packs (rainier-dem, rainier-outdoors, rainier-osm .pmtiles). In the main checkout they are
+# Data: the Rainier packs (rainier-dem, rainier-outdoors; rainier-osm optional). In the main checkout they are
 # out\ itself; in a worktree they are copied (never linked) from -DataDir, default the main checkout's out\.
-# Only those three files are copied, so packs of other places in the main out\ never reach a worktree.
+# Only those files are copied, so packs of other places in the main out\ never reach a worktree.
 # DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in docs/reference/machines.md.
 param(
     [string]$Date = (Get-Date -Format 'yyyyMMdd-HHmm'),
@@ -265,9 +265,12 @@ $meta | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Out 'meta.json')
 $emulatorStarted = $false
 try {
     # --- data ----------------------------------------------------------------------------------------------
-    $packs = @('rainier-dem.pmtiles', 'rainier-outdoors.pmtiles', 'rainier-osm.pmtiles')
+    # T87: rainier-osm.pmtiles (the OpenMapTiles profile) is optional: copied when present, never warned about,
+    # because no part needs it (the demo page reads it only with ?osm=openmaptiles).
+    $packs = @('rainier-dem.pmtiles', 'rainier-outdoors.pmtiles')
+    $optionalPacks = @('rainier-osm.pmtiles')
     $localOut = Join-Path $repo 'out'
-    foreach ($f in $packs) {
+    foreach ($f in $packs + $optionalPacks) {
         $dst = Join-Path $localOut $f
         $src = Join-Path $DataDir $f
         if (-not (Test-Path $dst) -and (Test-Path $src) -and ([IO.Path]::GetFullPath($src) -ne [IO.Path]::GetFullPath($dst))) {

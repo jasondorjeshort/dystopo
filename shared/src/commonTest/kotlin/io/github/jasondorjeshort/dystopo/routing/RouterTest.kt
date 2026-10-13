@@ -270,4 +270,21 @@ class RouterTest {
         assertEquals(WayAttrs.PRIVATE, a.flags)
         assertTrue(a.brunnel)
     }
+
+    @Test
+    fun aShortRoadStretchIsNotOneOfAHikesTrails() {
+        // T87: two named trails joined by a named road. 67 m of road is a crossing, not a trail the hike follows;
+        // 134 m is (MIN_VIA_ROAD_M is 100 m). Trails keep MIN_VIA_M (30 m).
+        fun via(roadEndLon: Double, mode: TravelMode): List<String> {
+            val g = graph(
+                WayLine.of(path.copy(name = "Lower Trail"), 0.0 to 0.0, 0.0 to 0.002),
+                WayLine.of(minor.copy(name = "Park Road"), 0.0 to 0.002, 0.0 to roadEndLon),
+                WayLine.of(path.copy(name = "Upper Trail"), 0.0 to roadEndLon, 0.0 to roadEndLon + 0.002),
+            )
+            return found(Router(g).route(0.0, 0.0, 0.0, roadEndLon + 0.002, mode)).via.map { it.first }
+        }
+        assertEquals(listOf("Lower Trail", "Upper Trail"), via(0.0026, TravelMode.HIKE))
+        assertEquals(listOf("Lower Trail", "Upper Trail"), via(0.0026, TravelMode.BIKE))
+        assertEquals(listOf("Lower Trail", "Park Road", "Upper Trail"), via(0.0032, TravelMode.HIKE))
+    }
 }

@@ -30,6 +30,10 @@ class OnlinePlanTest {
         // z4 windows average z6.
         assertTrue(OnlineTiles.demTilesFor(4, 0, 0, 256).all { it.first == 6 })
         assertEquals(16, OnlineTiles.demTilesFor(4, 0, 0, 256).size)
+        // T87: with no server the phone's sources start at z8, so a z8 contour tile's z7 window reads z8 tiles.
+        val z7 = OnlineTiles.demTilesFor(7, 20 * 256, 44 * 256, 136, minZoom = DirectSources.DEM_MIN_ZOOM)
+        assertTrue(z7.all { it.first == 8 })
+        assertEquals(listOf(Triple(8, 40, 88), Triple(8, 41, 88), Triple(8, 40, 89), Triple(8, 41, 89)), z7)
     }
 
     @Test

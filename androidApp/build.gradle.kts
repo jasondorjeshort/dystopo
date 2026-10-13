@@ -143,15 +143,29 @@ val bundleMapAssets by tasks.registering {
                     val cached = File(cacheRoot, "glyphs/$font/$range.pbf")
                     if (!cached.isFile || cached.length() == 0L) {
                         cached.parentFile.mkdirs()
-                        val conn = URI("https", "protomaps.github.io", "/basemaps-assets/fonts/$font/$range.pbf", null).toURL().openConnection() as HttpURLConnection
-                        conn.connectTimeout = 20_000
-                        conn.readTimeout = 60_000
-                        val bytes = when (val status = conn.responseCode) {
-                            200 -> conn.inputStream.use { it.readBytes() }
-                            404 -> ByteArray(0)
-                            else -> error("glyph range $font/$range: HTTP $status")
+                        // T87: a transient failure (a 5xx, a 429, a reset) is retried with backoff before the build fails.
+                        var attempt = 0
+                        var bytes: ByteArray
+                        while (true) {
+                            attempt++
+                            val conn = URI("https", "protomaps.github.io", "/basemaps-assets/fonts/$font/$range.pbf", null).toURL().openConnection() as HttpURLConnection
+                            conn.connectTimeout = 20_000
+                            conn.readTimeout = 60_000
+                            val got: ByteArray? = try {
+                                when (val status = conn.responseCode) {
+                                    200 -> conn.inputStream.use { it.readBytes() }
+                                    404 -> ByteArray(0)
+                                    429, in 500..599 -> if (attempt < 4) null else error("glyph range $font/$range: HTTP $status after $attempt attempts")
+                                    else -> error("glyph range $font/$range: HTTP $status")
+                                }
+                            } catch (e: java.io.IOException) {
+                                if (attempt < 4) null else throw e
+                            } finally {
+                                conn.disconnect()
+                            }
+                            if (got != null) { bytes = got; break }
+                            Thread.sleep(2_000L shl attempt)
                         }
-                        conn.disconnect()
                         val tmp = File(cached.parentFile, "$range.pbf.${Thread.currentThread().id}.part")
                         tmp.writeBytes(if (bytes.isEmpty()) emptyGlyphPbf(font, range) else bytes)
                         check(tmp.renameTo(cached) || cached.isFile) { "could not store $cached" }

@@ -29,6 +29,9 @@ import java.util.regex.Pattern;
  * 0.1 degrees of) any local bbox, and 1-degree DEM cell names (USGS n47w122, Copernicus N46_00_W122_00)
  * that overlap a local bbox. Matching ignores case, spaces, hyphens and underscores.
  *
+ * Without devtool.local.json the hooks pass and scan reports a clean result ("localFile": false,
+ * "0 private terms configured"); the public-area pair counts are still made.
+ *
  * devtool.local.json may include  "privateTerms": ["Some Peak", "Some Range", ...]  at top level.
  */
 public class PrivacyCheck {
@@ -46,8 +49,11 @@ public class PrivacyCheck {
         Path mainRoot = Path.of(run("git", "rev-parse", "--git-common-dir").trim()).toAbsolutePath().normalize().getParent();
         Path local = root.resolve("devtool.local.json");
         if (!Files.exists(local) && mainRoot != null) local = mainRoot.resolve("devtool.local.json");
-        if (!Files.exists(local)) return;
-        String json = Files.readString(local, StandardCharsets.UTF_8);
+        boolean haveLocal = Files.exists(local);
+        // T87: without the private file there is nothing private to check. The hooks pass; scan still reads its
+        // input and reports a clean result with "0 private terms configured" (an empty output read as a failure).
+        if (!haveLocal && !args[0].equals("scan")) return;
+        String json = haveLocal ? Files.readString(local, StandardCharsets.UTF_8) : "";
 
         Set<String> terms = new LinkedHashSet<>();
         List<double[]> boxes = new ArrayList<>();
@@ -70,7 +76,7 @@ public class PrivacyCheck {
         terms.removeIf(t -> t.length() < 4);
 
         if (args[0].equals("scan")) {
-            scan(args, terms, boxes, root);
+            scan(args, terms, boxes, root, haveLocal);
             return;
         }
         List<String[]> lines = new ArrayList<>(); // {location, text}
@@ -125,7 +131,7 @@ public class PrivacyCheck {
     private static final Pattern PAIR = Pattern.compile("(-?\\d{1,3}\\.\\d{2,})[^\\d\\n]{1,24}?(-?\\d{1,3}\\.\\d{2,})");
 
     /** Counts-only scan of stdin; see the class comment. Exit 1 when any private hit is found. */
-    private static void scan(String[] args, Set<String> terms, List<double[]> boxes, Path root) throws IOException {
+    private static void scan(String[] args, Set<String> terms, List<double[]> boxes, Path root, boolean haveLocal) throws IOException {
         Path pairsOut = null;
         for (int i = 1; i < args.length; i++) if (args[i].equals("--pairs") && i + 1 < args.length) pairsOut = Path.of(args[++i]);
         List<double[]> publicBoxes = new ArrayList<>();
@@ -168,7 +174,8 @@ public class PrivacyCheck {
         System.out.println("{\"lines\": " + lineCount + ", \"privateTerms\": " + terms.size() + ", \"privateBoxes\": " + boxes.size()
             + ", \"termHits\": " + termHits + ", \"coordinateValueHits\": " + valueHits + ", \"coordinatePairHits\": " + pairHits
             + ", \"commitsWithHits\": " + hitCommits.size() + ", \"publicAreas\": " + publicBoxes.size()
-            + ", \"pairsOutsidePublicAreas\": " + outsidePairs + ", \"distinctPairsOutsidePublicAreas\": " + outside.size() + "}");
+            + ", \"pairsOutsidePublicAreas\": " + outsidePairs + ", \"distinctPairsOutsidePublicAreas\": " + outside.size()
+            + ", \"localFile\": " + haveLocal + ", \"note\": \"" + (haveLocal ? terms.size() + " private terms configured" : "0 private terms configured: no devtool.local.json") + "\"}");
         if (termHits + pairHits + valueHits > 0) System.exit(1);
     }
 

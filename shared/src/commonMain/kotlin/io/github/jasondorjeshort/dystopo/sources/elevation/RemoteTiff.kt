@@ -51,6 +51,21 @@ class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Dec
         /** A [RemoteTiff] for [url]: from [SourceIo.tiffPool] when one is set (the phone), else a new one (the server, as before). */
         fun open(url: String, cacheDir: String, extraDecompressors: Map<Int, Decompressor> = emptyMap()): RemoteTiff =
             SourceIo.tiffPool?.get(url) { RemoteTiff(url, cacheDir, extraDecompressors) } ?: RemoteTiff(url, cacheDir, extraDecompressors)
+
+        /** [RemoteTiff.levelFor] over a file's level pixel sizes ([scales], CRS units, finest first). */
+        fun levelFor(scales: List<Double>, targetMeters: Double, metersPerUnit: Double): Int {
+            var best = 0
+            for ((i, scale) in scales.withIndex()) if (scale * metersPerUnit <= targetMeters) best = i
+            return best
+        }
+
+        /**
+         * T87: one level for a window read from several files ([cells], each its level pixel sizes): the finest of
+         * their own [levelFor] choices, which every file has. Files differ in how many overviews they carry (3DEP's
+         * mostly-ocean Hawaii cells have fewer), so one file's choice can be past another's last level.
+         */
+        fun commonLevel(cells: List<List<Double>>, targetMeters: Double, metersPerUnit: Double): Int =
+            cells.minOfOrNull { levelFor(it, targetMeters, metersPerUnit) } ?: 0
     }
 
     val source = CachedRangeSource(url, cacheDir)
@@ -74,15 +89,14 @@ class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Dec
 
     fun level(index: Int): GeoTiff = levels[index]
 
+    /** The level pixel sizes in CRS units, finest first ([commonLevel]). */
+    val levelScales: List<Double> get() = levels.map { it.pixelScaleY }
+
     /**
      * Coarsest level whose pixels are no bigger than [targetMeters], so we never read more detail than the
      * output can show. [metersPerUnit] converts CRS units to meters (1 for UTM).
      */
-    fun levelFor(targetMeters: Double, metersPerUnit: Double): Int {
-        var best = 0
-        for ((i, l) in levels.withIndex()) if (l.pixelScaleY * metersPerUnit <= targetMeters) best = i
-        return best
-    }
+    fun levelFor(targetMeters: Double, metersPerUnit: Double): Int = levelFor(levels.map { it.pixelScaleY }, targetMeters, metersPerUnit)
 
     private fun tile(levelIndex: Int, tx: Int, ty: Int): FloatArray {
         val l = levels[levelIndex]

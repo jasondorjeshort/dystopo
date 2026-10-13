@@ -41,7 +41,8 @@ class CopernicusSource(private val cacheDir: String = SourceIo.dir("copernicus30
                 }
             }
         }
-        val level = cells.values.filterNotNull().firstOrNull()?.levelFor(OverviewLevels.targetMeters(window), 111_320.0) ?: 0
+        // T87: a level every cell has (the finest of their own choices; see ThreeDepSource).
+        val level = RemoteTiff.commonLevel(cells.values.filterNotNull().map { it.levelScales }, OverviewLevels.targetMeters(window), 111_320.0)
         for ((key, cell) in cells) {
             val shift = shifts.getValue(key)
             cell?.prefetch(level, lons.first() + shift, lats.last(), lons.last() + shift, lats.first())

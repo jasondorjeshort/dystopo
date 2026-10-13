@@ -1,6 +1,6 @@
 ---
 date: 2026-10-12
-status: open
+status: resolved
 area: server / contour tiles
 ---
 
@@ -25,3 +25,13 @@ contour check in the demo tour (`tools/demo-tour.txt`).
 For the next sweep task: reproduce with `devtool serve` and a request for each tile, find the index
 that runs past the grid (likely the Hawaii geoid or the antimeridian-adjacent window), add a test; drop
 Flevoland from the contour expectations in the demo tour.
+
+## Resolution (T87, 2026-10-13)
+
+Cause: `ThreeDepSource` (and `CopernicusSource`) read every cell of a window at the overview level the
+first cell chose. Hawaii's mostly-ocean 3DEP cells carry fewer overview levels, so a z9 window over
+several cells asked one of them for level 5 of 5 (`RemoteTiff.prefetch`). The level is now the finest of
+the cells' own choices, which every cell has (`RemoteTiff.commonLevel`, `CommonLevelTest`). Both tiles
+answer 200 through `serve --live` (`9/33/227` is open ocean west of Kona and is empty; `9/34/227` has
+lines). Flevoland: `tools/demo-tour.txt` has no Flevoland view (its 21 views are Rainier), and no other
+tour expects contours there, so there was nothing to drop.

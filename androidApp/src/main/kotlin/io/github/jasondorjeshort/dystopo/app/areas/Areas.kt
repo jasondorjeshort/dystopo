@@ -82,6 +82,13 @@ object Areas {
     private val coverMemo = HashMap<String, Map<Int, TileSet>>()
     private var loaded = false
 
+    /**
+     * T87: loads this object, and so creates its Compose state ([list], [screenOpen]), on the main thread from
+     * `Application.onCreate` before any composition, as `NavSession.prepare()` does (T86): [AheadPrefetch]'s
+     * thread could otherwise be the first to touch it while a composition snapshot is open.
+     */
+    fun prepare() = Unit
+
     /** For the Areas screen (Compose state, replaced on every change). */
     var list by mutableStateOf<List<Record>>(emptyList())
         private set

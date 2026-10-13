@@ -61,7 +61,9 @@ class ThreeDepSource(
             }
         }
         val present = cells.values.filterNotNull()
-        val level = present.firstOrNull()?.levelFor(OverviewLevels.targetMeters(window), 111_320.0) ?: 0
+        // T87: the finest of the cells' own choices. Cells differ in how many overview levels they have (Hawaii's mostly
+        // ocean cells have fewer), so the first cell's level could be past another's last one (IndexOutOfBounds).
+        val level = RemoteTiff.commonLevel(present.map { it.levelScales }, OverviewLevels.targetMeters(window), 111_320.0)
         for (cell in present) cell.prefetch(level, lons.first(), lats.last(), lons.last(), lats.first())
 
         // Filtered native-grid copies per cell (destripe only); other cells are sampled directly.

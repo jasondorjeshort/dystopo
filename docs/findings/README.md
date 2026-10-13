@@ -22,5 +22,6 @@ should not be investigated twice.
 | `2026-10-11-actions-billing-stopped-release.md` | resolved | release / Actions | Actions refused the release job while private; built locally, Actions runs again since public. |
 | `2026-10-11-reported-push-that-never-happened.md` | resolved | process / verification | A `cd` inside a Bash call did not take effect; prove a push from the remote, use `git -C`. |
 | `2026-10-12-windows-long-path-delete.md` | resolved | tooling / Windows | Long-path deletes need the `\\?\` prefix; the `CLAUDE.md` line had lost a backslash. |
-| `2026-10-12-ci-glyph-download.md` | open | CI | CI downloads every glyph range on each run; a remote 503 fails any commit. |
-| `2026-10-12-hawaii-z9-contours-500.md` | open | server / contours | Two Hawaii z9 contour tiles answer 500; Flevoland is no contour check. |
+| `2026-10-12-ci-glyph-download.md` | resolved | CI | CI downloaded every glyph range on each run; T87 caches them and retries. |
+| `2026-10-12-hawaii-z9-contours-500.md` | resolved | server / contours | Two Hawaii z9 contour tiles answered 500: cells with fewer overviews; T87 picks a common level. |
+| `2026-10-13-inherited-pipe-handles.md` | resolved | tooling / Windows processes | Device scripts kept the caller waiting: a daemon they started inherited its pipe; start such processes detached. |

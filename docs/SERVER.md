@@ -805,6 +805,7 @@ keeps only errors, refusals, startup and shutdown.
 
 ```
 python -I tools/server-probe.py --port 8080 --token <token> [--admin-token <admin>] [--quick]   # bad input on every route family: JSON, exit 0 when all answered as expected and the server stayed up
+python -I tools/server-probe.py --port 9090 --quick   # T87: an open server (no token): sync, catalog refresh and /admin get their open answers, builds are still refused for their bbox; `serverOpen` in the JSON
 powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -Hours 12 -Port 9090 -Root E:\soak -Packs out\rainier-dem.pmtiles,out\rainier-outdoors.pmtiles -HeapMb 6144
 powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -ChartOnly -Root E:\soak         # redraw soak.svg and summary.json, also while it runs
 ```

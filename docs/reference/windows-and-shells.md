@@ -53,6 +53,12 @@ What holds on the development machine for every agent. The rules these facts sup
 - Never stop a process by name or command-line substring (finding
   `../findings/2026-10-10-kill-by-command-line-substring.md`). Stop by PID, or by serial for an
   emulator (`adb -s emulator-NNNN emu kill`, or `android-emu.ps1 -Stop`).
+- A script that starts a long-lived process (a Gradle daemon, an emulator) with `&`, a pipe or
+  `Start-Process -Redirect...` hands it the script's inheritable handles, among them the caller's stdout
+  pipe: the caller then waits for that process to exit although the script has finished. Start such a
+  process through ShellExecute (`Start-Process` without `-NoNewWindow` or redirection, `cmd /c` writing
+  the output to a log), as `Start-Detached` in `tools/android-emu.ps1` and `tools/android-push-pack.ps1`
+  does (finding `../findings/2026-10-13-inherited-pipe-handles.md`).
 
 ## Shared state
 

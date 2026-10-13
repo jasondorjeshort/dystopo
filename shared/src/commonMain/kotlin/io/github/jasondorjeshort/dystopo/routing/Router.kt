@@ -226,7 +226,8 @@ data class PlannedRoute(
     val metersByClass: Map<WayClass, Double>,
     /**
      * T49: the named ways along the route in travel order, consecutive edges of one name merged, with the
-     * metres on each (stretches under [Router.MIN_VIA_M] left out): the trails a route follows.
+     * metres on each (stretches under [Router.MIN_VIA_M] left out; T87: on hike and bike routes, roads under
+     * [Router.MIN_VIA_ROAD_M]): the trails a route follows.
      */
     val via: List<Pair<String, Double>> = emptyList(),
     /**
@@ -302,6 +303,12 @@ interface Router {
         const val PROFILE_SAMPLES = 100
         /** T49: named stretches shorter than this are left out of [PlannedRoute.via] (a crossing, a junction stub). */
         const val MIN_VIA_M = 30.0
+        /**
+         * T87: on a hike or bike route a named road (service and up) needs this much to be in [PlannedRoute.via]: a
+         * trail that crosses or briefly follows a road (a parking lot access, a bridge on the park road) does not
+         * make the road one of the trails the route follows. Drive routes keep [MIN_VIA_M].
+         */
+        const val MIN_VIA_ROAD_M = 100.0
 
         /** T73: what the trip editors say whenever drive mode is chosen. */
         const val DRIVE_NOTICE = "Drive follows the roads in your map packs, to and between trailheads. " +
@@ -752,13 +759,15 @@ class TileRouter(
         var descent = 0.0
         val byClass = LinkedHashMap<WayClass, Double>()
         val runs = ArrayList<Pair<String?, Double>>() // T49: consecutive stretches by way name
+        val runRoadM = ArrayList<Double>() // T87: metres of each run on roads (service and up)
         var driveS = 0.0 // T73
         for (st in steps) {
             val g = st.piece.graph
             val nm = g.name(st.e)
             val metres = g.edgeLength[st.e] * abs(st.f1 - st.f0)
             if (model.mode == TravelMode.DRIVE) driveS += model.edgeTimeS(g, st.e, metres.toDouble())
-            if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else runs += nm to metres
+            if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else { runs += nm to metres; runRoadM += 0.0 }
+            if (g.wayClass(st.e).code >= WayClass.SERVICE.code) runRoadM[runRoadM.size - 1] += metres.toDouble()
             val part = abs(st.f1 - st.f0)
             val fwd = st.f1 > st.f0
             ascent += (if (fwd) g.edgeAscent[st.e] else g.edgeDescent[st.e]) * part
@@ -776,7 +785,8 @@ class TileRouter(
         val distance = TrackStats.of(track).distanceM
         val hasEle = pts.any { it.ele != null }
         val time = if (model.mode == TravelMode.DRIVE) driveS else model.timeS(distance, if (hasEle) ascent else 0.0)
-        val via = runs.filter { it.first != null && it.second >= Router.MIN_VIA_M }.map { it.first!! to it.second }
+        fun minVia(i: Int) = if (model.mode != TravelMode.DRIVE && runRoadM[i] * 2 > runs[i].second) Router.MIN_VIA_ROAD_M else Router.MIN_VIA_M
+        val via = runs.filterIndexed { i, it -> it.first != null && it.second >= minVia(i) }.map { it.first!! to it.second }
             .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
         val desc = "${Router.km(distance)} km" + (if (hasEle) ", +${ascent.roundToLong()} m / -${descent.roundToLong()} m" else "") +
             ", about ${PlannedRoute.hm(time)}" + (if (via.isNotEmpty()) " via " + via.take(3).joinToString(", ") { it.first } else "") +

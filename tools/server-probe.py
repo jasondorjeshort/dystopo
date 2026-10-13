@@ -20,6 +20,10 @@ Tokens: --token is the server's `token` (or a user token) for /build and /sync; 
 token (an /admin probe expects 403 with it); --admin-token the admin token. Probes needing a token that
 was not given are skipped (listed under `skipped`). The probes write nothing that lasts: builds are
 refused before they start, sync pushes are refused or empty, relay posts are malformed.
+T87: an open server (no `token`, no users, no admin token: `GET /sync/status` answers 200 without one) is
+probed too. Its token probes then expect the open answers (sync 200, catalog refresh 200, /admin 403 "no
+adminToken"), the token-free build probes carry an unreadable bbox so even an open /build refuses them
+(400) and never queues a job, and the probes that need --token run without one (`serverOpen` in the JSON).
 Python 3 standard library only. Never point it at a server you do not own: the slowloris and idle
 probes hold up to a few hundred connections for up to a minute.
 """
@@ -231,6 +235,10 @@ def main():
 
     big = "9" * 40
     T, U, A = TOKEN, USER_TOKEN, ADMIN_TOKEN
+    # T87: an open server answers /sync without a token. Its /build would then queue a real job for any valid
+    # request, so every build probe below sends a request /build refuses before starting (on an open server the
+    # token-free ones too), and the "token" probes run without one.
+    server_open = get("/sync/status") == 200
     bad = {400}
     gone = {"reset", "closed"}
     # Coordinates the tile pattern does not match (a minus sign) or outside the zoom's range are "no such
@@ -282,11 +290,12 @@ def main():
         ("relay-not-a-frame", lambda: raw(req("POST", "/sync/relay?slot=" + "a" * 32 + "&side=" + "b" * 16, body=b"hello")), bad, None),
         ("relay-declared-oversize", lambda: raw(req("POST", "/sync/relay?slot=" + "a" * 32 + "&side=" + "b" * 16, headers={"Content-Length": "100000000"}) + b"x" * 65536), {413} | gone, None),
         # Tokens: /build and /sync need one; /admin only the admin token.
-        ("build-no-token", lambda: raw(req("POST", "/build?name=x&bbox=1,1,1.01,1.01")), {401}, None),
-        ("build-wrong-token", lambda: raw(req("POST", "/build?name=x&bbox=1,1,1.01,1.01", auth="wrong-token-wrong-token")), {401}, None),
-        ("sync-no-token", lambda: get("/sync/status"), {401}, None),
-        ("catalog-refresh-no-token", lambda: raw(req("POST", "/catalog/refresh")), {401}, None),
-        ("admin-no-token", lambda: get("/admin/users"), {401}, None),
+        # A token-protected server refuses these with 401; an open one must refuse the build for its bbox (400).
+        ("build-no-token", lambda: raw(req("POST", "/build?name=probe&bbox=nan,nan,nan,nan")), {400} if server_open else {401}, None),
+        ("build-wrong-token", lambda: raw(req("POST", "/build?name=probe&bbox=nan,nan,nan,nan", auth="wrong-token-wrong-token")), {400, 401} if server_open else {401}, None),
+        ("sync-no-token", lambda: get("/sync/status"), {200} if server_open else {401}, None),
+        ("catalog-refresh-no-token", lambda: raw(req("POST", "/catalog/refresh")), {200} if server_open else {401}, None),
+        ("admin-no-token", lambda: get("/admin/users"), {403} if server_open else {401}, None),
         ("admin-user-token", lambda: get("/admin/users", auth=U), {403}, "user"),
         ("admin-sync-without-user", lambda: get("/sync/status", auth=A), bad, "admin"),
         ("admin-sync-unknown-user", lambda: get("/sync/status?user=nobody", auth=A), {404}, "admin"),
@@ -329,7 +338,7 @@ def main():
             ("idle-connections-x300", lambda: idle_burst(300), {"ok"}, None),
         ]
 
-    need = {"token": T, "user": U, "admin": A}
+    need = {"token": T or server_open, "user": U, "admin": A}
     # Known answers outside the expected set, each a filed follow-up (not this script's to fix): reported
     # under `known` and not failing the run unless --strict. The server must still survive them.
     known = {}  # T74 closed the last one (the gzip bomb: pushes inflate with a cap now)
@@ -379,7 +388,7 @@ def main():
     }
     lenient = [{"probe": r["probe"], "status": r["status"], "why": lenient_rules[r["probe"]][1]}
                for r in results if r["probe"] in lenient_rules and r["status"] in lenient_rules[r["probe"]][0]]
-    report = {"ok": alive and not unexpected, "serverAlive": alive, "host": HOST, "port": PORT, "probes": len(results),
+    report = {"ok": alive and not unexpected, "serverAlive": alive, "host": HOST, "port": PORT, "serverOpen": server_open, "probes": len(results),
               "unexpected": unexpected, "known": known_hits, "lenientCount": len(lenient), "lenient": lenient,
               "skipped": skipped, "results": results}
     text = json.dumps(report, indent=1)

@@ -372,7 +372,9 @@ def part_strings(args):
     hard = scan.get("termHits", 0) + scan.get("coordinatePairHits", 0)
     return {"ok": hard == 0, "apk": os.path.basename(apk), "apkBytes": os.path.getsize(apk), "strings": len(lines),
             "stringsByRoot": per, "scan": scan, "seconds": round(time.time() - t0, 1),
-            "privateFile": scan.get("privateTerms", 0) > 0 or scan.get("privateBoxes", 0) > 0,
+            "privateFile": scan.get("localFile", scan.get("privateTerms", 0) > 0 or scan.get("privateBoxes", 0) > 0),
+            # T87: with no devtool.local.json the scan is clean by construction; say so instead of failing on no output.
+            "privateTermsConfigured": scan.get("privateTerms", 0), "note": scan.get("note", ""),
             "valueRule": "coordinateValueHits counts single decimals inside a local box's lat or lon range (the commit "
                          "hook's lenient rule); in compiled code and native libraries those are mostly constants, so "
                          "they are reported, not failed",

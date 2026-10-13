@@ -1,6 +1,6 @@
 ---
 date: 2026-10-12
-status: open
+status: resolved
 area: CI / build inputs
 ---
 
@@ -25,3 +25,9 @@ Any transient failure of the glyph host fails CI, whatever the commit changed.
 
 For the next sweep task: an `actions/cache` step on `cache/glyphs` keyed by the font and range list,
 or a retry in the Gradle task.
+
+## Resolution (T87, 2026-10-13)
+
+The CI build job restores `cache/glyphs` with `actions/cache`, keyed by a hash of the `glyphFonts` and
+`glyphRanges` lines of `androidApp/build.gradle.kts`, and `bundleMapAssets` retries a range on a 5xx, a
+429 or an I/O error (four attempts, 4, 8 and 16 s apart) before it fails.

@@ -47,6 +47,18 @@ function Adb {
     $out
 }
 
+# T87: a program that may leave a long-lived process behind (Gradle starts a daemon, the emulator runs on) is
+# started through ShellExecute (Start-Process without -NoNewWindow or redirection), with its output to a log by
+# cmd. Started any other way it inherits this script's handles, among them the caller's stdout pipe, and keeps
+# it open after the script ends: a caller reading the output (an agent's shell, `| Tee-Object`) then waits
+# until the daemon exits, which is how this script "hung after pushing the packs". Returns the cmd process
+# (its exit code is the program's).
+function Start-Detached([string]$exe, [string[]]$argv, [string]$log, [string]$dir = $repoRoot) {
+    $q = { param($s) if ($s -match '[\s"]') { '"' + ($s -replace '"', '\"') + '"' } else { $s } }
+    $line = ((@($exe) + $argv) | ForEach-Object { & $q $_ }) -join ' '
+    Start-Process -FilePath $env:ComSpec -ArgumentList "/d /s /c `"$line > `"$log`" 2>&1`"" -WorkingDirectory $dir -WindowStyle Hidden -PassThru
+}
+
 function Resolve-RepoPath([string]$p) { if ([IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $repoRoot $p } }
 
 if ($NoOsm -or $Osm -in @('none', '-')) { $Osm = '' }
@@ -106,12 +118,11 @@ if (-not $NoSprites) {
     # Always remade (a few seconds with a warm Gradle daemon): a sheet left in out/ from an older marker table would
     # lack icons the style names.
     Write-Host 'making the sprite sheet (devtool sprite)'
-    Push-Location $repoRoot
-    try {
-        $ErrorActionPreference = 'Continue'
-        & .\gradlew.bat :devtool:run --args='sprite' --console=plain -q | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'devtool sprite failed' }
-    } finally { Pop-Location; $ErrorActionPreference = 'Stop' }
+    $spriteLog = Join-Path $outDir 'push-pack-sprite.log'
+    New-Item -ItemType Directory -Force $outDir | Out-Null
+    $p = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':devtool:run', '--args=sprite', '--console=plain', '-q') $spriteLog
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "devtool sprite failed (exit $($p.ExitCode)); see $spriteLog" }
     Adb shell "mkdir -p $staging/sprites" | Out-Null
     foreach ($f in $spriteFiles) { Adb push (Join-Path $outDir $f) "$staging/sprites/$f" | Out-Null }
     Write-Host "pushing sprites ($($spriteFiles.Count) files)"

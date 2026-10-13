@@ -129,10 +129,19 @@ class OnlineTiles(
     /** Set on the generating thread when a DEM tile could not be fetched (the contour tile is then not cached). */
     private val incomplete = ThreadLocal<Boolean>()
 
+    /**
+     * T87: the shallowest DEM zoom this source has: [DEM_MIN_ZOOM] for a server, [DirectSources.DEM_MIN_ZOOM] when
+     * the phone reads the sources itself. The pyramid starts there, so a contour tile that samples a shallower zoom
+     * (a z8 tile reads DEM z7) is averaged from this zoom's tiles. Starting the pyramid lower left such a window to
+     * the empty shallower levels only: with a DEM pack (min zoom 8) and no server, the z8 contour tiles over the
+     * pack's edge came out with no lines at all.
+     */
+    val demMinZoom: Int get() = if (fetcher.server == DirectSources.SERVER) DirectSources.DEM_MIN_ZOOM else DEM_MIN_ZOOM
+
     /** Encoded DEM tile for the pyramid: the pack's where it covers, else fetched; null when nobody has it. */
     private fun demBytes(z: Int, x: Int, y: Int): ByteArray? {
         if (packCoversDem(z, x, y)) return packs.demFor(z, x, y)?.tile(z, x, y) // T41
-        if (z !in DEM_MIN_ZOOM..DEM_MAX_ZOOM) return null
+        if (z !in demMinZoom..DEM_MAX_ZOOM) return null
         return when (val f = fetcher.get("dem", "$z/$x/$y.png")) {
             is Fetch.Hit -> f.bytes
             Fetch.Missing -> null
@@ -153,7 +162,7 @@ class OnlineTiles(
         current?.takeIf { it.generation == gen }?.let { return it.pyramid }
         synchronized(this) {
             current?.takeIf { it.generation == gen }?.let { return it.pyramid }
-            val p = DemPyramid(DEM_MIN_ZOOM, DEM_MAX_ZOOM, decoder, cacheTiles = 96) { tz, tx, ty -> demBytes(tz, tx, ty) }
+            val p = DemPyramid(demMinZoom, DEM_MAX_ZOOM, decoder, cacheTiles = 96) { tz, tx, ty -> demBytes(tz, tx, ty) }
             current = Pyramid(gen, p)
             return p
         }
@@ -221,7 +230,7 @@ class OnlineTiles(
     /** Fetches the DEM tiles contour tile z/x/y samples, in parallel (into the disk cache), before it is generated. */
     private fun prefetch(z: Int, x: Int, y: Int) {
         val plan = DirectSources.prefetchPlan(this, contourOptions, z, x, y) // T85: the DEM tiles the tile reads
-        val tiles = demTilesFor(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize).filter { (tz, tx, ty) -> !packCoversDem(tz, tx, ty) }
+        val tiles = demTilesFor(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize, minZoom = demMinZoom).filter { (tz, tx, ty) -> !packCoversDem(tz, tx, ty) }
         if (tiles.size <= 1) return
         val futures = tiles.map { (tz, tx, ty) -> service.prefetch { fetcher.get("dem", "$tz/$tx/$ty.png") } }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(answerWithinMs ?: 30_000)
@@ -265,11 +274,12 @@ class OnlineTiles(
 
         /**
          * The DEM tiles (z, x, y) a window of [size] global pixels at ([px], [py]) of zoom [z] samples,
-         * at the zoom the online pyramid reads: [z] clamped to [DEM_MIN_ZOOM]..[DEM_MAX_ZOOM] (deeper
-         * windows overzoom the deepest level, shallower ones average the shallowest).
+         * at the zoom the online pyramid reads: [z] clamped to [minZoom]..[DEM_MAX_ZOOM] (deeper
+         * windows overzoom the deepest level, shallower ones average the shallowest; [minZoom] is the
+         * pyramid's, [demMinZoom]).
          */
-        fun demTilesFor(z: Int, px: Int, py: Int, size: Int, tileSize: Int = 256): List<Triple<Int, Int, Int>> {
-            val tz = z.coerceIn(DEM_MIN_ZOOM, DEM_MAX_ZOOM)
+        fun demTilesFor(z: Int, px: Int, py: Int, size: Int, tileSize: Int = 256, minZoom: Int = DEM_MIN_ZOOM): List<Triple<Int, Int, Int>> {
+            val tz = z.coerceIn(minZoom, DEM_MAX_ZOOM)
             fun scale(v: Long): Long = if (tz >= z) v shl (tz - z) else Math.floorDiv(v, 1L shl (z - tz))
             val x0 = scale(px.toLong())
             val y0 = scale(py.toLong())

@@ -339,4 +339,16 @@ class ContourTilesTest {
         for (i in 0 until 6) dem.tile(12, 20 + i, 10)
         assertEquals(4, dem.cachedTiles)
     }
+
+    @Test
+    fun aLowContourTileAveragesThePyramidsShallowestZoom() {
+        // T87: a z8 contour tile samples DEM z7. A pyramid that starts at z8 averages z8 down (lines); one declared from
+        // z6 whose source has nothing below z8 (the phone's direct sources, a DEM pack from z8) leaves the window NaN.
+        val (tx, ty) = peakTile(8)
+        val fromSourceMin = ContourTiles.generate(pyramid(8, 12), 8, tx, ty)
+        assertTrue(fromSourceMin.lines > 0, "z8 tile from a z8 pyramid: ${fromSourceMin.lines} lines")
+        assertEquals(7, ContourTiles.plan(8, tx, ty).sampleZoom)
+        val declaredLower = ContourTiles.generate(pyramid(6, 12) { z, _, _ -> z >= 8 }, 8, tx, ty)
+        assertEquals(0, declaredLower.lines)
+    }
 }
