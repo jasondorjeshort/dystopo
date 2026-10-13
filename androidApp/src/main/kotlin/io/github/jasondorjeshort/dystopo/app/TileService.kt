@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Process
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.online.DirectSources
 import io.github.jasondorjeshort.dystopo.app.options.ShadeService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
@@ -366,7 +367,7 @@ class TileService(
         val osmLo = osmPacks.minOfOrNull { it.header.minZoom } ?: 0
         val osmHi = osmPacks.maxOfOrNull { it.header.maxZoom }
         // The online generation in the URLs makes MapLibre ask again for tiles it got blank while offline.
-        val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" + it.fetcher.contentTag.let { c -> if (c.isEmpty()) "" else "-$c" } } ?: "") // T74: and its content versions
+        val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" + it.fetcher.contentTag.let { c -> if (c.isEmpty()) "" else "-$c" } + OnlineService.get().renderRefreshes.get().let { r -> if (r > 0) "-r$r" else "" } } ?: "") // T74: and its content versions; T85: and the reloads after rendering (MapLibre keeps a tile it got a 503 for when the style is the same)
         return MapLibreStyle(
             MapLibreSources(
                 // The pack identity in the URL keeps MapLibre's own tile cache from serving a replaced pack's tiles.
@@ -470,7 +471,8 @@ class TileService(
         try {
             // T38: outside the pack, contours come from the online DEM through the same generation path (not the pack's cache).
             online?.takeUnless { it.packCoversContour(z, x, y) }?.let { o ->
-                return ok(contours, "application/x-protobuf", o.contourTile(z, x, y) { p -> generateContourTile(p, z, x, y, null, contourGen) })
+                DirectSources.staleContour(o, contourOptions, z, x, y) { p, d -> generateContourTile(p, z, x, y, null, contourGen, options = d) }?.let { return ok(contours, "application/x-protobuf", it) } // T85: not kept
+                return ok(contours, "application/x-protobuf", o.contourTile(z, x, y) { p -> DirectSources.contourOptions(contourOptions, o, z, x, y).let { d -> generateContourTile(DirectSources.contourPyramid(o, d, z, x, y) ?: p, z, x, y, null, contourGen, options = d) } }) // T85: direct sources read the hillshade zoom
             }
             // T41: the DEM pack that holds the tile (else the best one overlapping it) makes it, into its own cache directory.
             val pack = packs.demFor(z, x, y, PackRoleZooms.CONTOUR) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
@@ -532,13 +534,13 @@ class TileService(
     }
 
     /** [cancel] (T42, the warm-up's): polled between steps; true abandons the tile with [ContourBuildCancelled]. */
-    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, cacheKey: String?, stats: ContourTileStats, cancel: (() -> Boolean)? = null): ByteArray {
+    private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, cacheKey: String?, stats: ContourTileStats, cancel: (() -> Boolean)? = null, options: ContourTileOptions = contourOptions): ByteArray {
         val requested = System.nanoTime()
         contourSlots.acquire()
         val concurrent = stats.begin()
         try {
             val started = System.nanoTime()
-            val plan = ContourTiles.plan(z, x, y, contourOptions, p.tileSize)
+            val plan = ContourTiles.plan(z, x, y, options, p.tileSize) // T85: direct sources read the hillshade's zoom
             if (cancel != null && cancel()) throw ContourBuildCancelled("contour tile $z/$x/$y cancelled before sampling")
             val grid = ContourTiles.sample(p, plan)
             val sampled = System.nanoTime()

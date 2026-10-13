@@ -83,6 +83,13 @@ class PackAttributionTest {
     }
 
     @Test
+    fun shortNamesCreditTheAgency() {
+        val meta = mapOf("attribution" to "x", "provenance" to listOf("linz-dem", "hrdem", "copernicus"))
+        val c = PackAttribution.compose(listOf(PackMetadata("dem", "dem.pmtiles", meta)))
+        assertEquals("Elevation: Copernicus, NRCan, LINZ · Sources", c.compact)
+    }
+
+    @Test
     fun packWithoutIdsKeepsItsOwnCredit() {
         val c = PackAttribution.compose(listOf(PackMetadata("dem", "old.pmtiles", mapOf("attribution" to "Terrain &copy; someone"))))
         assertEquals("Terrain © someone · Sources", c.compact)

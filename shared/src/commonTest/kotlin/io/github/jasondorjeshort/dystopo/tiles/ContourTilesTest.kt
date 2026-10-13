@@ -177,6 +177,64 @@ class ContourTilesTest {
     }
 
     @Test
+    fun sampleAtDemZoomReadsTheHillshadeZoomAndLeavesPackPlansAlone() {
+        val pack = ContourTileOptions()
+        val direct = ContourTileOptions(sampleAtDemZoom = 12)
+        // tile zoom -> DEM zoom read with the hillshade rendered to z12: the spec zoom, at most 12, never coarser than the plan.
+        val expected = mapOf(7 to 8, 8 to 9, 9 to 10, 10 to 11, 11 to 12, 12 to 12, 13 to 14, 14 to 15)
+        for ((z, read) in expected) {
+            val a = ContourTiles.plan(z, 3, 5, pack)
+            val b = ContourTiles.plan(z, 3, 5, direct)
+            assertEquals(0, a.oversample, "tile zoom $z")
+            assertEquals(a.sampleZoom, a.readZoom)
+            assertEquals(read, b.readZoom, "tile zoom $z")
+            // The traced grid, its zoom and window are the pack plan's; only where it is read from differs.
+            assertEquals(a, b.copy(oversample = 0), "tile zoom $z")
+            // What is read: the same ground, 2^oversample times the cells, at the read zoom.
+            val r = b.readWindow
+            assertEquals(read, r.sampleZoom)
+            assertEquals(b.windowSize shl b.oversample, r.windowSize)
+            assertEquals(b.windowX shl b.oversample, r.windowX)
+            assertEquals(a, a.readWindow)
+        }
+    }
+
+    @Test
+    fun oversampledTilesReadOnlyTheDeeperZoomAndMatchThePackTile() {
+        val reads = HashMap<Int, Int>()
+        val dem = DemPyramid(8, 12, decoder) { z, x, y -> reads[z] = (reads[z] ?: 0) + 1; encodeAddress(z, x, y) }
+        val (tx, ty) = peakTile(12)
+        for (z in listOf(9, 10, 11)) {
+            val x = tx shr (12 - z)
+            val y = ty shr (12 - z)
+            val packPlan = ContourTiles.plan(z, x, y)
+            val plan = ContourTiles.plan(z, x, y, ContourTileOptions(sampleAtDemZoom = 12))
+            reads.clear()
+            val grid = ContourTiles.sample(dem, plan)
+            assertEquals(setOf(plan.readZoom), reads.keys, "tile zoom $z reads only DEM z${plan.readZoom}")
+            // Each cell is the average of its block of the deeper window.
+            val k = plan.oversample
+            val fine = dem.window(plan.readZoom, plan.windowX shl k, plan.windowY shl k, plan.windowSize shl k, plan.windowSize shl k)
+            for ((i, j) in listOf(0 to 0, 17 to 5, plan.windowSize - 1 to plan.windowSize - 1)) {
+                var sum = 0.0
+                for (dj in 0 until (1 shl k)) for (di in 0 until (1 shl k)) sum += fine[(i shl k) + di, (j shl k) + dj]
+                assertTrue(abs(grid[i, j] - sum / (1 shl (2 * k))) < 1e-3, "z$z cell $i,$j")
+            }
+            val a = ContourTiles.build(ContourTiles.sample(dem, packPlan), packPlan)
+            val b = ContourTiles.build(grid, plan)
+            val levels = { t: ContourTile -> VectorTile.decode(t.bytes).layer("contours")!!.features.map { it.properties.getValue("ele").asDouble() }.toSet() }
+            assertEquals(levels(a), levels(b), "tile zoom $z levels")
+            assertTrue(abs(a.lines - b.lines) <= maxOf(1, a.lines / 10), "tile zoom $z: ${a.lines} vs ${b.lines} lines")
+        }
+        // NaN cells are left out of the average; a block of NaN stays NaN.
+        val nan = Float.NaN
+        val reduced = ContourTiles.reduce(floatArrayOf(1f, 3f, nan, nan, nan, nan, nan, nan, 2f, 2f, 0f, 0f, 2f, 2f, 0f, 0f), 4, 1)
+        assertEquals(2f, reduced[0])
+        assertTrue(reduced[1].isNaN())
+        assertEquals(listOf(2f, 0f), reduced.toList().subList(2, 4))
+    }
+
+    @Test
     fun coarseGridKeepsTheLevelsAndShapeOfFullResolution() {
         val dem = pyramid(8, 14)
         val (tx, ty) = peakTile(13)

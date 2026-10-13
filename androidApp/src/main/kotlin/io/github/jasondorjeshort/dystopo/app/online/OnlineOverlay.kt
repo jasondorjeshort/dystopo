@@ -74,7 +74,7 @@ fun OnlineOverlay() {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val (label, dot) = when (ui.state) {
-                "online" -> "Online" to Green
+                "online" -> if (ui.notice != null) "Paused" to Grey else "Online" to Green // T85: not green while mobile data is off for it or the session limit is reached
                 "offline" -> "Offline" to Red
                 "none" -> "No server" to Grey
                 else -> "Connecting" to Grey

@@ -176,6 +176,6 @@ object PackAttribution {
         return out.map { it.joinToString(" ") }
     }
 
-    /** First word of the source name: `USGS`, `Copernicus`, `Mapzen`. */
-    private fun shortName(s: DataSource): String = s.name.substringBefore(' ')
+    /** First word of the source name (`USGS`, `Copernicus`), or the agency in parentheses (T85: `LINZ`, not `New`). */
+    private fun shortName(s: DataSource): String = Regex("""\(([A-Z]{3,}) """).find(s.name)?.groupValues?.get(1) ?: s.name.substringBefore(' ')
 }

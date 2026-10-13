@@ -50,12 +50,23 @@ data class ContourTileOptions(
     /** T47: a fixed contour interval in [units] for tiles of zoom [intervalFromZoom] and up; null keeps the [ContourStyle] table. */
     val interval: Double? = null,
     val intervalFromZoom: Int = 0,
+    /**
+     * T85: the deepest DEM zoom the terrain is rendered at, when contours share their DEM with a hillshade
+     * made on the fly (the phone reading the sources itself; `DirectSources.maxZoom`). The window is then
+     * read at the hillshade's own zoom, min([ContourTiles.demZoom], this), whenever that is deeper than the
+     * plan's sample zoom, and box-averaged down to the plan's grid ([ContourTilePlan.oversample]), so a view
+     * reads each source block once instead of once more for a coarser ancestor. Null (packs, the server):
+     * the plan samples [ContourTilePlan.sampleZoom] directly, as before.
+     */
+    val sampleAtDemZoom: Int? = null,
 )
 
 /**
  * How contour tile z/x/y is made: the [ContourStyle] spec zoom ([specZoom], where one DEM pixel is
- * one screen pixel), the DEM zoom actually sampled ([sampleZoom] = [specZoom] - [reduction]), and the
+ * one screen pixel), the DEM zoom of the traced grid ([sampleZoom] = [specZoom] - [reduction]), and the
  * sampled window in global pixels of [sampleZoom] (the tile, [gridTileSize] cells across, plus a halo).
+ * With [oversample] > 0 (T85, [ContourTileOptions.sampleAtDemZoom]) the window is read [oversample]
+ * zooms deeper, at [readZoom], and each block of 2^[oversample] cells squared is averaged into one cell.
  */
 data class ContourTilePlan(
     val z: Int,
@@ -67,9 +78,23 @@ data class ContourTilePlan(
     val halo: Int,
     val windowX: Int,
     val windowY: Int,
+    val oversample: Int = 0,
 ) {
     val sampleZoom: Int get() = specZoom - reduction
     val windowSize: Int get() = gridTileSize + 2 * halo
+
+    /** The DEM zoom the window is read at: [sampleZoom], or [oversample] zooms deeper. */
+    val readZoom: Int get() = sampleZoom + oversample
+
+    /**
+     * The window actually read from the DEM as a plan without oversampling: [sampleZoom] is [readZoom] and the
+     * window is in its global pixels (what a caller prefetches). The plan itself when [oversample] is 0.
+     */
+    val readWindow: ContourTilePlan
+        get() = if (oversample == 0) this else copy(
+            reduction = reduction - oversample, gridTileSize = gridTileSize shl oversample, halo = halo shl oversample,
+            windowX = windowX shl oversample, windowY = windowY shl oversample, oversample = 0,
+        )
 
     /** Screen pixels per traced grid cell. */
     val cellScale: Int get() = 1 shl reduction
@@ -167,12 +192,49 @@ object ContourTiles {
         val grid = options.tileSize shr r
         require(grid >= 16 && (grid shl r) == options.tileSize) { "tileSize ${options.tileSize} too small for reduction $r" }
         val h = options.halo
-        return ContourTilePlan(z, x, y, specZoom, r, grid, h, x * grid - h, y * grid - h)
+        // T85: read at the hillshade's zoom (at most the spec zoom) when that is deeper than the traced grid.
+        val oversample = options.sampleAtDemZoom?.let { (minOf(specZoom, it) - (specZoom - r)).coerceAtLeast(0) } ?: 0
+        return ContourTilePlan(z, x, y, specZoom, r, grid, h, x * grid - h, y * grid - h, oversample)
     }
 
-    /** Samples the plan's window from [dem]: the grid [build] expects. Thread-safe when [dem] is. */
-    fun sample(dem: DemPyramid, plan: ContourTilePlan): ElevationGrid =
-        dem.window(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize, plan.windowSize)
+    /**
+     * Samples the plan's window from [dem]: the grid [build] expects. Thread-safe when [dem] is. With
+     * [ContourTilePlan.oversample] the window is read at [ContourTilePlan.readZoom] and box-averaged
+     * (NaN cells left out; all NaN stays NaN), as [DemPyramid] makes a zoom below its lowest level.
+     */
+    fun sample(dem: DemPyramid, plan: ContourTilePlan): ElevationGrid {
+        val k = plan.oversample
+        val size = plan.windowSize
+        if (k == 0) return dem.window(plan.sampleZoom, plan.windowX, plan.windowY, size, size)
+        val read = plan.readWindow
+        val fine = dem.window(read.sampleZoom, read.windowX, read.windowY, read.windowSize, read.windowSize)
+        return ElevationGrid(size, size, fine.cellSizeMeters * (1 shl k), reduce(fine.values, read.windowSize, k))
+    }
+
+    /** Averages each 2^[k] by 2^[k] block of the square grid [fine] ([fineSize] cells across), skipping NaN. */
+    internal fun reduce(fine: FloatArray, fineSize: Int, k: Int): FloatArray {
+        val f = 1 shl k
+        val size = fineSize shr k
+        val out = FloatArray(size * size)
+        for (j in 0 until size) {
+            for (i in 0 until size) {
+                var sum = 0.0
+                var n = 0
+                for (dj in 0 until f) {
+                    val row = (j * f + dj) * fineSize + i * f
+                    for (di in 0 until f) {
+                        val v = fine[row + di]
+                        if (!v.isNaN()) {
+                            sum += v
+                            n++
+                        }
+                    }
+                }
+                out[j * size + i] = if (n == 0) Float.NaN else (sum / n).toFloat()
+            }
+        }
+        return out
+    }
 
     /** Samples the window from [dem] and builds contour tile z/x/y; see [build]. */
     fun generate(dem: DemPyramid, z: Int, x: Int, y: Int, options: ContourTileOptions = ContourTileOptions()): ContourTile {
@@ -331,7 +393,7 @@ class ContourTileStats(private val keepRecent: Int = 20) {
         val t = tile.timings
         recent.addLast(
             linkedMapOf(
-                "tile" to "${plan.z}/${plan.x}/${plan.y}", "sampleZoom" to plan.sampleZoom, "grid" to plan.windowSize,
+                "tile" to "${plan.z}/${plan.x}/${plan.y}", "sampleZoom" to plan.sampleZoom, "readZoom" to plan.readZoom, "grid" to plan.windowSize,
                 "ms" to round1(totalMs), "waitMs" to round1(waitMs), "sampleMs" to round1(sampleMs),
                 "traceMs" to t?.let { round1(it.traceMs) }, "cutMs" to t?.let { round1(it.cutMs) },
                 "simplifyMs" to t?.let { round1(it.simplifyMs) }, "encodeMs" to t?.let { round1(it.encodeMs) },

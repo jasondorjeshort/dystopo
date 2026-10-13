@@ -16,6 +16,9 @@ import io.github.jasondorjeshort.dystopo.sources.elevation.HttpReply as SourceRe
 import io.github.jasondorjeshort.dystopo.sources.elevation.OverviewLevels
 import io.github.jasondorjeshort.dystopo.sources.elevation.SourceHttp
 import io.github.jasondorjeshort.dystopo.sources.elevation.SourceIo
+import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
+import io.github.jasondorjeshort.dystopo.tiles.ContourTilePlan
+import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import java.io.File
 import java.io.IOException
 import java.net.ConnectException
@@ -50,7 +53,7 @@ class SourceCapReached(message: String) : RuntimeException(message)
  * rendered at once (their own permits, so map tiles never wait behind them), and [sessionCapBytes] downloaded per app session, after which
  * tiles fail with a clear message until the app restarts (a casual pan cannot pull gigabytes).
  */
-class DirectSources(private val context: android.content.Context, private val cacheRoot: File, private val cache: TileCache) : HttpGet {
+class DirectSources(private val context: android.content.Context, private val cacheRoot: File, internal val cache: TileCache) : HttpGet {
     val http = PhoneSourceHttp(this)
 
     /** Mobile data allowed (setting `directOnMobileData`; on by default since T83: nothing in the app is gated on Wi-Fi, the session limit is the brake). */
@@ -184,24 +187,39 @@ class DirectSources(private val context: android.content.Context, private val ca
     }
 
     /** Tile [t] (at most [maxZoom]): from the online cache, where the fetcher keeps what this returned, else rendered once. */
-    private fun rendered(t: TileId): ByteArray {
+    /** T85: a render a contour tile asked for, given up when it got its turn because the view had moved on ([contourWindow]). */
+    private class StaleRender(t: TileId) : RuntimeException("DEM ${t.z}/${t.x}/${t.y} is not needed for the view any more")
+
+    /**
+     * [wanted] (T85, contour tiles only): checked again when the render gets its permit; false gives the render up
+     * ([StaleRender]). A request without it (the map's own tile) that joined such a render renders the tile itself.
+     */
+    private fun rendered(t: TileId, wanted: (() -> Boolean)? = null): ByteArray {
         val key = "$KEY/dem/${t.z}/${t.x}/${t.y}.png"
         cache.get(key)?.let { return it }
-        val job = synchronized(inFlight) { inFlight.getOrPut(key) { lazy { renderAndRecord(t).also { cache.put(key, it) } } } }
-        try {
-            return job.value
-        } finally {
-            synchronized(inFlight) { if (inFlight[key] === job) inFlight.remove(key) }
+        while (true) {
+            val job = synchronized(inFlight) { inFlight.getOrPut(key) { lazy { renderAndRecord(t, wanted).also { cache.put(key, it) } } } }
+            try {
+                return job.value
+            } catch (e: StaleRender) {
+                if (wanted != null) throw e
+            } finally {
+                synchronized(inFlight) { if (inFlight[key] === job) inFlight.remove(key) }
+            }
         }
     }
 
-    private fun renderAndRecord(t: TileId): ByteArray {
+    private fun renderAndRecord(t: TileId, wanted: (() -> Boolean)? = null): ByteArray {
         // Renders take their own permits, so OpenFreeMap tiles never queue behind them (MapLibre gives up on a
         // tile after its timeout, and the map then never counts as loaded).
         rendering.incrementAndGet()
         renderPermits.acquire()
         val started = System.nanoTime()
         val (png, ids) = try {
+            if (wanted != null && !wanted()) {
+                contourStale.incrementAndGet()
+                throw StaleRender(t)
+            }
             renderDem(t)
         } finally {
             renderPermits.release()
@@ -269,7 +287,10 @@ class DirectSources(private val context: android.content.Context, private val ca
     fun renderDem(t: TileId): Pair<ByteArray, List<String>> {
         val cell = WebMercator.metersPerPixel(REFERENCE_LAT, t.z, 256)
         val tw = TileWindow(t, TileWindows.haloCells(BestSource.GLOBAL_FEATHER_METERS, cell))
-        val result = OverviewLevels.withTarget(cell) { BestSource().fetch(tw.window, cell) }
+        // T85: below [COARSER_OVERVIEW_BELOW] the readers pick the overview level for twice the cell size: half the
+        // bytes of a zoomed-out view (measured in docs/PLANNING.md), and the hillshade there is drawn 1 dp per DEM pixel.
+        val target = if (t.z < COARSER_OVERVIEW_BELOW) cell * 2 else cell
+        val result = OverviewLevels.withTarget(target) { BestSource().fetch(tw.window, cell) }
         val grid = tw.interior(result.grid)
         return FastPng.encode(TileWindows.encodeTerrarium(grid), grid.width, grid.height) to result.provenance
     }
@@ -279,6 +300,105 @@ class DirectSources(private val context: android.content.Context, private val ca
         val key = "$z/$x/$y"
         synchronized(provenance) { provenance[key] }?.let { return it }
         return cache.get("$PROVENANCE_PREFIX/$key.txt")?.decodeToString()?.split(',')?.filter { it in SourceRegistry.builtIn }
+    }
+
+    // ---- T85: the DEM tiles a contour tile samples ----
+
+    /** Contour samples: halo tiles skipped (out of view, not made), taken already made, waited for, rendered for a contour tile. */
+    val contourHaloSkipped = AtomicLong()
+    val contourDemCached = AtomicLong()
+    val contourDemWaited = AtomicLong()
+    val contourDemRendered = AtomicLong()
+    val contourStale = AtomicLong()
+    val contourPartial = AtomicLong()
+    private val contourRenderPool = java.util.concurrent.Executors.newCachedThreadPool { r -> Thread(r, "direct-contour-dem").apply { isDaemon = true } }
+
+    /**
+     * The DEM tiles of [plan]'s read window ([ContourTilePlan.readWindow]) for one contour tile ([contourPyramid]),
+     * all waited for together (at most [CONTOUR_WAIT_MS], then the tile is not ready: a 503 MapLibre retries, by
+     * then from the cache). A tile made already (the online cache) or being made (the hillshade asked for it) is
+     * taken. Otherwise it is rendered only when the view needs it ([wanted]):
+     * - a core tile (under the contour tile itself) when the contour tile is at the view's own zoom or MapLibre's
+     *   fallback zoom ([PREFETCH_ZOOM_DELTA] up), or the core tile is in view. Tiles of other zooms (the ones MapLibre
+     *   asks for while the camera moves) take only what is made already or in view, else they are not ready (never
+     *   cached with a hole);
+     * - a halo tile (the ring around the contour tile, four cells of which are traced) when it is in view. Out
+     *   of view nobody asked for it, so its halo cells stay NaN and lines stop half a cell short of a seam nobody
+     *   sees, instead of a whole tile's COG blocks being read for four pixels.
+     * The check runs when the tile is asked for and again when its render gets a permit, so tiles asked for while
+     * the camera was still moving are given up once it has settled elsewhere. [lenient] ([staleContour]): a core
+     * tile the view does not need is left out (NaN) instead of the whole tile being not ready.
+     */
+    fun contourWindow(plan: ContourTilePlan, lenient: Boolean = false, onWaitedTooLong: () -> Unit = {}): Map<TileId, ByteArray> {
+        val read = plan.readWindow
+        val core = OnlineTiles.demTilesFor(read.sampleZoom, read.windowX + read.halo, read.windowY + read.halo, read.gridTileSize).toSet()
+        val jobs = LinkedHashMap<TileId, java.util.concurrent.CompletableFuture<ByteArray>>()
+        val out = HashMap<TileId, ByteArray>()
+        for (tile in OnlineTiles.demTilesFor(read.sampleZoom, read.windowX, read.windowY, read.windowSize)) {
+            val (tz, tx, ty) = tile
+            val t = TileId(tz, tx, ty)
+            val key = "$KEY/dem/$tz/$tx/$ty.png"
+            cache.get(key)?.let { out[t] = it; contourDemCached.incrementAndGet(); continue }
+            val job = synchronized(inFlight) { inFlight[key] }
+            val isCore = tile in core
+            val want = { wanted(t, plan.z, isCore) }
+            jobs[t] = when {
+                job != null -> java.util.concurrent.CompletableFuture.supplyAsync({ job.value }, contourRenderPool).also { contourDemWaited.incrementAndGet() }
+                want() -> java.util.concurrent.CompletableFuture.supplyAsync({ rendered(t, want) }, contourRenderPool).also { contourDemRendered.incrementAndGet() }
+                isCore && !lenient -> { contourStale.incrementAndGet(); throw OnlineTiles.NotReady("contour tile ${plan.z}/${plan.x}/${plan.y} is not at the view's zoom; it takes only tiles already made") }
+                isCore -> { contourStale.incrementAndGet(); continue }
+                else -> { contourHaloSkipped.incrementAndGet(); continue }
+            }
+        }
+        val deadline = System.nanoTime() + CONTOUR_WAIT_MS * 1_000_000
+        for ((t, f) in jobs) {
+            try {
+                out[t] = f.get(maxOf(0L, deadline - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                onWaitedTooLong()
+                throw OnlineTiles.NotReady("DEM ${t.z}/${t.x}/${t.y} for contours is still being made; try again")
+            } catch (e: java.util.concurrent.ExecutionException) {
+                val cause = e.cause ?: e
+                if (cause is StaleRender) {
+                    if (lenient) continue
+                    throw OnlineTiles.NotReady(cause.message ?: "stale")
+                }
+                throw cause
+            }
+        }
+        return out
+    }
+
+    /** True when contour tile zoom [z] is the view's own zoom or MapLibre's fallback zoom (true while the view is not known). */
+    fun atViewZoom(z: Int): Boolean {
+        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds ?: return true
+        return viewZoom(v).let { z == it || z == it - PREFETCH_ZOOM_DELTA }
+    }
+
+    /** Whether the view needs DEM tile [t] for contour tile zoom [contourZoom] (see [contourWindow]); true while the view is not known. */
+    private fun wanted(t: TileId, contourZoom: Int, core: Boolean): Boolean {
+        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds ?: return true
+        // The view's own contour zoom, and the zoom MapLibre loads four levels up as a fallback while the view's tiles come in.
+        if (core && atViewZoom(contourZoom)) return true
+        return inView(t)
+    }
+
+    /** The view's contour tile zoom (512-px tiles: floor of the map zoom), from the view's width in degrees and the screen's in dp. */
+    private fun viewZoom(v: io.github.jasondorjeshort.dystopo.packs.PackBounds): Int {
+        val m = context.resources.displayMetrics
+        val widthDp = m.widthPixels / m.density
+        val span = (v.maxLon - v.minLon).let { if (it <= 0) it + 360 else it }
+        return kotlin.math.floor(kotlin.math.ln(360.0 * widthDp / (512.0 * span)) / kotlin.math.ln(2.0) + 0.05).toInt()
+    }
+
+    /** True when tile [t] overlaps the map's view (true while the view is not known yet). */
+    private fun inView(t: TileId): Boolean {
+        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds ?: return true
+        val west = WebMercator.xToLon(t.x.toDouble(), t.z)
+        val east = WebMercator.xToLon(t.x + 1.0, t.z)
+        val north = WebMercator.yToLat(t.y.toDouble(), t.z)
+        val south = WebMercator.yToLat(t.y + 1.0, t.z)
+        return east > v.minLon && west < v.maxLon && north > v.minLat && south < v.maxLat
     }
 
     // ---- OpenFreeMap ----
@@ -413,6 +533,7 @@ class DirectSources(private val context: android.content.Context, private val ca
             "offlineFailures" to http.offline.get(), "requestWaitMs" to http.waitMs.get(), "requestNetMs" to http.netMs.get(),
             "maxZoom" to maxZoom, "demSynthesized" to demSynthesized.get(), "renderedByZoom" to synchronized(renderedByZoom) { renderedByZoom.mapKeys { "z${it.key}" } }, "demRendered" to n, "demMsAvg" to if (n == 0L) null else demMs.get() / n, "demMsMax" to demMaxMs.get(),
             "osmFetched" to osmFetched.get(), "osmBytes" to osmBytes.get(),
+            "contourDem" to linkedMapOf("cached" to contourDemCached.get(), "waited" to contourDemWaited.get(), "rendered" to contourDemRendered.get(), "haloSkipped" to contourHaloSkipped.get(), "notAtViewZoom" to contourStale.get(), "partialTiles" to contourPartial.get()), // T85
             "failures" to failures.get(), "lastError" to lastError,
             "tiffPool" to SourceIo.tiffPool?.let { mapOf("opened" to it.opened, "reused" to it.reused) },
             "decodedBlocks" to SourceIo.decodedBlocks?.let { mapOf("bytes" to it.sizeBytes, "hits" to it.hits, "misses" to it.misses) },
@@ -439,6 +560,9 @@ class DirectSources(private val context: android.content.Context, private val ca
          */
         const val DEFAULT_MAX_ZOOM = 12
 
+        /** T85: DEM tiles of a lower zoom read the sources' overview level for twice their cell size ([renderDem]). */
+        const val COARSER_OVERVIEW_BELOW = 12
+
         /** DEM tiles rendered at once: each holds a few decoded 4 MB COG blocks while it renders. */
         const val MAX_TILES_IN_FLIGHT = 6
 
@@ -455,6 +579,16 @@ class DirectSources(private val context: android.content.Context, private val ca
         /** How long a map request waits for a tile being rendered before it is told to come back (OnlineTiles.answerWithinMs). */
         const val ANSWER_WITHIN_MS = 8_000L
 
+        /**
+         * T85: how long a contour tile waits for its DEM tiles before it answers "not yet" (503). Shorter than
+         * [ANSWER_WITHIN_MS]: the tracing and the queue for a generation slot come on top, and a request MapLibre
+         * times out (about 10 s) is never asked for again, while a 503 is.
+         */
+        const val CONTOUR_WAIT_MS = 6_000L
+
+        /** MapLibre Native's default prefetch zoom delta: with the view at zoom z it also loads tiles of zoom z - 4. */
+        const val PREFETCH_ZOOM_DELTA = 4
+
         /** T83: shown only when the user turned mobile data off for the online map (the default is on). */
         val MOBILE_DATA_OFF = "Online map paused: mobile data is turned off for it in ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SOURCES}."
 
@@ -469,6 +603,77 @@ class DirectSources(private val context: android.content.Context, private val ca
         val OSM_IDS = listOf("osm", "openmaptiles", "openfreemap")
 
         fun gunzip(bytes: ByteArray): ByteArray = OnlineFetcher.gunzipIfNeeded(bytes)
+
+        /**
+         * T85: the contour plan options for contour tile z/x/y made over [online]'s DEM. When the phone renders the
+         * terrain itself and no pack's DEM overlaps the tile, it reads the DEM at the zoom the hillshade is rendered
+         * at (the tile's own DEM zoom, at most [maxZoom]) and averages it down to its grid
+         * ([ContourTileOptions.sampleAtDemZoom]): the coarser zooms the plans sampled before shared no COG blocks
+         * with the hillshade's tiles. Packs, tiles touching a pack and a configured server keep [base] unchanged.
+         */
+        fun contourOptions(base: ContourTileOptions, online: OnlineTiles?, z: Int, x: Int, y: Int): ContourTileOptions {
+            if (online?.fetcher?.server != SERVER || touchesPack(online, z, x, y)) return base
+            val d = OnlineService.get().direct
+            val options = base.copy(sampleAtDemZoom = d.maxZoom)
+            return if (ContourTiles.plan(z, x, y, options).readZoom in DEM_MIN_ZOOM..d.maxZoom) options else base
+        }
+
+        /** True when a DEM pack's bounds overlap contour tile z/x/y (it is then made as before T85, pack tiles and all). */
+        private fun touchesPack(online: OnlineTiles, z: Int, x: Int, y: Int): Boolean {
+            val west = WebMercator.xToLon(x.toDouble(), z)
+            val east = WebMercator.xToLon(x + 1.0, z)
+            val north = WebMercator.yToLat(y.toDouble(), z)
+            val south = WebMercator.yToLat(y + 1.0, z)
+            return online.packs.demPacks.any { p ->
+                val h = p.header
+                east > h.minLon && west < h.maxLon && north > h.minLat && south < h.maxLat
+            }
+        }
+
+        /**
+         * T85: the DEM window [OnlineTiles] fetches before it generates contour tile z/x/y: the plan's
+         * [ContourTilePlan.readWindow]; none when [contourPyramid] reads the direct sources (it decides per tile).
+         */
+        fun prefetchPlan(online: OnlineTiles, base: ContourTileOptions, z: Int, x: Int, y: Int): ContourTilePlan {
+            val options = contourOptions(base, online, z, x, y)
+            val read = ContourTiles.plan(z, x, y, options).readWindow
+            // One cell: OnlineTiles prefetches nothing for a single tile; [contourPyramid] fetches and waits itself.
+            return if (options.sampleAtDemZoom == null) read else read.copy(gridTileSize = 1, halo = 0)
+        }
+
+        /**
+         * T85: the pyramid contour tile z/x/y of [online] samples with direct sources ([contourOptions] chose the
+         * hillshade's zoom): the tiles of its read window resolved at once ([DirectSources.contourWindow]); ancestors
+         * only from the online cache. Null otherwise (the plain online pyramid, as before).
+         */
+        fun contourPyramid(online: OnlineTiles, options: ContourTileOptions, z: Int, x: Int, y: Int, lenient: Boolean = false): io.github.jasondorjeshort.dystopo.tiles.DemPyramid? {
+            if (online.fetcher.server != SERVER || options.sampleAtDemZoom == null) return null
+            val d = OnlineService.get().direct
+            val plan = ContourTiles.plan(z, x, y, options)
+            // Only a tile that waited too long counts toward the reload after rendering (OnlineService), so MapLibre
+            // asks for it again; one refused because the view moved on would make every reload refuse it again.
+            val window = d.contourWindow(plan, lenient) { online.notReady.incrementAndGet() }
+            return io.github.jasondorjeshort.dystopo.tiles.DemPyramid(DEM_MIN_ZOOM, d.maxZoom, io.github.jasondorjeshort.dystopo.app.TileService.demDecoder(), cacheTiles = 16) { tz, tx, ty ->
+                window[TileId(tz, tx, ty)] ?: if (tz < plan.readZoom) d.cache.get("$KEY/dem/$tz/$tx/$ty.png") else null
+            }
+        }
+
+        /**
+         * T85: contour tile z/x/y when the view does not need it at its own zoom (neither the view's zoom nor
+         * MapLibre's fallback zoom: a tile asked for while the camera moved, or a parent MapLibre keeps): made by
+         * [generate] from the DEM tiles already made or in view, the rest NaN, and not kept in the online cache,
+         * so a later view at that zoom makes it whole. Never a lasting "not ready", so the map can finish loading.
+         * Null when the tile is one the view needs (or not a direct-sources tile): the caller takes the usual path.
+         */
+        fun staleContour(online: OnlineTiles, base: ContourTileOptions, z: Int, x: Int, y: Int, generate: (io.github.jasondorjeshort.dystopo.tiles.DemPyramid, ContourTileOptions) -> ByteArray): ByteArray? {
+            val options = contourOptions(base, online, z, x, y)
+            if (options.sampleAtDemZoom == null || online.packCoversContour(z, x, y)) return null
+            val d = OnlineService.get().direct
+            if (d.atViewZoom(z)) return null
+            val pyramid = contourPyramid(online, options, z, x, y, lenient = true) ?: return null
+            d.contourPartial.incrementAndGet()
+            return generate(pyramid, options)
+        }
     }
 }
 

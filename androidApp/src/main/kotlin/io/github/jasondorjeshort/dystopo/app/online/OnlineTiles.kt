@@ -220,7 +220,7 @@ class OnlineTiles(
 
     /** Fetches the DEM tiles contour tile z/x/y samples, in parallel (into the disk cache), before it is generated. */
     private fun prefetch(z: Int, x: Int, y: Int) {
-        val plan = ContourTiles.plan(z, x, y, contourOptions)
+        val plan = DirectSources.prefetchPlan(this, contourOptions, z, x, y) // T85: the DEM tiles the tile reads
         val tiles = demTilesFor(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize).filter { (tz, tx, ty) -> !packCoversDem(tz, tx, ty) }
         if (tiles.size <= 1) return
         val futures = tiles.map { (tz, tx, ty) -> service.prefetch { fetcher.get("dem", "$tz/$tx/$ty.png") } }
