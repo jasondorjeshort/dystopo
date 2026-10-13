@@ -55,7 +55,7 @@ names (`CLAUDE.md`, Rules).
 
 | File | Kind | Status | One line |
 |---|---|---|---|
-| `2026-10-13-recenter-button.md` | feature | new | Recenter button cycling north-up, free and heading-up (T61 has it in nav mode only). |
+| `2026-10-13-recenter-button.md` | feature | planned | Recenter button cycling north-up, free and heading-up; the plain button is T93 (wave 13), the cycling later. |
 | `2026-10-13-map-scale-bar.md` | feature | new | Scale bar on the phone map, own units by default, optional both. |
 | `2026-10-13-large-distance-units.md` | feature | new | Imperial distances switch to miles at large scales; inches someday. |
 | `2026-10-13-driving-is-in-scope.md` | question | planned | Doctrine: hike and bike first, driving kept as a first-class mode (tension with T73 wording). |

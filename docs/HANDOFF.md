@@ -8,7 +8,7 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
 
 ## Now
 
-- Wave 13 is on the board (T88 to T92: the wave 12 follow-ups only, owner's word 2026-10-13) and
+- Wave 13 is on the board (T88 to T92 the wave 12 follow-ups, T93 the plain recentre button) and
   nothing is launched: the usage gate denies every launch at 95% weekly. The owner lifts the weekly
   figure for this wave, which the hook only knows through `DYSTOPO_GATE_OVERRIDE=1`: resume with
   `$env:DYSTOPO_GATE_OVERRIDE='1'; claude --resume 7b335a00-fa4a-4d77-a90a-7fa3644cdb09`.
@@ -19,7 +19,7 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
 
 1. Launch wave 13 (`wave` and `brief` skills): a Haiku chore first (rerun run 38462712750, start the
    live viewer on 8765 from the installed distribution, detached, PID in `out/coordinator-pids.txt`),
-   then the five Opus implementers in worktrees under `src\dystopo-wt\` with the ports and AVDs in
+   then the six Opus implementers (T88 to T93) in worktrees under `src\dystopo-wt\`, ports and AVDs in
    the wave 13 paragraph of `docs/TASKS.md`; then a critic (most capable model, `proposal` skill's
    critic brief) on ADRs 0027 and 0028 and Hatchery proposals 0003 and 0005.
 2. Verify, merge and log each PR by the merge sequence; then the sweep, then `v0.1.6-alpha`.

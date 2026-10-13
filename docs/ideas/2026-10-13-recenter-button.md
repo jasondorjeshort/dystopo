@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T61 partial
+status: planned
+pipeline: T93 (the plain button, wave 13); the three-state logic is a later wave
 related: [2026-10-13-map-scale-bar.md, 2026-10-13-turn-directions.md]
 ---
 
