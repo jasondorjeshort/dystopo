@@ -31,4 +31,10 @@ Updated: 2026-10-12 (night), by main session
 
 ## Open findings
 
+- CI's build job downloads every glyph range from protomaps.github.io on each run (no cache step
+  for `cache/glyphs`; `androidApp/build.gradle.kts` lines 143-157), so a remote 503 fails CI on a
+  docs-only commit (b9aa668, 2026-10-13; rerun green). Next sweep task: an `actions/cache` step on
+  `cache/glyphs` keyed by the font and range list, or a retry in the task.
+- For the next sweep task too: Hawaii z9 contour tiles 500 on main (T74); the first-launch
+  `NavSession.getUi` snapshot crash (T75's verifier); Flevoland unfit as a contour check.
 - Hatchery proposal 0003 (wave workflow) awaits a critic pass; see `../hatchery/docs/HANDOFF.md`.
