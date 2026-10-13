@@ -42,6 +42,10 @@ class OnlineService private constructor(private val app: DystopoApp) {
     @Volatile var fetcher: OnlineFetcher? = null
         private set
 
+    /** T78: the peer phones in use as sources (`peer://<host:port>`, [io.github.jasondorjeshort.dystopo.app.share.PeerSources]); declared before the init block that configures the fetcher. */
+    @Volatile var peers: List<String> = emptyList()
+        private set
+
     val region = RegionDownload(this, app)
 
     /**
@@ -121,16 +125,34 @@ class OnlineService private constructor(private val app: DystopoApp) {
     @Synchronized
     fun configure(server: String) {
         val target = server.ifEmpty { if (DirectPrefs.enabled(app)) DirectSources.SERVER else "" }
-        if ((fetcher?.server ?: "") == target) return
-        fetcher = when (target) {
-            "" -> null
-            DirectSources.SERVER -> OnlineFetcher(DirectSources.SERVER, cache, http = direct, maxInFlight = DirectSources.FETCHER_IN_FLIGHT)
-            // T74: a list of sources (the server now; T78 adds peer phones), content versions kept across restarts.
-            else -> OnlineFetcher(listOf(server), cache, versionFile = File(app.cacheDir, VERSIONS_FILE))
+        val want = listOf(target).filter { it.isNotEmpty() } + peers
+        if ((fetcher?.sources ?: emptyList<String>()) == want) return
+        val primary = fetcher?.server
+        // T78: peer phones (`peer://`) join whichever source is configured; their requests go over the sealed LAN link.
+        val peerGet = { d: HttpGet? -> io.github.jasondorjeshort.dystopo.app.share.PeerHttpGet(d) }
+        fetcher = when {
+            want.isEmpty() -> null
+            target == DirectSources.SERVER -> OnlineFetcher(want, cache, http = if (peers.isEmpty()) direct else peerGet(direct), maxInFlight = DirectSources.FETCHER_IN_FLIGHT)
+            // T74: a list of sources (the server, then T78's peer phones), content versions kept across restarts.
+            target.isNotEmpty() -> OnlineFetcher(want, cache, http = if (peers.isEmpty()) UrlConnectionGet() else peerGet(UrlConnectionGet()), versionFile = File(app.cacheDir, VERSIONS_FILE))
+            else -> OnlineFetcher(want, cache, http = peerGet(null)) // T78: no server and no direct reading: the peers alone
         }?.also { f -> f.onVersionChange = { onVersionChange(f, it) } }
-        info = null
-        assetsVersion = null
-        Log.i(TAG, "server: ${target.ifEmpty { "(none)" }}")
+        if (fetcher?.server != primary) {
+            info = null
+            assetsVersion = null
+        }
+        Log.i(TAG, "server: ${target.ifEmpty { "(none)" }}${if (peers.isEmpty()) "" else ", peers: $peers"}")
+    }
+
+    /** T78: uses [urls] as the peer sources from now on (rebuilds the fetcher, reloads the map when it changed). */
+    fun setPeers(urls: List<String>) {
+        val sorted = urls.distinct().sorted()
+        synchronized(this) {
+            if (sorted == peers) return
+            peers = sorted
+            configure(AppSettings.server)
+        }
+        runCatching { app.reload() }
     }
 
     /** The online half of a tile service over [packs], or null without a server. */

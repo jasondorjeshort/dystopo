@@ -19,6 +19,12 @@ logcat (`debug server on port N token T`). With --serial (or ANDROID_SERIAL, or 
 401 (no bootstrap), and also probes the tile server (device port 8686, through a temporary forward): map
 routes need the token, debug routes are 404 there with or without it. Without adb it reads the token from
 GET /health without one (the app's debugFixedPort=1 mode) and expects that bootstrap to answer 200.
+
+T78: --share probes the phone-to-phone share listener instead (the Share screen must be open: POST /share/start).
+The script reads its port from GET /share/status, forwards a host port to it, and checks that only sealed requests
+get through: plain sync, hello and peer-source routes 426, GET of the sealed route 405, a body that is not a frame
+400, a frame under a wrong code 403 (once: five would replace the code), a valid frame (from the debug route
+/share/peers/testframe) 200 and the same frame again 409, an unknown path 404, plus the malformed-request probes.
 """
 import argparse
 import importlib.util
@@ -130,6 +136,7 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""), help="device to read the debug port and token from (logcat)")
     ap.add_argument("--quick", action="store_true", help="skip the slow probes (header drip, idle connections)")
+    ap.add_argument("--share", action="store_true", help="T78: probe the share listener (Share screen open) instead of the loopback servers")
     a = ap.parse_args()
     host, port = a.host, a.port
 
@@ -153,6 +160,8 @@ def main():
     if not TOKEN or not health(host, port):
         print(json.dumps({"ok": False, "serverAlive": False, "error": f"/health did not answer on {host}:{port} before probing (token read: {bool(TOKEN)})"}))
         return 1
+    if a.share:
+        return share_probes(host, port, exe, serial)
 
     big = "9" * 40
     probes = [
@@ -230,6 +239,98 @@ def main():
     print(json.dumps({"ok": alive and not unexpected, "serverAlive": alive, "unexpected": unexpected, "serial": serial,
                       "debugPort": device_port, "tileServerHostPort": tile_port, "probes": results}, indent=1))
     if not alive:
+        return 1
+    return 2 if unexpected else 0
+
+
+def debug_json(host, port, path):
+    """GET path from the debug server with the token; the JSON body (None on failure)."""
+    try:
+        sock = socket.create_connection((host, port), timeout=5)
+    except OSError:
+        return None
+    with sock:
+        sock.settimeout(20)
+        sock.sendall(get(path))
+        data = b""
+        try:
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        except OSError:
+            pass
+    try:
+        return json.loads(data.split(b"\r\n\r\n", 1)[1].decode("utf-8"))
+    except (IndexError, ValueError):
+        return None
+
+
+def post(path, body):
+    return f"POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body
+
+
+def share_probes(host, port, exe, serial):
+    """T78: the share listener (see the module comment); one JSON object, exit codes as for the loopback probes."""
+    import base64
+    status = debug_json(host, port, "/share/status") or {}
+    device_share = status.get("port")
+    if not status.get("listening") or not device_share or not (exe and serial):
+        print(json.dumps({"ok": False, "serverAlive": False, "error": "the share listener is not open (POST /share/start), or no adb serial"}))
+        return 1
+    code, out = android_debug.adb(exe, serial, "forward", "tcp:0", f"tcp:{device_share}", timeout=30)
+    lines = out.strip().splitlines()
+    sp = int(lines[-1]) if code == 0 and lines and lines[-1].strip().isdigit() else None
+    if not sp:
+        print(json.dumps({"ok": False, "serverAlive": False, "error": f"adb forward to share port {device_share} failed: {out}"}))
+        return 1
+    tf = debug_json(host, port, "/share/peers/testframe") or {}
+    frame = base64.b64decode(tf["frame"]) if tf.get("frame") else b""
+    sealed = "/share/sealed"
+    fake = b"DSEAL\x01\x02" + os.urandom(16) + os.urandom(64)  # a frame's header and random bytes: opens under no code
+
+    def alive():
+        return raw(host, sp, post(sealed, b"not a frame"), timeout=10) == 400
+
+    probes = [
+        ("plain-sync-pull", lambda: raw(host, sp, post("/sync/pull?since=", b"")), {426}),
+        ("plain-sync-status", lambda: raw(host, sp, get("/sync/status", token=False)), {426}),
+        ("plain-hello", lambda: raw(host, sp, get("/share/hello?code=0000000000000000", token=False)), {426}),
+        ("plain-peer-catalog", lambda: raw(host, sp, get("/peer/catalog", token=False)), {426}),
+        ("plain-peer-file", lambda: raw(host, sp, get("/peer/file/rainier-dem.pmtiles?from=0&len=1024", token=False)), {426}),
+        ("plain-tile", lambda: raw(host, sp, get("/dem/10/165/357.png", token=False)), {404}),
+        ("sealed-get", lambda: raw(host, sp, get(sealed, token=False)), {405}),
+        ("not-a-frame", lambda: raw(host, sp, post(sealed, b"plain text")), {400}),
+        ("wrong-code-frame", lambda: raw(host, sp, post(sealed, fake)), {403}),
+        ("valid-frame", lambda: raw(host, sp, post(sealed, frame)), {200}),
+        ("replayed-frame", lambda: raw(host, sp, post(sealed, frame)), {409}),
+        ("unknown-route", lambda: raw(host, sp, get("/health", token=False)), {404}),
+        ("long-request-line", lambda: raw(host, sp, get("/" + "a" * 20000, token=False)), {414, "reset"}),
+        ("10k-headers", lambda: raw(host, sp, b"POST /share/sealed HTTP/1.1\r\n" + b"".join(b"X-H%d: v\r\n" % i for i in range(10000)) + b"\r\n"), {431, "reset"}),
+        ("oversized-body", lambda: raw(host, sp, b"POST /share/sealed HTTP/1.1\r\nContent-Length: 100000000\r\n\r\n" + b"x" * 65536), {413, "reset"}),
+        ("non-http-line", lambda: raw(host, sp, b"\x16\x03\x01\x02\x00 hello there\r\n\r\n"), {400}),
+        ("empty-connection", lambda: raw(host, sp, b"", timeout=10), {"closed", 408}),
+    ]
+    results = []
+    up = True
+    for name, run, expected in probes:
+        if name.endswith("-frame") and name != "wrong-code-frame" and not frame:
+            results.append({"probe": name, "status": "no-frame", "expected": sorted(map(str, expected)), "ok": False, "serverAlive": True, "ms": 0})
+            continue
+        t0 = time.time()
+        st = run()
+        ms = int((time.time() - t0) * 1000)
+        up = alive()
+        results.append({"probe": name, "status": st, "expected": sorted(map(str, expected)), "ok": st in expected and up, "serverAlive": up, "ms": ms})
+        if not up:
+            break
+    after = debug_json(host, port, "/share/status") or {}
+    android_debug.adb(exe, serial, "forward", "--remove", f"tcp:{sp}", timeout=30)
+    unexpected = [r["probe"] for r in results if not r["ok"]]
+    print(json.dumps({"ok": up and not unexpected, "serverAlive": up, "unexpected": unexpected, "serial": serial, "sharePort": device_share,
+                      "gate": after.get("gate"), "codeUnchanged": after.get("code") == status.get("code"), "probes": results}, indent=1))
+    if not up:
         return 1
     return 2 if unexpected else 0
 

@@ -27,7 +27,11 @@ object LanHttp {
         val host = u.host ?: throw IllegalArgumentException("no host in $url")
         val port = if (u.port > 0) u.port else 80
         Socket().use { s ->
-            s.connect(InetSocketAddress(host, port), connectMs)
+            try {
+                s.connect(InetSocketAddress(host, port), connectMs)
+            } catch (e: java.io.IOException) {
+                throw LanConnectException("$host:$port: ${e.javaClass.simpleName}: ${e.message}", e) // T78: no connection at all (the fetcher backs off)
+            }
             s.soTimeout = readMs
             val target = (u.rawPath?.ifEmpty { "/" } ?: "/") + (u.rawQuery?.let { "?$it" } ?: "")
             val head = "$method $target HTTP/1.1\r\nHost: $host:$port\r\nContent-Type: application/octet-stream\r\n" +
@@ -96,3 +100,6 @@ object LanHttp {
 }
 
 class LanHttpException(val status: Int, message: String) : java.io.IOException(message)
+
+/** T78: the connection itself failed (refused, no route, connect timeout), as opposed to a failed read after it. */
+class LanConnectException(message: String, cause: Throwable) : java.io.IOException(message, cause)

@@ -226,6 +226,26 @@ class PackCatalogClient(private val manager: PackManager, packsDir: File) {
         return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = catalogInfo(p))
     }
 
+    /**
+     * T78: downloads (or updates) pack [id] of a nearby phone's [catalog] (its `/peer/catalog`), the archives from
+     * [source] (`peer://<host:port>`) through the same downloader: resumable, and every archive checked against the
+     * SHA-256 the other phone published. [label] names the phone in the job's catalog record (`via`).
+     */
+    fun downloadFrom(source: String, catalog: PackCatalog, id: String, activate: Boolean = false, label: String? = null): PackDownloader.Job {
+        val p = catalog.find(id) ?: throw NoSuchElementException("no pack '$id' on $source")
+        val info = linkedMapOf<String, Any?>("server" to source, "id" to p.id, "hash" to p.hash, "builtAt" to p.builtAt, "via" to label)
+        val local = manager.catalog().firstOrNull { it.name == p.name && (it.dem != null || it.vector != null) }
+        if (local == null) {
+            val files = p.files.associate { it.role to Triple(PackCatalog.resolveUrl(source, it.url), it.sha256, it.bytes) }
+            return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = info)
+        }
+        val inst = installedNow(local)
+        val changed = CatalogStatus.changedRoles(p, inst)
+        require(changed.isNotEmpty()) { "pack '${p.name}' is already on this phone with the same content (${p.hash})" }
+        val files = p.files.filter { it.role in changed }.associate { it.role to Triple(PackCatalog.resolveUrl(source, it.url), it.sha256, it.bytes) }
+        return manager.downloads.startCatalog(p.name, files, p.files.map { it.role }.toSet() - changed, update = true, activate = false, catalog = info)
+    }
+
     /** Updates installed pack [name] to the catalog's content: only the archives whose SHA-256 differs are fetched. */
     fun update(name: String): PackDownloader.Job {
         val p = current(maxAgeMs = 0).packs.firstOrNull { it.name == name } ?: throw NoSuchElementException("no pack '$name' in the catalog of $server")

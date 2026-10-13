@@ -30,8 +30,11 @@ import java.net.NetworkInterface
  */
 class ShareSession private constructor(private val app: DystopoApp) {
     private val tracking = Tracking.of(app)
-    val peers = PeerList()
+    val peers = PeerList().also { it.onResolved = PeerSources::onDiscovered } // T78: known codes are tried on every phone found
     private val nsd = ShareNsd(app, peers)
+
+    /** T78: this phone as a map source for the phones with its code ([PeerServe], inside the sealed link). */
+    val serve = PeerServe(app) { linkedMapOf("name" to deviceName, "device" to deviceId.take(8)) }
 
     private var server: LocalServer? = null
     private var gate: ShareGate? = null
@@ -57,6 +60,9 @@ class ShareSession private constructor(private val app: DystopoApp) {
     val port: Int? get() = server?.localPort
     val code: String? get() = gate?.code
 
+    /** This phone's sync device id. */
+    val deviceId: String get() = store.deviceId
+
     /** Shown on the screen and announced: the model and the start of the device id. */
     val deviceName: String get() = "Dystopo ${Build.MODEL} ${store.deviceId.take(4)}".take(60)
 
@@ -65,21 +71,23 @@ class ShareSession private constructor(private val app: DystopoApp) {
     fun start(): Map<String, Any?> {
         if (server == null) {
             // T57: `now` lets the connecting phone compare clocks.
-            val g = ShareGate(hello = { mapOf("device" to store.deviceId, "name" to deviceName, "now" to System.currentTimeMillis()) }, sync = ::serveSync)
+            val g = ShareGate(hello = { mapOf("device" to store.deviceId, "name" to deviceName, "now" to System.currentTimeMillis()) }, sync = ::serveSync, serve = serve::handle)
             syncServer = SyncServer(sync.replica, System::currentTimeMillis, ShareClient.gzip, ShareClient.gunzip)
             gate = g
             val s = listen(ShareClient.DEFAULT_PORT, g) ?: listen(0, g) ?: throw java.io.IOException("could not open a LAN port")
             server = s
             startedAt = System.currentTimeMillis()
-            nsd.register(deviceName, s.localPort, mapOf("id" to store.deviceId.take(8)))
+            nsd.register(deviceName, s.localPort, mapOf("id" to store.deviceId.take(8), "maps" to "1"))
             nsd.startDiscovery()
+            serve.warm() // T78: the catalog's archive hashes, so a peer's first catalog request is quick
             Log.i(TAG, "share listener on port ${s.localPort}")
         }
         return status()
     }
 
     private fun listen(port: Int, g: ShareGate): LocalServer? {
-        val s = LocalServer(port, threads = 2, maxQueued = 8, readers = 2, debugThreads = 1, isMapRequest = { true }, handler = g::handle, bindAddress = "0.0.0.0")
+        // T78: four workers, so a peer's tile requests and a pack download go on while a sync is served.
+        val s = LocalServer(port, threads = 4, maxQueued = 32, readers = 4, debugThreads = 1, isMapRequest = { true }, handler = g::handle, bindAddress = "0.0.0.0")
         return try {
             s.start()
             s
@@ -182,6 +190,8 @@ class ShareSession private constructor(private val app: DystopoApp) {
         "discovered" to peers.all().map { it.json() },
         "connecting" to connecting,
         "lastConnect" to lastConnect,
+        "serving" to serve.json(), // T78: who fetched maps from this phone, and how much
+        "peerSources" to PeerSources.json(), // T78: the phones this one uses as map sources
     )
 
     companion object {

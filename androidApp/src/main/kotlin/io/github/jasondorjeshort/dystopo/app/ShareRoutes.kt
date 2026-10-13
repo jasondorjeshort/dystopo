@@ -53,6 +53,7 @@ object ShareRoutes {
         val session = ShareSession.of(app)
         return try {
             io.github.jasondorjeshort.dystopo.app.share.ShareRelayRoutes.handle(app, r)?.let { return it } // T72: /share/relay/* (sync via the server relay)
+            io.github.jasondorjeshort.dystopo.app.share.PeerRoutes.handle(app, r)?.let { return it } // T78: /share/peers/* (peer phones as map sources)
             when (r.method to r.path) {
                 "POST" to "/share/start" -> {
                     app.map.onMain { ShareUi.visible = true } // Compose state: created and written on the main thread

@@ -39,6 +39,10 @@ import java.util.concurrent.atomic.AtomicLong
  * part files until every archive is ready, so a rejected archive installs none of the pack; an update
  * (`update = true`) fetches only the archives whose content changed, then closes the pack, swaps the
  * files in and reopens it, so the map never mixes old and new archives.
+ *
+ * T78: a URL `peer://<host:port>/peer/file/<file>` is a nearby phone's archive ([io.github.jasondorjeshort.dystopo.app.share.PeerFiles]):
+ * the same loop asks it for the bytes from the part file's length on, over the encrypted LAN link in chunks, with
+ * the same plan, resume and SHA-256 check; only the transport differs ([RangeConn]).
  */
 class PackDownloader(private val manager: PackManager, private val dir: File) {
     private val stateDir = File(dir, ".downloads").apply { mkdirs() }
@@ -281,6 +285,45 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         }
     }
 
+    /** T78: one ranged GET as the download loop sees it: [HttpConn] for HTTP(S), a peer phone's sealed link for `peer://`. */
+    interface RangeConn : java.io.Closeable {
+        /** The status after redirects were looked at (reading it sends the request). */
+        val status: Int
+        fun header(name: String): String?
+        val contentLength: Long?
+        /** Where a redirect points (checked by the cleartext policy), else null. */
+        val redirect: String?
+        fun body(): java.io.InputStream
+    }
+
+    private class HttpConn(url: String, have: Long, f: FileJob) : RangeConn {
+        val conn: HttpURLConnection = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url).apply { // T79: plain http only to home-network hosts
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            setRequestProperty("Accept-Encoding", "identity") // byte offsets must be file offsets
+            if (have > 0) {
+                setRequestProperty("Range", "bytes=$have-")
+                (f.etag ?: f.lastModified)?.let { setRequestProperty("If-Range", it) }
+            }
+        }
+        override val status: Int get() = conn.responseCode
+        override fun header(name: String): String? = conn.getHeaderField(name)
+        override val contentLength: Long? get() = conn.contentLengthLong.takeIf { it >= 0 }
+        override val redirect: String? by lazy {
+            try {
+                io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.redirectTarget(conn)
+            } catch (e: IOException) {
+                if (conn.responseCode in 300..399) throw RedirectRefused("${f.target.name}: ${e.message}") else throw e
+            }
+        }
+        override fun body(): java.io.InputStream = conn.inputStream
+        override fun close() = conn.disconnect()
+    }
+
+    private fun open(url: String, have: Long, f: FileJob): RangeConn =
+        if (url.startsWith(io.github.jasondorjeshort.dystopo.app.share.PeerSources.SCHEME)) io.github.jasondorjeshort.dystopo.app.share.PeerFiles.open(url, have, f.expectSha256)
+        else HttpConn(url, have, f)
+
     private fun fetch(job: Job, f: FileJob) {
         var failures = 0
         // T79: redirects are followed here, each Location checked by the cleartext policy (open() turns automatic ones off).
@@ -291,29 +334,17 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             val have = if (f.part.isFile) f.part.length() else 0L
             f.done.set(have)
             f.status = "downloading"
-            val conn = io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.open(url).apply { // T79: plain http only to home-network hosts
-                connectTimeout = 15_000
-                readTimeout = 30_000
-                setRequestProperty("Accept-Encoding", "identity") // byte offsets must be file offsets
-                if (have > 0) {
-                    setRequestProperty("Range", "bytes=$have-")
-                    (f.etag ?: f.lastModified)?.let { setRequestProperty("If-Range", it) }
-                }
-            }
+            val conn = open(url, have, f) // T78: a peer's first request is sent when the status is read, inside the retries
             try {
-                val next = try {
-                    io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.redirectTarget(conn)
-                } catch (e: IOException) {
-                    if (conn.responseCode in 300..399) throw RedirectRefused("${f.target.name}: ${e.message}") else throw e
-                }
+                val next = conn.redirect
                 if (next != null) {
                     if (++redirects > io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.MAX_REDIRECTS) throw RedirectRefused("${f.target.name}: too many redirects")
-                    synchronized(f.responses) { f.responses += "${conn.responseCode} redirect to $next" }
+                    synchronized(f.responses) { f.responses += "${conn.status} redirect to $next" }
                     url = next
                     continue
                 }
-                val status = conn.responseCode
-                val plan = PackDownload.plan(have, status, conn.getHeaderField("Content-Range"), conn.contentLengthLong.takeIf { it >= 0 }, f.total)
+                val status = conn.status
+                val plan = PackDownload.plan(have, status, conn.header("Content-Range"), conn.contentLength, f.total)
                 synchronized(f.responses) { f.responses += "$status from $have: ${plan.javaClass.simpleName}" }
                 when (plan) {
                     is PackDownload.Plan.Append, is PackDownload.Plan.Restart -> {
@@ -321,8 +352,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                         val total = if (plan is PackDownload.Plan.Append) plan.total else (plan as PackDownload.Plan.Restart).total
                         if (append && have > 0) synchronized(f.resumedFrom) { f.resumedFrom += have }
                         if (!append) {
-                            f.etag = conn.getHeaderField("ETag")
-                            f.lastModified = conn.getHeaderField("Last-Modified")
+                            f.etag = conn.header("ETag")
+                            f.lastModified = conn.header("Last-Modified")
                         }
                         f.total = total
                         save(job)
@@ -354,17 +385,17 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 Thread.sleep(2000L * failures)
                 continue
             } finally {
-                conn.disconnect()
+                runCatching { conn.close() }
             }
             finish(f, stage = job.update || job.catalog != null)
             return
         }
     }
 
-    private fun copy(job: Job, f: FileJob, conn: HttpURLConnection, append: Boolean) {
+    private fun copy(job: Job, f: FileJob, conn: RangeConn, append: Boolean) {
         f.part.parentFile?.mkdirs()
         if (!append) f.done.set(0)
-        conn.inputStream.use { input ->
+        conn.body().use { input ->
             FileOutputStream(f.part, append).use { out ->
                 val buf = ByteArray(64 * 1024)
                 while (true) {

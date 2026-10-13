@@ -7,11 +7,15 @@ package io.github.jasondorjeshort.dystopo.app.share
  * ([self]). Thread-safe; [peers] is what the screen lists (resolved, not self, newest first).
  */
 class PeerList(private val clock: () -> Long = System::currentTimeMillis) {
-    data class Peer(val name: String, val host: String?, val port: Int?, val self: Boolean, val seenAt: Long) {
+    /** T78: [firstSeenAt] is when discovery first reported the name (kept across re-resolves), for "catalog within 5 s of discovery". */
+    data class Peer(val name: String, val host: String?, val port: Int?, val self: Boolean, val seenAt: Long, val firstSeenAt: Long = seenAt, val resolvedAt: Long? = null) {
         val hostPort: String? get() = if (host != null && port != null) (if (':' in host) "[$host]" else host) + ":" + port else null
 
-        fun json(): Map<String, Any?> = linkedMapOf("name" to name, "addr" to hostPort, "self" to self, "seenAt" to seenAt)
+        fun json(): Map<String, Any?> = linkedMapOf("name" to name, "addr" to hostPort, "self" to self, "seenAt" to seenAt, "firstSeenAt" to firstSeenAt, "resolvedAt" to resolvedAt)
     }
+
+    /** T78: called (on the resolver thread) after a phone's address is known; [PeerSources] tries its known codes. */
+    @Volatile var onResolved: ((Peer) -> Unit)? = null
 
     private val byName = LinkedHashMap<String, Peer>()
 
@@ -28,9 +32,12 @@ class PeerList(private val clock: () -> Long = System::currentTimeMillis) {
         byName[name] = old?.copy(seenAt = clock()) ?: Peer(name, null, null, name == selfName, clock())
     }
 
-    @Synchronized
     fun resolved(name: String, host: String, port: Int) {
-        byName[name] = Peer(name, host, port, name == selfName, clock())
+        val p = synchronized(this) {
+            val now = clock()
+            Peer(name, host, port, name == selfName, now, byName[name]?.firstSeenAt ?: now, now).also { byName[name] = it }
+        }
+        onResolved?.invoke(p)
     }
 
     @Synchronized

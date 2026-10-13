@@ -150,4 +150,21 @@ class PackCatalogTest {
         assertEquals("http://h/base/out/a.pmtiles", PackCatalog.resolveUrl("http://h/base", "/out/a.pmtiles"))
         assertEquals("https://cdn/x.pmtiles", PackCatalog.resolveUrl("http://h", "https://cdn/x.pmtiles"))
     }
+
+    /** T78: a phone publishes the same document with `publisher` and its own file URLs; a reader keeps the publisher, and a vector-only pack is an entry too. */
+    @Test
+    fun phoneCatalogKeepsPublisherAndVectorOnlyPacks() {
+        val vectorOnly = CatalogPack.of("trail", null, null, archive("trail-outdoors.pmtiles", "mvt", 300), vecSha, "outdoors", emptyList(), null, null, urlPrefix = "/peer/file/")
+        assertTrue(vectorOnly.vectorOnly)
+        assertEquals("/peer/file/trail-outdoors.pmtiles", vectorOnly.files.single().url)
+        assertEquals(PackHash.combine(mapOf(PackRole.VECTOR to vecSha)), vectorOnly.hash)
+        val doc = PackCatalog(1, "2026-10-12T00:00:00Z", listOf(entry(), vectorOnly), mapOf("name" to "Dystopo Pixel 6 3f2a", "device" to "3f2a0b1c"))
+        val back = PackCatalog.parse(MiniJson.parseObject(MiniJson.encode(doc.json())))
+        assertEquals(doc, back)
+        assertEquals("Dystopo Pixel 6 3f2a", back.publisher?.get("name"))
+        assertEquals("peer://10.0.2.24:8841/peer/file/trail-outdoors.pmtiles", PackCatalog.resolveUrl("peer://10.0.2.24:8841", back.find("trail")!!.files.single().url))
+        // A server's catalog has no publisher, and its JSON has no such key.
+        assertNull(PackCatalog(1, null, listOf(entry())).json()["publisher"])
+        assertFailsWith<IllegalArgumentException> { CatalogPack.of("none", null, null, null, null, null, emptyList(), null, null) }
+    }
 }

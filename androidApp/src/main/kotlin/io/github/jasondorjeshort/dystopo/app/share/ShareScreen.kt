@@ -169,6 +169,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
                 @Suppress("UNCHECKED_CAST") (status["lastIncoming"] as? Map<String, Any?>)?.let {
                     BasicText("Last sync from a phone: ${it["applied"]} changes received", style = TextStyle(color = Accent, fontSize = 13.sp))
                 }
+                ServingLines(status) // T78: who is fetching maps from this phone, and how much
             } else {
                 BasicText("Starting...", style = TextStyle(color = Muted, fontSize = 14.sp))
             }
@@ -211,8 +212,104 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
         }
         message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Synced")) Accent else Bad, fontSize = 14.sp)) }
 
+        PeerMapsSection(status, addr, code) // T78
         RelaySection(status)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** T78: one line per phone that fetched maps from this one: its name, the bytes, the archives and tiles. */
+@Composable
+private fun ServingLines(status: Map<String, Any?>) {
+    @Suppress("UNCHECKED_CAST") val serving = status["serving"] as? Map<String, Any?> ?: return
+    @Suppress("UNCHECKED_CAST") val fetchers = (serving["fetchers"] as? List<Map<String, Any?>>).orEmpty().filter { ((it["requests"] as? Number)?.toLong() ?: 0L) > 0 }
+    if (fetchers.isEmpty()) {
+        BasicText("Phones with the code can also download this phone's maps.", style = TextStyle(color = Muted, fontSize = 12.sp))
+        return
+    }
+    BasicText("Maps sent from this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
+    fetchers.forEach { f ->
+        val bytes = (f["bytes"] as? Number)?.toLong() ?: 0L
+        val tiles = (f["tiles"] as? Number)?.toLong() ?: 0L
+        @Suppress("UNCHECKED_CAST") val files = (f["files"] as? Map<String, Any?>).orEmpty().keys
+        val what = listOfNotNull(files.takeIf { it.isNotEmpty() }?.joinToString(", "), if (tiles > 0) "$tiles tiles" else null).joinToString("; ")
+        BasicText("${f["name"] ?: "A phone"}: ${mb(bytes)}${if (what.isEmpty()) "" else " ($what)"}", style = TextStyle(color = Accent, fontSize = 13.sp))
+    }
+}
+
+private fun mb(bytes: Long) = if (bytes < 1_000_000) "${(bytes + 999) / 1000} kB" else "%.1f MB".format(java.util.Locale.ROOT, bytes / 1e6)
+
+/**
+ * T78: maps from nearby phones. "Use its maps" adds the phone in the fields as a map source (its code unlocks its catalog);
+ * each source lists its packs with Download (the same verified, resumable download as from a server) and its areas.
+ */
+@Composable
+private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
+    val app = DystopoApp.instance
+    var peers by remember { mutableStateOf(PeerSources.all()) }
+    var jobs by remember { mutableStateOf<Map<String, Map<String, Any?>>>(emptyMap()) }
+    var installed by remember { mutableStateOf<Map<String, String?>>(emptyMap()) } // pack name to its content hash here
+    var message by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(tick) {
+        peers = PeerSources.all()
+        val manager = io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(app)
+        jobs = withContext(Dispatchers.IO) { manager.downloads.snapshot().associateBy { it["name"] as? String ?: "" } }
+        installed = withContext(Dispatchers.IO) { manager.catalog().associate { it.name to manager.catalogClient.installed(it, compute = false).hash } }
+    }
+    fun run(action: () -> String?) {
+        if (busy) return
+        busy = true
+        message = null
+        Thread {
+            message = runCatching(action).fold({ it }, { e -> if (e is ShareClient.WrongCodeException) "Wrong code" else (e.message ?: e.javaClass.simpleName) })
+            peers = PeerSources.all()
+            busy = false
+        }.start()
+    }
+
+    BasicText("Maps from a nearby phone", style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
+    BasicText(
+        "A phone with maps can pass them on: enter its address and code above, then tap Use its maps. Downloads are checked against the other phone's list, and work offline afterwards.",
+        style = TextStyle(color = Muted, fontSize = 13.sp),
+    )
+    Chip(if (busy) "Working..." else "Use its maps") {
+        if (addr.isBlank()) { message = "Enter the other phone's address and code"; return@Chip }
+        run { PeerSources.add(addr, code).let { p -> "Connected to ${p.name}: ${p.catalog?.packs?.size ?: 0} packs" } }
+    }
+    message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Connected") || it.startsWith("Downloading")) Accent else Bad, fontSize = 14.sp)) }
+    peers.forEach { p ->
+        Column(Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText(p.name ?: p.addr, style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
+            p.error?.let { BasicText(it, style = TextStyle(color = Bad, fontSize = 12.sp)) }
+            val packs = p.catalog?.packs.orEmpty()
+            if (packs.isEmpty()) BasicText("No packs on this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
+            packs.forEach { pack ->
+                val job = jobs[pack.name]
+                val state = job?.get("state") as? String
+                val here = pack.name in installed && state != "queued" && state != "running"
+                val line = when {
+                    state == "queued" || state == "running" -> "${pack.name}: downloading ${job?.get("percent") ?: 0}%"
+                    here && installed[pack.name] == pack.hash -> "${pack.name}: on this phone"
+                    here -> "${pack.name}: on this phone (another version)"
+                    state == "done" -> "${pack.name}: downloaded"
+                    state == "failed" -> "${pack.name}: failed (${job?.get("error")})"
+                    else -> "${pack.name}  ${mb(pack.bytes)}"
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    BasicText(line, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp))
+                    if (state != "queued" && state != "running" && state != "done" && !(here && installed[pack.name] == pack.hash)) {
+                        Chip("Download") { run { PeerSources.download(p.addr, pack.id, activate = true); "Downloading ${pack.name} from ${p.name}" } }
+                    }
+                }
+            }
+            p.areas.forEach { a ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    BasicText("Area: ${a["name"]}", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp))
+                    Chip("Get") { run { PeerSources.area(p.addr, a["id"] as String); "Downloading the area ${a["name"]}" } }
+                }
+            }
+        }
     }
 }
 

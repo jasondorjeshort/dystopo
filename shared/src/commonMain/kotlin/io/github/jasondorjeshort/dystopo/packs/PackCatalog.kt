@@ -19,11 +19,18 @@ package io.github.jasondorjeshort.dystopo.packs
  * files' SHA-256), so a rebuilt pack keeps its id and gets a new hash. `url` may be absolute or relative
  * to the server. `profile` is the vector archive's `dystopo:profile` (`outdoors`, `openmaptiles`,
  * `unknown`), null for a terrain-only pack.
+ *
+ * T78, a phone's catalog: a phone sharing its packs with nearby phones publishes the same document over the
+ * encrypted LAN link, with file URLs relative to the link (`/peer/file/<file>`) and one more top-level field,
+ * `publisher` (`{"name": "Dystopo Pixel 6 3f2a", "device": "<8 hex>"}`; absent from a server). Readers that do not
+ * know it ignore it, so a server's catalog and a phone's parse alike.
  */
-data class PackCatalog(val version: Int, val generatedAt: String?, val packs: List<CatalogPack>) {
+data class PackCatalog(val version: Int, val generatedAt: String?, val packs: List<CatalogPack>, val publisher: Map<String, Any?>? = null) {
     fun find(id: String): CatalogPack? = packs.firstOrNull { it.id == id } ?: packs.firstOrNull { it.name == id }
 
-    fun json(): Map<String, Any?> = linkedMapOf("version" to version, "generatedAt" to generatedAt, "packs" to packs.map { it.json() })
+    fun json(): Map<String, Any?> = linkedMapOf<String, Any?>("version" to version, "generatedAt" to generatedAt, "packs" to packs.map { it.json() }).apply {
+        if (publisher != null) put("publisher", publisher)
+    }
 
     companion object {
         const val VERSION = 1
@@ -45,7 +52,8 @@ data class PackCatalog(val version: Int, val generatedAt: String?, val packs: Li
                     null
                 }
             }
-            return PackCatalog(version, doc["generatedAt"] as? String, packs)
+            @Suppress("UNCHECKED_CAST")
+            return PackCatalog(version, doc["generatedAt"] as? String, packs, doc["publisher"] as? Map<String, Any?>)
         }
 
         /** [url] resolved against [server] (`http://host:port[/path]`): absolute URLs stay, `/out/x` gets the server's origin and path. */
@@ -158,11 +166,14 @@ data class CatalogPack(
             )
         }
 
-        /** An entry from the facts a server has about the archives in its pack directory. */
+        /**
+         * An entry from the facts a server (or, T78, a sharing phone) has about the archives in its pack directory.
+         * T78: [dem] may be null for a vector-only pack (then [vector] is required).
+         */
         fun of(
             name: String,
-            dem: PackArchiveInfo,
-            demSha256: String,
+            dem: PackArchiveInfo?,
+            demSha256: String?,
             vector: PackArchiveInfo?,
             vectorSha256: String?,
             profile: String?,
@@ -175,12 +186,16 @@ data class CatalogPack(
                 role, a.fileName, urlPrefix + a.fileName, a.bytes, PackHash.normalize(sha) ?: throw IllegalArgumentException("bad sha256 '$sha'"),
                 a.tileType, a.minZoom, a.maxZoom, a.bounds,
             )
-            val files = listOfNotNull(file(PackRole.DEM, dem, demSha256), vector?.let { file(PackRole.VECTOR, it, vectorSha256 ?: throw IllegalArgumentException("no sha256 for ${it.fileName}")) })
+            require(dem != null || vector != null) { "$name: no archive" }
+            val files = listOfNotNull(
+                dem?.let { file(PackRole.DEM, it, demSha256 ?: throw IllegalArgumentException("no sha256 for ${it.fileName}")) },
+                vector?.let { file(PackRole.VECTOR, it, vectorSha256 ?: throw IllegalArgumentException("no sha256 for ${it.fileName}")) },
+            )
             val archives = listOfNotNull(dem, vector)
             return CatalogPack(
                 id = name, name = name,
-                title = vector?.title ?: dem.title,
-                bounds = dem.bounds,
+                title = vector?.title ?: dem?.title,
+                bounds = dem?.bounds ?: vector?.bounds,
                 minZoom = archives.minOf { it.minZoom }, maxZoom = archives.maxOf { it.maxZoom },
                 profile = profile,
                 bytes = files.sumOf { it.bytes },

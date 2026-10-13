@@ -53,7 +53,8 @@ class UrlConnectionGet(private val connectTimeoutMs: Int = 3_000, private val re
  * has no such tile: ocean, outside its zooms) or [Unavailable] (network or server failure; try later).
  */
 sealed class Fetch {
-    class Hit(val bytes: ByteArray, val cached: Boolean) : Fetch()
+    /** T78: [source] is the cache key of the source that answered (a server, the phone's readers, or a peer phone). */
+    class Hit(val bytes: ByteArray, val cached: Boolean, val source: String? = null) : Fetch()
     object Missing : Fetch()
     class Unavailable(val reason: String) : Fetch()
 }
@@ -78,6 +79,9 @@ sealed class Fetch {
  * - T74: an empty 200 for a glyph range is a miss, not cached (MapLibre fails an empty range).
  * - [state] says online / offline for the indicator; [generation] counts offline-to-online transitions
  *   (the map refreshes then, so tiles left blank while offline load).
+ * - T78, peer phones (`peer://<host:port>`, [isPeer]): over the network they are asked before the other sources (a
+ *   phone on the same Wi-Fi answers from its packs in milliseconds and costs no data), and each source counts the
+ *   tiles and bytes it delivered (`sources[].fetched`, `.bytes` in [json]), so a download says where its bytes came from.
  */
 class OnlineFetcher(
     val sources: List<String>,
@@ -120,6 +124,11 @@ class OnlineFetcher(
         @Volatile var versionsSupported: Boolean? = null
         val versionChecking = AtomicBoolean()
         val versionChanges = AtomicLong()
+        /** T78: tiles fetched from this source over the network, their bytes, and cache hits under its key. */
+        val fetched = AtomicLong()
+        val bytes = AtomicLong()
+        val cacheHits = AtomicLong()
+        val peer: Boolean get() = isPeer(url)
 
         fun base() = url.trimEnd('/')
 
@@ -137,11 +146,15 @@ class OnlineFetcher(
             "versionChanges" to versionChanges.get(),
             "backoffMs" to backoffMs, "retryInMs" to (downUntil - now).coerceAtLeast(0),
             "negativeCache" to mapOf("missing" to missingUntil.count { it.value > now }, "failed" to failedUntil.count { it.value > now }),
+            "peer" to peer, "fetched" to fetched.get(), "bytes" to bytes.get(), "cacheHits" to cacheHits.get(), // T78
         )
     }
 
     val sourceList: List<Source> = sources.map { Source(it) }
     private val primary: Source get() = sourceList.first()
+
+    /** T78: the order sources are asked over the network: peer phones first, then the rest in list order. */
+    private val networkOrder: List<Source> = sourceList.sortedBy { if (it.peer) 0 else 1 }
 
     /** The primary source's address (the configured server; [DirectSources.SERVER] for the phone's own readers). */
     val server: String get() = primary.url
@@ -213,12 +226,13 @@ class OnlineFetcher(
             cache.get("${s.prefix(route)}/$path")?.let {
                 if (!(it.isEmpty() && route in EMPTY_IS_MISS)) {
                     cacheHits.incrementAndGet()
-                    return Fetch.Hit(it, cached = true)
+                    s.cacheHits.incrementAndGet()
+                    return Fetch.Hit(it, cached = true, source = s.key)
                 }
             }
         }
         var unavailable: Fetch.Unavailable? = null
-        for (s in sourceList) {
+        for (s in networkOrder) {
             when (val f = getFrom(s, route, path, transform)) {
                 is Fetch.Hit -> return f
                 Fetch.Missing -> {}
@@ -289,7 +303,9 @@ class OnlineFetcher(
                     }
                     val bytes = transform(reply.body)
                     cache.put("${s.prefix(route)}/$path", bytes)
-                    Fetch.Hit(bytes, cached = false)
+                    s.fetched.incrementAndGet()
+                    s.bytes.addAndGet(reply.body.size.toLong())
+                    Fetch.Hit(bytes, cached = false, source = s.key)
                 }
                 404, 410 -> {
                     notFound.incrementAndGet()
@@ -536,6 +552,9 @@ class OnlineFetcher(
         private val EMPTY_IS_MISS = setOf("glyphs")
 
         private val SAFE_VERSION = Regex("[A-Za-z0-9._-]{1,64}")
+
+        /** T78: a peer phone's source URL (`peer://<host:port>`, [io.github.jasondorjeshort.dystopo.app.share.PeerSources]). */
+        fun isPeer(url: String) = url.startsWith("peer://")
 
         /** A path-safe cache directory name for [server]: `http://10.0.2.2:8765` becomes `10.0.2.2_8765`. */
         fun keyFor(server: String): String =

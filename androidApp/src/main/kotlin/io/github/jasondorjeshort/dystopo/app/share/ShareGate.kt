@@ -19,12 +19,16 @@ import java.security.SecureRandom
  * The code itself never crosses the network. A frame that does not open under the code (a wrong code, or
  * changed bytes) is a 403 and counts as a failure; after [maxFailures] the code is replaced by a new one
  * (the screen shows it). A frame whose salt was already served is a 409 (a recorded request replayed).
- * The pre-T72 plain routes (`/share/hello?code=`, `/sync/pull?code=` and the other sync routes) answer 426: an unencrypted client is
- * refused without looking at anything it sent. Any other path is 404.
+ * - T78, when [serve] is set: the peer-source routes of [PeerServe] (`/peer/...`: this phone's pack catalog, area
+ *   manifests and pack bytes; `/dem`, `/osm` tiles from its packs), also only inside a sealed frame.
+ * The pre-T72 plain routes (`/share/hello?code=`, `/sync/pull?code=` and the other sync routes; T78: `/peer/...`) answer 426:
+ * an unencrypted client is refused without looking at anything it sent. Any other path is 404.
  */
 class ShareGate(
     private val hello: () -> Map<String, Any?>,
     private val sync: (Request) -> Response?,
+    /** T78: the peer-source routes ([PeerServe]); null answers them 404 inside the frame. */
+    private val serve: ((Request) -> Response?)? = null,
     private val maxFailures: Int = 5,
     private val newCode: () -> String = ::randomCode,
     private val random: (Int) -> ByteArray = ::randomBytes,
@@ -49,7 +53,7 @@ class ShareGate(
     private val innerRoutes = setOf("/share/hello", "/sync/pull", "/sync/push", "/sync/status")
 
     fun handle(r: Request): Response {
-        if (r.path in innerRoutes) {
+        if (r.path in innerRoutes || r.path.startsWith(PEER_PREFIX)) {
             plainRefused++
             return Response.json(mapOf("error" to "this phone takes only encrypted requests (POST $SEALED_PATH); update the app on the other phone"), 426)
         }
@@ -71,7 +75,7 @@ class ShareGate(
         }
         served++
         val reply = if (inner.path !in innerRoutes) {
-            Response.json(mapOf("error" to "not found"), 404)
+            serve?.invoke(Request(inner.method, inner.path, inner.query, inner.body, loopback = false)) ?: Response.json(mapOf("error" to "not found"), 404)
         } else if (inner.path == "/share/hello") {
             Response.json(hello() + mapOf("ok" to true))
         } else {
@@ -102,6 +106,9 @@ class ShareGate(
 
     companion object {
         const val SEALED_PATH = "/share/sealed"
+
+        /** T78: the peer-source routes ([PeerServe]); refused (426) when they arrive unencrypted. */
+        const val PEER_PREFIX = "/peer/"
 
         private val secure = SecureRandom()
 
