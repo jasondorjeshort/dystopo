@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-13
+
+- T77: Long-distance routing (#83)
+
 ### 2026-10-12
 
 - T75: Areas of interest: manifests, corridors, pinning, prefetch (#81)
