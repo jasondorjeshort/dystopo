@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-13
 
+- T93: A recentre button (the trivial version) (#91)
 - T94: Usage gate: an owner override file, here and in Hatchery (#90)
 
 ## v0.1.5-alpha (2026-10-13)

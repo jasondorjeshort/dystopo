@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-13, at commit fdea46d, by main session (session 7b335a00)
+Updated: 2026-10-13, at commit 58d7a7f, by main session (session 7b335a00)
 Resume: this file, then `docs/reference/machines.md` (the owner's account `Dorje` coordinates again:
 checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` skill; rewrite with the
 `handoff` skill at the end of every session and before any stop.
@@ -13,8 +13,8 @@ checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` ski
   implementers T88 to T94 (Opus), a Haiku chore (rerun of CI run 38462712750, live viewer on 8765,
   PID to `out/coordinator-pids.txt`), a critic on ADRs 0027/0028 and Hatchery 0003/0005 (reviews
   land uncommitted under `docs/design/proposals/` and in the Hatchery clone). T94 merged and logged
-  (PR #90, 21:41 UTC; its Hatchery PR #1 awaits the owner); the critic's reviews are committed, the
-  Hatchery ones left in its clone; T95 (pinned tiles vs. version bumps) waits for T90 and T91.
+  (PR #90; its Hatchery PR #1 awaits the owner) and T93 merged (PR #91, the bullseye button); the
+  critic reviews are in; T95 (pinned tiles vs. version bumps) waits for T90 and T91.
 
 ## Next
 
