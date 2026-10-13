@@ -564,6 +564,11 @@ Shared rules as in wave 11. Owner's standing decisions this wave: publish an alp
 **Owns:** `androidApp/.../share/**` (catalog publishing, discovery), `androidApp/.../online/**` (peer as a source), `androidApp/.../packs/**` (peer downloads), `shared/.../packs/PackCatalog.kt` (phone-published catalog), the Sync and Design goals sections of PLANNING, the Android section of CLAUDE.md.
 **Done when:** two emulators on one network, one with the Rainier pack and the other with nothing, end with the second navigating offline at Rainier after a peer download, with the host network blocked for the second emulator; a third phone sees the catalog within 5 s of discovery; the derived-tile measurement is in PLANNING; `check` green.
 
+### T86. First-launch crash in the navigation overlay
+**Goal:** the app crashes at launch with `IllegalStateException: Reading a state that was created after the snapshot was taken` in `NavSession.getUi` (`NavSession.kt`, called from `NavOverlay.kt` in the map screen), seen on first launch after a fresh install by T75's verifier and twice by T77's implementer on 2026-10-12; a relaunch works. Find the Compose state that is created outside a snapshot (a `mutableStateOf` made during composition or on another thread while `NavSession` restores its saved state) and fix it properly, not by catching the exception; add a test or a debug check that reproduces the first launch (restore with a saved navigation state and compose the overlay) so it cannot return; make `android-check.py` and `android-ui.py` report a launch crash as its own failure with the exception line instead of "no loaded style within 120 s".
+**Owns:** `androidApp/.../nav/NavSession.kt`, `androidApp/.../nav/NavOverlay.kt`, `androidApp/src/test/.../nav/**`, the launch-failure reporting in `tools/android-check.py` and `tools/android_debug.py`.
+**Done when:** ten fresh installs in a row (uninstall, install, launch, `/health` within 60 s) with no crash in logcat, with and without a saved navigation state; device tour 10/10; `check` green.
+
 ### Later
 - Vertical datum beyond CONUS (GEOID12B for Alaska/Hawaii); bare-earth national lidar outside the US.
 - A real lidar coverage edge in a public area, to verify the lidar → 10 m seam.
