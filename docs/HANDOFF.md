@@ -2,9 +2,9 @@
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-10-13, at commit 79e5e74, by main session (session 7b335a00)
-Resume: this file, then `docs/reference/machines.md` (the owner's account `Dorje` is the coordinator
-again: main checkout `src\dystopo`, signing key and `devtool.local.json` present) and the `wave`
-skill; rewrite it with the `handoff` skill at the end of every session and before any stop.
+Resume: this file, then `docs/reference/machines.md` (the owner's account `Dorje` coordinates again:
+checkout `src\dystopo`, key and `devtool.local.json` present) and the `wave` skill; rewrite with the
+`handoff` skill at the end of every session and before any stop.
 
 ## Now
 
