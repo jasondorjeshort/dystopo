@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.5-alpha (2026-10-13)
+
+Drive mode to and between trailheads on packs built with road data; long drives across packs planned through the server and navigated offline after a corridor download; areas of interest (download a trip's corridor, pin it, prefetch ahead on the route); bounded caches with a Storage screen and content versions on online tiles; one phone serving its packs to others over the sealed share link; a cold view from the phone's own sources at a third of the bytes; the first-launch crash in the navigation overlay fixed; the z8 contour miss fixed. Process: CLAUDE.md is rules plus pointers, with references, findings, ADRs and skills.
+
 ### 2026-10-13
 
 - T87: Wave 12 sweep leftovers (#87)
