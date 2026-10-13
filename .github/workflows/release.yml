@@ -6,7 +6,7 @@
 #
 # Secrets (all optional, all four together): RELEASE_KEYSTORE_B64 (base64 of a PKCS12 keystore),
 # RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD. Make the keystore with the keytool
-# command in CLAUDE.md > Release, then: base64 -w0 release.keystore | gh secret set RELEASE_KEYSTORE_B64
+# command in docs/reference/android-release.md, then: base64 -w0 release.keystore | gh secret set RELEASE_KEYSTORE_B64
 name: Release
 
 on:
