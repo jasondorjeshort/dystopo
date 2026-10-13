@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-12
+verified: 2026-10-13
 source: moved verbatim from CLAUDE.md in T84 (text as of 0547203); observed in the tasks named in each paragraph
 ---
 
@@ -25,6 +25,6 @@ Browser demo (MapLibre over our DEM tiles and OSM PMTiles): generation commands 
 
 ## Conventions for the coordinator's servers
 
-- The coordinator's live viewer runs from the main checkout on port 8765 (`./gradlew :tilebuild:installDist` once, then `./gradlew :devtool:run --args="serve --live --port 8765"`), started by a chore agent with its PID recorded in `out/coordinator-pids.txt`. Agents read it; they never stop it and never ask it to build (`android-firstrun.py --until test` only reads its catalog).
+- The coordinator's live viewer runs from the main checkout on port 8765, started by a chore agent from the installed distribution, not through Gradle (`./gradlew :tilebuild:installDist :devtool:installDist` once, then `devtooluild\install\devtoolin\devtool.bat serve --live --port 8765` detached with `DYSTOPO_CACHE` set; a server started with `./gradlew :devtool:run` lives inside a Gradle daemon and dies when anyone runs `./gradlew --stop`, which happened twice on 2026-10-12), its PID recorded in `out/coordinator-pids.txt`. Agents read it; they never stop it and never ask it to build (`android-firstrun.py --until test` only reads its catalog).
 - First-run tests use the standalone server (it binds 0.0.0.0) at the host's LAN address, not `devtool serve` (127.0.0.1 only) and not 10.0.2.2, so the private-range rule is what is tested (`android-online.md`, First run).
 - A task's own server uses the ports in its brief and is stopped by its PID.
