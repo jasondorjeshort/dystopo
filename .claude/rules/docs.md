@@ -50,7 +50,8 @@ Hatchery base, with this project's exemptions.
   `area`; optional `supersedes: <file>`, `promoted_to: <path>`. Sections in order: Question, What was
   tried, Result, Next (Next may be omitted when resolved).
 - `docs/ideas/YYYY-MM-DD-<slug>.md`: required `date`, `kind: bug | feature | question | chore`,
-  `status: new | planned | done | dropped`, `pipeline` (a `T##` or `none`).
+  `status: new | planned | done | dropped`, `pipeline` (a `T##` or `none`); optional `related`,
+  `merged_into`. Search for an existing idea before adding one (its README, "Before adding").
 - `docs/reference/<topic>.md`: required `verified: YYYY-MM-DD`, `source: <url or "observed">`. When a
   fact changes, fix it in place and bump `verified:`; do not append history.
 - `docs/design/decisions/NNNN-*.md` and `docs/design/proposals/NNNN-*.md`: no frontmatter; the `Date:`
