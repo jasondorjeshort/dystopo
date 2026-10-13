@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-13
 
+- T87: Wave 12 sweep leftovers (#87)
 - T84: Hatchery alignment (#86)
 - T78: Peer sources on a trip (#84)
 - T86: First-launch crash in the navigation overlay (#85)
