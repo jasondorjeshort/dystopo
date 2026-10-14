@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-13
+verified: 2026-10-14
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -23,11 +23,11 @@ wins and this file gets fixed.
 | Node | 22 (`node .claude/hooks/test-hooks.js`) |
 | Usage files | `~/.claude/usage-state.json`, written by the project status line (`.claude/statusline.js`) and read by the usage gate; `~/.claude/usage-gate-override.json` when the owner lifts the gate. The account-wide status line (`~/.claude/usage-statusline.ps1`, writing `~/.claude/usage.json`) still runs in other projects; nothing here reads that file |
 | Hatchery base clone | `C:\Users\Dorje\Documents\src\hatchery` (read it; only its runner commits there) |
-| Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout only, and in the `RELEASE_*` Actions secrets (`.claude/skills/release/SKILL.md`) |
+| Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout, the other account's (below), and the `RELEASE_*` Actions secrets (`.claude/skills/release/SKILL.md`) |
 | Private terms | `devtool.local.json` in this main checkout; the privacy hooks read it from the main checkout even in worktrees |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`) |
 
-## The other account (`second`, wave 12 second half)
+## The other account (`second`, wave 12 second half and wave 13 second half)
 
 | What | Where |
 |---|---|
@@ -39,6 +39,7 @@ wins and this file gets fixed.
 | AVDs | `E:\dystopo-avd` (`-AvdHome E:\dystopo-avd`; each AVD about 6 GB; remove with `-Stop -Delete`) |
 | Node | 22 (`node .claude/hooks/test-hooks.js`) |
 | Hatchery base clone | `~\Documents\src\hatchery` (read it; only its runner commits there) |
+| Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout (copied by the owner 2026-10-14; gitignored); worktrees do not see them, so the sweep's `upgrade` and `update` parts run from the main checkout |
 | Private terms | none: there is no `devtool.local.json` on this account, so the privacy hooks have no private terms to check; use only `areas.json` names and public places in anything written down |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`), standalone server on 8800 (no token, binds the LAN address); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`, `server-8800 <pid>`) |
 

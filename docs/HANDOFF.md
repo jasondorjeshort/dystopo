@@ -3,7 +3,7 @@
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-10-14, at commit 74d03d6, by main session (second account)
 Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
-`~\Documents\src\Dystopo`, no release key, no `devtool.local.json`), the `wave` skill, and
+`~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the `wave` skill, and
 the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the `handoff` skill.
 
 ## Now
@@ -24,8 +24,8 @@ the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the `
 2. After T90 and T91 merge: T95 (Opus, 8698, console 5574).
 3. Coordinator docs after merges: ADR 0028 Consequences (T89's z8 level, cell files, order test);
    `android-emulator.md` line 28 (T90 follow-up); README status line.
-4. After the last merge: the sweep with `-Skip upgrade,update` (no key here), then `v0.1.6-alpha`
-   through Actions (owner's word 2026-10-14; the draft's install check covers the upgrade).
+4. After the last merge: the full sweep from the main checkout (the key is only there; the agent
+   confirms the `47:31:38:10` certificate on the sweep's release APK), then `v0.1.6-alpha`.
 5. Wave 14 from the ideas folder (recentre tap rule, turn directions, scale bar) and the doctrine ADRs.
 
 ## Waiting on user
