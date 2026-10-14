@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-14
+
+- T89: Routing leftovers: one drive time, the z8 overlay, robustness (#92)
+
 ### 2026-10-13
 
 - T93: A recentre button (the trivial version) (#91)
