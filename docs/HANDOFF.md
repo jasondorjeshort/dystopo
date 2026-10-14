@@ -1,32 +1,35 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-14, at commit 74d03d6, by main session (second account)
+Updated: 2026-10-14, at commit cbf64a5, by main session (second account)
 Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
-`~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the `wave` skill, and
-the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the `handoff` skill.
+`~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
+`wave` skill, and the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the
+`handoff` skill.
 
 ## Now
 
-- Wave 13 second half, launched 2026-10-14 12:40 UTC from `second`; owner: HOLD lifted to 100% for this
-  session (override file until Oct 15 12:30 UTC; delete it when the session ends). 7d meter 82% at launch.
-- Running: verifier of PR #92 (T89; `dystopo-wt\T89-verify`, emulator 5580, 8710/8711); verifier of
-  PR #94 (T90; `T90-verify`, emulators 5582 and 5584, 8712 to 8715); T92 finish (soak write-up, PR
-  #93; `dystopo-wt\T92`, 8720 to 8727; the soak ran 6.34 h, data in `E:\dystopo-soak\T92`); T88
-  continuation (Opus, PR #96 draft; `dystopo-wt\T88`, 5560, 8690/8691); T91 finish (PR #95 draft;
-  `dystopo-wt\T91`, 5568 and 5572, 8696/8697).
+- Wave 13 second half from `second`; owner: HOLD lifted to 100% for this session (override file until
+  Oct 15 12:30 UTC; delete it when the session ends). 7d meter 85% at 13:10 UTC.
+- Merged and logged today: T89 (PR #92), T90 (PR #94).
+- Running: verifier of PR #93 (T92; `dystopo-wt\T92`, 8730 to 8737); verifier of PR #95 (T91;
+  `dystopo-wt\T91`, emulators 5586 and 5588, 8714 to 8716, sweep base 8740); T88 continuation (Opus,
+  draft PR #96; `dystopo-wt\T88`, 5560, 8690/8691); T96 implementer (Opus, share fixes from the T90
+  verifier; `dystopo-wt\T96`, 5564 and 5566, 8692 to 8695).
 - Live viewer 8765 and standalone server 8800 run on this account (`out/coordinator-pids.txt`).
 
 ## Next
 
-1. As each report lands: a Sonnet verifier per PR (T92 on 8730 to 8737; T88 and T91 on 8714 to 8717,
-   consoles 5586 to 5590), then the merge sequence and the log, T89 before T91 (`trips/` lines).
-2. After T90 and T91 merge: T95 (Opus, 8698, console 5574).
-3. Coordinator docs after merges: ADR 0028 Consequences (T89's z8 level, cell files, order test);
-   `android-emulator.md` line 28 (T90 follow-up); README status line.
-4. After the last merge: the full sweep from the main checkout (the key is only there; the agent
-   confirms the `47:31:38:10` certificate on the sweep's release APK), then `v0.1.6-alpha`.
-5. Wave 14 from the ideas folder (recentre tap rule, turn directions, scale bar) and the doctrine ADRs.
+1. As each report lands: merge sequence and log; a Sonnet verifier for T88 (ports 8717, 8750s,
+   console 5590) and T96 when their PRs are ready.
+2. After T91 merges: T95 (Opus, 8698, console 5574; `android-online.md` is T88's until PR #96 merges).
+3. Doc follow-ups once T92 is in: DYSG v5, `-overlay.idx` and `corruptGraphTiles` in
+   `devtool-commands.md`, `SERVER.md`, `live-server.md` (T89's); ADR 0028 Consequences (coordinator).
+4. After the last merge: README status, the full sweep from the main checkout (the key is only there;
+   confirm the `47:31:38:10` certificate), then `v0.1.6-alpha`; a Haiku chore removes merged local
+   branches (`task/T87-ci`, `T89`, `T90`) and worktrees.
+5. Wave 14 from the ideas folder (recentre tap rule, turn directions, scale bar, the demo page's trips
+   box) and the doctrine ADRs.
 
 ## Waiting on user
 
@@ -34,4 +37,4 @@ the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the `
 
 ## Open findings
 
-- `docs/findings/2026-10-10-emulator-share-direct-connect.md` (T90's PR resolves it).
+- none (T90 resolved `2026-10-10-emulator-share-direct-connect.md`).
