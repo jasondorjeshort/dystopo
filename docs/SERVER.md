@@ -128,7 +128,7 @@ key with its default.
 | `bind` | `"0.0.0.0"` | Address to listen on. `127.0.0.1` behind a local proxy. |
 | `port` | `8080` | Port (0 picks a free one; the `started` log line says which). |
 | `publicUrl` | `null` | Base URL for the absolute URLs in `/style.json`, e.g. `"https://maps.example.org"`. Null: from each request's `X-Forwarded-*` / `Host` headers. |
-| `cacheDir` | `"cache"` | Downloads and generated tiles (`live/`, `openfreemap/`, `derived/`, `copernicus30/`, `3dep13/`, `3dep1m/`, `overpass/`, `glyphs/`, ...). The tile stores are capped (`cache.*`); the source downloads are not. |
+| `cacheDir` | `"cache"` | Downloads and generated tiles (`live/`, `openfreemap/`, `derived/`, `copernicus30/`, `3dep13/`, `3dep1m/`, `overpass/`, `glyphs/`, ...). The tile stores are capped (`cache.*`); the source downloads have a byte budget (`sources.*`). |
 | `outDir` | `"out"` | Region packs: served as packs, under `/out/`, listed by `/catalog`, written by `/build`. |
 | `glyphsDir` | `null` | Glyph PBFs (`<font>/<range>.pbf`); null: `<cacheDir>/glyphs`. |
 | `fetchGlyphs` | `true` | At startup, download the glyph ranges the style uses (Noto Sans, SIL OFL) when missing. |
@@ -160,6 +160,7 @@ key with its default.
 | `relay.requestsPerMinute` | `120` | Relay requests per client address per minute (token bucket; 429 with `Retry-After`). A phone polls every 5 s. |
 | `extractDownloads.urls` | `[]` | Geofabrik regions the server may download into `extractsDir` when an outdoors build needs one (T66, below), e.g. `["https://download.geofabrik.de/europe/alps"]` (a `-latest.osm.pbf` or `.poly` URL works too). `devtool serve` reads `DYSTOPO_EXTRACT_DOWNLOADS` (comma-separated) instead. |
 | `extractDownloads.maxMb` | `4096` | Largest extract downloaded (by `Content-Length`, checked again while streaming). |
+| `extractDownloads.sha256` | `{}` | T92: region name to the SHA-256 (hex) its download must have, e.g. `{"liechtenstein": "38c2..."}`; a mismatch fails the build and nothing is kept. Pair it with a dated Geofabrik snapshot URL (`https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf`, kept as `liechtenstein-260101.osm.pbf`) so the bytes never change; CI does. |
 | `log.file` | `null` | T82: write the JSON log to this file instead of stdout, rotating it (below, Operations). Null: stdout (cap it in journald or Docker). |
 | `log.maxMb` | `64` | Rotate the log file at this size. |
 | `log.keep` | `5` | Rotated files kept (`server.log.1` .. `.5`); the log never takes more than about `(keep + 1) * maxMb`. |
@@ -172,6 +173,8 @@ key with its default.
 | `cache.liveMb` | `4096` | Byte cap of the live DEM tiles (`live/best-v2/`), least recently used evicted first. |
 | `cache.openfreemapMb` | `2048` | Byte cap of the OpenFreeMap tiles (`openfreemap/<build>/`, every planet build; old builds go first). |
 | `cache.derivedMb` | `1024` | Byte cap of the contour and shade tiles the server keeps (`derived/`). `devtool serve` reads all three from `DYSTOPO_CACHE_CAPS=live=4096,openfreemap=2048,derived=1024`. |
+| `sources.maxRequestMb` | `256` | T92: the most one download of the elevation readers may bring in (3DEP, Copernicus, the national sources, geoid grids under `cacheDir`): a larger range request is refused before it is sent, a larger whole file is cut off while it streams. `0`: no cap. |
+| `sources.maxHourMb` | `8192` | T92: the most those downloads may bring in over any 60 minutes; past it new ones are refused until older minutes leave the window (the tile that needed one fails; the server stays up). `0`: no cap. `/stats` `sourceDownloads` has the counters; `devtool serve --live` reads `DYSTOPO_SOURCE_CAPS=request=256,hour=8192`. |
 
 ## Routes
 
@@ -199,8 +202,10 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
 - `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`) or a route
   corridor (tile lists); `GET /area` for the parameters. Below, Areas of interest. Token-protected.
-- `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`: the sync peer
-  (docs/PLANNING.md, Sync). Token-protected.
+- `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`, `/sync/routes[?full=1]`: the sync peer
+  (docs/PLANNING.md, Sync). T92: `?full=1` adds each route's `path` value and `waypointList` (the browser
+  page pulls its trips with it); `POST /sync/waypoints/encode` turns waypoints into the `wpt:<id>` field values
+  the page writes (below, Route planning). Token-protected.
 - `POST /sync/relay?slot=&side=[&after=][&forget=1]`, `GET /sync/relay/status`: the encrypted relay
   between phones (below). Open, without the token.
 - `GET /catalog` (also `/catalog.json`): the pack catalog, below. `POST /catalog/refresh`: rehash every
@@ -209,7 +214,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   server, open like `/healthz` (no secrets, no user ids). Below, Operations.
 - `GET /healthz`: `status` (`ok`, or `stopping` with a 503), `uptimeS`, `packs`, `outDirWritable`,
   `cacheDirWritable`, `glyphs` (fonts present), `errors` (tile route exceptions so far), `catalog` (the
-  startup hash pass: `state` `cold`, `warming` or `ready`, `files`, `hashed`, `hashesComputed`, `ms`).
+  startup hash pass: `state` `cold`, `warming` or `ready`, `files`, `hashed`, `hashesComputed`, `ms`),
+  `users`, `routeGate` (T92: `/route*` needs a token, true while users are configured), `replicas`, `shareLinks`.
 
 ## Outdoors packs: extracts, Overpass, fallback
 
@@ -446,7 +452,16 @@ at most once a minute, so the order survives a restart. A reader that loses a ra
 as a miss and renders or fetches again. `/stats` `caches` has per store `bytes`, `maxBytes`, `entries`,
 `hits`, `adds`, `evictions`, `evictedBytes`, `peakBytes` (the most it held after a trim), `indexed` and
 `indexMs`; `versions` has the content versions. The source downloads (`3dep13/`, `copernicus30/`, ...)
-are not capped yet.
+are not a tile store: T92 puts a byte budget on them instead (`sources.maxRequestMb` per download,
+`sources.maxHourMb` per hour; `/stats` `sourceDownloads`: `requests`, `bytes`, `lastHourBytes`,
+`largestRequestBytes`, `refused.requestCap`, `refused.hourCap`).
+
+**Norway tiles from before T66** (T92). T66 changed how a Kartverket block's zero cells are read without
+bumping the live cache version (a bump wipes every server's whole `live/` store). Once per cache, at start, the
+server deletes the live DEM tiles whose `.src` sidecar names `kartverket-dtm` and the `derived/` tiles over
+Norway's coverage box, in the background after the stores are indexed, and writes `live/norway-zero-rule-pruned.txt`;
+`/stats` `staleCachePrune.norway-zero-rule` has the counts. On the shared development cache it deleted 55 tiles
+(9.0 MB) on 2026-10-13.
 
 ## Route planning (T68)
 
@@ -457,7 +472,10 @@ route editor and trip summary), so a route planned on the desktop has the number
 reused while both archives are unchanged; the Rainier graph builds in about 1.5 s). Since T76 the file holds z11
 graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every pack
 whose box comes within 5 km of its points, so it crosses from one pack into the next (docs/PLANNING.md ›
-Routing). The routes are open (no token): they read packs and write nothing but the graph files.
+Routing). The routes read packs and write nothing but the graph files. T92: they are open while the server has
+no users; once `users` are configured they need a known token like `/build` (any user's, the admin's or the T52
+`token`; `routeGate` in `/healthz`), since a route costs CPU and opens every pack's graph. The browser page
+sends its Token field with them.
 
 **Long drives (T77).** Drives whose ends are 40 km or more apart search the tiles away from their ends through a
 drive overlay (per graph tile of one pack: the border crossings of tertiary and larger roads and the cheapest
@@ -499,8 +517,19 @@ phone's store writes). Saving appends operations there, then sends the whole log
 per-user tokens the trip lands in that user's replica. Where the push is refused (a server that wants a token
 and has none, or no server) the trip stays in the browser and the page says so; "Send to server" retries and
 ".dsync" saves the same bundle as a file a phone can sync with (`POST /sync?with=<file>`). A phone that syncs with
-the server then lists the trip under Routes. The page only pushes: edits made on the phone do not come back to
-the browser.
+the server then lists the trip under Routes.
+
+**Getting trips back, and waypoints** (T92, `tools/demo/trip-sync.js`, served as `/trip-sync.js`). "Get trips
+from the server" reads the user's routes with `GET /sync/routes?full=1` and merges them into the browser's trip
+list: a route the browser lacks, or whose server copy changed after the browser last saved it, comes from the
+server (so a trip planned or edited on a phone shows up, and the open trip is shown again); a trip the browser
+had pushed or pulled that the server no longer lists was deleted elsewhere and goes. For the open (saved) trip,
+"Add waypoint" and a click drop a named waypoint; drag one to move it, rename or remove it in the list. Each edit
+is the phone's per-waypoint write (T65: one `wpt:<id>` field per waypoint, null when removed), encoded by
+`POST /sync/waypoints/encode` (`{"waypoints": [{"id", "name", "lat", "lon", "ele"?}]}` to `{"values": {"<id>":
+"<value>"}}`; ids are lowercase UUIDs; nothing is stored), appended to the browser's log and pushed, so a phone and
+the browser editing different waypoints of one trip both keep theirs. `tools/demo-check.py --route ... --trip-sync`
+drives it with the real mouse, including a fresh browser that gets the trip by pulling.
 
 ## The relay
 
@@ -555,6 +584,16 @@ the catalog, builds, tiles and `/out/` stay shared. Code: `serverlib/.../Users.k
 `SyncRoutes.kt` (one replica per user), `ShareLinks.kt` (links); `server/.../Gate.kt` (who a request is),
 `UserAdmin.kt` (the user flags and `/admin/users`).
 
+**The model in one paragraph** (T92). Three kinds of bearer token, all in the config file: user tokens
+(`users`), one per person, each opening that person's own replica and share links; the admin token
+(`adminToken`), which manages users and can look into any replica as that user but is not a sync user itself;
+and the single T52 `token`, which reaches the default replica `peer.db` (a one-person server, or one configured
+before T67). Everything else is shared by everyone the server lets in: packs, the catalog, builds, tiles, `/out/`
+and, once users exist, route planning (`/route*` needs any known token then). With no token of any kind the
+server is open and everyone is one anonymous user on `peer.db` (how `devtool serve` runs). Tokens are compared in
+constant time against every configured token, never logged (paths only, share links redacted; a test checks the
+log), and live in plain text in the config file, so the file must be readable by the server's account only (below).
+
 Config keys (both optional; with neither, nor `token`, the server stays open as before):
 
 | Key | Default | Meaning |
@@ -594,6 +633,12 @@ curl -H "Authorization: Bearer $ADMIN" https://maps.example.org/admin/users     
 curl -X POST -H "Authorization: Bearer $ADMIN" "https://maps.example.org/admin/users?id=carol"  # {"added":"carol","token":"...","persisted":true}
 curl -X DELETE -H "Authorization: Bearer $ADMIN" https://maps.example.org/admin/users/carol     # token refused at once, her share links revoked, replica kept
 ```
+
+**The config file holds the tokens** (T92). At start the server checks who can read it and logs
+`config_permissions` at `warn` when others can: group or world read bits on POSIX (`chmod 600 server.json`), an
+allow entry for Everyone, Users or Authenticated Users on Windows (`icacls server.json /inheritance:r /grant:r
+"%USERNAME%:F"`). A warning, not a refusal, because a container mounts the file read-only from the host. The user
+flags and `/admin/users` write it owner-only (mode 600) on POSIX.
 
 Tokens from the tools are 32 random bytes in base64url (43 characters). Give each person theirs: the
 phone's sync settings (`POST /sync/settings?peer=https://maps.example.org&token=<token>`, or the sync
@@ -647,6 +692,10 @@ fields.
 - `glyphs_fetched`, `request_failed`, `config_invalid`, `bind_failed`, `stopping`, `stopped`.
 - T82: every string field is cut at 512 characters (`...(N chars)` says how long it was) and lists at 100
   items, so a client cannot make one request write kilobytes of log.
+- `config_permissions` (warn, T92): the config file (which holds the tokens) is readable by others.
+- No token ever reaches the log (T92, `TokenHygieneTest`): the `Authorization` header is never logged, the path
+  is logged without its query string (so a page opened with `?token=` leaves none), share links are logged as
+  `/s/…` and `/sync/share/…`, and the tokens `/admin/users` hands out are only in its answer.
 
 ## Shutdown
 
@@ -823,37 +872,78 @@ minutes, samples `/metrics`, the OS process and a class histogram (a full GC, so
 every 10 minutes into `soak.jsonl`, and ends with the full probe, `soak.svg` and `summary.json`. The
 nightly workflow runs a 20-minute version (`server-soak` job) on a pack it builds itself.
 
-### Measured (T82, October 2026)
+T92: the soak ends with a verdict, printed one check per line (`PASS name: why` / `FAIL name: why`) and kept
+under `verdict` in `summary.json`, and exits 0 only when every check passes: the server alive when the load
+stopped and after the final probe, the final probe without unexpected answers, no `OutOfMemoryError` in the
+kept logs, failed requests (5xx or no answer) at most `-MaxFailureRate` of all (default 0.001: a cold live
+render may fail once in a hundred thousand; the post-T80 soak exited 1 on exactly one 500 in 102,792 requests),
+and the live heap after full GC growing at most `-MaxHeapGrowthMbPerHour` (default 5) over the second half.
+`-ChartOnly` redraws the chart, rewrites `summary.json` with the verdict, prints the same lines and exits 1 on a
+FAIL. A run that did not reach its end (no `summary-extra.json`: the account signed out, the machine slept, the
+script was killed; or one still going) gets a partial verdict from the samples: the server alive at the last
+sample with no `serverExited` event, the last hourly probe in place of the final one, no `OutOfMemoryError`, the
+failure rate and the live heap growth; its last line reads `verdict: PASS [partial run: 6.34 of 12 h planned, no
+final probe]`, and a server that exited on its own or an out-of-memory line is still a FAIL. The probe (T92) carries the token on its route
+probes when `/healthz` says `routeGate` and checks that `/route*` answers 401 without one (and stays open on a
+server without users); run it once against each kind of server.
 
-Two soaks side by side on one Windows machine (JDK 21, `-Xmx6g`, about 2.5 requests a second each: 12 pack
-tiles of each kind per 20-second round plus the rest of the mix), sampled every 10 minutes; the numbers
-below are from the first hours (the PR carries the final 12-hour charts):
+### Measured (T82 and T92, October 2026)
 
-- **Heap: one unbounded cache, in serverlib.** With the Rainier pack and the live column, the live heap
-  (after a full GC) was 2.45 GB after 30 minutes and then grew about 0.15 GB an hour. A heap dump put
-  2.19 GB of it in `Geoids.offsetCache`: the NAVD88-to-EGM2008 offsets (one `FloatArray`, about 0.73 MB)
-  of every US live window ever rendered with 3DEP or lidar, 3023 of them, never evicted (the map's bins
-  had also turned into trees: `MercatorWindow` keys collide). The edge of a US pack fills it fastest: the
-  first walk over the Rainier pack's 921 tiles at z8 to z14 with `-Xmx1g` ran out of memory within two
-  minutes. Until that cache is bounded, give a server that renders US live tiles 4 GB of heap or more, or
-  restart it daily. Away from the US (the Mont Blanc pack, no live column) the live heap stayed at about
-  145 MB.
-- **Threads.** Up to 407 on the US soak, 287 of them `ForkJoinPool.commonPool` workers: `RemoteTiff.prefetch`
-  runs blocking range reads in a parallel stream, and the common pool adds compensation threads up to its
-  cap (its parallelism plus 256). They idle out after a minute; the Mont Blanc soak held 81 threads.
-  Handles (Windows): about 3 300 on the US soak, 1 090 on the other; flat after the first half hour.
-- **Disk.** The cache has no cap yet (T74): with one new live column every two minutes it grew 1.45 GB in
-  the first 40 minutes (3DEP 1 m lidar range reads 0.52 GB, rendered live tiles 0.48 GB, 3DEP 1/3" 0.34 GB,
-  Copernicus 0.17 GB). `out/` grew only by the replicas and the rebuilt pack (a few MB).
-- **Latency.** Warm pack tiles p95 34 to 40 ms; while the first cycle rendered live tiles at the pack's
-  edges, p95 was 6 s and the slowest contour tile 21 s. `/metrics` answers in under a second.
-- **Errors.** 4 contour tiles answered 500 in the first 40 minutes (cold live renders whose upstream
-  reads failed; the two retried by hand answered 200). The quick probe passed every hour. The full probe
-  passes on Linux (CI) and Windows except one known answer: `/sync/push` inflates a gzipped bundle with no
-  cap on the inflated size, so 1 GiB of zeros in a 1 MB body is an `OutOfMemoryError` (a 500; the server
-  survives) with a 1 GB heap, and a 400 with 3 GB. The token keeps strangers out of `/sync/push`, so only a
-  user can do this.
-- **Log.** About 190 bytes a request at `logRequests: true`: 1.1 MB in 40 minutes at this rate.
+Two soaks of the standalone server on one Windows machine (JDK 21, 32 logical CPUs, `-Xmx2g`), each with the
+Rainier pack and the load above: about 2.4 requests a second (12 pack tiles of each kind per 20-second round, the
+rest of the mix, a new live tile column every two minutes), sampled every 10 minutes. The first (T82c, 11 October,
+after the T80 fixes) ran the full 12 hours: 102,792 requests and 1 failed (a cold live render), live heap after a
+full GC 6 to 174 MB (+0.22 MB/h over the second half), working set 121 MB at the start, 1.69 GB at its peak and
+0.99 GB at the end, threads 22 to 114, handles 621 to 1,371, cache 2.8 GB. The second (T92, 13 October, with the
+tile caps and the source budget) is below. The first soaks of T82 found two defects that are fixed: an unbounded
+geoid-offset cache (2.2 GB of live heap on a US pack) and a gzip bomb to `/sync/push` that was an
+`OutOfMemoryError` behind a valid token (a 413 since T74); away from the US (the Mont Blanc pack, no live column)
+that soak held a live heap of about 145 MB and 81 threads.
+
+**T92: 6.34 of 12 hours, the end was not the server.** The Windows session that ran the soak was signed out at
+23:50 local (03:50 UTC); that killed the script and the server together, mid-round. The server log stops there with
+no error and no shutdown line, `stderr` is empty, the last sample (03:44 UTC) was healthy (live heap 187 MB, 0
+failures), and the System log shows the session ending (a shutdown veto by `steam.exe` eight seconds later, the
+logoff notifications; no reboot). A detached soak does not outlive its account's session: run a long one as a
+scheduled task that runs whether or not the user is signed in, or on a machine nobody signs out of. `-ChartOnly` then
+judged the 39 samples (21:24 to 03:44 UTC): PASS on all five checks of a partial verdict (see Soak and probe).
+
+- **Requests.** 53,356 from the load, 0 failed (no 5xx, no timeout): 51,232 answered 200, 1,062 206, 1,062 204.
+  The server log has 0 `5xx` and 0 `OutOfMemoryError`. The hourly quick probe ran 7 times, 72 probes each, 0
+  unexpected, and left 14 `connection_lost` warnings, `live.errors` 14 and 7 `/route/edit` requests of 60.9 s
+  with no status (the probe's short-body case, cut at `http.maxRequestSeconds`; they are the `route` maximum).
+  The hourly rebuild of a small pack finished 7 of 7.
+- **Heap: flat after warm-up, a slow drift.** Live heap after a full GC went from 6 MB to 181 MB in the first 10
+  minutes (97 MB of float arrays that never change after that, 66 MB of byte arrays) and then stayed between 172
+  and 189 MB: median 174.5 MB at 1 to 2.5 hours, 179.4 MB at 4.8 to 6.3 hours. The summary's least-squares fit
+  over the second half is +1.69 MB/h (limit 5); a median-slope fit from the first hour on is +1.3 MB/h. The four
+  samples over 185 MB are the ones whose byte arrays were 73 to 76 MB instead of 65 to 69, most likely the buffers
+  of a request round in flight, and they sit at the end of the window, which is why the least-squares figure is
+  the higher one. Strings (1.2 to 2.4 MB) and map entries grow with the number of cached files, consistent with the
+  tile stores' in-memory index (one entry per file). If +1.3 MB/h held, a 2 GB heap has more than a thousand hours
+  of room. GC took 24 s in 6.3 hours.
+- **Working set and threads.** Working set 105 MB, then 0.9 GB after the first hour, 1,009 MB at the end (private
+  bytes 203 MB, 1,096 MB); the second half grows 12.8 MB/h, mostly the heap the JVM keeps committed (650 to 737 MB)
+  and 4 MB of non-heap, not live data. The run was too short to see it level off; T82c's working set came back
+  down from 1.69 GB. Handles 633, then 1,330 to 1,414 from the first half hour on (the first T82 soak had 3,300 on
+  the same kind of load), JVM threads 18, then 101 to 114 (it had up to 407), classes loaded constant at about
+  6,290.
+- **Disk.** `cache/` went from 0 to 1.4 GB in the first hour (the first pass over the pack's edge), 2.60 GB and 37,013
+  files at 6.3 hours, +233 MB/h over the second half: `3dep1m/` +101 MB/h (980 MB), `derived/` +66 MB/h (413
+  MB), `3dep13/` +59 MB/h (680 MB), `live/` +7 MB/h (510 MB); Copernicus 15 MB, OpenFreeMap 2.4 MB. No cap was
+  reached (`live/` 510 of 4,096 MB, `derived/` 413 of 1,024, OpenFreeMap 2.4 of 2,048), so eviction was not
+  exercised; at this rate `derived/` would reach its cap after about 9 more hours. The two source directories
+  (1.7 GB) have the download budget but no size cap, and every new place the soak adds grows them: a server that
+  keeps viewing the same places should stop growing. `/stats` `sourceDownloads` was not sampled (the soak reads
+  `/metrics`), so the budget's counters are not in this run; no request failed, so nothing shows it refusing a
+  tile. `out/` 144 to 146 MB (replicas, the hourly rebuild).
+- **Latency.** Client p95 per interval, pack tiles: 7.2 s in the first interval (the first pass renders contours
+  and shades at the pack's edge), then 83 to 138 ms (median 115). Live tiles: 1.2 to 7.8 s (median 2.6 s) from
+  about 20 requests an interval, no trend. Other routes 13 to 30 ms. Over the run the server's own histogram has
+  contours p50 at most 50 ms and p95 at most 250 ms (bucket bounds), the slowest 18.0 s; slowest `dem` 8.8 s, `shade`
+  9.4 s; `/metrics` p50 at most 250 ms, slowest 2.7 s.
+- **Log.** 55,312 lines and 10.0 MB at 6.4 hours (about 190 bytes a line, 1.6 MB/h), no rotation, 0 write
+  errors.
 
 ## Limits
 

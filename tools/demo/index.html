@@ -33,7 +33,8 @@
 
   Trip editor (T68, live mode only): tools/demo/trips.js adds "Plan a trip" to the panel (click start and end, drag
   numbered via points, right-click to remove, a summary card with the profile, GPX, Save as trip into this browser's
-  sync replica and on to the server's sync peer); see the top of trips.js.
+  sync replica and on to the server's sync peer); see the top of trips.js. T92: tools/demo/trip-sync.js adds the pull side
+  ("Get trips from the server") and waypoint editing for the open trip; see the top of trip-sync.js.
 -->
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
@@ -644,8 +645,23 @@ if (LIVE) {
   cancelBtn.onclick = async () => { if (buildId) await fetch(base + "/build/" + buildId, authed({ method: "DELETE" })); };
 }
 // T68: the trip editor (tools/demo/trips.js, served as /trips.js) plans on the server's /route routes, so live mode only.
-if (LIVE) import(base + "/trips.js").then(m => m.install({ map, base, units: UNITS, panel: document.getElementById("panel"),
-  token: () => document.getElementById("packtoken").value.trim() })).catch(e => console.warn("trip editor not loaded: " + e.message));
+// T92: a server with users keeps /route* behind its tokens, and trips.js sends the Token field only with its sync push,
+// so the page adds it to this server's /route requests here (until trips.js sends it itself).
+if (LIVE) {
+  const pageFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    const t = document.getElementById("packtoken").value.trim();
+    if (t && url.startsWith(base + "/route") && !(init && init.headers && init.headers.Authorization))
+      init = { ...(init || {}), headers: { ...((init && init.headers) || {}), Authorization: "Bearer " + t } };
+    return pageFetch(input, init);
+  };
+}
+const tripToken = () => document.getElementById("packtoken").value.trim();
+if (LIVE) import(base + "/trips.js").then(m => m.install({ map, base, units: UNITS, panel: document.getElementById("panel"), token: tripToken }))
+  // T92: the pull side of the trip replica and waypoint editing (tools/demo/trip-sync.js), on top of the trip editor.
+  .then(() => import(base + "/trip-sync.js")).then(m => m.install({ map, base, units: UNITS, panel: document.getElementById("panel"), token: tripToken }))
+  .catch(e => console.warn("trip editor not loaded: " + e.message));
 map.on("error", e => { if (e.error && !/404|Not Found/.test(e.error.message || "")) console.warn(e.error); });
 </script>
 </body>

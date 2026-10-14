@@ -125,22 +125,39 @@ class ExtractDownloads(
     val maxBytes: Long = DEFAULT_MAX_MB * 1024 * 1024,
     /** GET with a body stream (tests swap in a fake): status, content length (-1 unknown), stream. */
     private val open: (String) -> Triple<Int, Long, InputStream> = ::httpOpen,
+    /** T92: region name -> the SHA-256 (hex) its download must have (`extractDownloads.sha256`); a mismatch is refused. */
+    sha256: Map<String, String> = emptyMap(),
 ) {
-    /** One configured region: [base] without suffix; [name] its last path segment. */
-    class Region(val base: String) {
+    /**
+     * One configured region: [base] without suffix; [name] its last path segment. T92: [pin] is a Geofabrik
+     * snapshot date (`YYMMDD`, from a URL like `.../liechtenstein-260101.osm.pbf`): that file instead of
+     * `-latest`, so a CI run reads the same bytes every time; [sha256] is the checksum the download must have.
+     */
+    class Region(val base: String, val pin: String? = null, val sha256: String? = null) {
         val name: String = base.trimEnd('/').substringAfterLast('/')
-        val pbfUrl: String get() = "$base-latest.osm.pbf"
+        val pbfUrl: String get() = "$base-${pin ?: "latest"}.osm.pbf"
         val polyUrl: String get() = "$base.poly"
     }
 
+    private val checksums = sha256.mapValues { it.value.trim().lowercase() }.also { m ->
+        m.forEach { (k, v) -> require(HEX64.matches(v)) { "extractDownloads.sha256.$k must be 64 hex digits" } }
+    }
+
     val regions: List<Region> = urls.map { u ->
-        val t = u.trim().removeSuffix("-latest.osm.pbf").removeSuffix(".osm.pbf").removeSuffix(".poly").trimEnd('/')
+        var t = u.trim().removeSuffix("-latest.osm.pbf").removeSuffix(".poly").trimEnd('/')
+        val pin = PINNED.find(t)?.groupValues?.get(1)
+        if (pin != null) t = t.removeSuffix("-$pin.osm.pbf")
+        t = t.removeSuffix(".osm.pbf")
         require(Regex("https?://[^\\s]+/[^/\\s]+").matches(t)) { "extract download URL must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got '$u')" }
-        Region(t)
+        val name = t.trimEnd('/').substringAfterLast('/')
+        Region(t, pin, checksums[name])
     }
 
     private val polys = ConcurrentHashMap<String, Result<OsmPoly>>()
     private val locks = ConcurrentHashMap<String, Any>()
+
+    /** T92: the SHA-256 of each region's last download in this process (listed by [describe]). */
+    val lastSha256 = ConcurrentHashMap<String, String>()
 
     /** Downloads in progress: region name -> bytes so far, total (-1 unknown). */
     val progress = ConcurrentHashMap<String, LongArray>()
@@ -175,7 +192,7 @@ class ExtractDownloads(
             .minByOrNull { (_, p) -> (p.bbox.east - p.bbox.west) * (p.bbox.north - p.bbox.south) }?.first
 
     /** The extract file a download of [r] writes (also how [Extracts] finds it afterwards). */
-    fun pbfFile(r: Region): File? = dir?.let { File(it, "${r.name}-latest${Extracts.PBF_SUFFIX}") }
+    fun pbfFile(r: Region): File? = dir?.let { File(it, "${r.name}-${r.pin ?: "latest"}${Extracts.PBF_SUFFIX}") }
 
     /**
      * Downloads [r]'s `-latest.osm.pbf` into [dir] (unless a copy is already there) and returns the file.
@@ -194,6 +211,7 @@ class ExtractDownloads(
                 val part = Http.partFile(out)
                 val counter = LongArray(2).also { it[1] = length }
                 progress[r.name] = counter
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
                 try {
                     part.outputStream().buffered(1 shl 16).use { os ->
                         val buf = ByteArray(1 shl 16)
@@ -202,11 +220,16 @@ class ExtractDownloads(
                             val n = input.read(buf)
                             if (n < 0) break
                             os.write(buf, 0, n)
+                            digest.update(buf, 0, n)
                             counter[0] += n
                             if (counter[0] > maxBytes) throw IOException("${r.pbfUrl} passed the ${maxBytes / 1_048_576} MB limit")
                         }
                     }
                     if (length >= 0 && counter[0] != length) throw IOException("${r.pbfUrl}: got ${counter[0]} of $length bytes")
+                    val got = digest.digest().joinToString("") { "%02x".format(it) }
+                    lastSha256[r.name] = got
+                    // T92: a pinned checksum (extractDownloads.sha256) must match before the file is published.
+                    if (r.sha256 != null && got != r.sha256) throw IOException("${r.pbfUrl}: sha256 $got, expected ${r.sha256} (extractDownloads.sha256)")
                     Extracts.readHeader(part) // a real PBF before it is published
                     Http.publish(part, out)
                 } finally {
@@ -221,7 +244,7 @@ class ExtractDownloads(
     fun describe(box: BoundingBox? = null): List<Map<String, Any?>> = regions.map { r ->
         val p = poly(r)
         linkedMapOf(
-            "name" to r.name, "url" to r.pbfUrl, "poly" to r.polyUrl,
+            "name" to r.name, "url" to r.pbfUrl, "poly" to r.polyUrl, "pin" to r.pin, "sha256" to r.sha256, "downloadedSha256" to lastSha256[r.name],
             "bbox" to p?.bbox?.let { listOf(it.west, it.south, it.east, it.north) },
             "downloaded" to (pbfFile(r)?.isFile == true),
             "downloading" to progress[r.name]?.let { mapOf("bytes" to it[0], "total" to it[1]) },
@@ -231,6 +254,10 @@ class ExtractDownloads(
 
     companion object {
         const val DEFAULT_MAX_MB = 4096L
+
+        /** A Geofabrik snapshot URL's date: `<region>-YYMMDD.osm.pbf`. */
+        private val PINNED = Regex("-(\\d{6})\\.osm\\.pbf$")
+        private val HEX64 = Regex("[0-9a-f]{64}")
 
         private fun httpOpen(url: String): Triple<Int, Long, InputStream> {
             Http.beforeNetwork?.invoke(url)

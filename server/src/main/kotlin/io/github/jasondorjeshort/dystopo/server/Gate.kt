@@ -21,7 +21,9 @@ import java.net.URI
  * runs as the token's user: the gate sets [Users.ATTR] on the exchange and `SyncRoutes` opens that
  * user's replica. The admin token reaches `/sync*` only with `?user=<id>` (400 without, 404 for an
  * unknown id) and is the only token for `/admin*` (a user token there is a 403). Share pages (`/s/...`)
- * stay open: the link is the secret.
+ * stay open: the link is the secret. T92: with users configured, `/route` and `/route/...` (route planning,
+ * GPX and bundles for the browser) need a known token too (any user, the admin or the T52 token); a server
+ * without users keeps them open as before.
  */
 class Gate(
     val users: Users,
@@ -40,7 +42,7 @@ class Gate(
     private val anyOrigin = "*" in corsOrigins
     private val origins = corsOrigins.filter { it != "*" }.map { it.trimEnd('/').lowercase() }.toSet()
 
-    override fun description() = "dystopo gate: bearer tokens on /build, /sync and /admin, CORS allowlist, request log"
+    override fun description() = "dystopo gate: bearer tokens on /build, /sync, /admin (and /route with users), CORS allowlist, request log"
 
     /** The value for `Access-Control-Allow-Origin` for a request from [origin], or null to send none. */
     fun allowOrigin(origin: String?): String? = when {
@@ -59,7 +61,9 @@ class Gate(
      */
     fun refuse(ex: HttpExchange, path: String): Pair<Int, String>? {
         val admin = isAdmin(path)
-        if (!admin && !isProtected(path)) return null
+        // T92: route planning costs CPU and reads every pack's graph; once the server has users it is theirs.
+        val route = isRoute(path) && users.ids().isNotEmpty()
+        if (!admin && !route && !isProtected(path)) return null
         val who = users.resolve(ex.requestHeaders.getFirst("Authorization"))
             ?: return 401 to (if (admin) "this route needs Authorization: Bearer <admin token>" else "this route needs Authorization: Bearer <token>")
         if (admin) return when (who) {
@@ -270,10 +274,13 @@ class Gate(
             if (java.net.URLDecoder.decode(k, Charsets.UTF_8) == name) java.net.URLDecoder.decode(v, Charsets.UTF_8).takeIf { d -> d.isNotEmpty() } else null
         }
 
-        /** Routes behind a token: pack builds and the sync peer (not the T72 relay). */
+        /** T92: route planning in the browser (T68), behind a token when users are configured. */
+        fun isRoute(path: String): Boolean = path == "/route" || path.startsWith("/route/")
+
         /** T72: the relay's own paths, exactly `/sync/relay` or under `/sync/relay/` (not `/sync/relayanything`). */
         fun isRelay(path: String): Boolean = path == "/sync/relay" || path.startsWith("/sync/relay/")
 
+        /** Routes behind a token: pack builds and the sync peer (not the T72 relay). */
         fun isProtected(path: String): Boolean = !isRelay(path) && ( // T72: the relay holds only ciphertext and is open
             path == "/build" || path.startsWith("/build/") || path == "/area" || path == "/sync" || path.startsWith("/sync/") || // T75: /area starts builds
                 path == "/catalog/refresh") // T58: rehashes every pack file, so not for anyone

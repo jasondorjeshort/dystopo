@@ -64,6 +64,8 @@ data class OsmStats(
     /** Tile bytes after decompression. */
     val tileBytes: Long,
     val labelsPlaced: Int,
+    /** T92: features whose label has the local name in another script as a second line ([LocalNames]). */
+    val localNameLines: Int = 0,
     /** Contour labels removed because an OSM label took their place. */
     val contourLabelsDropped: Int,
     /** Line segments with downhill ticks drawn on their left because the DEM says that side is lower (against the OSM way direction). */
@@ -80,7 +82,7 @@ object AwtItalicMeasurer : TextMeasurer {
     fun font(fontPx: Double): Font = RenderFonts.boldItalic(fontPx)
 
     override fun measure(text: String, fontPx: Double): TextSize {
-        val bounds = font(fontPx).createGlyphVector(frc, text).visualBounds
+        val bounds = LabelText.bounds(text, font(fontPx), frc)
         return TextSize(bounds.width, bounds.height)
     }
 }
@@ -91,6 +93,10 @@ class AwtAdvances(private val font: (Double) -> Font) : TextAdvances {
 
     override fun advances(text: String, fontPx: Double): DoubleArray {
         val f = font(fontPx)
+        // T92: a character the label font lacks is measured in the script font that draws it (LabelText.fontFor).
+        if (f.canDisplayUpTo(text) != -1) {
+            return DoubleArray(text.length) { val c = text.substring(it, it + 1); LabelText.fontFor(c, f).createGlyphVector(frc, c).getGlyphMetrics(0).advance.toDouble() }
+        }
         val gv = f.createGlyphVector(frc, text)
         // One glyph per char for the scripts we label; otherwise measure each char alone.
         if (gv.numGlyphs == text.length) return DoubleArray(text.length) { gv.getGlyphMetrics(it).advance.toDouble() }
@@ -133,7 +139,8 @@ class OsmLayer private constructor(
             requireNotNull(window) { "--osm needs the map window; it is supported by 'render' only" }
             require(window.width == grid.width && window.height == grid.height) { "grid does not match the window" }
             val osmStyle = timings.time("${prefix}osmStyle") {
-                style.osmStyle?.let { OsmStyle.parse(it.readText(Charsets.UTF_8)) } ?: DefaultOsmStyle.style
+                // T92: point labels get the local name in another script on a second line (LocalNames).
+                LocalNames.style(style.osmStyle?.let { OsmStyle.parse(it.readText(Charsets.UTF_8)) } ?: DefaultOsmStyle.style)
             }
             val reader = timings.time("${prefix}osmOpen") { PmtilesReader.open(FileRangeSource(file), Gzip.decompressors) }
             require(reader.header.tileType == TileType.MVT) { "${file.path} holds ${reader.header.tileType} tiles, not vector tiles" }
@@ -150,7 +157,7 @@ class OsmLayer private constructor(
                     b?.let { id to it }
                 }
             }
-            val tiles = timings.time("${prefix}osmDecode") { raw.map { (id, b) -> SourceTile(id, VectorTile.decode(b)) } }
+            val (tiles, localNames) = timings.time("${prefix}osmDecode") { LocalNames.withLocalNames(raw.map { (id, b) -> SourceTile(id, VectorTile.decode(b)) }) }
             val sceneWindow = SceneWindow(window.zoom, window.x0, window.y0, window.width, window.height, window.tileSize)
             val scene = timings.time("${prefix}osmScene") { OsmScene.build(osmStyle, tiles, sceneWindow, style.units) }
             val advances = AwtAdvances(AwtTextMeasurer::font)
@@ -189,6 +196,7 @@ class OsmLayer private constructor(
                 tilesMissing = missing,
                 tileBytes = bytes,
                 labelsPlaced = labels.size,
+                localNameLines = localNames,
                 contourLabelsDropped = 0,
                 layers = layerStats,
             )
@@ -314,7 +322,7 @@ class OsmLayer private constructor(
         label.glyphs?.let { glyphs ->
             // Curved label: halos for every glyph first, so a halo never covers a neighbor's ink.
             val shapes = glyphs.map { gl ->
-                val gv = font.createGlyphVector(frc, gl.text)
+                val gv = LabelText.fontFor(gl.text, font).createGlyphVector(frc, gl.text) // T92: other scripts in their font
                 val t = AffineTransform()
                 t.translate(gl.x, gl.y)
                 t.rotate(gl.angle)
@@ -330,8 +338,8 @@ class OsmLayer private constructor(
         }
         val n = label.lines.size
         for ((i, text) in label.lines.withIndex()) {
-            val glyphs = font.createGlyphVector(frc, text)
-            val ink = glyphs.visualBounds
+            val glyphs = LabelText.ink(text, font, frc) // T92: a second line in another script uses the fallback fonts
+            val ink = glyphs.bounds
             val t = AffineTransform()
             t.translate(label.x, label.y)
             t.rotate(label.angle)

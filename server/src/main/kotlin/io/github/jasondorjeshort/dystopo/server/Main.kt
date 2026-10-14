@@ -96,6 +96,13 @@ fun main(args: Array<String>) {
     }
     // T82: the log cap. With log.file the log goes to that file and rotates; the config errors above still went to stdout.
     val serverLog = config.log.file?.let { JsonLog(file = File(it), maxBytes = config.log.maxMb.toLong() shl 20, keep = config.log.keep) } ?: log
+    // T92: the config holds tokens in plain text; say so when others can read it (a warning: a read-only
+    // mount from the host is not ours to fix).
+    if (configFile != null && ConfigPermissions.holdsTokens(config)) {
+        ConfigPermissions.problems(configFile).takeIf { it.isNotEmpty() }?.let {
+            serverLog.warn("config_permissions", mapOf("file" to configFile.path, "problems" to it))
+        }
+    }
     val server = try {
         Server(config, configFile, serverLog).also { it.start() }
     } catch (e: java.net.BindException) {
@@ -165,6 +172,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         SyncRoutes.userDir = SyncRoutes.dbOverride!!.absoluteFile.parentFile
         SyncRoutes.publicUrl = config.publicUrl
         RelayRoutes.configure(config.relay.toRelay()) // T72: the encrypted sync relay
+        SourceBudget.install(SourceBudget.ofMb(config.sources.maxRequestMb, config.sources.maxHourMb)) // T92: the readers' own downloads
         val (dems, osms) = LiveTiles.findPacks(emptyList(), outDir)
         val tilebuild = config.tilebuildHome?.let { TilebuildProcess(home = File(it)) } ?: TilebuildProcess()
         val extractsDir = when (config.extractsDir) { null -> File(cacheDir, Extracts.DIR_NAME); "" -> null; else -> File(config.extractsDir) }
@@ -184,7 +192,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
                         config.extracts.map { e -> Extracts.Configured(File(e.path), e.bbox?.let { BoundingBox(it[0], it[1], it[2], it[3]) }, e.name) },
                         extractsDir,
                     ),
-                    downloads = config.extractDownloads.urls.takeIf { it.isNotEmpty() }?.let { ExtractDownloads(it, extractsDir, config.extractDownloads.maxMb * 1_048_576L) },
+                    downloads = config.extractDownloads.urls.takeIf { it.isNotEmpty() }?.let { ExtractDownloads(it, extractsDir, config.extractDownloads.maxMb * 1_048_576L, sha256 = config.extractDownloads.sha256) },
                 )
             },
         )
@@ -223,6 +231,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         http.start()
 
         val stale = live.pruneStaleDemCaches()
+        live.pruneNorwayTiles() // T92: Norway tiles from before the T66 zero-cell rule, once per cache
         live.catalog.warm()
         if (config.fetchGlyphs) Thread({ fetchGlyphs() }, "glyph-fetch").apply { isDaemon = true }.start()
         log.info(
@@ -254,6 +263,8 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         "catalog" to live.catalog.warmState(),
         // T67: configured sync users, replica files on disk, share links.
         "users" to users.all().size,
+        // T92: /route* is behind the tokens while users are configured (the probe reads this).
+        "routeGate" to users.ids().isNotEmpty(),
         "replicas" to SyncRoutes.replicaFiles().size,
         "shareLinks" to SyncRoutes.shares.count(),
     )

@@ -100,6 +100,7 @@ object UserAdmin {
         file.absoluteFile.parentFile?.mkdirs()
         val tmp = File(file.path + ".tmp")
         tmp.writeText(text)
+        ConfigPermissions.ownerOnly(tmp.toPath()) // T92: it holds tokens
         if (!tmp.renameTo(file)) {
             file.delete()
             check(tmp.renameTo(file)) { "cannot write ${file.path}" }

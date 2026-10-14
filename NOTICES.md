@@ -364,7 +364,8 @@ from unpkg.com at run time; they are not bundled in any Dystopo artifact.
 
 ## Fonts
 
-- Noto Sans Regular and Bold (`serverlib/src/main/resources/fonts/`), used to draw text in rendered PNGs:
+- Noto Sans Regular and Bold, and Noto Sans Hebrew, Arabic, Thai and Georgian Bold (T92: the second name line),
+  in `serverlib/src/main/resources/fonts/`, used to draw text in rendered PNGs:
   SIL Open Font License 1.1, full text in `serverlib/src/main/resources/fonts/OFL.txt`. Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
 
 ## Map and elevation data

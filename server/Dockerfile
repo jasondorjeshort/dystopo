@@ -13,6 +13,17 @@
 FROM eclipse-temurin:21-jdk AS build
 
 WORKDIR /src
+# T92: the Gradle distribution first, in a layer of its own keyed by the wrapper files only, so a cached
+# build (CI keeps BuildKit layers in the Actions cache) never downloads it again, and a fresh one retries a
+# transient error from GitHub's distribution host (a 500 failed CI run 38462712750 on 2026-10-13).
+COPY gradlew ./
+COPY gradle/wrapper gradle/wrapper
+RUN chmod +x gradlew \
+    && for i in 1 2 3 4 5; do \
+         ./gradlew --no-daemon --version > /dev/null && exit 0; \
+         echo "Gradle distribution download failed (try $i of 5), retrying"; sleep $((i * 15)); \
+       done; \
+    exit 1
 COPY . .
 # No Android SDK in this stage, so settings.gradle.kts leaves the app module out.
 RUN chmod +x gradlew \

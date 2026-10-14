@@ -23,7 +23,10 @@
   group). At the end: a full probe, a class histogram, <Root>/soak.svg (the chart), <Root>/summary.json
   (first, last and per-hour growth of each series), and the server is stopped by its PID.
 
-  -ChartOnly redraws soak.svg and summary.json from an existing soak.jsonl (also while a soak runs).
+  -ChartOnly redraws soak.svg and summary.json from an existing soak.jsonl (also while a soak runs), prints the
+  verdict's PASS/FAIL lines and exits with its result. A run that ended early (no summary-extra.json) gets a
+  partial verdict: server alive at the last sample, the last hourly probe, no OutOfMemoryError, failure rate and
+  live heap growth; it says "partial run" and has no final probe.
   Refuses the coordinator's and the phone's ports (8765, 8686, 8687). Stops only the server it started.
 
 .EXAMPLE
@@ -52,7 +55,9 @@ param(
     [switch]$BuildPack,           # no pack on disk (CI): build a small one through /build first
     [switch]$NoBuild,             # use the install already under <Root>/install
     [switch]$ChartOnly,
-    [string]$Python = ""
+    [string]$Python = "",
+    [double]$MaxFailureRate = 0.001,      # verdict: failed requests (5xx or no answer) / all requests
+    [double]$MaxHeapGrowthMbPerHour = 5   # verdict: live heap growth over the second half
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,7 +82,9 @@ function Get-Path($o, [string]$path) {
 
 function Write-Chart {
     if (-not (Test-Path $logFile)) { Write-Host "no $logFile"; return }
-    $rows = @(Get-Content $logFile | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.kind -eq "sample" })
+    $all = @(Get-Content $logFile | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    $rows = @($all | Where-Object { $_.kind -eq "sample" })
+    $evts = @($all | Where-Object { $_.kind -eq "event" })
     if ($rows.Count -lt 1) { Write-Host "no samples yet"; return }
     $t0 = [double]$rows[0].epochS
     $mb = 1048576.0
@@ -173,6 +180,12 @@ function Write-Chart {
         requests = ($rows | ForEach-Object { [double](Get-Path $_ "client.requests") } | Measure-Object -Sum).Sum
         failures = ($rows | ForEach-Object { [double](Get-Path $_ "client.failures") } | Measure-Object -Sum).Sum
         statuses = @{}; series = [ordered]@{} }
+    # what a verdict needs when there is no summary-extra.json (the run ended early, or is still going)
+    $startEv = @($evts | Where-Object { $_.type -eq "start" })[0]
+    $sum.plannedHours = if ($startEv) { [double]$startEv.hours } else { $null }
+    $sum.lastSampleAlive = [bool]$rows[-1].alive
+    $sum.serverExited = (@($evts | Where-Object { $_.type -eq "serverExited" }).Count -gt 0)
+    $sum.lastProbe = @($evts | Where-Object { $_.type -in "probe", "probeFinal" })[-1]
     foreach ($r in $rows) { $st = Get-Path $r "client.status"; if ($st) { foreach ($pp in $st.PSObject.Properties) { $sum.statuses[$pp.Name] = [double]$sum.statuses[$pp.Name] + [double]$pp.Value } } }
     foreach ($k in $series.Keys) {
         $pts = @($rows | ForEach-Object { $v = Get-Path $_ $series[$k][0]; if ($null -ne $v) { , @((([double]$_.epochS - $t0) / 3600.0), ([double]$v / $series[$k][1])) } })
@@ -195,7 +208,62 @@ function Write-Chart {
     return $sum
 }
 
-if ($ChartOnly) { $s = Write-Chart; Write-Json $s; exit 0 }
+# The verdict: each check with its reason. A passing run is: the server alive at the end and after the final
+# probe, the final probe without unexpected answers, no OutOfMemoryError in the kept logs, failed requests
+# (5xx or no answer) at most -MaxFailureRate of all requests (a cold live render may 500 once in 100,000;
+# T82's post-fix soak exited 1 on exactly that), and the live heap after full GC growing at most
+# -MaxHeapGrowthMbPerHour over the second half (memory flat after warm-up).
+function Get-Verdict($sum) {
+    $checks = New-Object System.Collections.ArrayList
+    function chk([string]$name, [bool]$ok, [string]$detail) { [void]$checks.Add([ordered]@{ name = $name; ok = $ok; detail = $detail }) }
+    $end = $sum.end
+    $partial = $null
+    if ($null -eq $end) {
+        # No summary-extra.json: the soak ended early (the session was signed out, the machine slept, the script was
+        # killed) or is still running. Judge what was sampled, the last hourly probe standing in for the final one,
+        # and say so in the verdict. A server that exited on its own is still a FAIL.
+        chk "serverAlive" ([bool]$sum.lastSampleAlive -and -not $sum.serverExited) ("server running at the last sample ({0}): {1}; serverExited event: {2}" -f $sum.lastSampleAt, $sum.lastSampleAlive, $sum.serverExited)
+        $lp = $sum.lastProbe
+        if ($lp) { chk "lastProbe" ([bool]$lp.ok) ("last hourly probe {0}: exit {1}, {2} probes, unexpected [{3}]" -f $lp.ts, $lp.exit, $lp.probes, (@($lp.unexpected | Where-Object { $_ }) -join ", ")) }
+        $ooms = @(Select-String -Path (Join-Path (Join-Path $Root "logs") "server.log*") -Pattern "OutOfMemoryError" -SimpleMatch -ErrorAction SilentlyContinue).Count
+        chk "noOutOfMemory" ($ooms -eq 0) "OutOfMemoryError lines in the kept logs: $ooms"
+        $partial = "partial run: {0} of {1} h planned, no final probe" -f $sum.hours, $sum.plannedHours
+    }
+    else {
+        chk "aliveAtEnd" ([bool]$end.aliveAtEnd) "server running when the load stopped: $($end.aliveAtEnd)"
+        chk "aliveAfterProbe" ([bool]$end.aliveAfterProbe) "server running after the final probe: $($end.aliveAfterProbe)"
+        $fp = $end.finalProbe
+        $unexp = @($fp.unexpected | Where-Object { $_ })
+        chk "finalProbe" ([bool]$fp.ok) ("exit {0}, {1} probes, unexpected [{2}], known [{3}]{4}" -f $fp.exit, $fp.probes, ($unexp -join ", "), (@($fp.known) -join ", "), $(if ($fp.error) { ", $($fp.error)" }))
+        chk "noOutOfMemory" ([int]$end.outOfMemoryLinesInKeptLogs -eq 0) "OutOfMemoryError lines in the kept logs: $($end.outOfMemoryLinesInKeptLogs)"
+    }
+    $req = [double]$sum.requests; $fail = [double]$sum.failures
+    $rate = if ($req -gt 0) { $fail / $req } else { 1.0 }
+    chk "failureRate" ($req -gt 0 -and $rate -le $MaxFailureRate) ("{0} of {1} requests failed (5xx or no answer) = {2:P4}, limit {3:P4}" -f $fail, $req, $rate, $MaxFailureRate)
+    $lh = $sum.series["liveHeapMb"]
+    if ($lh -and $null -ne $lh.perHourSecondHalf) {
+        chk "liveHeapFlat" ([double]$lh.perHourSecondHalf -le $MaxHeapGrowthMbPerHour) ("live heap after full GC {0} -> {1} MB, {2} MB/h over the second half, limit {3}" -f $lh.first, $lh.last, $lh.perHourSecondHalf, $MaxHeapGrowthMbPerHour)
+    } else { chk "liveHeapFlat" $true "not measured (-NoFullGc or too few samples)" }
+    $ok = -not ($checks | Where-Object { -not $_.ok })
+    $v = [ordered]@{ ok = [bool]$ok; checks = @($checks) }
+    if ($partial) { $v.partial = $partial }
+    return $v
+}
+
+function Write-Verdict($v) {
+    foreach ($c in $v.checks) { Write-Host ("{0} {1}: {2}" -f $(if ($c.ok) { "PASS" } else { "FAIL" }), $c.name, $c.detail) }
+    Write-Host ("verdict: {0}{1}" -f $(if ($v.ok) { "PASS" } else { "FAIL (" + (($v.checks | Where-Object { -not $_.ok } | ForEach-Object { $_.name }) -join ", ") + ")" }), $(if ($v.partial) { " [$($v.partial)]" }))
+}
+
+if ($ChartOnly) {
+    $s = Write-Chart
+    if (-not $s) { exit 1 }
+    $s.verdict = Get-Verdict $s
+    (Write-Json $s) | Out-File -Encoding utf8 (Join-Path $Root "summary.json")
+    Write-Json $s
+    Write-Verdict $s.verdict
+    exit $(if ($s.verdict.ok) { 0 } else { 1 })
+}
 
 # ---------------------------------------------------------------- setup
 if ($Port -in 8765, 8686, 8687) { throw "port $Port belongs to the coordinator or the phone; pick 9090..9099" }
@@ -536,6 +604,9 @@ $ooms = @(Select-String -Path (Join-Path $logDir "server.log*") -Pattern "OutOfM
 (Write-Json ([ordered]@{ aliveAtEnd = $alive; aliveAfterProbe = $aliveAfterProbe; finalProbe = $final; events = $events.Count; outOfMemoryLinesInKeptLogs = $ooms })) | Out-File -Encoding utf8 (Join-Path $Root "summary-extra.json")
 $summary = Write-Chart
 if (-not $srv.HasExited) { Stop-Process -Id $srvPid -Force }
+$verdict = Get-Verdict $summary
+$summary.verdict = $verdict
+(Write-Json $summary) | Out-File -Encoding utf8 (Join-Path $Root "summary.json")
 Write-Json $summary
-$failed = (-not $alive) -or (-not $aliveAfterProbe) -or (-not $final.ok) -or ($summary.failures -gt 0)
-exit $(if ($failed) { 1 } else { 0 })
+Write-Verdict $verdict
+exit $(if ($verdict.ok) { 0 } else { 1 })

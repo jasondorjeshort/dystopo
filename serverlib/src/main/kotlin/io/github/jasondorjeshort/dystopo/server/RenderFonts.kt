@@ -24,6 +24,15 @@ object RenderFonts {
     /** Noto Sans Bold at 1 px; derive the size. */
     val bold: Font by lazy { load("NotoSans-Bold.ttf") }
 
+    /**
+     * T92: bold faces for the scripts Noto Sans lacks that the phone ships glyphs for (Hebrew, Arabic, Thai,
+     * Georgian; Noto Sans has Latin, Greek and Cyrillic), for the second name line ([LabelText]). Same
+     * project and licence (`fonts/OFL.txt`).
+     */
+    val scriptFallbacks: List<Font> by lazy {
+        listOf("NotoSansHebrew-Bold.ttf", "NotoSansArabic-Bold.ttf", "NotoSansThai-Bold.ttf", "NotoSansGeorgian-Bold.ttf").map(::load)
+    }
+
     /** Horizontal shear of the italic face (about 11 degrees, close to Noto Sans Italic's slant). */
     const val ITALIC_SHEAR = -0.2
 

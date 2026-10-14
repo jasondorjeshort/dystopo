@@ -312,7 +312,7 @@ class ExtractsTest {
             synchronized(requests) { requests += url }
             return when {
                 url.endsWith("/test-state.poly") -> lPoly.toByteArray().let { Triple(200, it.size.toLong(), it.inputStream()) }
-                url.endsWith("/test-state-latest.osm.pbf") -> pbfBytes().let { Triple(200, it.size.toLong(), it.inputStream()) }
+                url.endsWith("/test-state-latest.osm.pbf") || url.endsWith("/test-state-260101.osm.pbf") -> pbfBytes().let { Triple(200, it.size.toLong(), it.inputStream()) }
                 else -> Triple(404, 0L, ByteArray(0).inputStream())
             }
         }
@@ -375,5 +375,35 @@ class ExtractsTest {
         assertFailsWith<java.io.IOException> { junk.download(junk.regions.single()) }
         assertTrue(ex.listFiles().orEmpty().none { it.name.contains("osm.pbf") }, ex.listFiles()?.map { it.name }.toString())
         assertFailsWith<IllegalArgumentException> { ExtractDownloads(listOf("washington"), ex) }
+    }
+
+    @Test
+    fun aPinnedSnapshotIsDownloadedOnlyWithItsChecksum() {
+        // T92: CI pins a dated Geofabrik snapshot and its SHA-256, so every run reads the same bytes.
+        val ex = File(dir, "cache/extracts")
+        val bytes = pbfBytes(BoundingBox(-124.0, 45.5, -117.0, 49.0))
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        val url = "https://geofabrik.invalid/x/test-state-260101.osm.pbf"
+        val wrong = ExtractDownloads(listOf(url), ex, open = FakeGeofabrik { bytes }::open, sha256 = mapOf("test-state" to "0".repeat(64)))
+        val r = wrong.regions.single()
+        assertEquals("test-state", r.name)
+        assertEquals("260101", r.pin)
+        assertEquals(url, r.pbfUrl)
+        assertEquals("https://geofabrik.invalid/x/test-state.poly", r.polyUrl)
+        val e = assertFailsWith<java.io.IOException> { wrong.download(r) }
+        assertTrue("sha256" in e.message!! && sha in e.message!!, e.message)
+        assertTrue(ex.listFiles().orEmpty().none { it.name.contains("osm.pbf") }, "nothing published on a mismatch")
+
+        val fake = FakeGeofabrik { bytes }
+        val pinned = ExtractDownloads(listOf(url), ex, open = fake::open, sha256 = mapOf("test-state" to sha.uppercase()))
+        val f = pinned.download(pinned.regions.single())
+        assertEquals("test-state-260101.osm.pbf", f.name)
+        assertEquals(sha, pinned.lastSha256["test-state"])
+        assertEquals(listOf(url), fake.requests.filter { it.endsWith(".osm.pbf") })
+        val listed = Extracts(dir = ex).all().single()
+        assertEquals("test-state", listed.name)
+        assertEquals("poly", listed.json()["coverage"])
+        assertEquals("260101", pinned.describe().single()["pin"])
+        assertFailsWith<IllegalArgumentException> { ExtractDownloads(listOf(url), ex, sha256 = mapOf("test-state" to "abc")) }
     }
 }

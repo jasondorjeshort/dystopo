@@ -86,7 +86,16 @@ data class ServerConfig(
     val http: HttpConfig = HttpConfig(),
     /** T74: byte caps (LRU) of the tile stores and where they live. */
     val cache: CacheConfig = CacheConfig(),
+    /** T92: the byte budget on the elevation readers' own downloads (per request and per hour, MB; 0 for none). */
+    val sources: SourcesConfig = SourcesConfig(),
 ) {
+    /** T92: [SourceBudget]: [maxRequestMb] per download, [maxHourMb] over any 60 minutes; 0 turns a cap off. */
+    @Serializable
+    data class SourcesConfig(
+        val maxRequestMb: Long = SourceBudget.DEFAULT_REQUEST_MB,
+        val maxHourMb: Long = SourceBudget.DEFAULT_HOUR_MB,
+    )
+
     /** T74: [tileDir] holds `live/`, `openfreemap/` and `derived/` (null: [cacheDir]); each store is capped in MB. */
     @Serializable
     data class CacheConfig(
@@ -145,6 +154,11 @@ data class ServerConfig(
         val urls: List<String> = emptyList(),
         /** Largest extract downloaded, MB (by Content-Length). */
         val maxMb: Int = 4096,
+        /**
+         * T92: region name -> SHA-256 (hex) the download must have; pair it with a dated snapshot URL
+         * (`.../liechtenstein-260101.osm.pbf`) so the bytes never change. A mismatch fails the build.
+         */
+        val sha256: Map<String, String> = emptyMap(),
     )
 
     @Serializable
@@ -205,6 +219,7 @@ data class ServerConfig(
             if (e.path.isBlank()) add("extracts[$i].path must not be empty")
             if (b != null && (b.size != 4 || b[0] >= b[2] || b[1] >= b[3] || b.any { it.isNaN() })) add("extracts[$i].bbox must be [west, south, east, north] with west < east and south < north")
         }
+        if (sources.maxRequestMb < 0 || sources.maxHourMb < 0) add("sources.maxRequestMb and sources.maxHourMb must be >= 0 (0: no cap)")
         if (relay.ttlSeconds < 1 || relay.maxBlobBytes < 1024 || relay.maxTotalBytes < relay.maxBlobBytes || relay.maxSlots < 1 || relay.maxSides < 2 || relay.requestsPerMinute < 1) add("relay limits: ttlSeconds >= 1, maxBlobBytes >= 1024, maxTotalBytes >= maxBlobBytes, maxSlots >= 1, maxSides >= 2, requestsPerMinute >= 1")
         extractDownloads.urls.forEachIndexed { i, u ->
             if (!Regex("https?://[^\\s]+/[^/\\s]+").matches(u.trim())) add("extractDownloads.urls[$i] must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got $u)")

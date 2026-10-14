@@ -27,7 +27,9 @@ import java.util.concurrent.ConcurrentHashMap
  * - `GET /sync/status`: device id, vector, operation count, state summary and digest, request counts,
  *   plus `user`, `db` and `tablesMatchLog`.
  * - `GET /sync/tracks`: the tracks this replica holds; `GET /sync/tracks/{id}.gpx`: one as GPX (to
- *   compare with a device's `GET /tracks/{id}.gpx`). T67: `GET /sync/routes`: the routes it holds.
+ *   compare with a device's `GET /tracks/{id}.gpx`). T67: `GET /sync/routes`: the routes it holds; T92: with
+ *   `?full=1` each route's `path` value and `waypointList` too (the browser's trip editor pulls with it).
+ * - T92: `POST /sync/waypoints/encode`: waypoints as `wpt:` field values for the browser's waypoint edits.
  * - T67 share links ([ShareLinks]): `POST /sync/share?route=<id>`, `GET /sync/share`,
  *   `DELETE /sync/share/<token>`, and the open `GET /s/<token>[.gpx|.json]`.
  * Calls on one replica are serialised on its lock (the store is not thread-safe and a merge is one
@@ -194,6 +196,7 @@ object SyncRoutes {
         val rep = replica(user)
         rep.lastRequestAt = System.currentTimeMillis()
         if (path == "/sync/share" || path.startsWith("/sync/share/")) return share(ex, path, query, rep)
+        if (path == "/sync/waypoints/encode") return encodeWaypoints(ex, body)
         synchronized(rep) {
             val store = rep.store
             val dbFile = rep.file
@@ -207,8 +210,12 @@ object SyncRoutes {
                         ?: return reply(ex, 404, "application/json", JsonWriter.write(mapOf("error" to "no such track")).toByteArray())
                     return reply(ex, 200, "application/gpx+xml", gpx.toByteArray())
                 }
-                path == "/sync/routes" && ex.requestMethod == "GET" ->
-                    return reply(ex, 200, "application/json", JsonWriter.write(mapOf("user" to user, "routes" to store.routeList().map { it.json() })).toByteArray())
+                path == "/sync/routes" && ex.requestMethod == "GET" -> {
+                    // T92: ?full=1 adds each route's path value and waypoints, the pull side of the browser's trip replica.
+                    val full = query["full"] == "1"
+                    val list = store.routeList().map { item -> if (full) item.json() + (store.routePlan(item.id)?.let(::routeValues) ?: emptyMap()) else item.json() }
+                    return reply(ex, 200, "application/json", JsonWriter.write(mapOf("user" to user, "routes" to list)).toByteArray())
+                }
             }
             // T74: a push is inflated with a cap and its operations counted before the merge (a 1 MB gzip of zeros
             // inflated to 1 GiB and ran the server out of memory behind a valid token, T82).
@@ -226,6 +233,52 @@ object SyncRoutes {
             } else r.body
             return reply(ex, r.status, r.contentType, bytes)
         }
+    }
+
+    /** T92: what `GET /sync/routes?full=1` adds to a route's list item: its `path` value and its waypoints. */
+    fun routeValues(plan: RoutePlan): Map<String, Any?> = linkedMapOf(
+        "path" to plan.path.quantized().encode(),
+        "waypointList" to plan.waypoints.map { w ->
+            linkedMapOf("id" to w.id, "name" to w.name, "lat" to w.lat, "lon" to w.lon, "ele" to w.ele, "description" to w.description, "symbol" to w.symbol)
+        },
+    )
+
+    /** T92: the most waypoints one `POST /sync/waypoints/encode` takes. */
+    const val MAX_ENCODE_WAYPOINTS = 1000
+
+    /**
+     * T92: `POST /sync/waypoints/encode` with `{"waypoints": [{"id", "name", "lat", "lon", "ele"?, "description"?, "symbol"?}]}`
+     * answers `{"values": {"<id>": "<wpt: value>"}}`: each waypoint in the encoding of a route's `wpt:<id>` field
+     * (RouteOps.encodeWaypoint), so the browser's trip editor writes per-waypoint operations like the phone's
+     * without a copy of the binary format. Ids are lowercase UUIDs; nothing is stored.
+     */
+    fun encodeWaypoints(ex: HttpExchange, body: ByteArray): Boolean {
+        fun json(status: Int, m: Map<String, Any?>) = reply(ex, status, "application/json", (JsonWriter.write(m) + "\n").toByteArray())
+        if (ex.requestMethod != "POST") return json(405, mapOf("error" to "POST {\"waypoints\": [...]}"))
+        val values = linkedMapOf<String, String>()
+        try {
+            val root = io.github.jasondorjeshort.dystopo.pmtiles.MiniJson.parseObject(body.decodeToString())
+            val list = root["waypoints"] as? List<*> ?: throw IllegalArgumentException("waypoints: [...] required")
+            require(list.size <= MAX_ENCODE_WAYPOINTS) { "at most $MAX_ENCODE_WAYPOINTS waypoints" }
+            for (item in list) {
+                val o = item as? Map<*, *> ?: throw IllegalArgumentException("each waypoint is an object")
+                val id = o["id"] as? String ?: throw IllegalArgumentException("id required")
+                require(io.github.jasondorjeshort.dystopo.model.Uuid.isValid(id) && id == id.lowercase()) { "id must be a lowercase UUID (got '$id')" }
+                val name = (o["name"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: throw IllegalArgumentException("name required")
+                require(name.length <= 200) { "name longer than 200 characters" }
+                val lat = (o["lat"] as? Number)?.toDouble() ?: throw IllegalArgumentException("lat required")
+                val lon = (o["lon"] as? Number)?.toDouble() ?: throw IllegalArgumentException("lon required")
+                require(lat in -90.0..90.0 && lon in -180.0..180.0) { "lat or lon out of range" }
+                val w = io.github.jasondorjeshort.dystopo.model.Waypoint(
+                    id, name, lat, lon, (o["ele"] as? Number)?.toDouble(),
+                    description = (o["description"] as? String)?.takeIf { it.isNotBlank() }, symbol = (o["symbol"] as? String)?.takeIf { it.isNotBlank() },
+                )
+                values[id] = io.github.jasondorjeshort.dystopo.sync.RouteOps.encodeWaypoint(w)
+            }
+        } catch (e: IllegalArgumentException) {
+            return json(400, mapOf("error" to (e.message ?: "bad request")))
+        }
+        return json(200, mapOf("values" to values))
     }
 
     /** `POST /sync/share?route=`, `GET /sync/share`, `DELETE /sync/share/<token>` for the request's user. */

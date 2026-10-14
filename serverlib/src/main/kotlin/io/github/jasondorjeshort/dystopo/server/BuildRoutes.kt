@@ -581,7 +581,7 @@ class BuildRoutes(
             watcher.interrupt()
         }
         job.timings["downloadMs"] = (System.nanoTime() - started) / 1_000_000
-        job.downloadInfo = linkedMapOf("name" to region.name, "url" to region.pbfUrl, "bytes" to file.length(), "total" to file.length(), "file" to file.name)
+        job.downloadInfo = linkedMapOf("name" to region.name, "url" to region.pbfUrl, "bytes" to file.length(), "total" to file.length(), "file" to file.name, "sha256" to dl.lastSha256[region.name])
         if (job.cancelled) throw CancelledBuild()
         val target = file.absoluteFile.normalize()
         return extracts.all().firstOrNull { it.file.absoluteFile.normalize() == target }

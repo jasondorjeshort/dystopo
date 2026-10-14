@@ -117,6 +117,22 @@ class BoundedCache(
         delete(victims)
     }
 
+    /**
+     * T92: deletes the entries of [rels] (paths relative to [dir]; an entry is every file of the same stem) and
+     * those files, indexed or not yet; returns the files and bytes deleted.
+     */
+    fun remove(rels: Collection<String>): Pair<Long, Long> {
+        val stems = rels.map { stem(it) }.toSet()
+        val entries = synchronized(this) {
+            stems.mapNotNull { k -> index.remove(k)?.also { total -= it.bytes } }
+        }
+        val files = (entries.flatMap { it.files } + rels).toSet()
+        var n = 0L
+        var bytes = 0L
+        for (f in files) { val file = file(f); val len = file.length(); if (file.delete()) { n++; bytes += len } }
+        return n to bytes
+    }
+
     /** Deletes every entry (and the files the index has not seen yet); returns the bytes freed. */
     fun clear(): Long {
         val victims = synchronized(this) {

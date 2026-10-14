@@ -12,7 +12,7 @@ object AwtTextMeasurer : TextMeasurer {
     fun font(fontPx: Double): Font = RenderFonts.bold(fontPx) // T50: bundled Noto Sans Bold
 
     override fun measure(text: String, fontPx: Double): TextSize {
-        val bounds = font(fontPx).createGlyphVector(frc, text).visualBounds
+        val bounds = LabelText.bounds(text, font(fontPx), frc) // T92: other scripts through the fallback fonts
         return TextSize(bounds.width, bounds.height)
     }
 }

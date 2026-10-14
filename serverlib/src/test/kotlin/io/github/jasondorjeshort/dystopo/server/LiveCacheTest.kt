@@ -5,6 +5,10 @@ import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.style.AssetManifest
 import io.github.jasondorjeshort.dystopo.sync.Bundle
+import io.github.jasondorjeshort.dystopo.sync.Delete
+import io.github.jasondorjeshort.dystopo.sync.EntityKind
+import io.github.jasondorjeshort.dystopo.sync.Hlc
+import io.github.jasondorjeshort.dystopo.sync.Op
 import io.github.jasondorjeshort.dystopo.sync.VersionVector
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -175,5 +179,22 @@ class LiveCacheTest {
         assertTrue(checked is SyncRoutes.PushCheck.Ok && checked.raw.contentEquals(ok))
         assertTrue(SyncRoutes.checkPush(ok) is SyncRoutes.PushCheck.Ok)
         assertFalse(SyncRoutes.checkPush(ok, maxInflated = 4) is SyncRoutes.PushCheck.Ok)
+    }
+
+    @Test
+    fun pushesAreCappedAtOneHundredThousandOperations() {
+        // T92: the T74 operation cap at its real value. 100,000 operations (the largest page a pull hands out) pass,
+        // one more is a 413 that says to push in pages; both well under the 64 MiB inflate cap, so the count decides.
+        val device = "5b8e2f0a-6c1d-4f3e-9a7b-2d4c6e8f0a1b"
+        fun bundle(n: Int): ByteArray {
+            val ops = List(n) { i -> Op(Hlc(1_760_000_000_000L + i / 1000, i % 1000, device), Delete(EntityKind.ROUTE, "r$i")) }
+            val raw = Bundle(device, VersionVector.EMPTY, VersionVector.EMPTY, ops).encode()
+            return ByteArrayOutputStream().also { o -> GZIPOutputStream(o).use { it.write(raw) } }.toByteArray()
+        }
+        assertEquals(100_000, SyncRoutes.MAX_PUSH_OPS)
+        val atCap = SyncRoutes.checkPush(bundle(SyncRoutes.MAX_PUSH_OPS))
+        assertTrue(atCap is SyncRoutes.PushCheck.Ok && atCap.ops == 100_000, "$atCap")
+        val over = SyncRoutes.checkPush(bundle(SyncRoutes.MAX_PUSH_OPS + 1))
+        assertTrue(over is SyncRoutes.PushCheck.Refused && over.status == 413 && "100001 operations" in over.message && "pages" in over.message, "$over")
     }
 }

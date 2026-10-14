@@ -305,6 +305,55 @@ class LiveTiles(
         }, "live-cache-prune").apply { isDaemon = true }.start()
         return stale
     }
+
+    /**
+     * T92: T66 changed how a Kartverket (Norway) block's zero cells are read (sea level held at 0 inside a block
+     * with land, Sweden, Finland and Russia masked) without bumping [CACHE_VERSION], which would have wiped every
+     * server's whole live cache. Tiles rendered before that keep the old coast and border. This deletes, once per
+     * cache, the live DEM tiles whose provenance names `kartverket-dtm` and the derived contour and shade tiles over
+     * Norway's coverage box, so they are rendered again; the marker [NORWAY_PRUNE_MARKER] under `live/` records it.
+     * On a background thread, after the live index is built; the outcome is under `staleCachePrune` in `/stats`.
+     */
+    fun pruneNorwayTiles(wait: Boolean = false): Thread? {
+        val marker = File(File(tileRoot, "live"), NORWAY_PRUNE_MARKER)
+        if (marker.isFile) return null
+        val t = Thread({
+            synchronized(pruned) { pruned[NORWAY_PRUNE] = mapOf("status" to "running") }
+            while (!liveCache.indexed || !derivedCache.indexed) Thread.sleep(200)
+            var files = 0L
+            var bytes = 0L
+            val dem = ArrayList<String>()
+            demCacheDir.takeIf { it.isDirectory }?.walkTopDown()?.filter { it.isFile && it.name.endsWith(".src") }?.forEach { side ->
+                val text = try { side.readText() } catch (_: java.io.IOException) { "" }
+                if ("kartverket-dtm" in text.split(',').map { it.trim() }) {
+                    val rel = side.relativeTo(liveCache.dir).invariantSeparatorsPath
+                    dem += rel
+                    dem += rel.removeSuffix(".src") + ".png"
+                }
+            }
+            liveCache.remove(dem).let { (n, b) -> files += n; bytes += b }
+            val (w, s, e, n) = NORWAY_BOX.toList()
+            val derived = ArrayList<String>()
+            derivedCache.dir.takeIf { it.isDirectory }?.walkTopDown()?.filter { it.isFile }?.forEach { f ->
+                val parts = f.relativeTo(derivedCache.dir).invariantSeparatorsPath.split('/')
+                if (parts.size != 4) return@forEach
+                val z = parts[1].toIntOrNull() ?: return@forEach
+                val x = parts[2].toIntOrNull() ?: return@forEach
+                val y = parts[3].substringBefore('.').toIntOrNull() ?: return@forEach
+                val tw = WebMercator.xToLon(x.toDouble(), z); val te = WebMercator.xToLon(x + 1.0, z)
+                val tn = WebMercator.yToLat(y.toDouble(), z); val ts = WebMercator.yToLat(y + 1.0, z)
+                if (te > w && tw < e && tn > s && ts < n) derived += parts.joinToString("/")
+            }
+            derivedCache.remove(derived).let { (k, b) -> files += k; bytes += b }
+            marker.parentFile.mkdirs()
+            marker.writeText("T92: live DEM tiles with kartverket-dtm provenance and derived tiles over Norway deleted after the T66 zero-cell rule\n")
+            synchronized(pruned) { pruned[NORWAY_PRUNE] = mapOf("status" to "deleted", "demTiles" to dem.size / 2, "derivedTiles" to derived.size, "files" to files, "bytes" to bytes) }
+        }, "live-cache-prune-norway").apply { isDaemon = true }
+        t.start()
+        if (wait) t.join()
+        return t
+    }
+
     private val pool: ExecutorService = Executors.newFixedThreadPool(threads) { r -> Thread(r, "live-dem").apply { isDaemon = true } }
     private val ofmPool: ExecutorService = Executors.newCachedThreadPool { r -> Thread(r, "live-ofm").apply { isDaemon = true } }
     private val demInflight = ConcurrentHashMap<TileId, CompletableFuture<Tile>>()
@@ -726,6 +775,7 @@ class LiveTiles(
         server.createContext("/", handler(glyphDir, demoPage, textScale) { base })
         server.start()
         val stale = pruneStaleDemCaches() // only once the port is ours: a second server that fails to bind touches nothing
+        pruneNorwayTiles() // T92: once per cache
         println(
             JsonWriter.write(
                 mapOf(
@@ -755,6 +805,10 @@ class LiveTiles(
         val path = ex.requestURI.path
         if (RelayRoutes.handle(ex)) return // T72: /sync/relay (encrypted relay; before the sync peer)
         if (SyncRoutes.handle(ex)) return // T44: /sync/* (the always-on sync peer)
+        if (path == "/trip-sync.js" || path == "/tools/demo/trip-sync.js") { // T92: the trip replica's pull side and waypoint editing
+            val f = listOf(File(demoPage.absoluteFile.parentFile, "trip-sync.js"), File("tools/demo/trip-sync.js")).firstOrNull { it.isFile }
+            return if (f == null) reply(ex, null, "text/plain") else reply(ex, f.readBytes(), "text/javascript; charset=utf-8")
+        }
         if (RouteRoutes.handle(ex, this, demoPage)) return // T68: /route* (route planning in the browser), /trips.js
         if (path == "/build" || path.startsWith("/build/") || path == "/area") return builds.handle(ex, path) // T75: /area
         catalog.route(path, ex.requestMethod)?.let { (status, body) -> return reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
@@ -876,6 +930,8 @@ class LiveTiles(
                 "live" to liveCache.json(), "openfreemap" to ofmCache.json(),
                 "derived" to derivedCache.json() + mapOf("hits" to derivedHits.get(), "made" to derivedMade.get()),
             ),
+            // T92: the byte budget on the elevation readers' own downloads (SourceBudget), when one is installed.
+            "sourceDownloads" to SourceBudget.current?.json(),
             "versions" to linkedMapOf<String, Any?>("dem" to demVersion, "osm" to osmVersion()),
             "inflight" to mapOf("dem" to demInflight.size, "osm" to osmInflight.size),
             "recent" to recent.toList(),
@@ -911,6 +967,13 @@ class LiveTiles(
         const val OSM_MAX_ZOOM = 14
         /** Bump when the live DEM rendering changes, so old cached tiles are not served. v2: one overview level and blend band per zoom. */
         const val CACHE_VERSION = "best-v2"
+
+        /** T92: [pruneNorwayTiles]'s marker file under `live/` and its `staleCachePrune` key. */
+        const val NORWAY_PRUNE_MARKER = "norway-zero-rule-pruned.txt"
+        const val NORWAY_PRUNE = "norway-zero-rule"
+
+        /** Kartverket's coverage box: west, south, east, north. */
+        val NORWAY_BOX: DoubleArray get() = io.github.jasondorjeshort.dystopo.sources.elevation.NorwaySource.COVERAGE
 
         /** T74: bump when contour generation changes what it writes (the server's derived contour tiles; the phone's is `ContourCache.VERSION`). */
         const val CONTOUR_CACHE_VERSION = "v2"

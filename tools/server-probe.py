@@ -24,6 +24,9 @@ T87: an open server (no `token`, no users, no admin token: `GET /sync/status` an
 probed too. Its token probes then expect the open answers (sync 200, catalog refresh 200, /admin 403 "no
 adminToken"), the token-free build probes carry an unreadable bbox so even an open /build refuses them
 (400) and never queues a job, and the probes that need --token run without one (`serverOpen` in the JSON).
+T92: with users configured the server keeps /route* behind the tokens too (`routeGate: true` in /healthz): the route
+probes then carry --token, and route-no-token, route-wrong-token and route-bundle-no-token expect 401 (without users:
+the open answers). A server from before T92 (no `routeGate`) skips those three.
 Python 3 standard library only. Never point it at a server you do not own: the slowloris and idle
 probes hold up to a few hundred connections for up to a minute.
 """
@@ -239,6 +242,16 @@ def main():
     # request, so every build probe below sends a request /build refuses before starting (on an open server the
     # token-free ones too), and the "token" probes run without one.
     server_open = get("/sync/status") == 200
+    # T92: with users configured, /route* is behind the tokens too (`routeGate` in /healthz; a server from before
+    # T92 does not say, and its route-gate probes are skipped). The route probes then carry the token.
+    try:
+        with urllib.request.urlopen(f"http://{HOST}:{PORT}/healthz", timeout=10) as r:
+            hz = json.loads(r.read())
+    except Exception:
+        hz = {}
+    route_gate = hz.get("routeGate")
+    RT = T if route_gate else None
+    route_auth = (f"Authorization: Bearer {RT}\r\n".encode() if RT else b"")
     bad = {400}
     gone = {"reset", "closed"}
     # Coordinates the tile pattern does not match (a minus sign) or outside the zoom's range are "no such
@@ -282,10 +295,15 @@ def main():
         ("cors-preflight", lambda: raw(req("OPTIONS", "/build", headers={"Origin": "https://x.example", "Access-Control-Request-Method": "POST"})), {204}, None),
         ("share-link-unknown", lambda: get("/s/notatoken"), {404}, None),
         ("share-link-traversal", lambda: get("/s/..%2f..%2fshares.json"), {400, 404}, None),
-        ("route-bad-point", lambda: get("/route?from=999,999&to=0,0"), bad, None),
-        ("route-too-many-points", lambda: get("/route?points=" + ";".join(f"46.{i:03d},-121.7" for i in range(60))), bad, None),
-        ("route-edit-bad-json", lambda: raw(req("POST", "/route/edit", body=b"{not json", headers={"Content-Type": "application/json"})), bad, None),
-        ("route-edit-deep-json", lambda: raw(req("POST", "/route/edit", body=b"[" * 100000 + b"]" * 100000, headers={"Content-Type": "application/json"})), bad, None),
+        ("route-bad-point", lambda: get("/route?from=999,999&to=0,0", auth=RT), bad, "route"),
+        ("route-too-many-points", lambda: get("/route?points=" + ";".join(f"46.{i:03d},-121.7" for i in range(60)), auth=RT), bad, "route"),
+        ("route-edit-bad-json", lambda: raw(req("POST", "/route/edit", body=b"{not json", headers={"Content-Type": "application/json"}, auth=RT)), bad, "route"),
+        ("route-edit-deep-json", lambda: raw(req("POST", "/route/edit", body=b"[" * 100000 + b"]" * 100000, headers={"Content-Type": "application/json"}, auth=RT)), bad, "route"),
+        # T92: /route* needs a token once the server has users, and stays open without them.
+        ("route-no-token", lambda: get("/route/status"), {401} if route_gate else {200}, "gateKnown"),
+        ("route-wrong-token", lambda: get("/route/status", auth="wrong-token-wrong-token"), {401} if route_gate else {200}, "gateKnown"),
+        ("route-bundle-no-token", lambda: raw(req("POST", "/route/bundle", body=b"{}", headers={"Content-Type": "application/json"})), {401} if route_gate else bad, "gateKnown"),
+        ("route-with-token", lambda: get("/route/status", auth=T), {200}, "routeToken"),
         ("relay-bad-slot", lambda: raw(req("POST", "/sync/relay?slot=zz&side=yy", body=b"x")), bad, None),
         ("relay-not-a-frame", lambda: raw(req("POST", "/sync/relay?slot=" + "a" * 32 + "&side=" + "b" * 16, body=b"hello")), bad, None),
         ("relay-declared-oversize", lambda: raw(req("POST", "/sync/relay?slot=" + "a" * 32 + "&side=" + "b" * 16, headers={"Content-Length": "100000000"}) + b"x" * 65536), {413} | gone, None),
@@ -314,11 +332,11 @@ def main():
         ("very-long-request-line", lambda: get("/" + "a" * 1_000_000), {400, 414, 431} | gone, None),
         ("10k-headers", lambda: raw(b"GET /healthz HTTP/1.1\r\n" + b"".join(b"X-H%d: v\r\n" % i for i in range(10000)) + b"\r\n"), {400, 431} | gone, None),
         ("1mb-header-line", lambda: raw(b"GET /healthz HTTP/1.1\r\nX-Big: " + b"b" * (1 << 20) + b"\r\n\r\n"), {400, 431} | gone, None),
-        ("declared-oversize-body", lambda: raw(req("POST", "/route/edit", headers={"Content-Length": "100000000"}) + b"x" * 65536), {413} | gone, None),
-        ("chunked-oversize-body", lambda: chunked_body("/route/edit", 20 << 20), {413} | gone, None),
-        ("negative-content-length", lambda: raw(b"POST /route/edit HTTP/1.1\r\nHost: x\r\nContent-Length: -5\r\n\r\n"), {400} | gone, None),
-        ("two-content-lengths", lambda: raw(b"POST /route/edit HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 50\r\n\r\nhello"), {400, 413} | gone, None),
-        ("short-body", lambda: raw(b"POST /route/edit HTTP/1.1\r\nHost: x\r\nContent-Length: 50\r\n\r\n{\"op\":", timeout=100), {400, 408, 413} | gone, None),  # cut at http.maxRequestSeconds
+        ("declared-oversize-body", lambda: raw(req("POST", "/route/edit", headers={"Content-Length": "100000000"}, auth=RT) + b"x" * 65536), {413} | gone, "route"),
+        ("chunked-oversize-body", lambda: chunked_body("/route/edit", 20 << 20, auth=RT), {413} | gone, "route"),
+        ("negative-content-length", lambda: raw(b"POST /route/edit HTTP/1.1\r\nHost: x\r\n" + route_auth + b"Content-Length: -5\r\n\r\n"), {400} | gone, "route"),
+        ("two-content-lengths", lambda: raw(b"POST /route/edit HTTP/1.1\r\nHost: x\r\n" + route_auth + b"Content-Length: 5\r\nContent-Length: 50\r\n\r\nhello"), {400, 413} | gone, "route"),
+        ("short-body", lambda: raw(b"POST /route/edit HTTP/1.1\r\nHost: x\r\n" + route_auth + b"Content-Length: 50\r\n\r\n{\"op\":", timeout=100), {400, 408, 413} | gone, "route"),  # cut at http.maxRequestSeconds
         ("non-http-line", lambda: raw(b"\x16\x03\x01\x02\x00 hello there\r\n\r\n"), {400, 404} | gone, None),  # the JDK reads method + path
         ("http-0.9", lambda: raw(b"GET /healthz\r\n\r\n"), {400, 505} | gone, None),
         ("bad-version", lambda: raw(b"GET /healthz HTTP/7.3\r\nHost: x\r\n\r\n"), {200, 400, 505} | gone, None),  # the JDK takes any version
@@ -338,7 +356,9 @@ def main():
             ("idle-connections-x300", lambda: idle_burst(300), {"ok"}, None),
         ]
 
-    need = {"token": T or server_open, "user": U, "admin": A}
+    # T92: "route" probes need the token when /route* is gated; "gateKnown" ones need a server that says (routeGate).
+    need = {"token": T or server_open, "user": U, "admin": A, "route": (not route_gate) or bool(T), "gateKnown": route_gate is not None,
+            "routeToken": bool(T) and route_gate is not None}
     # Known answers outside the expected set, each a filed follow-up (not this script's to fix): reported
     # under `known` and not failing the run unless --strict. The server must still survive them.
     known = {}  # T74 closed the last one (the gzip bomb: pushes inflate with a cap now)
@@ -388,7 +408,7 @@ def main():
     }
     lenient = [{"probe": r["probe"], "status": r["status"], "why": lenient_rules[r["probe"]][1]}
                for r in results if r["probe"] in lenient_rules and r["status"] in lenient_rules[r["probe"]][0]]
-    report = {"ok": alive and not unexpected, "serverAlive": alive, "host": HOST, "port": PORT, "serverOpen": server_open, "probes": len(results),
+    report = {"ok": alive and not unexpected, "serverAlive": alive, "host": HOST, "port": PORT, "serverOpen": server_open, "routeGate": route_gate, "probes": len(results),
               "unexpected": unexpected, "known": known_hits, "lenientCount": len(lenient), "lenient": lenient,
               "skipped": skipped, "results": results}
     text = json.dumps(report, indent=1)

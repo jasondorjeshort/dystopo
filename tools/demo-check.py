@@ -32,6 +32,8 @@ chromium`). Exit code 1 if the map never became idle or any page error / console
 two polls in a row with every tile loaded; a view that is not idle after --timeout is jumped to again and
 given another --timeout (--retries, default 1: the host under load, T66), and the report lists the misses
 under `notIdle` with the flags that were false.
+T92: --trip-sync (live mode, with --route) checks waypoint editing and the pull side of the browser's trip replica
+(tools/demo/trip-sync.js: check_trip_sync); --token types a server's bearer token into the page's Token field.
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -43,6 +45,9 @@ import os
 import re
 import sys
 import time
+import urllib.parse
+import urllib.request
+import uuid
 
 from playwright.sync_api import sync_playwright
 
@@ -271,6 +276,141 @@ def check_long_route(page, spec, shot, timeout, mode="drive", max_ms=10000, min_
     return out
 
 
+def server_json(base, path, token="", method="GET", body=None, raw=False):
+    """T92: one request to the server under test (urllib), with the bearer token when given."""
+    req = urllib.request.Request(base + path, data=body, method=method)
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    if body is not None and not raw:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = r.read()
+    return data if raw else json.loads(data)
+
+
+def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280, 900)):
+    """T92: waypoint editing and the pull side of the browser's trip replica (tools/demo/trip-sync.js), after --route
+    saved a trip. With the real mouse: "Add waypoint" and a click on the map, a drag of that waypoint; through the page:
+    a second waypoint and a rename. The server's replica must then list both (GET /sync/routes?full=1). A phone-like
+    device then renames the trip and removes one waypoint on the server (its own operations through /route/bundle and
+    /sync/push); "Get trips from the server" must bring both changes into this page, and a fresh browser (empty
+    localStorage) must get the trip with its waypoint by pulling. Returns a report with `ok`."""
+    out = {"ok": False, "screenshot": shot, "steps": []}
+    step = lambda name, **kw: out["steps"].append({"step": name, **kw})
+    u = urllib.parse.urlsplit(page_url)
+    base = f"{u.scheme}://{u.netloc}"
+    try:
+        page.wait_for_function("() => window.dystopoTripSync && window.dystopoTrips", timeout=timeout * 1000)
+        trip = page.evaluate("() => window.dystopoTrips.state()")
+        if not trip["id"] or not trip["saved"]:
+            raise RuntimeError("no saved trip open: run --trip-sync with --route")
+        tid = trip["id"]
+        page.evaluate("() => window.dystopoTripSync.refresh()")
+        box = page.evaluate("() => { const r = map.getCanvas().getBoundingClientRect(); return [r.left, r.top]; }")
+        px = lambda p: [v + o for v, o in zip(page.evaluate("p => { const q = map.project([p[1], p[0]]); return [q.x, q.y]; }", list(p)), box)]
+        mid = trip["route"]["middle"]
+        at = (mid[0] + 0.0012, mid[1] - 0.0016)  # beside the line, so the click is not on a via marker
+        page.fill("#wpt-name", "Lunch spot")
+        page.click("#wpt-add")
+        page.mouse.click(*px(at))
+        s = page.evaluate("() => window.dystopoTripSync.idle()")
+        if len(s["waypoints"]) != 1:
+            raise RuntimeError("no waypoint after the click: " + str(s.get("error")))
+        w1 = s["waypoints"][0]
+        step("add by click", waypoint=w1["name"], at=[w1["lat"], w1["lon"]], offM=round(math.dist(at, (w1["lat"], w1["lon"])) * 111195, 1))
+        page.click("#wpt-add")  # off again
+        page.evaluate("p => window.dystopoTripSync.add(p[0], p[1], 'Viewpoint')", [mid[0] - 0.001, mid[1] + 0.0015])
+        s = page.evaluate("() => window.dystopoTripSync.idle()")
+        step("add by api", waypoints=len(s["waypoints"]), markers=len(s["markers"]))
+        # Drag the first one about 150 m north with the real mouse.
+        el = page.locator(f".trip-wpt[data-id='{w1['id']}']")
+        bb = el.bounding_box()
+        page.mouse.move(bb["x"] + 4, bb["y"] + bb["height"] - 4)
+        page.mouse.down()
+        start = px((w1["lat"], w1["lon"]))
+        end = px((w1["lat"] + 150 / 111195, w1["lon"]))
+        page.mouse.move(bb["x"] + 4 + (end[0] - start[0]), bb["y"] + bb["height"] - 4 + (end[1] - start[1]), steps=10)
+        page.mouse.up()
+        s = page.evaluate("() => window.dystopoTripSync.idle()")
+        moved = next(w for w in s["waypoints"] if w["id"] == w1["id"])
+        moved_m = math.dist((w1["lat"], w1["lon"]), (moved["lat"], moved["lon"])) * 111195
+        step("drag", movedM=round(moved_m))
+        # Rename the second in the list.
+        w2 = next(w for w in s["waypoints"] if w["id"] != w1["id"])
+        page.fill(f"#wpt-list input[data-id='{w2['id']}']", "Viewpoint east")
+        page.press(f"#wpt-list input[data-id='{w2['id']}']", "Enter")
+        page.locator("#wpt-name").click()  # blur fires change
+        s = page.evaluate("() => window.dystopoTripSync.idle()")
+        last = page.evaluate("() => window.dystopoTrips.state().lastPush || window.dystopoTrips.replica().lastPush")
+        step("rename", names=[w["name"] for w in s["waypoints"]], push=last)
+        server = {r["id"]: r for r in server_json(base, "/sync/routes?full=1", token)["routes"]}
+        on_server = [w["name"] for w in server.get(tid, {}).get("waypointList", [])]
+        step("server", waypoints=on_server)
+        server_ok = sorted(on_server) == ["Lunch spot", "Viewpoint east"]
+
+        # A phone-like device renames the trip and removes "Lunch spot" on the server.
+        dev = str(uuid.uuid4())
+        wall = int(time.time() * 1000) + 2000
+        hlc = lambda i: "%012x.%06x.%s" % (wall, i, dev)
+        ops = [{"hlc": hlc(0), "type": "set", "id": tid, "field": "name", "value": "Renamed on a phone"},
+               {"hlc": hlc(1), "type": "set", "id": tid, "field": "wpt:" + w1["id"], "value": None}]
+        bundle = server_json(base, "/route/bundle", token, "POST", json.dumps({"device": dev, "ops": ops}).encode(), raw=True)
+        pushed = server_json(base, "/sync/push", token, "POST", bundle, raw=True)
+        step("phone edit", push=json.loads(pushed))
+        r = page.evaluate("() => window.dystopoTripSync.pull()")
+        page.evaluate("() => window.dystopoTripSync.idle()")
+        here = page.evaluate("id => ({ trip: (window.dystopoTrips.trips().find(t => t.id === id) || {}).name, waypoints: window.dystopoTripSync.waypoints().map(w => w.name), listed: [...document.querySelectorAll('#trip-list li span')].map(e => e.textContent) })", tid)
+        step("pull here", result=page.evaluate("() => window.dystopoTripSync.state().lastPull"), **here)
+        card = page.input_value("#trip-name")
+        step("card after pull", card=card)
+        pulled_ok = card == "Renamed on a phone" and here["trip"] == "Renamed on a phone" and here["waypoints"] == ["Viewpoint east"] and any("Renamed on a phone" in t for t in here["listed"])
+        page.wait_for_timeout(400)
+        page.screenshot(path=shot)
+
+        # A fresh browser: nothing in localStorage; the pull brings the trip, opening it draws its waypoint.
+        ctx = browser.new_context(viewport={"width": size[0], "height": size[1]})
+        fresh = ctx.new_page()
+        fresh.goto(page_url, wait_until="load", timeout=timeout * 1000)
+        fresh.wait_for_function("() => window.dystopoTripSync && window.dystopoTrips", timeout=timeout * 1000)
+        if token:
+            fresh.fill("#packtoken", token)
+            fresh.dispatch_event("#packtoken", "change")
+        fresh.wait_for_function("() => map.isStyleLoaded() && map.getSource('trip')", timeout=timeout * 1000)
+        before = fresh.evaluate("() => window.dystopoTrips.trips().length")
+        fresh.click("#sync-pull")
+        fresh.wait_for_function("() => window.dystopoTripSync.state().lastPull", timeout=timeout * 1000)
+        pull2 = fresh.evaluate("() => window.dystopoTripSync.state().lastPull")
+        fresh.evaluate("id => window.dystopoTrips.load(id)", tid)
+        fresh.evaluate("() => window.dystopoTrips.idle()")
+        fresh.wait_for_function("() => window.dystopoTripSync.state().open", timeout=timeout * 1000)
+        fs = fresh.evaluate("() => window.dystopoTripSync.state()")
+        drawn = fresh.evaluate("() => document.querySelectorAll('.trip-wpt').length")
+        froute = fresh.evaluate("() => window.dystopoTrips.state().route")
+        stem, ext = os.path.splitext(shot)
+        fresh.wait_for_timeout(1200)
+        line = fresh.evaluate("() => map.queryRenderedFeatures({ layers: ['trip-line', 'trip-straight'] }).length")
+        fresh.screenshot(path=f"{stem}-fresh{ext}")
+        step("fresh browser", tripsBefore=before, pull=pull2, waypoints=[w["name"] for w in fs["waypoints"]], drawn=drawn, lineFeatures=line,
+             route=froute and {"pack": froute["pack"], "distanceM": froute["summary"]["distanceM"]})
+        ctx.close()
+        # The phone deletes the trip: the next pull here drops it from the list.
+        bundle = server_json(base, "/route/bundle", token, "POST", json.dumps({"device": dev, "ops": [{"hlc": hlc(2), "type": "delete", "id": tid}]}).encode(), raw=True)
+        server_json(base, "/sync/push", token, "POST", bundle, raw=True)
+        gone = page.evaluate("() => window.dystopoTripSync.pull()")
+        still = page.evaluate("id => window.dystopoTrips.trips().some(t => t.id === id)", tid)
+        step("deleted elsewhere", pull=gone, stillListed=still)
+        deleted_ok = gone.get("ok") and gone.get("removed", 0) >= 1 and not still
+        fresh_ok = before == 0 and pull2.get("ok") and pull2.get("added", 0) >= 1 and [w["name"] for w in fs["waypoints"]] == ["Viewpoint east"] and drawn == 1 and froute and line > 0
+        out["ok"] = bool(len(s["waypoints"]) == 2 and moved_m > 80 and server_ok and pulled_ok and fresh_ok and deleted_ok and (last or {}).get("ok"))
+    except Exception as e:  # report, do not crash the tour
+        out["error"] = str(e)[:500]
+        try:
+            page.screenshot(path=shot)
+        except Exception:
+            pass
+    return out
+
+
 def not_idle_because(state, v):
     """Why a view did not count as idle: the MapLibre flags that were false, or the zoom still moving."""
     if not state:
@@ -300,6 +440,8 @@ def main() -> int:
                     "(--route-mode, default drive) and check it follows the network across at least --long-route-packs packs in under --long-route-ms (check_long_route)")
     ap.add_argument("--long-route-ms", type=int, default=10000, help="T77: the server's time limit for --long-route, ms (default 10000)")
     ap.add_argument("--long-route-packs", type=int, default=2, help="T77: how many packs --long-route must cross (default 2)")
+    ap.add_argument("--trip-sync", action="store_true", help="T92, live mode, with --route: waypoint editing and the pull side of the browser's trip replica (check_trip_sync)")
+    ap.add_argument("--token", default="", help="T92: the server's bearer token, typed into the page's Token field (a server with users keeps /route* and /sync* behind it)")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
 
@@ -436,10 +578,17 @@ def main() -> int:
                     ok = ok and not report["missingRequired"]
             report["ok"] = ok
             reports.append(dict(report))
+        if args.token:
+            page.fill("#packtoken", args.token)
+            page.dispatch_event("#packtoken", "change")
         if args.route:
             route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout, args.route_mode)
             errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
             reports[-1].update(route=route, ok=reports[-1]["ok"] and route["ok"] and not errors)
+        if args.trip_sync:
+            ts = check_trip_sync(browser, page, args.url, f"{stem}-trip-sync{ext}", args.timeout, args.token, (args.width, args.height))
+            errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
+            reports[-1].update(tripSync=ts, ok=reports[-1]["ok"] and ts["ok"] and not errors)
         if args.long_route:
             lr = check_long_route(page, args.long_route, f"{stem}-long-route{ext}", args.timeout, args.route_mode or "drive",
                                   args.long_route_ms, args.long_route_packs)

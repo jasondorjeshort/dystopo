@@ -132,26 +132,43 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build the image
-        run: docker build -f server/Dockerfile -t dystopo-server .
+      # T92: BuildKit with its layers in the Actions cache. The Dockerfile fetches the Gradle distribution in a
+      # layer keyed by the wrapper files alone (with retries), so a run whose wrapper did not change never
+      # downloads it; run 38462712750 failed on a 500 from GitHub's distribution host while doing that.
+      - uses: docker/setup-buildx-action@v3
 
-      # The container's cache volume is a host directory, so the aux data can be cached by Actions. The
-      # key names the aux set; bump it to refresh the files (they change rarely; tilebuild re-downloads
-      # anything missing).
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          tags: dystopo-server
+          load: true
+          cache-from: type=gha,scope=server-image
+          cache-to: type=gha,scope=server-image,mode=max
+
+      # The container's cache volume is a host directory, so the aux data can be cached by Actions. T92: the
+      # key is the aux URLs (Profiles.kt) plus the month, so a changed source or a new month fetches fresh
+      # files (water polygons change upstream daily; one cold run a month, about a minute) with no hand bump.
+      - name: Planetiler aux cache key
+        id: auxkey
+        run: echo "key=planetiler-aux-$(grep -E '_URL = ' tilebuild/src/main/kotlin/io/github/jasondorjeshort/dystopo/tilebuild/Profiles.kt | sha256sum | cut -c1-12)-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
       - name: Restore Planetiler's aux data
         uses: actions/cache@v4
         with:
           path: |
             ci-cache/planetiler/*.zip
             ci-cache/planetiler/*.index
-          key: planetiler-aux-v1
+          key: ${{ steps.auxkey.outputs.key }}
 
       - name: Run it; check /healthz, the token, /catalog and tilebuild
         run: |
           mkdir -p ci-cache/planetiler ci-out
           chmod -R a+rwX ci-cache ci-out
           cat > /tmp/server.json <<'JSON'
-          {"extractDownloads": {"urls": ["https://download.geofabrik.de/europe/liechtenstein"], "maxMb": 64}}
+          {"extractDownloads": {"urls": ["https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf"], "maxMb": 64,
+           "sha256": {"liechtenstein": "38c281920dcf599754a1e58f399b88c35d18b40dff932bd4dd926aa1a79cda76"}}}
           JSON
           chmod a+r /tmp/server.json
           docker run -d --name dystopo -p 8080:8080 -e DYSTOPO_SERVER_TOKEN=ci-token \
@@ -174,6 +191,7 @@ jobs:
           assert t["available"], t
           regions = limits["extractDownloads"]["regions"]
           assert [r["name"] for r in regions] == ["liechtenstein"], regions
+          assert regions[0]["pin"] == "260101" and regions[0]["sha256"], regions  # T92: a pinned snapshot
           print("image ok: healthz", h["catalog"], "tilebuild", t["how"], "download regions", regions)
           PY
           docker exec dystopo /opt/tilebuild/bin/tilebuild --help > /dev/null
@@ -201,7 +219,8 @@ jobs:
           j = json.load(open("/tmp/job.json"))
           assert j["status"] == "done", j
           assert j["osmSource"] == "extract" and j["osmProfile"] == "outdoors", j
-          assert j["download"]["name"] == "liechtenstein" and j["download"]["bytes"] > 1_000_000, j["download"]
+          assert j["download"]["name"] == "liechtenstein" and j["download"]["bytes"] == 3_255_783, j["download"]  # the pinned 2026-01-01 snapshot
+          assert j["download"]["sha256"] == "38c281920dcf599754a1e58f399b88c35d18b40dff932bd4dd926aa1a79cda76", j["download"]
           assert j["provenance"]["osmExtract"]["name"] == "liechtenstein", j["provenance"]
           packs = {p["id"]: p for p in json.load(open("/tmp/catalog.json"))["packs"]}
           assert packs["ci-small"]["profile"] == "outdoors", packs

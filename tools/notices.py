@@ -170,7 +170,8 @@ def render(paths, deps, sources, js):
             if line.strip().lower().startswith('copyright'):
                 copyright_line = line.strip()
                 break
-    w('- Noto Sans Regular and Bold (`serverlib/src/main/resources/fonts/`), used to draw text in rendered PNGs:')
+    w('- Noto Sans Regular and Bold, and Noto Sans Hebrew, Arabic, Thai and Georgian Bold (T92: the second name line),')
+    w('  in `serverlib/src/main/resources/fonts/`, used to draw text in rendered PNGs:')
     w('  SIL Open Font License 1.1, full text in `serverlib/src/main/resources/fonts/OFL.txt`.' + (' ' + copyright_line if copyright_line else ''))
     w('')
     w('## Map and elevation data')

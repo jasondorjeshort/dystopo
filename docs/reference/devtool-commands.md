@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-12
+verified: 2026-10-13
 source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
 ---
 
@@ -36,7 +36,7 @@ DYSTOPO_3DEP_DESTRIPE=1 ./gradlew :devtool:run --args="render --area rainier --s
 
 ## Fonts in PNGs
 
-PNG text (labels, contact sheets) is drawn with the bundled Noto Sans TTFs (`serverlib/src/main/resources/fonts/`, OFL; `RenderFonts`), never the platform `SansSerif`, so goldens match on every OS without installing fonts.
+PNG text (labels, contact sheets) is drawn with the bundled Noto Sans TTFs (`serverlib/src/main/resources/fonts/`, OFL; `RenderFonts`), never the platform `SansSerif`, so goldens match on every OS without installing fonts. T92: point labels also carry the local name in another script on a second line, as the phone style does (`name:nonlatin`, else a `name` starting outside the Latin blocks, when it differs from the first line; `devtool/.../LocalNames.kt`), drawn with bundled Noto Sans Hebrew, Arabic, Thai and Georgian Bold through `LabelText` (Greek and Cyrillic are in Noto Sans); a script none of them has (CJK, Devanagari) is left out rather than drawn as boxes. Curved labels in Hebrew or Arabic are laid out in visual order (Arabic letters unjoined there). The render JSON counts them under `osm.localNameLines`; `render --area dead-sea --osm <pack>` shows Hebrew second lines. Latin text is measured and drawn exactly as before, so the goldens are unchanged.
 
 ## Working directory, cache and output
 
