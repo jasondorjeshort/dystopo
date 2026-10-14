@@ -25,14 +25,11 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 2. After T88 merges: README status paragraph; the full sweep from the main checkout (`sweep` skill;
    stop 8765 and 8800 by PID first and restart them on the new build after; confirm the
    `47:31:38:10` certificate on the sweep's release APK); its findings become a wave 14 task.
-3. Green sweep: `v0.1.6-alpha` (`release` skill), after the owner's word on the new strings (below).
+3. Green sweep: `v0.1.6-alpha` (`release` skill); the owner signed off the new strings 2026-10-14.
 4. Wave 14 from the ideas folder and the follow-ups in the T89 to T97 Status lines.
 
 ## Waiting on user
 
-- Sign-off on new phone wording from T95 (the Offline offer and budget lines, "Older than the
-  source. Update downloads the newer data.", the Storage note) and T96 ("Wrong code" on Download
-  for a peer whose code changed; a failed download hidden after the peer's state changes).
 - Hatchery PR #1; real-phone checks of 0.1.5; Google developer registration.
 
 ## Open findings
