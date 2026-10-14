@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-14
 
+- T96: Kept peers never rotate the sharer's code; a bounded linger (T90 verifier) (#98)
 - T97: Server and devtool doc follow-ups of T89 and T92 (#97)
 - T91: Android leftover sweep 6 (#95)
 - T92: Desktop and server leftover sweep 6 (#93)
