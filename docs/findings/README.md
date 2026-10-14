@@ -15,7 +15,7 @@ should not be investigated twice.
 | `2026-10-09-junction-into-main-checkout.md` | resolved | process / worktrees | A junction from a worktree into the main checkout wiped the main `out/` when the worktree was removed. |
 | `2026-10-09-branch-deleted-before-merge.md` | resolved | process / merge | Deleting a branch after a failed merge closed the PR; git-guard now checks the merge first. |
 | `2026-10-10-kill-by-command-line-substring.md` | resolved | process / parallel agents | Stopping processes by substring killed every agent's emulator and the live server; stop by PID or serial. |
-| `2026-10-10-emulator-share-direct-connect.md` | open | android / emulator networking | Two emulators discover each other, but a direct connect is not reliable; go through the host. |
+| `2026-10-10-emulator-share-direct-connect.md` | resolved | android / emulator networking | Direct connects work when both emulators have Wi-Fi; replies cut through the host were the sharer's early close (T90). |
 | `2026-10-10-emulator-software-gpu-draws-no-text.md` | resolved | android / emulator rendering | Under `swiftshader_indirect` MapLibre draws no text or dashes; use `-gpu host`. |
 | `2026-10-10-sqldelight-verify-empty-environment.md` | resolved | build / SQLDelight | SQLDelight's own migration check cannot run on Windows here; our own migration test replaces it. |
 | `2026-10-11-android-location-listener-lambda.md` | resolved | android / location | A `LocationListener` lambda crashes Android 8 to 10; use the helper, a test forbids lambdas. |

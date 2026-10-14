@@ -103,6 +103,7 @@ fun ShareAction() {
  */
 @Composable
 fun ShareOverlay() {
+    LaunchedEffect(Unit) { ShareUi.worker.execute { runCatching { PeerSources.load() } } } // T90: kept peers, retried from launch
     if (!ShareUi.visible) return
     val session = ShareSession.of(DystopoApp.instance)
     DisposableEffect(Unit) {
@@ -277,11 +278,15 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
         if (addr.isBlank()) { message = "Enter the other phone's address and code"; return@Chip }
         run { PeerSources.add(addr, code).let { p -> "Connected to ${p.name}: ${p.catalog?.packs?.size ?: 0} packs" } }
     }
-    message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Connected") || it.startsWith("Downloading")) Accent else Bad, fontSize = 14.sp)) }
+    message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Connected") || it.startsWith("Downloading") || it.startsWith("Forgot")) Accent else Bad, fontSize = 14.sp)) }
     peers.forEach { p ->
         Column(Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            BasicText(p.name ?: p.addr, style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
-            p.error?.let { BasicText(it, style = TextStyle(color = Bad, fontSize = 12.sp)) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(p.name ?: p.addr, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
+                Chip("Forget") { run { PeerSources.remove(p.addr); "Forgot ${p.name ?: p.addr}" } } // T90: peers are kept until forgotten
+            }
+            BasicText(peerSeenLine(p, System.currentTimeMillis()), style = TextStyle(color = Muted, fontSize = 12.sp))
+            p.error?.takeIf { p.state == "error" }?.let { BasicText(it, style = TextStyle(color = Bad, fontSize = 12.sp)) }
             val packs = p.catalog?.packs.orEmpty()
             if (packs.isEmpty()) BasicText("No packs on this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
             packs.forEach { pack ->
@@ -310,6 +315,32 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
                 }
             }
         }
+    }
+}
+
+/**
+ * T90: the state line of a peer in the list: kept peers are listed after a restart before they answer, and one that
+ * does not answer stays listed with when it was last seen (it is tried again in the background).
+ */
+internal fun peerSeenLine(p: PeerSources.Peer, now: Long): String {
+    val seen = p.lastSeenAt?.let { "last seen ${ago(now - it)}" } ?: "not seen yet"
+    return when (p.state) {
+        "saved" -> "Saved from before; connecting... ($seen)"
+        "unreachable" -> "Not reachable; trying again${p.nextRetryAt?.let { t -> " in ${ago(t - now).removeSuffix(" ago")}" } ?: ""} ($seen)"
+        "codeChanged" -> "Its code changed: enter the code it shows now and tap Use its maps ($seen)"
+        "error" -> "Not reachable ($seen)"
+        else -> "Connected, $seen"
+    }
+}
+
+internal fun ago(ms: Long): String {
+    val s = (ms.coerceAtLeast(0) + 500) / 1000
+    return when {
+        s < 5 -> "just now"
+        s < 90 -> "$s s ago"
+        s < 90 * 60 -> "${(s + 30) / 60} min ago"
+        s < 36 * 3600 -> "${(s + 1800) / 3600} h ago"
+        else -> "${(s + 43200) / 86400} days ago"
     }
 }
 

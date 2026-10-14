@@ -29,6 +29,16 @@ class ShareNsd(context: Context, private val peers: PeerList) {
         private set
     @Volatile var resolves = 0
         private set
+    /** T90, discovery timing: when the announcement was confirmed and when browsing started (wall ms, comparable across emulators on one host). */
+    @Volatile var registeredAt: Long? = null
+        private set
+    @Volatile var discoveryStartedAt: Long? = null
+        private set
+    /** T90: milliseconds of the last resolve (the request to NSD's answer) and the slowest so far. */
+    @Volatile var lastResolveMs: Long? = null
+        private set
+    @Volatile var maxResolveMs = 0L
+        private set
 
     @Synchronized
     fun register(name: String, port: Int, attributes: Map<String, String>) {
@@ -42,11 +52,12 @@ class ShareNsd(context: Context, private val peers: PeerList) {
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(s: NsdServiceInfo) {
                 registeredName = s.serviceName
+                registeredAt = System.currentTimeMillis()
                 peers.selfName = s.serviceName
                 Log.i(TAG, "announced ${s.serviceName} on port $port")
             }
             override fun onRegistrationFailed(s: NsdServiceInfo, errorCode: Int) { lastError = "register failed: $errorCode" }
-            override fun onServiceUnregistered(s: NsdServiceInfo) { registeredName = null }
+            override fun onServiceUnregistered(s: NsdServiceInfo) { registeredName = null; registeredAt = null }
             override fun onUnregistrationFailed(s: NsdServiceInfo, errorCode: Int) { lastError = "unregister failed: $errorCode" }
         }
         registration = listener
@@ -65,7 +76,7 @@ class ShareNsd(context: Context, private val peers: PeerList) {
     fun startDiscovery() {
         if (discovery != null) return
         val listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(serviceType: String) { discovering = true }
+            override fun onDiscoveryStarted(serviceType: String) { discovering = true; discoveryStartedAt = System.currentTimeMillis() }
             override fun onDiscoveryStopped(serviceType: String) { discovering = false }
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { lastError = "discovery failed: $errorCode"; discovering = false }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) { lastError = "stop discovery failed: $errorCode" }
@@ -90,6 +101,7 @@ class ShareNsd(context: Context, private val peers: PeerList) {
     @Suppress("DEPRECATION") // resolveService: its API 34 replacement (registerServiceInfoCallback) is not on minSdk 26
     private fun resolve(s: NsdServiceInfo) {
         val done = CountDownLatch(1)
+        val t0 = System.currentTimeMillis()
         runCatching {
             nsd.resolveService(s, object : NsdManager.ResolveListener {
                 override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
@@ -98,6 +110,9 @@ class ShareNsd(context: Context, private val peers: PeerList) {
                 }
                 override fun onServiceResolved(info: NsdServiceInfo) {
                     val host = info.host?.hostAddress
+                    val ms = System.currentTimeMillis() - t0
+                    lastResolveMs = ms
+                    if (ms > maxResolveMs) maxResolveMs = ms
                     if (host != null) peers.resolved(info.serviceName, host, info.port)
                     resolves++
                     done.countDown()

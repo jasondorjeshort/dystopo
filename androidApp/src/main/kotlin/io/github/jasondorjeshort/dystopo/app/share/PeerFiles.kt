@@ -78,6 +78,21 @@ object PeerFiles {
         return Piece(r.status, params["first"]?.toLongOrNull() ?: from, params["total"]?.toLongOrNull(), r.body)
     }
 
+    /**
+     * T90, a debug check: one piece of [file] from peer [addr] (bytes [from] to [from] + [len]), as the downloader asks for it,
+     * with its SHA-256 and timing (`POST /share/peers/piece`). Throws like a piece of a download (a reply cut short).
+     */
+    fun fetchPiece(addr: String, file: String, from: Long, len: Int): Map<String, Any?> {
+        val t0 = System.nanoTime()
+        val p = piece(addr, PeerServe.FILE_PREFIX + file, from, len, null)
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(p.body).joinToString("") { "%02x".format(it) }
+        return linkedMapOf(
+            "status" to p.status, "first" to p.first, "total" to p.total, "bytes" to p.body.size, "sha256" to sha,
+            "ms" to ms, "bytesPerSec" to if (ms > 0) p.body.size * 1000L / ms else null,
+        )
+    }
+
     fun open(url: String, have: Long, expectSha256: String?): PackDownloader.RangeConn {
         val (addr, path) = parse(url)
         return openWith(have, chunk(addr)) { from, len -> piece(addr, path, from, len, expectSha256) }

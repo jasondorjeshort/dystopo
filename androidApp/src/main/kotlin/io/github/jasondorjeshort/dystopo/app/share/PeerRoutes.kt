@@ -12,19 +12,24 @@ import kotlin.math.floor
  * needs nothing beyond the Share screen being open (`POST /share/start`); `GET /share/status` has `serving` (who fetched
  * what from this phone) and `peerSources`.
  * - `GET /share/peers`: the phones in use as sources (address, name, catalog packs, areas, `discoveredAt`, `catalogAt`,
- *   `catalogAfterDiscoveryMs`), the known codes' count, auto tries, address overrides, and the fetcher's per-source counters.
+ *   `catalogAfterDiscoveryMs`; T90: `state` `connected`, `saved` or `unreachable`, `lastSeenAt`, `retries`, `nextRetryAt`),
+ *   the known codes' count, auto tries, address overrides, `restoredPeers` and `saves` (T90: peers are kept in
+ *   `files/share/peers.json` across restarts), and the fetcher's per-source counters.
+ * - `POST /share/peers/refresh?peer=`: T90: a restored peer is added again (hello, catalog), any other refreshed.
  * - `POST /share/peers/add?addr=<host[:port]|share link>&code=<code>`: adds that phone as a source (hello, catalog, areas).
  * - `POST /share/peers/code?code=<code>`: remembers a code; every phone discovery resolves from then on is tried with it
  *   once (the trip's code). `DELETE /share/peers/code` forgets them all.
  * - `POST /share/peers/via?from=<host:port>&to=<host:port>`: connect to `to` whenever discovery reports `from` (emulators:
  *   a peer's 10.0.2.x address through an adb forward on the host); without `to` the override goes.
- * - `POST /share/peers/refresh?peer=`: its catalog and areas again. `DELETE /share/peers?peer=`: stop using it.
+ * - `DELETE /share/peers?peer=`: stop using it (and forget it: the Share screen's Forget).
  * - `GET /share/peers/catalog?peer=`: the peer's catalog document as it sent it.
  * - `POST /share/peers/download?peer=&pack=<id>[&activate=1]`: downloads that pack from the peer (job as `GET /packs/downloads`).
  * - `POST /share/peers/area?peer=&id=<area id>`: downloads that area (a pack, or a corridor's tiles through the fetcher).
  * - `POST /share/peers/bench?peer=[&lat=&lon=][&z=13][&n=9]`: the derived-tile measurement: the same contour tiles fetched
  *   from the peer (cold: it makes them; warm: from its cache) and regenerated here (contour cache cleared, one warm-up tile
  *   first); needs the same pack on both phones (the full derived key must match).
+ * - `POST /share/peers/piece?peer=&file=<archive>&from=<byte>&len=<bytes>`: T90, one piece of the peer's archive as a download
+ *   asks for it (at most 4 MiB), with its SHA-256, milliseconds and bytes per second; a reply cut short is a 500 with the error.
  * - `GET /share/peers/testframe`: a sealed `GET /share/hello` frame under this phone's current share code (base64), for
  *   `tools/android-probe.py --share` (sent twice: 200, then 409 as a replay). Debug builds only, like every route here.
  * `peer` is the address, `peer://` URL, the phone's name or its NSD name; it may be left out when there is one peer.
@@ -50,7 +55,7 @@ object PeerRoutes {
                 PeerSources.setVia(from, r.query["to"])
                 Response.json(PeerSources.json())
             }
-            "POST" to "/share/peers/refresh" -> Response.json(PeerSources.refresh(peer()).json())
+            "POST" to "/share/peers/refresh" -> Response.json(PeerSources.reach(peer()).json())
             "DELETE" to "/share/peers" -> Response.json(mapOf("removed" to PeerSources.remove(r.query["peer"] ?: peer().addr)))
             "GET" to "/share/peers/catalog" -> Response.json(PeerSources.refresh(peer()).catalog?.json())
             "POST" to "/share/peers/download" -> {
@@ -64,8 +69,13 @@ object PeerRoutes {
                 val frame = io.github.jasondorjeshort.dystopo.sync.crypto.SealedLink.sealRequest(c, io.github.jasondorjeshort.dystopo.sync.crypto.SealedLink.Request("GET", "/share/hello", ByteArray(0)), ShareGate::randomBytes)
                 Response.json(mapOf("frame" to java.util.Base64.getEncoder().encodeToString(frame), "port" to ShareSession.of(app).port))
             }
+            "POST" to "/share/peers/piece" -> {
+                val file = r.query["file"] ?: return Response.json(mapOf("error" to "pass file=<archive name on the peer>&from=&len="), 400)
+                val len = (r.query["len"]?.toIntOrNull() ?: PeerFiles.CHUNK).coerceIn(1, PeerServe.MAX_CHUNK)
+                Response.json(PeerFiles.fetchPiece(peer().addr, file, r.query["from"]?.toLongOrNull() ?: 0L, len))
+            }
             "POST" to "/share/peers/sealbench" -> Response.json(sealBench(r.query["mb"]?.toIntOrNull() ?: 4))
-            else -> Response.json(mapOf("error" to "GET /share/peers, POST /share/peers/add|code|via|refresh|download|area|bench, GET /share/peers/catalog"), 404)
+            else -> Response.json(mapOf("error" to "GET /share/peers, POST /share/peers/add|code|via|refresh|download|area|bench|piece, GET /share/peers/catalog"), 404)
         }
     }
 

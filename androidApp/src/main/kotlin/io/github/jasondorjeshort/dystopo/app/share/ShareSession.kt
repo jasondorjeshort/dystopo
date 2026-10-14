@@ -3,7 +3,6 @@ package io.github.jasondorjeshort.dystopo.app.share
 import android.os.Build
 import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.app.LocalServer
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
 import io.github.jasondorjeshort.dystopo.app.sync.AppSync
@@ -19,7 +18,7 @@ import java.net.NetworkInterface
 
 /**
  * Phone-to-phone sync on a local network (T54). While the Share screen is open ([start] .. [stop]):
- * - a second [LocalServer] listens on all interfaces (port [ShareClient.DEFAULT_PORT], else any free
+ * - a second listener ([ShareListener] since T90; a [io.github.jasondorjeshort.dystopo.app.LocalServer] before) listens on all interfaces (port [ShareClient.DEFAULT_PORT], else any free
  *   one), separate from the loopback tile server, and answers only what [ShareGate] allows: the T44
  *   sync routes through a [SyncServer] over the app's track store, each sealed under the share code (T72:
  *   ChaCha20-Poly1305, an 80-bit code; [ShareGate]);
@@ -36,7 +35,7 @@ class ShareSession private constructor(private val app: DystopoApp) {
     /** T78: this phone as a map source for the phones with its code ([PeerServe], inside the sealed link). */
     val serve = PeerServe(app) { linkedMapOf("name" to deviceName, "device" to deviceId.take(8)) }
 
-    private var server: LocalServer? = null
+    private var server: ShareListener? = null
     private var gate: ShareGate? = null
     private var syncServer: SyncServer? = null
 
@@ -85,9 +84,10 @@ class ShareSession private constructor(private val app: DystopoApp) {
         return status()
     }
 
-    private fun listen(port: Int, g: ShareGate): LocalServer? {
-        // T78: four workers, so a peer's tile requests and a pack download go on while a sync is served.
-        val s = LocalServer(port, threads = 4, maxQueued = 32, readers = 4, debugThreads = 1, isMapRequest = { true }, handler = g::handle, bindAddress = "0.0.0.0")
+    private fun listen(port: Int, g: ShareGate): ShareListener? {
+        // T78: four workers, so a peer's tile requests and a pack download go on while a sync is served. T90: its own
+        // listener, which lets the client close first and has a write deadline (whole replies over a slow path).
+        val s = ShareListener(port, handler = g::handle, threads = 4, maxQueued = 32, log = { Log.w(TAG, it) })
         return try {
             s.start()
             s
@@ -184,9 +184,10 @@ class ShareSession private constructor(private val app: DystopoApp) {
         "startedAt" to startedAt,
         "stops" to stops,
         "gate" to gate?.json(),
+        "listener" to server?.json(), // T90: replies written, closed by the client first, stalled
         "served" to syncServer?.let { mapOf("pulls" to it.pulls, "pushes" to it.pushes) },
         "lastIncoming" to lastIncoming,
-        "nsd" to mapOf("registeredAs" to nsd.registeredName, "discovering" to nsd.discovering, "resolves" to nsd.resolves, "lastError" to nsd.lastError),
+        "nsd" to mapOf("registeredAs" to nsd.registeredName, "registeredAt" to nsd.registeredAt, "discoveryStartedAt" to nsd.discoveryStartedAt, "lastResolveMs" to nsd.lastResolveMs, "maxResolveMs" to nsd.maxResolveMs, "discovering" to nsd.discovering, "resolves" to nsd.resolves, "lastError" to nsd.lastError),
         "discovered" to peers.all().map { it.json() },
         "connecting" to connecting,
         "lastConnect" to lastConnect,
