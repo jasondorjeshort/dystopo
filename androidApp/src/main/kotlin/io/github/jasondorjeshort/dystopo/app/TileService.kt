@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.os.Process
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.online.DirectSources
+import io.github.jasondorjeshort.dystopo.app.online.DirectTrace
 import io.github.jasondorjeshort.dystopo.app.options.ShadeService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
@@ -471,14 +472,18 @@ class TileService(
         try {
             // T38: outside the pack, contours come from the online DEM through the same generation path (not the pack's cache).
             online?.takeUnless { it.packCoversContour(z, x, y) }?.let { o ->
-                DirectSources.staleContour(o, contourOptions, z, x, y) { p, d -> generateContourTile(p, z, x, y, null, contourGen, options = d) }?.let { return ok(contours, "application/x-protobuf", it) } // T85: not kept
-                return ok(contours, "application/x-protobuf", o.contourTile(z, x, y) { p -> DirectSources.contourOptions(contourOptions, o, z, x, y).let { d -> generateContourTile(DirectSources.contourPyramid(o, d, z, x, y) ?: p, z, x, y, null, contourGen, options = d) } }) // T85: direct sources read the hillshade zoom
+                if (o.fetcher.server == DirectSources.SERVER) DirectTrace.mark("c? $z/$x/$y") // T88
+                DirectSources.staleContour(o, contourOptions, z, x, y) { p, d -> generateContourTile(p, z, x, y, null, contourGen, options = d) }?.let { DirectTrace.mark("c200p $z/$x/$y ${it.size}"); return ok(contours, "application/x-protobuf", it) } // T85: not kept
+                val made = o.contourTile(z, x, y) { p -> DirectSources.contourOptions(contourOptions, o, z, x, y).let { d -> generateContourTile(DirectSources.contourPyramid(o, d, z, x, y) ?: p, z, x, y, null, contourGen, options = d) } } // T85: direct sources read the hillshade zoom
+                if (o.fetcher.server == DirectSources.SERVER) DirectTrace.mark("c200 $z/$x/$y ${made.size}") // T88
+                return ok(contours, "application/x-protobuf", made)
             }
             // T41: the DEM pack that holds the tile (else the best one overlapping it) makes it, into its own cache directory.
             val pack = packs.demFor(z, x, y, PackRoleZooms.CONTOUR) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
             val bytes = contourBytes(pack, z, x, y, contourGen)
             return ok(contours, "application/x-protobuf", bytes)
         } catch (e: io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.NotReady) {
+            DirectTrace.mark("c503 $z/$x/$y") // T88
             return TileResult(503, "text/plain", "${e.message}\n".toByteArray()) // T80: MapLibre retries a 503 with backoff
         } catch (e: Throwable) {
             contours.errors.incrementAndGet()
@@ -701,6 +706,18 @@ class TileService(
 
         /** T63: generation requests (contours, shade) run on the server's generation pool, below the tile pool. */
         fun isGenerationRequest(path: String): Boolean = path.startsWith("/contours/") || path.startsWith("/shade/")
+
+        /**
+         * T88: requests that may wait seconds on the network: DEM, contour and shade tiles while the phone reads the
+         * sources itself (no server; [OnlineService.isDirect]). They run on the server's wait pool ([LocalServer]), so
+         * the tile and generation workers stay free for OpenFreeMap tiles and for tiles whose DEM is there.
+         */
+        fun isWaitingRequest(path: String): Boolean =
+            (path.startsWith("/dem/") || path.startsWith("/contours/") || path.startsWith("/shade/")) &&
+                runCatching { OnlineService.get().isDirect }.getOrDefault(false)
+
+        /** T88: the wait pool's most workers: MapLibre asks for a few dozen tiles of a view at once. */
+        const val WAIT_THREADS = 48
 
         /** T63: tiles generating at once and the server's generation pool size; one core is left to the map renderer. */
         val GEN_THREADS = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 8)

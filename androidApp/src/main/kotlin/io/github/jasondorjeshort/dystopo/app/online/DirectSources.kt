@@ -49,7 +49,7 @@ class SourceCapReached(message: String) : RuntimeException(message)
  * - `osm/z/x/y.pbf`: OpenFreeMap's public planet tiles (template from its TileJSON, cached a day).
  * - `live/info`, `live/sources`: what the fetcher's probe and the credits ask a server.
  *
- * Costs are capped ([PhoneSourceHttp]): at most [MAX_RANGE_REQUESTS] source requests at once, six tiles
+ * Costs are capped ([PhoneSourceHttp]): at most [MAX_RANGE_REQUESTS] source requests at once, [MAX_TILES_IN_FLIGHT] tiles
  * rendered at once (their own permits, so map tiles never wait behind them), and [sessionCapBytes] downloaded per app session, after which
  * tiles fail with a clear message until the app restarts (a casual pan cannot pull gigabytes).
  */
@@ -95,7 +95,94 @@ class DirectSources(private val context: android.content.Context, private val ca
     @Volatile var lastRenderDoneAt = 0L
         private set
 
+    /**
+     * T88, coarse first: a view's coarser DEM tiles (below [COARSER_OVERVIEW_BELOW]: MapLibre's fallback tiles and
+     * the fallback contour tile's DEM) read a quarter of the bytes of its own tiles and show terrain and contours
+     * long before them. On a cold view both used to share the link, so neither came early. A render at the
+     * view's zoom waits for the coarse renders in flight (at most [COARSE_FIRST_MS]); at the start of a burst it
+     * gives them [COARSE_GRACE_MS] to be asked for (MapLibre asks for them just after the view's own tiles).
+     */
+    private val coarseActive = java.util.concurrent.atomic.AtomicInteger()
+    private val coarseGate = Object()
+    @Volatile private var burstStartedAt = 0L
+    val coarseHeldMs = AtomicLong()
+
+    private fun holdForCoarse() {
+        val start = System.currentTimeMillis()
+        synchronized(coarseGate) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val inGrace = coarseActive.get() == 0 && now - burstStartedAt < COARSE_GRACE_MS
+                if (!inGrace && coarseActive.get() == 0) break
+                val left = if (inGrace) burstStartedAt + COARSE_GRACE_MS - now else start + COARSE_FIRST_MS - now
+                if (left <= 0) break
+                coarseGate.wait(left)
+            }
+        }
+        coarseHeldMs.addAndGet(System.currentTimeMillis() - start)
+    }
+
+    /** T88: cache keys of the DEM renders a map request was answered "not ready" (503) for while waiting on them. */
+    private val awaited = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** T88: a map request for DEM tile z/x/y (or a contour tile's DEM tile) was answered 503 while it rendered. */
+    fun awaitedTile(z: Int, x: Int, y: Int) {
+        // Deeper tiles are synthesized from their [maxZoom] ancestor and the neighbours its edge reaches into; the
+        // reload waits for those in view (the rest only feed the tile's outer edge and are done by the time it is asked again).
+        val sources = if (z > maxZoom) synthesisSources(TileId(z, x, y), maxZoom).filter { it == TileId(maxZoom, x shr (z - maxZoom), y shr (z - maxZoom)) || inView(it) } else listOf(TileId(z, x, y))
+        for (t in sources) awaited += "$KEY/dem/${t.z}/${t.x}/${t.y}.png"
+    }
+
+    /**
+     * T88: map requests for DEM tiles wait on renders: they run here, not on [OnlineService]'s six prefetch threads,
+     * where six requests waiting on renders kept the rest of the view's tiles queued past their 8 s.
+     */
+    private val requestPool = java.util.concurrent.Executors.newCachedThreadPool { r -> Thread(r, "direct-request").apply { isDaemon = true } }
+
+    fun <T> request(block: () -> T): java.util.concurrent.CompletableFuture<T> = java.util.concurrent.CompletableFuture.supplyAsync(block, requestPool)
+
+    /**
+     * T88: whether the map should reload now to pick up tiles it was told were not ready (OnlineService). Before
+     * T88 that waited until every render had finished and the phone had been idle a second, so contour tiles of
+     * the view's first renders waited for the slowest fallback tile (6 to 7 s on a cold Rainier view). Now: as
+     * soon as every render a 503 was answered for is done (made, failed or given up), or everything is idle.
+     */
+    fun readyForRefresh(): Boolean {
+        val now = System.currentTimeMillis()
+        val ready = when {
+            rendering.get() == 0 && now - lastRenderDoneAt >= 1_000 -> true
+            now - lastRenderDoneAt < REFRESH_SETTLE_MS -> false
+            else -> {
+                synchronized(inFlight) { awaited.removeIf { it !in inFlight } }
+                awaited.isEmpty()
+            }
+        }
+        if (ready) {
+            lastRefreshAt = now
+            DirectTrace.mark("refresh") // the caller reloads the style now
+        }
+        return ready
+    }
+
+    /** T88: when the last reload for tiles that were not ready was started (wall clock ms). */
+    @Volatile var lastRefreshAt = 0L
+        private set
+
+    /**
+     * T88: whether a "not ready" answer to a request that arrived at [askedAt] should bring another reload. One
+     * asked for before the last reload is the old style's: MapLibre asks again with the new one, and that request
+     * counts. Counted, those answers (DEM tiles time out a few seconds after a reload) brought a second reload
+     * about a second after the first, blanking the map twice.
+     */
+    fun countsForRefresh(askedAt: Long): Boolean = askedAt >= lastRefreshAt
+
     val demRendered = AtomicLong()
+    /** T88: per-stage sums over every render: waiting for a render permit, `best` fetching (reads, decodes, resampling, geoid, compositing), encoding. */
+    val renderWaitMs = AtomicLong()
+    val renderFetchMs = AtomicLong()
+    val renderEncodeMs = AtomicLong()
+    /** T88: contour tiles' time waiting for their DEM tiles ([contourWindow]). */
+    val contourDemWaitMs = AtomicLong()
     val demMs = AtomicLong()
     val demMaxMs = AtomicLong()
     val osmFetched = AtomicLong()
@@ -119,6 +206,8 @@ class DirectSources(private val context: android.content.Context, private val ca
         // Neighbouring tiles share COG blocks: keep files open and their decoded blocks under a heap-sized cap.
         SourceIo.tiffPool = TiffPool(TIFF_POOL)
         SourceIo.decodedBlocks = DecodedBlocks(minOf(DECODED_CAP_BYTES, Runtime.getRuntime().maxMemory() / 4))
+        // T88: every cold range read on the timeline (file name, bytes, ms).
+        io.github.jasondorjeshort.dystopo.sources.elevation.SourceTiming.onRead = { url, bytes, nanos -> DirectTrace.mark("read ${url.substringAfterLast('/')} ${bytes shr 10} KB ${nanos / 1_000_000} ms") }
         Thread({ trimSourceCache() }, "direct-trim").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
     }
 
@@ -212,17 +301,29 @@ class DirectSources(private val context: android.content.Context, private val ca
     private fun renderAndRecord(t: TileId, wanted: (() -> Boolean)? = null): ByteArray {
         // Renders take their own permits, so OpenFreeMap tiles never queue behind them (MapLibre gives up on a
         // tile after its timeout, and the map then never counts as loaded).
-        rendering.incrementAndGet()
+        val coarse = t.z < COARSER_OVERVIEW_BELOW
+        if (rendering.getAndIncrement() == 0) burstStartedAt = System.currentTimeMillis()
+        if (coarse) coarseActive.incrementAndGet()
+        val queued = System.nanoTime()
+        DirectTrace.mark("dem? ${t.z}/${t.x}/${t.y}")
+        if (!coarse) holdForCoarse()
         renderPermits.acquire()
         val started = System.nanoTime()
+        renderWaitMs.addAndGet((started - queued) / 1_000_000)
         val (png, ids) = try {
             if (wanted != null && !wanted()) {
                 contourStale.incrementAndGet()
                 throw StaleRender(t)
             }
-            renderDem(t)
+            DirectTrace.mark("dem> ${t.z}/${t.x}/${t.y}")
+            // T88: block reads of the coarse tiles first, then the view's own, then out-of-view ones (synthesis edges).
+            SourceIo.withPriority(if (coarse) 1 else if (inView(t)) 0 else -1) { renderDem(t) }
         } finally {
             renderPermits.release()
+            if (coarse) {
+                coarseActive.decrementAndGet()
+                synchronized(coarseGate) { coarseGate.notifyAll() }
+            }
             rendering.decrementAndGet()
             lastRenderDoneAt = System.currentTimeMillis()
         }
@@ -232,6 +333,7 @@ class DirectSources(private val context: android.content.Context, private val ca
         demMs.addAndGet(ms)
         demMaxMs.accumulateAndGet(ms, ::maxOf)
         recordProvenance(t, ids)
+        DirectTrace.mark("dem. ${t.z}/${t.x}/${t.y} $ms ms")
         Log.d(TAG, "rendered ${t.z}/${t.x}/${t.y} in $ms ms on ${Thread.currentThread().name}")
         return png
     }
@@ -266,6 +368,18 @@ class DirectSources(private val context: android.content.Context, private val ca
 
     /** Tile [t] deeper than [maxZoom]: its [maxZoom] ancestor rendered (once) and sampled bilinearly, as packs overzoom. */
     private fun synthesize(t: TileId): ByteArray {
+        // T88: the ancestor and the neighbours the edge samples reach into are rendered together, those in view first
+        // and then those out of view (only this tile's outer edge needs them). The pyramid asked for them one after
+        // another as the window reached them, so a view-edge tile of a cold view waited for its ancestor's render,
+        // then for each neighbour's in turn, and answered 503 at 8 s.
+        val sources = synthesisSources(t, maxZoom)
+        if (sources.size > 1) {
+            val parent = TileId(maxZoom, t.x shr (t.z - maxZoom), t.y shr (t.z - maxZoom))
+            for (group in sources.partition { it == parent || inView(it) }.toList()) {
+                val jobs = group.map { s -> java.util.concurrent.CompletableFuture.supplyAsync({ runCatching { rendered(s) } }, contourRenderPool) }
+                for (j in jobs) runCatching { j.get() } // failures surface again below, through the pyramid
+            }
+        }
         failure.set(null)
         val p = pyramid()
         val grid = p.window(t.z, t.x * 256, t.y * 256, 256, 256)
@@ -290,9 +404,14 @@ class DirectSources(private val context: android.content.Context, private val ca
         // T85: below [COARSER_OVERVIEW_BELOW] the readers pick the overview level for twice the cell size: half the
         // bytes of a zoomed-out view (measured in docs/PLANNING.md), and the hillshade there is drawn 1 dp per DEM pixel.
         val target = if (t.z < COARSER_OVERVIEW_BELOW) cell * 2 else cell
+        val f0 = System.nanoTime()
         val result = OverviewLevels.withTarget(target) { BestSource().fetch(tw.window, cell) }
+        val f1 = System.nanoTime()
         val grid = tw.interior(result.grid)
-        return FastPng.encode(TileWindows.encodeTerrarium(grid), grid.width, grid.height) to result.provenance
+        val png = FastPng.encode(TileWindows.encodeTerrarium(grid), grid.width, grid.height)
+        renderFetchMs.addAndGet((f1 - f0) / 1_000_000)
+        renderEncodeMs.addAndGet((System.nanoTime() - f1) / 1_000_000)
+        return png to result.provenance
     }
 
     /** The registry ids of DEM tile z/x/y when it was rendered here (this session, or kept beside the online cache). */
@@ -315,7 +434,7 @@ class DirectSources(private val context: android.content.Context, private val ca
 
     /**
      * The DEM tiles of [plan]'s read window ([ContourTilePlan.readWindow]) for one contour tile ([contourPyramid]),
-     * all waited for together (at most [CONTOUR_WAIT_MS], then the tile is not ready: a 503 MapLibre retries, by
+     * all waited for together (at most [CONTOUR_WAIT_MS], then the tile is not ready: a 503, asked for again after the reload ([readyForRefresh]),
      * then from the cache). A tile made already (the online cache) or being made (the hillshade asked for it) is
      * taken. Otherwise it is rendered only when the view needs it ([wanted]):
      * - a core tile (under the contour tile itself) when the contour tile is at the view's own zoom or MapLibre's
@@ -329,7 +448,8 @@ class DirectSources(private val context: android.content.Context, private val ca
      * the camera was still moving are given up once it has settled elsewhere. [lenient] ([staleContour]): a core
      * tile the view does not need is left out (NaN) instead of the whole tile being not ready.
      */
-    fun contourWindow(plan: ContourTilePlan, lenient: Boolean = false, onWaitedTooLong: () -> Unit = {}): Map<TileId, ByteArray> {
+    fun contourWindow(plan: ContourTilePlan, lenient: Boolean = false, packHas: (TileId) -> Boolean = { false }, onWaitedTooLong: () -> Unit = {}): Map<TileId, ByteArray> {
+        val askedAt = System.currentTimeMillis()
         val read = plan.readWindow
         val core = OnlineTiles.demTilesFor(read.sampleZoom, read.windowX + read.halo, read.windowY + read.halo, read.gridTileSize).toSet()
         val jobs = LinkedHashMap<TileId, java.util.concurrent.CompletableFuture<ByteArray>>()
@@ -337,6 +457,7 @@ class DirectSources(private val context: android.content.Context, private val ca
         for (tile in OnlineTiles.demTilesFor(read.sampleZoom, read.windowX, read.windowY, read.windowSize)) {
             val (tz, tx, ty) = tile
             val t = TileId(tz, tx, ty)
+            if (packHas(t)) continue // T88: the pyramid reads it from the pack
             val key = "$KEY/dem/$tz/$tx/$ty.png"
             cache.get(key)?.let { out[t] = it; contourDemCached.incrementAndGet(); continue }
             val job = synchronized(inFlight) { inFlight[key] }
@@ -347,15 +468,27 @@ class DirectSources(private val context: android.content.Context, private val ca
                 want() -> java.util.concurrent.CompletableFuture.supplyAsync({ rendered(t, want) }, contourRenderPool).also { contourDemRendered.incrementAndGet() }
                 isCore && !lenient -> { contourStale.incrementAndGet(); throw OnlineTiles.NotReady("contour tile ${plan.z}/${plan.x}/${plan.y} is not at the view's zoom; it takes only tiles already made") }
                 isCore -> { contourStale.incrementAndGet(); continue }
-                else -> { contourHaloSkipped.incrementAndGet(); continue }
+                else -> { contourHaloSkipped.incrementAndGet(); skippedHalo.get()?.add(Triple(tz, tx, ty)); continue }
             }
         }
-        val deadline = System.nanoTime() + CONTOUR_WAIT_MS * 1_000_000
+        val waitStart = System.nanoTime()
+        val deadline = waitStart + CONTOUR_WAIT_MS * 1_000_000
+        try {
+            awaitWindow(jobs, out, deadline, lenient) { await -> if (countsForRefresh(askedAt)) { await(); onWaitedTooLong() } }
+        } finally {
+            contourDemWaitMs.addAndGet((System.nanoTime() - waitStart) / 1_000_000)
+        }
+        return out
+    }
+
+    private fun awaitWindow(jobs: Map<TileId, java.util.concurrent.CompletableFuture<ByteArray>>, out: HashMap<TileId, ByteArray>, deadline: Long, lenient: Boolean, onWaitedTooLong: (await: () -> Unit) -> Unit) {
         for ((t, f) in jobs) {
             try {
                 out[t] = f.get(maxOf(0L, deadline - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS)
             } catch (e: java.util.concurrent.TimeoutException) {
-                onWaitedTooLong()
+                // Every render of the window still going, not only this one: a reload after the first of them
+                // finished asked for the tile while the others still rendered, and it answered 503 a second time.
+                onWaitedTooLong { for ((pending, job) in jobs) if (!job.isDone) awaitedTile(pending.z, pending.x, pending.y) }
                 throw OnlineTiles.NotReady("DEM ${t.z}/${t.x}/${t.y} for contours is still being made; try again")
             } catch (e: java.util.concurrent.ExecutionException) {
                 val cause = e.cause ?: e
@@ -363,10 +496,33 @@ class DirectSources(private val context: android.content.Context, private val ca
                     if (lenient) continue
                     throw OnlineTiles.NotReady(cause.message ?: "stale")
                 }
+                // T88: offline, the session limit, a source that failed: the tile is made without this DEM tile (NaN)
+                // and not kept, as the online path does (OnlineTiles: served, not cached). A contour tile across a
+                // phone-built pack's edge then shows the pack's part offline; it answered 500 and showed nothing.
+                if (cause is IOException || cause is SourceOffline || cause is SourceCapReached) {
+                    windowIncomplete.set(true)
+                    continue
+                }
                 throw cause
             }
         }
-        return out
+    }
+
+    /**
+     * T88: the halo tiles [contourWindow] would leave out (NaN) for [plan] now: not made, not being made and not
+     * wanted by the view. A contour tile made without them has a half-cell gap at that seam, so it is cached
+     * under a key naming them ([OnlineTiles.contourKey]) and made again once one of them exists.
+     */
+    fun haloSkipped(plan: ContourTilePlan, packHas: (TileId) -> Boolean = { false }): List<Triple<Int, Int, Int>> {
+        val read = plan.readWindow
+        val core = OnlineTiles.demTilesFor(read.sampleZoom, read.windowX + read.halo, read.windowY + read.halo, read.gridTileSize).toSet()
+        return OnlineTiles.demTilesFor(read.sampleZoom, read.windowX, read.windowY, read.windowSize).filter { tile ->
+            if (tile in core) return@filter false
+            val (tz, tx, ty) = tile
+            if (packHas(TileId(tz, tx, ty))) return@filter false
+            val key = "$KEY/dem/$tz/$tx/$ty.png"
+            !cache.contains(key) && synchronized(inFlight) { key !in inFlight } && !wanted(TileId(tz, tx, ty), plan.z, false)
+        }
     }
 
     /** True when contour tile zoom [z] is the view's own zoom or MapLibre's fallback zoom (true while the view is not known). */
@@ -530,9 +686,14 @@ class DirectSources(private val context: android.content.Context, private val ca
             "sessionBytes" to http.bytes.get(), "sessionCapBytes" to sessionCapBytes, "capReached" to (http.bytes.get() >= sessionCapBytes),
             "onMobileDataAllowed" to onMobileData, "onCellular" to onCellular(), "blockedOnMobileData" to blockedOnMobile(), "notice" to notice(),
             "requests" to http.requests.get(), "inFlight" to http.inFlight.get(), "maxInFlight" to MAX_RANGE_REQUESTS,
-            "offlineFailures" to http.offline.get(), "requestWaitMs" to http.waitMs.get(), "requestNetMs" to http.netMs.get(),
+            "offlineFailures" to http.offline.get(), "requestWaitMs" to http.waitMs.get(), "rangeStalls" to http.stalls.get(), "requestNetMs" to http.netMs.get(),
             "maxZoom" to maxZoom, "demSynthesized" to demSynthesized.get(), "renderedByZoom" to synchronized(renderedByZoom) { renderedByZoom.mapKeys { "z${it.key}" } }, "demRendered" to n, "demMsAvg" to if (n == 0L) null else demMs.get() / n, "demMsMax" to demMaxMs.get(),
             "osmFetched" to osmFetched.get(), "osmBytes" to osmBytes.get(),
+            "stages" to linkedMapOf( // T88: summed over threads
+                "renderWaitMs" to renderWaitMs.get(), "coarseFirstHeldMs" to coarseHeldMs.get(), "renderFetchMs" to renderFetchMs.get(), "renderEncodeMs" to renderEncodeMs.get(),
+                "contourDemWaitMs" to contourDemWaitMs.get(), "sources" to io.github.jasondorjeshort.dystopo.sources.elevation.SourceTiming.json(),
+            ),
+            "timeline" to DirectTrace.json(),
             "contourDem" to linkedMapOf("cached" to contourDemCached.get(), "waited" to contourDemWaited.get(), "rendered" to contourDemRendered.get(), "haloSkipped" to contourHaloSkipped.get(), "notAtViewZoom" to contourStale.get(), "partialTiles" to contourPartial.get()), // T85
             "failures" to failures.get(), "lastError" to lastError,
             "tiffPool" to SourceIo.tiffPool?.let { mapOf("opened" to it.opened, "reused" to it.reused) },
@@ -564,10 +725,14 @@ class DirectSources(private val context: android.content.Context, private val ca
         const val COARSER_OVERVIEW_BELOW = 12
 
         /** DEM tiles rendered at once: each holds a few decoded 4 MB COG blocks while it renders. */
-        const val MAX_TILES_IN_FLIGHT = 6
+        const val MAX_TILES_IN_FLIGHT = 10
 
-        /** Requests the fetcher lets through at once (renders are limited separately, OpenFreeMap tiles are quick). */
-        const val FETCHER_IN_FLIGHT = 12
+        /**
+         * Requests the fetcher lets through at once (renders are limited separately, OpenFreeMap tiles are quick).
+         * T88: 48, from 12: DEM requests hold a permit while they wait on their render, so twelve of them made the
+         * OpenFreeMap tiles of the same view wait behind the renders.
+         */
+        const val FETCHER_IN_FLIGHT = 48
 
         /** Source requests (range reads, index pages) at once over every source. */
         const val MAX_RANGE_REQUESTS = 16
@@ -577,14 +742,35 @@ class DirectSources(private val context: android.content.Context, private val ca
         const val DECODED_CAP_BYTES = 96L shl 20
 
         /** How long a map request waits for a tile being rendered before it is told to come back (OnlineTiles.answerWithinMs). */
-        const val ANSWER_WITHIN_MS = 8_000L
+        const val ANSWER_WITHIN_MS = 9_000L
 
         /**
          * T85: how long a contour tile waits for its DEM tiles before it answers "not yet" (503). Shorter than
          * [ANSWER_WITHIN_MS]: the tracing and the queue for a generation slot come on top, and a request MapLibre
-         * times out (about 10 s) is never asked for again, while a 503 is.
+         * times out (10 s, OkHttp's read timeout in MapLibre's client) is never asked for again. T88: 7 s and 9 s,
+         * from 6 s and 8 s. A 503 costs a style reload once the renders are done, which blanks the map for 2 to 5 s
+         * on the emulator (MapLibre did not ask for a 503 tile again by itself in any T88 trace), while a cold
+         * view's renders end 5 to 9 s after the request; with requests no longer queued behind the server's fixed
+         * pools ([io.github.jasondorjeshort.dystopo.app.LocalServer] wait pool) the wait starts when the request
+         * arrives, and a release build traced a contour tile in about 0.6 s.
          */
-        const val CONTOUR_WAIT_MS = 6_000L
+        const val CONTOUR_WAIT_MS = 7_000L
+
+        /** T88: a refresh for tiles that were not ready waits this long after the last render finished (renders finish in bursts). */
+        const val REFRESH_SETTLE_MS = 300L
+
+        /** T88: a range read with no byte for this long (or no connection for [RANGE_CONNECT_MS]) is dropped and retried. */
+        const val RANGE_STALL_MS = 4_000L
+        const val RANGE_CONNECT_MS = 5_000
+
+        /**
+         * T88: how long a render at the view's zoom waits for coarse renders in flight, and for them to be asked for.
+         * 1.5 s: the coarse reads (a few 0.4 MB overview blocks) get the link to themselves for their first part; with
+         * 3 s the view's own renders started late on a fast link, and without any hold the coarse contours came no
+         * earlier than the fine ones on a slow one (measurements in docs/PLANNING.md, T88).
+         */
+        const val COARSE_FIRST_MS = 1_500L
+        const val COARSE_GRACE_MS = 250L
 
         /** MapLibre Native's default prefetch zoom delta: with the view at zoom z it also loads tiles of zoom z - 4. */
         const val PREFETCH_ZOOM_DELTA = 4
@@ -609,25 +795,57 @@ class DirectSources(private val context: android.content.Context, private val ca
          * terrain itself and no pack's DEM overlaps the tile, it reads the DEM at the zoom the hillshade is rendered
          * at (the tile's own DEM zoom, at most [maxZoom]) and averages it down to its grid
          * ([ContourTileOptions.sampleAtDemZoom]): the coarser zooms the plans sampled before shared no COG blocks
-         * with the hillshade's tiles. Packs, tiles touching a pack and a configured server keep [base] unchanged.
+         * with the hillshade's tiles. Packs and a configured server keep [base] unchanged. T88: a tile a DEM pack's
+         * bounds overlap reads the same way, taking the pack's tiles where the pack has them ([contourPyramid]); it
+         * was made as before T85, with whole halo rings of coarse DEM tiles, and on a fresh emulator the device
+         * tour's z8 view (24 such renders of 40 to 75 s each in a debug build) never went idle within 30 s.
          */
         fun contourOptions(base: ContourTileOptions, online: OnlineTiles?, z: Int, x: Int, y: Int): ContourTileOptions {
-            if (online?.fetcher?.server != SERVER || touchesPack(online, z, x, y)) return base
+            if (online?.fetcher?.server != SERVER) return base
             val d = OnlineService.get().direct
             val options = base.copy(sampleAtDemZoom = d.maxZoom)
             return if (ContourTiles.plan(z, x, y, options).readZoom in DEM_MIN_ZOOM..d.maxZoom) options else base
         }
 
-        /** True when a DEM pack's bounds overlap contour tile z/x/y (it is then made as before T85, pack tiles and all). */
-        private fun touchesPack(online: OnlineTiles, z: Int, x: Int, y: Int): Boolean {
-            val west = WebMercator.xToLon(x.toDouble(), z)
-            val east = WebMercator.xToLon(x + 1.0, z)
-            val north = WebMercator.yToLat(y.toDouble(), z)
-            val south = WebMercator.yToLat(y + 1.0, z)
-            return online.packs.demPacks.any { p ->
-                val h = p.header
-                east > h.minLon && west < h.maxLon && north > h.minLat && south < h.maxLat
+        /**
+         * T88: the tiles of zoom [k] that [DemPyramid.window] reads to synthesize deeper tile [t] (bilinear from zoom
+         * [k], as [synthesize] does): the ancestor and, where the edge samples reach past it, the neighbours on that side.
+         */
+        fun synthesisSources(t: TileId, k: Int): List<TileId> {
+            val dz = t.z - k
+            if (dz <= 0) return listOf(t)
+            val scale = (1 shl dz).toDouble()
+            val maxPx = (256L shl k) - 1
+            fun range(tile: Int): IntRange {
+                val lo = floor((tile * 256L + 0.5) / scale - 0.5).toLong().coerceIn(0L, maxPx)
+                val hi = (floor((tile * 256L + 255.5) / scale - 0.5).toLong() + 1).coerceIn(0L, maxPx)
+                return (lo / 256).toInt()..(hi / 256).toInt()
             }
+            return range(t.y).flatMap { y -> range(t.x).map { x -> TileId(k, x, y) } }
+        }
+
+        /** T88: a DEM tile of the window [contourWindow] resolved on this thread failed (offline, ...): the tile must not be kept. */
+        private val windowIncomplete = ThreadLocal<Boolean>()
+
+        /** T88: the halo tiles the contour tile made on this thread left out ([haloSkipped]); null while not collecting. */
+        private val skippedHalo = ThreadLocal<MutableList<Triple<Int, Int, Int>>?>()
+
+        /** T88: collects, on this thread, the halo tiles [contourWindow] leaves out while [block] makes a contour tile. */
+        fun <T> collectSkippedHalo(block: () -> T): Pair<T, List<Triple<Int, Int, Int>>> {
+            val list = ArrayList<Triple<Int, Int, Int>>()
+            skippedHalo.set(list)
+            try {
+                return block() to list.distinct()
+            } finally {
+                skippedHalo.set(null)
+            }
+        }
+
+        /** T88: what [haloSkipped] says for contour tile z/x/y of [online], or empty when it is not made from the direct sources. */
+        fun haloSkippedFor(online: OnlineTiles, base: ContourTileOptions, z: Int, x: Int, y: Int): List<Triple<Int, Int, Int>> {
+            val options = contourOptions(base, online, z, x, y)
+            if (online.fetcher.server != SERVER || options.sampleAtDemZoom == null) return emptyList()
+            return OnlineService.get().direct.haloSkipped(ContourTiles.plan(z, x, y, options)) { t -> online.packCoversDem(t.z, t.x, t.y) }
         }
 
         /**
@@ -652,9 +870,12 @@ class DirectSources(private val context: android.content.Context, private val ca
             val plan = ContourTiles.plan(z, x, y, options)
             // Only a tile that waited too long counts toward the reload after rendering (OnlineService), so MapLibre
             // asks for it again; one refused because the view moved on would make every reload refuse it again.
-            val window = d.contourWindow(plan, lenient) { online.notReady.incrementAndGet() }
+            windowIncomplete.set(false)
+            val window = d.contourWindow(plan, lenient, packHas = { t -> online.packCoversDem(t.z, t.x, t.y) }) { online.notReady.incrementAndGet() }
+            if (windowIncomplete.get() == true) online.noteIncomplete() // made, served, not kept
             return io.github.jasondorjeshort.dystopo.tiles.DemPyramid(DEM_MIN_ZOOM, d.maxZoom, io.github.jasondorjeshort.dystopo.app.TileService.demDecoder(), cacheTiles = 16) { tz, tx, ty ->
-                window[TileId(tz, tx, ty)] ?: if (tz < plan.readZoom) d.cache.get("$KEY/dem/$tz/$tx/$ty.png") else null
+                // T88: a DEM pack's tile where the pack has it (a contour tile across the pack's edge joins its contours).
+                window[TileId(tz, tx, ty)] ?: online.packDem(tz, tx, ty) ?: if (tz < plan.readZoom) d.cache.get("$KEY/dem/$tz/$tx/$ty.png") else null
             }
         }
 
@@ -692,12 +913,24 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
     val netMs = AtomicLong()
     private val permits = Semaphore(DirectSources.MAX_RANGE_REQUESTS)
 
-    override fun range(url: String, offset: Long, length: Int): SourceReply =
-        send(url, 120_000) { it.setRequestProperty("Range", "bytes=$offset-${offset + length - 1}") }
+    /** T88: range reads that stalled ([DirectSources.RANGE_STALL_MS] with no byte) and were given up for a retry ([SourceIo] retries I/O errors). */
+    val stalls = AtomicLong()
+
+    /**
+     * T88: a range read fails after [DirectSources.RANGE_STALL_MS] without a byte (the socket's read timeout, which is per
+     * read, not for the whole body) and is retried at once. On the emulator one read in five sat for 5 to 10 s while the
+     * same size took 0.4 s on another connection; waiting two minutes for those held whole renders up.
+     */
+    override fun range(url: String, offset: Long, length: Int): SourceReply = try {
+        send(url, DirectSources.RANGE_STALL_MS, DirectSources.RANGE_CONNECT_MS) { it.setRequestProperty("Range", "bytes=$offset-${offset + length - 1}") }
+    } catch (e: java.net.SocketTimeoutException) {
+        stalls.incrementAndGet()
+        throw e
+    }
 
     override fun get(url: String, timeoutMs: Long): SourceReply = send(url, timeoutMs) {}
 
-    private fun send(start: String, timeoutMs: Long, prepare: (HttpURLConnection) -> Unit): SourceReply {
+    private fun send(start: String, timeoutMs: Long, connectTimeoutMs: Int = 15_000, prepare: (HttpURLConnection) -> Unit): SourceReply {
         if (bytes.get() >= owner.sessionCapBytes) {
             owner.capReachedAt = System.currentTimeMillis()
             throw SourceCapReached(owner.capMessage())
@@ -715,8 +948,9 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
             var url = start
             repeat(5) {
                 requests.incrementAndGet()
+                var reused = false
                 val conn = CleartextPolicy.open(url)
-                conn.connectTimeout = 15_000
+                conn.connectTimeout = connectTimeoutMs
                 conn.readTimeout = timeoutMs.toInt()
                 conn.useCaches = false
                 conn.setRequestProperty("User-Agent", "dystopo-android/0.1 (+https://github.com/jasondorjeshort/dystopo)")
@@ -738,10 +972,13 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
                     val status = conn.responseCode
                     val body = if (status in 200..299) conn.inputStream.use { it.readBytes() } else ByteArray(0)
                     bytes.addAndGet(body.size.toLong())
-                    // HttpURLConnection asks for gzip and undoes it itself.
+                    // HttpURLConnection asks for gzip and undoes it itself. T88: a body read to its end leaves the
+                    // connection to the pool (keep-alive): the next range read to the same host skips the TCP and
+                    // TLS handshakes and slow start; disconnect() closed it after every request.
+                    reused = true
                     return SourceReply(status, body)
                 } finally {
-                    conn.disconnect()
+                    if (!reused) conn.disconnect()
                 }
             }
             throw IOException("too many redirects from $start")
@@ -751,6 +988,31 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
             permits.release()
         }
     }
+}
+
+/**
+ * T88: the session's timeline in milliseconds from its first event (`GET /firstrun/direct` `timeline`, and logcat tag
+ * `DystopoDirect` as `trace <ms> <event>` for release builds): DEM renders queued (`dem?`), started (`dem>`) and done
+ * (`dem. <ms>`), cold source reads (`read <file> <KB> <ms>`), the map's DEM tiles asked for (`d?`) and answered (`d200`,
+ * `d503`), contour tiles asked for (`c?`) and answered (`c200` with bytes, `c200p` partial, `c503`), and the style
+ * reloads for tiles answered 503 (`refresh`). The first [CAP] events, which is the cold first view the 15 s target is about.
+ */
+object DirectTrace {
+    const val CAP = 800
+    private val events = ArrayList<String>()
+    @Volatile private var start = 0L
+
+    fun mark(event: String) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val line = synchronized(events) {
+            if (start == 0L) start = now
+            if (events.size >= CAP) return
+            "${now - start} $event".also { events += it }
+        }
+        Log.i(DirectSources.TAG, "trace $line") // release builds have no debug routes: logcat carries the same lines
+    }
+
+    fun json(): Map<String, Any?> = synchronized(events) { mapOf("startElapsedMs" to start, "events" to events.size, "lines" to events.toList()) }
 }
 
 internal fun logDirect(message: String) = Log.i(DirectSources.TAG, message)

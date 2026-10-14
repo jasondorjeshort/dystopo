@@ -64,7 +64,11 @@ class ThreeDepSource(
         // T87: the finest of the cells' own choices. Cells differ in how many overview levels they have (Hawaii's mostly
         // ocean cells have fewer), so the first cell's level could be past another's last one (IndexOutOfBounds).
         val level = RemoteTiff.commonLevel(present.map { it.levelScales }, OverviewLevels.targetMeters(window), 111_320.0)
-        for (cell in present) cell.prefetch(level, lons.first(), lats.last(), lons.last(), lats.first())
+        // T88: the datum offsets (the geoid grids' blocks, cold on a phone) are read together with the cells' blocks, not after them.
+        var offsets: Geoids.Offsets? = null
+        val geoidTask: () -> Unit = { offsets = SourceTiming.timed(SourceTiming.geoidNanos) { Geoids.navd88ToEgm2008(window) } }
+        val tasks = present.flatMap { it.prefetchTasks(level, lons.first(), lats.last(), lons.last(), lats.first()) }
+        parallelForEach(if (present.isEmpty()) tasks else listOf(geoidTask) + tasks) { it() }
 
         // Filtered native-grid copies per cell (destripe only); other cells are sampled directly.
         val destriped = HashMap<RemoteTiff, Destripe.Native>()
@@ -77,14 +81,26 @@ class ThreeDepSource(
             }
         }
         val values = FloatArray(window.width * window.height)
-        for (j in 0 until window.height) {
-            for (i in 0 until window.width) {
-                val cell = cellName(lats[j], lons[i])?.let { cells[it] }
-                values[j * window.width + i] = cell?.let { c -> destriped[c]?.sample(lons[i], lats[j]) ?: c.sample(level, lons[i], lats[j]) } ?: Float.NaN
+        // T88: the cell of each row and column once (naming a cell per pixel was a string per sample).
+        // Same numbers as [cellName]: n = floor(lat) + 1, w = floor(-lon) + 1.
+        val colCell = IntArray(window.width) { floor(-lons[it]).toInt() + 1 }
+        val rowCell = IntArray(window.height) { floor(lats[it]).toInt() + 1 }
+        val byKey = HashMap<Long, RemoteTiff?>()
+        fun cellAt(n: Int, w: Int): RemoteTiff? = byKey.getOrPut(n.toLong() * 100_000 + w) { cellName(n - 0.5, -(w - 0.5))?.let { cells[it] } }
+        SourceTiming.timed(SourceTiming.resampleNanos) {
+            for (j in 0 until window.height) {
+                var lastLon = Int.MIN_VALUE
+                var cell: RemoteTiff? = null
+                for (i in 0 until window.width) {
+                    if (colCell[i] != lastLon) {
+                        lastLon = colCell[i]
+                        cell = cellAt(rowCell[j], lastLon)
+                    }
+                    values[j * window.width + i] = cell?.let { c -> destriped[c]?.sample(lons[i], lats[j]) ?: c.sample(level, lons[i], lats[j]) } ?: Float.NaN
+                }
             }
         }
-        val offsets = if (present.isEmpty()) null else Geoids.navd88ToEgm2008(window)
-        val (meanOffset, unconverted) = if (offsets == null) 0.0 to 0L else Geoids.apply(values, offsets)
+        val (meanOffset, unconverted) = offsets?.let { Geoids.apply(values, it) } ?: (0.0 to 0L)
 
         val counters = mapOf(
             "cells" to cells.size.toLong(),

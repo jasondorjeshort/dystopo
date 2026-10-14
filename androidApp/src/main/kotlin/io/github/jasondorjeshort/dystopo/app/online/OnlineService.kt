@@ -240,7 +240,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
             val online = app.tiles.online ?: return
             val n = online.notReady.get()
             if (n == notReadySeen) return
-            if (direct.rendering.get() > 0 || System.currentTimeMillis() - direct.lastRenderDoneAt < 1_000) return
+            if (!direct.readyForRefresh()) return // T88: once the renders that were waited on are done, not every render
             notReadySeen = n
             renderRefreshes.incrementAndGet()
             val style = app.tiles.style()

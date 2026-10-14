@@ -49,9 +49,11 @@ class CopernicusSource(private val cacheDir: String = SourceIo.dir("copernicus30
         }
 
         val values = FloatArray(window.width * window.height)
-        for (j in 0 until window.height) {
-            for (i in 0 until window.width) {
-                values[j * window.width + i] = sampleAcrossCells(cells, level, lats[j], wrapLon(lons[i]))
+        SourceTiming.timed(SourceTiming.resampleNanos) {
+            for (j in 0 until window.height) {
+                for (i in 0 until window.width) {
+                    values[j * window.width + i] = sampleAcrossCells(cells, level, lats[j], wrapLon(lons[i]))
+                }
             }
         }
         val counters = mapOf(

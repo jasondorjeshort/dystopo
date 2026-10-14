@@ -32,8 +32,23 @@ class CachedRangeSource(
 
     override fun read(offset: Long, length: Int): ByteArray {
         val path = "$cacheDir/$offset-$length.bin"
-        SourceFiles.read(path)?.let { return it }
+        SourceFiles.read(path)?.let { SourceTiming.diskHits.increment(); return it }
+        // T88: renders of neighbouring tiles start together and want the same blocks: one download, the others wait for it.
+        val once = inFlightReads.getOrPut(path) { Once() }
+        try {
+            return once.get({ SourceTiming.rangeShared.increment() }) { download(path, offset, length) }
+        } finally {
+            inFlightReads.remove(path)
+        }
+    }
+
+    private fun download(path: String, offset: Long, length: Int): ByteArray {
+        SourceFiles.read(path)?.let { SourceTiming.diskHits.increment(); return it }
+        val t0 = nanoTime()
         val bytes = fetchRange(url, offset, length)
+        val took = nanoTime() - t0
+        SourceTiming.addRead(took)
+        SourceTiming.onRead?.invoke(url, bytes.size, took)
         count(bytes.size)
         // Parallel tile renders can fetch the same cold range at once: each writes its own temp file, the first
         // to land wins, and the others return the winner's bytes so every caller agrees.
@@ -48,6 +63,11 @@ class CachedRangeSource(
  */
 class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Decompressor> = emptyMap()) {
     companion object {
+        /** T88: forgets this thread's last sampled block (see [LastBlock]); sources call it when a window is done. */
+        fun releaseThreadBlock() {
+            lastBlock.get()?.apply { tiff = null; values = null; level = -1; key = -1 }
+        }
+
         /** A [RemoteTiff] for [url]: from [SourceIo.tiffPool] when one is set (the phone), else a new one (the server, as before). */
         fun open(url: String, cacheDir: String, extraDecompressors: Map<Int, Decompressor> = emptyMap()): RemoteTiff =
             SourceIo.tiffPool?.get(url) { RemoteTiff(url, cacheDir, extraDecompressors) } ?: RemoteTiff(url, cacheDir, extraDecompressors)
@@ -98,25 +118,60 @@ class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Dec
      */
     fun levelFor(targetMeters: Double, metersPerUnit: Double): Int = levelFor(levels.map { it.pixelScaleY }, targetMeters, metersPerUnit)
 
+    /** T88: [GeoTiff.readTile] with its decode time (without the read) in [SourceTiming]. */
+    private fun decode(l: GeoTiff, tx: Int, ty: Int): FloatArray {
+        val t0 = nanoTime()
+        val r0 = SourceTiming.threadReadNanos()
+        val out = l.readTile(tx, ty)
+        SourceTiming.decodeNanos.add(nanoTime() - t0 - (SourceTiming.threadReadNanos() - r0))
+        SourceTiming.blocksDecoded.increment()
+        return out
+    }
+
     private fun tile(levelIndex: Int, tx: Int, ty: Int): FloatArray {
         val l = levels[levelIndex]
         val key = ty * l.tilesAcross + tx
+        val memo = lastBlock.get() ?: LastBlock().also { lastBlock.set(it) }
+        if (memo.tiff === this && memo.level == levelIndex && memo.key == key) memo.values?.let { return it }
+        val values = lookup(levelIndex, l, tx, ty, key)
+        memo.tiff = this
+        memo.level = levelIndex
+        memo.key = key
+        memo.values = values
+        return values
+    }
+
+    private fun lookup(levelIndex: Int, l: GeoTiff, tx: Int, ty: Int, key: Int): FloatArray {
         if (shared != null) {
             val k = "$id/$levelIndex/$key"
             shared[k]?.let { return it }
-            val decoded = l.readTile(tx, ty)
-            countDecoded()
-            return shared.put(k, decoded)
+            // T88: a block another render is reading or decoding is waited for, not read and decoded twice.
+            val once = inFlightBlocks.getOrPut(k) { Once<FloatArray>() }
+            try {
+                return once.get({ SourceTiming.blockWaits.increment() }) {
+                    shared[k] ?: decode(l, tx, ty).let { decoded ->
+                        countDecoded()
+                        shared.put(k, decoded)
+                    }
+                }
+            } finally {
+                inFlightBlocks.remove(k)
+            }
         }
         val cache = caches[levelIndex]
         cache[key]?.let { return it }
         // Decoded outside the lock (two threads may decode the same tile once each; the bytes come from the disk cache).
-        val decoded = l.readTile(tx, ty)
+        val decoded = decode(l, tx, ty)
         return cache.getOrPut(key) { decoded }
     }
 
     /** Decodes, in parallel, every tile of [levelIndex] overlapping the CRS rectangle. */
     fun prefetch(levelIndex: Int, minX: Double, minY: Double, maxX: Double, maxY: Double) {
+        parallelForEach(prefetchTasks(levelIndex, minX, minY, maxX, maxY)) { it() }
+    }
+
+    /** T88: [prefetch] as one task per block, so a caller can run them together with other reads (the geoid). */
+    fun prefetchTasks(levelIndex: Int, minX: Double, minY: Double, maxX: Double, maxY: Double): List<() -> Unit> {
         val l = levels[levelIndex]
         val c0 = floor(l.colOf(minX)).toInt().coerceIn(0, l.width - 1)
         val c1 = ceil(l.colOf(maxX)).toInt().coerceIn(0, l.width - 1)
@@ -125,7 +180,8 @@ class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Dec
         val needed = (r0 / l.tileHeight..r1 / l.tileHeight).flatMap { ty ->
             (c0 / l.tileWidth..c1 / l.tileWidth).map { tx -> tx to ty }
         }
-        parallelForEach(needed) { (tx, ty) -> tile(levelIndex, tx, ty) }
+        // Not through [tile]: prefetch threads keep no block of their own (see [LastBlock]).
+        return needed.map { (tx, ty) -> { lookup(levelIndex, l, tx, ty, ty * l.tilesAcross + tx); Unit } }
     }
 
     /** True if CRS point (x, y) is inside the image's pixel area. */
@@ -148,6 +204,22 @@ class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Dec
         val r0 = floor(row).toInt()
         val fx = (col - c0).toFloat()
         val fy = (row - r0).toFloat()
+        // T88: the four neighbours inside one block (most samples): one block lookup instead of four.
+        if (c0 >= 0 && r0 >= 0 && c0 + 1 < l.width && r0 + 1 < l.height) {
+            val tw = l.tileWidth
+            val th = l.tileHeight
+            val ic = c0 % tw
+            val ir = r0 % th
+            if (ic + 1 < tw && ir + 1 < th) {
+                val block = tile(levelIndex, c0 / tw, r0 / th)
+                val k = ir * tw + ic
+                val a = valueOf(l, block[k])
+                val b = valueOf(l, block[k + 1])
+                val c = valueOf(l, block[k + tw])
+                val d = valueOf(l, block[k + tw + 1])
+                return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy
+            }
+        }
         val a = at(levelIndex, c0, r0)
         val b = at(levelIndex, c0 + 1, r0)
         val c = at(levelIndex, c0, r0 + 1)
@@ -160,11 +232,45 @@ class RemoteTiff(url: String, cacheDir: String, extraDecompressors: Map<Int, Dec
         val l = levels[levelIndex]
         val c = col.coerceIn(0, l.width - 1)
         val r = row.coerceIn(0, l.height - 1)
-        val v = tile(levelIndex, c / l.tileWidth, r / l.tileHeight)[(r % l.tileHeight) * l.tileWidth + c % l.tileWidth]
+        return valueOf(l, tile(levelIndex, c / l.tileWidth, r / l.tileHeight)[(r % l.tileHeight) * l.tileWidth + c % l.tileWidth])
+    }
+
+    private fun valueOf(l: GeoTiff, v: Float): Float {
         val nd = l.noData
         return if (v.isNaN() || (nd != null && abs(v - nd) < 1e-3f)) Float.NaN else v
     }
 }
+
+/**
+ * T88: the block this thread sampled last (one per thread over every file, so at most one block per thread is held
+ * outside [DecodedBlocks]' cap), letting a window's per-pixel samples skip the shared cache's lock. A source drops it
+ * when its window is done ([RemoteTiff.releaseThreadBlock]).
+ */
+private class LastBlock {
+    var tiff: RemoteTiff? = null
+    var level = -1
+    var key = -1
+    var values: FloatArray? = null
+}
+
+private val lastBlock = PerThread<LastBlock>()
+
+/**
+ * T88: one computation shared by the callers that ask for it while it runs: the first runs [get]'s block, the
+ * others wait on the lock and take its value (or run it themselves when it failed).
+ */
+internal class Once<T : Any> {
+    private var value: T? = null
+
+    @Synchronized
+    fun get(onShared: () -> Unit, make: () -> T): T {
+        value?.let { onShared(); return it }
+        return make().also { value = it }
+    }
+}
+
+private val inFlightReads = SyncMap<String, Once<ByteArray>>()
+private val inFlightBlocks = SyncMap<String, Once<FloatArray>>()
 
 /** Pooled [RemoteTiff]s and decoded blocks for long-running readers (the phone): see [SourceIo.tiffPool]. */
 private var lastId = 0

@@ -17,6 +17,7 @@ import java.net.URLDecoder
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -71,6 +72,14 @@ class HttpError(val status: Int, message: String) : Exception(message)
  * Every pool records how long its requests waited in the queue and how long they ran ([poolStats],
  * `/stats` `server.pools`).
  *
+ * T88: map requests that wait on the network rather than compute ([isWaitingRequest]: with no server and the
+ * phone reading the sources, DEM, contour and shade tiles waiting seconds for their DEM renders) run on a wait
+ * pool that grows to [waitThreads] workers and queues nothing, so they never hold the fixed tile and generation
+ * workers. On a cold direct view the eight tile workers all waited on DEM renders and the three generation
+ * workers on contour DEM, so OpenFreeMap tiles and the other contour tiles queued for up to 9 s and some
+ * passed MapLibre's 10 s timeout. The work itself stays bounded where it runs (render, range and generation
+ * permits). When every wait worker is busy a request takes the pool it would have taken before.
+ *
  * Guards against misbehaving clients (`tools/android-probe.py` exercises each one):
  * - at most [readers] heads are read at once and [maxQueued] connections wait; beyond that a new
  *   connection gets 503 from the accept thread without being read; a full tile or debug queue gets
@@ -96,6 +105,8 @@ class LocalServer(
     private val genNice: Int = 0,
     private val tileNice: Int = 0,
     private val isGenerationRequest: (Request) -> Boolean = { false },
+    waitThreads: Int = 0, // T88: the wait pool (0: none)
+    private val isWaitingRequest: (Request) -> Boolean = { false },
 ) {
     private val readQueue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val readPool = ThreadPoolExecutor(readers, readers, 30, TimeUnit.SECONDS, readQueue) { r ->
@@ -120,7 +131,15 @@ class LocalServer(
         }, "dystopo-http-gen").apply { isDaemon = true }
     }
 
+    private val waitPool: ThreadPoolExecutor? = if (waitThreads <= 0) null else ThreadPoolExecutor(0, waitThreads, 30, TimeUnit.SECONDS, SynchronousQueue()) { r ->
+        Thread({
+            runCatching { Process.setThreadPriority(genNice) } // T88: as generation; the waiting costs no CPU
+            r.run()
+        }, "dystopo-http-wait").apply { isDaemon = true }
+    }
+
     /** T63: queue waits and run times per pool. */
+    private val waitStats = PoolStats()
     private val tileStats = PoolStats()
     private val genStats = PoolStats()
     private val debugStats = PoolStats()
@@ -134,6 +153,7 @@ class LocalServer(
             genStats.json() + mapOf("threads" to it.corePoolSize, "nice" to genNice, "active" to it.activeCount, "queued" to genQueue.size, "abandonedBeforeStart" to genAbandoned.get())
         },
         "debug" to debugStats.json() + mapOf("threads" to debugPool.corePoolSize, "active" to debugPool.activeCount, "queued" to debugQueue.size),
+        "wait" to waitPool?.let { waitStats.json() + mapOf("maxThreads" to it.maximumPoolSize, "threads" to it.poolSize, "largest" to it.largestPoolSize, "active" to it.activeCount) }, // T88
     )
     private var socket: ServerSocket? = null
     val requests = AtomicLong()
@@ -168,6 +188,7 @@ class LocalServer(
         "debugQueued" to debugQueue.size,
         "genActive" to (genPool?.activeCount ?: 0), // T63
         "genQueued" to genQueue.size,
+        "waitActive" to (waitPool?.activeCount ?: 0), // T88
         "inFlight" to inFlight.filterValues { it.get() > 0 }.mapValues { it.value.get() },
         "rejected" to rejected.mapValues { it.value.get() },
     )
@@ -212,6 +233,7 @@ class LocalServer(
         readPool.shutdownNow()
         pool.shutdownNow()
         genPool?.shutdownNow()
+        waitPool?.shutdownNow()
         debugPool.shutdownNow()
     }
 
@@ -221,26 +243,30 @@ class LocalServer(
         try {
             val request = read(client) ?: return
             val map = isMapRequest(request)
-            val gen = if (map && genPool != null && isGenerationRequest(request)) genPool else null
+            val generates = map && isGenerationRequest(request)
+            val gen = if (generates && genPool != null) genPool else null
             val target = gen ?: if (map) pool else debugPool
             val stats = if (gen != null) genStats else if (map) tileStats else debugStats
             val queuedAt = SystemClock.elapsedRealtimeNanos()
-            try {
-                target.execute {
-                    val started = SystemClock.elapsedRealtimeNanos()
-                    try {
-                        if (gen != null) {
-                            if (clientGone(client)) {
-                                genAbandoned.incrementAndGet()
-                                runCatching { client.close() }
-                                return@execute
-                            }
-                        }
-                        client.use { respond(it, request) }
-                    } finally {
-                        stats.add(started - queuedAt, SystemClock.elapsedRealtimeNanos() - started)
+            fun task(stats: PoolStats, checkGone: Boolean) = Runnable {
+                val started = SystemClock.elapsedRealtimeNanos()
+                try {
+                    if (checkGone && clientGone(client)) {
+                        genAbandoned.incrementAndGet()
+                        runCatching { client.close() }
+                        return@Runnable
                     }
+                    client.use { respond(it, request) }
+                } finally {
+                    stats.add(started - queuedAt, SystemClock.elapsedRealtimeNanos() - started)
                 }
+            }
+            try {
+                // T88: a request that waits on the network takes a wait worker when one is free (no queue), else its usual pool.
+                val wp = waitPool
+                val waited = map && wp != null && isWaitingRequest(request) &&
+                    runCatching { wp.execute(task(waitStats, generates)) }.isSuccess
+                if (!waited) target.execute(task(stats, gen != null))
                 handedOff = true
             } catch (e: RejectedExecutionException) {
                 reject("busy")

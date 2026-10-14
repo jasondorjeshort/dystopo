@@ -254,4 +254,26 @@ class GeoTiffTest {
         assertEquals(20.0, ov.pixelScaleX, 1e-12)
         assertEquals(listOf(3.5f, 5.5f), ov.readTile(0, 0).toList().take(2))
     }
+
+    /**
+     * T88 (from T69): a level's tile index is read when one of its tiles is, not at open. The source hands out only the
+     * 16-byte header at offset 0, so everything else is a separate read; the main level's offsets sit at byte 64
+     * (header 16, two 16-byte tiles, the overview's tile, then the offsets).
+     */
+    @Test
+    fun tileIndexIsReadOnFirstUse() {
+        val bytes = buildBigTiff()
+        val reads = ArrayList<Long>()
+        val src = ByteRangeSource { offset, length ->
+            reads += offset
+            val end = if (offset == 0L) 16 else minOf(bytes.size, offset.toInt() + length)
+            bytes.copyOfRange(offset.toInt(), end)
+        }
+        val tiff = GeoTiff.open(src)
+        assertTrue(64L !in reads, "the main level's tile offsets were read at open: $reads")
+        assertEquals(listOf(3.5f, 5.5f), tiff.overviews.single().readTile(0, 0).toList().take(2))
+        assertTrue(64L !in reads, "reading the overview read the main level's index: $reads")
+        assertEquals(listOf(1f, 2f, 5f, 6f), tiff.readTile(0, 0).toList())
+        assertTrue(64L in reads, "the main level's index was never read: $reads")
+    }
 }

@@ -377,11 +377,11 @@ def timed_map(dev, name, contour_min, timeout, t0):
     first = None
     last = None
     while time.time() < deadline:
+        now = round(time.time() - t0, 1)  # T88: when the frame was grabbed, not after its PNG encoding and decoding (seconds under load)
         path, raw = dev.screencap(name)
         raster = check.decode_png(raw)
         share = contour_share(raster)
         changed = check.changed_share(prev, raster) if prev is not None else 1.0
-        now = round(time.time() - t0, 1)
         if share >= contour_min and first is None:
             first = now
         last = {"png": path, "contourShare": round(share, 4), "changed": round(changed, 4)}

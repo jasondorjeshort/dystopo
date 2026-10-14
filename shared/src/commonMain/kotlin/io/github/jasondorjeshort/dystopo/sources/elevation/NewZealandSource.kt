@@ -193,6 +193,11 @@ object Lerc2 {
 
     private const val KEY = "Lerc2 "
 
+    /** T88: the largest image decoded (a COG block is 512 x 512; overviews are smaller) and micro block side. */
+    const val MAX_SIDE = 8192
+    const val MAX_PIXELS = 4096L * 4096
+    const val MAX_MICRO_BLOCK = 256
+
     /** Decodes [blob] into [expectedSize] bytes of little-endian float32 (invalid pixels NaN), padded with NaN. */
     fun decodeToFloatBytes(blob: ByteArray, expectedSize: Int): ByteArray {
         val image = decode(blob)
@@ -293,6 +298,12 @@ object Lerc2 {
         val zMax = r.f64()
         require(depth == 1) { "LERC2 with $depth values per pixel not supported" }
         require(width > 0 && height > 0 && microBlock > 0 && blobSize <= blob.size) { "bad LERC2 header" }
+        // T88 (from T69): caps before anything is allocated, so a garbled or hostile header cannot ask for gigabytes.
+        require(width <= MAX_SIDE && height <= MAX_SIDE && width.toLong() * height <= MAX_PIXELS) { "LERC2 image ${width}x$height is larger than $MAX_PIXELS pixels" }
+        require(microBlock <= MAX_MICRO_BLOCK) { "LERC2 micro block $microBlock larger than $MAX_MICRO_BLOCK" }
+        require(blobSize >= 14) { "LERC2 blob size $blobSize" }
+        require(numValid in 0..width * height) { "LERC2 valid count $numValid outside 0..${width * height}" }
+        require(dt in 0..7) { "LERC2 data type $dt" }
         require(fletcher32(blob, 14, blobSize) == checksum) { "LERC2 checksum mismatch" }
         val body = Reader(blob, r.pos, blobSize)
         val count = width * height

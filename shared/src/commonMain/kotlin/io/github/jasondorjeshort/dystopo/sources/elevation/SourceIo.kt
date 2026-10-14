@@ -50,6 +50,26 @@ object SourceIo {
     @Volatile var tiffPool: TiffPool? = null
     @Volatile var decodedBlocks: DecodedBlocks? = null
 
+    private val priority = PerThread<IntArray>()
+
+    /** T88: the priority of the reads this thread fans out ([parallelForEach]); 0 unless set by [withPriority]. */
+    fun currentPriority(): Int = priority.get()?.get(0) ?: 0
+
+    /**
+     * T88: runs [block] with its parallel block reads queued at priority [p] (higher first; the phone puts a view's
+     * coarse fallback tiles above its own and those above out-of-view ones). Reads already running are not affected.
+     */
+    fun <T> withPriority(p: Int, block: () -> T): T {
+        val slot = priority.get() ?: IntArray(1).also { priority.set(it) }
+        val before = slot[0]
+        slot[0] = p
+        try {
+            return block()
+        } finally {
+            slot[0] = before
+        }
+    }
+
     /**
      * Runs [block] up to [attempts] times, sleeping [initialDelayMs] and doubling between tries, as long as each
      * failure is [transient]. A non-transient failure, or the last one, is rethrown.

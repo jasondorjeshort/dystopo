@@ -29,8 +29,8 @@ class GeoTiff private constructor(
     val tileHeight: Int,
     val compression: Int,
     val predictor: Int,
-    private val tileOffsets: LongArray,
-    private val tileByteCounts: LongArray,
+    /** T88: the tile index, read on the first [readTile] of this level (a BigTIFF mosaic's is megabytes per level). */
+    private val tileIndex: Lazy<Pair<LongArray, LongArray>>,
     /** Ground size of one pixel in CRS units (degrees for geographic DEMs, meters for UTM). */
     val pixelScaleX: Double,
     val pixelScaleY: Double,
@@ -80,6 +80,7 @@ class GeoTiff private constructor(
         require(tx in 0 until tilesAcross && ty in 0 until tilesDown) { "tile ($tx,$ty) out of range" }
         val index = ty * tilesAcross + tx
         val count = tileWidth * tileHeight
+        val (tileOffsets, tileByteCounts) = tileIndex.value
         val byteCount = tileByteCounts[index].toInt()
         if (byteCount == 0) return FloatArray(count) { noData ?: Float.NaN } // sparse COG: tile not written
         val raw = source.read(tileOffsets[index], byteCount)
@@ -121,8 +122,7 @@ class GeoTiff private constructor(
             val predictor: Int,
             val subfileType: Int,
             val intSamples: Boolean,
-            val tileOffsets: LongArray,
-            val tileByteCounts: LongArray,
+            val tileIndex: Lazy<Pair<LongArray, LongArray>>,
             val numbers: (Int) -> DoubleArray?,
             val ascii: (Int) -> String?,
             val next: Long,
@@ -207,8 +207,12 @@ class GeoTiff private constructor(
                     predictor = number(317, 1.0).toInt(),
                     subfileType = number(254, 0.0).toInt(),
                     intSamples = sampleFormat == 2,
-                    tileOffsets = numbers(if (tiled) 324 else 273)!!.map { it.toLong() }.toLongArray(),
-                    tileByteCounts = numbers(if (tiled) 325 else 279)!!.map { it.toLong() }.toLongArray(),
+                    // T88: read when the level is first used, not at open: a cold view reads one or two levels of a file.
+                    tileIndex = lazy {
+                        val offsets = numbers(if (tiled) 324 else 273) ?: throw IllegalArgumentException("missing TIFF tile offsets")
+                        val counts = numbers(if (tiled) 325 else 279) ?: throw IllegalArgumentException("missing TIFF tile byte counts")
+                        LongArray(offsets.size) { offsets[it].toLong() } to LongArray(counts.size) { counts[it].toLong() }
+                    },
                     numbers = ::numbers,
                     ascii = { tag -> raw(tag)?.second?.decodeToString()?.trimEnd('\u0000')?.trim() },
                     next = offsetAt(ifdBytes, count * entrySize),
@@ -248,7 +252,7 @@ class GeoTiff private constructor(
                 val oy = if (pixelIsPoint) originY + scale[1] / 2 - sy / 2 else originY
                 return GeoTiff(
                     source, le, ifd.width, ifd.height, ifd.tileWidth, ifd.tileHeight, ifd.compression, ifd.predictor,
-                    ifd.tileOffsets, ifd.tileByteCounts, sx, sy, ox, oy, pixelIsPoint, noData, epsg, overviews, decompressors,
+                    ifd.tileIndex, sx, sy, ox, oy, pixelIsPoint, noData, epsg, overviews, decompressors,
                     ifd.intSamples, intScale, intOffset,
                 )
             }

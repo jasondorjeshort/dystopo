@@ -74,6 +74,9 @@ class OnlineTiles(
     /** True when the DEM pack answers tile z/x/y (stored, or synthesized from its ancestors). */
     fun packCoversDem(z: Int, x: Int, y: Int): Boolean = packs.demFor(z, x, y) != null // T41: any pack
 
+    /** T88: the encoded DEM tile z/x/y from the pack that answers it, or null (direct contour tiles across a pack's edge). */
+    fun packDem(z: Int, x: Int, y: Int): ByteArray? = packs.demFor(z, x, y)?.tile(z, x, y)
+
     fun packCoversOsm(z: Int, x: Int, y: Int): Boolean = packs.osmFor(z, x, y) != null // T41: any pack
 
     /** True when the contour tile lies wholly inside the DEM pack: the pack path (and its cache) makes it, as without a server. */
@@ -83,16 +86,25 @@ class OnlineTiles(
 
     fun demTile(z: Int, x: Int, y: Int): TileResult {
         if (z !in DEM_MIN_ZOOM..DEM_MAX_ZOOM) return TileResult.notFound()
+        val direct = fetcher.server == DirectSources.SERVER
+        val askedAt = System.currentTimeMillis()
+        if (direct) DirectTrace.mark("d? $z/$x/$y") // T88
         val f = answerWithinMs?.let { ms ->
-            val job = service.prefetch { fetcher.get("dem", "$z/$x/$y.png") }
+            // T88: with the sources read here a request waits on a render; its own pool, not the six prefetch threads.
+            val job = if (direct) service.direct.request { fetcher.get("dem", "$z/$x/$y.png") } else service.prefetch { fetcher.get("dem", "$z/$x/$y.png") }
             try {
                 job.get(ms, TimeUnit.MILLISECONDS)
             } catch (e: java.util.concurrent.TimeoutException) {
-                return TileResult(503, "text/plain", "DEM $z/$x/$y is still being made; try again\n".toByteArray()).also { notReady.incrementAndGet() }
+                DirectTrace.mark("d503 $z/$x/$y") // T88
+                // T88: a reload once it is made, unless the request is from before the last reload (asked again since).
+                val counts = !direct || service.direct.countsForRefresh(askedAt)
+                if (direct && counts) service.direct.awaitedTile(z, x, y)
+                return TileResult(503, "text/plain", "DEM $z/$x/$y is still being made; try again\n".toByteArray()).also { if (counts) notReady.incrementAndGet() }
             }
         } ?: fetcher.get("dem", "$z/$x/$y.png")
         return when (f) {
             is Fetch.Hit -> {
+                if (direct) DirectTrace.mark("d200 $z/$x/$y") // T88
                 service.recordDem(z, x, y, if (f.cached) OnlineService.CACHED else OnlineService.ONLINE)
                 service.served("dem", f)
                 TileResult(200, "image/png", f.bytes)
@@ -128,6 +140,9 @@ class OnlineTiles(
 
     /** Set on the generating thread when a DEM tile could not be fetched (the contour tile is then not cached). */
     private val incomplete = ThreadLocal<Boolean>()
+
+    /** T88: the contour tile being made on this thread missed a DEM tile (offline): served, not kept ([DirectSources.contourPyramid]). */
+    internal fun noteIncomplete() = incomplete.set(true)
 
     /**
      * T87: the shallowest DEM zoom this source has: [DEM_MIN_ZOOM] for a server, [DirectSources.DEM_MIN_ZOOM] when
@@ -184,9 +199,16 @@ class OnlineTiles(
             service.contourCacheHits.incrementAndGet()
             return it
         }
+        // T88: a tile made without some out-of-view halo tiles is kept under a key naming them, valid while they are still missing.
+        if (keep) DirectSources.haloSkippedFor(this, contourOptions, z, x, y).takeIf { it.isNotEmpty() }?.let { missing ->
+            service.cache.get(contourKey(key, missing))?.let {
+                service.contourCacheHits.incrementAndGet()
+                return it
+            }
+        }
         prefetch(z, x, y)
         incomplete.set(false)
-        val bytes = generate(pyramid())
+        val (bytes, skipped) = DirectSources.collectSkippedHalo { generate(pyramid()) }
         val missed = incomplete.get() == true
         incomplete.remove()
         if (missed) {
@@ -194,7 +216,7 @@ class OnlineTiles(
             // A one-off failure while the server is up: forget the pyramid's missing-tile memory now.
             if (fetcher.state == "online") dropPyramid()
         } else if (keep) {
-            service.cache.put(key, bytes)
+            service.cache.put(contourKey(key, skipped), bytes)
         }
         service.contoursMade.incrementAndGet()
         return bytes
@@ -232,14 +254,30 @@ class OnlineTiles(
         val plan = DirectSources.prefetchPlan(this, contourOptions, z, x, y) // T85: the DEM tiles the tile reads
         val tiles = demTilesFor(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize, minZoom = demMinZoom).filter { (tz, tx, ty) -> !packCoversDem(tz, tx, ty) }
         if (tiles.size <= 1) return
-        val futures = tiles.map { (tz, tx, ty) -> service.prefetch { fetcher.get("dem", "$tz/$tx/$ty.png") } }
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(answerWithinMs ?: 30_000)
+        // T88, direct sources (this is the path of contour tiles a DEM pack's bounds overlap): the renders run on
+        // their own threads, not the six prefetch threads, and the wait is the contour tile's (MapLibre gives up on
+        // a request after 10 s, and tracing comes on top). Tiles still rendering are marked for the reload: without
+        // that the reload came at once, before they were made, and every tile was asked for again too early (the
+        // device tour's cold z8 view reloaded three times and went idle after a minute).
+        val direct = fetcher.server == DirectSources.SERVER
+        val askedAt = System.currentTimeMillis()
+        val futures = tiles.map { (tz, tx, ty) ->
+            val get = { fetcher.get("dem", "$tz/$tx/$ty.png") }
+            if (direct) service.direct.request(get) else service.prefetch(get)
+        }
+        val waitMs = (answerWithinMs ?: 30_000).let { if (direct) minOf(it, DirectSources.CONTOUR_WAIT_MS) else it }
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs)
         for (f in futures) {
             val left = deadline - System.nanoTime()
             if (left <= 0) break
             runCatching { f.get(left, TimeUnit.NANOSECONDS) }
         }
-        if (answerWithinMs != null && futures.any { !it.isDone }) notReady("contour tile $z/$x/$y")
+        if (answerWithinMs != null && futures.any { !it.isDone }) {
+            if (!direct) notReady("contour tile $z/$x/$y")
+            if (!service.direct.countsForRefresh(askedAt)) throw NotReady("contour tile $z/$x/$y is still being made; try again")
+            for ((t, f) in tiles.zip(futures)) if (!f.isDone) service.direct.awaitedTile(t.first, t.second, t.third)
+            notReady("contour tile $z/$x/$y")
+        }
     }
 
     // ---- indicator ----
@@ -262,6 +300,19 @@ class OnlineTiles(
     }
 
     companion object {
+        /**
+         * T88: the online cache key of a contour tile made with the DEM tiles [missingHalo] of its halo left out
+         * (NaN: out of view and not made, [DirectSources.haloSkipped]): [key] itself when none were, else [key]
+         * with them named. Such a tile has lines stopping half a cell short of that seam; it was cached under the
+         * plain key before, so the gap stayed after the neighbour was made. Now it is found only while the same
+         * tiles are still missing, and made again whole once they exist.
+         */
+        fun contourKey(key: String, missingHalo: Collection<Triple<Int, Int, Int>>): String {
+            if (missingHalo.isEmpty()) return key
+            val names = missingHalo.distinct().sortedWith(compareBy({ it.first }, { it.second }, { it.third })).joinToString("_") { "${it.first}-${it.second}-${it.third}" }
+            return "${key.removeSuffix(".pbf")}.halo-$names.pbf"
+        }
+
         /** The live server's DEM zooms (`LiveTiles.LIVE_MIN_ZOOM`..`LIVE_MAX_ZOOM`). */
         const val DEM_MIN_ZOOM = 6
         const val DEM_MAX_ZOOM = 15

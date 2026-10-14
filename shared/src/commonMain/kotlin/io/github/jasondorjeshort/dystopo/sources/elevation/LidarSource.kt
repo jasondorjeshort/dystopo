@@ -382,7 +382,14 @@ class BestSource : FeatheredSource {
         "chgeo2004", "href2018b", "bev-geoid", "cgg2013a", "nzgeoid2016",
     ) + Geoids.REGISTRY_IDS
 
-    override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
+    override fun fetch(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result =
+        try {
+            fetchLayers(window, featherCellSizeMeters)
+        } finally {
+            RemoteTiff.releaseThreadBlock() // T88: no decoded block held by this thread past the window
+        }
+
+    private fun fetchLayers(window: MercatorWindow, featherCellSizeMeters: Double): ElevationSource.Result {
         // Regional layers barely overlap (Switzerland, Austria, Norway, US, Canada, New Zealand), so each feathers
         // into what is below it; where Swiss and Austrian data both reach past the border, Austria's goes on top,
         // and where 3DEP's 10 m base reaches into Canada, HRDEM lidar goes on top (T69).

@@ -11,6 +11,11 @@ import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
+import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.Inflater
 
 // T80: the JVM and Android actuals of Platform.kt (one source set for both: java.io, java.util.concurrent and
@@ -122,7 +127,21 @@ actual class IoPool actual constructor(name: String, threads: Int) {
  */
 private const val SOURCE_IO_THREADS = 16
 private const val SOURCE_IO_NAME = "source-io"
-private val sourceIo = Executors.newFixedThreadPool(SOURCE_IO_THREADS) { r -> Thread(r, SOURCE_IO_NAME).apply { isDaemon = true } }
+
+/**
+ * T88: a [parallelForEach] task with the priority of the thread that fanned it out ([SourceIo.withPriority]): queued
+ * tasks run higher priority first, then in the order they came. On a cold phone view the coarse tiles' block reads
+ * queued behind the view's own and finished 5 s after them, too late for the contour tile waiting on them.
+ */
+private class SourceTask(val priority: Int, val seq: Long, body: () -> Unit) : FutureTask<Unit>(Callable { body() }), Comparable<SourceTask> {
+    override fun compareTo(other: SourceTask): Int =
+        if (priority != other.priority) other.priority.compareTo(priority) else seq.compareTo(other.seq)
+}
+
+private val sourceIoSeq = AtomicLong()
+private val sourceIo = ThreadPoolExecutor(SOURCE_IO_THREADS, SOURCE_IO_THREADS, 0L, TimeUnit.MILLISECONDS, PriorityBlockingQueue<Runnable>()) { r ->
+    Thread(r, SOURCE_IO_NAME).apply { isDaemon = true }
+}
 
 actual fun <T> parallelForEach(items: List<T>, f: (T) -> Unit) {
     // On a pool thread already (a task fanning out again): inline, so tasks never wait on tasks of their own pool.
@@ -130,7 +149,8 @@ actual fun <T> parallelForEach(items: List<T>, f: (T) -> Unit) {
         items.forEach(f)
         return
     }
-    items.map { item -> sourceIo.submit { f(item) } }.forEach {
+    val priority = SourceIo.currentPriority()
+    items.map { item -> SourceTask(priority, sourceIoSeq.incrementAndGet()) { f(item) }.also { sourceIo.execute(it) } }.forEach {
         try {
             it.get()
         } catch (e: ExecutionException) {
