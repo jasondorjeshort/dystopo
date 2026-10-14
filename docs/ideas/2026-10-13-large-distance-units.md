@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: none
+status: planned
+pipeline: T101
 related: [2026-10-13-map-scale-bar.md, 2026-10-13-turn-directions.md]
 ---
 

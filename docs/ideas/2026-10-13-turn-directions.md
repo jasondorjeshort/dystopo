@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T61 partial
+status: planned
+pipeline: T102 (text; voice later)
 related: [2026-10-13-large-distance-units.md, 2026-10-13-route-waypoints-and-reroute.md, 2026-10-13-driving-is-in-scope.md]
 ---
 

@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: question
-status: planned
-pipeline: T73
+status: done
+pipeline: ADR 0032, T102 (the wording)
 related: [2026-10-13-turn-directions.md, 2026-10-13-routing-modes-crow-bushwhack.md]
 ---
 

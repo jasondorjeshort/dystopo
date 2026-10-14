@@ -20,6 +20,8 @@ Status: `proposed` (waits for the owner: anything humans see or touch), `accepte
 | [0028-long-distance-routing.md](0028-long-distance-routing.md) | Long drives through a partition overlay over our graph tiles, the server as a remote router | 2026-10-12 | superseded by 0029 (in part) |
 | [0029-two-level-drive-overlay.md](0029-two-level-drive-overlay.md) | Long drives: a z8 overlay level, cells kept on disk, a settle budget, component labels, the phone going remote for packs that do not join | 2026-10-14 | accepted |
 | [0030-pinned-tiles-keep-their-version.md](0030-pinned-tiles-keep-their-version.md) | Pinned tiles keep the content version they were fetched at until the area is refreshed; pinned bytes have their own budget; the Offline button shows the size first | 2026-10-14 | accepted |
+| [0031-interface-changes-in-alpha.md](0031-interface-changes-in-alpha.md) | In alpha, an interface change an idea or a task describes is built without prior sign-off and adjusted after the owner sees it; removed flows, identity and data formats are still flagged | 2026-10-14 | accepted |
+| [0032-driving-is-a-full-second-mode.md](0032-driving-is-a-full-second-mode.md) | Hiking first; driving a full second mode across routing, directions and navigation, saying concretely what it does not do | 2026-10-14 | accepted |
 
 Template (also in the `adr` skill):
 

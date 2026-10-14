@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: none
+status: planned
+pipeline: T103
 ---
 
 # Group the Android settings into tabs by theme

@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: question
-status: new
-pipeline: none
+status: done
+pipeline: ADR 0031
 ---
 
 # Doctrine: while in alpha, changing the interface is fine

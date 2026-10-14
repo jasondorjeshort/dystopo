@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: chore
-status: new
-pipeline: none
+status: planned
+pipeline: T104 (the check and the renames); the rule is in CLAUDE.md
 related: [2026-10-13-avalanche-slope-shading.md, 2026-10-13-external-integrations.md]
 ---
 

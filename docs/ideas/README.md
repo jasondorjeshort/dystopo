@@ -55,22 +55,22 @@ names (`CLAUDE.md`, Rules).
 
 | File | Kind | Status | One line |
 |---|---|---|---|
-| `2026-10-13-recenter-button.md` | feature | planned | Recenter button cycling north-up, free and heading-up; the plain button is T93 (wave 13), the cycling later. |
-| `2026-10-13-map-scale-bar.md` | feature | new | Scale bar on the phone map, own units by default, optional both. |
-| `2026-10-13-large-distance-units.md` | feature | new | Imperial distances switch to miles at large scales; inches someday. |
-| `2026-10-13-driving-is-in-scope.md` | question | planned | Doctrine: hike and bike first, driving kept as a first-class mode (tension with T73 wording). |
+| `2026-10-13-recenter-button.md` | feature | planned | Recenter button cycling north-up, free and facing; the plain button is T93 (wave 13), the cycling T100 (wave 14). |
+| `2026-10-13-map-scale-bar.md` | feature | planned | Scale bar on the phone map, own units by default, optional both (T101, wave 14). |
+| `2026-10-13-large-distance-units.md` | feature | planned | Imperial distances switch to miles at large scales (T101, wave 14); inches someday. |
+| `2026-10-13-driving-is-in-scope.md` | question | done | Doctrine: hike first, driving a full second mode; ADR 0032 (2026-10-14); T102 rewrites the T73 wording. |
 | `2026-10-13-cannot-create-waypoints-android.md` | bug | done | A waypoint can be dropped on the phone at the fix or at a long-press, recording or not (T91, wave 13). |
-| `2026-10-13-turn-directions.md` | feature | new | "Turn left in 30 feet onto Trail F" in every mode; optional voice later. |
+| `2026-10-13-turn-directions.md` | feature | planned | "Turn left in 30 feet onto Trail F" in every mode (T102, wave 14); optional voice later. |
 | `2026-10-13-auto-download-when-zoomed-in.md` | feature | new | Keep topo and map data automatically when dwelling zoomed in (T75 is manual). |
 | `2026-10-13-routing-modes-crow-bushwhack.md` | feature | new | Crow (straight line) and bushwhack (trails, then gentlest cross-country) modes. |
-| `2026-10-13-avalanche-slope-shading.md` | feature | new | Separate avalanche-window and plain-steepness slope shadings. |
-| `2026-10-13-no-other-product-names.md` | chore | new | Rule: our text does not name other mapping software; where it does today. |
+| `2026-10-13-avalanche-slope-shading.md` | feature | planned | Separate avalanche-window and plain-steepness slope shadings (T104, wave 14). |
+| `2026-10-13-no-other-product-names.md` | chore | planned | Rule: our user-visible text does not name other mapping software (CLAUDE.md, 2026-10-14); the check and renames are T104. |
 | `2026-10-13-route-waypoints-and-reroute.md` | feature | new | Route to a destination with waypoints dropped when passed, rerouting, all modes. |
 | `2026-10-13-cache-budgets.md` | feature | new | One total cache budget plus per-kind budgets, LRU or LFU (T74 has per-store caps). |
-| `2026-10-13-settings-tabs.md` | feature | new | Settings sheet grouped into thematic tabs. |
+| `2026-10-13-settings-tabs.md` | feature | planned | Settings sheet grouped into thematic tabs (T103, wave 14). |
 | `2026-10-13-s-pen-features.md` | feature | new | Niche: useful S Pen behaviour. |
 | `2026-10-13-battery-efficiency.md` | feature | new | Battery doctrine, a measurement mode and an automatic low-battery mode. |
 | `2026-10-13-external-integrations.md` | feature | new | Import, export and sync with outside services (route services, cloud drive, OSM, fitness). |
 | `2026-10-13-download-by-region.md` | feature | new | Download topo by county, state, park, drawn region, or distance around a point or route. |
 | `2026-10-13-help-popups.md` | feature | new | Help text pop-ups behind a question-mark icon. |
-| `2026-10-13-alpha-interface-freedom.md` | question | new | Doctrine: interface changes are fine while in alpha (tension with the sign-off rule). |
+| `2026-10-13-alpha-interface-freedom.md` | question | done | Doctrine: interface changes are fine while in alpha; ADR 0031 (2026-10-14) and the CLAUDE.md Decisions line. |
