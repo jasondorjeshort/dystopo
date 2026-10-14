@@ -134,6 +134,7 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act
             }
         }
         holdsLine(key, s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
+        olderLine(s)?.let { BasicText(it, style = TextStyle(color = Older, fontSize = 12.sp, fontWeight = FontWeight.Bold)) } // T95
         // T91: the chips wrap (a scrolling row clipped the 2 GB chip at the right edge).
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // Clear first, so it is on screen whatever the budget chips take.
@@ -169,11 +170,20 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act
 private fun holdsLine(key: String, s: Map<String, Any?>): String? {
     if (key == Storage.PACKS) return "${s["count"]} installed; remove one in the pack list"
     if (key == Storage.SOURCES) return "Elevation data read by this phone when no server is set"
-    if (key == Storage.PINNED) return "${s["areas"]} pinned; kept out of Online tiles' budget until unpinned"
     @Suppress("UNCHECKED_CAST")
-    val holds = s["holds"] as? Map<String, Map<String, Any?>> ?: return null
+    val holds = s["holds"] as? Map<String, Map<String, Any?>>
+    val kinds = holds?.entries?.joinToString(", ") { (k, v) -> "$k ${mb(v["bytes"])}" }
+    // T95: what the pinned tiles are, as for the online row (which counts its unpinned tiles only).
+    if (key == Storage.PINNED) return "${s["areas"]} pinned" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; kept out of Online tiles' budget until unpinned"
+    if (holds == null) return null
     if (holds.isEmpty()) return "Empty"
-    return holds.entries.joinToString(", ") { (k, v) -> "$k ${mb(v["bytes"])}" }
+    return kinds
+}
+
+/** T95: the pinned areas whose source has moved on to newer data, by name. */
+private fun olderLine(s: Map<String, Any?>): String? {
+    val names = (s["olderThanSource"] as? List<*>)?.map { it.toString() }?.takeIf { it.isNotEmpty() } ?: return null
+    return "Older than the source: ${names.joinToString(", ")}. Update in Offline areas."
 }
 
 private fun mb(v: Any?): String {
@@ -205,3 +215,4 @@ private val Muted = Color(0xFF6B5A4A)
 private val Paper = Color(0xFFFFFCF5)
 private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
+private val Older = Color(0xFF9A5B00)

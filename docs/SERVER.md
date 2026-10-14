@@ -388,6 +388,9 @@ like `/build`, because a box starts a build. `GET /area` lists the parameters an
 - `source`: who made the manifest when it is not the server answering (`phone`, `phone (public sources)`;
   a phone publishing to another phone puts its address here). Null from the server.
 - `generatedAt`: ISO-8601 UTC.
+- `versions` (T95, optional): the source's content versions (`dem`, `osm`, as `GET /version` names them) the
+  tiles were fetched at; a phone writes it when a download completes, and keeps a pinned area's tiles at these
+  versions until the area is refreshed. Absent when unknown, so the server's own answers are unchanged.
 - `area`: the request, normalised. Box: `{"kind": "box", "bbox": [west, south, east, north], "minZoom", "maxZoom",
   "name"}` (west < east: no antimeridian crossing; split such boxes). Corridor: `{"kind": "corridor", "line":
   [[lon, lat], ...]` (GeoJSON order, 1e-7 degrees), `"bufferM"` (10 to 20000, metres on each side), zooms, name}.

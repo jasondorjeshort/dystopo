@@ -161,6 +161,46 @@ class AreasTest {
     }
 
     @Test
+    fun manifestVersionsRoundTripAndAreLeftOutWhenUnknown() { // T95
+        val tiles = AreaManifest.tileItems(corridor, 6..15, 8..14)
+        val m = AreaManifest(corridor.id, "test", corridor, AreaManifest.STATUS_READY, tiles, versions = mapOf("osm" to "b1.0", "dem" to "best-v2.aaaa1111"))
+        val back = AreaManifest.parse(io.github.jasondorjeshort.dystopo.pmtiles.MiniJson.encode(m.json()))
+        assertEquals(mapOf("dem" to "best-v2.aaaa1111", "osm" to "b1.0"), back.versions)
+        assertEquals(m.json(), back.json())
+        val none = AreaManifest(corridor.id, "test", corridor, AreaManifest.STATUS_READY, tiles)
+        assertFalse("versions" in none.json(), "a manifest without versions reads as before T95")
+        assertEquals(emptyMap(), AreaManifest.parse(io.github.jasondorjeshort.dystopo.pmtiles.MiniJson.encode(none.json())).versions)
+    }
+
+    @Test
+    fun pinsHoldTheVersionTheirTilesWereFetchedAt() { // T95
+        val src = "10.0.2.2_8775"
+        val pins = AreaPins(listOf(AreaPins.cover(corridor)), listOf(mapOf(src to mapOf("dem" to "v1", "osm" to "o1"))))
+        val (x, y) = tileOf(46.80, -121.7355, 15)
+        assertEquals(setOf("v1"), pins.versions(src, "dem"))
+        assertEquals(emptySet(), pins.versions("other_1", "dem"))
+        assertTrue(pins.holds(src, "dem", "v1", 15, x, y))
+        assertTrue(pins.holds(src, "dem", "v1", 16, 2 * x, 2 * y), "deeper tiles follow their ancestor")
+        assertFalse(pins.holds(src, "dem", "v2", 15, x, y), "not at another version")
+        assertFalse(pins.holds("other_1", "dem", "v1", 15, x, y), "not for another source")
+        val (fx, fy) = tileOf(45.83, 6.86, 15)
+        assertFalse(pins.holds(src, "dem", "v1", 15, fx, fy), "not outside the cover")
+        // A cover without versions (a transient pin before T95, or a source never asked) holds nothing at any version.
+        assertFalse(AreaPins(listOf(AreaPins.cover(corridor))).holds(src, "dem", "v1", 15, x, y))
+        assertEquals(Triple(15, x, y), AreaPins.tileOf("$src/dem@v1/15/$x/$y.png"))
+        assertEquals(null, AreaPins.tileOf("$src/glyphs/Noto%20Sans%20Regular/0-255.pbf"))
+    }
+
+    @Test
+    fun anAreaIsOlderThanItsSourceWhenAKnownVersionDiffers() { // T95
+        assertEquals(listOf("dem"), AreaPins.older(mapOf("dem" to "v1", "osm" to "o1"), mapOf("dem" to "v2", "osm" to "o1")))
+        assertEquals(listOf("dem", "osm"), AreaPins.older(mapOf("dem" to "v1", "osm" to "o1"), mapOf("dem" to "v2", "osm" to "o2")))
+        assertEquals(emptyList(), AreaPins.older(mapOf("dem" to "v1"), mapOf("dem" to "v1", "osm" to "o2")), "a name the area never recorded is not compared")
+        assertEquals(emptyList(), AreaPins.older(mapOf("dem" to ""), mapOf("dem" to "v2")), "fetched from a source without versions")
+        assertEquals(emptyList(), AreaPins.older(mapOf("dem" to "v1"), emptyMap()), "the source's versions are not known yet")
+    }
+
+    @Test
     fun sliceAndSimplify() {
         val cum = Polyline.cumulative(line)
         val total = cum.last()

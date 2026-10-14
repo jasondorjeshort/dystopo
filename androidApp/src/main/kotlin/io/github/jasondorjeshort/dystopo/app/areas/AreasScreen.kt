@@ -68,6 +68,10 @@ private val Teal = Color(0xFF00796B)
  * and Remove; the running corridor download's progress on top. While open, every area's outline is on the map
  * ([AreaOutlines]): a box as a rectangle, a corridor as a translucent band as wide as its buffer. Drawn over the
  * map by one line in MainActivity.
+ *
+ * T95: an area whose source has moved on to a newer version says [OLDER_NOTE] and offers Update (a download again
+ * at the current version) instead of "Download again"; until then its tiles are served at the version they were
+ * fetched at.
  */
 @Composable
 fun AreasOverlay() {
@@ -143,11 +147,13 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
             style = TextStyle(color = Muted, fontSize = 12.sp),
         )
         if (r.pack != null) BasicText(PACK_NOTE, style = TextStyle(color = Muted, fontSize = 12.sp))
+        val older = !Areas.older(r).isNullOrEmpty() // T95
+        if (older) BasicText(OLDER_NOTE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 12.sp, fontWeight = FontWeight.Bold))
         r.error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 2) }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
             if (r.pack == null) Action(if (r.pinned) "Unpin" else "Pin") { thread { runCatching { Areas.pin(r.id, !r.pinned) } } }
-            if (r.pack == null && r.state != "downloading") Action("Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
+            if (r.pack == null && r.state != "downloading") Action(if (older) "Update" else "Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
             Action("Remove", Color(0xFFD73027)) { thread { runCatching { Areas.remove(r.id) } } }
         }
     }
@@ -156,6 +162,9 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
 private fun mb(bytes: Long): String = if (bytes >= 1_048_576) String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0) else String.format(Locale.US, "%d kB", bytes / 1024)
 
 private const val SHEET = 0.55f
+
+/** T95: an area whose source serves a newer version than its tiles were fetched at. */
+internal const val OLDER_NOTE = "Older than the source. Update downloads the newer data."
 
 /** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). */
 internal const val PACK_NOTE = "A region pack is never evicted, so it needs no pin; it stays until you remove it."

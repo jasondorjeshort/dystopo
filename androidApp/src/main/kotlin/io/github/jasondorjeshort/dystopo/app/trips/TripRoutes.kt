@@ -31,6 +31,9 @@ import java.security.MessageDigest
  * - T67: `POST /routes/{id}/share`: the trip card's "Share link" (syncs with the sync peer, asks it for a
  *   read-only link, copies it; answers `url`, `gpx`, `token`, `existing`, `copied`, `sync`);
  *   `GET /routes/{id}/share`: the last link made here; `DELETE /routes/{id}/share`: revokes it.
+ * - T95: `POST /routes/{id}/offline` is the card's Offline button (opens the route if it is not open, works out the
+ *   corridor's size and shows it with Download and Cancel, or Close over the pinned budget; answers the offer with its
+ *   `plan`); `?go=1` is Download, `?cancel=1` Cancel or Close; `GET /routes/{id}/offline`: the offer shown now.
  * - `POST /routes/import[?replace=1]` with a GPX body. `POST /routes/ui?open=1|0` (the Routes list),
  *   `POST /routes/close` (closes the editor), `POST /routes/tool?tool=none|via|waypoint`,
  *   `POST /routes/tap?lat=&lon=` (a tap on the map with the current tool).
@@ -156,6 +159,17 @@ object TripRoutes {
                 return Response.json(mapOf("renamed" to Trips.rename(id, name)))
             }
             r.method == "POST" && suffix == "/open" -> return Response.json(planJson(Trips.open(id) ?: throw NoSuchElementException("no route $id"), false))
+            r.method == "POST" && suffix == "/offline" -> return Response.json(
+                when {
+                    q["go"] == "1" -> Trips.confirmOffline(id)
+                    q["cancel"] == "1" -> { Trips.cancelOffline(); mapOf("offer" to null) }
+                    else -> {
+                        if (Trips.editingId?.startsWith(id) != true) Trips.open(id) ?: throw NoSuchElementException("no route $id")
+                        Trips.planOffline(id)
+                    }
+                },
+            )
+            r.method == "GET" && suffix == "/offline" -> return Response.json(mapOf("offer" to Trips.offline?.json()))
             r.method == "POST" && suffix == "/share" -> return Response.json(Trips.shareLink(id))
             r.method == "GET" && suffix == "/share" -> return Response.json(mapOf("link" to ShareLinkClient.of(app).last(id)))
             r.method == "DELETE" && suffix == "/share" -> return Response.json(Trips.revokeShareLink(id))

@@ -23,6 +23,12 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   `line=lat,lon;lat,lon`, or `trip=<trip id or prefix>` for a kept route's corridor; with `bufferM`, `minZoom`,
  *   `maxZoom`, `name`, `contours=1`). A box is "Download this region" (a pack); a corridor is fetched into the tile
  *   cache and pinned. `GET /areas/download`: progress; `DELETE /areas/download`: cancel.
+ * - T95: `POST /areas/plan` with the same parameters: the corridor's manifest size, tiles per route, and whether the
+ *   pinned budget allows it (`fits`, `refusal`), with nothing started (what a trip's Offline button shows).
+ *   `GET /areas` and `GET /areas/{id}` give each area's `versions` (per source, what its tiles were fetched at),
+ *   `olderThanSource` (the content names whose version the source has moved on from; empty when current, null when
+ *   unknown) and `coverage.atOlderVersion` (tiles found only at the area's own older version). Downloading an area
+ *   again is its Update.
  * - `POST /areas/{id}/pin?on=0|1`: pin or unpin (T91: 409 for a pack-backed area, which is never evicted); `DELETE /areas/{id}`: remove (a box's pack is deleted, a corridor's
  *   tiles leave the cache).
  * - `POST /areas/trim?mb=N`: sets the online cache's cap to N MB now (not saved; `restore=1` goes back to the
@@ -53,6 +59,7 @@ object AreaRoutes {
             "GET" to "/areas/download" -> return Response.json(AreaDownload.json() ?: mapOf("state" to "idle"))
             "DELETE" to "/areas/download", "POST" to "/areas/download/cancel" -> return Response.json(mapOf("cancelled" to AreaDownload.cancel(), "download" to AreaDownload.json()))
             "POST" to "/areas/download" -> return Response.json(download(r), 202)
+            "POST" to "/areas/plan" -> return Response.json(AreaDownload.plan(area(r).second).json())
             "POST" to "/areas/trim" -> return Response.json(trim(r))
             "GET" to "/areas/prefetch" -> return Response.json(AheadPrefetch.json())
             "POST" to "/areas/prefetch" -> {
@@ -69,7 +76,7 @@ object AreaRoutes {
         val id = m.groupValues[1]
         val rec = Areas.get(id) ?: throw NoSuchElementException("no area '$id'")
         return when (r.method to m.groupValues[2]) {
-            "GET" to "" -> Response.json(rec.json() + mapOf("coverage" to Areas.coverage(rec), "manifest" to Areas.manifest(rec.id)?.summary()))
+            "GET" to "" -> Response.json(rec.json() + mapOf("olderThanSource" to Areas.older(rec), "coverage" to Areas.coverage(rec), "manifest" to Areas.manifest(rec.id)?.summary()))
             "GET" to "/manifest" -> Response.json(Areas.manifest(rec.id)?.json() ?: throw NoSuchElementException("area $id has no manifest (a pack-backed area: see its pack)"))
             "POST" to "/pin" -> Response.json(Areas.pin(rec.id, r.query["on"] != "0").json())
             "DELETE" to "" -> Response.json(Areas.remove(rec.id))
@@ -78,23 +85,23 @@ object AreaRoutes {
     }
 
     private fun download(r: Request): Map<String, Any?> {
+        val (tripId, area) = area(r)
+        return AreaDownload.start(area, r.query["name"], tripId, contours = r.query["contours"] == "1")
+    }
+
+    /** The area a request names (JSON body, `trip=`, or query parameters) and the trip it is for. */
+    private fun area(r: Request): Pair<String?, AreaOfInterest> {
         val q = r.query
         val body = r.bodyText.trim()
-        var tripId: String? = null
-        val area = when {
+        return when {
             body.startsWith("{") -> {
                 val doc = MiniJson.parseObject(body)
                 @Suppress("UNCHECKED_CAST")
-                AreaOfInterest.parse((doc["area"] as? Map<String, Any?>) ?: doc)
+                null to AreaOfInterest.parse((doc["area"] as? Map<String, Any?>) ?: doc)
             }
-            q["trip"] != null -> {
-                val (id, area) = tripArea(q["trip"]!!, q)
-                tripId = id
-                area
-            }
-            else -> AreaOfInterest.fromQuery(q)
+            q["trip"] != null -> tripArea(q["trip"]!!, q)
+            else -> null to AreaOfInterest.fromQuery(q)
         }
-        return AreaDownload.start(area, q["name"], tripId, contours = q["contours"] == "1")
     }
 
     /**

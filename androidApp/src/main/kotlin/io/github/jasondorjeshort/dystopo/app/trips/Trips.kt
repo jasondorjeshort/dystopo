@@ -68,6 +68,15 @@ object Trips {
     var tool by mutableStateOf("none")
     var message by mutableStateOf<String?>(null)
         private set
+
+    /** T95: the Offline button's offer for one trip: the size of its corridor before anything downloads. */
+    class OfflineOffer(val tripId: String, val text: String, val canDownload: Boolean, val plan: io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.Plan? = null) {
+        fun json(): Map<String, Any?> = linkedMapOf("tripId" to tripId, "text" to text, "canDownload" to canDownload, "plan" to plan?.json())
+    }
+
+    /** T95: the offer the trip card shows under its actions (Download and Cancel, or Close when it does not fit). */
+    var offline by mutableStateOf<OfflineOffer?>(null)
+        private set
     /** The last edit: what it did, how long, and why legs are straight. */
     @Volatile var lastEdit: Map<String, Any?>? = null
         private set
@@ -255,13 +264,46 @@ object Trips {
     }
 
     /**
-     * T75: "Download for offline": the route's corridor (500 m each side, z8 to z15) as an area of interest, fetched
-     * into the tile cache and pinned ([io.github.jasondorjeshort.dystopo.app.areas.AreaDownload]); progress in the
-     * card's message line and `GET /areas/download`.
+     * T95: the Offline button. Works out the route's corridor ([io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.tripArea]:
+     * the mode's zooms, z8 to z13 for a drive, z8 to z15 otherwise) and its manifest, and shows its size in the card
+     * with Download and Cancel, or, when the offline areas' budget would be passed, the size and why it does not fit
+     * with Close. Nothing is downloaded or recorded until Download ([confirmOffline]).
      */
-    fun downloadOffline(id: String): Map<String, Any?> {
+    fun planOffline(id: String): Map<String, Any?> {
         val (tripId, area) = io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.tripArea(id)
-        val r = io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.start(area, area.name, tripId)
+        ui { offline = OfflineOffer(tripId, OFFLINE_WORKING, false); message = null }
+        val plan = try {
+            io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.plan(area)
+        } catch (e: Exception) {
+            Log.w(TAG, "offline plan failed", e)
+            val o = OfflineOffer(tripId, OFFLINE_FAILED + (e.message ?: e.javaClass.simpleName), false)
+            ui { offline = o }
+            return o.json()
+        }
+        val o = OfflineOffer(tripId, offlineOfferText(plan.bytes, plan.tiles, plan.refusal), plan.refusal == null, plan)
+        ui { offline = o }
+        return o.json()
+    }
+
+    /** T95: Download in the offer: starts the planned download (the budget is checked again first). */
+    fun confirmOffline(id: String): Map<String, Any?> {
+        val o = offline?.takeIf { it.canDownload && it.plan != null && (it.tripId == id || (id.length >= 4 && it.tripId.startsWith(id))) }
+            ?: throw IllegalStateException("no offline offer for this route that fits: tap Offline first")
+        ui { offline = null }
+        return downloadOffline(o.tripId, o.plan!!.manifest)
+    }
+
+    /** T95: Cancel or Close in the offer. */
+    fun cancelOffline() = ui { offline = null }
+
+    /**
+     * T75: "Download for offline": the route's corridor (500 m each side, z8 to z15; T91: z8 to z13 for a drive) as an
+     * area of interest, fetched into the tile cache and pinned ([io.github.jasondorjeshort.dystopo.app.areas.AreaDownload]);
+     * progress in the card's message line and `GET /areas/download`. T95: [manifest] is the planned one, when there is one.
+     */
+    fun downloadOffline(id: String, manifest: io.github.jasondorjeshort.dystopo.areas.AreaManifest? = null): Map<String, Any?> {
+        val (tripId, area) = io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.tripArea(id)
+        val r = io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.start(area, area.name, tripId, manifest = manifest)
         ui { message = "Downloading the route for offline use…" }
         Thread({
             while (true) {
@@ -298,6 +340,7 @@ object Trips {
             showPlan(p)
             listOpen = false
             message = null
+            if (offline?.tripId != p.id) offline = null // T95
             if (fit) fitCamera(p)
         }
         overlay.show(p)
@@ -315,7 +358,7 @@ object Trips {
     }
 
     fun close() {
-        ui { showPlan(null); message = null }
+        ui { showPlan(null); message = null; offline = null }
         overlay.show(null)
     }
 
@@ -372,3 +415,19 @@ object Trips {
  * editor holds [nowId]: only to the same route (a refresh that read none has nothing to apply). Pure, tested.
  */
 internal fun refreshApplies(readId: String?, nowId: String?): Boolean = readId != null && readId == nowId
+
+/** T95: the Offline offer while the corridor's manifest is being made. */
+internal const val OFFLINE_WORKING = "Working out the offline size…"
+
+/** T95: the Offline offer when the manifest could not be made (the reason follows). */
+internal const val OFFLINE_FAILED = "Could not work out the offline size: "
+
+/**
+ * T95: the Offline offer's text: the corridor's estimated size and tiles, and when the offline areas' budget would
+ * be passed, [refusal] (the T91 budget message) after it. Pure, tested.
+ */
+internal fun offlineOfferText(bytes: Long, tiles: Int, refusal: String?): String {
+    val size = io.github.jasondorjeshort.dystopo.app.areas.aboutMb(bytes) // the budget message's rounding, so one size reads the same
+    val head = "This route offline: about $size (${String.format(java.util.Locale.US, "%,d", tiles)} tiles)."
+    return if (refusal == null) head else "$head $refusal."
+}

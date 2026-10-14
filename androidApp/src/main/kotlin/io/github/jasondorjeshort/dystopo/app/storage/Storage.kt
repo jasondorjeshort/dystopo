@@ -21,6 +21,9 @@ import java.io.File
  *   unpinned tiles.
  * - `pinned` (T91): the tiles of pinned offline areas in that same directory, with their own budget
  *   `pinnedCacheMb` (default 2 GB), checked when an area downloads; Pin, Unpin and Remove are in Offline areas.
+ *   T95: each row's `holds` and `entries` count its own tiles (the online row's held pinned tiles before), and
+ *   `olderThanSource` names the pinned areas whose source has moved on to a newer version (Update in Offline areas).
+ *   Clear on the online row deletes its own tiles only ([TileCache.clearUnkept]); pinned tiles go with their area.
  * - `derived`: contour, shade and cliff tiles made from packs (`cache/contours/`), one LRU capped by `contourCacheMb`.
  * - `sources`: what the phone's own readers downloaded from the public elevation sources when no server is set
  *   (`cache/sources/`, trimmed to its own cap by the readers).
@@ -66,10 +69,13 @@ object Storage {
 
     private fun walkAll(dirs: List<File>): Walk = dirs.map(::walk).fold(Walk(0, 0, 0)) { a, b -> Walk(a.files + b.files, a.apparentBytes + b.apparentBytes, a.diskBytes + b.diskBytes) }
 
-    /** The online cache split by what it holds: fetched tiles per route, and tiles made on the phone from them. */
-    private fun onlineBreakdown(cache: TileCache): Map<String, Map<String, Long>> {
+    /**
+     * The online cache split by what it holds: fetched tiles per route, and tiles made on the phone from them. T95:
+     * only the unpinned entries ([pinned] false, the online row, whose bytes count them alone) or only the pinned ones.
+     */
+    internal fun onlineBreakdown(cache: TileCache, pinned: Boolean): Map<String, Map<String, Long>> {
         val out = LinkedHashMap<String, LongArray>()
-        for ((prefix, v) in cache.byPrefix(2)) {
+        for ((prefix, v) in cache.byPrefix(2, pinned)) {
             val route = prefix.substringAfter('/').substringBefore('@')
             val kind = when {
                 OnlineFetcher.DERIVED_FROM_DEM.any { route.startsWith(it) } -> route.substringBefore('-') // contours, shade
@@ -115,6 +121,7 @@ object Storage {
             m
         }
         val packList = runCatching { io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(app).list() }.getOrDefault(emptyList())
+        val areas = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.all() }.getOrDefault(emptyList())
         val stores = linkedMapOf<String, Any?>(
             PACKS to linkedMapOf(
                 "label" to "Packs", "bytes" to packsWalk.apparentBytes, "budgetMb" to null, "clearable" to false,
@@ -123,13 +130,16 @@ object Storage {
                 "dirs" to dirsJson(PACKS),
             ),
             ONLINE to linkedMapOf(
-                "label" to "Online tiles", "bytes" to online.bytes - pinned, "entries" to online.size, "budgetMb" to AppSettings.onlineCacheMb,
-                "setting" to "onlineCacheMb", "clearable" to true, "holds" to onlineBreakdown(online), "evictions" to online.evictions.get(),
+                // T95: the entries and what they hold count the unpinned tiles only, like the bytes (T91).
+                "label" to "Online tiles", "bytes" to online.bytes - pinned, "entries" to online.size - online.pinnedSize, "budgetMb" to AppSettings.onlineCacheMb,
+                "setting" to "onlineCacheMb", "clearable" to true, "holds" to onlineBreakdown(online, pinned = false), "evictions" to online.evictions.get(),
                 "allBytes" to online.bytes, "dirs" to dirsJson(ONLINE),
             ),
             PINNED to linkedMapOf(
-                "label" to "Offline areas (pinned)", "bytes" to pinned, "budgetMb" to AppSettings.pinnedCacheMb,
-                "setting" to "pinnedCacheMb", "clearable" to false, "areas" to runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.all().count { it.pinned && it.pack == null } }.getOrDefault(0),
+                "label" to "Offline areas (pinned)", "bytes" to pinned, "entries" to online.pinnedSize, "budgetMb" to AppSettings.pinnedCacheMb,
+                "setting" to "pinnedCacheMb", "clearable" to false, "areas" to areas.count { it.pinned && it.pack == null },
+                "holds" to onlineBreakdown(online, pinned = true), // T95
+                "olderThanSource" to areas.filter { it.pinned && !io.github.jasondorjeshort.dystopo.app.areas.Areas.older(it).isNullOrEmpty() }.map { it.name }, // T95
             ),
             DERIVED to linkedMapOf(
                 "label" to "Contours and shading", "bytes" to derived.bytes, "entries" to derived.size, "budgetMb" to AppSettings.contourCacheMb,
@@ -160,9 +170,10 @@ object Storage {
         val before = System.currentTimeMillis()
         val result: Map<String, Any?> = when (store) {
             ONLINE -> {
+                // T95: the row's own tiles only; the pinned tiles of offline areas stay (they went too before).
                 val c = OnlineService.get(app).cache
-                val bytes = c.bytes
-                mapOf("store" to store, "tiles" to c.clear(), "bytes" to bytes)
+                val bytes = c.bytes - c.pinnedBytes
+                mapOf("store" to store, "tiles" to c.clearUnkept(), "bytes" to bytes, "pinnedKept" to c.pinnedSize)
             }
             DERIVED -> {
                 val c = ContourCache.get(app)

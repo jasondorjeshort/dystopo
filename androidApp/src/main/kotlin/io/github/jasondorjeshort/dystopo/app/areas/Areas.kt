@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.online.VersionPins
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
@@ -31,8 +32,13 @@ import java.io.File
  * Records live in `files/areas/areas.json`; each area's manifest (with its tile lists) in `files/areas/<id>.json`.
  * [AheadPrefetch] adds transient pins for the segments ahead during navigation. [coverage] counts what is on the
  * device now: a tile counts when a pack holds it or the cache has it under the area's source.
+ *
+ * T95: each record keeps the content versions its tiles were fetched at ([Record.versions], per source); the pins
+ * carry them ([VersionPins], read by [OnlineFetcher]), so a source's version change keeps the area's tiles and
+ * lookups serve them at that version until the area is downloaded again ("Update" when [older] says the source
+ * has moved on, or the prefetch ahead on the route).
  */
-object Areas {
+object Areas : VersionPins {
     const val TAG = "DystopoAreas"
     private val app: DystopoApp get() = DystopoApp.instance
     private val dir: File by lazy { File(app.filesDir, "areas").apply { mkdirs() } }
@@ -54,6 +60,8 @@ object Areas {
         val tiles: Int = 0,
         val error: String? = null,
         val downloadMs: Long? = null,
+        /** T95: per source (cache key) the content versions (`dem`, `osm`; "" for none) the tiles were fetched at. */
+        val versions: Map<String, Map<String, String>> = emptyMap(),
     ) {
         val kind: String get() = if (pack != null) "pack" else "tiles"
 
@@ -62,6 +70,7 @@ object Areas {
             "source" to source, "pack" to pack, "tripId" to tripId, "bytes" to bytes, "estimateBytes" to estimateBytes, "tiles" to tiles,
             "error" to error, "downloadMs" to downloadMs, "createdAt" to createdAt, "bounds" to area.bounds.toList(),
             "lengthM" to area.lengthM.takeIf { it > 0 }, "zooms" to listOf(area.minZoom, area.maxZoom), "area" to area.json(),
+            "versions" to versions,
         )
 
         companion object {
@@ -74,6 +83,9 @@ object Areas {
                 tripId = m["tripId"] as? String, bytes = (m["bytes"] as? Number)?.toLong() ?: 0L,
                 estimateBytes = (m["estimateBytes"] as? Number)?.toLong() ?: 0L, tiles = (m["tiles"] as? Number)?.toInt() ?: 0,
                 error = m["error"] as? String, downloadMs = (m["downloadMs"] as? Number)?.toLong(),
+                versions = (m["versions"] as? Map<*, *>).orEmpty().mapNotNull { (k, v) ->
+                    if (k !is String || v !is Map<*, *>) null else k to v.mapNotNull { (n, ver) -> if (n is String && ver is String) n to ver else null }.toMap()
+                }.toMap(),
             )
         }
     }
@@ -96,9 +108,9 @@ object Areas {
     /** The Areas screen is open. */
     var screenOpen by mutableStateOf(false)
 
-    @Volatile private var pins: AreaPins = AreaPins.NONE
-    /** Covers pinned for a while by [AheadPrefetch] (navigation), by key. */
-    private val transient = LinkedHashMap<String, Map<Int, TileSet>>()
+    @Volatile private var current: AreaPins = AreaPins.NONE
+    /** Covers pinned for a while by [AheadPrefetch] (navigation), by key, with the versions they were fetched at (T95). */
+    private val transient = LinkedHashMap<String, Pair<Map<Int, TileSet>, Map<String, Map<String, String>>>>()
 
     /**
      * The tile cache hook (the default of [TileCache.keep], so it holds from the cache's first trim at start-up):
@@ -106,7 +118,44 @@ object Areas {
      */
     fun isPinned(key: String): Boolean {
         if (!loaded) runCatching { load() } // before the app is up (unit tests) nothing is pinned
-        return pins.isPinned(key)
+        return current.isPinned(key)
+    }
+
+    /** T95 ([VersionPins]): the pins with their versions, for the fetcher's lookups and version changes. */
+    override fun pins(): AreaPins {
+        if (!loaded) runCatching { load() }
+        return current
+    }
+
+    /**
+     * T95 ([VersionPins]): [source]'s version of [name] moves on from [old] (a known one). A pinned record (or transient pin) that
+     * never recorded one for that source (made before T95) takes [old], the version its tiles were fetched at.
+     */
+    @Synchronized
+    override fun adopt(source: String, name: String, old: String) {
+        if (!loaded) runCatching { load() }.onFailure { return }
+        var n = 0
+        fun take(v: Map<String, Map<String, String>>): Map<String, Map<String, String>>? =
+            if (v[source]?.containsKey(name) == true) null else v + (source to (v[source].orEmpty() + (name to old)))
+        for ((id, r) in records.toList()) if (r.pinned && r.pack == null) take(r.versions)?.let { records[id] = r.copy(versions = it); n++ }
+        for ((k, t) in transient.toList()) take(t.second)?.let { transient[k] = t.first to it; n++ }
+        if (n > 0) {
+            Log.i(TAG, "$n areas take $name version '$old' of $source")
+            changed()
+        }
+    }
+
+    /**
+     * T95: the content names (`dem`, `osm`) whose version [r] was fetched at differs from what its source serves
+     * now ("older than the source"); empty when they agree, null when the source is not in use or not known.
+     */
+    fun older(r: Record): List<String>? {
+        if (r.pack != null || r.source == null) return null
+        val f = runCatching { OnlineService.get(app).fetcher }.getOrNull() ?: return null
+        val key = OnlineFetcher.keyFor(r.source)
+        val s = f.sourceList.firstOrNull { it.key == key } ?: return null
+        val recorded = r.versions[key] ?: return null
+        return AreaPins.older(recorded, HashMap(s.versions))
     }
 
     @Synchronized
@@ -162,8 +211,13 @@ object Areas {
     fun pin(id: String, on: Boolean): Record {
         val r = get(id) ?: throw NoSuchElementException("no area '$id'")
         check(r.pack == null) { "area ${r.name} is the pack ${r.pack}: $PACK_NOTE" } // T91: pinning one did nothing either
-        return update(r.id) { it.copy(pinned = on) }!!
+        val n = update(r.id) { it.copy(pinned = on) }!!
+        if (!on) dropUnheld() // T95: its tiles of an older version are reachable no more
+        return n
     }
+
+    /** T95: the fetcher's [OnlineFetcher.dropUnheld] after the pins changed (an area refreshed, unpinned or removed). */
+    fun dropUnheld(): Int = runCatching { OnlineService.get(app).fetcher?.dropUnheld() ?: 0 }.getOrDefault(0)
 
     /**
      * Removes [id]: a pack-backed area deletes its pack; a corridor's tiles that no other pinned area holds are
@@ -187,7 +241,8 @@ object Areas {
                 for (key in cacheKeys(item.route, "$z/$x/$y.${item.ext}", r.source)) if (!isPinned(key)) tilesDeleted += cache.clear(key)
             }
         }
-        return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted, "pack" to pack)
+        val unheld = dropUnheld() // T95: and its tiles of an older version that no other area holds
+        return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted + unheld, "pack" to pack)
     }
 
     /** T91: told (on its own thread, so no lock is held) when the pins change, so the cache recounts its pinned bytes. */
@@ -196,10 +251,11 @@ object Areas {
 
     private fun changed(save: Boolean = true) {
         val all = records.values.toList()
-        val covers = all.filter { it.pinned && it.pack == null }.map { r -> coverMemo.getOrPut(r.id) { AreaPins.cover(r.area) } } + transient.values
+        val pinned = all.filter { it.pinned && it.pack == null }
+        val covers = pinned.map { r -> coverMemo.getOrPut(r.id) { AreaPins.cover(r.area) } } + transient.values.map { it.first }
         val same = covers == pinCovers
         pinCovers = covers
-        pins = AreaPins(covers)
+        current = AreaPins(covers, pinned.map { it.versions } + transient.values.map { it.second }) // T95: with the versions
         if (!same) onPinsChanged?.let { hook -> Thread(hook, "areas-recount").apply { isDaemon = true }.start() }
         list = all
         if (save) runCatching {
@@ -209,11 +265,11 @@ object Areas {
         }.onFailure { Log.w(TAG, "saving areas failed", it) }
     }
 
-    /** [AheadPrefetch]: pins [cover] under [key] until [unpinTransient]. */
+    /** [AheadPrefetch]: pins [cover] (fetched at [versions], T95) under [key] until [unpinTransient]. */
     @Synchronized
-    fun pinTransient(key: String, cover: Map<Int, TileSet>) {
+    fun pinTransient(key: String, cover: Map<Int, TileSet>, versions: Map<String, Map<String, String>> = emptyMap()) {
         load()
-        transient[key] = cover
+        transient[key] = cover to versions
         changed(save = false)
     }
 
@@ -226,17 +282,28 @@ object Areas {
 
     /**
      * The cache keys tile [path] of [route] may sit under: every source of the current fetcher with its content
-     * version (T74: `<source>/<route>@<version>/...`), else the recorded [source] unversioned.
+     * version (T74: `<source>/<route>@<version>/...`), else the recorded [source] unversioned; T95: with [held], also
+     * under every older version a pin holds for that source (the keys a lookup tries after a miss).
      */
-    fun cacheKeys(route: String, path: String, source: String? = null): List<String> {
+    fun cacheKeys(route: String, path: String, source: String? = null, held: Boolean = true): List<String> {
         val f = OnlineService.get(app).fetcher
         val keys = f?.sourceList?.map { "${it.prefix(route)}/$path" }.orEmpty()
-        return keys.ifEmpty { listOfNotNull(source?.let { "${OnlineFetcher.keyFor(it)}/$route/$path" }) }
+        val older = if (!held || f == null) emptyList() else OnlineFetcher.VERSION_OF[route]?.let { name ->
+            val p = pins()
+            f.sourceList.flatMap { s -> p.versions(s.key, name).filter { it != (s.versions[name] ?: "") }.map { "${s.prefixAt(route, it)}/$path" } }
+        }.orEmpty()
+        return (keys + older).ifEmpty { listOfNotNull(source?.let { "${OnlineFetcher.keyFor(it)}/$route/$path" }) }
     }
 
     fun cached(route: String, path: String, source: String? = null): Boolean {
         val cache = OnlineService.get(app).cache
         return cacheKeys(route, path, source).any { cache.contains(it) }
+    }
+
+    /** T95: whether tile [path] of [route] is cached at the current version of some source (not only at an older one a pin holds). */
+    fun cachedCurrent(route: String, path: String, source: String? = null): Boolean {
+        val cache = OnlineService.get(app).cache
+        return cacheKeys(route, path, source, held = false).any { cache.contains(it) }
     }
 
     fun manifestFile(id: String) = File(dir, "$id.json")
@@ -264,6 +331,7 @@ object Areas {
         var have = 0
         var total = 0
         var inPacks = 0
+        var olderOnly = 0
         val perRoute = LinkedHashMap<String, Map<String, Int>>()
         for (item in m.items.filterIsInstance<TilesItem>()) {
             var h = 0
@@ -277,21 +345,25 @@ object Areas {
                 }
                 when {
                     pack != null -> { h++; inPacks++ }
-                    cached(item.route, "$z/$x/$y.${item.ext}", r.source) -> h++
+                    cachedCurrent(item.route, "$z/$x/$y.${item.ext}", r.source) -> h++
+                    cached(item.route, "$z/$x/$y.${item.ext}", r.source) -> { h++; olderOnly++ } // T95: kept at the version it was fetched at
                 }
             }
             perRoute[item.route] = mapOf("have" to h, "tiles" to t)
             have += h
             total += t
         }
-        return linkedMapOf("share" to if (total == 0) null else Math.round(have * 1000.0 / total) / 1000.0, "have" to have, "tiles" to total, "inPacks" to inPacks, "routes" to perRoute)
+        return linkedMapOf(
+            "share" to if (total == 0) null else Math.round(have * 1000.0 / total) / 1000.0, "have" to have, "tiles" to total, "inPacks" to inPacks,
+            "atOlderVersion" to olderOnly, "routes" to perRoute,
+        )
     }
 
     fun json(withCoverage: Boolean = true): Map<String, Any?> {
         val all = all()
         val cache = OnlineService.get(app).cache
         return linkedMapOf(
-            "areas" to all.map { r -> r.json() + if (withCoverage) mapOf("coverage" to coverage(r)) else emptyMap() },
+            "areas" to all.map { r -> r.json() + mapOf("olderThanSource" to older(r)) + if (withCoverage) mapOf("coverage" to coverage(r)) else emptyMap() },
             "pinned" to all.count { it.pinned }, "transientPins" to transientCount,
             "cache" to cache.json(), "download" to AreaDownload.json(), "prefetch" to AheadPrefetch.json(),
         )

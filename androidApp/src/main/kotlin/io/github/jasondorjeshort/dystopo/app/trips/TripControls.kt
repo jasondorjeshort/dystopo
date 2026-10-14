@@ -177,6 +177,14 @@ private fun TripCard(modifier: Modifier) {
             )
         }
         Trips.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+        // T95: the Offline button's offer: the size first, then Download and Cancel, or Close when it does not fit.
+        Trips.offline?.takeIf { it.tripId == p.id }?.let { o ->
+            BasicText(o.text, style = TextStyle(color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (o.canDownload) Action("Download") { Trips.background { Trips.confirmOffline(p.id) } }
+                Action(if (o.canDownload) "Cancel" else "Close") { Trips.cancelOffline() }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
                 Toggle(label, Trips.tool == t) { Trips.tool = t }
@@ -189,7 +197,7 @@ private fun TripCard(modifier: Modifier) {
                 for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }
             }
             Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrip(p.id) }.start() } // T65: navigate this route
-            Action("Offline") { Trips.background { Trips.downloadOffline(p.id) } } // T75: download the route's corridor
+            Action("Offline") { Trips.background { Trips.planOffline(p.id) } } // T75: download the route's corridor; T95: its size first
             Action("GPX") { Trips.background { Trips.export(p.id) } }
             Action("Share link") { Trips.background { Trips.shareLink(p.id) } } // T67: a read-only link from the sync server
             Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }

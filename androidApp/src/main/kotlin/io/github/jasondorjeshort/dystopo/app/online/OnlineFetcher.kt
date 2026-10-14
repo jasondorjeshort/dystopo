@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app.online
 
+import io.github.jasondorjeshort.dystopo.areas.AreaPins
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -49,6 +50,21 @@ class UrlConnectionGet(private val connectTimeoutMs: Int = 3_000, private val re
 }
 
 /**
+ * T95: what the fetcher asks about pinned areas of interest (on the phone [io.github.jasondorjeshort.dystopo.app.areas.Areas]):
+ * their covers with the content versions their tiles were fetched at ([AreaPins.versions], [AreaPins.holds]).
+ */
+interface VersionPins {
+    fun pins(): AreaPins
+
+    /** [source]'s version of content [name] moves on from [old] (a known version): pins that never recorded one for it take [old]. */
+    fun adopt(source: String, name: String, old: String) {}
+
+    object None : VersionPins {
+        override fun pins() = AreaPins.NONE
+    }
+}
+
+/**
  * What an online lookup found: [Hit] (bytes, from the disk cache or the network), [Missing] (the server
  * has no such tile: ocean, outside its zooms) or [Unavailable] (network or server failure; try later).
  */
@@ -82,6 +98,12 @@ sealed class Fetch {
  * - T78, peer phones (`peer://<host:port>`, [isPeer]): over the network they are asked before the other sources (a
  *   phone on the same Wi-Fi answers from its packs in milliseconds and costs no data), and each source counts the
  *   tiles and bytes it delivered (`sources[].fetched`, `.bytes` in [json]), so a download says where its bytes came from.
+ * - T95, pinned areas and versions ([pins]): a pinned area records the content versions its tiles were fetched at. A
+ *   version change keeps the `dem` and `osm` tiles a pin holds at the old version (the tiles made on the phone from
+ *   the old DEM still go: they are made again from the kept DEM), and a lookup that misses the current version tries
+ *   the versions the pins hold before the network, so a pinned area is served at its own version, online or not,
+ *   until it is refreshed: a download of the area or the prefetch ahead on the route asks with `fresh` (the current
+ *   version only, else the network), and [dropUnheld] then deletes what no pin holds any more.
  */
 class OnlineFetcher(
     val sources: List<String>,
@@ -106,6 +128,9 @@ class OnlineFetcher(
 
     /** Called (on the thread that noticed it) when a source's content version changed: the map should reload. */
     @Volatile var onVersionChange: ((String) -> Unit)? = null
+
+    /** T95: the pinned areas and the versions they hold (the phone's areas of interest by default; tests set their own). */
+    @Volatile var pins: VersionPins = io.github.jasondorjeshort.dystopo.app.areas.Areas
 
     /** One source: its address, cache key, content versions, reachability and negative cache. */
     inner class Source(val url: String) {
@@ -137,6 +162,9 @@ class OnlineFetcher(
             val v = VERSION_OF[route]?.let { versions[it] }
             return if (v == null) "$key/$route" else "$key/$route@$v"
         }
+
+        /** T95: the cache key prefix of [route] at content version [v] ("" for the keys from before versions were known). */
+        fun prefixAt(route: String, v: String): String = if (v.isEmpty()) "$key/$route" else "$key/$route@$v"
 
         fun json(now: Long): Map<String, Any?> = linkedMapOf(
             "url" to url, "key" to key,
@@ -184,6 +212,10 @@ class OnlineFetcher(
     val sharedFetches = AtomicLong()
     val emptyAsMissing = AtomicLong()
     val versionChecks = AtomicLong()
+    /** T95: lookups answered at a version a pinned area holds; tiles kept at a version change; unreachable tiles dropped. */
+    val pinnedHits = AtomicLong()
+    val pinnedKept = AtomicLong()
+    val unheldDropped = AtomicLong()
     private val fetchMs = AtomicLong()
     private val maxFetchMs = AtomicLong()
     private val recentErrors = ArrayDeque<String>()
@@ -218,8 +250,11 @@ class OnlineFetcher(
     /**
      * The tile at `<source>/<route>/<path>` (e.g. `dem`, `12/654/1431.png`): from the disk cache, else
      * fetched (unless the negative cache or the backoff says not to try now) and cached.
+     *
+     * T95: a miss at the current version tries the versions pinned areas hold before the network, unless [fresh]
+     * (a download or the prefetch refreshing an area: the current version or nothing).
      */
-    fun get(route: String, path: String, transform: (ByteArray) -> ByteArray = { it }): Fetch {
+    fun get(route: String, path: String, transform: (ByteArray) -> ByteArray = { it }, fresh: Boolean = false): Fetch {
         requests.incrementAndGet()
         for (s in sourceList) maybeCheckVersions(s)
         for (s in sourceList) {
@@ -231,6 +266,7 @@ class OnlineFetcher(
                 }
             }
         }
+        if (!fresh) pinnedVersion(route, path)?.let { return it }
         var unavailable: Fetch.Unavailable? = null
         for (s in networkOrder) {
             when (val f = getFrom(s, route, path, transform)) {
@@ -334,6 +370,75 @@ class OnlineFetcher(
         }
     }
 
+    /** T95: tile [path] of [route] under a version a pinned area holds (not the current one), or null. */
+    private fun pinnedVersion(route: String, path: String): Fetch.Hit? {
+        val name = VERSION_OF[route] ?: return null
+        val p = pins.pins()
+        if (p.isEmpty) return null
+        for (s in sourceList) for (v in p.versions(s.key, name)) {
+            if (v == (s.versions[name] ?: "")) continue
+            val key = "${s.prefixAt(route, v)}/$path"
+            if (!cache.contains(key)) continue
+            val bytes = cache.get(key) ?: continue
+            if (bytes.isEmpty() && route in EMPTY_IS_MISS) continue
+            cacheHits.incrementAndGet()
+            pinnedHits.incrementAndGet()
+            s.cacheHits.incrementAndGet()
+            return Fetch.Hit(bytes, cached = true, source = s.key)
+        }
+        return null
+    }
+
+    /** T95: every source's content versions of the tile routes (`dem`, `osm`) now, "" where it has none: what a pinned area records. */
+    fun currentVersions(): Map<String, Map<String, String>> =
+        sourceList.associate { s -> s.key to PINNED_NAMES.associateWith { s.versions[it] ?: "" } }
+
+    /**
+     * T95: deletes the cached tiles no lookup reaches any more: a source's `dem` and `osm` tiles of a version that is
+     * neither its current one nor one a pin holds for the tile (an area refreshed, unpinned or removed), and tiles
+     * made on the phone from a DEM version that is not current. Sources without versions are left alone. Returns how
+     * many went.
+     */
+    fun dropUnheld(): Int {
+        val p = pins.pins()
+        var n = 0
+        for (s in sourceList) {
+            val current = HashMap(s.versions)
+            if (current.isEmpty()) continue
+            n += cache.clearWhere { k ->
+                val parts = k.split('/', limit = 3)
+                if (parts.size < 3 || parts[0] != s.key) return@clearWhere false
+                val route = parts[1].substringBefore('@')
+                val v = parts[1].substringAfter('@', "")
+                val derived = DERIVED_FROM_DEM.any { route.startsWith(it) }
+                val name = if (derived) "dem" else VERSION_OF[route]?.takeIf { it in PINNED_NAMES } ?: return@clearWhere false
+                val cur = current[name] ?: return@clearWhere false
+                when {
+                    v == cur -> false
+                    derived -> true
+                    else -> AreaPins.tileOf(k)?.let { (z, x, y) -> !p.holds(s.key, name, v, z, x, y) } ?: true
+                }
+            }
+        }
+        unheldDropped.addAndGet(n.toLong())
+        return n
+    }
+
+    /**
+     * T95: deletes the tiles made on the phone (contours, shade) at each source's current DEM version whose tile
+     * [inCover] holds: after an area was refreshed they may have been made from the older DEM a pin served.
+     */
+    fun dropDerived(inCover: (Int, Int, Int) -> Boolean): Int = sourceList.sumOf { s ->
+        val cur = s.versions["dem"] ?: ""
+        cache.clearWhere { k ->
+            val parts = k.split('/', limit = 3)
+            if (parts.size < 3 || parts[0] != s.key) return@clearWhere false
+            val route = parts[1].substringBefore('@')
+            DERIVED_FROM_DEM.any { route.startsWith(it) } && parts[1].substringAfter('@', "") == cur &&
+                AreaPins.tileOf(k)?.let { (z, x, y) -> inCover(z, x, y) } == true
+        }
+    }
+
     // ---- T74: content versions ----
 
     /** Asks [s] for `/version` when the last answer is older than [versionCheckMs] (one thread at a time; others go on). */
@@ -378,6 +483,8 @@ class OnlineFetcher(
                 if (old == v) continue
                 changed = true
                 if (old != null) s.versionChanges.incrementAndGet()
+                // T95: before the drop, so areas recorded before T95 keep their tiles (a first version learnt adopts nothing).
+                if (name in PINNED_NAMES && old != null) runCatching { pins.adopt(s.key, name, old) }
                 dropOld(s, name, old)
             }
         }
@@ -390,18 +497,29 @@ class OnlineFetcher(
     /**
      * Deletes [s]'s cached tiles of content [name] at version [old] (null: the keys from before versions were
      * known): `<key>/<route>@<old>/...` for the routes that depend on it, and for `dem` also the tiles derived
-     * on the phone (`<key>/contours-...@<old>/`, `<key>/shade-...@<old>/`).
+     * on the phone (`<key>/contours-...@<old>/`, `<key>/shade-...@<old>/`). T95: except the fetched tiles a pinned
+     * area holds at [old] ([AreaPins.holds]), which lookups find through the pins' versions until it is refreshed.
      */
     private fun dropOld(s: Source, name: String, old: String?) {
         val routes = VERSION_OF.filterValues { it == name }.keys
+        val p = runCatching { pins.pins() }.getOrDefault(AreaPins.NONE)
+        val oldV = old ?: ""
+        var kept = 0L
         cache.clearWhere { k ->
             val parts = k.split('/', limit = 3)
             if (parts.size < 3 || parts[0] != s.key) return@clearWhere false
             val seg = parts[1]
             val route = seg.substringBefore('@')
-            val depends = route in routes || (name == "dem" && DERIVED_FROM_DEM.any { route.startsWith(it) })
-            depends && (if (old == null) '@' !in seg else seg.substringAfter('@', "") == old)
+            val fetched = route in routes
+            val depends = fetched || (name == "dem" && DERIVED_FROM_DEM.any { route.startsWith(it) })
+            if (!depends || seg.substringAfter('@', "") != oldV) return@clearWhere false
+            if (fetched && AreaPins.tileOf(k)?.let { (z, x, y) -> p.holds(s.key, name, oldV, z, x, y) } == true) {
+                kept++
+                return@clearWhere false
+            }
+            true
         }
+        pinnedKept.addAndGet(kept)
     }
 
     private fun loadVersions() {
@@ -517,6 +635,7 @@ class OnlineFetcher(
             "fetchedBytes" to fetchedBytes.get(), "notFound" to notFound.get(), "errors" to errors.get(),
             "negativeCacheHits" to negativeHits.get(), "negativeRetried" to negativeRetried.get(), "backoffSkips" to backoffSkips.get(), "sharedFetches" to sharedFetches.get(),
             "emptyAnswersAsMissing" to emptyAsMissing.get(), "versionChecks" to versionChecks.get(), // T74
+            "pinnedHits" to pinnedHits.get(), "pinnedKept" to pinnedKept.get(), "unheldDropped" to unheldDropped.get(), // T95
             "inFlight" to inFlight.size, "maxInFlight" to maxInFlight,
             "fetchMsAvg" to if (n == 0L) null else fetchMs.get() / n, "fetchMsMax" to maxFetchMs.get(),
             "negativeCache" to mapOf("missing" to sourceList.sumOf { s -> s.missingUntil.count { it.value > now } }, "failed" to sourceList.sumOf { s -> s.failedUntil.count { it.value > now } }),
@@ -544,6 +663,9 @@ class OnlineFetcher(
         /** T74: which content version a route's tiles depend on. */
         val VERSION_OF = mapOf("dem" to "dem", "osm" to "osm", "glyphs" to "assets")
         private val VERSION_NAMES = setOf("dem", "osm", "assets")
+
+        /** T95: the content versions a pinned area records and keeps (the style assets are bundled in the app). */
+        val PINNED_NAMES = listOf("dem", "osm")
 
         /** T74: cache directories made on the phone from a source's DEM (contours, shade): dropped with its old DEM version. */
         val DERIVED_FROM_DEM = listOf("contours-", "shade-")

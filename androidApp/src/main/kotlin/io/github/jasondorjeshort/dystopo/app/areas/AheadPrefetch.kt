@@ -27,6 +27,10 @@ import kotlin.math.floor
  * `cachedAtArrival` says whether all of its tiles were on the device by then (a pack or the cache): the point of
  * the feature, measured.
  *
+ * T95: the segments are fetched at the source's current version (`fresh`), so on a pinned area older than its source
+ * they refresh the tiles ahead (the rest of the area stays at its own version until it is updated); contour and shade
+ * tiles made there from the older DEM then go. Each transient pin records the versions it was fetched at.
+ *
  * Polled every [POLL_MS] on its own thread; nothing is fetched while the fetcher is offline, or with no server and
  * no direct sources. `GET /areas/prefetch` is [json]; `POST /areas/prefetch?on=0|1` turns it off and on.
  */
@@ -57,6 +61,7 @@ object AheadPrefetch {
         @Volatile var arrivedAt = 0L
         @Volatile var cachedAtArrival: Boolean? = null
         @Volatile var missingAtArrival = 0
+        @Volatile var derivedDropped = 0
 
         fun json(): Map<String, Any?> = linkedMapOf(
             "index" to index, "fromM" to fromM.toInt(), "toM" to toM.toInt(), "tiles" to tiles.size,
@@ -64,7 +69,7 @@ object AheadPrefetch {
             "fetchedAt" to fetchedAt.takeIf { it > 0 }, "progressAtFetchM" to progressAtFetchM.toInt(),
             "aheadByM" to (fromM - progressAtFetchM).toInt().coerceAtLeast(0),
             "arrivedAt" to arrivedAt.takeIf { it > 0 }, "secondsBeforeArrival" to if (arrivedAt > 0 && fetchedAt > 0) (arrivedAt - fetchedAt) / 1000.0 else null,
-            "cachedAtArrival" to cachedAtArrival, "missingAtArrival" to missingAtArrival,
+            "cachedAtArrival" to cachedAtArrival, "missingAtArrival" to missingAtArrival, "derivedDropped" to derivedDropped,
         )
     }
 
@@ -163,7 +168,7 @@ object AheadPrefetch {
         }
         val s = Segment(k, from, to, tiles, area)
         segments[k] = s
-        Areas.pinTransient("ahead:$k", AreaPins.cover(area))
+        Areas.pinTransient("ahead:$k", AreaPins.cover(area), fetcher.currentVersions())
         val started = System.currentTimeMillis()
         s.progressAtFetchM = progress
         val packs = runCatching { app.tiles.packs }.getOrNull()
@@ -172,7 +177,7 @@ object AheadPrefetch {
                 val inPack = if (t.route == AreaManifest.ROUTE_DEM) packs?.demFor(t.z, t.x, t.y) != null else packs?.osmFor(t.z, t.x, t.y) != null
                 if (inPack) return@Callable "pack" to 0
                 val transform: (ByteArray) -> ByteArray = if (t.route == AreaManifest.ROUTE_OSM) OnlineFetcher::gunzipIfNeeded else { b -> b }
-                when (val f = fetcher.get(t.route, t.path, transform)) {
+                when (val f = fetcher.get(t.route, t.path, transform, fresh = true)) { // T95: the current version
                     is Fetch.Hit -> (if (f.cached) "cached" else "fetched") to f.bytes.size
                     Fetch.Missing -> "missing" to 0
                     is Fetch.Unavailable -> "failed" to 0
@@ -188,11 +193,22 @@ object AheadPrefetch {
                 "failed" -> s.failed++
             }
         }
+        if (s.fetched > 0 && olderDemPinned(fetcher)) {
+            // T95: the segment refreshed DEM a pin held at an older version; what was made from that here goes.
+            val cover = AreaPins(listOf(AreaPins.cover(area)))
+            s.derivedDropped = fetcher.dropDerived { z, x, y -> z >= MIN_ZOOM && cover.contains(z, x, y) }
+        }
         s.ms = System.currentTimeMillis() - started
         s.fetchedAt = System.currentTimeMillis()
         // A segment that could not be fetched whole is tried again on a later poll.
         if (s.failed > 0) segments.remove(k)
         Log.i(Areas.TAG, "ahead segment $k (${from.toInt()}-${to.toInt()} m, walker at ${progress.toInt()} m): ${tiles.size} tiles, ${s.fetched} fetched, ${s.alreadyCached} cached, ${s.inPacks} in packs, ${s.failed} failed, ${s.ms} ms")
+    }
+
+    /** T95: some pin holds a DEM version that is not its source's current one. */
+    private fun olderDemPinned(fetcher: OnlineFetcher): Boolean {
+        val p = Areas.pins()
+        return fetcher.sourceList.any { src -> p.versions(src.key, "dem").any { it != (src.versions["dem"] ?: "") } }
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(

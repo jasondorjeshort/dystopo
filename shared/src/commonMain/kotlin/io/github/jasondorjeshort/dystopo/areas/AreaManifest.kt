@@ -141,6 +141,10 @@ data class LocalItem(override val kind: String, val from: String?, val available
  *
  * [status]: `ready` (every item can be fetched now), `building` (a pack is being built: [build] is the
  * `/build` job; ask again) or `failed` ([notes] says why).
+ *
+ * T95: [versions] are the source's content versions (`dem`, `osm`, as its `GET /version` names them) that the
+ * tiles were fetched at, written by the phone when a download completes (empty when unknown). A pinned area's
+ * tiles stay keyed by them until the area is refreshed, whatever the source serves meanwhile.
  */
 data class AreaManifest(
     val id: String,
@@ -153,6 +157,7 @@ data class AreaManifest(
     val build: Map<String, Any?>? = null,
     val notes: List<String> = emptyList(),
     val version: Int = VERSION,
+    val versions: Map<String, String> = emptyMap(),
 ) {
     val bytes: Long get() = items.sumOf { it.bytes }
     val bytesExact: Boolean get() = items.all { it.exact }
@@ -165,7 +170,7 @@ data class AreaManifest(
         "area" to area.json(), "bounds" to area.bounds.toList(), "lengthM" to area.lengthM.takeIf { it > 0 },
         "bytes" to bytes, "bytesExact" to bytesExact, "tiles" to tileCount,
         "items" to items.map { it.json() }, "build" to build, "notes" to notes,
-    )
+    ).also { if (versions.isNotEmpty()) it["versions"] = versions.toSortedMap() } // T95
 
     /** The manifest without the tile lists (for listings; [json] has them). */
     fun summary(): Map<String, Any?> = json() + ("items" to items.map { i -> i.json().filterKeys { it != "tiles" } })
@@ -195,6 +200,7 @@ data class AreaManifest(
                 build = m["build"] as? Map<String, Any?>,
                 notes = (m["notes"] as? List<*>).orEmpty().map { it.toString() },
                 version = version,
+                versions = (m["versions"] as? Map<*, *>).orEmpty().mapNotNull { (k, v) -> if (k is String && v is String) k to v else null }.toMap(),
             )
         }
 

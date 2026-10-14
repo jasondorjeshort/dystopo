@@ -79,6 +79,9 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     }
 
     val size: Int @Synchronized get() = index.size
+
+    /** T95: entries [keep] holds (as of the last put, trim or [recountPinned]). */
+    val pinnedSize: Int @Synchronized get() = index.values.count { it.pinned }
     val bytes: Long @Synchronized get() = total
 
     private fun checkKey(key: String) =
@@ -111,10 +114,15 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
 
     fun contains(key: String): Boolean = synchronized(this) { index.containsKey(key) }
 
-    /** Entries and bytes per first key segment (`<prefix>/...`; T74: the first [depth] segments), for reports. */
-    fun byPrefix(depth: Int = 1): Map<String, Pair<Int, Long>> = synchronized(this) {
+    /**
+     * Entries and bytes per first key segment (`<prefix>/...`; T74: the first [depth] segments), for reports. T95:
+     * [pinned] true or false counts only the entries [keep] holds or only the others (as of the last put, trim or
+     * [recountPinned], like [pinnedBytes]).
+     */
+    fun byPrefix(depth: Int = 1, pinned: Boolean? = null): Map<String, Pair<Int, Long>> = synchronized(this) {
         val out = LinkedHashMap<String, Pair<Int, Long>>()
         for ((k, e) in index) {
+            if (pinned != null && e.pinned != pinned) continue
             val p = k.split('/').take(depth).joinToString("/")
             val (n, b) = out[p] ?: (0 to 0L)
             out[p] = (n + 1) to (b + e.bytes)
@@ -158,6 +166,12 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         gone.forEach { it.file.delete() }
         return gone.size
     }
+
+    /**
+     * T95: deletes every entry [keep] does not hold (Settings › Storage, the Online tiles row's Clear: the tiles of pinned
+     * offline areas are a store of their own and stay); returns how many went.
+     */
+    fun clearUnkept(): Int = clearWhere { !keep(it) }
 
     /** T74: deletes every entry whose key [matches] (a source's tiles of an old content version); returns how many went. */
     fun clearWhere(matches: (String) -> Boolean): Int {
