@@ -17,8 +17,7 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 - Owner: HOLD lifted to 100% for this session (override file until Oct 15 12:30 UTC; delete it when
   the session ends). ADR 0031: interface changes from the ideas folder are built without sign-off.
   Never `cd` into a subfolder in this session's shell (its hooks predate T99).
-- Harmless leftovers: `task/T87-ci` (in `main`), the empty locked folder `dystopo-wt\T85`, an orphan
-  `tail -F` (PID 69696).
+- Harmless leftovers: `task/T87-ci` (in `main`), the locked empty `dystopo-wt\T85`, a stray `tail -F`.
 
 ## Next
 
