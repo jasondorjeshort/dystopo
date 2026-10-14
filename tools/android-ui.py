@@ -22,13 +22,15 @@ Parts:
                pack (no first-run card, contours drawn) and the setting survived. The new APK must carry a higher
                versionCode: the sweep builds it with -PdystopoVersionCode=<commit count> as release.yml does.
   update       (T83) the in-app update by taps: --prev-apk (the published release) with the pack, a track and metric
-               units; then --apk (this build) over it, pointed at a mock releases API (update-api.txt in the app's
-               external files dir; the mock on 127.0.0.1:--mock-port is 10.0.2.2 to the emulator). A lower release
-               stays quiet (the start-up check asks the mock, no offer, Settings says "Up to date"); a wrong
-               SHA256SUMS.txt and a debug-signed APK are refused with the reason; a good one (--new-apk, a higher
-               versionCode, the release key) is offered on the map ("Update to <version>"), Install goes through the
-               system installer (allowing installs from Dystopo the first time), and the new build runs with the
-               track, the units and the pack; finally Check for updates against the real GitHub API (read only) is quiet.
+               units, pointed at a mock releases API from its first start (update-api.txt in the app's external files
+               dir; the mock on 127.0.0.1:--mock-port is 10.0.2.2 to the emulator; T99), whose own start-up check
+               finds an older release; then --apk (this build) over it. A lower release stays quiet (this build's
+               start-up check asks the mock although the previous build checked minutes before, no offer, Settings
+               says "Up to date"); a wrong SHA256SUMS.txt and an APK signed with a throwaway key are refused with the
+               reason; a good one (--new-apk, a higher versionCode, the same key) is offered on the map ("Update to
+               <version>"), Install goes through the system installer (allowing installs from Dystopo the first
+               time), and the new build runs with the track, the units and the pack; finally Check for updates against
+               the real GitHub API (read only) is quiet. The app's DystopoUpdate log lines go to updater-log.txt.
   permissions  fresh installs with no permission granted in advance: location allowed (the dialog's "While using
                the app") and denied ("Don't allow": the app keeps working, "Download the map around me" says why it
                cannot), then notifications at the first recording (API 33+): allowed (the recording notification is
@@ -579,14 +581,17 @@ CARD = r"^[\d.,]+ (mi|km) · \+"
 FIRST_RUN = "No map on this phone yet"
 
 
-def release_with_pack(dev, args, apk=None, grant=True, fresh=True):
+def release_with_pack(dev, args, apk=None, grant=True, fresh=True, before_open=None):
     """Installs the release APK (fresh, permissions granted unless grant=False), starts it once so its external
-    files dir exists, pushes the Rainier pack, glyphs and sprites, and opens the map at Paradise."""
+    files dir exists, pushes the Rainier pack, glyphs and sprites, and opens the map at Paradise. [before_open]
+    runs just before that cold start (T99: the update part points the build at its mock feed there)."""
     install(dev, apk or args.apk or default_apk(dev), grant=grant, fresh=fresh)
     dev.shell("am", "start", "-W", "-n", ACTIVITY, timeout=60)
     time.sleep(3)
     dev.shell("am", "force-stop", PACKAGE)
     push_pack(dev, args.dem, args.osm)
+    if before_open:
+        before_open()
     dev.adb("logcat", "-c", check_ok=False)
     dev.adb("logcat", "-c", "-b", "crash", check_ok=False)
     dev.adb("emu", "geo", "fix", str(PARADISE[1]), str(PARADISE[0]), check_ok=False)  # the GPS has a fix before the app starts
@@ -1576,18 +1581,62 @@ def build_tools():
     return os.path.join(root, versions[-1])
 
 
-def debug_signed_copy(apk, out_dir):
-    """The same APK re-signed with the debug key (~/.android/debug.keystore): a wrong certificate for the release app."""
-    ks = os.path.join(os.path.expanduser("~"), ".android", "debug.keystore")
-    if not os.path.isfile(ks):
-        raise RuntimeError(f"no debug keystore at {ks} (build any debug APK once)")
-    dst = os.path.join(out_dir, "debug-signed.apk")
+def other_key_copy(apk, out_dir):
+    """The same APK re-signed with a throwaway key made here (keytool, a new one each run): a wrong certificate for the
+    app whichever key the app carries (T99: the release key in the sweep, the debug key in a run of builds made
+    without the release key; the debug key used before could not be refused by a debug-signed app)."""
+    ks = os.path.join(out_dir, "other-key.p12")
+    if os.path.exists(ks):
+        os.remove(ks)
+    jh = os.environ.get("JAVA_HOME")
+    keytool = os.path.join(jh, "bin", "keytool.exe" if os.name == "nt" else "keytool") if jh else ""
+    p = subprocess.run([keytool if os.path.isfile(keytool) else "keytool", "-genkeypair", "-keystore", ks, "-storetype", "PKCS12",
+                        "-storepass", "throwaway", "-keypass", "throwaway", "-alias", "other", "-keyalg", "RSA", "-keysize", "2048",
+                        "-validity", "30", "-dname", "CN=Dystopo update test (not the app key)"], capture_output=True, text=True, timeout=120)
+    if p.returncode != 0:
+        raise RuntimeError(f"keytool: {(p.stderr or p.stdout).strip()[-300:]}")
+    dst = os.path.join(out_dir, "other-key-signed.apk")
     signer = os.path.join(build_tools(), "apksigner.bat" if os.name == "nt" else "apksigner")
-    p = subprocess.run([signer, "sign", "--ks", ks, "--ks-pass", "pass:android", "--ks-key-alias", "androiddebugkey",
-                        "--key-pass", "pass:android", "--out", dst, apk], capture_output=True, text=True, timeout=300)
+    p = subprocess.run([signer, "sign", "--ks", ks, "--ks-pass", "pass:throwaway", "--ks-key-alias", "other",
+                        "--key-pass", "pass:throwaway", "--out", dst, apk], capture_output=True, text=True, timeout=300)
     if p.returncode != 0:
         raise RuntimeError(f"apksigner: {(p.stderr or p.stdout).strip()[-300:]}")
     return dst
+
+
+class UpdaterLog:
+    """T99: the app's DystopoUpdate log lines while the part runs (`adb logcat -s DystopoUpdate`, started from the
+    device's clock now, so earlier parts' lines are not included and `logcat -c` does not cut it), written to
+    updater-log.txt under --out: which build checked, when, against which feed, and with what result."""
+
+    def __init__(self, dev):
+        self.path = os.path.join(dev.out, "updater-log.txt")
+        # The format quoted for the device's shell (adb joins the arguments; unquoted, `date` gets two and fails).
+        now = dev.shell("date", "'+%m-%d %H:%M:%S.000'", check_ok=False).strip()
+        since = now if re.match(r"^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$", now) else None
+        cmd = [dev.exe, "-s", dev.serial, "logcat", "-v", "time"] + (["-T", since] if since else []) + ["-s", "DystopoUpdate:V"]
+        self.file = open(self.path, "w", encoding="utf-8", errors="replace")
+        self.proc = subprocess.Popen(cmd, stdout=self.file, stderr=subprocess.STDOUT)
+
+    def lines(self):
+        try:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
+                return [l.rstrip() for l in f if "DystopoUpdate" in l]
+        except OSError:
+            return []
+
+    def checks(self):
+        """The "update checking" lines so far (one per check that started)."""
+        return sum(1 for l in self.lines() if re.search(r"update checking", l))
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()  # our own child, by its handle
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.file.close()
 
 
 class MockReleases:
@@ -1717,6 +1766,7 @@ def system_install(dev, want_code, timeout=240):
     """Answers the system installer like a user: allow installs from this app the first time (Settings, the switch,
     back), then Update / Install; returns the taps once the package has want_code."""
     taps = []
+    toggled = 0
     deadline = time.time() + timeout
     while time.time() < deadline:
         code, _ = version_of(dev)
@@ -1729,10 +1779,18 @@ def system_install(dev, want_code, timeout=240):
             # The Settings page for this app's "install unknown apps". Switch it on once (never off again), then go back
             # only if the page is still up: Android may return to the installer by itself, and Back there cancels it.
             if not installs_allowed(dev):
+                if toggled:
+                    # T99: one tap only. A tap that did not take (Settings refused the change: logcat AppOps "Cannot
+                    # setMode") is not repeated, since a repeat that does take could be the one switching it off again.
+                    raise RuntimeError("Allow from this source did not take (logcat: AppOps)")
                 toggle = next((n for n in nodes if n["cls"].endswith("Switch") and n["bounds"]), None)
                 dev.tap(toggle or switch)
+                toggled += 1
                 taps.append("Allow from this source")
-                time.sleep(2.5)
+                for _ in range(4):
+                    time.sleep(1.5)
+                    if installs_allowed(dev):
+                        break
             if installs_allowed(dev) and dev.find(r"^Allow from this source$"):
                 dev.shell("input", "keyevent", "KEYCODE_BACK")
                 taps.append("back")
@@ -1769,12 +1827,25 @@ def part_update(args):
     prev_code, prev_name = apk_badging(args.prev_apk)
     if not (new_code and cur_code and new_code > cur_code):
         return fail(f"--new-apk must have a higher versionCode than --apk ({new_code} vs {cur_code})")
-    bad_apk = debug_signed_copy(args.new_apk, dev.out)
+    bad_apk = other_key_copy(args.new_apk, dev.out)
     mock = MockReleases(args.mock_port)
+    log = UpdaterLog(dev)
     st = {}
 
+    def point_at_mock():
+        # update-api.txt in the app's external files dir: kept by `install -r`, removed by an uninstall.
+        local = os.path.join(dev.out, "update-api.txt")
+        with open(local, "w", encoding="ascii", newline="\n") as f:
+            f.write(mock.api + "\n")
+        dev.adb("push", local, UPDATE_API_FILE)
+        dev.shell("chmod", "a+r", UPDATE_API_FILE, check_ok=False)
+
     def previous():
-        release_with_pack(dev, args, apk=args.prev_apk)
+        # T99: the previous release is pointed at the mock too (before its first start), with an older release
+        # announced, so its own start-up check is quiet and never depends on what GitHub publishes; it still records
+        # that check in its preferences, which the current build must not inherit (lower-quiet).
+        st["lowerPrev"] = mock.announce("v0.1.2-alpha", args.prev_apk, code=prev_code)
+        release_with_pack(dev, args, apk=args.prev_apk, before_open=point_at_mock)
         st["prev"] = version_of(dev)
         r = map_settled(dev, "prev-map")
         return {"ok": r["ok"], "version": st["prev"], "png": r.get("png"), **({"error": r.get("error")} if not r["ok"] else {})}
@@ -1785,16 +1856,20 @@ def part_update(args):
         tracks = track_rows(dev)
         close_tracks(dev)
         st["tracks"] = tracks
-        return {"ok": bool(tracks), "tracks": tracks, **({} if tracks else {"error": "no track recorded"})}
+        # The previous build's start-up check (15 s after its start) must have run before the current build goes on:
+        # that is the user's path, and what made the current build's check "not due" before T99.
+        t0 = time.time()
+        while time.time() - t0 < 45 and not mock.asked():
+            time.sleep(2)
+        st["prevAsked"] = mock.asked()
+        return {"ok": bool(tracks), "tracks": tracks, "previousCheckAsked": st["prevAsked"], "previousCheckLines": log.checks(),
+                **({} if tracks else {"error": "no track recorded"})}
 
     def current():
         # The mock is quiet first (an older release), so the build's own first check (15 s after start) finds nothing.
         st["lower"] = mock.announce("v0.1.2-alpha", args.prev_apk, code=prev_code)
-        local = os.path.join(dev.out, "update-api.txt")
-        with open(local, "w", encoding="ascii", newline="\n") as f:
-            f.write(mock.api + "\n")
-        dev.adb("push", local, UPDATE_API_FILE)
-        dev.shell("chmod", "a+r", UPDATE_API_FILE, check_ok=False)
+        point_at_mock()
+        st["checksBefore"] = log.checks()
         out = dev.adb("install", "-r", "-g", apk, timeout=300, check_ok=False)
         if "Success" not in out:
             return fail(f"install -r: {out.strip()[-200:]}")
@@ -1807,14 +1882,17 @@ def part_update(args):
         while time.time() - t0 < 60 and not mock.asked():
             time.sleep(2)
         auto = mock.asked()
+        auto_lines = log.checks() - st.get("checksBefore", 0)
         time.sleep(3)
         banner, _ = dev.wait_for(r"^Update to ", 3)
         png = dev.screencap("lower-map")[0]
         line, row_png = check_for_updates(dev)
         close_sheet(dev)
         ok = auto > 0 and banner is None and line.startswith("Up to date") and not mock.downloaded_apk()
-        return {"ok": ok, "announced": st["lower"], "dailyCheckAsked": auto, "banner": bool(banner), "line": line, "png": png, "rowPng": row_png,
-                **({} if ok else {"error": "the lower version was not quiet" if banner or not line.startswith("Up to date") else "the start-up check never asked the mock API"})}
+        return {"ok": ok, "announced": st["lower"], "dailyCheckAsked": auto, "startupCheckLines": auto_lines, "banner": bool(banner),
+                "line": line, "png": png, "rowPng": row_png,
+                **({} if ok else {"error": "the lower version was not quiet" if banner or not line.startswith("Up to date") else
+                                  f"the start-up check never asked the mock API (previous build asked {st.get('prevAsked')}; updater-log.txt)"})}
 
     def wrong_checksum():
         # No version.json: the tag decides (v0.1.9 > this build's 0.1.x); SHA256SUMS.txt lies about the APK.
@@ -1854,6 +1932,10 @@ def part_update(args):
                 "notification": notified, **({} if ok else {"error": f"no update offer on the map ({line})"})}
 
     def install_step():
+        # T99: a Settings process left from an earlier install of the app on this emulator keeps the app's old uid, and
+        # its "Allow from this source" switch then fails ("Cannot setMode": the package does not belong to that uid);
+        # restarting Settings makes it read the installed package again.
+        dev.shell("am", "force-stop", "com.android.settings", check_ok=False)
         dev.tap_text("^Install$")
         taps = system_install(dev, new_code)
         st["new"] = version_of(dev)
@@ -1894,8 +1976,10 @@ def part_update(args):
     finally:
         mock.close()
         dev.shell("rm", "-f", UPDATE_API_FILE, check_ok=False)
+        log.close()
     return run.report(previous=os.path.basename(args.prev_apk), apk=os.path.basename(apk), newApk=os.path.basename(args.new_apk),
-                      versions={"previous": [prev_code, prev_name], "current": [cur_code, cur_name], "new": [new_code, new_name]})
+                      versions={"previous": [prev_code, prev_name], "current": [cur_code, cur_name], "new": [new_code, new_name]},
+                      updaterLog=log.path, updaterLines=log.lines()[-60:])
 
 
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,

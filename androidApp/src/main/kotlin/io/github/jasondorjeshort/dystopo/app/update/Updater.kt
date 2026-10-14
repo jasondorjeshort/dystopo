@@ -21,7 +21,8 @@ import java.util.concurrent.Future
  * the best a sideloaded app can do is find the new build, fetch and check it, and hand it to the system
  * installer with one tap:
  *
- * 1. Once a day (release builds; the first check about 15 s after start) and on "Check for updates" in Settings,
+ * 1. Once a day (release builds; the first check about 15 s after start; a newly installed version checks at its
+ *    first start whatever the build before it recorded, [UpdateFeed.CheckRecord]) and on "Check for updates" in Settings,
  *    read the public releases API ([UpdateFeed.DEFAULT_API], no token, pre-releases included during alpha) on
  *    any network (owner's rule, 2026-10-11: nothing is gated on Wi-Fi).
  * 2. Pick the newest release with a universal APK and decide whether it is newer ([UpdateFeed.verdict]: its
@@ -45,8 +46,6 @@ object Updater {
     const val TAG = "DystopoUpdate"
     const val API_FILE = "update-api.txt"
     private const val PREFS = "dystopo-updates"
-    private const val DAY_MS = 24L * 3600 * 1000
-    private const val RETRY_MS = 3600L * 1000
     private const val FIRST_CHECK_DELAY_MS = 15_000L
     private const val POLL_MS = 30L * 60 * 1000
     private const val MAX_APK_BYTES = 300L shl 20
@@ -109,11 +108,22 @@ object Updater {
 
     fun initialized() = ::app.isInitialized
 
-    private fun due(): Boolean {
+    private fun due(): Boolean = checkRecord().due(System.currentTimeMillis(), ownCode)
+
+    /** `lastCheckAt`, `lastAttemptAt` and the versionCode of the build that wrote them (`checkedByCode`, since T99). */
+    private fun checkRecord(): UpdateFeed.CheckRecord {
         val p = prefs()
-        val now = System.currentTimeMillis()
-        return now - p.getLong("lastCheckAt", 0) >= DAY_MS && now - p.getLong("lastAttemptAt", 0) >= RETRY_MS
+        return UpdateFeed.CheckRecord(p.getLong("lastCheckAt", 0), p.getLong("lastAttemptAt", 0),
+            if (p.contains(CHECKED_BY)) p.getLong(CHECKED_BY, 0) else null)
     }
+
+    private fun saveCheckRecord(r: UpdateFeed.CheckRecord) {
+        prefs().edit().putLong("lastCheckAt", r.lastCheckAt).putLong("lastAttemptAt", r.lastAttemptAt).putLong(CHECKED_BY, r.byCode ?: ownCode).apply()
+    }
+
+    private fun attempted() = saveCheckRecord(checkRecord().attempted(System.currentTimeMillis(), ownCode))
+
+    private const val CHECKED_BY = "checkedByCode"
 
     // --- the running build ---------------------------------------------------------------------------------------
 
@@ -161,7 +171,7 @@ object Updater {
             doCheck(manual)
         } catch (e: Exception) {
             Log.w(TAG, "update check failed", e)
-            prefs().edit().putLong("lastAttemptAt", System.currentTimeMillis()).apply()
+            attempted()
             set(State(Phase.FAILED, state.tag, state.versionName, state.versionCode, "Update check failed: ${reason(e)}", manual = manual))
         }
         state
@@ -180,7 +190,7 @@ object Updater {
 
     private fun doCheck(manual: Boolean) {
         val p = prefs()
-        p.edit().putLong("lastAttemptAt", System.currentTimeMillis()).apply()
+        attempted()
         set(State(Phase.CHECKING, manual = manual, message = "Checking for updates"))
         val (api, _) = api()
         val releases = UpdateFeed.parseReleases(fetchText(api, json = true))
@@ -243,7 +253,7 @@ object Updater {
     }
 
     private fun done(s: State) {
-        prefs().edit().putLong("lastCheckAt", System.currentTimeMillis()).apply()
+        saveCheckRecord(checkRecord().checked(System.currentTimeMillis(), ownCode))
         set(s)
     }
 
@@ -331,11 +341,15 @@ object Updater {
         }
     }
 
-    /** From [UpdateInstaller]'s result receiver. */
+    /**
+     * From [UpdateInstaller]'s result receiver. The success broadcast usually reaches the new build's fresh process,
+     * whose state knows no version yet (T99: the update part's updater-log.txt showed "Installed null"); that build is
+     * the installed one.
+     */
     internal fun installResult(status: Int, message: String?) {
         val s = state
         when (status) {
-            android.content.pm.PackageInstaller.STATUS_SUCCESS -> set(s.copy(phase = Phase.INSTALLED, message = "Installed ${s.versionName}"))
+            android.content.pm.PackageInstaller.STATUS_SUCCESS -> set(s.copy(phase = Phase.INSTALLED, message = "Installed ${s.versionName ?: ownName}"))
             android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED -> decline("the install was cancelled")
             else -> set(s.copy(phase = Phase.READY, message = "Install failed: ${message ?: "status $status"}"))
         }
@@ -358,7 +372,7 @@ object Updater {
             "app" to mapOf("versionName" to ownName, "versionCode" to ownCode, "signers" to runCatching { Signing.own(app) }.getOrDefault(emptyList()), "sdk" to Build.VERSION.SDK_INT),
             "api" to api, "apiFrom" to origin,
             "auto" to !BuildConfig.DEBUG_ENDPOINTS,
-            "lastCheckAt" to p.getLong("lastCheckAt", 0), "lastAttemptAt" to p.getLong("lastAttemptAt", 0),
+            "lastCheckAt" to p.getLong("lastCheckAt", 0), "lastAttemptAt" to p.getLong("lastAttemptAt", 0), "checkedByCode" to checkRecord().byCode,
             "declinedTag" to p.getString("declinedTag", null), "refusedTag" to p.getString("refusedTag", null),
             "readyTag" to p.getString("readyTag", null), "readyFile" to readyFile?.path, "checks" to checks.get(),
             "canRequestInstalls" to (Build.VERSION.SDK_INT < 26 || app.packageManager.canRequestPackageInstalls()),

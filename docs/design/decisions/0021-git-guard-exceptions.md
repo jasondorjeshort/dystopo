@@ -62,6 +62,21 @@ exception id in a comment. Run against Hatchery's own unmodified harness (copy t
 | P02 handoff cap message | "... docs/backlog.md ..." | "... a finding or docs/TASKS.md." | No backlog file here (ADR 0020) |
 | U01 to U07 | the base gate (50%, 80%, override file) | as the base | Since T94 the gate is the base's under this project's policy (Usage gate, below); this harness tests it as U01 to U15, S01 to S05 |
 
+### How the hooks are run
+
+Since T99 (2026-10-14) every hook in `.claude/settings.json` uses Claude Code's exec form,
+`"command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/<name>.js"]`: no shell, and
+Claude Code substitutes the placeholder with the directory the session started in (the main
+checkout, or a worktree when the session starts there). The earlier `node .claude/hooks/<name>.js`
+was resolved against the shell's current directory, which follows `cd`: after a `cd` into a
+subfolder every hook failed with MODULE_NOT_FOUND, and git-guard's `onFailure: "block"` then
+blocked every shell call of the session (2026-10-14). `test-hooks.js` runs each command from
+`settings.json` as Claude Code does, from a subfolder (H01 to H03, and HS01 to HS03 under a path
+with a space), with the old form as the control (H00); 136 cases on 2026-10-14, all pass. The
+status line command keeps its relative form (its documentation names neither the placeholder nor
+exec form); a status line that fails only lets `usage-state.json` go stale, which the gate allows
+with a note.
+
 ### Usage gate
 
 Since T94 (2026-10-13) `.claude/hooks/usage-gate.js`, `policy.js` and `.claude/statusline.js` are

@@ -34,6 +34,29 @@ object UpdateFeed {
 
     const val SUMS = "SHA256SUMS.txt"
     const val VERSION_JSON = "version.json"
+    const val DAY_MS = 24L * 3600 * 1000
+    const val RETRY_MS = 3600L * 1000
+
+    /**
+     * T99: when the automatic check last finished ([lastCheckAt]) and last started ([lastAttemptAt]), and the
+     * versionCode of the build that recorded them ([byCode]; null for a record from before T99, v0.1.5-alpha's
+     * among them). A check is due once a day, a failed one again after an hour, but only this build's times count:
+     * a build installed over another one (the in-app update, a sideload, `adb install -r`) keeps the old build's
+     * preferences, and it checks once at its own first start instead of inheriting the old build's day.
+     */
+    data class CheckRecord(val lastCheckAt: Long = 0, val lastAttemptAt: Long = 0, val byCode: Long? = null) {
+        fun due(now: Long, ownCode: Long): Boolean =
+            byCode != ownCode || (now - lastCheckAt >= DAY_MS && now - lastAttemptAt >= RETRY_MS)
+
+        /** A check started at [now] by build [ownCode]; another build's times are dropped. */
+        fun attempted(now: Long, ownCode: Long) = own(ownCode).copy(lastAttemptAt = now)
+
+        /** A check finished at [now] by build [ownCode] (any answer: up to date, an offer, a refusal). */
+        fun checked(now: Long, ownCode: Long) = own(ownCode).copy(lastCheckAt = now)
+
+        private fun own(ownCode: Long) = if (byCode == ownCode) this else CheckRecord(byCode = ownCode)
+    }
+
     private val UNIVERSAL = Regex("^dystopo-.+-universal\\.apk$")
     private val HEX64 = Regex("^[0-9a-f]{64}$")
 

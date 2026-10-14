@@ -47,8 +47,11 @@ refuses 8765, 8686, 8687 and console 5554.
 ## Output
 
 `out\sweep-<date>\summary.json` (per part ok, seconds and the numbers the log entry quotes; paste it
-into the log) and `sheet.png` (every contact sheet and screenshot on one page: view it), plus each
-part's log; exit 1 on any failure. `bash tools/sweep.sh` runs the same parts without the device, and
+into the log) and `sheet.png` (every contact sheet and screenshot on one page, the `update` part's
+included since T99: view it), plus each part's log; exit 1 on any failure. `steps.tsv` gets one line
+per part as it ends; since T99 it is written with read sharing and retried, so watching it
+(`tail -F`, `Get-Content -Wait`) no longer stops the sweep. The `update` part also keeps the app's
+update log, `ui\update\updater-log.txt`. `bash tools/sweep.sh` runs the same parts without the device, and
 `.github/workflows/nightly.yml` runs it every night on main (artifact `sweep-nightly`).
 
 ## After it

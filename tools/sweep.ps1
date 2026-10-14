@@ -33,10 +33,12 @@
 #   background   recording through forced doze with the app in the background
 #   network      the emulator throttled, the server killed mid-download and (through a stall proxy) mid-sync,
 #                then retries once it is back
-#   update       T83, the in-app update: the previous published release with data, then this build over it pointed at
-#                a mock releases API (127.0.0.1:-BasePort+7): a lower release quiet, a wrong SHA256SUMS.txt and a
-#                debug-signed APK refused, a second build of this commit (versionCode +1, built here) offered on the
-#                map and installed through the system installer by taps, data intact; the real GitHub API read only
+#   update       T83, the in-app update: the previous published release with data, then this build over it, both pointed
+#                at a mock releases API (127.0.0.1:-BasePort+7): a lower release quiet (this build's start-up check asks
+#                the mock although the previous release checked minutes before, T99), a wrong SHA256SUMS.txt and an APK
+#                signed with a throwaway key refused, a second build of this commit (versionCode +1, built here) offered
+#                on the map and installed through the system installer by taps, data intact; the real GitHub API read
+#                only. Screenshots in ui\update\ (on the sheet), the app's DystopoUpdate log in ui\update\updater-log.txt.
 #   matrix       (-Matrix only) font scale 2.0 and dark mode on the sweep's emulator, then fresh emulators per
 #                -MatrixDevices entry (default: the minimum API 26 phone, an API 35 tablet in German), each
 #                checked with android-ui.py matrix and deleted afterwards
@@ -129,7 +131,27 @@ if (-not $Out) { $Out = Join-Path 'out' "sweep-$Date" }
 $Out = [IO.Path]::GetFullPath((Join-Path $repo $Out))
 New-Item -ItemType Directory -Force $Out | Out-Null
 $steps = Join-Path $Out 'steps.tsv'
-Set-Content -Encoding utf8 $steps ''
+# T99: steps.tsv is written through Write-Steps (below), never Add-Content: Add-Content opens the file without read
+# sharing, so a reader holding it open (tail -F, an editor) made every append throw and the whole sweep die
+# (2026-10-14). Lines are also kept in memory; a line that could not be written is written with the rest at the end.
+$script:stepLines = New-Object System.Collections.Generic.List[string]
+$script:stepsBehind = $false
+function Write-Steps([string[]]$lines, [switch]$Rewrite) {
+    $mode = if ($Rewrite) { [IO.FileMode]::Create } else { [IO.FileMode]::Append }
+    for ($i = 0; $i -lt 20; $i++) {
+        try {
+            $fs = [IO.FileStream]::new($steps, $mode, [IO.FileAccess]::Write, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            try {
+                $bytes = [Text.Encoding]::UTF8.GetBytes((@($lines | ForEach-Object { "$_`r`n" }) -join ''))
+                $fs.Write($bytes, 0, $bytes.Length)
+            } finally { $fs.Dispose() }
+            return $true
+        } catch { Start-Sleep -Milliseconds 250 }
+    }
+    Write-Host "[sweep] could not write $steps after 20 tries; its lines are kept and written at the end"
+    $false
+}
+$null = Write-Steps @() -Rewrite
 $serial = "emulator-$EmuPort"
 
 # --- ports: never the coordinator's, never one already in use ----------------------------------------------
@@ -159,7 +181,9 @@ function Want([string]$part) {
 
 function Step([string]$name, $code, [double]$seconds, [string]$note = '') {
     $line = "$name`t$code`t$([math]::Round($seconds, 1))`t$($note -replace '[\t\r\n]', ' ')"
-    Add-Content -Encoding utf8 $steps $line
+    $script:stepLines.Add($line)
+    if ($script:stepsBehind) { $script:stepsBehind = -not (Write-Steps $script:stepLines.ToArray() -Rewrite) }
+    else { $script:stepsBehind = -not (Write-Steps @($line)) }
     Write-Host ("[sweep] {0,-12} {1,-5} {2,7:N1} s {3}" -f $name, $(if ("$code" -eq '0') { 'ok' } elseif ("$code" -eq 'skip') { 'skip' } else { "exit $code" }), $seconds, $note)
 }
 
@@ -581,5 +605,9 @@ try {
 }
 
 # --- summary ---------------------------------------------------------------------------------------------
+if ($script:stepsBehind -and -not (Write-Steps $script:stepLines.ToArray() -Rewrite)) {
+    Write-Host "[sweep] steps.tsv is still held by another process; the summary will miss steps:"
+    $script:stepLines | ForEach-Object { Write-Host "[sweep]   $_" }
+}
 & $py -I (Join-Path $repo 'tools\sweep-summary.py') $Out --channel $Channel
 exit $LASTEXITCODE

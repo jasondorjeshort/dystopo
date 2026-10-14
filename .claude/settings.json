@@ -43,7 +43,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/usage-gate.js"
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/usage-gate.js"]
           }
         ]
       },
@@ -52,7 +53,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/git-guard.js",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/git-guard.js"],
             "onFailure": "block"
           }
         ]
@@ -64,7 +66,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/post-edit.js"
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/post-edit.js"]
           }
         ]
       }

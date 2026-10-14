@@ -1,7 +1,8 @@
 ---
 date: 2026-10-14
-status: open
+status: resolved
 area: tooling / sweep, in-app update
+promoted_to: docs/reference/release-realism.md
 ---
 
 # The sweep's update part stops at `lower-quiet`: the previous build's own check makes the new build's check not due
@@ -31,9 +32,22 @@ preferences, so the current build's first check was not due and the mock was nev
 sweeps upgraded from a previous release without the updater, which wrote nothing. Not confirmed on
 the device: the sweep deletes its AVD and the part keeps no logcat.
 
+Confirmed in T99 (2026-10-14) on an API 35 emulator with release builds signed by the debug key (the
+release key is not in task worktrees): a build of v0.1.5-alpha's updater code (versionCode 269) and a
+pre-T99 build of `main` (330), run through `main`'s `android-ui.py update`, stopped at `lower-quiet`
+exactly as the sweep did (`dailyCheckAsked` 0). The `DystopoUpdate` log shows the previous build's
+start-up check against the real API ("up_to_date v0.1.5-alpha", 15 s after its start) and no check by
+the current build until the step's manual Check for updates 60 s after its start.
+
+Fixed in T99: `UpdateFeed.CheckRecord` keys the check times by the versionCode that recorded them
+(`checkedByCode`), so a build installed over another one checks at its first start (`UpdateFeedTest`);
+the part points the previous build at the mock too, from its first start, and keeps the app's update
+log (`updater-log.txt`); a throwaway key replaces the debug key for the wrong-certificate step; the
+part's screenshots are on the sheet. With the T99 harness the pre-T99 current build still stops at
+`lower-quiet`, so the harness alone does not fix it; with the T99 build all ten steps and `alive`
+pass (269 -> 330 -> 331, debug-signed).
+
 ## Next
 
-T99 (wave 14): confirm with logcat (`Updater` lines or `GET /update` in a debug build), then make the
-part independent of the previous build's preferences, for example by pointing the previous build at
-the mock too and treating a check recorded by another version code as not done (`due()` keyed by
-version code), so every step of the part runs; put the part's screenshots on the sheet.
+The part from the main checkout with the release key and the published v0.1.5-alpha APK: the next
+post-wave sweep.

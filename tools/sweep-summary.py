@@ -11,7 +11,7 @@ and each part's own outputs under fixed names (the table PARTS below). The summa
 `seconds`, the exit code and the few numbers the dated sweep log entries quote (tour passed/failed, demo
 views ok, live DEM sources, sync convergence, device views, probe count, release timings, the first-run steps, and T81's
 release realism parts: routing and search tours, APK string scan, features, upgrade, permissions, background, network,
-the device matrix with any known defects); `ok` overall is
+update, the device matrix with any known defects); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -28,6 +28,7 @@ import glob
 import html
 import json
 import os
+import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -221,6 +222,11 @@ def ui_part(d, part):
         out["syncMessage"] = (steps.get("sync-killed") or {}).get("message")
     elif part == "permissions":
         out["api"] = r.get("api")
+    elif part == "update":  # T99
+        out["versions"] = r.get("versions")
+        out["previousCheckAsked"] = (steps.get("create-data") or {}).get("previousCheckAsked")
+        out["startupCheckAsked"] = (steps.get("lower-quiet") or {}).get("dailyCheckAsked")
+        out["survived"] = (steps.get("survived") or {}).get("checks")
     return out
 
 
@@ -270,6 +276,7 @@ PARTS = {
     "permissions": ui_part,
     "background": ui_part,
     "network": ui_part,
+    "update": ui_part,
     "matrix": matrix,
     "tour": tour,
     "demo-static": demo,
@@ -310,7 +317,8 @@ def sheet_images(d):
     out = []
 
     def add(section, pattern, labels=None, label=None):
-        for p in sorted(glob.glob(os.path.join(d, pattern)), key=lambda s: (len(s), s)):
+        # Natural order (view-2 before view-10, 02-x before 08-y; T99: was by length first, which put 08-alive first).
+        for p in sorted(glob.glob(os.path.join(d, pattern)), key=lambda s: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]):
             name = os.path.basename(p)
             out.append((section, label or (labels or {}).get(name) or os.path.splitext(name)[0], os.path.relpath(p, d)))
 
@@ -319,7 +327,8 @@ def sheet_images(d):
     add("Release smoke tour", os.path.join("release", "*.png"))
     add("First run (release, by taps)", os.path.join("first-run", "*.png"))
     for part, title in (("features", "Release features (by taps)"), ("upgrade", "Upgrade in place"), ("permissions", "Permissions"),
-                        ("background", "Background recording under doze"), ("network", "Network: throttled, server killed")):
+                        ("background", "Background recording under doze"), ("network", "Network: throttled, server killed"),
+                        ("update", "In-app update (mock releases API)")):
         add(title, os.path.join("ui", part, "*.png"))
     add("Device matrix", os.path.join("ui", "matrix", "*", "*.png"))
     for part, title in (("live", "Live views (serve --live)"), ("demo-static", "Demo tour, static page"),

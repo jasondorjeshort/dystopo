@@ -149,4 +149,30 @@ class UpdateFeedTest {
         assertFalse(UpdateFeed.verdict(v013, null, ownCode = 240, ownName = "0.1.4-alpha").newer)
         assertEquals("tag", UpdateFeed.verdict(v013, null, 1, "0.1.0-dev").by)
     }
+
+    @Test
+    fun aNewlyInstalledBuildChecksWhateverTheBuildBeforeItRecorded() {
+        // T99: the sweep's update part installs v0.1.5-alpha (code 269), which checks 15 s after start and records
+        // that, then this build over it with `install -r`; the preferences stay, the new build must still check.
+        val hour = UpdateFeed.RETRY_MS
+        val t0 = 1_760_400_000_000L
+        val prev = UpdateFeed.CheckRecord().attempted(t0, 269).checked(t0 + 2_000, 269)
+        assertFalse(prev.due(t0 + hour, ownCode = 269))
+        assertTrue(prev.due(t0 + 2_000 + UpdateFeed.DAY_MS, ownCode = 269))
+        // A record from before T99 carries no code (the published v0.1.5-alpha writes none): another build's.
+        val legacy = UpdateFeed.CheckRecord(lastCheckAt = t0, lastAttemptAt = t0, byCode = null)
+        assertTrue(legacy.due(t0 + 60_000, ownCode = 269))
+        // The build installed over it checks at once, then keeps its own day.
+        assertTrue(prev.due(t0 + 60_000, ownCode = 330))
+        val mine = prev.attempted(t0 + 60_000, 330)
+        assertEquals(UpdateFeed.CheckRecord(lastCheckAt = 0, lastAttemptAt = t0 + 60_000, byCode = 330), mine)
+        // Its first check failed: retried after an hour, not after the old build's day.
+        assertFalse(mine.due(t0 + 60_000 + hour - 1, ownCode = 330))
+        assertTrue(mine.due(t0 + 60_000 + hour, ownCode = 330))
+        val done = mine.checked(t0 + 61_000, 330)
+        assertFalse(done.due(t0 + 61_000 + 23 * hour, ownCode = 330))
+        assertTrue(done.due(t0 + 61_000 + UpdateFeed.DAY_MS, ownCode = 330))
+        // The in-app update to the next build: that build checks at its first start too.
+        assertTrue(done.due(t0 + 62_000, ownCode = 331))
+    }
 }

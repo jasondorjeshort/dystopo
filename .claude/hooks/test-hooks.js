@@ -459,6 +459,74 @@ for (const [id, label, stdin, check] of S) {
   }
 }
 
+// ---------- settings.json: every hook command finds its script from any directory (T99) ----------
+// Claude Code runs a hook in the shell's current directory, which follows `cd`; a command such as
+// `node .claude/hooks/git-guard.js` then fails with MODULE_NOT_FOUND in a subfolder, and git-guard's
+// onFailure "block" stops every later shell call (2026-10-14). The hooks therefore run in exec form,
+// `"command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/<name>.js"]`: no shell, and Claude
+// Code substitutes the placeholder with the directory the session started in (the main checkout or a
+// worktree; https://code.claude.com/docs/en/hooks, "Reference scripts by path"). These cases run each
+// command from settings.json the way Claude Code does, from a subfolder that has no .claude/, against
+// this checkout (H01..) and against a copy of the hooks under a project path with a space in it (HS..).
+// H00 is the control: the old relative form, run from the same subfolder, does not find its script.
+{
+  const ROOT = path.resolve(HOOKS, '..', '..');
+  const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8'));
+  const sub = path.join(scratch, 'elsewhere', 'out', 'sub');
+  fs.mkdirSync(sub, { recursive: true });
+  const hHome = path.join(scratch, 'hook-home');
+  fs.mkdirSync(path.join(hHome, '.claude'), { recursive: true });
+  const spaced = path.join(scratch, 'project dir');
+  fs.mkdirSync(path.join(spaced, '.claude'), { recursive: true });
+  fs.cpSync(HOOKS, path.join(spaced, '.claude', 'hooks'), { recursive: true });
+  const hooks = [];
+  for (const [event, groups] of Object.entries(settings.hooks || {})) {
+    for (const g of groups) for (const h of g.hooks || []) if (h.type === 'command') hooks.push({ event, matcher: g.matcher || '', h });
+  }
+  const inputFor = (event, matcher, projectDir) => {
+    const tool = matcher.split('|')[0] || 'Bash';
+    if (event === 'PostToolUse') {
+      return { hook_event_name: event, tool_name: tool, cwd: sub, tool_input: { file_path: path.join(sub, 'note.txt') } };
+    }
+    if (tool === 'Bash' || tool === 'PowerShell') {
+      return { hook_event_name: event, tool_name: tool, cwd: repoTask, tool_input: { command: 'git status' } };
+    }
+    return { hook_event_name: event, tool_name: tool, cwd: projectDir, tool_input: {} };
+  };
+  // Exec form as Claude Code runs it: the placeholder substituted as plain text, no shell, cwd as given.
+  const subst = (s, projectDir) => String(s).split('${CLAUDE_PROJECT_DIR}').join(projectDir);
+  function runHook(h, stdin, projectDir, cwd) {
+    const env = envWith({ HOME: hHome, USERPROFILE: hHome, CLAUDE_PROJECT_DIR: projectDir, GIT_GUARD_MERGED: 'task/T1',
+      HOOK_POLICY_FILE: undefined, POST_EDIT_FORMATTERS_JSON: undefined });
+    const r = Array.isArray(h.args)
+      ? spawnSync(subst(h.command, projectDir), h.args.map((a) => subst(a, projectDir)), { input: stdin, encoding: 'utf8', timeout: 30000, cwd, env })
+      : spawnSync(h.command, { input: stdin, encoding: 'utf8', timeout: 30000, cwd, env, shell: true });
+    return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? String(r.error) : '') };
+  }
+  const missing = (r) => /MODULE_NOT_FOUND|Cannot find module/.test(r.stderr);
+  if (selected('H00')) {
+    const r = runHook({ command: NODE, args: ['.claude/hooks/git-guard.js'] }, JSON.stringify(inputFor('PreToolUse', 'Bash', ROOT)), ROOT, sub);
+    report('H00', 'control: the old form `node .claude/hooks/git-guard.js` from a subfolder -> MODULE_NOT_FOUND', r.code !== 0 && missing(r),
+      `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 200)}`);
+  }
+  let n = 0;
+  for (const { event, matcher, h } of hooks) {
+    n++;
+    const script = (Array.isArray(h.args) ? h.args.join(' ') : h.command).replace(/^.*[\\/]/, '');
+    for (const [prefix, projectDir, where] of [['H', ROOT, 'this checkout'], ['HS', spaced, 'a project path with a space']]) {
+      const id = `${prefix}${String(n).padStart(2, '0')}`;
+      if (!selected(id)) continue;
+      const r = runHook(h, JSON.stringify(inputFor(event, matcher, projectDir)), projectDir, sub);
+      const placeholder = Array.isArray(h.args) && h.args.some((a) => a.includes('${CLAUDE_PROJECT_DIR}'));
+      const ok = r.code === 0 && !missing(r) && r.stdout === '' && placeholder;
+      report(id, `settings.json ${event} ${matcher} ${script} run from a subfolder (${where}) finds its script and allows`, ok,
+        (placeholder ? '' : 'the command does not name its script through ${CLAUDE_PROJECT_DIR} in exec form (args); ') +
+          `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 300)}`, r.stdout);
+    }
+  }
+  if (selected('H99')) report('H99', 'settings.json has the three command hooks', n === 3, `found ${n}`);
+}
+
 if (opt.keep) process.stdout.write(`scratch tree kept at ${scratch}\n`);
 else fs.rmSync(scratch, { recursive: true, force: true });
 
