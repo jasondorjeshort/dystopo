@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-12
+verified: 2026-10-14
 source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
 ---
 
@@ -21,7 +21,7 @@ python -I tools/android-check.py --port 8686 --serial emulator-5554 --views-file
 
 ## The device tour (`android-check.py`)
 
-`android-check.py` relaunches the app and clears the contour cache first, then per view sets the camera, waits for idle, screenshots, diffs `/stats` and reads `/features`; it fails a view on: style not loaded, not idle, tile server errors, an expected source (pack covers the view) serving no tiles, a blank screenshot, no contour lines rendered, or labels placed but not drawn (`/features/text`); and the tour when no glyphs were served for a font the style uses. Contour tiles over `--contour-budget-ms` (1000) are warnings, failures with `--strict` (timings swing with host load). It also reports the app's logcat warnings. Look at the contact sheet (`out/android-tour-sheet.png`).
+`android-check.py` relaunches the app and clears the contour cache first, then per view sets the camera, waits for idle, screenshots, diffs `/stats` and reads `/features`; it fails a view on: style not loaded, not idle, tile server errors, an expected source (pack covers the view) serving no tiles, a blank screenshot, no contour lines rendered, or labels placed but not drawn (`/features/text`); and the tour when no glyphs were served for a font the style uses. Contour tiles over `--contour-budget-ms` (1000) are warnings, failures with `--strict` (timings swing with host load). It also reports the app's logcat warnings. Look at the contact sheet (`out/android-tour-sheet.png`). T98: the summary records the server the app reads and its state at the start and the end (`setup.online`, `online`, and an `online:` line on stderr): a debug build on an emulator defaults to `http://10.0.2.2:8765`, the host's live viewer, so a tour runs online when that server is up and with an unreachable server when it is not (`POST /settings?server=` for no server: the phone reads the sources). A view whose contour tiles were sampled with no elevation over a DEM pack (`contourGeneration.noDemOverPack`) gets a warning naming them.
 
 ## Loopback token and the debug port
 

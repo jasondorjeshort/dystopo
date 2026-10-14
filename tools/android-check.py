@@ -441,6 +441,23 @@ def expected_sources(health, v):
     return [s for s in SOURCES if exp[s]]
 
 
+def online_state(server):
+    """T98: the app's online target and its state (GET /online): a configured server that does not answer changes what
+    the tour measures (a debug build on an emulator defaults to the host's 8765)."""
+    try:
+        o = server.json("/online")
+    except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
+        return {"error": str(e)}
+    return {"server": o.get("server") or (o.get("fetcher") or {}).get("server"), "state": o.get("state")}  # direct://sources with no server
+
+
+def no_dem_over_pack(before, after):
+    """T98: contour tiles made between two /stats snapshots whose DEM was all NaN although a DEM pack overlaps them."""
+    b = (before["contourGeneration"].get("noDemOverPack") or {}).get("count", 0)
+    a = after["contourGeneration"].get("noDemOverPack") or {}
+    return a.get("count", 0) - b, a.get("recent", [])
+
+
 def new_contour_timings(before, after):
     """Generation times (ms) of the contour tiles made between two /stats snapshots."""
     b, a = before["contourGeneration"], after["contourGeneration"]
@@ -532,6 +549,7 @@ def main():
         health = server.json("/health")
         summary["setup"]["token"] = {"sent": True, "noTokenStatsStatus": server.status_without_token("/stats"),  # T49: expect 401
                                      "devicePort": server.device_port, "from": "logcat" if server.serial else "/health"}  # T57
+        summary["setup"]["online"] = online_state(server)  # T98: the server the tour runs against
         summary["app"] = health.get("app")
         summary["packs"] = {k: (v if not isinstance(v, dict) else {kk: v[kk] for kk in ("file", "minZoom", "maxZoom", "bounds", "bytes")})
                             for k, v in health.get("packs", {}).items()}
@@ -626,6 +644,10 @@ def main():
         elif over:
             # Contour timings swing with host load (several emulators on one machine): a warning unless --strict.
             rep["warnings"].append(f"{len(over)} contour tile(s) over {args.contour_budget_ms:g} ms (max {max(over):g})")
+        empty, empty_tiles = no_dem_over_pack(before, after)
+        if empty > 0:  # T98 diagnostic: an empty contour tile where a DEM pack has elevations
+            rep["contours"]["noDemOverPack"] = empty
+            rep["warnings"].append(f"{empty} contour tile(s) with no elevation over a DEM pack ({', '.join(empty_tiles[-empty:])})")
         c["tiles"] = all(tiles[s]["served"] > 0 for s in exp)
         if not c["tiles"]:
             rep["sourcesWithoutTiles"] = [s for s in exp if tiles[s]["served"] == 0]
@@ -674,6 +696,8 @@ def main():
                              "evidence": "http" if http_ok else "drawn text" if drawn else "none"}
         cg = final["contourGeneration"]
         summary["contourGeneration"] = {k: cg[k] for k in ("count", "minMs", "avgMs", "maxMs")}
+        summary["contourGeneration"]["noDemOverPack"] = (cg.get("noDemOverPack") or {}).get("count")  # T98
+        summary["online"] = online_state(server)  # T98: the state at the end of the tour
         summary["memory"] = final.get("memory")
     except (urllib.error.URLError, OSError, ValueError) as e:
         summary["glyphs"] = {"ok": False, "error": str(e)}
@@ -702,6 +726,8 @@ def main():
     lab = summary["glyphs"]
     print(f"glyphs: {'ok' if lab['ok'] else 'FAIL'} (evidence: {lab.get('evidence')}; {lab.get('glyphRangesServed')} ranges served over HTTP, "
           f"{lab.get('viewsWithDrawnText')} views with drawn text; fonts in style: {', '.join(lab.get('fontsInStyle', []))})", file=sys.stderr)
+    on = summary.get("online") or summary["setup"].get("online") or {}
+    print(f"online: server {on.get('server') or '(none)'}, {on.get('state') or on.get('error')}", file=sys.stderr)  # T98
     print(f"{summary['viewsOk']}/{summary['viewsTotal']} views ok; sheet {summary['sheet']}; summary {stem}.json", file=sys.stderr)
     print(json.dumps(summary, indent=2))
     return 0 if summary["ok"] else 1

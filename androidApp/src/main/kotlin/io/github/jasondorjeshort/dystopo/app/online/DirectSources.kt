@@ -799,9 +799,12 @@ class DirectSources(private val context: android.content.Context, private val ca
          * bounds overlap reads the same way, taking the pack's tiles where the pack has them ([contourPyramid]); it
          * was made as before T85, with whole halo rings of coarse DEM tiles, and on a fresh emulator the device
          * tour's z8 view (24 such renders of 40 to 75 s each in a debug build) never went idle within 30 s.
+         * T98: with a configured server, a tile a pack's bounds overlap reads at least at the pack's first zoom
+         * ([OnlineTiles.serverContourOptions]); the direct path above already reads at or below the pack's zooms.
          */
         fun contourOptions(base: ContourTileOptions, online: OnlineTiles?, z: Int, x: Int, y: Int): ContourTileOptions {
-            if (online?.fetcher?.server != SERVER) return base
+            if (online == null) return base
+            if (online.fetcher.server != SERVER) return online.serverContourOptions(base, z, x, y)
             val d = OnlineService.get().direct
             val options = base.copy(sampleAtDemZoom = d.maxZoom)
             return if (ContourTiles.plan(z, x, y, options).readZoom in DEM_MIN_ZOOM..d.maxZoom) options else base
@@ -856,7 +859,8 @@ class DirectSources(private val context: android.content.Context, private val ca
             val options = contourOptions(base, online, z, x, y)
             val read = ContourTiles.plan(z, x, y, options).readWindow
             // One cell: OnlineTiles prefetches nothing for a single tile; [contourPyramid] fetches and waits itself.
-            return if (options.sampleAtDemZoom == null) read else read.copy(gridTileSize = 1, halo = 0)
+            // T98: a server's window read at a pack's first zoom is prefetched like any other.
+            return if (online.fetcher.server != SERVER || options.sampleAtDemZoom == null) read else read.copy(gridTileSize = 1, halo = 0)
         }
 
         /**
@@ -887,6 +891,7 @@ class DirectSources(private val context: android.content.Context, private val ca
          * Null when the tile is one the view needs (or not a direct-sources tile): the caller takes the usual path.
          */
         fun staleContour(online: OnlineTiles, base: ContourTileOptions, z: Int, x: Int, y: Int, generate: (io.github.jasondorjeshort.dystopo.tiles.DemPyramid, ContourTileOptions) -> ByteArray): ByteArray? {
+            if (online.fetcher.server != SERVER) return null // T98: a server's options can set sampleAtDemZoom too
             val options = contourOptions(base, online, z, x, y)
             if (options.sampleAtDemZoom == null || online.packCoversContour(z, x, y)) return null
             val d = OnlineService.get().direct

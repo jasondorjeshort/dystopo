@@ -61,6 +61,29 @@ class TileCounters {
     /** T65: hillshade and slope tiles (`shadeGeneration`) and cliff rewrites (`cliffs`), cumulative like the rest. */
     val shade = io.github.jasondorjeshort.dystopo.app.options.ShadeCounters()
     val cliffs = CliffCounters()
+
+    /**
+     * T98: contour tiles whose sampled DEM was all NaN although a DEM pack's bounds overlap them
+     * (`contourGeneration.noDemOverPack`). The pack has elevations there, so such a tile is a bug: the z8 tiles over the
+     * Rainier pack with the server unreachable were exactly that, served as empty tiles the map then kept.
+     */
+    val contourNoDemOverPack = TileTally()
+}
+
+/** T98: how often something that should not happen happened, and the last few tiles it happened to (`/stats`). */
+class TileTally(private val keep: Int = 8) {
+    private val count = AtomicLong()
+    private val recent = ArrayDeque<String>()
+
+    fun add(tile: String) {
+        count.incrementAndGet()
+        synchronized(recent) {
+            recent.addLast(tile)
+            while (recent.size > keep) recent.removeFirst()
+        }
+    }
+
+    fun json(): Map<String, Any?> = mapOf("count" to count.get(), "recent" to synchronized(recent) { recent.toList() })
 }
 
 /** Counters for one tile source, reported by `/stats`. */
@@ -353,6 +376,7 @@ class TileService(
         "demPack" to packs.dem?.let { p -> mapOf("bytes" to p.file.length(), "mtime" to p.file.lastModified(), "identity" to identities[p]) },
         "demPacks" to packs.demPacks.map { mapOf("pack" to packs.packOf(it), "identity" to identities[it], "cacheDir" to contourDir(it)) }, // T41
         "staleCacheFilesDeleted" to ContourCache.staleFilesDeleted.get(),
+        "noDemOverPack" to counters.contourNoDemOverPack.json(), // T98: should stay 0
         "warmup" to (warmup?.json()?.plus("generation" to warmupGen.json()) ?: mapOf("state" to "off", "enabled" to AppSettings.warmup)),
     )
 
@@ -474,7 +498,7 @@ class TileService(
             online?.takeUnless { it.packCoversContour(z, x, y) }?.let { o ->
                 if (o.fetcher.server == DirectSources.SERVER) DirectTrace.mark("c? $z/$x/$y") // T88
                 DirectSources.staleContour(o, contourOptions, z, x, y) { p, d -> generateContourTile(p, z, x, y, null, contourGen, options = d) }?.let { DirectTrace.mark("c200p $z/$x/$y ${it.size}"); return ok(contours, "application/x-protobuf", it) } // T85: not kept
-                val made = o.contourTile(z, x, y) { p -> DirectSources.contourOptions(contourOptions, o, z, x, y).let { d -> generateContourTile(DirectSources.contourPyramid(o, d, z, x, y) ?: p, z, x, y, null, contourGen, options = d) } } // T85: direct sources read the hillshade zoom
+                val made = o.contourTile(z, x, y) { p -> DirectSources.contourOptions(contourOptions, o, z, x, y).let { d -> generateContourTile(DirectSources.contourPyramid(o, d, z, x, y) ?: p, z, x, y, null, contourGen, options = d) } } // T85: direct sources read the hillshade zoom; T98: a server's tile over a pack at least the pack's first zoom
                 if (o.fetcher.server == DirectSources.SERVER) DirectTrace.mark("c200 $z/$x/$y ${made.size}") // T88
                 return ok(contours, "application/x-protobuf", made)
             }
@@ -549,6 +573,8 @@ class TileService(
             if (cancel != null && cancel()) throw ContourBuildCancelled("contour tile $z/$x/$y cancelled before sampling")
             val grid = ContourTiles.sample(p, plan)
             val sampled = System.nanoTime()
+            // T98: a pack's bounds overlap the tile but the window has no elevation at all: an empty tile where the pack has data.
+            if (grid.values.all { it.isNaN() } && packs.demCandidates(z, x, y, PackRoleZooms.CONTOUR).isNotEmpty()) counters.contourNoDemOverPack.add("$z/$x/$y")
             val tile = ContourTiles.build(grid, plan, contourOptions, cancel)
             val done = System.nanoTime()
             if (cacheKey != null) contourCache.put(cacheKey, tile.bytes) // T41: the shared LRU cache (atomic rename inside)

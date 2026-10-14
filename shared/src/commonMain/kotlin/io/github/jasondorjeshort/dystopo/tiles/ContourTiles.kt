@@ -56,7 +56,8 @@ data class ContourTileOptions(
      * read at the hillshade's own zoom, min([ContourTiles.demZoom], this), whenever that is deeper than the
      * plan's sample zoom, and box-averaged down to the plan's grid ([ContourTilePlan.oversample]), so a view
      * reads each source block once instead of once more for a coarser ancestor. Null (packs, the server):
-     * the plan samples [ContourTilePlan.sampleZoom] directly, as before.
+     * the plan samples [ContourTilePlan.sampleZoom] directly, as before. T98: the phone also sets it to a DEM
+     * pack's first zoom for a server's tile the pack overlaps, whose plan would sample a zoom the pack lacks.
      */
     val sampleAtDemZoom: Int? = null,
 )

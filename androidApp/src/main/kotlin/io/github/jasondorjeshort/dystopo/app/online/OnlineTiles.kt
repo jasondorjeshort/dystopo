@@ -4,6 +4,7 @@ import io.github.jasondorjeshort.dystopo.app.Pack
 import io.github.jasondorjeshort.dystopo.app.PackSet
 import io.github.jasondorjeshort.dystopo.app.TileResult
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
@@ -24,8 +25,9 @@ import kotlin.math.floor
  *   gunzipped. Glyphs missing on the device come from `/glyphs`.
  * - Contours are generated on the device exactly like pack contours ([ContourTiles] through a
  *   [DemPyramid]); the pyramid reads pack tiles where the pack covers and fetched tiles elsewhere, so
- *   contour tiles across a pack edge join. The DEM tiles a contour tile needs are fetched in parallel
- *   first. A contour tile is disk-cached only when every DEM tile it needed was there: one made while a
+ *   contour tiles across a pack edge join; such a tile reads at least at the pack's first zoom (T98,
+ *   [serverContourOptions]), so the pack answers its part when the server does not. The DEM tiles a contour tile
+ *   needs are fetched in parallel first. A contour tile is disk-cached only when every DEM tile it needed was there: one made while a
  *   fetch failed (offline) is served but not kept, and the pyramid is rebuilt when the server comes back.
  */
 class OnlineTiles(
@@ -56,14 +58,9 @@ class OnlineTiles(
     }
     // ---- coverage ----
 
-    private fun overlaps(p: Pack, z: Int, x: Int, y: Int): Boolean {
-        val h = p.header
-        val west = WebMercator.xToLon(x.toDouble(), z)
-        val east = WebMercator.xToLon(x + 1.0, z)
-        val north = WebMercator.yToLat(y.toDouble(), z)
-        val south = WebMercator.yToLat(y + 1.0, z)
-        return east > h.minLon && west < h.maxLon && north > h.minLat && south < h.maxLat
-    }
+    private fun overlaps(p: Pack, z: Int, x: Int, y: Int): Boolean = tileOverlaps(bounds(p), z, x, y)
+
+    private fun bounds(p: Pack): PackBounds = p.header.let { h -> PackBounds(h.minLon, h.minLat, h.maxLon, h.maxLat) }
 
     private fun inside(p: Pack, z: Int, x: Int, y: Int): Boolean {
         val h = p.header
@@ -81,6 +78,18 @@ class OnlineTiles(
 
     /** True when the contour tile lies wholly inside the DEM pack: the pack path (and its cache) makes it, as without a server. */
     fun packCoversContour(z: Int, x: Int, y: Int): Boolean = packs.demContains(z, x, y) // T41: wholly inside any pack
+
+    /**
+     * T98: the plan options of contour tile z/x/y over a configured server's DEM ([DirectSources.contourOptions] for the
+     * phone's own sources). A tile a DEM pack's bounds overlap reads its window at least at the shallowest zoom those
+     * packs store ([readFrom]). Its plan samples a coarser zoom below z10 (a z8 tile z7, a z7 tile z6) while region
+     * packs start at z8, and the pyramid's tiles above a pack's first zoom come from the server alone: with the server
+     * unreachable (the post-wave 13 sweep's device tour, the debug build's default server not running) every z7 and z8
+     * contour tile over the Rainier pack was all NaN and drew no line, in about 1 ms once the fetcher was in backoff.
+     * Now the pack answers its part offline; online the server's tiles of that zoom fill the rest, as at deeper zooms.
+     */
+    fun serverContourOptions(base: ContourTileOptions, z: Int, x: Int, y: Int): ContourTileOptions =
+        serverContourOptions(base, packs.demPacks.map { bounds(it) to it.header.minZoom }, z, x, y)
 
     // ---- tiles ----
 
@@ -311,6 +320,32 @@ class OnlineTiles(
             if (missingHalo.isEmpty()) return key
             val names = missingHalo.distinct().sortedWith(compareBy({ it.first }, { it.second }, { it.third })).joinToString("_") { "${it.first}-${it.second}-${it.third}" }
             return "${key.removeSuffix(".pbf")}.halo-$names.pbf"
+        }
+
+        /**
+         * T98: [base], or [base] reading the DEM window at [minZoom] ([ContourTileOptions.sampleAtDemZoom], box-averaged
+         * down to the plan's grid) when contour tile z/x/y's plan would read a shallower zoom. Never deeper than the
+         * tile's spec zoom (one DEM pixel per screen pixel), so a z6 tile still reads z7 over a z8 pack.
+         */
+        fun readFrom(base: ContourTileOptions, minZoom: Int, z: Int, x: Int, y: Int): ContourTileOptions =
+            if (ContourTiles.plan(z, x, y, base).readZoom >= minZoom) base else base.copy(sampleAtDemZoom = minZoom)
+
+        /**
+         * T98: [serverContourOptions] over DEM packs given as (bounds, first zoom): [readFrom] the deepest first zoom
+         * of the packs whose bounds overlap contour tile z/x/y, so each of them answers its part; [base] when none does.
+         */
+        fun serverContourOptions(base: ContourTileOptions, packs: List<Pair<PackBounds, Int>>, z: Int, x: Int, y: Int): ContourTileOptions {
+            val floor = packs.filter { tileOverlaps(it.first, z, x, y) }.maxOfOrNull { it.second } ?: return base
+            return readFrom(base, floor, z, x, y)
+        }
+
+        /** True when tile z/x/y and box [b] overlap (touching edges do not count). */
+        fun tileOverlaps(b: PackBounds, z: Int, x: Int, y: Int): Boolean {
+            val west = WebMercator.xToLon(x.toDouble(), z)
+            val east = WebMercator.xToLon(x + 1.0, z)
+            val north = WebMercator.yToLat(y.toDouble(), z)
+            val south = WebMercator.yToLat(y + 1.0, z)
+            return east > b.minLon && west < b.maxLon && north > b.minLat && south < b.maxLat
         }
 
         /** The live server's DEM zooms (`LiveTiles.LIVE_MIN_ZOOM`..`LIVE_MAX_ZOOM`). */
