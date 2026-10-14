@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-14
 
+- T99: The sweep's update part, its sheet, `steps.tsv`, and the hook paths (#100)
 - T88: The 15 s cold view and the direct-source leftovers (#96)
 - T95: Pinned tiles survive a source version change; the Offline button shows the size first (#99)
 - T96: Kept peers never rotate the sharer's code; a bounded linger (#98)
