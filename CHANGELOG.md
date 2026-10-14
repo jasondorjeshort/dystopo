@@ -6,6 +6,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-14
 
+- T97: Server and devtool doc follow-ups of T89 and T92 (small, Sonnet-class) (#97)
+- T91: Android leftover sweep 6 (#95)
 - T92: Desktop and server leftover sweep 6 (#93)
 - T90: Peer sources: kept across restarts, whole replies over a slow path (#94)
 - T89: Routing leftovers: one drive time, the z8 overlay, robustness (#92)
