@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-14, at commit 45cb98a, by main session (second account)
+Updated: 2026-10-14, at commit 59dbb7e, by main session (second account, Fable 5.1 from 15:40 UTC)
 Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
 `~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
 `wave` skill, and the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the
@@ -11,27 +11,28 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 - Wave 13 second half from `second`; owner: HOLD lifted to 100% for this session (override file until
   Oct 15 12:30 UTC; delete it when the session ends).
-- Merged and logged today: T89 (#92), T90 (#94), T92 (#93), T91 (#95), T97 (#97); ADR 0029.
-- Running: T88 continuation (Opus, draft PR #96; `dystopo-wt\T88`, 5560, 8690/8691); T95
-  implementer (Opus; `dystopo-wt\T95`, 5574, 8698, servers 8775/8776); verifier of PR #98 (T96;
-  `dystopo-wt\T96`, emulators 5586 and 5588, 8714 to 8717).
-- Live viewer 8765 and standalone server 8800 run on this account (`out/coordinator-pids.txt`); they
-  run a pre-T89 build until restarted.
+- Merged and logged today: T89 (#92), T90 (#94), T92 (#93), T91 (#95), T97 (#97), T96 (#98),
+  T95 (#99); ADRs 0029 and 0030. One task left: T88.
+- Running: T88 continuation (Opus, draft PR #96; `dystopo-wt\T88`, emulator console 5560, ports
+  8690/8691); a Haiku chore removing the merged worktrees and local branches.
+- Live viewer 8765 and standalone server 8800 run on this account (`out/coordinator-pids.txt`) on a
+  pre-T89 build; they hold the install jars open, so the sweep's build must stop and restart them.
 
 ## Next
 
-1. As each report lands: merge sequence and log; Sonnet verifiers for T88 and T95 (free ports
-   8710/8711 with console 5580, 8718/8719 with console 5590).
-2. After T95 merges: an ADR superseding ADR 0027 in part (pinned tiles keep their manifest's
-   version; coordinator, `adr` skill).
-3. After the last merge: README status; restart the 8765 viewer on the new build (Haiku chore);
-   the full sweep from the main checkout (key only there; confirm the `47:31:38:10` certificate),
-   then `v0.1.6-alpha`; a Haiku chore removes merged local branches and worktrees.
-4. Owner review before the release: new strings from T95 and T96 (listed in their PRs).
-5. Wave 14 from the ideas folder and the follow-ups in the T89 to T97 Status lines.
+1. T88's PR: a Sonnet verifier (ports 8710/8711, console 5580), the merge sequence, the log; then
+   `docs/reference/android-online.md` gets T95's lines from PR #99's body (coordinator or a chore).
+2. After T88 merges: README status paragraph; the full sweep from the main checkout (`sweep` skill;
+   stop 8765 and 8800 by PID first and restart them on the new build after; confirm the
+   `47:31:38:10` certificate on the sweep's release APK); its findings become a wave 14 task.
+3. Green sweep: `v0.1.6-alpha` (`release` skill), after the owner's word on the new strings (below).
+4. Wave 14 from the ideas folder and the follow-ups in the T89 to T97 Status lines.
 
 ## Waiting on user
 
+- Sign-off on new phone wording from T95 (the Offline offer and budget lines, "Older than the
+  source. Update downloads the newer data.", the Storage note) and T96 ("Wrong code" on Download
+  for a peer whose code changed; a failed download hidden after the peer's state changes).
 - Hatchery PR #1; real-phone checks of 0.1.5; Google developer registration.
 
 ## Open findings
