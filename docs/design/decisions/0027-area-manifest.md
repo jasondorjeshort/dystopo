@@ -1,7 +1,9 @@
 # 0027. Areas of interest: a versioned manifest, packs for boxes, pinned tile covers for corridors
 
 Date: 2026-10-12
-Status: accepted
+Status: superseded by 0030 (in part)
+
+Superseded in part by `0030-pinned-tiles-keep-their-version.md` (2026-10-14): how pinned tiles relate to a source's content version, the pinned budget and the Offline button; the areas, the manifest, packs for boxes and pinned covers for corridors stand.
 
 Record: the proposal paragraph "Areas of interest as built (T75, proposal for the ADR T84 will
 write)" in `docs/PLANNING.md` › Design goals; the format field by field in `docs/SERVER.md` › Areas

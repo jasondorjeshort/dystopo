@@ -16,9 +16,10 @@ Status: `proposed` (waits for the owner: anything humans see or touch), `accepte
 | [0024-publishing-and-beta-path.md](0024-publishing-and-beta-path.md) | An alpha after every green sweep on GitHub Releases, verified from the draft; beta on Google Play | 2026-10-10 | accepted |
 | [0025-design-goals.md](0025-design-goals.md) | One data path online and offline, keyed and bounded caches, areas of interest, tiled routing, peer sources | 2026-10-10 | accepted |
 | [0026-coordinator-hands.md](0026-coordinator-hands.md) | The coordinator coordinates; everything that runs the project is delegated | 2026-10-12 | accepted |
-| [0027-area-manifest.md](0027-area-manifest.md) | Areas of interest: versioned manifest, packs for boxes, pinned tile covers for corridors | 2026-10-12 | accepted |
+| [0027-area-manifest.md](0027-area-manifest.md) | Areas of interest: versioned manifest, packs for boxes, pinned tile covers for corridors | 2026-10-12 | superseded by 0030 (in part) |
 | [0028-long-distance-routing.md](0028-long-distance-routing.md) | Long drives through a partition overlay over our graph tiles, the server as a remote router | 2026-10-12 | superseded by 0029 (in part) |
 | [0029-two-level-drive-overlay.md](0029-two-level-drive-overlay.md) | Long drives: a z8 overlay level, cells kept on disk, a settle budget, component labels, the phone going remote for packs that do not join | 2026-10-14 | accepted |
+| [0030-pinned-tiles-keep-their-version.md](0030-pinned-tiles-keep-their-version.md) | Pinned tiles keep the content version they were fetched at until the area is refreshed; pinned bytes have their own budget; the Offline button shows the size first | 2026-10-14 | accepted |
 
 Template (also in the `adr` skill):
 
