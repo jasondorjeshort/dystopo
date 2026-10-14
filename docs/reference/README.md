@@ -20,6 +20,6 @@ them, in the same PR.
 | `android-emulator.md` | Several emulators side by side, host virtualization, GPU and API quirks | 2026-10-12 |
 | `android-debug-routes.md` | Every debug route family (health, screenshot, camera, stats, settings, storage, packs, routes, navigation, areas, probe) | 2026-10-12 |
 | `android-tracks-and-sync.md` | Tracks and GPX, phone-to-phone sync and the relay, sync with the server | 2026-10-12 |
-| `android-online.md` | The phone reading the sources with no server, no Wi-Fi gates, in-app updates, first run and cleartext | 2026-10-12 |
+| `android-online.md` | The phone reading the sources with no server, the cold view stage by stage, no Wi-Fi gates, pinned areas and content versions, in-app updates, first run and cleartext | 2026-10-14 |
 | `android-release.md` | The release build and signing, deep links, `android-release.ps1` | 2026-10-12 |
 | `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps | 2026-10-12 |
