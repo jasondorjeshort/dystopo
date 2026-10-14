@@ -25,3 +25,5 @@ should not be investigated twice.
 | `2026-10-12-ci-glyph-download.md` | resolved | CI | CI downloaded every glyph range on each run; T87 caches them and retries. |
 | `2026-10-12-hawaii-z9-contours-500.md` | resolved | server / contours | Two Hawaii z9 contour tiles answered 500: cells with fewer overviews; T87 picks a common level. |
 | `2026-10-13-inherited-pipe-handles.md` | resolved | tooling / Windows processes | Device scripts kept the caller waiting: a daemon they started inherited its pipe; start such processes detached. |
+| `2026-10-14-z8-contour-lines-missing-in-sweep-tour.md` | open | android / contour tiles over a DEM pack | The sweep's z8 tour view draws no contour lines again after T88; tiles generated, the rerun's in 1 ms (T98). |
+| `2026-10-14-sweep-update-part-blocked-by-previous-check.md` | open | tooling / sweep, in-app update | The update part stops at `lower-quiet`: the previous build's own check leaves `lastCheckAt`, so the new build's check is not due (T99). |
