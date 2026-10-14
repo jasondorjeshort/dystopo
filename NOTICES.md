@@ -364,9 +364,15 @@ from unpkg.com at run time; they are not bundled in any Dystopo artifact.
 
 ## Fonts
 
-- Noto Sans Regular and Bold, and Noto Sans Hebrew, Arabic, Thai and Georgian Bold (T92: the second name line),
-  in `serverlib/src/main/resources/fonts/`, used to draw text in rendered PNGs:
-  SIL Open Font License 1.1, full text in `serverlib/src/main/resources/fonts/OFL.txt`. Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+The Noto Sans fonts in `serverlib/src/main/resources/fonts/` draw text in rendered PNGs (the Hebrew, Arabic, Thai
+and Georgian ones for the second name line, T92). They are under the SIL Open Font License 1.1, full text in
+`serverlib/src/main/resources/fonts/OFL.txt`; each font's copyright notice, as in its name table:
+
+- Noto Sans Bold and Noto Sans Regular: Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+- Noto Sans Arabic Bold: Copyright 2022 The Noto Project Authors (https://github.com/notofonts/arabic)
+- Noto Sans Georgian Bold: Copyright 2022 The Noto Project Authors (https://github.com/notofonts/georgian)
+- Noto Sans Hebrew Bold: Copyright 2024 The Noto Project Authors (https://github.com/notofonts/hebrew)
+- Noto Sans Thai Bold: Copyright 2022 The Noto Project Authors (https://github.com/notofonts/thai)
 
 ## Map and elevation data
 

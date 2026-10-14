@@ -6,13 +6,16 @@ Inputs:
     writes to <module>/build/reports/licenses/licenses.json (a CSV with artifact,license[,module] columns
     is read too, for reports made by other tools);
   - shared/src/commonMain/resources/sources.json, the data source registry (data and font licences);
-  - the bundled Noto Sans fonts (serverlib/src/main/resources/fonts/OFL.txt);
+  - the bundled Noto Sans fonts (serverlib/src/main/resources/fonts/*.ttf): each font's copyright notice and
+    licence come from its name table, and the notice block at the top of fonts/OFL.txt is written from them
+    (T97: the Hebrew, Arabic, Thai and Georgian fonts carried their notices only in the name tables);
   - the JavaScript libraries the browser pages load from unpkg (tools/demo/index.html and serverlib resources).
 
 Usage (repo root, after `./gradlew check` with the Android SDK configured so :androidApp reports too):
-  python -I tools/notices.py                 # writes NOTICES.md
-  python -I tools/notices.py --check         # exit 1 if NOTICES.md is not what this would write
-Prints one JSON summary line to stdout.
+  python -I tools/notices.py                 # writes NOTICES.md (and the notice block of fonts/OFL.txt when it differs)
+  python -I tools/notices.py --check         # exit 1 if NOTICES.md or fonts/OFL.txt is not what this would write
+Prints one JSON summary line to stdout. A font without a copyright notice or without the SIL Open Font License in its
+name table fails the run (`fontProblems`).
 """
 import argparse
 import csv
@@ -20,9 +23,14 @@ import glob
 import json
 import os
 import re
+import struct
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+FONT_DIR = os.path.join('serverlib', 'src', 'main', 'resources', 'fonts')
+# The line of fonts/OFL.txt where the licence starts; what is above it is the generated notice block.
+OFL_LICENCE_START = 'This Font Software is licensed under'
 
 # Licences of the browser libraries the demo pages load from a CDN at runtime (not bundled in any artifact).
 JS_LICENSES = {
@@ -97,6 +105,72 @@ def dependencies(report_glob):
     return paths, by_artifact
 
 
+def ttf_names(path):
+    """The name-table strings of a TrueType/OpenType font as {name id: text} (Windows entries, else Macintosh Roman)."""
+    data = open(path, 'rb').read()
+    count = struct.unpack('>H', data[4:6])[0]
+    for i in range(count):
+        tag, _, offset, _length = struct.unpack('>4sIII', data[12 + 16 * i:28 + 16 * i])
+        if tag == b'name':
+            break
+    else:
+        return {}
+    _fmt, n, strings = struct.unpack('>HHH', data[offset:offset + 6])
+    windows, mac = {}, {}
+    for i in range(n):
+        platform, _enc, lang, name_id, length, start = struct.unpack('>6H', data[offset + 6 + 12 * i:offset + 18 + 12 * i])
+        raw = data[offset + strings + start:offset + strings + start + length]
+        if platform in (0, 3):
+            if name_id not in windows or lang == 0x409:
+                windows[name_id] = raw.decode('utf-16-be')
+        elif platform == 1 and name_id not in mac:
+            mac[name_id] = raw.decode('mac_roman')
+    return {**mac, **windows}
+
+
+def bundled_fonts():
+    """[{file, label, copyright, ofl}] for each TTF in the fonts directory, by file name. The label comes from the
+    file name (`NotoSansHebrew-Bold.ttf` is `Noto Sans Hebrew Bold`), since name tables disagree about families."""
+    fonts = []
+    for path in sorted(glob.glob(os.path.join(ROOT, FONT_DIR, '*.ttf'))):
+        names = ttf_names(path)
+        file = os.path.basename(path)
+        label = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', os.path.splitext(file)[0].replace('-', ' '))
+        fonts.append({'file': file, 'label': label, 'copyright': names.get(0, '').strip(),
+                      'ofl': 'SIL Open Font License' in names.get(13, '')})
+    return fonts
+
+
+def font_groups(fonts):
+    """The fonts grouped by copyright notice, in file-name order of each group's first font: [(notice, [font])]."""
+    groups = {}
+    for f in fonts:
+        groups.setdefault(f['copyright'], []).append(f)
+    return list(groups.items())
+
+
+def font_problems(fonts):
+    problems = []
+    if not fonts:
+        problems.append('no fonts found in ' + FONT_DIR)
+    for f in fonts:
+        if not f['copyright'].lower().startswith('copyright'):
+            problems.append('%s has no copyright notice in its name table' % f['file'])
+        if not f['ofl']:
+            problems.append('%s does not say it is under the SIL Open Font License (name table entry 13)' % f['file'])
+    return problems
+
+
+def ofl_text(current, fonts):
+    """fonts/OFL.txt with its notice block (everything above the licence) written from the fonts' name tables."""
+    start = current.index(OFL_LICENCE_START)
+    head = ["The fonts in this directory and their copyright notices (the notice is also in each font's name table;",
+            "this block is written by tools/notices.py; the licence below it is the SIL OFL 1.1 as the fonts' authors ship it).", '']
+    for notice, group in font_groups(fonts):
+        head += [', '.join(f['file'] for f in group), notice, '']
+    return '\n'.join(head) + '\n' + current[start:]
+
+
 def js_libraries():
     found = {}
     files = [os.path.join(ROOT, 'tools', 'demo', 'index.html')]
@@ -109,7 +183,7 @@ def js_libraries():
     return found
 
 
-def render(paths, deps, sources, js):
+def render(paths, deps, sources, js, fonts):
     out = []
     w = out.append
     w('# Third-party notices')
@@ -163,16 +237,12 @@ def render(paths, deps, sources, js):
     w('')
     w('## Fonts')
     w('')
-    ofl = os.path.join(ROOT, 'serverlib', 'src', 'main', 'resources', 'fonts', 'OFL.txt')
-    copyright_line = ''
-    if os.path.exists(ofl):
-        for line in open(ofl, encoding='utf-8'):
-            if line.strip().lower().startswith('copyright'):
-                copyright_line = line.strip()
-                break
-    w('- Noto Sans Regular and Bold, and Noto Sans Hebrew, Arabic, Thai and Georgian Bold (T92: the second name line),')
-    w('  in `serverlib/src/main/resources/fonts/`, used to draw text in rendered PNGs:')
-    w('  SIL Open Font License 1.1, full text in `serverlib/src/main/resources/fonts/OFL.txt`.' + (' ' + copyright_line if copyright_line else ''))
+    w('The Noto Sans fonts in `serverlib/src/main/resources/fonts/` draw text in rendered PNGs (the Hebrew, Arabic, Thai')
+    w('and Georgian ones for the second name line, T92). They are under the SIL Open Font License 1.1, full text in')
+    w("`serverlib/src/main/resources/fonts/OFL.txt`; each font's copyright notice, as in its name table:")
+    w('')
+    for notice, group in font_groups(fonts):
+        w('- %s: %s' % (' and '.join(f['label'] for f in group), notice))
     w('')
     w('## Map and elevation data')
     w('')
@@ -206,22 +276,39 @@ def main():
         return 1
     sources = json.load(open(os.path.join(ROOT, args.sources), encoding='utf-8'))['sources']
     js = js_libraries()
-    text = render(paths, deps, sources, js)
+    fonts = bundled_fonts()
+    text = render(paths, deps, sources, js, fonts)
     out = os.path.join(ROOT, args.out)
+    ofl_path = os.path.join(ROOT, FONT_DIR, 'OFL.txt')
+    ofl_current = open(ofl_path, encoding='utf-8', newline='').read() if os.path.exists(ofl_path) else ''
+    ofl_new = ofl_text(ofl_current, fonts) if OFL_LICENCE_START in ofl_current else None
     modules = sorted({m for a in deps.values() for m in a['modules']})
     summary = {'ok': True, 'reports': len(paths), 'modules': modules, 'artifacts': len(deps),
                'licences': len({a['license'] for a in deps.values()}), 'dataSources': len(sources),
-               'jsLibraries': len(js), 'out': args.out}
+               'jsLibraries': len(js), 'fonts': len(fonts), 'out': args.out}
+    problems = font_problems(fonts)
+    if ofl_new is None:
+        problems.append('%s lacks the licence text (a line starting "%s")' % (os.path.join(FONT_DIR, 'OFL.txt'), OFL_LICENCE_START))
+    if problems:
+        summary.update(ok=False, fontProblems=problems)
+        print(json.dumps(summary))
+        return 1
     if ':androidApp' not in modules:
         summary['warning'] = 'no :androidApp report (Android SDK not configured?); the app dependencies are missing'
     if args.check:
         current = open(out, encoding='utf-8').read() if os.path.exists(out) else ''
-        summary['upToDate'] = current == text
+        summary['noticesUpToDate'] = current == text
+        summary['oflUpToDate'] = ofl_current == ofl_new
+        summary['upToDate'] = summary['noticesUpToDate'] and summary['oflUpToDate']
         summary['ok'] = summary['upToDate']
         print(json.dumps(summary))
         return 0 if summary['ok'] else 1
     with open(out, 'w', encoding='utf-8', newline='\n') as f:
         f.write(text)
+    if ofl_new != ofl_current:
+        with open(ofl_path, 'w', encoding='utf-8', newline='') as f:
+            f.write(ofl_new)
+        summary['oflWritten'] = True
     print(json.dumps(summary))
     return 0
 

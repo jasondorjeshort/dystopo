@@ -144,13 +144,9 @@ class ExtractDownloads(
     }
 
     val regions: List<Region> = urls.map { u ->
-        var t = u.trim().removeSuffix("-latest.osm.pbf").removeSuffix(".poly").trimEnd('/')
-        val pin = PINNED.find(t)?.groupValues?.get(1)
-        if (pin != null) t = t.removeSuffix("-$pin.osm.pbf")
-        t = t.removeSuffix(".osm.pbf")
-        require(Regex("https?://[^\\s]+/[^/\\s]+").matches(t)) { "extract download URL must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got '$u')" }
-        val name = t.trimEnd('/').substringAfterLast('/')
-        Region(t, pin, checksums[name])
+        val (base, pin) = parseUrl(u)
+            ?: throw IllegalArgumentException("extract download URL must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got '$u')")
+        Region(base, pin, checksums[Region(base).name])
     }
 
     private val polys = ConcurrentHashMap<String, Result<OsmPoly>>()
@@ -258,6 +254,21 @@ class ExtractDownloads(
         /** A Geofabrik snapshot URL's date: `<region>-YYMMDD.osm.pbf`. */
         private val PINNED = Regex("-(\\d{6})\\.osm\\.pbf$")
         private val HEX64 = Regex("[0-9a-f]{64}")
+
+        /** A configured URL's region base (no `-latest`/`-YYMMDD` `.osm.pbf`, `.poly` or trailing slash) and snapshot date, or null when it is no region URL. */
+        private fun parseUrl(u: String): Pair<String, String?>? {
+            var t = u.trim().removeSuffix("-latest.osm.pbf").removeSuffix(".poly").trimEnd('/')
+            val pin = PINNED.find(t)?.groupValues?.get(1)
+            if (pin != null) t = t.removeSuffix("-$pin.osm.pbf")
+            t = t.removeSuffix(".osm.pbf")
+            return if (Regex("https?://[^\\s]+/[^/\\s]+").matches(t)) t to pin else null
+        }
+
+        /**
+         * T97: the region name a configured URL gives ([Region.name], the key of `extractDownloads.sha256`), or
+         * null when it is no region URL; `ServerConfig.validate` checks the checksum keys against these.
+         */
+        fun regionName(url: String): String? = parseUrl(url)?.let { Region(it.first).name }
 
         private fun httpOpen(url: String): Triple<Int, Long, InputStream> {
             Http.beforeNetwork?.invoke(url)

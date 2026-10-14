@@ -55,6 +55,35 @@ class ServerTest {
     }
 
     @Test
+    fun extractDownloadsChecksumKeysMustNameAConfiguredRegion() {
+        val sum = "0".repeat(64)
+        fun config(urls: List<String>, vararg keys: String) =
+            ServerConfig(extractDownloads = ServerConfig.ExtractDownloadConfig(urls = urls, sha256 = keys.associateWith { sum }))
+
+        // Every way a region URL can be written names the same region: the last path segment without the suffixes.
+        val forms = listOf(
+            "https://download.geofabrik.de/europe/liechtenstein",
+            "https://download.geofabrik.de/europe/liechtenstein.poly",
+            "https://download.geofabrik.de/europe/liechtenstein-latest.osm.pbf",
+            "https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf",
+        )
+        forms.forEach { assertEquals(emptyList(), config(listOf(it), "liechtenstein").validate(), it) }
+        assertEquals(emptyList(), config(forms.take(1) + "https://download.geofabrik.de/europe/alps", "liechtenstein", "alps").validate())
+
+        // A misspelt key, a key in another case (lookups are exact) and a key with no URL at all are refused,
+        // each by name, with the configured regions listed.
+        val misspelt = config(forms.take(1), "liechtenstien").validate()
+        assertEquals(1, misspelt.size, misspelt.toString())
+        assertTrue("extractDownloads.sha256.liechtenstien" in misspelt[0] && "liechtenstein" in misspelt[0], misspelt[0])
+        assertEquals(1, config(forms.take(1), "Liechtenstein").validate().size)
+        assertEquals(1, config(emptyList(), "liechtenstein").validate().size)
+        // One good key does not cover a bad one next to it.
+        assertEquals(listOf(true), config(forms.take(1), "liechtenstein", "alps").validate().map { "sha256.alps" in it })
+        // The path of a region (europe/liechtenstein) is not its name.
+        assertEquals(1, config(forms.take(1), "europe/liechtenstein").validate().size)
+    }
+
+    @Test
     fun gateRules() {
         val open = Gate(null, listOf("*"), log, false)
         assertTrue(open.authorized(null))

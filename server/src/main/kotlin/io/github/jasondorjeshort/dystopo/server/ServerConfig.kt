@@ -224,6 +224,12 @@ data class ServerConfig(
         extractDownloads.urls.forEachIndexed { i, u ->
             if (!Regex("https?://[^\\s]+/[^/\\s]+").matches(u.trim())) add("extractDownloads.urls[$i] must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got $u)")
         }
+        // T97: a checksum is looked up by region name, so a key that names no configured region would let that
+        // download through unchecked (a misspelt name, another case, a path instead of the last segment).
+        val regionNames = extractDownloads.urls.mapNotNull { ExtractDownloads.regionName(it) }.distinct()
+        extractDownloads.sha256.keys.filter { it !in regionNames }.forEach { k ->
+            add("extractDownloads.sha256.$k names no configured region (regions from extractDownloads.urls: ${regionNames.joinToString().ifEmpty { "none" }}); a region's name is the last segment of its URL, e.g. liechtenstein")
+        }
         if (extractDownloads.maxMb < 1) add("extractDownloads.maxMb must be at least 1")
         if (extractDownloads.urls.isNotEmpty() && extractsDir == "") add("extractDownloads needs an extracts directory (extractsDir is \"\")")
         if (log.maxMb < 1 || log.keep < 0) add("log.maxMb must be at least 1 and log.keep at least 0")

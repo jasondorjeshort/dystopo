@@ -160,7 +160,7 @@ key with its default.
 | `relay.requestsPerMinute` | `120` | Relay requests per client address per minute (token bucket; 429 with `Retry-After`). A phone polls every 5 s. |
 | `extractDownloads.urls` | `[]` | Geofabrik regions the server may download into `extractsDir` when an outdoors build needs one (T66, below), e.g. `["https://download.geofabrik.de/europe/alps"]` (a `-latest.osm.pbf` or `.poly` URL works too). `devtool serve` reads `DYSTOPO_EXTRACT_DOWNLOADS` (comma-separated) instead. |
 | `extractDownloads.maxMb` | `4096` | Largest extract downloaded (by `Content-Length`, checked again while streaming). |
-| `extractDownloads.sha256` | `{}` | T92: region name to the SHA-256 (hex) its download must have, e.g. `{"liechtenstein": "38c2..."}`; a mismatch fails the build and nothing is kept. Pair it with a dated Geofabrik snapshot URL (`https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf`, kept as `liechtenstein-260101.osm.pbf`) so the bytes never change; CI does. |
+| `extractDownloads.sha256` | `{}` | T92: region name to the SHA-256 (hex) its download must have, e.g. `{"liechtenstein": "38c2..."}`; a mismatch fails the build and nothing is kept. Pair it with a dated Geofabrik snapshot URL (`https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf`, kept as `liechtenstein-260101.osm.pbf`) so the bytes never change; CI does. T97: a key must be the name of a region in `extractDownloads.urls` (the last segment of its URL without `-latest.osm.pbf`, `-YYMMDD.osm.pbf` or `.poly`, compared exactly: `liechtenstein`, not `Liechtenstein` or `europe/liechtenstein`); a key that names none, which would let a misspelt region download unchecked, fails the config check at start (`config_invalid` in the log, exit code 2). |
 | `log.file` | `null` | T82: write the JSON log to this file instead of stdout, rotating it (below, Operations). Null: stdout (cap it in journald or Docker). |
 | `log.maxMb` | `64` | Rotate the log file at this size. |
 | `log.keep` | `5` | Rotated files kept (`server.log.1` .. `.5`); the log never takes more than about `(keep + 1) * maxMb`. |
@@ -469,10 +469,13 @@ The browser map plans routes on the server with the phone's shared code (`RouteR
 route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each pack in
 `outDir` with a vector archive gets a trail graph on first use, written next to it as
 `<vector archive>-graph.idx` (the phone's and `devtool route`'s file name, e.g. `rainier-outdoors-graph.idx`;
-reused while both archives are unchanged; the Rainier graph builds in about 1.5 s). Since T76 the file holds z11
+reused while both archives are unchanged; the Rainier graph builds in about 2 s). Since T76 the file holds z11
 graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every pack
 whose box comes within 5 km of its points, so it crosses from one pack into the next (docs/PLANNING.md ›
-Routing). The routes read packs and write nothing but the graph files. T92: they are open while the server has
+Routing). T89: the file is `DYSG` version 5 (bridge and tunnel levels, component labels); a file of an older
+version is rebuilt on the next route, and the reply's `graph.rebuildReason` says why (`missing`, `stale (pack
+changed)`, or the older version's message). The routes read packs and write nothing but the graph files and the
+overlay cell files (below). T92: they are open while the server has
 no users; once `users` are configured they need a known token like `/build` (any user's, the admin's or the T52
 `token`; `routeGate` in `/healthz`), since a route costs CPU and opens every pack's graph. The browser page
 sends its Token field with them.
@@ -483,9 +486,24 @@ in-tile drive between them), then expand it back into the pack's edges, so a dri
 well under a second once the graphs are open (Seattle to Yakima over three Washington packs, 232 km: 0.66 s on a
 fresh server with the graph files on disk, 0.2 to 0.4 s warm; numbers in docs/PLANNING.md › Routing). Cells are
 built when a drive first reaches them, and every tile of a pack is built in the background once its graph opens
-(`GET /route/status` `driveOverlay`, `warm`); they are kept in memory, up to 65,536 cells, and built again after a
-restart. A phone with this server set asks it for routes whose ends lie beyond its own packs (the same
-`GET /route`), keeps the answer as a trip and downloads its corridor (`POST /area`, below) to navigate offline.
+(`GET /route/status` `driveOverlay`, `warm`); they are kept in memory, up to 65,536 cells. A phone with this
+server set asks it for routes whose ends lie beyond its own packs (the same `GET /route`), keeps the answer as a
+trip and downloads its corridor (`POST /area`, below) to navigate offline.
+
+**Overlay cell files (T89, ADR 0029).** A second level (z8 cells, each over the 64 graph tiles below it: the crossings of a
+z8 tile and the cheapest drive between them through its level-1 cells) lets a long drive search mostly z8 cells;
+only the server builds it (the phone stays on level 1), in the warm-up and never inside a search. When the
+warm-up has built both levels for every tile of a pack it writes them to `<vector archive>-overlay.idx` beside
+`<vector archive>-graph.idx` (`DYSO` version 1, each cell with its own checksum; `rainier-outdoors-overlay.idx` is
+1,549 bytes: 15 level-1 and 2 level-2 cells, a warm-up of 0.1 to 0.2 s). A restarted server reads that
+file instead of building (cells on demand through ranged reads): the pack's `warm` entry says `loaded` with
+`cells`, `bytes` and `ms` (1 to 2 ms for Rainier) and `built` and `level2Built` stay 0. The file is valid for
+the one graph build it names (the graph file's source name, fingerprints and build time) and the overlay's zooms; a
+rebuilt graph (the pack changed, an older `DYSG` version, the graph file deleted) makes it stale, and the
+warm-up then builds again and overwrites it, as it does for a file that cannot be read (a truncated one, say).
+Delete it to force a rebuild; nothing else reads it. It is not written when the cells no longer all fit in
+memory (a pack with more than 65,536 of them; `file` and `bytes` are null in its `warm` entry), and a pack
+without drive data (outdoors profile 1) has neither a cell file nor a `warm` entry.
 
 - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
@@ -501,14 +519,39 @@ restart. A phone with this server set asks it for routes whose ends lie beyond i
   `via`, `legs` (`kind` trail/straight/fixed, `coordinates` as `[lon, lat, ele]`), `summary` (distance, ascent,
   descent, hike-model time, `straightM`, a 100-sample profile), `notes` (why a leg is straight), `graph`
   (`built`, `loaded` or `cached`, the reported pack's; every pack used under `graphs`; T77: `searches`, one per
-  leg searched, with `ms`, `tiles`, `overlayTiles`, `expanded` and the search's memory) and `ms`. Bad input is a 400 with `error`.
+  leg searched, with `ms`, `tiles`, `overlayTiles`, T89 `level2Tiles` (the z8 cells it went through), `expanded`
+  and the search's memory) and `ms`. Bad input is a 400 with `error`.
 - `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
   what the phone exports for the same trip.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one
   device, HLC-stamped) as a gzipped sync bundle, for `POST /sync/push` or a `.dsync` file.
-- `GET /route/packs` (packs and graph state), `GET /route/status` (request counts, builds, timings, `tileCache`,
-  `lastRouteMemory`, T77 `driveOverlay`: cells, builds, hits, border nodes, shortcuts and the per-pack `warm` state), and
+- `GET /route/packs` (packs and graph state), `GET /route/status` (below), and
   `GET /trips.js`, the page's editor script (`tools/demo/trips.js` next to the served page).
+- `GET /route/status` answers, since the server started (a pack's graph opens on its first route, so a fresh
+  server has empty `graphs` and `warm`):
+  - `outDir`, `requests` (counts by kind), `errors`, `lastMs`, `building` (packs whose graph is being built),
+    `graphs` (per open pack, how its graph was opened: `action` `built` or `loaded`, `file`, `bytes`, `buildMs` or
+    `loadMs`, `rebuildReason` after a build, `nodes`, `tiles`);
+  - `tileCache`: graph tiles in memory (`tiles`, `bytes` of `maxBytes`, `loads`, `hits`, `evictions`) and, T89,
+    `loadErrors` (tiles that failed their checksum or were cut short), `corruptTiles` (how many are remembered)
+    and `corruptHits` (lookups answered from that memory without reading the file again);
+  - `lastRouteMemory`: the last route's `tiles`, `graphBytes`, `searchBytes` and `searchNodes`, and
+    `overlayTiles` and `level2Tiles` when its search used the overlay;
+  - `corruptGraphTiles` (T89): `[]`, or one `{file, x, y, error}` per remembered corrupt graph tile (`file` is the
+    pack's vector archive name, `x` and `y` the z11 tile). Such a tile is skipped for the life of the process, so
+    a route that needs it behaves as if the roads there were missing (`start_off_network` or `not_connected`
+    notes, not an error). The list lives in memory only: a restart starts it empty and the next route that
+    reaches the tile finds it again. To repair, stop the server, delete `<vector archive>-graph.idx` (and the
+    `-overlay.idx` beside it), start it and route: the graph is rebuilt (`rebuildReason` `missing`), the list is
+    empty and the warm-up writes the cell file again;
+  - `driveOverlay`: `tiles` (cells held in memory, both levels, with the tiles known to have none), `built`
+    (level-1 tiles built by this process: 25 for Rainier, 15 of them with a cell), `hits`, `buildMs`,
+    `borderNodes` and `shortcuts` (totals of those built), `minClass` (`tertiary`: the smallest road class that
+    crosses a cell border), T89 `level2Zoom` (8; null when level 2 is off), `level2Built`, `level2Used` (level-2
+    cells handed to searches), `loadedFromFiles` (cells read from cell files), `cellFiles` (the vector archive
+    name of each graph with a registered cell file) and `warm`: one entry per pack and graph build, `state`
+    `queued` (while the warm-up runs), `done` (`tiles`, `cells`, `level2Cells`, `ms`, `level1Ms`, `level2Ms`,
+    `file`, `bytes`), `loaded` (`file`, `cells`, `bytes`, `ms`) or `failed` (`error`).
 
 **Save as trip.** The page keeps its trips in its own sync replica in the browser (localStorage
 `dystopo.trips`: a device id, a hybrid logical clock, and the same put + `path` + `waypoints` operations the

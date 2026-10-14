@@ -1,4 +1,20 @@
+The fonts in this directory and their copyright notices (the notice is also in each font's name table;
+this block is written by tools/notices.py; the licence below it is the SIL OFL 1.1 as the fonts' authors ship it).
+
+NotoSans-Bold.ttf, NotoSans-Regular.ttf
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+
+NotoSansArabic-Bold.ttf
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/arabic)
+
+NotoSansGeorgian-Bold.ttf
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/georgian)
+
+NotoSansHebrew-Bold.ttf
+Copyright 2024 The Noto Project Authors (https://github.com/notofonts/hebrew)
+
+NotoSansThai-Bold.ttf
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/thai)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
