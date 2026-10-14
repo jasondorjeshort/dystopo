@@ -1,7 +1,8 @@
 ---
 date: 2026-10-14
-status: open
+status: resolved
 area: android / contour tiles over a DEM pack
+promoted_to: docs/reference/android-online.md
 ---
 
 # The device tour's z8 view draws no contour lines again (post-wave 13 sweep)
@@ -38,9 +39,12 @@ the pack answers one; `OnlineTiles`, `DirectSources`, `TileService`), which is t
 whether the sweep's tour runs with a server set or with none is to be read from `tools\sweep.ps1`
 (`android-check.py --port ...`), since T88's measurements were with no server.
 
-## Next
-
-T98 (wave 14): reproduce under the sweep's exact conditions and with no server, trace what the eight
-z8 contour requests read (`GET /firstrun/direct` `timeline`, `contourDem` counters, the cache keys
-written), fix the cause, add a test or debug-route check that fails on an empty contour tile where the
-DEM pack covers the view, and run the tour twice on a fresh emulator.
+Resolved in T98 (2026-10-14, PR #101): the sweep's tour ran with a server set but unreachable, not with no
+server. A debug build on an emulator uses `http://10.0.2.2:8765` (the host's live viewer) until a server
+is set, and the sweep had stopped that viewer to rebuild the install jars. With a server set, a contour
+tile the pack's bounds overlap but do not contain samples a coarser grid (z7 for a z8 tile, z6 for z7)
+that the online pyramid read from the server only, so every cell was NaN and a 17-byte empty tile went
+out; the rerun's 1 ms was the fetcher in backoff. Reproduced on `main` with an unreachable server
+(0 lines, the sweep's screenshot), fixed by reading at least the pack's first zoom
+(`OnlineTiles.serverContourOptions`, `PackFloorContourTest`): 10/10 twice as the sweep runs it, with a
+dead server and with no server. T88's direct path was not involved.
