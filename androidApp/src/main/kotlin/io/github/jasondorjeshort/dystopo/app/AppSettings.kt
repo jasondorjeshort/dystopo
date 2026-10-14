@@ -72,6 +72,39 @@ object AppSettings {
         loadCaches(p) // T41
         routeSnapM = p.getInt(KEY_ROUTE_SNAP_M, DEFAULT_ROUTE_SNAP_M).coerceIn(ROUTE_SNAP_RANGE) // T57
         debugFixedPort = p.getBoolean(KEY_DEBUG_FIXED_PORT, false)
+        navStaleS = p.getInt(KEY_NAV_STALE_S, DEFAULT_NAV_STALE_S).coerceIn(NAV_STALE_RANGE) // T91
+        navStartM = p.getInt(KEY_NAV_START_M, DEFAULT_NAV_START_M).coerceIn(NAV_START_RANGE)
+        navSnoozeMin = p.getInt(KEY_NAV_SNOOZE_MIN, DEFAULT_NAV_SNOOZE_MIN).coerceIn(NAV_SNOOZE_RANGE)
+    }
+
+    // ---- T91: navigation thresholds (the T65 constants) ----
+
+    private const val KEY_NAV_STALE_S = "navStaleS"
+    private const val KEY_NAV_START_M = "navStartM"
+    private const val KEY_NAV_SNOOZE_MIN = "navSnoozeMin"
+    const val DEFAULT_NAV_STALE_S = 30
+    const val DEFAULT_NAV_START_M = 2000
+    const val DEFAULT_NAV_SNOOZE_MIN = 10
+    val NAV_STALE_RANGE = 5..600
+    val NAV_START_RANGE = 100..50_000
+    val NAV_SNOOZE_RANGE = 1..240
+
+    /** A GPS fix older than this is not used, and with no usable fix for this long the bar says so (seconds). */
+    @Volatile var navStaleS: Int = DEFAULT_NAV_STALE_S
+        private set
+    /** The last known location starts navigation only within this of the line (metres). */
+    @Volatile var navStartM: Int = DEFAULT_NAV_START_M
+        private set
+    /** The banner's Snooze button holds the off-route alert this long (minutes). */
+    @Volatile var navSnoozeMin: Int = DEFAULT_NAV_SNOOZE_MIN
+        private set
+
+    fun setNav(staleS: Int?, startM: Int?, snoozeMin: Int?) {
+        val e = prefs?.edit()
+        staleS?.let { navStaleS = it; e?.putInt(KEY_NAV_STALE_S, it) }
+        startM?.let { navStartM = it; e?.putInt(KEY_NAV_START_M, it) }
+        snoozeMin?.let { navSnoozeMin = it; e?.putInt(KEY_NAV_SNOOZE_MIN, it) }
+        e?.apply()
     }
 
     // ---- T57: routing snap distance, debug server port ----
@@ -124,6 +157,19 @@ object AppSettings {
     private fun loadCaches(p: SharedPreferences) {
         onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_MB_RANGE)
         contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+        pinnedCacheMb = p.getLong(KEY_PINNED_CACHE_MB, DEFAULT_PINNED_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+    }
+
+    private const val KEY_PINNED_CACHE_MB = "pinnedCacheMb"
+    const val DEFAULT_PINNED_CACHE_MB = 2048L
+
+    /** T91: budget of the pinned tiles of offline areas (no longer counted in [onlineCacheMb]); a download that would pass it is refused, MB. */
+    @Volatile var pinnedCacheMb: Long = DEFAULT_PINNED_CACHE_MB
+        private set
+
+    fun setPinnedCacheMb(mb: Long) {
+        pinnedCacheMb = mb
+        prefs?.edit()?.putLong(KEY_PINNED_CACHE_MB, mb)?.apply()
     }
 
     /** Sets and persists a cap (the caller checked the range and resizes the cache). */
@@ -233,9 +279,11 @@ object AppSettings {
         "unitsSource" to (unitPreference.source ?: "locale default (not set yet)"),
         "warmup" to warmup,
         "onlineCacheMb" to onlineCacheMb, // T41
+        "pinnedCacheMb" to pinnedCacheMb, // T91
         "contourCacheMb" to contourCacheMb,
         "routeSnapM" to routeSnapM, // T57
         "routeSnapRange" to listOf(ROUTE_SNAP_RANGE.first, ROUTE_SNAP_RANGE.last),
         "debugFixedPort" to debugFixedPort,
+        "navStaleS" to navStaleS, "navStartM" to navStartM, "navSnoozeMin" to navSnoozeMin, // T91
     ) + mapOptions.json(units) // T47
 }

@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy
 import io.github.jasondorjeshort.dystopo.app.online.DirectSources
 import io.github.jasondorjeshort.dystopo.app.online.Fetch
 import io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher
+import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
@@ -135,6 +136,8 @@ object AreaDownload {
             j.manifestMs = System.currentTimeMillis() - t0
             j.manifest = m
             Areas.saveManifest(m)
+            // T91: pinned tiles have their own budget (pinnedCacheMb, Settings › Storage); refuse a download that would pass it.
+            budgetError(OnlineService.get(app).cache.pinnedBytes, m.bytes, Areas.get(j.id)?.bytes ?: 0L, AppSettings.pinnedCacheMb)?.let { throw IllegalStateException(it) }
             val wants = m.items.filterIsInstance<TilesItem>().flatMap { item -> item.tiles.flatMap { (z, set) -> set.tiles().map { (x, y) -> Want(item, z, x, y) } } }
                 .sortedWith(compareBy({ it.z }, { it.item.route }))
             j.planned.set(wants.size)
@@ -278,4 +281,15 @@ object AreaDownload {
     }
 
     private const val POOL = 6
+}
+
+/**
+ * T91: why a download of about [estimateBytes] may not start, with [pinnedBytes] already pinned ([alreadyBytes] of them
+ * this area's own, from an earlier download) and a budget of [budgetMb]; null when it fits. Pure, tested.
+ */
+internal fun budgetError(pinnedBytes: Long, estimateBytes: Long, alreadyBytes: Long, budgetMb: Long): String? {
+    val mb = 1024L * 1024L
+    val after = pinnedBytes - minOf(alreadyBytes, pinnedBytes) + estimateBytes
+    if (after <= budgetMb * mb) return null
+    return "Offline areas would use about ${(after + mb - 1) / mb} MB, over their ${budgetMb} MB budget: remove an area or raise the budget in Settings › Storage"
 }

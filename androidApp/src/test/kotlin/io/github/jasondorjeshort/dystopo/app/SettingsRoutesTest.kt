@@ -68,6 +68,20 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun navThresholdsAreWholeNumbersInRange() { // T91
+        val p = ok("navStaleS" to "60", "navStartM" to 5000, "navSnoozeMin" to "20")
+        assertEquals(60, p.navStaleS)
+        assertEquals(5000, p.navStartM)
+        assertEquals(20, p.navSnoozeMin)
+        assertEquals(null, ok("units" to "m").navStaleS)
+        bad("navStaleS" to "2")
+        bad("navStaleS" to "abc")
+        bad("navStartM" to 60_000)
+        bad("navSnoozeMin" to 0)
+        bad("navSnoozeMin" to "241")
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {

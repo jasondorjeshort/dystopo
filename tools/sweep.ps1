@@ -16,6 +16,9 @@
 #                server (the standalone server on -BasePort+3, bound to all interfaces), Test shows the catalog count,
 #                "Download the map around me" at a mock fix at Rainier, a map with contours; then a second fresh
 #                install imports the Rainier pair through the system file picker. Screenshots in first-run\.
+#                T91: then the same release with no server (android-firstrun.py --direct: the map straight from the
+#                public sources at Rainier and Mont Blanc, mobile data only, the phone's own download, offline);
+#                its report is first-run-direct.json, screenshots in first-run\direct\.
 # T81, release realism (tools/android-ui.py; everything on the RELEASE build by taps unless noted):
 #   routes       (debug build, after the device tour) tools/routing-tour.txt: public routes, distance, ascent, trails
 #   search       (debug build) tools/search-tour.txt: each query's expected top hit
@@ -23,7 +26,9 @@
 #   features     search, a route kept as a trip, the Routes list, a recorded track, GPX export, sync with the sweep's
 #                server, the sync sheet, the Share screen, Settings; no crash
 #   upgrade      the previous published release (-PrevRelease, default the latest on GitHub) with a track, a trip,
-#                the pack and metric units, then this build installed over it: all of it survives
+#                the pack and metric units, then this build installed over it: all of it survives. T91: the
+#                downloaded APK is pinned (tag, file and SHA-256 in ui\previous\previous.json) and must match its
+#                release's SHA256SUMS.txt, else the part stops (the update part checks its copy the same way).
 #   permissions  location denied and allowed from the system dialog, notifications at the first recording
 #   background   recording through forced doze with the app in the background
 #   network      the emulator throttled, the server killed mid-download and (through a stall proxy) mid-sync,
@@ -77,7 +82,7 @@ param(
     [string[]]$MatrixDevices = @('26:pixel_6', '35:pixel_tablet:de-DE'),
     [int]$MatrixEmuPort = 0,
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
-    [string]$Known = 'overlap:search/Settings',
+    [string]$Known = '', # T91: overlap:search/Settings fixed (the map chips cap their font scale at 1.3)
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
     [string]$Channel = 'chrome',
     # One view per elevation source for the live part; labels are public places from areas.json.
@@ -174,6 +179,30 @@ function Run([string]$exe, [string[]]$argv, [string]$stdout, [string]$stderr) {
     $null = $p.Handle  # makes ExitCode available after the wait
     $p.WaitForExit()
     $p.ExitCode
+}
+
+# T91: the previous release's APK, pinned and checked: downloads the first asset matching $patterns plus the release's
+# SHA256SUMS.txt into $dir, and stops unless the APK's SHA-256 is the one SHA256SUMS.txt lists for it. Writes
+# previous.json (tag, file, sha256, expected, verified) next to it and returns the file.
+function Get-PreviousApk([string]$tag, [string]$dir, [string[]]$patterns, [string]$logBase) {
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $argv = @('release', 'download', $tag) + @($patterns | ForEach-Object { @('-p', $_) }) + @('-p', 'SHA256SUMS.txt', '-D', $dir, '--clobber')
+    $c = Run 'gh' $argv "$logBase.log" "$logBase.err.log"
+    $apk = @(foreach ($p in $patterns) { Get-ChildItem $dir -Filter $p }) | Select-Object -First 1
+    if ($c -ne 0 -or -not $apk) { throw "could not download $($patterns -join ' or ') of $tag" }
+    $sums = Join-Path $dir 'SHA256SUMS.txt'
+    if (-not (Test-Path $sums)) { throw "$tag has no SHA256SUMS.txt, so its APK cannot be checked" }
+    $want = $null
+    foreach ($line in Get-Content $sums) {
+        if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+)$' -and $Matches[2].Trim() -eq $apk.Name) { $want = $Matches[1].ToLower(); break }
+    }
+    if (-not $want) { throw "SHA256SUMS.txt of $tag has no line for $($apk.Name)" }
+    $hash = (Get-FileHash -Algorithm SHA256 $apk.FullName).Hash.ToLower()
+    [ordered]@{ tag = $tag; file = $apk.Name; bytes = $apk.Length; sha256 = $hash; expected = $want; verified = ($hash -eq $want) } |
+        ConvertTo-Json | Set-Content -Encoding ascii (Join-Path $dir 'previous.json')
+    if ($hash -ne $want) { throw "the $tag APK $($apk.Name) has SHA-256 $hash, SHA256SUMS.txt says $want" }
+    Write-Host "[sweep] previous release ${tag}: $($apk.Name) sha256 $hash (matches SHA256SUMS.txt)"
+    $apk
 }
 
 function Part([string]$name, [scriptblock]$body) {
@@ -410,9 +439,13 @@ try {
             $cfg | ConvertTo-Json | Set-Content -Encoding ascii $cfgPath
             Start-Server 'firstrun-server' (Join-Path $repo 'server\build\install\server\bin\server.bat') @('--config', $cfgPath) $fp '/healthz' 180
             try {
-                Run $py @('-I', 'tools/android-firstrun.py', '--serial', $serial, '--server', "http://${lan}:$fp", '--out', $fdir,
+                $c1 = Run $py @('-I', 'tools/android-firstrun.py', '--serial', $serial, '--server', "http://${lan}:$fp", '--out', $fdir,
                     '--import', "$dem,$osm") (Join-Path $Out 'first-run.json') (Join-Path $Out 'first-run.err.log')
             } finally { Stop-Server 'firstrun-server' }
+            # T91 (the T81 and T83 follow-up): the same fresh release install with no server, through the public sources.
+            $c2 = Run $py @('-I', 'tools/android-firstrun.py', '--serial', $serial, '--direct', '--out', (Join-Path $fdir 'direct')) `
+                (Join-Path $Out 'first-run-direct.json') (Join-Path $Out 'first-run-direct.err.log')
+            if ("$c1" -ne '0') { $c1 } else { $c2 }
         }
 
         # --- T81: release realism (tools/android-ui.py) ---------------------------------------------------------
@@ -446,15 +479,12 @@ try {
         $null = Part 'upgrade' {
             Build-Release
             $prevDir = Join-Path $ui 'previous'
-            New-Item -ItemType Directory -Force $prevDir | Out-Null
             $tag = $PrevRelease
             if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
             if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
             $abi = "$(& (Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }) 'platform-tools\adb.exe') -s $serial shell getprop ro.product.cpu.abi)".Trim()
             # Alpha releases since v0.1.4 ship only the universal APK (owner's policy 2026-10-11); older ones have per-ABI files too.
-            $c = Run 'gh' @('release', 'download', $tag, '-p', "*-$abi.apk", '-p', '*-universal.apk', '-D', $prevDir, '--clobber') (Join-Path $ui 'previous.log') (Join-Path $ui 'previous.err.log')
-            $prev = @(Get-ChildItem $prevDir -Filter "*-$abi.apk") + @(Get-ChildItem $prevDir -Filter '*-universal.apk') | Select-Object -First 1
-            if ($c -ne 0 -or -not $prev) { throw "could not download the $abi or universal APK of $tag" }
+            $prev = Get-PreviousApk $tag $prevDir @("*-$abi.apk", '*-universal.apk') (Join-Path $ui 'previous') # T91: pinned and checked
             Run $py (@('-I', 'tools/android-ui.py', 'upgrade', '--serial', $serial, '--prev-apk', $prev.FullName, '--dem', $dem, '--osm', $osm,
                     '--label', $tag, '--out', (Join-Path $ui 'upgrade')) + $knownArgs) (Join-Path $Out 'upgrade.json') (Join-Path $Out 'upgrade.err.log')
         }
@@ -486,11 +516,7 @@ try {
             $tag = $PrevRelease
             if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
             if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
-            $prevDir = Join-Path $udir 'previous'
-            New-Item -ItemType Directory -Force $prevDir | Out-Null
-            $c = Run 'gh' @('release', 'download', $tag, '-p', '*-universal.apk', '-D', $prevDir, '--clobber') (Join-Path $udir 'previous.log') (Join-Path $udir 'previous.err.log')
-            $prev = Get-ChildItem $prevDir -Filter '*-universal.apk' | Select-Object -First 1
-            if ($c -ne 0 -or -not $prev) { throw "could not download the universal APK of $tag" }
+            $prev = Get-PreviousApk $tag (Join-Path $udir 'previous') @('*-universal.apk') (Join-Path $udir 'previous') # T91: pinned and checked
             Run $py (@('-I', 'tools/android-ui.py', 'update', '--serial', $serial, '--prev-apk', $prev.FullName, '--apk', (Join-Path $udir 'current.apk'),
                     '--new-apk', (Join-Path $udir 'next.apk'), '--mock-port', "$($BasePort + 7)", '--dem', $dem, '--osm', $osm,
                     '--label', $tag, '--out', $udir) + $knownArgs) (Join-Path $Out 'update.json') (Join-Path $Out 'update.err.log')

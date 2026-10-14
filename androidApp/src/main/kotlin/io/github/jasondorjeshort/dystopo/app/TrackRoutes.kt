@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu
 import io.github.jasondorjeshort.dystopo.app.tracking.ReplayChecks
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
@@ -31,6 +32,14 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  * - `GET /tracks/waypoints/{wid}`; `POST /tracks/waypoints/{wid}?name=` renames;
  *   `DELETE /tracks/waypoints/{wid}`; `POST /tracks/waypoints/{wid}/select` opens the rename/delete
  *   sheet (what tapping the waypoint on the map does).
+ * - T91, waypoints at any time: `POST /waypoint[?lat=&lon=][&name=]` is the map's Waypoint chip (shown
+ *   folded or not, recording or not): a waypoint at the given point or at "here" (the recorder's last fix or
+ *   the map's last device fix, whichever is newer), on the recording track if one records, else
+ *   free-standing; it opens the waypoint sheet. 409 with no position. `GET /tracks` lists the
+ *   free-standing ones (`freeWaypoints`, drawn whatever track is shown) and `lastDrop`.
+ *   `POST /map/longpress?lat=&lon=` is a long-press on the map: it opens the long-press card ("Waypoint
+ *   here", "Route from here", Cancel), or while a route waits for its end passes straight to the route;
+ *   `POST /map/longpress/waypoint|route|cancel` taps the card's entries; `GET /map/longpress` its state.
  * - `POST /tracks/import` with a GPX body (`?name=` names a track the file leaves unnamed), or
  *   `POST /tracks/import?file=<name>` for a file in `files/tracks/`; `GET /tracks/files` lists those.
  *   Tracks keep their ids from `dystopo:id`; ids already stored are skipped.
@@ -48,7 +57,7 @@ object TrackRoutes {
     private val waypointPath = Regex("^/tracks/waypoints/($UUID)(/select)?$")
 
     fun handle(app: DystopoApp, r: Request): Response? {
-        if (r.path != "/tracks" && !r.path.startsWith("/tracks/") && !r.path.startsWith("/location")) return null
+        if (r.path != "/tracks" && !r.path.startsWith("/tracks/") && !r.path.startsWith("/location") && r.path != "/waypoint" && !r.path.startsWith("/map/longpress")) return null
         val t = Tracking.of(app)
         val p = params(r)
         when (r.method to r.path) {
@@ -61,6 +70,34 @@ object TrackRoutes {
                 return null
             }
             "GET" to "/tracks" -> return Response.json(overview(t))
+            "POST" to "/waypoint" -> {
+                val lat = p.d("lat")
+                val lon = p.d("lon")
+                if ((lat == null) != (lon == null)) return Response.json(mapOf("error" to "pass both lat and lon, or neither"), 400)
+                val w = t.dropWaypoint(lat, lon, p.s("name"), via = "route")
+                    ?: return Response.json(mapOf("error" to "no position yet: pass lat and lon, or inject a fix first"), 409)
+                return Response.json(storedJson(w) + mapOf("sheetOpen" to (t.selectedWaypointId == w.waypoint.id), "drop" to t.lastDrop))
+            }
+            "GET" to "/map/longpress" -> return Response.json(app.map.onMain { LongPressMenu.json() })
+            "POST" to "/map/longpress" -> {
+                val lat = p.d("lat") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
+                val lon = p.d("lon") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
+                return Response.json(app.map.onMain { LongPressMenu.longPress(lat, lon); LongPressMenu.json() })
+            }
+            "POST" to "/map/longpress/waypoint", "POST" to "/map/longpress/route", "POST" to "/map/longpress/cancel" -> {
+                val action = r.path.substringAfterLast('/')
+                val ok = app.map.onMain {
+                    val open = LongPressMenu.point != null
+                    when (action) {
+                        "waypoint" -> LongPressMenu.waypoint()
+                        "route" -> LongPressMenu.route()
+                        else -> LongPressMenu.cancel()
+                    }
+                    open
+                }
+                if (!ok) return Response.json(mapOf("error" to "the long-press card is not open"), 409)
+                return Response.json(app.map.onMain { LongPressMenu.json() })
+            }
             "POST" to "/tracks/record" -> {
                 val mode = when (p.s("source")?.lowercase()) {
                     null, "all" -> Tracking.Mode.ALL
@@ -229,6 +266,8 @@ object TrackRoutes {
             val ui = t.ui
             mapOf(
                 "recording" to recording,
+                "freeWaypoints" to t.store.waypoints(null).map(::waypointJson), // T91
+                "lastDrop" to t.lastDrop,
                 "lastFix" to rec.lastFix?.let { mapOf("lat" to it.lat, "lon" to it.lon, "ele" to it.ele, "time" to it.time, "source" to it.source) },
                 "shown" to t.shownId,
                 "selectedWaypoint" to t.selectedWaypointId,

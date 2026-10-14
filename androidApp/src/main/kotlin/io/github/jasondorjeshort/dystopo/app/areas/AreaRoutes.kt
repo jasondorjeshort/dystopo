@@ -23,7 +23,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   `line=lat,lon;lat,lon`, or `trip=<trip id or prefix>` for a kept route's corridor; with `bufferM`, `minZoom`,
  *   `maxZoom`, `name`, `contours=1`). A box is "Download this region" (a pack); a corridor is fetched into the tile
  *   cache and pinned. `GET /areas/download`: progress; `DELETE /areas/download`: cancel.
- * - `POST /areas/{id}/pin?on=0|1`: pin or unpin; `DELETE /areas/{id}`: remove (a box's pack is deleted, a corridor's
+ * - `POST /areas/{id}/pin?on=0|1`: pin or unpin (T91: 409 for a pack-backed area, which is never evicted); `DELETE /areas/{id}`: remove (a box's pack is deleted, a corridor's
  *   tiles leave the cache).
  * - `POST /areas/trim?mb=N`: sets the online cache's cap to N MB now (not saved; `restore=1` goes back to the
  *   setting) and evicts unpinned tiles down to it; answers the cache before and after and every area's coverage,
@@ -97,7 +97,10 @@ object AreaRoutes {
         return AreaDownload.start(area, q["name"], tripId, contours = q["contours"] == "1")
     }
 
-    /** The corridor of kept route [key] (id or prefix): its line, `bufferM` (default 500 m), zooms 8 to 15. */
+    /**
+     * The corridor of kept route [key] (id or prefix): its line, `bufferM` (default 500 m), zooms 8 to 15, or (T91)
+     * 8 to 13 for a drive ([corridorMaxZoom]); `minZoom`/`maxZoom` override.
+     */
     fun tripArea(key: String, q: Map<String, String> = emptyMap()): Pair<String, AreaOfInterest> {
         val plans = Trips.store { it.routePlans() }
         val p = plans.firstOrNull { it.id == key } ?: plans.filter { key.length >= 4 && it.id.startsWith(key) }.singleOrNull()
@@ -110,7 +113,7 @@ object AreaRoutes {
         val line = Polyline.simplify(pts, tol)
         val area = AreaOfInterest(
             AreaShape.Corridor(line, buffer + tol),
-            q["minZoom"]?.toIntOrNull() ?: 8, q["maxZoom"]?.toIntOrNull() ?: 15, q["name"] ?: p.name.ifBlank { "Route" },
+            q["minZoom"]?.toIntOrNull() ?: 8, q["maxZoom"]?.toIntOrNull() ?: corridorMaxZoom(p.type), q["name"] ?: p.name.ifBlank { "Route" },
         )
         return p.id to area
     }
@@ -129,3 +132,9 @@ object AreaRoutes {
         )
     }
 }
+
+/**
+ * T91 (the T77 follow-up): the deepest zoom a trip's corridor fetches by default. A drive is seen from a car at
+ * z13 at most (z8 to z15 was 134 MB for an 84 km drive), a walk or ride wants the trail detail of z15.
+ */
+internal fun corridorMaxZoom(type: String?): Int = if (type.equals("drive", ignoreCase = true)) 13 else 15

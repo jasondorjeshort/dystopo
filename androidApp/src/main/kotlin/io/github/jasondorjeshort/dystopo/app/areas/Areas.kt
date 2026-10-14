@@ -130,6 +130,7 @@ object Areas {
     fun attach(service: OnlineService) {
         load()
         service.cache.keep = ::isPinned
+        onPinsChanged = { service.cache.recountPinned() } // T91: pinned bytes have their own budget
         AheadPrefetch.start()
     }
 
@@ -160,7 +161,7 @@ object Areas {
     /** Pins or unpins [id]; unpinned tiles rejoin the cache's LRU order (and go first when it is over its cap). */
     fun pin(id: String, on: Boolean): Record {
         val r = get(id) ?: throw NoSuchElementException("no area '$id'")
-        check(on || r.pack == null) { "area ${r.name} is the pack ${r.pack}: packs are never evicted; remove the area to delete it" }
+        check(r.pack == null) { "area ${r.name} is the pack ${r.pack}: $PACK_NOTE" } // T91: pinning one did nothing either
         return update(r.id) { it.copy(pinned = on) }!!
     }
 
@@ -189,10 +190,17 @@ object Areas {
         return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted, "pack" to pack)
     }
 
+    /** T91: told (on its own thread, so no lock is held) when the pins change, so the cache recounts its pinned bytes. */
+    @Volatile private var onPinsChanged: (() -> Unit)? = null
+    private var pinCovers: List<Map<Int, TileSet>> = emptyList()
+
     private fun changed(save: Boolean = true) {
         val all = records.values.toList()
         val covers = all.filter { it.pinned && it.pack == null }.map { r -> coverMemo.getOrPut(r.id) { AreaPins.cover(r.area) } } + transient.values
+        val same = covers == pinCovers
+        pinCovers = covers
         pins = AreaPins(covers)
+        if (!same) onPinsChanged?.let { hook -> Thread(hook, "areas-recount").apply { isDaemon = true }.start() }
         list = all
         if (save) runCatching {
             val tmp = File(dir, "areas.json.tmp")

@@ -17,7 +17,10 @@ import java.io.File
  * - `packs`: region packs (`files/packs/` and pushed ones in the external files dir), with their routing graphs and
  *   search indexes; not a cache (a pack is removed in the pack list), so no budget and no clear here.
  * - `online`: tiles fetched from the server (DEM, map, glyphs) and the contour and shade tiles made on the phone
- *   from them (`cache/online/tiles/`), one LRU capped by `onlineCacheMb`.
+ *   from them (`cache/online/tiles/`), one LRU capped by `onlineCacheMb`; T91: the bytes and the cap count only
+ *   unpinned tiles.
+ * - `pinned` (T91): the tiles of pinned offline areas in that same directory, with their own budget
+ *   `pinnedCacheMb` (default 2 GB), checked when an area downloads; Pin, Unpin and Remove are in Offline areas.
  * - `derived`: contour, shade and cliff tiles made from packs (`cache/contours/`), one LRU capped by `contourCacheMb`.
  * - `sources`: what the phone's own readers downloaded from the public elevation sources when no server is set
  *   (`cache/sources/`, trimmed to its own cap by the readers).
@@ -29,6 +32,7 @@ object Storage {
     const val DERIVED = "derived"
     const val SOURCES = "sources"
     const val PACKS = "packs"
+    const val PINNED = "pinned"
     val CLEARABLE = listOf(ONLINE, DERIVED, SOURCES)
 
     /** The budgets the screen offers (any value in [AppSettings.CACHE_MB_RANGE] through `POST /storage`). */
@@ -97,6 +101,7 @@ object Storage {
     /** `GET /storage` and the screen: every store with its bytes, budget and what it holds. */
     fun json(app: DystopoApp, walk: Boolean = false): Map<String, Any?> {
         val online = OnlineService.get(app).cache
+        val pinned = online.pinnedBytes // T91
         val derived = ContourCache.get(app)
         val dirs = dirs(app)
         val packsWalk = walkAll(dirs.getValue(PACKS))
@@ -118,9 +123,13 @@ object Storage {
                 "dirs" to dirsJson(PACKS),
             ),
             ONLINE to linkedMapOf(
-                "label" to "Online tiles", "bytes" to online.bytes, "entries" to online.size, "budgetMb" to AppSettings.onlineCacheMb,
+                "label" to "Online tiles", "bytes" to online.bytes - pinned, "entries" to online.size, "budgetMb" to AppSettings.onlineCacheMb,
                 "setting" to "onlineCacheMb", "clearable" to true, "holds" to onlineBreakdown(online), "evictions" to online.evictions.get(),
-                "dirs" to dirsJson(ONLINE),
+                "allBytes" to online.bytes, "dirs" to dirsJson(ONLINE),
+            ),
+            PINNED to linkedMapOf(
+                "label" to "Offline areas (pinned)", "bytes" to pinned, "budgetMb" to AppSettings.pinnedCacheMb,
+                "setting" to "pinnedCacheMb", "clearable" to false, "areas" to runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.all().count { it.pinned && it.pack == null } }.getOrDefault(0),
             ),
             DERIVED to linkedMapOf(
                 "label" to "Contours and shading", "bytes" to derived.bytes, "entries" to derived.size, "budgetMb" to AppSettings.contourCacheMb,

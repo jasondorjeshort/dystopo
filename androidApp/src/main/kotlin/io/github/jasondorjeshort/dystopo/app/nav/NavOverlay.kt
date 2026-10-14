@@ -102,7 +102,7 @@ fun NavOverlay() {
                         // T65: silence the alert for a while, or until back on the route.
                         if (u.offRoute && u.snoozed == null) {
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Action("Snooze 10 min", Color.White) { NavSession.snooze(10.0) }
+                                Action("Snooze ${io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin} min", Color.White) { NavSession.snooze(io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin.toDouble()) } // T91: a setting
                                 Action("Quiet until back", Color.White) { NavSession.snooze(null) }
                             }
                         }

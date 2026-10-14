@@ -124,7 +124,8 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
     Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            BasicText(if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+            // T91 (the T75 follow-up): a pack-backed area has no Pin or Unpin; the card says why.
+            BasicText(if (r.pack != null) "KEPT AS A PACK" else if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned || r.pack != null) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
         }
         val kind = when {
             r.pack != null -> "Region pack ${r.pack}"
@@ -141,6 +142,7 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
                 (share?.let { String.format(Locale.US, " · %.0f%% on this phone", it * 100) } ?: ""),
             style = TextStyle(color = Muted, fontSize = 12.sp),
         )
+        if (r.pack != null) BasicText(PACK_NOTE, style = TextStyle(color = Muted, fontSize = 12.sp))
         r.error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 2) }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
@@ -154,6 +156,9 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
 private fun mb(bytes: Long): String = if (bytes >= 1_048_576) String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0) else String.format(Locale.US, "%d kB", bytes / 1024)
 
 private const val SHEET = 0.55f
+
+/** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). */
+internal const val PACK_NOTE = "A region pack is never evicted, so it needs no pin; it stays until you remove it."
 
 @Composable
 private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {

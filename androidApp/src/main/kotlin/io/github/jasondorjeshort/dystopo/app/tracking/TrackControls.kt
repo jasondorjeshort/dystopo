@@ -57,7 +57,8 @@ private val Magenta = Color(0xFFD01C8B)
 
 /**
  * The track controls on the map (T31, T40): record/pause/resume/stop with the live distance, point
- * count and time; a waypoint button; a "Tracks" list (tap a track to show it, "Profile" for its
+ * count and time; a Waypoint chip, always shown (T91: at the current fix, recording or not; a long-press
+ * on the map offers one too, [LongPressMenu]); a "Tracks" list (tap a track to show it, "Profile" for its
  * elevation profile, "GPX" to export it to the files dir, "Import" for a GPX from the files dir or
  * the system file picker); the waypoint sheet (rename or delete; opened by tapping a waypoint on the
  * map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view.
@@ -75,6 +76,7 @@ private fun BoxScope.Controls() {
     val mapView = app.map.mapView
     DisposableEffect(mapView) {
         mapView?.let { tracking.overlay.bind(it) }
+        LongPressMenu.install() // T91: a long-press offers a waypoint or a route
         onDispose { tracking.overlay.unbind() }
     }
     val ui = tracking.ui
@@ -92,77 +94,89 @@ private fun BoxScope.Controls() {
         if (granted) TrackingService.instance?.update(tracking.ui)
     }
 
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    Column(
-        // Below the Packs button (T29), which sits in the top-right corner; T65: below the navigation card while
-        // navigating, and measured so the Routes chip stacks under this column (TopChips).
-        Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.trackColumn()).padding(start = 8.dp, end = 8.dp)
-            .onGloballyPositioned { c ->
-                val chips = io.github.jasondorjeshort.dystopo.app.TopChips
-                chips.edge(c, density, top = true).let { if (it != chips.trackColumnTop) chips.trackColumnTop = it }
-                chips.edge(c, density).let { if (it != chips.trackColumnBottom) chips.trackColumnBottom = it }
-            },
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (!barOpen) {
-                // Folded: one chip; while recording it shows the live distance in red.
-                Chip(if (ui.recording) "\u25CF " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
-            } else {
-                if (ui.recording) {
-                    Chip("Waypoint") { tracking.post { tracking.recorder.waypoint(null); tracking.refreshUi(); tracking.refreshOverlay(true) } }
-                    Chip(if (ui.paused) "Resume" else "Pause") { Thread { if (tracking.ui.paused) tracking.resume() else tracking.pause() }.start() }
+    io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        Column(
+            // Below the Packs button (T29), which sits in the top-right corner; T65: below the navigation card while
+            // navigating, and measured so the Routes chip stacks under this column (TopChips).
+            Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.trackColumn()).padding(start = 8.dp, end = 8.dp)
+                .onGloballyPositioned { c ->
+                    val chips = io.github.jasondorjeshort.dystopo.app.TopChips
+                    chips.edge(c, density, top = true).let { if (it != chips.trackColumnTop) chips.trackColumnTop = it }
+                    chips.edge(c, density).let { if (it != chips.trackColumnBottom) chips.trackColumnBottom = it }
+                },
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // T91: the chips wrap (right-aligned) instead of running under the online indicator on the left; at
+            // most the width right of it.
+            val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+            val onlineRight = with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineRightPx.toDp() }
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(
+                Modifier.widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // T91: a waypoint at the current fix at any time, folded or not, recording or not.
+                Chip("Waypoint") { Thread { dropHere(tracking) }.start() }
+                if (!barOpen) {
+                    // Folded: one chip; while recording it shows the live distance in red.
+                    Chip(if (ui.recording) "\u25CF " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
+                } else {
+                    if (ui.recording) {
+                        Chip(if (ui.paused) "Resume" else "Pause") { Thread { if (tracking.ui.paused) tracking.resume() else tracking.pause() }.start() }
+                    }
+                    Chip("Tracks") { listOpen = !listOpen }
+                    Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
+                        val starting = !tracking.ui.recording
+                        Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
+                        if (starting && NotificationPrompt.shouldAsk(context)) notificationAsk.launch(NotificationPrompt.PERMISSION)
+                    }
+                    Chip("\u00D7") { barOpen = false; listOpen = false }
                 }
-                Chip("Tracks") { listOpen = !listOpen }
-                Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
-                    val starting = !tracking.ui.recording
-                    Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
-                    if (starting && NotificationPrompt.shouldAsk(context)) notificationAsk.launch(NotificationPrompt.PERMISSION)
-                }
-                Chip("\u00D7") { barOpen = false; listOpen = false }
             }
-        }
-        if (barOpen && ui.recording) {
-            Panel {
-                BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
-                BasicText(
-                    UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)) +
-                        if (ui.paused) "  PAUSED" else "",
-                    style = TextStyle(color = if (ui.paused) RecordRed else Ink, fontSize = 13.sp),
-                )
-            }
-        }
-        if (barOpen && listOpen) {
-            Panel(Modifier.widthIn(max = 300.dp).heightIn(max = 380.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Action("Import") { importOpen = !importOpen }
-                    io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
-                    io.github.jasondorjeshort.dystopo.app.share.ShareAction() // T54: phone-to-phone sync
-                    if (importOpen) Action("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
+            if (barOpen && ui.recording) {
+                Panel {
+                    BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+                    BasicText(
+                        UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)) +
+                            if (ui.paused) "  PAUSED" else "",
+                        style = TextStyle(color = if (ui.paused) RecordRed else Ink, fontSize = 13.sp),
+                    )
                 }
-                if (importOpen) ImportList(tracking) { importOpen = false }
-                if (ui.tracks.isEmpty()) BasicText("No tracks yet", style = TextStyle(color = Ink, fontSize = 13.sp))
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(ui.tracks, key = { it.id }) { t ->
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val km = ui.distances[t.id]?.let { "  " + UnitFormat.distance(it, AppSettings.units) } ?: ""
-                            BasicText(
-                                (if (t.id == ui.shownId) "● " else "") + t.name + "\n" + t.points + " pts" + km + if (t.recording) "  recording" else "",
-                                style = TextStyle(color = Ink, fontSize = 13.sp),
-                                modifier = Modifier.widthIn(max = 170.dp).clickable { Thread { tracking.show(t.id) }.start() },
-                            )
-                            Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
-                            Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start() } // T61: navigate
-                            Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
-                            io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51
+            }
+            if (barOpen && listOpen) {
+                Panel(Modifier.widthIn(max = 300.dp).heightIn(max = 380.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Action("Import") { importOpen = !importOpen }
+                        io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
+                        io.github.jasondorjeshort.dystopo.app.share.ShareAction() // T54: phone-to-phone sync
+                        if (importOpen) Action("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
+                    }
+                    if (importOpen) ImportList(tracking) { importOpen = false }
+                    if (ui.tracks.isEmpty()) BasicText("No tracks yet", style = TextStyle(color = Ink, fontSize = 13.sp))
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(ui.tracks, key = { it.id }) { t ->
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val km = ui.distances[t.id]?.let { "  " + UnitFormat.distance(it, AppSettings.units) } ?: ""
+                                BasicText(
+                                    (if (t.id == ui.shownId) "● " else "") + t.name + "\n" + t.points + " pts" + km + if (t.recording) "  recording" else "",
+                                    style = TextStyle(color = Ink, fontSize = 13.sp),
+                                    modifier = Modifier.widthIn(max = 170.dp).clickable { Thread { tracking.show(t.id) }.start() },
+                                )
+                                Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
+                                Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start() } // T61: navigate
+                                Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
+                                io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51
+                            }
                         }
                     }
+                    ui.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 11.sp)) }
                 }
-                ui.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 11.sp)) }
             }
         }
-    }
+    } }
 
     Column(
         // T41: above the credit line (its measured top), so the profile panel never covers it.
@@ -178,6 +192,7 @@ private fun BoxScope.Controls() {
         },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        LongPressCard() // T91
         ui.selectedWaypoint?.let { WaypointSheet(tracking, it) }
         ui.profile?.let { ProfilePanel(tracking, it) }
     }
@@ -198,6 +213,15 @@ private fun ImportList(tracking: Tracking, onDone: () -> Unit) {
                 onDone()
             },
         )
+    }
+}
+
+/** The Waypoint chip (T91): a waypoint at the current fix, or a short note when there is none yet. Off the main thread. */
+internal fun dropHere(tracking: Tracking) {
+    if (tracking.dropWaypoint(via = "chip") == null) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(DystopoApp.instance, "No location yet: long-press the map to place a waypoint", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 }
 

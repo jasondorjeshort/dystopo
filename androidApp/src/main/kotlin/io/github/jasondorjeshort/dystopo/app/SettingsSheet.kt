@@ -96,7 +96,7 @@ fun SettingsSheet() {
             }
             SourcesSection() // T79: first, so a fresh install finds the server field at once
             io.github.jasondorjeshort.dystopo.app.update.UpdateRow() // T83: version, Check for updates, Install
-            Setting("Storage", "packs, online tiles and contours on this phone, with their budgets") { Option("Storage ›", false) { SettingsUi.visible = false; io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true } } // T74
+            Setting(io.github.jasondorjeshort.dystopo.app.firstrun.Screens.STORAGE, "packs, online tiles and contours on this phone, with their budgets") { Option("Storage ›", false) { SettingsUi.visible = false; io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true } } // T74
             Setting("Units", if (AppSettings.unitPreference.units == null) "from your region until you choose" else null) {
                 Option("Feet", units == ContourUnits.FEET) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.FEET, null)) }
                 Option("Metres", units == ContourUnits.METERS) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.METERS, null)) }
@@ -118,6 +118,15 @@ fun SettingsSheet() {
                         change(SettingsRoutes.Parsed.Ok(null, false, null, null, routeSnapM = m))
                     }
                 }
+            }
+            // T91: the navigation thresholds (T65's constants).
+            val stale = AppSettings.navStaleS
+            Setting("Navigation: GPS fix stale after", "an older fix is not used, and the bar says the fix is lost") {
+                for (s in STALE_CHOICES) Option("$s s", stale == s) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navStaleS = s)) }
+            }
+            val snoozeMin = AppSettings.navSnoozeMin
+            Setting("Navigation: Snooze", "how long the off-route banner's Snooze holds the alert") {
+                for (m in SNOOZE_CHOICES) Option("$m min", snoozeMin == m) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSnoozeMin = m)) }
             }
             io.github.jasondorjeshort.dystopo.app.options.MapOptionsSection { change(SettingsRoutes.Parsed.Ok(null, false, null, null, it)) } // T47
         }
@@ -192,6 +201,8 @@ private fun SourcesSection() {
 
 /** T57: the snap distances the sheet offers (any value in [AppSettings.ROUTE_SNAP_RANGE] through `/settings`). */
 private val SNAP_CHOICES = listOf(300, 500, 1000)
+private val STALE_CHOICES = listOf(15, 30, 60, 120) // T91
+private val SNOOZE_CHOICES = listOf(5, 10, 30)
 
 private fun stepScale(scale: Double, dir: Int): Double =
     (Math.round((scale + 0.1 * dir) * 10) / 10.0).coerceIn(MapLibreStyle.MIN_TEXT_SCALE, MapLibreStyle.MAX_TEXT_SCALE)

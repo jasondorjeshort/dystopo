@@ -16,10 +16,12 @@ object Screens {
 
     /** Sections of the settings sheet, by their heading (`Settings › Sources`). */
     const val SOURCES = "Sources"
+    /** T91: the Storage row of the settings sheet (opens the Storage screen; budgets live there). */
+    const val STORAGE = "Storage"
 
     /** Screen name -> the sections a message may name after `›` (each must appear as a heading in that screen's file). */
     val ALL: Map<String, Set<String>> = mapOf(
-        SETTINGS to setOf(SOURCES),
+        SETTINGS to setOf(SOURCES, STORAGE),
         PACKS to setOf("From server"),
         TRACKS to emptySet(),
         ROUTES to emptySet(),

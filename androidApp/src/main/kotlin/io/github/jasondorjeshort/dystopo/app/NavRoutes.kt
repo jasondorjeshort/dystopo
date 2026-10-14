@@ -27,7 +27,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   time for routes, the line's model time for tracks and files); 1.0 at the start, above 1 behind plan, below 1 ahead;
  *   `pace` has its three parts. `fix`: stale-fix handling (a GPS fix or the last known location more than 30 s old when it
  *   arrives is dropped, `droppedTooOld`; the last known location more than 2 km from the line does not start navigation,
- *   `droppedTooFar`; with no usable fix for 30 s the bar says "No GPS fix for N s", `lost`). `layout`: where the Tracks and
+ *   `droppedTooFar`; with no usable fix for 30 s the bar says "No GPS fix for N s", `lost`; T91: the 30 s and 2 km are the
+ *   settings `navStaleS` and `navStartM`, read at each start, and the banner's Snooze length is `navSnoozeMin`). `layout`: where the Tracks and
  *   Routes chips sit relative to the stats bar ([TopChips]). `path.totalAscentM` is the route's one ascent figure (T24 rule).
  * - Starting navigation closes the route editor sheet and hides the T45 route card; the navigation line draws above
  *   the planned and kept route lines (T65).

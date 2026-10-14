@@ -14,7 +14,8 @@ Parts:
                never opens it); the lenient single-value rule is reported, not failed (see `valueRule` in the report).
   features     the release feature pass (R8 has never seen these paths in a test): with the Rainier pack pushed,
                search (type, pick a hit), routing (long-press start and end, the card, Keep as a trip, the Routes
-               list), tracks (Record, fixes through `adb emu geo fix`, Stop, the list, GPX export), the sync sheet
+               list; T91: the long-press card's Route from here), a waypoint with no recording (long-press, Waypoint here,
+               the sheet), tracks (Record, fixes through `adb emu geo fix`, Stop, the list, GPX export), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -43,7 +44,11 @@ Parts:
                (Tracks, Routes, Settings, search box) are on screen, inside it and not overlapping, and the Settings
                sheet's Sources section is reachable. --font-scale/--dark/--locale apply the setting first and undo it.
   routes       (debug build, debug port) the routing tour: tools/routing-tour.txt, each public route planned with
-               POST /route; distance and ascent within tolerance and the named trails present.
+               POST /route; distance and ascent within tolerance and the named trails present. T91: a line with
+               `pack=<name>` needs that pack on the phone: <name>-outdoors.pmtiles (and <name>-dem.pmtiles when it
+               exists) from --pack-dir (default out/) are pushed to the app's external packs dir, the app reloads
+               them, and the ones this run pushed are deleted again at the end; without the outdoors file the line is
+               reported `skipped` with the reason and does not fail the part (routesSkipped).
   search       (debug build, debug port) the search tour: tools/search-tour.txt, each query's expected top hit.
 
 Privacy: only areas.json places are used (the Rainier pack and the views around it); reports never echo file
@@ -433,41 +438,106 @@ def within(actual, expected, tol):
     return abs(actual - expected) <= float(tol)
 
 
+def pack_state(srv, name):
+    """The pack `name` as the app's GET /packs lists it, or None."""
+    code, r = srv.call("GET", "/packs")
+    for p in (r or {}).get("packs") or []:
+        if p.get("name") == name:
+            return p
+    return None
+
+
+def ensure_route_pack(srv, args, name):
+    """T91: makes the pack a routing line asks for (`pack=<name>`) usable on the phone. Returns
+    {"ready": bool, "skipped": bool, "pushed": bool, "reason": str, ...}: skipped when its outdoors file is not in
+    --pack-dir (the line is then reported, not failed), not ready when it was pushed and the app still does not
+    use it (`inUse` in GET /packs; `usable` also needs a DEM, which the Grand Canyon pack does not have). A pack already on the phone is used as it is."""
+    src = {role: os.path.join(args.pack_dir, f"{name}-{role}.pmtiles") for role in ("outdoors", "dem")}
+    p = pack_state(srv, name)
+    if p and (p.get("inUse") or p.get("usable")):
+        return {"ready": True, "skipped": False, "pushed": False, "note": "already on the phone"}
+    if not os.path.isfile(src["outdoors"]):
+        return {"ready": False, "skipped": True, "pushed": False,
+                "reason": f"pack {name} not on the phone and {os.path.relpath(src['outdoors'], REPO)} not found "
+                          f"(build it with tilebuild, see tools/routing-tour.txt)"}
+    exe, ser = srv.exe, srv.serial
+    debug.adb(exe, ser, "shell", "mkdir", "-p", f"{EXTERNAL}/packs")
+    for role, path in src.items():
+        if os.path.isfile(path):
+            code, out = debug.adb(exe, ser, "push", path, f"{EXTERNAL}/packs/{name}-{role}.pmtiles", timeout=600)
+            if code != 0:
+                return {"ready": False, "skipped": False, "pushed": False, "reason": f"adb push {path}: {out.strip()[:200]}"}
+    debug.adb(exe, ser, "shell", f"chmod a+rwx {EXTERNAL}/packs", timeout=30)
+    srv.call("POST", "/reload")
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        p = pack_state(srv, name)
+        if p and (p.get("inUse") or p.get("usable")):  # a vector-only pack (no DEM) is never `usable`, but is `inUse`
+            return {"ready": True, "skipped": False, "pushed": True, "bytes": p.get("bytes")}
+        time.sleep(2)
+    return {"ready": False, "skipped": False, "pushed": True, "reason": f"pack {name} pushed but not usable: {(p or {}).get('errors')}"}
+
+
 def part_routes(args):
     srv = DebugServer(args.port, args.serial)
     tour = read_tour(args.routes_file)
     res = []
-    for v in tour:
-        a, b = v["spec"].split(";")[:2]
-        mode = v["opts"].get("mode", "hike")
-        t0 = time.time()
-        code, r = srv.call("POST", f"/route?from={a}&to={b}&mode={mode}&wait=180000", timeout=240)
-        route = (r or {}).get("route") or {}
-        dist = route.get("distanceM")
-        asc = route.get("ascentM")
-        via = [x.get("name") if isinstance(x, dict) else x for x in route.get("via") or (r or {}).get("via") or []]
-        o = v["opts"]
-        if "expect" in o:  # a refusal on purpose: the status and a message naming the nearest trail
-            msg = (r or {}).get("message") or ""
-            checks = {"status": str(code) == o["expect"], **({"message": o["msg"].lower() in msg.lower()} if "msg" in o else {})}
-            res.append({"label": v["label"], "mode": mode, "ok": all(checks.values()), "checks": checks, "status": code, "message": msg})
-            print(f"[ui] route {v['label']}: {'ok' if res[-1]['ok'] else 'FAILED'} {code} {msg}", file=sys.stderr)
-            continue
-        checks = {"planned": code == 200 and dist is not None}
-        if "dist" in o:
-            checks["distance"] = within(dist, float(o["dist"]), o.get("distTol", "0.1%"))
-        if "ascent" in o:
-            checks["ascent"] = within(asc, float(o["ascent"]), o.get("ascentTol", "2%"))
-        if "via" in o:
-            want = [w.strip() for w in o["via"].split("+") if w.strip()]
-            checks["via"] = all(any(w.lower() in (n or "").lower() for n in via) for w in want)
-        res.append({"label": v["label"], "mode": mode, "ok": all(checks.values()), "checks": checks, "status": code,
-                    "distanceM": dist, "ascentM": asc, "descentM": route.get("descentM"), "timeS": route.get("timeS"),
-                    "via": via, "ms": round((time.time() - t0) * 1000),
-                    **({"error": (r or {}).get("message") or (r or {}).get("error")} if code != 200 else {})})
-        print(f"[ui] route {v['label']}: {'ok' if res[-1]['ok'] else 'FAILED'} {dist} m, +{asc} m, via {via}", file=sys.stderr)
-    srv.call("POST", "/route/clear")
-    return {"ok": bool(res) and all(x["ok"] for x in res), "routes": res, "routesOk": sum(1 for x in res if x["ok"]), "routesTotal": len(res)}
+    packs = {}  # pack= lines: name -> ensure_route_pack's answer
+    try:
+        for v in tour:
+            res.append(route_line(srv, args, v, packs))
+    finally:
+        srv.call("POST", "/route/clear")
+        for name, st in packs.items():  # what this run pushed goes again, so later parts see the phone as they left it
+            if st.get("pushed"):
+                code, _ = srv.call("DELETE", f"/packs/{urllib.parse.quote(name)}")
+                st["removed"] = code == 200
+    ran = [x for x in res if not x.get("skipped")]
+    return {"ok": bool(ran) and all(x["ok"] for x in ran), "routes": res, "routesOk": sum(1 for x in ran if x["ok"]),
+            "routesTotal": len(ran), "routesSkipped": len(res) - len(ran), **({"packs": packs} if packs else {})}
+
+
+def route_line(srv, args, v, packs):
+    """One line of the routing tour: planned and checked; a `pack=<name>` line first makes sure the pack is there."""
+    a, b = v["spec"].split(";")[:2]
+    mode = v["opts"].get("mode", "hike")
+    o = v["opts"]
+    if "pack" in o:  # T91: the line needs that pack on the phone
+        if o["pack"] not in packs:
+            packs[o["pack"]] = ensure_route_pack(srv, args, o["pack"])
+        st = packs[o["pack"]]
+        if st.get("skipped"):
+            print(f"[ui] route {v['label']}: skipped ({st['reason']})", file=sys.stderr)
+            return {"label": v["label"], "mode": mode, "pack": o["pack"], "ok": True, "skipped": True, "reason": st["reason"]}
+        if not st.get("ready"):
+            print(f"[ui] route {v['label']}: FAILED ({st['reason']})", file=sys.stderr)
+            return {"label": v["label"], "mode": mode, "pack": o["pack"], "ok": False, "error": st["reason"]}
+    t0 = time.time()
+    code, r = srv.call("POST", f"/route?from={a}&to={b}&mode={mode}&wait=180000", timeout=240)
+    route = (r or {}).get("route") or {}
+    dist = route.get("distanceM")
+    asc = route.get("ascentM")
+    via = [x.get("name") if isinstance(x, dict) else x for x in route.get("via") or (r or {}).get("via") or []]
+    if "expect" in o:  # a refusal on purpose: the status and a message naming the nearest trail
+        msg = (r or {}).get("message") or ""
+        checks = {"status": str(code) == o["expect"], **({"message": o["msg"].lower() in msg.lower()} if "msg" in o else {})}
+        out = {"label": v["label"], "mode": mode, "ok": all(checks.values()), "checks": checks, "status": code, "message": msg}
+        print(f"[ui] route {v['label']}: {'ok' if out['ok'] else 'FAILED'} {code} {msg}", file=sys.stderr)
+        return out
+    checks = {"planned": code == 200 and dist is not None}
+    if "dist" in o:
+        checks["distance"] = within(dist, float(o["dist"]), o.get("distTol", "0.1%"))
+    if "ascent" in o:
+        checks["ascent"] = within(asc, float(o["ascent"]), o.get("ascentTol", "2%"))
+    if "via" in o:
+        want = [w.strip() for w in o["via"].split("+") if w.strip()]
+        checks["via"] = all(any(w.lower() in (n or "").lower() for n in via) for w in want)
+    out = {"label": v["label"], "mode": mode, "ok": all(checks.values()), "checks": checks, "status": code,
+           "distanceM": dist, "ascentM": asc, "descentM": route.get("descentM"), "timeS": route.get("timeS"),
+           "via": via, "ms": round((time.time() - t0) * 1000),
+           **({"error": (r or {}).get("message") or (r or {}).get("error")} if code != 200 else {})}
+    print(f"[ui] route {v['label']}: {'ok' if out['ok'] else 'FAILED'} {dist} m, +{asc} m, via {via}", file=sys.stderr)
+    return out
 
 
 def part_search(args):
@@ -593,6 +663,12 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13):
     time.sleep(5)  # the link's camera move ends before the presses
     w, h, d = screen(dev)
     long_press(dev, *to_screen(*a, *c, z, w, h, d))
+    # T91: a long-press opens a card (Waypoint here, Route from here, Cancel); the end press goes to the route.
+    # Builds before T91 (the upgrade part's previous release) set the start at once: wait for whichever shows.
+    first, _ = dev.wait_for("^(Route from here|Long-press the end point)$", 15)
+    if first and first["text"] == "Route from here":
+        dev.tap(first)
+        dev.wait_for("^Long-press the end point$", 10)
     end = to_screen(*b, *c, z, w, h, d)
     long_press(dev, *end)
     card, nodes = dev.wait_for(CARD, 20)
@@ -750,6 +826,22 @@ def part_features(args):
         ok = any(r.split(" · ")[0] == st.get("route", "").split(" · ")[0] for r in rows)
         return {"ok": ok, "rows": rows, "png": png, **({} if ok else {"error": "the kept route is not in the Routes list"})}
 
+    def waypoint():
+        # T91: a waypoint with no recording: long-press the map, "Waypoint here", the sheet opens to name it.
+        hide_keyboard(dev)
+        w, h, _ = screen(dev)
+        long_press(dev, w // 2, h * 11 // 20)
+        here, nodes = dev.wait_for("^Waypoint here$", 10)
+        if not here:
+            return fail("no long-press card", texts=dev.texts(nodes)[:20])
+        dev.tap(here)
+        sheet, nodes = dev.wait_for("^Rename$", 10)
+        png = dev.screencap("waypoint")[0]
+        name = next((t for t in dev.texts(nodes) if re.match(r"^Waypoint \d+$", t)), None)
+        if sheet:
+            dev.tap_text("^Close$")
+        return {"ok": bool(sheet), "name": name, "png": png, **({} if sheet else {"error": "no waypoint sheet after Waypoint here"})}
+
     def track():
         pts = record_track(dev, walk(*PARADISE, 46.7950, -121.7330, 12))
         rows = track_rows(dev)
@@ -808,7 +900,7 @@ def part_features(args):
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
     for name, fn in (("install-map", setup), ("search", search), ("route", route), ("routes-list", trips),
-                     ("track", track), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
+                     ("waypoint", waypoint), ("track", track), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings)):
         run.step(name, fn)
     run.step("alive", lambda: alive_and_clean(dev))
@@ -1828,6 +1920,7 @@ def main():
     ap.add_argument("--target-port", type=int, default=0, help="network: the server's own port when --server-config is not given")
     ap.add_argument("--port", type=int, default=0, help="routes/search: host port forwarded to the debug server")
     ap.add_argument("--routes-file", default=os.path.join(HERE, "routing-tour.txt"))
+    ap.add_argument("--pack-dir", default=os.path.join(REPO, "out"), help="routes: where a `pack=<name>` line finds <name>-outdoors.pmtiles (and -dem)")
     ap.add_argument("--search-file", default=os.path.join(HERE, "search-tour.txt"))
     ap.add_argument("--net-speed", default="umts", help="network: emulator network speed while a transfer is killed (gsm, edge, umts, hsdpa, lte, full, or up:down kbps)")
     ap.add_argument("--net-delay", default="umts", help="network: emulator network latency (gprs, edge, umts, none, or min:max ms)")

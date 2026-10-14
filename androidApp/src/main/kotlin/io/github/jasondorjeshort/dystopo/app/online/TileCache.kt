@@ -10,6 +10,10 @@ import java.util.concurrent.atomic.AtomicLong
  * restart finds them again: the index is rebuilt from the directory, oldest modification time first,
  * and a hit touches the file's mtime (at most once a minute per entry) so the order survives a restart.
  * Writes go to a temporary file renamed into place, so a reader never sees half a tile. Thread-safe.
+ *
+ * T91: [maxBytes] caps the entries [keep] does not hold (the pinned tiles of offline areas have their own budget,
+ * `pinnedCacheMb`, checked when an area downloads); [pinnedBytes] is what the kept entries take. Each entry
+ * remembers whether it was kept when last seen; [recountPinned] refreshes that after the pins change.
  */
 class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = System::currentTimeMillis) {
     /** The cap; [resize] changes it (a setting, T41). */
@@ -22,14 +26,37 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     /** Sets the cap and evicts the least recently used entries over it at once. */
     fun resize(bytes: Long) {
         maxBytes = bytes
-        trim()
+        recountPinned()
     }
 
-    private class Entry(val file: File, val bytes: Long, @Volatile var touchedAt: Long)
+    private class Entry(val file: File, val bytes: Long, @Volatile var touchedAt: Long, var pinned: Boolean = false)
 
     // Access order: iteration starts at the least recently used entry.
     private val index = LinkedHashMap<String, Entry>(256, 0.75f, true)
     private var total = 0L
+    private var pinnedTotal = 0L
+
+    /** Removes [e]'s bytes from the totals (under the lock). */
+    private fun forget(e: Entry) {
+        total -= e.bytes
+        if (e.pinned) pinnedTotal -= e.bytes
+    }
+
+    /** T91: re-asks [keep] for every entry (after the pins changed), then trims the unpinned ones to the cap. */
+    fun recountPinned() {
+        synchronized(this) {
+            var p = 0L
+            for ((k, e) in index) {
+                e.pinned = keep(k)
+                if (e.pinned) p += e.bytes
+            }
+            pinnedTotal = p
+        }
+        trim()
+    }
+
+    /** Bytes of the entries [keep] holds (as of the last put, trim or [recountPinned]). */
+    val pinnedBytes: Long @Synchronized get() = pinnedTotal
 
     val hits = AtomicLong()
     val misses = AtomicLong()
@@ -48,7 +75,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
                 total += len
             }
         }
-        trim()
+        recountPinned()
     }
 
     val size: Int @Synchronized get() = index.size
@@ -69,7 +96,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
             e.file.readBytes()
         } catch (_: Exception) {
             // Deleted behind our back (the system trims app caches under storage pressure).
-            synchronized(this) { if (index[key] === e) { index.remove(key); total -= e.bytes } }
+            synchronized(this) { if (index[key] === e) { index.remove(key); forget(e) } }
             misses.incrementAndGet()
             return null
         }
@@ -111,10 +138,12 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         }
         val now = clock()
         file.setLastModified(now)
+        val pinned = keep(key)
         synchronized(this) {
-            index.remove(key)?.let { total -= it.bytes }
-            index[key] = Entry(file, bytes.size.toLong(), now)
+            index.remove(key)?.let { forget(it) }
+            index[key] = Entry(file, bytes.size.toLong(), now, pinned)
             total += bytes.size
+            if (pinned) pinnedTotal += bytes.size
         }
         writes.incrementAndGet()
         trim()
@@ -124,7 +153,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     fun clear(prefix: String = ""): Int {
         val gone = synchronized(this) {
             val keys = index.keys.filter { it.startsWith(prefix) }
-            keys.mapNotNull { k -> index.remove(k)?.also { total -= it.bytes } }
+            keys.mapNotNull { k -> index.remove(k)?.also { forget(it) } }
         }
         gone.forEach { it.file.delete() }
         return gone.size
@@ -134,7 +163,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     fun clearWhere(matches: (String) -> Boolean): Int {
         val gone = synchronized(this) {
             val keys = index.keys.filter(matches)
-            keys.mapNotNull { k -> index.remove(k)?.also { total -= it.bytes } }
+            keys.mapNotNull { k -> index.remove(k)?.also { forget(it) } }
         }
         gone.forEach { it.file.delete() }
         return gone.size
@@ -144,10 +173,18 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         val victims = ArrayList<File>()
         synchronized(this) {
             val it = index.entries.iterator()
-            while (total > maxBytes && it.hasNext()) {
-                val e = it.next().takeUnless { n -> keep(n.key) }?.value ?: continue // T75: pinned areas stay
+            // T91: only the unpinned entries count against the cap.
+            while (total - pinnedTotal > maxBytes && it.hasNext()) {
+                val n = it.next()
+                val e = n.value
+                val kept = keep(n.key) // T75: pinned areas stay
+                if (kept != e.pinned) {
+                    e.pinned = kept
+                    pinnedTotal += if (kept) e.bytes else -e.bytes
+                }
+                if (kept) continue
                 it.remove()
-                total -= e.bytes
+                forget(e)
                 victims += e.file
             }
         }
@@ -156,7 +193,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "dir" to dir.path, "entries" to size, "bytes" to bytes, "maxBytes" to maxBytes,
+        "dir" to dir.path, "entries" to size, "bytes" to bytes, "maxBytes" to maxBytes, "pinnedBytes" to pinnedBytes,
         "hits" to hits.get(), "misses" to misses.get(), "writes" to writes.get(), "evictions" to evictions.get(),
     )
 

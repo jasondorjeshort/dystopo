@@ -32,6 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -90,9 +92,19 @@ fun PacksOverlay() {
     Box(Modifier.fillMaxSize()) {
         if (!PacksUi.visible) {
             // T33: the top-right chips in one row (Settings, Packs); track controls sit in the row below (TrackControls).
-            Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Chip(Screens.SETTINGS) { io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = !io.github.jasondorjeshort.dystopo.app.SettingsUi.visible }
-                Chip(Screens.PACKS) { PacksUi.visible = true }
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale, and the search box ends before this row
+                Box(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).onGloballyPositioned { c ->
+                            with(density) { c.positionInRoot().x.toDp() }.let { if (it != io.github.jasondorjeshort.dystopo.app.TopChips.topRowLeft) io.github.jasondorjeshort.dystopo.app.TopChips.topRowLeft = it }
+                        },
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Chip(Screens.SETTINGS) { io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = !io.github.jasondorjeshort.dystopo.app.SettingsUi.visible }
+                        Chip(Screens.PACKS) { PacksUi.visible = true }
+                    }
+                }
             }
         } else {
             BackHandler { PacksUi.visible = false }

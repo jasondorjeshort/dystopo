@@ -15,7 +15,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
@@ -113,6 +114,7 @@ fun StorageScreen() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act: (String, () -> String) -> Unit) {
     val bytes = (s["bytes"] as? Number)?.toLong() ?: 0L
@@ -132,7 +134,8 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act
             }
         }
         holdsLine(key, s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // T91: the chips wrap (a scrolling row clipped the 2 GB chip at the right edge).
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // Clear first, so it is on screen whatever the budget chips take.
             if (s["clearable"] == true) Chip("Clear", false) {
                 act("Clearing") {
@@ -154,6 +157,10 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act
                 StorageUi.visible = false
                 PacksUi.visible = true
             }
+            if (key == Storage.PINNED) Chip("Offline areas ›", false) {
+                StorageUi.visible = false
+                io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true
+            }
         }
     }
 }
@@ -162,6 +169,7 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act
 private fun holdsLine(key: String, s: Map<String, Any?>): String? {
     if (key == Storage.PACKS) return "${s["count"]} installed; remove one in the pack list"
     if (key == Storage.SOURCES) return "Elevation data read by this phone when no server is set"
+    if (key == Storage.PINNED) return "${s["areas"]} pinned; kept out of Online tiles' budget until unpinned"
     @Suppress("UNCHECKED_CAST")
     val holds = s["holds"] as? Map<String, Map<String, Any?>> ?: return null
     if (holds.isEmpty()) return "Empty"

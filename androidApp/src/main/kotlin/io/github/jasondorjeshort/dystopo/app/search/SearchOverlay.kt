@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
@@ -121,9 +122,15 @@ fun SearchOverlay() {
     }
     LaunchedEffect(ui.query) { ui.refresh() }
 
-    Box(Modifier.fillMaxSize()) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
         Column(
-            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp).width(220.dp),
+            // T91: ends before the Settings chip; its bottom edge places the online indicator below it.
+            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp).width(io.github.jasondorjeshort.dystopo.app.TopChips.searchWidth())
+                .onGloballyPositioned { c ->
+                    // Without the open result list, which covers the indicator on purpose.
+                    if (!ui.open || ui.hits.isEmpty()) io.github.jasondorjeshort.dystopo.app.TopChips.edge(c, density).let { if (it != io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom) io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom = it }
+                },
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(
@@ -171,7 +178,7 @@ fun SearchOverlay() {
                 }
             }
         }
-    }
+    } }
 }
 
 @Composable

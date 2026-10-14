@@ -17,10 +17,12 @@ object MapInsets {
     fun onlineChipsAt(c: LayoutCoordinates) {
         val b = c.boundsInRoot()
         onlineChips = floatArrayOf(b.left, b.top, b.right, b.bottom)
+        if (TopChips.onlineRightPx != b.right) TopChips.onlineRightPx = b.right // T91: the track chips wrap before it
     }
 
     fun onlineChipsHidden() {
         onlineChips = null
+        if (TopChips.onlineRightPx != 0f) TopChips.onlineRightPx = 0f
     }
 
     /** True when ([x], [y]) lies in [r] (`left, top, right, bottom`) grown by [marginPx]. */

@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: bug
-status: planned
+status: done
 pipeline: T91
 related: [2026-10-13-route-waypoints-and-reroute.md]
 ---
@@ -22,3 +22,8 @@ long-press on the map is used by routing and trips, not for waypoints.
 - Wanted behaviour: drop a waypoint at the current fix any time, and at a long-pressed map point;
   name and edit it in the existing waypoint sheet; it syncs as today.
 - Needs a debug route or an existing one to test it (every feature must be agent-testable).
+
+## Resolved
+
+T91 (PR #95): a Waypoint chip shows folded or not, recording or not, and drops at the current fix; a long-press
+card offers "Waypoint here"; free-standing waypoints are drawn and sync. Debug: `POST /waypoint`, `POST /map/longpress`.

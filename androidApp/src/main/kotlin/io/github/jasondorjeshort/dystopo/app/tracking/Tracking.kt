@@ -230,6 +230,44 @@ class Tracking private constructor(private val app: DystopoApp) {
         return true
     }
 
+    /** Where [dropWaypoint] put the last waypoint and from what position (`GET /tracks` `lastDrop`). */
+    @Volatile var lastDrop: Map<String, Any?>? = null
+        private set
+
+    /**
+     * T91: drops a waypoint at any time (the owner's bug: before, only the Waypoint chip of a running
+     * recording could). On the recording track while one records, else free-standing (synced like any
+     * waypoint, drawn whatever track is shown). At ([lat], [lon]) when given (a long-pressed point), else at
+     * "here": the recorder's last fix (injected or GPS while recording) or the map's last device fix,
+     * whichever is newer. Opens the waypoint sheet on it so it can be named. Null when there is no position.
+     */
+    fun dropWaypoint(lat: Double? = null, lon: Double? = null, name: String? = null, via: String = "here"): StoredWaypoint? {
+        val device = app.map.lastLocation
+        // A given point's elevation from the DEM pack (off the tracking thread).
+        val pressedEle = if (lat != null && lon != null) runCatching { io.github.jasondorjeshort.dystopo.app.trips.Trips.elevationAt(lat, lon) }.getOrNull() else null
+        val w = call {
+            val trackId = recorder.activeId
+            val fix = recorder.lastFix
+            val pos: Triple<Double, Double, Double?>? = when {
+                lat != null && lon != null -> Triple(lat, lon, pressedEle)
+                fix != null && (device == null || fix.time >= device.time) -> null // the recorder's own "here"
+                device != null -> Triple(device.latitude, device.longitude, if (device.hasAltitude()) device.altitude else null)
+                else -> null
+            }
+            if (pos == null && fix == null) return@call null
+            val placed = recorder.waypoint(name?.takeIf { it.isNotBlank() }, trackId, pos?.first, pos?.second, pos?.third) ?: return@call null
+            lastDrop = linkedMapOf(
+                "id" to placed.id, "track" to trackId, "via" to via,
+                "position" to when { lat != null -> "given"; pos == null -> "recorderFix"; else -> "deviceFix" },
+            )
+            StoredWaypoint(trackId, placed)
+        } ?: return null
+        selectedWaypointId = w.waypoint.id
+        refreshUi()
+        refreshOverlay(force = true)
+        return w
+    }
+
     fun renameWaypoint(id: String, name: String): Boolean {
         val ok = call { store.renameWaypoint(id, name.trim(), System.currentTimeMillis()) }
         refreshUi()
@@ -369,7 +407,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         lastOverlayAt = now
         val id = shownId
         val track: Track? = id?.let { trackFor(it) }
-        val waypoints = id?.let { store.waypoints(it) } ?: emptyList()
+        // T91: free-standing waypoints (dropped with no recording, or synced) show whatever track is shown.
+        val waypoints = (id?.let { store.waypoints(it) } ?: emptyList()) + store.waypoints(null)
         overlay.show(track, waypoints, recording = id != null && id == recorder.activeId)
     }
 

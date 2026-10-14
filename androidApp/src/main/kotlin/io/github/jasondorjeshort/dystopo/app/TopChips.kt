@@ -1,6 +1,9 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,7 +42,21 @@ object TopChips {
     fun routesChip(): Modifier =
         if (trackColumnBottom > 0.dp) Modifier.padding(end = 8.dp, top = trackColumnBottom + GAP) else Modifier.statusBarsPadding().padding(end = 8.dp, top = ROUTES_TOP)
 
+    /** T91: left edge of the Settings and Packs row, and bottom edge of the search column (0 until measured). */
+    var topRowLeft by mutableStateOf(0.dp)
+    /** T91: right edge of the online indicator in px (0 when it is hidden). */
+    var onlineRightPx by mutableStateOf(0f)
+    var searchBottom by mutableStateOf(0.dp)
+
+    /** T91: the search box's width: 220 dp, or less so it ends before the Settings chip. */
+    fun searchWidth(): Dp = if (topRowLeft > 0.dp) minOf(SEARCH_WIDTH, topRowLeft - 8.dp - GAP).coerceAtLeast(96.dp) else SEARCH_WIDTH
+
+    /** T91: where the online indicator starts: just below the search column (and its "Indexing places" line). */
+    fun onlineColumn(): Modifier =
+        if (searchBottom > 0.dp) Modifier.padding(start = 8.dp, top = searchBottom + 4.dp) else Modifier.statusBarsPadding().padding(start = 8.dp, top = 60.dp)
+
     fun json(): Map<String, Any?> = linkedMapOf(
+        "topRowLeftDp" to topRowLeft.value, "searchBottomDp" to searchBottom.value, "searchWidthDp" to searchWidth().value,
         "navCardBottomDp" to navCardBottom.value, "trackColumnTopDp" to trackColumnTop.value, "trackColumnBottomDp" to trackColumnBottom.value,
         "routesChipTopDp" to if (trackColumnBottom > 0.dp) (trackColumnBottom + GAP).value else null,
         // The track controls clear the navigation card when they start below its bottom edge.
@@ -47,6 +64,22 @@ object TopChips {
     )
 
     private val GAP = 6.dp
+    private val SEARCH_WIDTH = 220.dp
+
+    /**
+     * T91: the font scale the floating map chips follow at most. They sit in fixed places around the map, and at
+     * the system's 2.0 the Settings chip covered the search box and the online indicator the Waypoint chip; the
+     * sheets, cards and lists keep the full scale.
+     */
+    const val MAX_FONT_SCALE = 1.3f
     private val TRACKS_TOP = 64.dp
     private val ROUTES_TOP = 112.dp
+}
+
+/** T91: draws [content] (floating map chips) with the font scale capped at [TopChips.MAX_FONT_SCALE]. */
+@Composable
+fun MapChrome(content: @Composable () -> Unit) {
+    val d = LocalDensity.current
+    if (d.fontScale <= TopChips.MAX_FONT_SCALE) content()
+    else CompositionLocalProvider(LocalDensity provides Density(d.density, TopChips.MAX_FONT_SCALE)) { content() }
 }

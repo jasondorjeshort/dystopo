@@ -138,7 +138,9 @@ object NavSession {
             source = src
             this.planTimeS = planTimeS
             snooze.clear()
-            freshness = FixFreshness()
+            // T91: the thresholds are settings now (navStaleS, navStartM), read at each start.
+            val stale = io.github.jasondorjeshort.dystopo.app.AppSettings.navStaleS.toDouble()
+            freshness = FixFreshness(io.github.jasondorjeshort.dystopo.nav.FixFreshnessOptions(maxAgeS = stale, maxStartDistanceM = io.github.jasondorjeshort.dystopo.app.AppSettings.navStartM.toDouble(), lostAfterS = stale))
             this.sound = sound
             this.vibrate = vibrate
             this.zoom = zoom

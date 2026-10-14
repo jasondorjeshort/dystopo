@@ -70,8 +70,12 @@ class SettingsRoutes(private val app: DystopoApp) {
         parsed.warmup?.let { AppSettings.setWarmup(it) }
         parsed.onlineCacheMb?.let { AppSettings.setOnlineCacheMb(it); io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.resize(it * ContourCache.MB) } // T41
         parsed.contourCacheMb?.let { AppSettings.setContourCacheMb(it); ContourCache.resize(it) }
+        parsed.pinnedCacheMb?.let { AppSettings.setPinnedCacheMb(it) } // T91: checked when an area downloads
         parsed.routeSnapM?.let { AppSettings.setRouteSnapM(it) } // T57: the next plan uses it
         parsed.debugFixedPort?.let { AppSettings.setDebugFixedPort(it) } // T57: from the next launch
+        if (parsed.navStaleS != null || parsed.navStartM != null || parsed.navSnoozeMin != null) {
+            AppSettings.setNav(parsed.navStaleS, parsed.navStartM, parsed.navSnoozeMin) // T91: from the next navigation start
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -95,16 +99,18 @@ class SettingsRoutes(private val app: DystopoApp) {
             val map: Map<String, Any?> = emptyMap(),
             val onlineCacheMb: Long? = null, val contourCacheMb: Long? = null, // T41
             val routeSnapM: Int? = null, val debugFixedPort: Boolean? = null, // T57
+            val navStaleS: Int? = null, val navStartM: Int? = null, val navSnoozeMin: Int? = null, // T91
+            val pinnedCacheMb: Long? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
 
     companion object {
         /** T41: cache caps in MB, within [AppSettings.CACHE_MB_RANGE] (declared before [KEYS], which uses it). */
-        val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb")
+        val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb", "pinnedCacheMb") // T91: pinnedCacheMb
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData") + MapOptions.KEYS + CACHE_KEYS // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
+        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin") + MapOptions.KEYS + CACHE_KEYS // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -151,6 +157,19 @@ class SettingsRoutes(private val app: DystopoApp) {
                 if (v == null || !v.isFinite() || v < r.first || v > r.last) return Parsed.Error("routeSnapM must be between ${r.first} and ${r.last} m (got $raw)")
                 routeSnapM = Math.round(v).toInt()
             }
+            // T91: the navigation thresholds, whole numbers within their ranges.
+            fun intIn(key: String, r: IntRange, unit: String): Pair<Int?, String?> {
+                val raw = params[key] ?: return null to null
+                val v = (raw as? Number)?.toDouble() ?: raw.toString().trim().toDoubleOrNull()
+                if (v == null || !v.isFinite() || v < r.first || v > r.last) return null to "$key must be between ${r.first} and ${r.last} $unit (got $raw)"
+                return Math.round(v).toInt() to null
+            }
+            val (navStaleS, e1) = intIn("navStaleS", AppSettings.NAV_STALE_RANGE, "s")
+            e1?.let { return Parsed.Error(it) }
+            val (navStartM, e2) = intIn("navStartM", AppSettings.NAV_START_RANGE, "m")
+            e2?.let { return Parsed.Error(it) }
+            val (navSnoozeMin, e3) = intIn("navSnoozeMin", AppSettings.NAV_SNOOZE_RANGE, "min")
+            e3?.let { return Parsed.Error(it) }
             val map = params.filterKeys { it in MapOptions.KEYS }
             if (map.isNotEmpty()) {
                 try {
@@ -163,7 +182,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             onlineError?.let { return Parsed.Error(it) }
             val (contour, contourError) = cacheMb(params, "contourCacheMb")
             contourError?.let { return Parsed.Error(it) }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort)
+            val (pinned, pinnedError) = cacheMb(params, "pinnedCacheMb")
+            pinnedError?.let { return Parsed.Error(it) }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

@@ -51,17 +51,38 @@ class PinnedTrimTest {
         cache.put("10.0.2.2_9130/contours-v9-ft-512/16/${cx * 2}/${cy * 2}.pbf", tile)
         cache.put("10.0.2.2_9130/glyphs/Noto%20Sans%20Regular/0-255.pbf", tile)
 
-        cache.resize(5_000) // a tiny cap: everything unpinned must go
+        cache.resize(0) // T91: the cap counts unpinned entries only, so 0 is what makes everything unpinned go
         assertTrue(inArea.all { cache.contains(it) }, "a pinned tile was evicted")
         assertTrue(elsewhere.none { cache.contains(it) }, "unpinned tiles stayed")
         assertTrue(cache.contains("10.0.2.2_9130/contours-v9-ft-512/16/${cx * 2}/${cy * 2}.pbf"))
         assertTrue(cache.contains("10.0.2.2_9130/glyphs/Noto%20Sans%20Regular/0-255.pbf"))
         assertEquals(elsewhere.size.toLong(), cache.evictions.get())
 
+        assertEquals(cache.bytes, cache.pinnedBytes, "only pinned bytes are left")
         // Unpinned: the next trim treats them like any other entry.
         pins = AreaPins.NONE
         cache.resize(5_000)
         assertTrue(cache.bytes <= 5_000, "over the cap after unpinning: ${cache.bytes}")
         assertTrue(inArea.count { cache.contains(it) } <= 5)
+        assertEquals(0L, cache.pinnedBytes)
+    }
+
+    @Test
+    fun pinnedBytesDoNotCountAgainstTheOnlineCap() { // T91: they have their own budget
+        val cache = TileCache(dir, 20_000) { now }
+        val pins = AreaPins(listOf(AreaPins.cover(area)))
+        cache.keep = { pins.isPinned(it) }
+        val tile = ByteArray(1000)
+        val inArea = TileCover.of(area, 15).tiles().map { (x, y) -> "10.0.2.2_9130/dem/15/$x/$y.png" }
+        for (k in inArea) { now += 10; cache.put(k, tile) }
+        val x0 = floor(WebMercator.lonToX(6.86, 15)).toInt()
+        val y0 = floor(WebMercator.latToY(45.83, 15)).toInt()
+        val elsewhere = (0 until 15).map { i -> "10.0.2.2_9130/dem/15/${x0 + i}/$y0.png" }
+        for (k in elsewhere) { now += 10; cache.put(k, tile) }
+        assertEquals(inArea.size * 1000L, cache.pinnedBytes)
+        assertTrue(cache.bytes > 20_000, "pinned plus unpinned exceed the cap")
+        // Fifteen unpinned tiles fit the 20 kB cap however many pinned bytes there are: none evicted.
+        assertTrue(elsewhere.all { cache.contains(it) })
+        assertEquals(0L, cache.evictions.get())
     }
 }

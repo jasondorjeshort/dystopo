@@ -98,6 +98,10 @@ object Trips {
         return safe
     }
 
+    /** T91: the active DEM pack's elevation at a point (metres, one decimal), or null without a DEM or data there. */
+    fun elevationAt(lat: Double, lon: Double): Double? =
+        elevation()?.elevation(lat, lon)?.takeUnless { it.isNaN() }?.let { Math.round(it * 10) / 10.0 }
+
     /** An editor on the active pack's graph (waits up to [waitMs] for it to load or build; straight legs without one). */
     fun editor(waitMs: Long = 120_000): RouteEditor {
         val graph = try { RoutePlanner.router(waitMs) } catch (e: RoutePlanner.NotReady) { null }
@@ -112,17 +116,27 @@ object Trips {
 
     fun refresh() {
         val items = store { it.routeList() }
-        val open = editingId?.let { id -> store { it.routePlan(id) } }
+        val readId = editingId
+        val open = readId?.let { id -> store { it.routePlan(id) } }
         val profiles = if (listOpen) store { it.routePlans() }.associate { it.id to RouteSummary.of(it, 40).profile } else null
         ui {
             list = items
             profiles?.let { listProfiles = it }
-            if (editing != null) showPlan(open)
+            // T91 (the T65 race): apply the open route only if it is still the one this refresh read. A route
+            // opened (or closed) after the read is newer than this answer, and its opener refreshes again.
+            if (refreshApplies(readId, editingId)) {
+                showPlan(open)
+                overlay.show(open)
+            }
         }
-        if (editingId != null || open != null) overlay.show(open)
     }
 
     private fun showPlan(p: RoutePlan?) {
+        // T91 (the T77 follow-up): a route opened in the editor replaces the T45 planned route and its card, which
+        // otherwise stayed under the trip card (and its line on the map). Keep it first to have it as a trip.
+        if (p != null && editing?.id != p.id && io.github.jasondorjeshort.dystopo.app.routing.RouteSession.phase != "idle") {
+            io.github.jasondorjeshort.dystopo.app.routing.RouteSession.clear()
+        }
         editing = p
         summary = p?.let { RouteSummary.of(it) }
         if (p == null) tool = "none"
@@ -352,3 +366,9 @@ object Trips {
 
     const val TAG = "DystopoTrips"
 }
+
+/**
+ * T91: whether a [Trips.refresh] that read the open route id [readId] may apply its answer now that the
+ * editor holds [nowId]: only to the same route (a refresh that read none has nothing to apply). Pure, tested.
+ */
+internal fun refreshApplies(readId: String?, nowId: String?): Boolean = readId != null && readId == nowId

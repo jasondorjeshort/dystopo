@@ -83,9 +83,13 @@ fun TripControls() {
             return@Box
         }
         if (Trips.editing == null) {
-            Chip("Routes", Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChip())) { // T65: below the track controls
-                Trips.listOpen = true
-                Trips.background { Trips.refresh() }
+            io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale
+                Box(Modifier.fillMaxSize()) {
+                    Chip("Routes", Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChip())) { // T65: below the track controls
+                        Trips.listOpen = true
+                        Trips.background { Trips.refresh() }
+                    }
+                }
             }
         } else {
             BackHandler { Trips.close() }
