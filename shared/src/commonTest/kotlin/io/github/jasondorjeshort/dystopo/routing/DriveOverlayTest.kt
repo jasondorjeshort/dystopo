@@ -108,6 +108,20 @@ class DriveOverlayTest {
     }
 
     @Test
+    fun theFullFallbackHasASettleBudget() {
+        // T89 (critic of ADR 0028): the overlay cannot carry this drive (a minor road is the only way across), and the
+        // full search it falls back to stops at the budget with a plain failure instead of searching on.
+        val g = grid(minorOnlyAcross = true)
+        val tg = TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(g))))
+        val full = found(TileRouter(tg, DriveOverlay()).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE))
+        val capped = TileRouter(tg, DriveOverlay(), maxSettled = full.expanded / 2).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
+        assertIs<RouteResult.Failed>(capped)
+        assertEquals(RouteFailure.SEARCH_LIMIT, capped.reason, capped.message)
+        assertTrue(capped.details["expanded"] as Int <= full.expanded / 2 + 1, "${capped.details}")
+        assertTrue(capped.message.contains("search limit"), capped.message)
+    }
+
+    @Test
     fun hikingAndShortDrivesNeverUseIt() {
         val (plain, fast) = routers(grid())
         val hike = found(fast.route(0.05, 0.03, 0.35, 0.77, TravelMode.HIKE))
@@ -138,5 +152,77 @@ class DriveOverlayTest {
         overlay.piece(e.x, e.y, tg.pieces(e.x, e.y))
         assertEquals(built, overlay.json()["built"])
         assertEquals(hits + 1, overlay.json()["hits"])
+    }
+
+    // ---- T89: the second level (z8 cells over the z11 cells) and cell files ----
+
+    /** Secondary roads every 0.2 degrees over lon 0..4.4, lat 0..1.6 near the equator: across 4 by 2 z8 tiles. */
+    private fun wideGrid(): RoutingGraph {
+        val road = WayAttrs(WayClass.SECONDARY, Surface.PAVED, name = "Grid Highway")
+        val lines = ArrayList<WayLine>()
+        var v = 0.0
+        while (v <= 4.4 + 1e-9) { lines += WayLine.of(road, 0.0 to v, 1.6 to v); v += 0.2 }
+        v = 0.0
+        while (v <= 1.6 + 1e-9) { lines += WayLine.of(road, v to 0.0, v to 4.4); v += 0.2 }
+        return RoutingGraphBuilder().build(lines, source)
+    }
+
+    /** Builds every level-2 cell (and so every level-1 cell) of [archive], as the server's warm-up does. */
+    private fun warm(overlay: DriveOverlay, archive: GraphTileArchive, tg: TiledGraph): Int {
+        val step = overlay.tileZoom - overlay.level2Zoom
+        var cells = 0
+        for ((x2, y2) in archive.entries.map { (it.x shr step) to (it.y shr step) }.toSet()) {
+            if (overlay.buildLevel2(x2, y2, archive.source, archive::has) { x, y -> tg.piece(0, x, y) } != null) cells++
+        }
+        return cells
+    }
+
+    @Test
+    fun theSecondLevelGivesTheSameRouteSettlingFewerNodesAndItsCellsReloadFromAFile() {
+        val g = wideGrid()
+        val bytes = GraphTileFile.encode(g)
+        val archive = GraphTileFile.open(bytes)
+        val tg = TiledGraph(listOf(archive))
+        val from = 0.2 to 0.1
+        val to = 1.4 to 4.3
+        val full = found(TileRouter(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val one = found(TileRouter(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertEquals(0, one.memory["level2Tiles"], "level 2 is never built inside a search: ${one.memory}")
+        val overlay = DriveOverlay()
+        val cells2 = warm(overlay, archive, tg)
+        assertTrue(cells2 >= 6, "level-2 cells $cells2")
+        val two = found(TileRouter(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertTrue(two.memory["level2Tiles"] as Int > 0, "${two.memory}")
+        for ((label, r) in listOf("level 1" to one, "level 2" to two)) {
+            assertEquals(full.cost, r.cost, full.cost * 1e-9, label)
+            assertEquals(full.distanceM, r.distanceM, 0.01, label)
+            assertEquals(full.timeS, r.timeS, 0.01, label)
+            assertEquals(full.route.points.size, r.route.points.size, label)
+        }
+        assertTrue(two.expanded < one.expanded, "level 2 settled ${two.expanded} nodes, level 1 ${one.expanded}")
+        // The cell file: a fresh overlay reads every cell from it and builds none, with the same route.
+        val (c1, c2) = overlay.cellsOf(archive.source)
+        val file = OverlayCellFile.open(OverlayCellFile.encode(archive.source, overlay.tileZoom, overlay.level2Zoom, c1, c2))
+        assertEquals(c1.size + c2.size, file.cellCount)
+        val fresh = DriveOverlay()
+        fresh.register(file)
+        val again = found(TileRouter(tg, fresh).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertEquals(two.cost, again.cost, 1e-6)
+        assertEquals(two.route.points, again.route.points)
+        assertEquals(two.memory["level2Tiles"], again.memory["level2Tiles"])
+        val stats = fresh.json()
+        assertEquals(0L, stats["built"], "nothing built: $stats")
+        assertEquals(0L, stats["level2Built"], "$stats")
+        assertTrue(stats["loadedFromFiles"] as Long > 0, "$stats")
+        // A cell read back is the cell written.
+        val k = c1.first()
+        val back = file.cell1(k.x, k.y)!!
+        assertTrue(k.baseNode.contentEquals(back.baseNode) && k.cost.contentEquals(back.cost) && k.graph == back.graph)
+        val k2 = c2.first()
+        val back2 = file.cell2(k2.x, k2.y)!!
+        assertTrue(k2.subNode.contentEquals(back2.subNode) && k2.subX.contentEquals(back2.subX) && k2.cost.contentEquals(back2.cost) && k2.graph == back2.graph)
+        // Another graph's file is not used for this one, and a damaged file is refused.
+        assertNull(file.cell1(-1, -1))
+        kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(OverlayCellFile.encode(archive.source, 11, 8, c1, c2).copyOf(30)) }
     }
 }

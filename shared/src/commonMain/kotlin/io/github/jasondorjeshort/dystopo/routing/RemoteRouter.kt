@@ -88,7 +88,8 @@ class RemoteRouter(
         val hasEle = pts.any { it.ele != null }
         val ascent = (summary["ascentM"] as? Number)?.toDouble() ?: if (hasEle) stats.ascentM else null
         val descent = (summary["descentM"] as? Number)?.toDouble() ?: if (hasEle) stats.descentM else null
-        val time = CostModel(mode).timeS(stats.distanceM, ascent ?: 0.0)
+        // T89: the server's summary time (for a drive, the sum of its router's per-road times), else the model's.
+        val time = (summary["timeS"] as? Number)?.toDouble() ?: CostModel(mode).timeS(stats.distanceM, ascent ?: 0.0)
         val host = server.substringAfter("://").trimEnd('/')
         val desc = "${Router.km(stats.distanceM)} km" + (if (ascent != null) ", +${ascent.roundToLong()} m / -${(descent ?: 0.0).roundToLong()} m" else "") +
             ", about ${PlannedRoute.hm(time)} (${mode.label}; planned by the Dystopo server at $host" +
@@ -112,8 +113,10 @@ class RemoteRouter(
  * The phone's router (T77): [local] (the packs on the device) first; when it fails because an end lies
  * where no local pack reaches ([covers] is false for it) and a server is set, [remote] plans it, so a
  * drive to a town beyond the packs still has a route. When the server cannot help either, the local
- * failure stands (its message names the nearest trail). Ends inside the local packs never go remote:
- * an off-network tap there is the user's to fix, not the server's.
+ * failure stands (its message names the nearest trail). Ends inside the local packs go remote only for
+ * a long drive (T89): two packs on the phone that do not join (a home pack and a destination pack) or a
+ * search that hit its limit, when the ends are [DriveOverlay.MIN_DISTANCE_M] or more apart; otherwise an
+ * off-network tap there is the user's to fix, not the server's.
  */
 class FallbackRouter(
     val local: Router?,
@@ -130,7 +133,12 @@ class FallbackRouter(
     ): RouteResult {
         val l = local?.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
         if (l is RouteResult.Found) return l
-        val fallBack = l == null || (l as RouteResult.Failed).reason in REMOTE_REASONS && !(covers(fromLat, fromLon) && covers(toLat, toLon))
+        val fallBack = l == null || (l as RouteResult.Failed).reason in REMOTE_REASONS && (
+            !(covers(fromLat, fromLon) && covers(toLat, toLon)) ||
+                // T89: both ends on the phone's packs, but they do not join (or the search ran out of budget) on a long drive.
+                mode == TravelMode.DRIVE && l.reason in LONG_DRIVE_REASONS &&
+                TrackStats.distanceM(fromLat, fromLon, toLat, toLon) >= DriveOverlay.MIN_DISTANCE_M
+            )
         if (!fallBack) return l!!
         val r = remote.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
         lastRemote = linkedMapOf("found" to (r is RouteResult.Found), "error" to (r as? RouteResult.Failed)?.reason?.code)
@@ -141,6 +149,9 @@ class FallbackRouter(
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double, mode: TravelMode): EdgeSnap? = local?.nearest(lat, lon, maxDistanceM, mode)
 
     companion object {
-        val REMOTE_REASONS = setOf(RouteFailure.START_OFF_NETWORK, RouteFailure.END_OFF_NETWORK, RouteFailure.NOT_CONNECTED, RouteFailure.EMPTY_GRAPH)
+        val REMOTE_REASONS = setOf(RouteFailure.START_OFF_NETWORK, RouteFailure.END_OFF_NETWORK, RouteFailure.NOT_CONNECTED, RouteFailure.EMPTY_GRAPH, RouteFailure.SEARCH_LIMIT)
+
+        /** T89: failures that send a long drive between two covered ends to the server. */
+        val LONG_DRIVE_REASONS = setOf(RouteFailure.NOT_CONNECTED, RouteFailure.SEARCH_LIMIT)
     }
 }

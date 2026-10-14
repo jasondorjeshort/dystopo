@@ -15,7 +15,8 @@ import kotlin.math.min
  * boundary node; the router looks for its twin, a node at the same place, in the pieces around it.
  * Within one graph file twins sit at exactly the same microdegrees (the tiler writes a cut into both
  * tiles); between two packs the lines were clipped separately, so a twin may be up to
- * [GraphPieces.JOIN_M] away.
+ * [GraphPieces.JOIN_M] away. T89: a twin has the same level ([RoutingGraph.nodeLevel]): a bridge or
+ * tunnel cut at a border joins only the same structure on the other side, never the road beneath.
  */
 class GraphPiece(
     /**
@@ -47,9 +48,9 @@ class GraphPiece(
         }
     }
 
-    /** Boundary nodes by exact position, and in cells of about [CELL_DEG] for the tolerant match. */
+    /** Boundary nodes by exact position and level, and in cells of about [CELL_DEG] for the tolerant match. */
     private val exact: HashMap<Long, Int> by lazy {
-        HashMap<Long, Int>().also { m -> for (n in boundary.indices) if (boundary[n]) m.putIfAbsent(pos(graph.nodeLon[n], graph.nodeLat[n]), n) }
+        HashMap<Long, Int>().also { m -> for (n in boundary.indices) if (boundary[n]) m.putIfAbsent(pos(graph.nodeLon[n], graph.nodeLat[n], graph.nodeLevel[n].toInt()), n) }
     }
     private val cells: HashMap<Long, IntList> by lazy {
         HashMap<Long, IntList>().also { m ->
@@ -58,11 +59,11 @@ class GraphPiece(
     }
 
     /**
-     * This piece's node at ([lonE6], [latE6]): exactly there, else (with [tolerant]) the nearest boundary
-     * node within [GraphPieces.JOIN_M]; -1 when there is none.
+     * This piece's node of [level] at ([lonE6], [latE6]): exactly there, else (with [tolerant]) the nearest
+     * boundary node of that level within [GraphPieces.JOIN_M]; -1 when there is none.
      */
-    fun twin(lonE6: Int, latE6: Int, tolerant: Boolean): Int {
-        exact[pos(lonE6, latE6)]?.let { return it }
+    fun twin(lonE6: Int, latE6: Int, tolerant: Boolean, level: Int = 0): Int {
+        exact[pos(lonE6, latE6, level)]?.let { return it }
         if (!tolerant) return -1
         val cx = floor(lonE6 / CELL_E6).toLong()
         val cy = floor(latE6 / CELL_E6).toLong()
@@ -72,6 +73,7 @@ class GraphPiece(
             val list = cells[((cx + dx) shl 32) xor ((cy + dy) and 0xFFFFFFFFL)] ?: continue
             for (i in 0 until list.size) {
                 val n = list[i]
+                if (graph.nodeLevel[n].toInt() != level) continue
                 val d = TrackStats.distanceM(latE6 / E6, lonE6 / E6, graph.nodeLat[n] / E6, graph.nodeLon[n] / E6)
                 if (d <= bestD) { bestD = d; best = n }
             }
@@ -85,7 +87,8 @@ class GraphPiece(
         const val E6 = 1e6
         const val CELL_DEG = 0.0001
         const val CELL_E6 = CELL_DEG * E6
-        fun pos(lon: Int, lat: Int): Long = (lon.toLong() shl 32) xor (lat.toLong() and 0xFFFFFFFFL)
+        /** Position and level in one key: the level in the top bits, where valid microdegrees leave room for it. */
+        fun pos(lon: Int, lat: Int, level: Int): Long = (lon.toLong() shl 32) xor (lat.toLong() and 0xFFFFFFFFL) xor (level.toLong() shl 62)
         fun cell(lon: Int, lat: Int): Long = (floor(lon / CELL_E6).toLong() shl 32) xor (floor(lat / CELL_E6).toLong() and 0xFFFFFFFFL)
     }
 }
@@ -100,6 +103,12 @@ interface GraphPieces {
 
     /** True when there is no network at all (no tiles anywhere). */
     val isEmpty: Boolean
+
+    /**
+     * T89: how many graph files make up this network (the component summary is conclusive on its own only
+     * when there is one); [Int.MAX_VALUE] when unknown.
+     */
+    val fileCount: Int get() = Int.MAX_VALUE
 
     /** The pieces of tile ([x], [y]) from every graph that has one there (loads them; may be empty). */
     fun pieces(x: Int, y: Int): List<GraphPiece>
@@ -137,6 +146,7 @@ class WholeGraph(val graph: RoutingGraph) : GraphPieces {
     private val piece = GraphPiece(0, 0, 0, graph, joinZoom = -1)
     override val tileZoom: Int get() = 0
     override val isEmpty: Boolean get() = graph.edgeCount == 0
+    override val fileCount: Int get() = 1
     override fun pieces(x: Int, y: Int): List<GraphPiece> = if (x == 0 && y == 0) listOf(piece) else emptyList()
 }
 
@@ -146,6 +156,10 @@ class WholeGraph(val graph: RoutingGraph) : GraphPieces {
  * A route keeps strong references to the pieces it uses, so eviction never pulls a tile from under
  * a search. commonMain has no locks: on a platform with threads pass [lock] (on the JVM
  * `{ block -> synchronized(obj) { block() } }`); tile reads and decoding run outside it.
+ *
+ * T89: a tile that fails its checksum or does not decode is remembered as corrupt (a negative cache,
+ * cleared by [forget] when the file is rebuilt), so later routes skip it at once instead of reading and
+ * checking it again; [corrupt] lists them for status pages and the rebuild decision.
  */
 class GraphTileCache(
     val maxBytes: Long = DEFAULT_MAX_BYTES,
@@ -166,18 +180,31 @@ class GraphTileCache(
         private set
     var loadErrors = 0L
         private set
+    /** T89: lookups answered from the negative cache (a tile known to be corrupt, not read again). */
+    var corruptHits = 0L
+        private set
+    private val bad = LinkedHashMap<Key, String>()
 
     /** The piece for tile ([x], [y]) of [archive] (index [index] in the caller's list), loading it when needed; null when absent or corrupt. */
     fun get(archive: GraphTileArchive, index: Int, x: Int, y: Int): GraphPiece? {
         if (!archive.has(x, y)) return null
         val k = Key(archive, x, y)
         var hit: GraphPiece? = null
-        lock { map.remove(k)?.let { p -> hits++; map[k] = p; hit = p } }
+        var known = false
+        lock {
+            map.remove(k)?.let { p -> hits++; map[k] = p; hit = p }
+            if (hit == null && bad.containsKey(k)) { corruptHits++; known = true }
+        }
         hit?.let { return it }
+        if (known) return null
         val g = try {
             archive.tile(x, y)
         } catch (e: IllegalArgumentException) {
-            lock { loadErrors++ }
+            lock {
+                loadErrors++
+                bad[k] = e.message ?: e.toString()
+                while (bad.size > MAX_CORRUPT) { val it = bad.keys.iterator(); it.next(); it.remove() }
+            }
             return null
         } ?: return null
         var p = GraphPiece(index, x, y, g, joinZoom = maxOf(archive.source.zoom, archive.tileZoom)) // the deeper borders include the other zoom's
@@ -203,10 +230,17 @@ class GraphTileCache(
         }
     }
 
-    /** Drops every tile of [archive] (its file was rebuilt or its pack removed). */
-    fun forget(archive: GraphTileArchive) = lock { map.keys.removeAll { it.archive === archive } }
+    /** Drops every tile of [archive] (its file was rebuilt or its pack removed), and what is known about its corrupt tiles. */
+    fun forget(archive: GraphTileArchive) = lock { map.keys.removeAll { it.archive === archive }; bad.keys.removeAll { it.archive === archive } }
 
-    fun clear() = lock { map.clear() }
+    fun clear() = lock { map.clear(); bad.clear() }
+
+    /** T89: the tiles found corrupt, as (file, x, y, message). */
+    fun corrupt(): List<Map<String, Any?>> {
+        var out: List<Map<String, Any?>> = emptyList()
+        lock { out = bad.map { (k, m) -> linkedMapOf("file" to k.archive.source.file, "x" to k.x, "y" to k.y, "error" to m) } }
+        return out
+    }
 
     fun json(): Map<String, Any?> {
         var out: Map<String, Any?> = emptyMap()
@@ -214,6 +248,7 @@ class GraphTileCache(
             out = linkedMapOf(
                 "tiles" to map.size, "bytes" to map.values.sumOf { it.graph.approxBytes() }, "maxBytes" to maxBytes,
                 "loads" to loads, "hits" to hits, "evictions" to evictions, "loadErrors" to loadErrors,
+                "corruptTiles" to bad.size, "corruptHits" to corruptHits, // T89
             )
         }
         return out
@@ -222,6 +257,9 @@ class GraphTileCache(
     companion object {
         /** 32 MB: every graph tile of a few national-park packs. */
         const val DEFAULT_MAX_BYTES = 32L shl 20
+
+        /** T89: corrupt tiles remembered at most (oldest forgotten first). */
+        const val MAX_CORRUPT = 1024
     }
 }
 
@@ -237,6 +275,7 @@ class TiledGraph(val archives: List<GraphTileArchive>, val cache: GraphTileCache
 
     override val tileZoom: Int = archives.firstOrNull()?.tileZoom ?: GraphTiler.ZOOM
     override val isEmpty: Boolean get() = archives.all { it.entries.isEmpty() }
+    override val fileCount: Int get() = archives.size
 
     override fun pieces(x: Int, y: Int): List<GraphPiece> = archives.withIndex().mapNotNull { (i, a) -> cache.get(a, i, x, y) }
 

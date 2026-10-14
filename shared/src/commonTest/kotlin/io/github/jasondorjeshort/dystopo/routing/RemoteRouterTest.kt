@@ -80,4 +80,21 @@ class RemoteRouterTest {
         assertEquals("local: end_off_network", (down.route(46.7864, -121.7366, 46.6021, -120.5059) as RouteResult.Failed).message)
         assertNull(FallbackRouter(null, remote) { _, _ -> false }.nearest(46.7, -121.7, 300.0))
     }
+
+    @Test
+    fun aLongDriveBetweenTwoPacksThatDoNotJoinGoesToTheServer() {
+        // T89 (critic of ADR 0028): a home pack and a destination pack on the phone, both ends covered, no road joining them.
+        var asked = 0
+        val remote = RemoteRouter("http://s", { asked++; 200 to reply })
+        val apart = FallbackRouter(Failing(RouteFailure.NOT_CONNECTED), remote) { _, _ -> true }
+        assertIs<RouteResult.Found>(apart.route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE))
+        assertEquals(1, asked)
+        // So does a long drive whose local search ran out of budget.
+        assertIs<RouteResult.Found>(FallbackRouter(Failing(RouteFailure.SEARCH_LIMIT), remote) { _, _ -> true }.route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE))
+        assertEquals(2, asked)
+        // Not a hike, and not a short drive (under 40 km): those stay the local answer.
+        assertIs<RouteResult.Failed>(apart.route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.HIKE))
+        assertIs<RouteResult.Failed>(apart.route(46.7864, -121.7366, 46.9145, -121.6425, TravelMode.DRIVE))
+        assertEquals(2, asked)
+    }
 }

@@ -5,7 +5,9 @@
 // Use: "Plan route", click the start and the end (the route follows trails; a dashed straight line where no trail
 // connects), click again to add a via point (into the nearest leg when it passes close, else as the new end), drag a
 // numbered point to move it (only its two legs are rerouted), right-click a point to remove it. The card shows
-// distance, climb, the hike-model time and the elevation profile (hover it to see the place on the map).
+// distance, climb, the time and the elevation profile (hover it to see the place on the map). The time is the server's
+// summary: the hike or bike model, and for a drive (T89) the router's own sum of each road's time, the number the phone's
+// route and trip cards and `devtool route` show for the same drive.
 // Mode drive (T73) follows the packs' roads (one-ways, roads closed to cars) to and between trailheads; the card says
 // it is not a road navigator, and a pack built before the road data says it must be rebuilt (the server's messages).
 //
@@ -19,7 +21,7 @@
 //
 // Long drives (T77): the server plans across every pack near the route, searching the tiles away from the ends through
 // its drive overlay; the card then says how many packs the route crossed and how long the server took
-// (`longRoute` in state()). Before navigating such a route offline the phone downloads its corridor (T75).
+// (`longRoute` in state(); T89: `level2Tiles`, the z8 overlay cells the searches went through). Before navigating such a route offline the phone downloads its corridor (T75).
 //
 // window.dystopoTrips is the scripting surface (tools/demo-check.py --route and --long-route drive the real mouse and read it).
 
@@ -165,7 +167,8 @@ export function install({ map, base, units, panel, token }) {
     const long = longRoute(reply);
     if (long && (long.packs.length > 1 || long.overlayTiles > 0)) // T77: a long route across packs
       notes.push("planned by the server across " + long.packs.length + (long.packs.length === 1 ? " pack" : " packs") + " (" + long.packs.join(", ") + ") in " +
-                 (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? ", " + long.overlayTiles + " tiles through the drive overlay" : ""));
+                 (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? ", " + long.overlayTiles + " tiles through the drive overlay" : "") +
+                 (long.level2Tiles ? " and " + long.level2Tiles + " of its z8 cells" : ""));
     $("trip-notes").textContent = notes.join("; ");
     drawProfile(s.profile);
     card.hidden = false;
@@ -382,7 +385,8 @@ export function install({ map, base, units, panel, token }) {
     if (!g) return null;
     const searches = g.searches || [];
     return { packs: (g.graphs || []).map(x => x.pack), ms: reply.ms, searches: searches.length,
-             overlayTiles: searches.reduce((n, x) => n + (x.overlayTiles || 0), 0), searchMs: searches.reduce((n, x) => n + (x.ms || 0), 0),
+             overlayTiles: searches.reduce((n, x) => n + (x.overlayTiles || 0), 0),
+             level2Tiles: searches.reduce((n, x) => n + (x.level2Tiles || 0), 0), searchMs: searches.reduce((n, x) => n + (x.ms || 0), 0),
              tiles: searches.reduce((n, x) => n + (x.tiles || 0), 0), expanded: searches.reduce((n, x) => n + (x.expanded || 0), 0) };
   }
   // The route's middle point [lat, lon] (by point count; for scripted clicks on the line).

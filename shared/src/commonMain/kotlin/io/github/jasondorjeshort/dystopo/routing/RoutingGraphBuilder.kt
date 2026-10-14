@@ -73,7 +73,9 @@ data class GraphBuildStats(
  *    is decoded; each line is clipped to its tile's exact square (tiles repeat a buffer around their
  *    edge), so the pieces of a line in neighbouring tiles meet end to end on the shared tile border.
  * 2. Vertices within [SNAP_M] of each other become one, which joins those pieces, shared OSM nodes
- *    and lines that merely end at the same spot.
+ *    and lines that merely end at the same spot. T89: a point where a bridge or tunnel was cut at a tile
+ *    border snaps only to cut points of bridges (or tunnels) and becomes a node of that level
+ *    ([RoutingGraph.nodeLevel]), so a road passing under a bridge at a tile border is not joined to it.
  * 3. Where two segments cross or touch without a shared vertex, a vertex is added to both, so the
  *    junction exists; not for bridges and tunnels, which pass over or under what they cross, and not
  *    between a trunk or motorway and anything but another road (T73: a trail crossing a highway does
@@ -83,6 +85,10 @@ data class GraphBuildStats(
  *    vertices) is one edge whose drive flags allow what either copy allowed.
  * 5. Elevation from [elevation] (when given) is sampled at every vertex, and the edge's ascent and
  *    descent from samples every [SAMPLE_M] along it.
+ * 6. T89: the component summary ([RoutingGraph.footComponent], [RoutingGraph.driveComponent]): the
+ *    connected parts of the network hiking and cycling may use and that cars may use (one-ways ignored),
+ *    each marked open when it reaches a tile the pack does not have (it may go on in another pack), so
+ *    the router refuses a route between two parts nothing joins without searching either.
  *
  * Coordinates are snapped in the integer frame of the read zoom (4096 units per tile).
  * [progress] is called after each tile with (done, total).
@@ -145,7 +151,9 @@ class RoutingGraphBuilder(
                 progress(i + 1, ids.size)
             }
         }
-        return assemble(acc, GraphSource(fileName, fingerprint(h), demFingerprint, z, builtAtMs, drive = driveCapable(metadata)), ids.size, errors, features)
+        val present = HashSet<Long>(ids.size * 2)
+        for (id in ids) { val t = TileIds.toZxy(id); present += tileKey(t.x, t.y) }
+        return assemble(acc, GraphSource(fileName, fingerprint(h), demFingerprint, z, builtAtMs, drive = driveCapable(metadata)), ids.size, errors, features, present)
     }
 
     /** Builds a graph from lon/lat lines (tests; any non-pack source), snapping in the zoom-14 frame. */
@@ -158,7 +166,7 @@ class RoutingGraphBuilder(
             acc.add(DoubleArray(l.lons.size) { (l.lons[it] + 180) / 360 * world }, DoubleArray(l.lats.size) { mercY(l.lats[it]) * world }, l.attrs)
         }
         progress(1, 1)
-        return assemble(acc, source, 0, 0, lines.size)
+        return assemble(acc, source, 0, 0, lines.size, null)
     }
 
     /** Line pieces in world units of zoom [z] (4096 per tile). */
@@ -166,13 +174,15 @@ class RoutingGraphBuilder(
         val xs = ArrayList<DoubleArray>()
         val ys = ArrayList<DoubleArray>()
         val attrs = ArrayList<WayAttrs>()
+        /** T89: per line, which of its points were made by clipping at the tile border (null: none, or not a bridge or tunnel). */
+        val clips = ArrayList<BooleanArray?>()
         /** Metres per world unit at the pack's middle latitude. */
         val metersPerUnit = 40_075_016.686 * cos(lat0 * PI / 180) / (UNITS.toDouble() * (1 shl z))
         var inputVertices = 0
 
-        fun add(x: DoubleArray, y: DoubleArray, a: WayAttrs) {
+        fun add(x: DoubleArray, y: DoubleArray, a: WayAttrs, clip: BooleanArray? = null) {
             if (x.size < 2) return
-            xs += x; ys += y; attrs += a
+            xs += x; ys += y; attrs += a; clips += clip
             inputVertices += x.size
         }
 
@@ -180,9 +190,10 @@ class RoutingGraphBuilder(
         fun addClipped(x: DoubleArray, y: DoubleArray, a: WayAttrs, x0: Double, y0: Double, x1: Double, y1: Double) {
             var px = DoubleList()
             var py = DoubleList()
+            var pc = ArrayList<Boolean>()
             fun flush() {
-                if (px.size >= 2) add(px.toArray(), py.toArray(), a)
-                px = DoubleList(); py = DoubleList()
+                if (px.size >= 2) add(px.toArray(), py.toArray(), a, if (a.brunnel && pc.any { it }) pc.toBooleanArray() else null)
+                px = DoubleList(); py = DoubleList(); pc = ArrayList()
             }
             for (i in 0 until x.size - 1) {
                 val ax = x[i]; val ay = y[i]; val bx = x[i + 1]; val by = y[i + 1]
@@ -204,24 +215,25 @@ class RoutingGraphBuilder(
                 val ex = ax + t1 * dx; val ey = ay + t1 * dy
                 if (px.size == 0 || px[px.size - 1] != sx || py[py.size - 1] != sy) {
                     flush()
-                    px.add(sx); py.add(sy)
+                    px.add(sx); py.add(sy); pc += t0 > 0.0
                 }
-                px.add(ex); py.add(ey)
+                px.add(ex); py.add(ey); pc += t1 < 1.0
                 if (t1 < 1.0) flush() // left the tile
             }
             flush()
         }
     }
 
-    /** Snapped vertices with a hash grid of cell [tol]. */
+    /** Snapped vertices with a hash grid of cell [tol]; T89: a vertex snaps only to vertices of its own level. */
     private class Vertices(val tol: Double) {
         val x = DoubleList()
         val y = DoubleList()
+        val level = ArrayList<Byte>()
         private val cells = HashMap<Long, IntList>()
         private fun key(cx: Long, cy: Long) = (cx shl 32) xor (cy and 0xFFFFFFFFL)
 
         /** The vertex within [tol] of (px, py) nearest to it, or a new one there. */
-        fun id(px: Double, py: Double): Int {
+        fun id(px: Double, py: Double, lv: Byte = 0): Int {
             val cx = floor(px / tol).toLong()
             val cy = floor(py / tol).toLong()
             var best = -1
@@ -230,6 +242,7 @@ class RoutingGraphBuilder(
                 val list = cells[key(cx + dx, cy + dy)] ?: continue
                 for (i in 0 until list.size) {
                     val v = list[i]
+                    if (level[v] != lv) continue
                     val ddx = x[v] - px; val ddy = y[v] - py
                     val d = ddx * ddx + ddy * ddy
                     if (d <= bestD) { bestD = d; best = v }
@@ -237,13 +250,18 @@ class RoutingGraphBuilder(
             }
             if (best >= 0) return best
             val v = x.size
-            x.add(px); y.add(py)
+            x.add(px); y.add(py); level += lv
             cells.getOrPut(key(cx, cy)) { IntList(2) }.add(v)
             return v
         }
     }
 
-    private fun assemble(acc: Accumulator, source: GraphSource, tiles: Int, errors: Int, features: Int): RoutingGraph {
+    /**
+     * [present]: the archive's tiles at the read zoom ([tileKey]), for the component summary's open flag (a
+     * component with a node on the border of a tile the archive does not have may go on in another pack);
+     * null without an archive (every component counts as open).
+     */
+    private fun assemble(acc: Accumulator, source: GraphSource, tiles: Int, errors: Int, features: Int, present: Set<Long>?): RoutingGraph {
         val tol = SNAP_M / acc.metersPerUnit
         val verts = Vertices(tol)
         // 2. Snap.
@@ -251,8 +269,11 @@ class RoutingGraphBuilder(
             val out = ArrayList<IntArray>(acc.xs.size)
             for (i in acc.xs.indices) {
                 val ids = IntList(acc.xs[i].size)
+                val clip = acc.clips[i]
+                val lv = acc.attrs[i].brunnelKind.toByte()
                 for (k in acc.xs[i].indices) {
-                    val v = verts.id(acc.xs[i][k], acc.ys[i][k])
+                    // T89: a bridge or tunnel cut at the tile border joins only its own other piece there.
+                    val v = verts.id(acc.xs[i][k], acc.ys[i][k], if (clip != null && clip[k]) lv else 0)
                     if (ids.size == 0 || ids[ids.size - 1] != v) ids.add(v)
                 }
                 out += ids.toArray()
@@ -406,11 +427,53 @@ class RoutingGraphBuilder(
             }
             nodeEle to gEle
         }
-        val graph = RoutingGraph(
+        val plain = RoutingGraph(
             source, nodeLon, nodeLat, nodeEle, eFrom.toArray(), eTo.toArray(), len, asc, desc,
             ByteArray(m) { eCls[it].toByte() }, ByteArray(m) { eAttrs[it].toByte() }, ByteArray(m) { eFlags[it].toByte() },
             gs, gLon, gLat, gEle, eName.toArray(), names, ByteArray(m) { eSpeed[it].toByte() },
+            ByteArray(n) { verts.level[nodeVerts[it]] },
         )
+        // 6. T89: the component summary.
+        val graph = timed("components") {
+            fun open(node: Int): Boolean {
+                if (present == null) return true
+                val vx = verts.x[nodeVerts[node]] / UNITS
+                val vy = verts.y[nodeVerts[node]] / UNITS
+                val d = tol * 2 / UNITS // within two snap tolerances of a tile border
+                for (ox in doubleArrayOf(-d, d)) for (oy in doubleArrayOf(-d, d)) {
+                    if (tileKey(floor(vx + ox).toInt(), floor(vy + oy).toInt()) !in present) return true
+                }
+                return false
+            }
+            val walk = CostModel(TravelMode.HIKE)
+            val car = CostModel(TravelMode.DRIVE)
+            fun labels(usable: (Int) -> Boolean): IntArray {
+                val parent = IntArray(n) { it }
+                fun find(i: Int): Int {
+                    var r = i
+                    while (parent[r] != r) r = parent[r]
+                    var j = i
+                    while (parent[j] != r) { val nx = parent[j]; parent[j] = r; j = nx }
+                    return r
+                }
+                for (e in 0 until m) if (usable(e)) {
+                    val a = find(plain.edgeFrom[e]); val b = find(plain.edgeTo[e])
+                    if (a != b) parent[max(a, b)] = min(a, b)
+                }
+                val ids = HashMap<Int, Int>()
+                val comp = IntArray(n) { ids.getOrPut(find(it)) { ids.size } }
+                val isOpen = BooleanArray(ids.size)
+                for (i in 0 until n) if (!isOpen[comp[i]] && open(i)) isOpen[comp[i]] = true
+                return IntArray(n) { comp[it] * 2 + if (isOpen[comp[it]]) 1 else 0 }
+            }
+            val foot = labels { e -> walk.usable(plain, e) }
+            val drive = labels { e -> source.drive && car.usable(plain, e) }
+            RoutingGraph(
+                source, plain.nodeLon, plain.nodeLat, plain.nodeEle, plain.edgeFrom, plain.edgeTo, plain.edgeLength, plain.edgeAscent, plain.edgeDescent,
+                plain.edgeClass, plain.edgeAttrs, plain.edgeFlags, plain.geomStart, plain.geomLon, plain.geomLat, plain.geomEle, plain.edgeName, plain.names,
+                plain.edgeSpeed, plain.nodeLevel, foot, drive,
+            )
+        }
         stats = GraphBuildStats(
             zoom = acc.z, tiles = tiles, tileErrors = errors, features = features, lines = acc.xs.size,
             inputVertices = acc.inputVertices, vertices = verts.x.size, crossings = verts.x.size - vertexCountBeforeCrossings + crossingsOnExisting,
@@ -503,6 +566,8 @@ class RoutingGraphBuilder(
     }
 
     companion object {
+        private fun tileKey(x: Int, y: Int): Long = (x.toLong() shl 32) or (y.toLong() and 0xFFFFFFFFL)
+
         /** T73: the first outdoors profile version whose packs carry one-ways, motor access and speed limits. */
         const val DRIVE_PROFILE_VERSION = 2
 

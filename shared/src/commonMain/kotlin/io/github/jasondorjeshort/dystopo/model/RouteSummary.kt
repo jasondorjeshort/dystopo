@@ -12,7 +12,8 @@ data class WaypointAt(val id: String, val name: String, val alongM: Double, val 
 /**
  * The trip summary of a [RoutePlan] (T60): distance, ascent and descent by T24's rules
  * ([TrackStats]: the 3 m turning-point hysteresis), the estimated time by T45's hike model
- * ([CostModel.timeS]: Naismith for hiking), T24's profile sampling ([TrackStats.profile]) and where
+ * ([CostModel.timeS]: Naismith for hiking; T89: for driving the sum of the legs' router times,
+ * [RouteLeg.timeS], with [CostModel.DRIVE_SUMMARY_KMH] only for legs that have none), T24's profile sampling ([TrackStats.profile]) and where
  * each waypoint sits along the route (profile markers). A pure function of the plan, so every replica
  * shows the same numbers.
  */
@@ -49,7 +50,7 @@ data class RouteSummary(
             val track = listOf(pts.map { TrackPoint(it.lat, it.lon, it.ele) })
             val stats = TrackStats.of(track)
             val travel = TravelMode.of(path.mode) ?: TravelMode.HIKE
-            val time = CostModel(travel).timeS(stats.distanceM, stats.ascentM ?: 0.0)
+            val time = if (travel == TravelMode.DRIVE && path.legs.isNotEmpty()) driveTimeS(path) else CostModel(travel).timeS(stats.distanceM, stats.ascentM ?: 0.0)
             val straight = path.legs.filter { it.kind == LegKind.STRAIGHT }.sumOf { leg ->
                 leg.points.zipWithNext { a, b -> TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon) }.sum()
             }
@@ -62,6 +63,15 @@ data class RouteSummary(
                 path.mode, stats.distanceM, stats.ascentM, stats.descentM, stats.minEleM, stats.maxEleM, time,
                 pts.size, path.via.size, path.legs.size, straight, profile, along,
             )
+        }
+
+        /**
+         * T89: a drive route's time: each leg's router time ([RouteLeg.timeS], the router's per-road speeds, the
+         * number `devtool route` and `GET /route` report), else the leg's length at [CostModel.DRIVE_SUMMARY_KMH]
+         * (straight and imported legs).
+         */
+        fun driveTimeS(path: RoutePath): Double = path.legs.sumOf { leg ->
+            leg.timeS ?: CostModel(TravelMode.DRIVE).timeS(leg.points.zipWithNext { a, b -> TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon) }.sum(), 0.0)
         }
 
         /** The profile's elevation at [d] metres (linear between samples), or null. */

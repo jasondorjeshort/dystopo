@@ -20,6 +20,7 @@ import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.GraphTileCache
 import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
 import io.github.jasondorjeshort.dystopo.routing.GraphTiler
+import io.github.jasondorjeshort.dystopo.routing.OverlayCellFile
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
@@ -63,7 +64,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   `devtool route`'s file name, z11 graph tiles read on demand into one LRU), reused while both
  *   archives are unchanged. Straight legs take their elevation every 25 m from the DEM (packs first,
  *   else the live `best` source). T77: drives whose ends are 40 km or more apart search the tiles away from them
- *   through [DriveOverlay] (`overlay=0` to compare without); the reply's `graph.searches` has each leg's search.
+ *   through [DriveOverlay] (`overlay=0` to compare without); the reply's `graph.searches` has each leg's search
+ *   (T89: `level2Tiles`, the z8 cells it went through). T89: once a pack's graph is open its overlay cells
+ *   (z11 and z8) are built in the background and written to `<vector archive>-overlay.idx` next to the graph
+ *   file; a restarted server reads them from there instead of building them (`driveOverlay.warm` in the status).
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
@@ -86,7 +90,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   "delete", "id"}`; a `path` or `waypoints` value must decode. The bundle's base is empty and it
  *   holds every op the page sends, so a push is idempotent.
  * - `GET /route/packs`: packs with a vector archive (`name`, files, `bounds`, graph state);
- *   `GET /route/status`: request counts, graph builds and timings, `tileCache` (T76: graph tiles in memory, loads, hits, evictions) and `lastRouteMemory` (the last route's tiles, their bytes, the search's own).
+ *   `GET /route/status`: request counts, graph builds and timings, `tileCache` (T76: graph tiles in memory, loads, hits, evictions; T89: `corruptTiles`, `corruptHits`), `corruptGraphTiles` (T89: tiles that failed their checksum, skipped without reading them again) and `lastRouteMemory` (the last route's tiles, their bytes, the search's own).
  * - `GET /trips.js` (also `/tools/demo/trips.js`): the page's trip editor script, `tools/demo/trips.js`
  *   next to the served page.
  */
@@ -226,19 +230,60 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     private val warmer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-overlay-warm").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
     private val warm = ConcurrentHashMap<String, Map<String, Any?>>()
 
-    /** Builds the overlay cell of every tile of [archive] on the warm-up thread (once per graph build). */
+    /**
+     * Builds the overlay cells of every tile of [archive] on the warm-up thread (once per graph build): level 1
+     * (z11), then level 2 (z8, T89), then writes them to the pack's cell file ([OverlayCellFile]). T89: when that
+     * file already holds this graph's cells it is read instead (registered with [driveOverlay]) and nothing is built.
+     */
     private fun warm(pack: Pack, archive: GraphTileArchive) {
         if (!warmOverlay || !archive.source.drive) return
         val key = pack.name + "|" + archive.source.builtAtMs
         if (warm.putIfAbsent(key, mapOf("pack" to pack.name, "state" to "queued")) != null) return
+        val cellFile = File(pack.vector.absoluteFile.parentFile, OverlayCellFile.fileNameFor(pack.vector.name))
+        if (cellFile.isFile) {
+            val t0 = System.nanoTime()
+            val f = runCatching { val src = FileRangeSource(cellFile); OverlayCellFile.open { o, l -> src.read(o, l) } }.getOrNull()
+            if (f != null && f.source == archive.source && f.tileZoom == driveOverlay.tileZoom && f.level2Zoom == driveOverlay.level2Zoom) {
+                driveOverlay.register(f)
+                warm[key] = linkedMapOf(
+                    "pack" to pack.name, "state" to "loaded", "file" to cellFile.name, "cells" to f.cellCount, "bytes" to f.fileBytes,
+                    "ms" to (System.nanoTime() - t0) / 1_000_000,
+                )
+                return
+            }
+        }
         warmer.execute {
             val t0 = System.nanoTime()
             var cells = 0
+            var cells2 = 0
             try {
                 for (e in archive.entries) {
                     if (driveOverlay.piece(e.x, e.y, 0, archive.source) { tileCache.get(archive, 0, e.x, e.y) } != null) cells++
                 }
-                warm[key] = linkedMapOf("pack" to pack.name, "state" to "done", "tiles" to archive.entries.size, "cells" to cells, "ms" to (System.nanoTime() - t0) / 1_000_000)
+                val ms1 = (System.nanoTime() - t0) / 1_000_000
+                // T89: the second level, from the first.
+                val step = driveOverlay.tileZoom - driveOverlay.level2Zoom
+                if (driveOverlay.level2) {
+                    for ((x2, y2) in archive.entries.map { (it.x shr step) to (it.y shr step) }.toSet()) {
+                        if (driveOverlay.buildLevel2(x2, y2, archive.source, archive::has) { x, y -> tileCache.get(archive, 0, x, y) } != null) cells2++
+                    }
+                }
+                val ms2 = (System.nanoTime() - t0) / 1_000_000 - ms1
+                // T89: the cell file, when every cell is still in memory (the cache keeps 65,536).
+                val (one, two) = driveOverlay.cellsOf(archive.source)
+                var written: Long? = null
+                if (one.size == cells && two.size == cells2) {
+                    val bytes = OverlayCellFile.encode(archive.source, driveOverlay.tileZoom, driveOverlay.level2Zoom, one, two)
+                    val tmp = File(cellFile.path + ".tmp")
+                    tmp.writeBytes(bytes)
+                    if (!tmp.renameTo(cellFile)) { cellFile.delete(); tmp.renameTo(cellFile) }
+                    written = bytes.size.toLong()
+                }
+                warm[key] = linkedMapOf(
+                    "pack" to pack.name, "state" to "done", "tiles" to archive.entries.size, "cells" to cells, "level2Cells" to cells2,
+                    "ms" to (System.nanoTime() - t0) / 1_000_000, "level1Ms" to ms1, "level2Ms" to ms2,
+                    "file" to cellFile.name.takeIf { written != null }, "bytes" to written,
+                )
             } catch (e: Exception) {
                 warm[key] = linkedMapOf("pack" to pack.name, "state" to "failed", "error" to (e.message ?: e.toString()))
             }
@@ -293,7 +338,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             building += pack.name
             try {
                 val (a, info) = openOrBuild(pack)
-                graphs.put(id, Loaded(a, key, info))?.let { tileCache.forget(it.archive) }
+                graphs.put(id, Loaded(a, key, info))?.let { tileCache.forget(it.archive); driveOverlay.unregister(it.archive.source) }
                 warm(pack, a) // T77
                 failures.remove(pack.name)
                 return a to info
@@ -530,6 +575,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         "outDir" to outDir.path, "requests" to requests.mapValues { it.value.get() }.toSortedMap(), "errors" to errors.get(),
         "lastMs" to lastMs, "building" to building.toList(), "graphs" to graphs.values.map { it.info },
         "tileCache" to tileCache.json(), "lastRouteMemory" to lastMemory, // T76
+        "corruptGraphTiles" to tileCache.corrupt(), // T89: skipped until the pack's graph is rebuilt
         "driveOverlay" to driveOverlay.json() + ("warm" to warm.values.toList()), // T77
     )
 

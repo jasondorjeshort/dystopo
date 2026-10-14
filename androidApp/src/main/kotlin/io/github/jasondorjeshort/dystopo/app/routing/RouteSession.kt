@@ -198,7 +198,8 @@ object RouteSession {
      */
     fun summaryOf(p: PlannedRoute): RouteSummary {
         summaryCache?.let { (k, v) -> if (k === p) return v }
-        val s = RouteSummary.of(RoutePath.fixed(p.route.points, p.mode.label), emptyList(), samples = 0)
+        // T89: as Keep stores it (one trail leg; a drive keeps the router's time), so the card and the trip agree.
+        val s = RouteSummary.of(RoutePath.planned(p.route.points, p.mode.label, p.timeS), emptyList(), samples = 0)
         summaryCache = p to s
         return s
     }

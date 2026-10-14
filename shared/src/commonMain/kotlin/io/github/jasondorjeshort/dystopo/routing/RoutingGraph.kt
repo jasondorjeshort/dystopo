@@ -103,6 +103,20 @@ class RoutingGraph(
     val names: List<String> = emptyList(),
     /** T73: edge e's speed limit in km/h (unsigned byte), 0 when not tagged. */
     val edgeSpeed: ByteArray = ByteArray(edgeFrom.size),
+    /**
+     * T89: node n's level, 0 on the ground; [LEVEL_BRIDGE] or [LEVEL_TUNNEL] for a point where a bridge or
+     * tunnel was cut at a tile border. Joins between tiles and packs ([GraphPiece.twin]) match only nodes of
+     * the same level, so a bridge cut at a border is never stitched to the road it passes over.
+     */
+    val nodeLevel: ByteArray = ByteArray(nodeLon.size),
+    /**
+     * T89: the component summary, per node: `component * 2 + open` of the whole pack's network that hiking
+     * and cycling may use ([footComponent]) and that cars may use, one-ways ignored ([driveComponent]);
+     * `open` when the component reaches a border of the pack's coverage (it may continue in another pack).
+     * Null when unknown (graphs built from lines, overlay cells).
+     */
+    val footComponent: IntArray? = null,
+    val driveComponent: IntArray? = null,
 ) {
     val nodeCount: Int get() = nodeLon.size
     val edgeCount: Int get() = edgeFrom.size
@@ -111,7 +125,16 @@ class RoutingGraph(
         require(geomStart.size == edgeCount + 1) { "geomStart must have edgeCount + 1 entries" }
         require(edgeName.size == edgeCount) { "edgeName must have edgeCount entries" }
         require(edgeSpeed.size == edgeCount) { "edgeSpeed must have edgeCount entries" }
+        require(nodeLevel.size == nodeCount) { "nodeLevel must have nodeCount entries" }
+        require(footComponent == null || footComponent.size == nodeCount) { "footComponent must have nodeCount entries" }
+        require(driveComponent == null || driveComponent.size == nodeCount) { "driveComponent must have nodeCount entries" }
     }
+
+    /** T89: whether edge [e] is a bridge or a tunnel ([WayAttrs.brunnelOf] of its attributes). */
+    fun brunnel(e: Int): Int = WayAttrs.brunnelOf(edgeAttrs[e].toInt())
+
+    /** T89: the component labels (`component * 2 + open`) [mode] uses, or null when this graph has none. */
+    fun components(mode: TravelMode): IntArray? = if (mode == TravelMode.DRIVE) driveComponent else footComponent
 
     /** T73: edge [e]'s tagged speed limit in km/h, 0 when not tagged. */
     fun speedKmh(e: Int): Int = edgeSpeed[e].toInt() and 0xFF
@@ -263,7 +286,8 @@ class RoutingGraph(
     fun approxBytes(): Long {
         var b = 4L * (nodeLon.size + nodeLat.size + nodeEle.size) +
             4L * (edgeFrom.size + edgeTo.size + edgeLength.size + edgeAscent.size + edgeDescent.size + edgeName.size + geomStart.size) +
-            4L * edgeCount + 4L * (geomLon.size + geomLat.size + geomEle.size) + names.sumOf { 40L + 2L * it.length }
+            4L * edgeCount + 4L * (geomLon.size + geomLat.size + geomEle.size) + names.sumOf { 40L + 2L * it.length } +
+            nodeCount + 4L * ((footComponent?.size ?: 0) + (driveComponent?.size ?: 0))
         if (adjacencyDerived) b += 4L * (nodeCount + 1 + 2 * edgeCount)
         if (gridDerived) b += grid.approxBytes()
         return b
@@ -271,9 +295,10 @@ class RoutingGraph(
 
     /**
      * Nodes, edges and names, without source or checksum: one tile's body in the graph file ([GraphTileFile]);
-     * [withSpeeds] (graph file version 4, T73) adds a byte per edge with its speed limit.
+     * [withSpeeds] (graph file version 4, T73) adds a byte per edge with its speed limit; [withNodes] (version
+     * 5, T89) then per node its level byte and its foot and drive component labels (varint label + 1, 0 unknown).
      */
-    internal fun writeBody(w: ByteWriter, withSpeeds: Boolean = true) {
+    internal fun writeBody(w: ByteWriter, withSpeeds: Boolean = true, withNodes: Boolean = withSpeeds) {
         w.varint(nodeCount.toLong())
         var pLon = 0
         var pLat = 0
@@ -309,6 +334,11 @@ class RoutingGraph(
         for (s in names) w.str(s)
         for (e in 0 until edgeCount) w.varint(edgeName[e].toLong())
         if (withSpeeds) for (e in 0 until edgeCount) w.u8(edgeSpeed[e].toInt() and 0xFF)
+        if (withNodes) for (n in 0 until nodeCount) {
+            w.u8(nodeLevel[n].toInt() and 0xFF)
+            w.varint(footComponent?.let { it[n].toLong() + 1 } ?: 0L)
+            w.varint(driveComponent?.let { it[n].toLong() + 1 } ?: 0L)
+        }
     }
 
     override fun equals(other: Any?): Boolean = other is RoutingGraph && source == other.source &&
@@ -318,7 +348,7 @@ class RoutingGraph(
         edgeClass.contentEquals(other.edgeClass) && edgeAttrs.contentEquals(other.edgeAttrs) && edgeFlags.contentEquals(other.edgeFlags) &&
         geomStart.contentEquals(other.geomStart) && geomLon.contentEquals(other.geomLon) && geomLat.contentEquals(other.geomLat) &&
         sameFloats(geomEle, other.geomEle) && edgeName.contentEquals(other.edgeName) && names == other.names &&
-        edgeSpeed.contentEquals(other.edgeSpeed)
+        edgeSpeed.contentEquals(other.edgeSpeed) && nodeLevel.contentEquals(other.nodeLevel) // the component labels are derived (T89)
 
     override fun hashCode(): Int = source.hashCode() * 31 + nodeCount * 17 + edgeCount
 
@@ -327,6 +357,11 @@ class RoutingGraph(
         const val VERSION = 2
         const val SUFFIX = "-graph.idx"
         const val E6 = 1e6
+
+        /** T89: [nodeLevel] of a bridge cut at a tile border. */
+        const val LEVEL_BRIDGE: Byte = 1
+        /** T89: [nodeLevel] of a tunnel cut at a tile border. */
+        const val LEVEL_TUNNEL: Byte = 2
 
         /**
          * The graph file that sits next to a vector archive: `<archive name>-graph.idx` (T49: the whole archive
@@ -345,7 +380,7 @@ class RoutingGraph(
         /** Reads a graph written by [encode]; throws IllegalArgumentException on a bad, truncated or newer file. */
         fun decode(bytes: ByteArray): RoutingGraph {
             require(bytes.size >= 9 && bytes.copyOfRange(0, 4).contentEquals(MAGIC)) { "not a routing graph" }
-            require(bytes[4].toInt() != GraphTileFile.VERSION) { "a tiled graph file (version ${GraphTileFile.VERSION}); read it with GraphTileFile" }
+            require(bytes[4].toInt() < 3) { "a tiled graph file (version ${bytes[4].toInt()}); read it with GraphTileFile" }
             val stored = ByteReader(bytes, bytes.size - 4).u32().toInt()
             require(stored == fnv1a(bytes, bytes.size - 4)) { "routing graph checksum mismatch (truncated or corrupt)" }
             val r = ByteReader(bytes.copyOfRange(0, bytes.size - 4), 4)
@@ -362,7 +397,7 @@ class RoutingGraph(
         }
 
         /** Reads what [writeBody] wrote; throws IllegalStateException or IllegalArgumentException on bad data. */
-        internal fun readBody(r: ByteReader, source: GraphSource, withNames: Boolean = true, withSpeeds: Boolean = true): RoutingGraph {
+        internal fun readBody(r: ByteReader, source: GraphSource, withNames: Boolean = true, withSpeeds: Boolean = true, withNodes: Boolean = withSpeeds): RoutingGraph {
             run {
                 val n = r.count()
                 val nodeLon = IntArray(n)
@@ -421,10 +456,28 @@ class RoutingGraph(
                 // T73: speed limits (graph file version 4).
                 val speed = ByteArray(m)
                 if (withSpeeds) for (e in 0 until m) speed[e] = r.u8().toByte()
+                // T89: node levels and component labels (graph file version 5).
+                val level = ByteArray(n)
+                var foot: IntArray? = null
+                var drive: IntArray? = null
+                if (withNodes) {
+                    val f = IntArray(n)
+                    val d = IntArray(n)
+                    var known = true
+                    for (i in 0 until n) {
+                        level[i] = r.u8().toByte()
+                        val a = r.varint(); val b = r.varint()
+                        require(a in 0..Int.MAX_VALUE.toLong() && b in 0..Int.MAX_VALUE.toLong()) { "bad component label" }
+                        if (a == 0L || b == 0L) known = false
+                        f[i] = (a - 1).toInt(); d[i] = (b - 1).toInt()
+                    }
+                    if (known) { foot = f; drive = d }
+                }
                 // Decimetre values were written from floats rounded to decimetres; divide the same way the builder rounds.
                 return RoutingGraph(
                     source, nodeLon, nodeLat, nodeEle.requantize(), from, to, len.requantizeLen(), asc.requantizeLen(), desc.requantizeLen(),
                     cls, attrs, flags, geomStart, gLon.toArray(), gLat.toArray(), gEle.toArray().requantize(), edgeName, names, speed,
+                    level, foot, drive,
                 )
             }
         }

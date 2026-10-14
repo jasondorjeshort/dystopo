@@ -277,7 +277,7 @@ object RoutePlanner {
             if (server != null) return Measured(FallbackRouter(null, server) { _, _ -> false })
             throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
         }
-        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay)
+        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED)
         if (server == null) return Measured(local)
         val boxes = states.values.map { it.bounds }
         return Measured(FallbackRouter(local, server) { lat, lon -> boxes.any { b -> lon in b[0]..b[2] && lat in b[1]..b[3] } })
@@ -346,6 +346,9 @@ object RoutePlanner {
 
     /** T76: packs whose box comes this close to a route's ends join its network. */
     const val NEAR_M = 5_000.0
+
+    /** T89: one search settles at most this many junctions on the phone (about 25 MB of search state); longer drives go to the server. */
+    const val MAX_SETTLED = 600_000
 
     // ---- Saved routes ----
 

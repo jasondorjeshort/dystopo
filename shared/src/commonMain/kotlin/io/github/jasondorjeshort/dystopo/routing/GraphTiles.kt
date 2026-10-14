@@ -41,14 +41,21 @@ object GraphTiler {
         val nodeLon = IntList(g.nodeCount + 16).apply { for (n in 0 until g.nodeCount) add(g.nodeLon[n]) }
         val nodeLat = IntList(g.nodeCount + 16).apply { for (n in 0 until g.nodeCount) add(g.nodeLat[n]) }
         val nodeEle = FloatList(g.nodeCount + 16).apply { for (n in 0 until g.nodeCount) add(g.nodeEle[n]) }
+        // T89: per node its level and component labels; a cut becomes a node of its edge's bridge or tunnel level, in the edge's components.
+        val nodeExtra = IntList(g.nodeCount + 16).apply { for (n in 0 until g.nodeCount) add(n) } // the original node whose labels it shares
+        val nodeLevel = IntList(g.nodeCount + 16).apply { for (n in 0 until g.nodeCount) add(g.nodeLevel[n].toInt()) }
         val parts = ArrayList<Part>(g.edgeCount)
-        for (e in 0 until g.edgeCount) cut(g, e, zoom, parts, nodeLon, nodeLat, nodeEle)
+        for (e in 0 until g.edgeCount) {
+            val before = nodeLon.size
+            cut(g, e, zoom, parts, nodeLon, nodeLat, nodeEle)
+            for (i in before until nodeLon.size) { nodeExtra.add(g.edgeFrom[e]); nodeLevel.add(g.brunnel(e)) }
+        }
         val byTile = parts.groupBy { (it.ty.toLong() shl 32) or it.tx.toLong() }
         return byTile.keys.sorted().map { key ->
             val list = byTile.getValue(key)
             val local = HashMap<Int, Int>()
-            val nLon = IntList(); val nLat = IntList(); val nEle = FloatList()
-            fun node(v: Int): Int = local.getOrPut(v) { nLon.add(nodeLon[v]); nLat.add(nodeLat[v]); nEle.add(nodeEle[v]); local.size }
+            val nLon = IntList(); val nLat = IntList(); val nEle = FloatList(); val nOf = IntList()
+            fun node(v: Int): Int = local.getOrPut(v) { nLon.add(nodeLon[v]); nLat.add(nodeLat[v]); nEle.add(nodeEle[v]); nOf.add(v); local.size }
             val m = list.size
             val from = IntArray(m); val to = IntArray(m)
             val len = FloatArray(m); val asc = FloatArray(m); val desc = FloatArray(m)
@@ -66,11 +73,15 @@ object GraphTiler {
                 gs[i + 1] = gLon.size
                 edgeName[i] = g.name(p.edge)?.let { nm -> nameIds.getOrPut(nm) { names += nm; names.size } } ?: 0
             }
+            val k = nOf.size
             GraphTile(
                 zoom, (key and 0xFFFFFFFFL).toInt(), (key shr 32).toInt(),
                 RoutingGraph(
                     g.source, nLon.toArray(), nLat.toArray(), nEle.toArray(), from, to, len, asc, desc, cls, attrs, flags,
                     gs, gLon.toArray(), gLat.toArray(), gEle.toArray(), edgeName, names, speed,
+                    ByteArray(k) { nodeLevel[nOf[it]].toByte() },
+                    g.footComponent?.let { c -> IntArray(k) { c[nodeExtra[nOf[it]]] } },
+                    g.driveComponent?.let { c -> IntArray(k) { c[nodeExtra[nOf[it]]] } },
                 ),
             )
         }
@@ -97,13 +108,18 @@ object GraphTiler {
             val lo1 = g.pointLonE6(e, k + 1); val la1 = g.pointLatE6(e, k + 1); val el1 = g.pointEle(e, k + 1)
             val x1 = WebMercator.lonToX(lo1 / E6, z); val y1 = WebMercator.latToY(la1 / E6, z)
             val ts = ArrayList<Double>()
+            // T89: a crossing within MIN_CUT_M of a point is no cut: the point itself, a hair from the border, is
+            // where the tiles meet (it becomes the node in both when the tile changes there), so the route does
+            // not gain a point centimetres from an existing one (the T76 "224 points" on the Rainier pack).
+            val segM = TrackStats.distanceM(la / E6, lo / E6, la1 / E6, lo1 / E6)
+            fun keep(t: Double) = t > 0 && t < 1 && t * segM >= MIN_CUT_M && (1 - t) * segM >= MIN_CUT_M
             for (c in ceil(minOf(x, x1)).toInt()..floor(maxOf(x, x1)).toInt()) {
                 val t = (c - x) / (x1 - x)
-                if (t > 0 && t < 1) ts += t
+                if (keep(t)) ts += t
             }
             for (c in ceil(minOf(y, y1)).toInt()..floor(maxOf(y, y1)).toInt()) {
                 val t = (c - y) / (y1 - y)
-                if (t > 0 && t < 1) ts += t
+                if (keep(t)) ts += t
             }
             if (ts.isEmpty()) continue
             ts.sort()
@@ -169,6 +185,9 @@ object GraphTiler {
     }
 
     private const val E6 = 1e6
+
+    /** T89: crossings closer than this to a point of the line are not cut (the point is the tile join). */
+    const val MIN_CUT_M = 0.5
 }
 
 /**
@@ -183,16 +202,21 @@ object GraphTiler {
  *     varint x, varint y, varint bodyLength, varint nodes, varint edges
  * u32 FNV-1a of every header byte before it (from the magic)
  * tile bodies, in directory order: RoutingGraph.writeBody (nodes, edges, names; the version 2 layout
- *     without its source fields; version 4: then u8 speedKmh per edge) followed by u32 FNV-1a of the body
+ *     without its source fields; version 4: then u8 speedKmh per edge; version 5, T89: then per node
+ *     u8 level, varint foot component + 1, varint drive component + 1) followed by u32 FNV-1a of the body
  * ```
+ * Version 5 (T89) also marks bridges and tunnels in each edge's attribute byte (bits 5 and 6) and keeps
+ * the bridge and tunnel points cut at tile borders as nodes of their own level, so joins never stitch a
+ * bridge to the road below it; its component labels let the router refuse a route between unconnected
+ * parts at once ([RoutingGraph.footComponent]).
  * Edge flags carry the T73 drive bits ([WayAttrs.ONEWAY], [WayAttrs.MOTOR_NO], ...) relative to the
- * edge's from -> to direction. Version 2 files (one graph per pack, before T76) and version 3 files
- * (before T73: no speed limits, no drive flag) are refused with a message saying so; the phone, the
+ * edge's from -> to direction. Version 2 files (one graph per pack, before T76), version 3 files
+ * (before T73: no speed limits, no drive flag) and version 4 files (before T89) are refused with a message saying so; the phone, the
  * server and `devtool route` then rebuild the file. The directory is all a reader keeps in memory
  * besides the tiles it loads; tile offsets are the sums of the body lengths before them.
  */
 object GraphTileFile {
-    const val VERSION = 4
+    const val VERSION = 5
     /** Header capability bit: the graph supports drive mode ([GraphSource.drive]). */
     private const val CAP_DRIVE = 1
     private val MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x47) // "DYSG", as RoutingGraph
@@ -241,7 +265,8 @@ object GraphTileFile {
         val version = first[4].toInt() and 0xFF
         require(version == VERSION) {
             if (version < 3) "routing graph version $version (one graph per pack, before T76), expected $VERSION: rebuild as tiles"
-            else if (version < VERSION) "routing graph version $version (before T73's drive data), expected $VERSION: rebuild"
+            else if (version < 4) "routing graph version $version (before T73's drive data), expected $VERSION: rebuild"
+            else if (version < VERSION) "routing graph version $version (before T89's bridge levels and component summary), expected $VERSION: rebuild"
             else "routing graph version $version, expected $VERSION"
         }
         val headerLength = ByteReader(first, 5).u32()
@@ -319,7 +344,9 @@ class GraphTileArchive internal constructor(
      */
     fun whole(): RoutingGraph {
         val nLon = IntList(); val nLat = IntList(); val nEle = FloatList()
-        val at = HashMap<Long, Pair<Int, Int>>() // position -> (node, tile index)
+        val nLevel = IntList(); val nFoot = IntList(); val nDrive = IntList()
+        var labelled = true
+        val at = HashMap<Long, Pair<Int, Int>>() // position and level -> (node, tile index)
         val from = IntList(); val to = IntList()
         val len = FloatList(); val asc = FloatList(); val desc = FloatList()
         val cls = IntList(); val attrs = IntList(); val flags = IntList(); val speed = IntList()
@@ -328,11 +355,13 @@ class GraphTileArchive internal constructor(
         val names = ArrayList<String>(); val nameIds = HashMap<String, Int>(); val edgeName = IntList()
         entries.forEachIndexed { ti, en ->
             val g = tile(en.x, en.y) ?: return@forEachIndexed
+            if (g.footComponent == null || g.driveComponent == null) labelled = false
             val map = IntArray(g.nodeCount) { n ->
-                val k = (g.nodeLon[n].toLong() shl 32) xor (g.nodeLat[n].toLong() and 0xFFFFFFFFL)
+                val k = ((g.nodeLon[n].toLong() shl 32) xor (g.nodeLat[n].toLong() and 0xFFFFFFFFL)) xor (g.nodeLevel[n].toLong() shl 62)
                 val prev = at[k]
                 if (prev != null && prev.second != ti) prev.first else {
                     nLon.add(g.nodeLon[n]); nLat.add(g.nodeLat[n]); nEle.add(g.nodeEle[n])
+                    nLevel.add(g.nodeLevel[n].toInt()); nFoot.add(g.footComponent?.get(n) ?: 0); nDrive.add(g.driveComponent?.get(n) ?: 0)
                     (nLon.size - 1).also { if (prev == null) at[k] = it to ti }
                 }
             }
@@ -350,6 +379,7 @@ class GraphTileArchive internal constructor(
             source, nLon.toArray(), nLat.toArray(), nEle.toArray(), from.toArray(), to.toArray(), len.toArray(), asc.toArray(), desc.toArray(),
             ByteArray(m) { cls[it].toByte() }, ByteArray(m) { attrs[it].toByte() }, ByteArray(m) { flags[it].toByte() },
             gs.toArray(), gLon.toArray(), gLat.toArray(), gEle.toArray(), edgeName.toArray(), names, ByteArray(m) { speed[it].toByte() },
+            ByteArray(nLevel.size) { nLevel[it].toByte() }, if (labelled) nFoot.toArray() else null, if (labelled) nDrive.toArray() else null,
         )
     }
 

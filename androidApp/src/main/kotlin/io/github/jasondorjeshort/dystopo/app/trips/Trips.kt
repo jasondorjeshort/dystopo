@@ -14,14 +14,10 @@ import io.github.jasondorjeshort.dystopo.app.sync.ShareLinkClient
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.model.RouteEditor
 import io.github.jasondorjeshort.dystopo.model.RouteGpx
-import io.github.jasondorjeshort.dystopo.model.RouteLeg
-import io.github.jasondorjeshort.dystopo.model.LegKind
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
-import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
-import io.github.jasondorjeshort.dystopo.model.ViaPoint
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
@@ -149,8 +145,7 @@ object Trips {
 
     /** Keeps the T45 planned route as a trip: its start and end become via points, its line one trail leg. */
     fun keep(p: PlannedRoute, name: String = p.route.name): RoutePlan {
-        val pts = p.route.points.map { RoutePoint(it.lat, it.lon, it.ele) }
-        val path = RoutePath(p.mode.label, listOf(ViaPoint(pts.first().lat, pts.first().lon), ViaPoint(pts.last().lat, pts.last().lon)), listOf(RouteLeg(LegKind.TRAIL, pts))).quantized()
+        val path = RoutePath.planned(p.route.points, p.mode.label, p.timeS) // T89: a drive keeps the router's time
         val plan = RoutePlan(p.route.id, name, path, type = p.mode.label, description = p.route.description)
         store { it.putRoutePlan(plan, System.currentTimeMillis()) }
         return opened(plan.id)

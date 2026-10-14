@@ -40,8 +40,12 @@ enum class LegKind(val code: Int, val label: String) {
 /** A point the route is drawn through (where the user put it, snapped onto a trail when one was near). */
 data class ViaPoint(val lat: Double, val lon: Double)
 
-/** The geometry from via point i to via point i + 1: at least two points, the first and last equal to those via points. */
-data class RouteLeg(val kind: LegKind, val points: List<RoutePoint>)
+/**
+ * The geometry from via point i to via point i + 1: at least two points, the first and last equal to those via points.
+ * [timeS] (T89): for a drive leg the router planned, its travel time by the router's per-road speeds (whole seconds),
+ * which [RouteSummary] adds up so every editor shows the router's time; null for every other leg.
+ */
+data class RouteLeg(val kind: LegKind, val points: List<RoutePoint>, val timeS: Double? = null)
 
 /**
  * A route's shape: the travel [mode] (`hike`, `bike`), the [via] points and one [legs] entry between
@@ -72,13 +76,19 @@ data class RoutePath(val mode: String, val via: List<ViaPoint>, val legs: List<R
     fun quantized(): RoutePath = RoutePath(
         mode,
         via.map { ViaPoint(q7(it.lat), q7(it.lon)) },
-        legs.map { leg -> RouteLeg(leg.kind, leg.points.map { RoutePoint(q7(it.lat), q7(it.lon), it.ele?.let(::qEle)) }) },
+        legs.map { leg -> RouteLeg(leg.kind, leg.points.map { RoutePoint(q7(it.lat), q7(it.lon), it.ele?.let(::qEle)) }, leg.timeS?.let { kotlin.math.round(it) }) },
     )
 
-    /** The `path` field value: a versioned binary form (deltas in 1e-7 degrees and centimetres) as base64url. */
+    /**
+     * The `path` field value: a versioned binary form (deltas in 1e-7 degrees and centimetres) as base64url.
+     * Version 1 unless a leg has a [RouteLeg.timeS]; then version 2 ([VERSION_TIMES], T89), which appends each
+     * leg's time. Builds before T89 refuse version 2 and show the route's put points as one fixed leg instead
+     * (the Materializer's rule for a newer format), so only drive routes planned on a newer build look different there.
+     */
     fun encode(): String {
         val w = ByteWriter()
-        w.byte(VERSION)
+        val times = legs.any { it.timeS != null }
+        w.byte(if (times) VERSION_TIMES else VERSION)
         w.string(mode)
         w.uvarint(via.size.toLong())
         var lat = 0L
@@ -107,11 +117,16 @@ data class RoutePath(val mode: String, val via: List<ViaPoint>, val legs: List<R
                 }
             }
         }
+        // T89: version 2, then per leg 0 (no time) or 1 + whole seconds.
+        if (times) for (leg in legs) w.uvarint(leg.timeS?.let { kotlin.math.round(it).toLong().coerceAtLeast(0) + 1 } ?: 0L)
         return Base64Url.encode(w.toByteArray())
     }
 
     companion object {
         const val VERSION = 1
+
+        /** T89: version 1 plus each leg's [RouteLeg.timeS]; written only when a leg has one. */
+        const val VERSION_TIMES = 2
 
         /** An empty path (no via points yet). */
         fun empty(mode: String = "hike") = RoutePath(mode, emptyList(), emptyList())
@@ -127,13 +142,25 @@ data class RoutePath(val mode: String, val via: List<ViaPoint>, val legs: List<R
             return RoutePath(mode, listOf(ViaPoint(pts.first().lat, pts.first().lon), ViaPoint(pts.last().lat, pts.last().lon)), listOf(RouteLeg(LegKind.FIXED, pts))).quantized()
         }
 
+        /**
+         * A route the router planned in one piece (the phone's route card, kept as a trip): its start and end as via
+         * points and its line as one [LegKind.TRAIL] leg, with the router's [timeS] on a drive (T89; dropped for
+         * hike and bike, whose time the summary models from distance and climb).
+         */
+        fun planned(points: List<RoutePoint>, mode: String, timeS: Double): RoutePath {
+            val pts = points.map { RoutePoint(it.lat, it.lon, it.ele) }
+            require(pts.size >= 2) { "a planned route has two points or more" }
+            val leg = RouteLeg(LegKind.TRAIL, pts, timeS.takeIf { mode == "drive" })
+            return RoutePath(mode, listOf(ViaPoint(pts.first().lat, pts.first().lon), ViaPoint(pts.last().lat, pts.last().lon)), listOf(leg)).quantized()
+        }
+
         /** Decodes a `path` field value; throws [IllegalArgumentException] for anything malformed. */
         fun decode(text: String): RoutePath {
             val bytes = Base64Url.decode(text)
             try {
                 val r = ByteReader(bytes)
                 val version = r.byte()
-                require(version == VERSION) { "unknown path version $version" }
+                require(version == VERSION || version == VERSION_TIMES) { "unknown path version $version" }
                 val mode = r.string()
                 val nv = r.count()
                 var lat = 0L
@@ -161,8 +188,13 @@ data class RoutePath(val mode: String, val via: List<ViaPoint>, val legs: List<R
                         RoutePoint(lat / 1e7, lon / 1e7, e)
                     })
                 }
+                val timed = if (version != VERSION_TIMES) legs else legs.map { leg ->
+                    val t = r.uvarint()
+                    require(t >= 0) { "bad leg time" }
+                    if (t == 0L) leg else leg.copy(timeS = (t - 1).toDouble())
+                }
                 r.end()
-                return RoutePath(mode, via, legs)
+                return RoutePath(mode, via, timed)
             } catch (e: IllegalArgumentException) {
                 throw e
             } catch (e: RuntimeException) {

@@ -80,13 +80,15 @@ class TiledRoutingTest {
     }
 
     @Test
-    fun separateNetworksFailWhenOneSideRunsOut() {
+    fun separateNetworksFailAtOnceFromTheComponentSummary() {
         val r = tiled(RainierRoutingTest().graph()).route(46.7864, -121.7366, 46.9180, -121.6400)
         assertIs<RouteResult.Failed>(r)
         assertEquals(RouteFailure.NOT_CONNECTED, r.reason)
         assertTrue(r.message.startsWith("no trail connects start and end"), r.message)
         assertTrue(r.message.contains("separate networks"), r.message)
-        assertEquals("end", r.details["exhausted"], "the short Sunrise path runs out first")
+        // T89: one graph file, two components: refused before any search (it used to search until the short Sunrise path ran out).
+        assertEquals(true, r.details["componentSummary"], "${r.details}")
+        assertEquals(0, r.details["expanded"])
     }
 
     // ---- The tiler and the file ----

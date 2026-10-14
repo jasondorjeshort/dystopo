@@ -14,3 +14,13 @@
 46.7864,-121.7366;46.9145,-121.6425:paradise-sunrise-drive|mode=drive|dist=81937.1|via=Stevens Canyon Road+Mather Memorial Parkway+Sunrise Park Road
 # Off the network on purpose: the start is 0.25 mi from the nearest trail, beyond the 300 m snap.
 46.7856,-121.7754;46.7995,-121.7716:comet-falls-off-network|mode=hike|expect=422|msg=Van Trump Trail
+# T89 Grand Canyon (public trailheads; needs the grand-canyon pack on the phone, pack=: tilebuild --extract north-america/us/arizona
+# --bbox -112.20,36.03,-111.98,36.24 --profile outdoors --out out/grand-canyon-outdoors.pmtiles, no DEM pack, so no ascent check).
+# Down the South Kaibab Trail from its trailhead to the Kaibab Suspension Bridge, and up the Bright Angel Trail from the
+# Bright Angel Suspension Bridge to its trailhead (the walk across the canyon by its two southern trails, in two legs).
+36.0530,-112.0836;36.1003,-112.0897:grand-canyon-south-kaibab-down|mode=hike|pack=grand-canyon|dist=10301.4|via=South Kaibab Trail+Kaibab Suspension Bridge
+36.0975,-112.0960;36.0576,-112.1437:grand-canyon-bright-angel-up|mode=hike|pack=grand-canyon|dist=14328.4|via=Bright Angel Trail
+# Rim to rim, South Kaibab trailhead to North Kaibab trailhead: refused at once (the component summary) because the OSM
+# extract has no highway way for the North Kaibab Trail between Phantom Ranch and Ribbon Falls (T77), so the North Rim
+# is a separate network. When OSM gains it, this line fails and should become a dist= check.
+36.0530,-112.0836;36.2167,-112.0567:grand-canyon-rim-to-rim|mode=hike|pack=grand-canyon|expect=422|msg=separate networks

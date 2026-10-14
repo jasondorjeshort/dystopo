@@ -85,9 +85,14 @@ data class WayAttrs(
     val name: String? = null,
     /** T73: OSM `maxspeed` in km/h (the profile's `maxspeed`), 0 when not tagged. */
     val maxspeedKmh: Int = 0,
+    /** T89: with [brunnel], a tunnel rather than a bridge. */
+    val tunnel: Boolean = false,
 ) {
-    /** Surface and sac scale in one byte, as stored in the graph. */
-    val packed: Int get() = surface.code or (sac.coerceIn(0, 7) shl 2)
+    /** T89: 0 on the ground, [BRIDGE] or [TUNNEL]. */
+    val brunnelKind: Int get() = if (!brunnel) 0 else if (tunnel) TUNNEL else BRIDGE
+
+    /** Surface and sac scale in one byte, as stored in the graph; since T89 the bridge or tunnel kind in bits 5 and 6. */
+    val packed: Int get() = surface.code or (sac.coerceIn(0, 7) shl 2) or (brunnelKind shl 5)
 
     companion object {
         const val PRIVATE = 1
@@ -113,6 +118,12 @@ data class WayAttrs(
 
         fun surfaceOf(packed: Int): Surface = Surface.ofCode(packed and 3)
         fun sacOf(packed: Int): Int = (packed shr 2) and 7
+        /** T89: 0, [BRIDGE] or [TUNNEL] from the packed byte. */
+        fun brunnelOf(packed: Int): Int = (packed shr 5) and 3
+
+        /** T89: [brunnelKind] values (and the node levels of [RoutingGraph.nodeLevel]). */
+        const val BRIDGE = 1
+        const val TUNNEL = 2
 
         /**
          * Attributes of a `transportation` feature, or null when it is not routable. [openMapTiles]: the
@@ -141,9 +152,10 @@ data class WayAttrs(
             if (s("trail_visibility") in setOf("bad", "horrible", "no")) flags = flags or POOR_VISIBILITY
             val sac = s("sac_scale")?.let { SAC_SCALES.indexOf(it) + 1 } ?: 0
             val brunnel = s("brunnel") == "bridge" || s("brunnel") == "tunnel"
+            val tunnel = s("brunnel") == "tunnel"
             val name = s("name")?.trim()?.ifEmpty { null } ?: s("route_name")?.substringBefore(';')?.trim()?.ifEmpty { null }
                 ?: s("ref")?.takeIf { cls.code >= WayClass.SERVICE.code }?.substringBefore(';')?.trim()?.ifEmpty { null } // T73: a road known by its number
-            return WayAttrs(cls, Surface.of(s("surface")), sac, flags, brunnel, name, maxspeed)
+            return WayAttrs(cls, Surface.of(s("surface")), sac, flags, brunnel, name, maxspeed, tunnel)
         }
     }
 }

@@ -63,7 +63,8 @@ class RouteEditor(
                 // The router starts and ends on its own snap of the via points: pin the ends to them exactly.
                 pts[0] = pts[0].copy(lat = a.lat, lon = a.lon)
                 pts[pts.size - 1] = pts.last().copy(lat = b.lat, lon = b.lon)
-                RouteLeg(LegKind.TRAIL, pts.map { RoutePoint(it.lat, it.lon, it.ele) })
+                // T89: a drive leg keeps the router's time (per-road speeds), which the summary adds up.
+                RouteLeg(LegKind.TRAIL, pts.map { RoutePoint(it.lat, it.lon, it.ele) }, r.plan.timeS.takeIf { travel == TravelMode.DRIVE })
             }
             is RouteResult.Failed -> {
                 notes += r.reason.code

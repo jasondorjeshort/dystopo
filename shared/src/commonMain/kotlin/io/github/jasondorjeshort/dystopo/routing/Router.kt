@@ -161,8 +161,9 @@ class CostModel(val mode: TravelMode) {
     /**
      * Moving time in seconds from distance and ascent alone (the trip summary's model, [RouteSummary]).
      * Hike: Naismith's rule, 5 km/h plus an hour per 600 m of ascent. Bike: 16 km/h plus an hour per
-     * 500 m of ascent (a touring pace; descents are not credited). Drive: [DRIVE_SUMMARY_KMH] (the
-     * router itself adds up each road's speed, [edgeTimeS]; a summary has only the points).
+     * 500 m of ascent (a touring pace; descents are not credited). Drive: [DRIVE_SUMMARY_KMH], used only
+     * for a drive leg without a router time (straight or imported; T89): a routed drive leg keeps the
+     * router's own sum of each road's time ([edgeTimeS]) and the summary adds those up.
      */
     fun timeS(distanceM: Double, ascentM: Double): Double = when (mode) {
         TravelMode.HIKE -> distanceM / 5000.0 * 3600 + ascentM / 600.0 * 3600
@@ -174,7 +175,7 @@ class CostModel(val mode: TravelMode) {
         /** Drive costs are metres at this speed; also the largest speed drive mode assumes. */
         const val DRIVE_REF_KMH = 130.0
 
-        /** The average speed a drive route's summary assumes (mountain and park roads to trailheads). */
+        /** The average speed a drive route's summary assumes on legs the router did not plan (straight or imported; T89). */
         const val DRIVE_SUMMARY_KMH = 45.0
 
         /** T73: the speed drive mode assumes on an untagged line of class [c], km/h; 0 when cars may not use it. */
@@ -202,6 +203,8 @@ enum class RouteFailure(val code: String) {
     DRIVE_UNSUPPORTED("drive_unsupported"),
     /** T77: the server a [RemoteRouter] asked did not answer or could not plan. */
     REMOTE_UNAVAILABLE("remote_unavailable"),
+    /** T89: the search settled [TileRouter.maxSettled] nodes without finding a route (a budget, not proof there is none). */
+    SEARCH_LIMIT("search_limit"),
 }
 
 /** A route found by [Router]: the [Route] (T24 model) and its numbers. */
@@ -298,6 +301,8 @@ interface Router {
     companion object {
         /** How far a tapped point may be from the nearest trail or road. */
         const val DEFAULT_SNAP_M = 300.0
+        /** T89: the default settle budget of one search ([TileRouter.maxSettled]; the statewide 570 km drive in full settled 0.5 to 1.2 million). */
+        const val DEFAULT_MAX_SETTLED = 1_500_000
         /** How far an off-network failure looks for the nearest line, to say how far it is. */
         const val FAR_SEARCH_M = 10_000.0
         const val PROFILE_SAMPLES = 100
@@ -334,13 +339,21 @@ fun Router(graph: RoutingGraph): Router = TileRouter(WholeGraph(graph))
  * smallest keys add up to the best start-to-end cost found, so the route is optimal for the
  * [CostModel], like the unidirectional search was. Costs are direction aware (ascent one way is
  * descent the other); the backward search prices each edge in the direction of travel. Ends on
- * separate networks fail when either search runs out of nodes, which takes as long as the smaller
- * of the two networks.
+ * separate networks fail before any search when the graph's component summary tells them apart
+ * (T89: [RoutingGraph.footComponent]; conclusive within one graph file, and across files when either
+ * end's part of the network stays inside its pack); otherwise when either search runs out of nodes,
+ * which takes as long as the smaller of the two networks.
  */
 class TileRouter(
     val tiles: GraphPieces,
     /** T77: the long-drive overlay; drives of [DriveOverlay.MIN_DISTANCE_M] or more search it between their end areas. */
     val overlay: DriveOverlay? = null,
+    /**
+     * T89: a search (the overlay's and the full fallback alike) that settles this many nodes stops and fails with
+     * [RouteFailure.SEARCH_LIMIT], so an unreachable or very long route costs a bounded amount of time and memory
+     * (about 42 bytes of search state per node: 1.5 million nodes is about 63 MB).
+     */
+    val maxSettled: Int = Router.DEFAULT_MAX_SETTLED,
 ) : Router {
     /** A snapped end: the piece it lies in and the snap on that piece's graph. */
     private class End(val piece: GraphPiece, val snap: EdgeSnap)
@@ -354,17 +367,59 @@ class TileRouter(
      */
     private class View(val tiles: GraphPieces, val overlay: DriveOverlay? = null, val detail: Set<Long> = emptySet()) {
         private val memo = HashMap<Long, List<GraphPiece>>()
+        /** T89: level-2 pieces by level-2 tile (one object for all the graph tiles inside), null where level 2 does not apply. */
+        private val memo2 = HashMap<Long, GraphPiece?>()
+        /** T89: level-2 tiles holding an end area (searched through level 1 or in full). */
+        private val detail2: Set<Long> = if (overlay == null || !overlay.level2) emptySet() else {
+            val step = overlay.tileZoom - overlay.level2Zoom
+            detail.mapTo(HashSet()) { k -> tileKey((k and 0xFFFFFFFFL).toInt() shr step, (k shr 32).toInt() shr step) }
+        }
         var overlayTiles = 0
             private set
+        var level2Tiles = 0
+            private set
+
         fun pieces(x: Int, y: Int): List<GraphPiece> = tileKey(x, y).let { k ->
             memo.getOrPut(k) {
                 // T77: away from the ends a tile one pack alone covers is searched through its overlay.
                 if (overlay == null || k in detail) return@getOrPut tiles.pieces(x, y)
-                val src = tiles.sources(x, y)
-                val o = if (src == null) overlay.piece(x, y, tiles.pieces(x, y))
-                else if (src.size == 1) overlay.piece(x, y, src[0].first, src[0].second) { tiles.piece(src[0].first, x, y) }
-                else null
-                if (o != null) { overlayTiles++; listOf(o) } else tiles.pieces(x, y)
+                level2(x, y)?.let { return@getOrPut listOf(it) } // T89: whole z8 cells far from both ends
+                level1(x, y)?.let { overlayTiles++; return@getOrPut listOf(it) }
+                tiles.pieces(x, y)
+            }
+        }
+
+        /** The level-1 overlay piece of graph tile ([x], [y]), when one pack alone has it. */
+        fun level1(x: Int, y: Int): GraphPiece? {
+            val o = overlay ?: return null
+            val src = tiles.sources(x, y)
+            return if (src == null) o.piece(x, y, tiles.pieces(x, y))
+            else if (src.size == 1) o.piece(x, y, src[0].first, src[0].second) { tiles.piece(src[0].first, x, y) }
+            else null
+        }
+
+        /**
+         * T89: the level-2 piece covering graph tile ([x], [y]): its level-2 tile holds no end area, every graph
+         * tile in it comes from one and the same graph file, and that file's level-2 cell is cached or on file.
+         */
+        private fun level2(x: Int, y: Int): GraphPiece? {
+            val o = overlay ?: return null
+            if (!o.level2) return null
+            val step = o.tileZoom - o.level2Zoom
+            val x2 = x shr step
+            val y2 = y shr step
+            val k2 = tileKey(x2, y2)
+            if (k2 in detail2) return null
+            return memo2.getOrPut(k2) {
+                var only: Pair<Int, GraphSource>? = null
+                for (dy in 0 until (1 shl step)) for (dx in 0 until (1 shl step)) {
+                    val src = tiles.sources((x2 shl step) + dx, (y2 shl step) + dy) ?: return@getOrPut null
+                    if (src.isEmpty()) continue
+                    if (src.size != 1) return@getOrPut null
+                    if (only == null) only = src[0] else if (only.second != src[0].second) return@getOrPut null
+                }
+                val (index, source) = only ?: return@getOrPut null
+                o.piece2(x2, y2, index, source) { sx, sy -> level1(sx, sy) }?.also { level2Tiles++ }
             }
         }
     }
@@ -386,7 +441,8 @@ class TileRouter(
                 for ((x, y) in tiles.tilesIn(b[0], b[1], b[2], b[3])) detail += tileKey(x, y)
             }
             val r = route(View(tiles, overlay, detail), model, fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
-            if (r !is RouteResult.Failed || r.reason != RouteFailure.NOT_CONNECTED) return r
+            // T89: a component-summary refusal is final; only a search the overlay could not carry is repeated in full (within the budget).
+            if (r !is RouteResult.Failed || r.reason != RouteFailure.NOT_CONNECTED || r.details["componentSummary"] == true) return r
         }
         return route(View(tiles), model, fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
     }
@@ -399,7 +455,38 @@ class TileRouter(
         val accept: ((GraphPiece, Int) -> Boolean)? = if (mode == TravelMode.DRIVE) { p, e -> p.graph.source.drive && model.usable(p.graph, e) } else null
         val s = snap(view, fromLat, fromLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
         val t = snap(view, toLat, toLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
+        separate(model, s, t)?.let { return it }
         return Search(view, model, s, t).run(name, ids)
+    }
+
+    /**
+     * T89: the component summary's answer when it is conclusive: the two ends lie on parts of one graph
+     * file's network that no line [model] may use joins, and either the network is that one file or one
+     * of the two parts never reaches the edge of its pack (so no other pack can join them). Null otherwise.
+     */
+    private fun separate(model: CostModel, s: End, t: End): RouteResult.Failed? {
+        val gs = s.piece.graph
+        val gt = t.piece.graph
+        if (gs.source != gt.source) return null
+        val cs = gs.components(model.mode) ?: return null
+        val ct = gt.components(model.mode) ?: return null
+        if (!model.usable(gs, s.snap.edge) || !model.usable(gt, t.snap.edge)) return null
+        val a = cs[gs.edgeFrom[s.snap.edge]]
+        val b = ct[gt.edgeFrom[t.snap.edge]]
+        if (a shr 1 == b shr 1) return null
+        val bothOpen = a and 1 == 1 && b and 1 == 1
+        if (bothOpen && tiles.fileCount != 1) return null
+        val inside = if (bothOpen) "" else if (a and 1 == 0) "; the start's part stays inside ${gs.source.file}" else "; the end's part stays inside ${gs.source.file}"
+        return RouteResult.Failed(
+            RouteFailure.NOT_CONNECTED,
+            if (model.mode == TravelMode.DRIVE) {
+                "no road open to cars connects start and end: they are on separate road networks of the map packs " +
+                    "(the graph's component summary$inside; drive mode only knows the roads in the map packs)"
+            } else {
+                "no trail connects start and end: they are on separate networks (the graph's component summary$inside)"
+            },
+            linkedMapOf("componentSummary" to true, "expanded" to 0),
+        )
     }
 
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = snap(View(tiles), lat, lon, maxDistanceM)?.let { e ->
@@ -540,7 +627,7 @@ class TileRouter(
                 if (p.boundary[n]) {
                     for (q in neighbourPieces(g.nodeLon[n], g.nodeLat[n])) {
                         if (q === p || !q.graph.source.drive) continue
-                        val lq = q.twin(g.nodeLon[n], g.nodeLat[n], tolerant = q.graph.source != p.graph.source)
+                        val lq = q.twin(g.nodeLon[n], g.nodeLat[n], tolerant = q.graph.source != p.graph.source, level = g.nodeLevel[n].toInt())
                         if (lq >= 0) queue.addLast(q to lq)
                     }
                 }
@@ -655,7 +742,7 @@ class TileRouter(
                 val lat = g.nodeLat[lu]
                 for (q in neighbourPieces(lon, lat)) {
                     if (q === p || (drive && !q.graph.source.drive)) continue
-                    val lq = q.twin(lon, lat, tolerant = q.graph.source != p.graph.source)
+                    val lq = q.twin(lon, lat, tolerant = q.graph.source != p.graph.source, level = g.nodeLevel[lu].toInt()) // T89: same level only
                     if (lq >= 0) relax(d, base(q) + lq, du, u, -1)
                 }
             }
@@ -687,6 +774,16 @@ class TileRouter(
                     break
                 }
                 if (f.peekKey() + r.peekKey() >= mu) break
+                if (expanded >= maxSettled && mu == Double.POSITIVE_INFINITY) {
+                    // T89: the budget: fail plainly instead of searching on through every pack.
+                    return RouteResult.Failed(
+                        RouteFailure.SEARCH_LIMIT,
+                        "no route found within the search limit ($maxSettled junctions settled, ${Router.km(networkM[0])} km of " +
+                            (if (drive) "road" else "trail and road") + " around the start and ${Router.km(networkM[1])} km around the end); " +
+                            "the ends may not be connected in the map packs",
+                        linkedMapOf("expanded" to expanded, "maxSettled" to maxSettled),
+                    )
+                }
                 val d = if (f.size <= r.size) 0 else 1
                 val u = heaps[d].pop()
                 if (closed[d][u]) continue
@@ -724,12 +821,15 @@ class TileRouter(
                 "tiles" to pieces.size, "graphBytes" to pieces.sumOf { it.graph.approxBytes() },
                 "searchBytes" to cap.toLong() * SEARCH_BYTES_PER_NODE, "searchNodes" to size,
             )
-            if (view.overlay != null) memory["overlayTiles"] = view.overlayTiles // T77
+            if (view.overlay != null) {
+                memory["overlayTiles"] = view.overlayTiles // T77
+                if (view.overlay.level2) memory["level2Tiles"] = view.level2Tiles // T89: z8 cells the search used
+            }
             val expandedSteps = ArrayList<Step>(steps.size)
             for (st in steps) {
                 val o = st.piece.overlay
                 if (o == null) expandedSteps += st
-                else for ((e, fwd) in o.unpack(st.e)) expandedSteps += if (fwd) Step(o.base, e, 0.0, 1.0) else Step(o.base, e, 1.0, 0.0)
+                else for ((p, e, fwd) in o.expand(st.e)) expandedSteps += if (fwd) Step(p, e, 0.0, 1.0) else Step(p, e, 1.0, 0.0)
             }
             return RouteResult.Found(plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory))
         }
