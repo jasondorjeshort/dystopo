@@ -17,7 +17,8 @@ Status: `proposed` (waits for the owner: anything humans see or touch), `accepte
 | [0025-design-goals.md](0025-design-goals.md) | One data path online and offline, keyed and bounded caches, areas of interest, tiled routing, peer sources | 2026-10-10 | accepted |
 | [0026-coordinator-hands.md](0026-coordinator-hands.md) | The coordinator coordinates; everything that runs the project is delegated | 2026-10-12 | accepted |
 | [0027-area-manifest.md](0027-area-manifest.md) | Areas of interest: versioned manifest, packs for boxes, pinned tile covers for corridors | 2026-10-12 | accepted |
-| [0028-long-distance-routing.md](0028-long-distance-routing.md) | Long drives through a partition overlay over our graph tiles, the server as a remote router | 2026-10-12 | accepted |
+| [0028-long-distance-routing.md](0028-long-distance-routing.md) | Long drives through a partition overlay over our graph tiles, the server as a remote router | 2026-10-12 | superseded by 0029 (in part) |
+| [0029-two-level-drive-overlay.md](0029-two-level-drive-overlay.md) | Long drives: a z8 overlay level, cells kept on disk, a settle budget, component labels, the phone going remote for packs that do not join | 2026-10-14 | accepted |
 
 Template (also in the `adr` skill):
 

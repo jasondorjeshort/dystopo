@@ -1,7 +1,9 @@
 # 0028. Long-distance routing: a drive overlay over our own graph tiles, the server as a remote router
 
 Date: 2026-10-12
-Status: accepted
+Status: superseded by 0029 (in part)
+
+Superseded in part by `0029-two-level-drive-overlay.md` (2026-10-14): the levels, cells on disk, bounded searches and when the phone goes remote; the overlay approach and the alternatives here stand.
 
 Record: "Long distance: the proposal (T77, written before building; T84 turns it into an ADR)" and
 the paragraphs after it in `docs/PLANNING.md` › Routing; the T77 log entry (2026-10-13 in the log,
