@@ -25,13 +25,11 @@ the wave 13 paragraph in `docs/TASKS.md` (second-half ports); rewrite with the `
 3. Coordinator docs after merges: ADR 0028 Consequences (T89's z8 level, cell files, order test);
    `android-emulator.md` line 28 (T90 follow-up); README status line.
 4. After the last merge: the sweep with `-Skip upgrade,update` (no key here), then `v0.1.6-alpha`
-   through Actions (the draft's install check covers the upgrade).
+   through Actions (owner's word 2026-10-14; the draft's install check covers the upgrade).
 5. Wave 14 from the ideas folder (recentre tap rule, turn directions, scale bar) and the doctrine ADRs.
 
 ## Waiting on user
 
-- Sign-off on what people see: T91's long-press card (Waypoint here / Route from here / Cancel instead
-  of starting a route at once); T92's new demo-page box "Trips on the server and waypoints".
 - Hatchery PR #1; real-phone checks of 0.1.5; Google developer registration.
 
 ## Open findings
