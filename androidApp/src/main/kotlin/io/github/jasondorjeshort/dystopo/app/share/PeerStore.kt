@@ -10,22 +10,25 @@ import java.io.File
  * `allowBackup="false"`, so it never leaves the phone):
  * ```
  * {"version": 1, "codes": ["7K3MQW2D9XHPT4CA"], "via": {"10.0.2.16:8841": "10.0.2.2:8842"},
+ *  "refused": {"7K3MQW2D9XHPT4CA": ["a:10.0.2.16:8841", "n:Dystopo Pixel 6 3f2a", "d:3f2a91c0"]},
  *  "peers": [{"addr": "10.0.2.16:8841", "code": "7K3MQW2D9XHPT4CA", "name": "Dystopo Pixel 6 3f2a", "device": "3f2a91c0",
  *             "nsdName": "...", "auto": false, "addedAt": 1791..., "helloAt": 1791..., "lastSeenAt": 1791..., "catalogAt": 1791...,
  *             "catalog": {<the peer's catalog, PackCatalog.json()>}, "areas": [{"id": ..., "name": ..., ...}]}]}
  * ```
  * The address and the share code are all the sealed link needs ([io.github.jasondorjeshort.dystopo.sync.crypto.SealedLink]
  * derives each frame's key from the code and the frame's own salt; nothing else about a link is kept between
- * requests). The catalog is kept so the list shows the peer's packs before it answers again. A file that does not parse
- * is ignored (the phone starts with no peers), never a crash.
+ * requests). The catalog is kept so the list shows the peer's packs before it answers again. T96: `refused` is which
+ * phone (address, NSD name, device id: [PeerCodes.Phone.keys]) refused which known code, so a relaunch does not send a
+ * code again to a phone that refused it (a kept peer whose own code is there comes back `codeChanged`); a file without
+ * it (T90) reads as no refusals. A file that does not parse is ignored (the phone starts with no peers), never a crash.
  */
 internal object PeerStore {
     const val VERSION = 1
 
-    class Saved(val peers: List<PeerSources.Peer>, val codes: List<String>, val via: Map<String, String>)
+    class Saved(val peers: List<PeerSources.Peer>, val codes: List<String>, val via: Map<String, String>, val refused: Map<String, List<String>> = emptyMap())
 
-    fun encode(peers: Collection<PeerSources.Peer>, codes: Collection<String>, via: Map<String, String>): String =
-        MiniJson.encode(linkedMapOf("version" to VERSION, "codes" to codes.toList(), "via" to via.toSortedMap(), "peers" to peers.map(::peerJson)))
+    fun encode(peers: Collection<PeerSources.Peer>, codes: Collection<String>, via: Map<String, String>, refused: Map<String, List<String>> = emptyMap()): String =
+        MiniJson.encode(linkedMapOf("version" to VERSION, "codes" to codes.toList(), "via" to via.toSortedMap(), "refused" to refused.toSortedMap(), "peers" to peers.map(::peerJson)))
 
     fun decode(text: String): Saved {
         val doc = MiniJson.parseObject(text)
@@ -35,7 +38,11 @@ internal object PeerStore {
         }
         val codes = (doc["codes"] as? List<*>).orEmpty().mapNotNull { (it as? String)?.let { c -> runCatching { ShareClient.requireCode(c) }.getOrNull() } }
         val via = (doc["via"] as? Map<*, *>).orEmpty().entries.mapNotNull { (k, v) -> if (k is String && v is String) k to v else null }.toMap()
-        return Saved(peers, codes, via)
+        val refused = (doc["refused"] as? Map<*, *>).orEmpty().entries.mapNotNull { (k, v) ->
+            val c = (k as? String)?.let { runCatching { ShareClient.requireCode(it) }.getOrNull() } ?: return@mapNotNull null
+            c to (v as? List<*>).orEmpty().filterIsInstance<String>()
+        }.toMap()
+        return Saved(peers, codes, via, refused)
     }
 
     fun read(file: File): Saved? = if (!file.isFile) null else runCatching { decode(file.readText()) }.getOrNull()

@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-12
+verified: 2026-10-14
 source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
 ---
 
@@ -25,4 +25,4 @@ The emulator needs CPU virtualization, which an administrator enables once: Wind
 - Under `-gpu swiftshader_indirect` MapLibre Native draws no text and no dash patterns; `-Gpu host` is the default when there is a hardware GPU, and the GPU mode is fixed at boot (finding `../findings/2026-10-10-emulator-software-gpu-draws-no-text.md`).
 - Images before API 30 need `-Feature GLESDynamicVersion`, or the emulator offers only OpenGL ES 2 and MapLibre crashes in its render thread.
 - On API 35 emulators keep wifi enabled, or 10.0.2.2 (the host) is unreachable.
-- Two emulators discover each other over NSD, but a direct connect between them is not reliable; go through the host (finding `../findings/2026-10-10-emulator-share-direct-connect.md`).
+- Two emulators on one host share a virtual Wi-Fi network (`wlan0`, 10.0.2.x): they discover each other over NSD and connect directly to each other's `10.0.2.x:8841` when both have a Wi-Fi carrier; an emulator that never gets one can only go through the host (`adb forward`, reached at 10.0.2.2), so restart it (finding `../findings/2026-10-10-emulator-share-direct-connect.md`, resolved by T90). Every agent's emulators share that network, so discovery also finds other agents' phones; keep a pair to itself with `iptables` (`android-tracks-and-sync.md`).

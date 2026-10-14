@@ -33,6 +33,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   relay in the middle (an emulator reaching the other through the host and an `adb forward`) the sender's close
  *   could reach the relay while most of a 4 MiB reply was still queued there, and the client got a reply shorter
  *   than its Content-Length (T78; the finding `docs/findings/2026-10-10-emulator-share-direct-connect.md`).
+ * - **The wait is bounded** (T96). At most [maxLingerMs] in all (T90's formula gave a 4 MiB reply 11.6 h at
+ *   100 B/s), at most [maxLingering] sockets at once (the oldest is closed when one more arrives: it has had the
+ *   longest to drain), and no thread per socket: one watcher ([LINGER_POLL_MS]) reads each waiting socket with a 1 ms
+ *   timeout to see its close. T90 held a thread and a socket per idle client (300 idle clients, 300 threads, 30 s).
  * - **A write deadline.** The body goes out in [SLICE] slices; a client that takes no slice for [stallMs] (it stopped
  *   reading, or the path died) has its socket closed by a watchdog, so a worker is never held by a dead peer.
  *   Progress, not the total time, is what counts: a slow path that keeps moving keeps its reply.
@@ -50,20 +54,28 @@ class ShareListener(
     private val stallMs: Long = 60_000,
     private val lingerMs: Long = 30_000,
     private val minBytesPerSec: Long = 100,
+    /** T96: the longest a socket waits for the client's close, whatever the body. */
+    private val maxLingerMs: Long = MAX_LINGER_MS,
+    /** T96: the most sockets waiting for the client's close at once; one more closes the oldest. */
+    private val maxLingering: Int = MAX_LINGERING,
     private val log: (String) -> Unit = {},
 ) {
     private val queue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val pool = ThreadPoolExecutor(threads, threads, 30, TimeUnit.SECONDS, queue) { r -> Thread(r, "dystopo-share").apply { isDaemon = true } }
 
-    /** Sockets waiting for the client's close, each on its own daemon thread (they only block in a read). */
-    private val lingerPool = Executors.newCachedThreadPool { r -> Thread(r, "dystopo-share-linger").apply { isDaemon = true } }
+    /** T96: the one thread that watches every waiting socket for its client's close ([pollLingers]). */
+    private val lingerWatch = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-share-linger").apply { isDaemon = true } }
     private val watchdog = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-share-watchdog").apply { isDaemon = true } }
 
     /** Replies being written: socket to the time of its last progress (ms). */
     private val writing = ConcurrentHashMap<Socket, Long>()
 
-    /** Replies written, waiting for the client's close (closed by [stop] too). */
-    private val lingering = ConcurrentHashMap.newKeySet<Socket>()
+    private class Lingering(val socket: Socket, val input: InputStream, val start: Long, val deadline: Long) {
+        var extra = 0
+    }
+
+    /** Replies written, waiting for the client's close, oldest first, at most [maxLingering] (closed by [stop] too). */
+    private val lingering = ArrayDeque<Lingering>()
 
     @Volatile private var socket: ServerSocket? = null
 
@@ -78,6 +90,10 @@ class ShareListener(
     /** Replies after which the client closed first (the normal end); [lingerTimeouts] did not within the time allowed. */
     val clientClosed = AtomicLong()
     val lingerTimeouts = AtomicLong()
+    /** T96: waiting sockets closed early because [maxLingering] others were waiting (the oldest goes). */
+    val lingerEvicted = AtomicLong()
+    /** T96: the most sockets that waited at once. */
+    val lingerPeak = AtomicLong()
     /** Replies the client stopped reading before the end (it closed or reset the connection while the body was going). */
     val writeFailures = AtomicLong()
     val lingerMsTotal = AtomicLong()
@@ -87,6 +103,7 @@ class ShareListener(
         s.reuseAddress = true
         socket = s
         watchdog.scheduleWithFixedDelay(::sweep, WATCH_MS, WATCH_MS, TimeUnit.MILLISECONDS)
+        lingerWatch.scheduleWithFixedDelay(::pollLingers, LINGER_POLL_MS, LINGER_POLL_MS, TimeUnit.MILLISECONDS)
         Thread({
             while (!s.isClosed) {
                 val client = try {
@@ -115,10 +132,11 @@ class ShareListener(
     fun stop() {
         runCatching { socket?.close() }
         pool.shutdownNow()
-        lingerPool.shutdownNow()
+        lingerWatch.shutdownNow()
         watchdog.shutdownNow()
         writing.keys.forEach { runCatching { it.close() } }
-        lingering.forEach { runCatching { it.close() } }
+        val waiting = synchronized(lingering) { lingering.toList().also { lingering.clear() } }
+        waiting.forEach { runCatching { it.socket.close() } }
     }
 
     private fun serve(c: Socket) {
@@ -158,47 +176,61 @@ class ShareListener(
     }
 
     /**
-     * Waits (on another thread) for the client to close its end, then closes; true when it was handed off. The
-     * request was read completely, so anything the client still sends is discarded; at most [lingerMs] plus the
-     * body's time at [minBytesPerSec].
+     * Hands [c] to the watcher, which closes it once the client has closed its end ([pollLingers]); true when it was
+     * handed off. The request was read completely, so anything the client still sends is discarded. T96: at most
+     * [lingerWait] ([maxLingerMs] in all), and when [maxLingering] sockets are waiting already the oldest is closed now.
      */
     private fun linger(c: Socket, input: InputStream, bodyBytes: Long): Boolean {
-        val waitMs = lingerMs + bodyBytes * 1000 / minBytesPerSec.coerceAtLeast(1)
-        lingering += c
-        return try {
-            lingerPool.execute {
-                val t0 = System.currentTimeMillis()
-                try {
-                    c.soTimeout = waitMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                    val buf = ByteArray(1024)
-                    var extra = 0
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) {
-                            clientClosed.incrementAndGet()
-                            break
-                        }
-                        extra += n
-                        if (extra > MAX_AFTER || System.currentTimeMillis() - t0 > waitMs) {
-                            lingerTimeouts.incrementAndGet()
-                            break
-                        }
-                    }
-                } catch (_: SocketTimeoutException) {
-                    lingerTimeouts.incrementAndGet()
-                } catch (_: IOException) {
-                    clientClosed.incrementAndGet() // a reset after the body: the client is gone, which is all we wait for
-                } finally {
-                    lingerMsTotal.addAndGet(System.currentTimeMillis() - t0)
-                    lingering -= c
-                    runCatching { c.close() }
-                }
-            }
-            true
-        } catch (_: RejectedExecutionException) {
-            lingering -= c
-            false
+        if (lingerWatch.isShutdown) return false
+        try {
+            c.soTimeout = 1 // the watcher's reads only look: data, the client's close, or nothing yet
+        } catch (_: IOException) {
+            return false
         }
+        val now = System.currentTimeMillis()
+        val l = Lingering(c, input, now, now + lingerWait(bodyBytes, lingerMs, minBytesPerSec, maxLingerMs))
+        val evicted = synchronized(lingering) {
+            val out = if (lingering.size >= maxLingering) lingering.removeFirst() else null
+            lingering.addLast(l)
+            lingerPeak.accumulateAndGet(lingering.size.toLong()) { a, b -> maxOf(a, b) }
+            out
+        }
+        evicted?.let { end(it, lingerEvicted) }
+        return true
+    }
+
+    /**
+     * T96: one pass of the watcher over the waiting sockets: a client that closed (or reset) is done; a socket past its
+     * deadline, or whose client sent more than [MAX_AFTER] after its request, is closed. Each read waits at most 1 ms.
+     */
+    private fun pollLingers() {
+        val list = synchronized(lingering) { lingering.toList() }
+        if (list.isEmpty()) return
+        val buf = ByteArray(8192)
+        for (l in list) {
+            val counter = try {
+                val n = l.input.read(buf)
+                when {
+                    n < 0 -> clientClosed
+                    else -> {
+                        l.extra += n
+                        if (l.extra > MAX_AFTER || System.currentTimeMillis() > l.deadline) lingerTimeouts else null
+                    }
+                }
+            } catch (_: SocketTimeoutException) {
+                if (System.currentTimeMillis() > l.deadline) lingerTimeouts else null
+            } catch (_: IOException) {
+                clientClosed // a reset after the body: the client is gone, which is all we wait for (or [stop] closed it)
+            }
+            if (counter != null && synchronized(lingering) { lingering.remove(l) }) end(l, counter)
+        }
+    }
+
+    /** Closes a waiting socket that left the queue, counting why in [counter]. */
+    private fun end(l: Lingering, counter: AtomicLong) {
+        counter.incrementAndGet()
+        lingerMsTotal.addAndGet(System.currentTimeMillis() - l.start)
+        runCatching { l.socket.close() }
     }
 
     /** Closes the sockets of replies that made no progress for [stallMs]. */
@@ -295,7 +327,9 @@ class ShareListener(
     fun json(): Map<String, Any?> = linkedMapOf(
         "requests" to requests.get(), "bytesOut" to bytesOut.get(), "busy" to busy.get(), "badRequests" to badRequests.get(),
         "writeFailures" to writeFailures.get(), "stalled" to stalled.get(), "clientClosed" to clientClosed.get(),
-        "lingerTimeouts" to lingerTimeouts.get(), "lingerMsTotal" to lingerMsTotal.get(), "writing" to writing.size, "lingering" to lingering.size,
+        "lingerTimeouts" to lingerTimeouts.get(), "lingerMsTotal" to lingerMsTotal.get(), "writing" to writing.size,
+        "lingering" to synchronized(lingering) { lingering.size }, "lingerEvicted" to lingerEvicted.get(), "lingerPeak" to lingerPeak.get(), // T96
+        "maxLingering" to maxLingering, "maxLingerMs" to maxLingerMs,
     )
 
     companion object {
@@ -307,6 +341,19 @@ class ShareListener(
 
         /** Bytes a client may send after its request before the listener stops waiting for its close. */
         const val MAX_AFTER = 64 shl 10
+
+        /** T96: the longest wait for a client's close (T90 measured whole 4 MiB replies within a second of the last write). */
+        const val MAX_LINGER_MS = 120_000L
+
+        /** T96: the most sockets waiting at once: a pack download keeps about four in flight per phone. */
+        const val MAX_LINGERING = 32
+
+        /** T96: how often the watcher looks at the waiting sockets. */
+        const val LINGER_POLL_MS = 20L
+
+        /** T96: how long a reply of [bodyBytes] waits for the client's close: T90's rule, capped at [maxMs]. */
+        fun lingerWait(bodyBytes: Long, lingerMs: Long, minBytesPerSec: Long, maxMs: Long): Long =
+            (lingerMs + bodyBytes * 1000 / minBytesPerSec.coerceAtLeast(1)).coerceAtMost(maxMs)
     }
 }
 

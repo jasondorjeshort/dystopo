@@ -44,8 +44,11 @@ class PeerStoreTest {
         assertEquals("connected", p.state)
         val dir = Files.createTempDirectory("peers").toFile()
         val file = File(dir, PeerSources.STORE_FILE)
-        PeerStore.write(file, PeerStore.encode(listOf(p), listOf("7K3MQW2D9XHPT4CA"), mapOf("10.0.2.16:8841" to "10.0.2.2:8842")))
+        val refused = mapOf("7K3MQW2D9XHPT4CA" to listOf("a:10.0.2.16:8841", "d:3f2a91c0")) // T96
+        PeerStore.write(file, PeerStore.encode(listOf(p), listOf("7K3MQW2D9XHPT4CA"), mapOf("10.0.2.16:8841" to "10.0.2.2:8842"), refused))
         val back = PeerStore.read(file)!!
+        assertEquals(refused, back.refused, "which phone refused which code survives a restart")
+        assertTrue(PeerCodes().apply { restore(back.codes, back.refused) }.isRefused(back.peers.single().phone, back.peers.single().code))
         val q = back.peers.single()
         assertEquals(p.addr, q.addr)
         assertEquals(p.code, q.code)
@@ -81,6 +84,7 @@ class PeerStoreTest {
         val back = PeerStore.read(file)!!
         assertEquals(listOf("10.0.2.20:8841"), back.peers.map { it.addr })
         assertEquals(listOf("7K3MQW2D9XHPT4CA"), back.codes)
+        assertEquals(emptyMap(), back.refused, "a T90 file has no refusals")
         assertEquals(0, back.peers.single().catalog!!.packs.size)
         dir.deleteRecursively()
     }
@@ -98,6 +102,22 @@ class PeerStoreTest {
         p.error = PeerSources.CODE_CHANGED
         assertEquals("codeChanged", p.state, "a kept code that no longer opens is not retried")
         assertTrue(peerSeenLine(p, now).startsWith("Its code changed"))
+        p.restored = false
+        assertEquals("codeChanged", p.state, "T96: also for a peer that was connected when its code changed")
+        // T96 verifier: a download that failed before the peer's state changed is not shown under it.
+        p.stateAt = 1_000
+        p.setState(null)
+        assertEquals("connected", p.state)
+        assertTrue(p.stateAt > 1_000, "a state change is noted")
+        val changedAt = p.stateAt
+        p.setState(null)
+        assertEquals(changedAt, p.stateAt, "no change, no new time")
+        val failedBefore = mapOf("state" to "failed", "error" to "wrong code for 10.0.2.23:8841", "createdAt" to changedAt - 5_000)
+        assertNull(shownJob(failedBefore, p))
+        val failedAfter = failedBefore + ("createdAt" to changedAt + 1)
+        assertEquals(failedAfter, shownJob(failedAfter, p))
+        val running = failedBefore + ("state" to "running")
+        assertEquals(running, shownJob(running, p))
         assertEquals("just now", ago(1_000))
         assertEquals("2 h ago", ago(2 * 3_600_000L))
     }

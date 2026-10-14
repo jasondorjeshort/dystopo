@@ -7,11 +7,15 @@ package io.github.jasondorjeshort.dystopo.app.share
  * ([self]). Thread-safe; [peers] is what the screen lists (resolved, not self, newest first).
  */
 class PeerList(private val clock: () -> Long = System::currentTimeMillis) {
-    /** T78: [firstSeenAt] is when discovery first reported the name (kept across re-resolves), for "catalog within 5 s of discovery". */
-    data class Peer(val name: String, val host: String?, val port: Int?, val self: Boolean, val seenAt: Long, val firstSeenAt: Long = seenAt, val resolvedAt: Long? = null) {
+    /**
+     * T78: [firstSeenAt] is when discovery first reported the name (kept across re-resolves), for "catalog within 5 s of
+     * discovery". T96: [device] is the device-id prefix the phone announces (the `id` attribute of its NSD record), so a
+     * kept peer is recognised at a new address or under a new name and its code is not tried on another phone.
+     */
+    data class Peer(val name: String, val host: String?, val port: Int?, val self: Boolean, val seenAt: Long, val firstSeenAt: Long = seenAt, val resolvedAt: Long? = null, val device: String? = null) {
         val hostPort: String? get() = if (host != null && port != null) (if (':' in host) "[$host]" else host) + ":" + port else null
 
-        fun json(): Map<String, Any?> = linkedMapOf("name" to name, "addr" to hostPort, "self" to self, "seenAt" to seenAt, "firstSeenAt" to firstSeenAt, "resolvedAt" to resolvedAt)
+        fun json(): Map<String, Any?> = linkedMapOf("name" to name, "addr" to hostPort, "self" to self, "seenAt" to seenAt, "firstSeenAt" to firstSeenAt, "resolvedAt" to resolvedAt, "device" to device)
     }
 
     /** T78: called (on the resolver thread) after a phone's address is known; [PeerSources] tries its known codes. */
@@ -32,10 +36,10 @@ class PeerList(private val clock: () -> Long = System::currentTimeMillis) {
         byName[name] = old?.copy(seenAt = clock()) ?: Peer(name, null, null, name == selfName, clock())
     }
 
-    fun resolved(name: String, host: String, port: Int) {
+    fun resolved(name: String, host: String, port: Int, device: String? = null) {
         val p = synchronized(this) {
             val now = clock()
-            Peer(name, host, port, name == selfName, now, byName[name]?.firstSeenAt ?: now, now).also { byName[name] = it }
+            Peer(name, host, port, name == selfName, now, byName[name]?.firstSeenAt ?: now, now, device).also { byName[name] = it }
         }
         onResolved?.invoke(p)
     }

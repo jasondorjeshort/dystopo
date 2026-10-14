@@ -12,13 +12,18 @@ import kotlin.math.floor
  * needs nothing beyond the Share screen being open (`POST /share/start`); `GET /share/status` has `serving` (who fetched
  * what from this phone) and `peerSources`.
  * - `GET /share/peers`: the phones in use as sources (address, name, catalog packs, areas, `discoveredAt`, `catalogAt`,
- *   `catalogAfterDiscoveryMs`; T90: `state` `connected`, `saved` or `unreachable`, `lastSeenAt`, `retries`, `nextRetryAt`),
- *   the known codes' count, auto tries, address overrides, `restoredPeers` and `saves` (T90: peers are kept in
- *   `files/share/peers.json` across restarts), and the fetcher's per-source counters.
- * - `POST /share/peers/refresh?peer=`: T90: a restored peer is added again (hello, catalog), any other refreshed.
+ *   `catalogAfterDiscoveryMs`; T90: `state` `connected`, `saved`, `unreachable` or `codeChanged`, `lastSeenAt`, `retries`,
+ *   `nextRetryAt`), the known codes' count, auto tries, address overrides, `restoredPeers` and `saves` (T90: peers are kept
+ *   in `files/share/peers.json` across restarts), the fetcher's per-source counters; T96: `codes` (`known`, `fresh`: learned
+ *   since the app started, `refused`: phone keys that refused a known code, `sent` and `held`: tries made and held back by
+ *   the rules in `PeerCodes`, `waited` and `spared`: requests that waited for another one's answer, and those then not
+ *   sent because it was refused).
+ * - `POST /share/peers/refresh?peer=`: T90: a restored peer is added again (hello, catalog), any other refreshed. T96: for
+ *   a peer whose code its phone refused, 403 `wrongCode` with nothing sent (`codeChanged`; so does `download`); a 403 to
+ *   a refresh makes the peer `codeChanged` and cancels its retry.
  * - `POST /share/peers/add?addr=<host[:port]|share link>&code=<code>`: adds that phone as a source (hello, catalog, areas).
  * - `POST /share/peers/code?code=<code>`: remembers a code; every phone discovery resolves from then on is tried with it
- *   once (the trip's code). `DELETE /share/peers/code` forgets them all.
+ *   once (the trip's code). `DELETE /share/peers/code` forgets them all. T96: `DELETE /share/peers` retires the peer's code too.
  * - `POST /share/peers/via?from=<host:port>&to=<host:port>`: connect to `to` whenever discovery reports `from` (emulators:
  *   a peer's 10.0.2.x address through an adb forward on the host); without `to` the override goes.
  * - `DELETE /share/peers?peer=`: stop using it (and forget it: the Share screen's Forget).

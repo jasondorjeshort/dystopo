@@ -290,7 +290,7 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
             val packs = p.catalog?.packs.orEmpty()
             if (packs.isEmpty()) BasicText("No packs on this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
             packs.forEach { pack ->
-                val job = jobs[pack.name]
+                val job = shownJob(jobs[pack.name], p)
                 val state = job?.get("state") as? String
                 val here = pack.name in installed && state != "queued" && state != "running"
                 val line = when {
@@ -317,6 +317,14 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
         }
     }
 }
+
+/**
+ * T96: the download job to show under [p]'s pack: none for one that failed before the peer's state last changed (its
+ * code changed, or it connected again with the new one), so "failed (wrong code ...)" does not stay under a peer that
+ * works again; the pack then shows its size and Download.
+ */
+internal fun shownJob(job: Map<String, Any?>?, p: PeerSources.Peer): Map<String, Any?>? =
+    job?.takeUnless { it["state"] == "failed" && ((it["createdAt"] as? Number)?.toLong() ?: 0L) < p.stateAt }
 
 /**
  * T90: the state line of a peer in the list: kept peers are listed after a restart before they answer, and one that

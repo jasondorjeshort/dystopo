@@ -105,7 +105,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             val total = bytesTotal
             val elapsed = if (sessionStartedAt == 0L) 0L else (finishedAt ?: SystemClock.elapsedRealtime()) - sessionStartedAt
             return linkedMapOf(
-                "name" to name, "state" to state, "error" to error, "activate" to activate,
+                "name" to name, "state" to state, "error" to error, "activate" to activate, "createdAt" to createdAt, // T96: the Share screen hides a peer's failure from before its state changed
                 "update" to update, "catalog" to catalog,
                 "bytesDone" to done, "bytesTotal" to total,
                 "percent" to total?.takeIf { it > 0 }?.let { Math.round(done * 1000.0 / it) / 10.0 },

@@ -113,7 +113,9 @@ class ShareNsd(context: Context, private val peers: PeerList) {
                     val ms = System.currentTimeMillis() - t0
                     lastResolveMs = ms
                     if (ms > maxResolveMs) maxResolveMs = ms
-                    if (host != null) peers.resolved(info.serviceName, host, info.port)
+                    // T96: the device-id prefix it announces (`id`, see ShareSession.start), so kept peers are told apart.
+                    val device = runCatching { info.attributes["id"]?.decodeToString()?.takeIf { it.isNotBlank() } }.getOrNull()
+                    if (host != null) peers.resolved(info.serviceName, host, info.port, device)
                     resolves++
                     done.countDown()
                 }

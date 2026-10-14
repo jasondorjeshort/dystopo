@@ -39,6 +39,12 @@ import java.util.concurrent.TimeUnit
  * and whenever discovery resolves a phone at its address or with its NSD name; a peer that does not answer stays listed
  * (`unreachable`, with `lastSeenAt`) until it is removed. A download interrupted with the peer gone resumes from its part
  * file once the peer answers again, with the code the other phone still shows.
+ *
+ * T96: which code goes to which phone unasked is [PeerCodes]' (a refused code is never sent to that phone again, by any
+ * path; a phone gets at most one code kept from before per session; a kept peer's code goes only to that phone), so a
+ * relaunch with kept codes cannot spend the other phone's five failures. A peer whose own code is refused
+ * (`codeChanged`) is no longer retried nor a fetcher source, whether the 403 came to a retry, a refresh, a download or a
+ * tile; Forget retires its code.
  */
 object PeerSources {
     const val SCHEME = "peer://"
@@ -69,12 +75,28 @@ object PeerSources {
 
         /**
          * T90: `connected` (answered since the app started), `saved` (restored, being tried), `unreachable` (restored, did not
-         * answer, retried), `codeChanged` (restored, its kept code no longer opens: not retried), `error`.
+         * answer, retried), `codeChanged` (its code no longer opens: not retried, not a source; T96: also for a peer that was
+         * connected), `error`.
          */
         val state: String get() = when {
-            restored -> if (error == null) "saved" else if (error == CODE_CHANGED) "codeChanged" else "unreachable"
+            error == CODE_CHANGED -> "codeChanged"
+            restored -> if (error == null) "saved" else "unreachable"
             error != null -> "error"
             else -> "connected"
+        }
+
+        /** T96: this peer as [PeerCodes] knows a phone (its address, NSD name and device id). */
+        internal val phone: PeerCodes.Phone get() = PeerCodes.Phone(addr, nsdName, device)
+
+        /** T96: when [state] last changed; the Share screen does not show a download that failed before it. */
+        @Volatile var stateAt = System.currentTimeMillis()
+
+        /** T96: sets [error] and [restored], noting [stateAt] when that changes [state]. */
+        internal fun setState(error: String?, restored: Boolean = this.restored) {
+            val before = state
+            this.error = error
+            this.restored = restored
+            if (state != before) stateAt = System.currentTimeMillis()
         }
 
         fun json(): Map<String, Any?> = linkedMapOf(
@@ -90,10 +112,12 @@ object PeerSources {
 
     private val app: DystopoApp get() = DystopoApp.instance
     private val peers = ConcurrentHashMap<String, Peer>()
-    private val known = LinkedHashSet<String>()
-    private val tried = ConcurrentHashMap.newKeySet<String>()
+    /** T96: the known codes and which phone refused which ([PeerCodes]); replaces T90's known list and tried set. */
+    private val codes = PeerCodes()
     private val worker = Executors.newFixedThreadPool(2) { r -> Thread(r, "dystopo-peer").apply { isDaemon = true } }
     private val retryTimer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-peer-retry").apply { isDaemon = true } }
+    /** T96: each restored peer's pending retry by address, so a changed code or Forget cancels it. */
+    private val retries = ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<*>>()
 
     /** T90: where peers are kept ([PeerStore]). */
     const val STORE_FILE = "share/peers.json"
@@ -105,7 +129,12 @@ object PeerSources {
     /** T90: a restored peer's error when its kept code no longer opens the link. */
     const val CODE_CHANGED = "its code changed: enter the code its Share screen shows now"
 
-    /** T90: the most codes kept for discovery ([learnCode]). */
+    /**
+     * T90: the most codes kept for discovery ([learnCode]). T96: kept at 4, under the five failures that replace another
+     * phone's code, because [PeerCodes] sends each code to a phone at most once: a kept peer's phone gets only its own
+     * code from before (one failure in all once its screen is reopened), any other phone at most one stale code per
+     * relaunch, so one phone's automatic tries stay at most four on any other.
+     */
     const val MAX_CODES = 4
 
     /** T90: [Peer.lastSeenAt] is written to the file at most this often while a peer is in use. */
@@ -131,8 +160,8 @@ object PeerSources {
         s.deviceId.take(8) to s.deviceName
     }
 
-    @Volatile var autoTries = 0
-        private set
+    /** Tries sent unasked (retries and discovery; T96: those [PeerCodes] allowed). */
+    val autoTries: Int get() = codes.sent
 
     private val loaded = java.util.concurrent.atomic.AtomicBoolean()
 
@@ -143,48 +172,84 @@ object PeerSources {
     /**
      * T90: reads [PeerStore] once per process and starts retrying the peers it held. The map screen calls it at launch
      * (`ShareOverlay`), so kept peers become sources again without the Share screen being opened; any first use of this
-     * object loads too.
+     * object loads too. T96: a peer whose code its phone refused before (kept in the file) comes back as `codeChanged`
+     * and is not retried.
      */
     fun load() {
         if (!loaded.compareAndSet(false, true)) return
         val s = runCatching { PeerStore.read(storeFile) }.getOrNull() ?: return
-        synchronized(known) { known.addAll(s.codes) }
+        codes.restore(s.codes, s.refused)
         via.putAll(s.via)
         s.peers.forEach { peers.putIfAbsent(it.addr, it) }
         restoredPeers = s.peers.size
-        Log.i(TAG, "restored ${s.peers.size} peers, ${s.codes.size} codes")
-        s.peers.forEach { p -> scheduleRetry(p, 0) }
+        s.peers.forEach { p -> if (codes.isRefused(p.phone, p.code)) p.error = CODE_CHANGED }
+        Log.i(TAG, "restored ${s.peers.size} peers (${s.peers.count { it.error == CODE_CHANGED }} with a changed code), ${s.codes.size} codes")
+        s.peers.filter { it.error != CODE_CHANGED }.forEach { p -> scheduleRetry(p, 0) }
     }
 
-    /** T90: writes the peers, codes and overrides ([PeerStore]); a failure is logged, never thrown. */
+    /** T90: writes the peers, codes and overrides ([PeerStore]); a failure is logged, never thrown. T96: and the refusals. */
     private fun save() {
         synchronized(saveLock) {
-            runCatching { PeerStore.write(storeFile, PeerStore.encode(peers.values.sortedBy { it.addedAt }, knownCodes, via)) }
+            runCatching {
+                val list = peers.values.sortedBy { it.addedAt }
+                val known = codes.codes
+                PeerStore.write(storeFile, PeerStore.encode(list, known, via, codes.refusals(known.toSet() + list.map { it.code })))
+            }
                 .onSuccess { saves++; savedAt = System.currentTimeMillis() }
                 .onFailure { Log.w(TAG, "could not save peers: ${it.message}") }
         }
     }
 
-    /** T90: tries restored peer [p] again after [delayMs] (hello, catalog); on failure the next try is later, up to [RETRY_MAX_MS]. */
+    /**
+     * T90: tries restored peer [p] again after [delayMs] (hello, catalog); on failure the next try is later, up to [RETRY_MAX_MS].
+     * T96: the try is one of [PeerCodes]' (its code counts as tried on that phone, so discovery does not send it again).
+     */
     private fun scheduleRetry(p: Peer, delayMs: Long) {
         p.nextRetryAt = System.currentTimeMillis() + delayMs
-        retryTimer.schedule({
-            if (peers[p.addr] === p && p.restored) {
+        retries[p.addr] = retryTimer.schedule({
+            retries.remove(p.addr)
+            if (peers[p.addr] === p && p.restored && p.error != CODE_CHANGED) {
                 p.nextRetryAt = null
+                val phone = p.phone
+                if (!codes.claim(phone, p.code)) {
+                    // Refused there before: its Share screen was reopened (a new code). Or a discovery try of the same code
+                    // or of another kept code is under way: that one decides.
+                    if (codes.isRefused(phone, p.code)) codeChanged(p) else scheduleRetry(p, RETRY_FIRST_MS)
+                    return@schedule
+                }
                 p.retries++
-                try {
+                val outcome = try {
                     add(p.addr, p.code, auto = p.auto)
+                    PeerCodes.Outcome.OPENED
                 } catch (e: ShareClient.WrongCodeException) {
                     // Its Share screen was reopened (a new code): retrying would only spend that phone's five failures and
                     // make it replace its code again. Listed until the new code is entered (Use its maps) or it is forgotten.
-                    p.error = CODE_CHANGED
                     Log.i(TAG, "peer ${p.name} at ${p.addr}: the kept code no longer opens; not retried")
+                    PeerCodes.Outcome.WRONG
                 } catch (e: Exception) {
                     Log.i(TAG, "peer ${p.name} at ${p.addr} did not answer (try ${p.retries}): ${e.message}")
-                    scheduleRetry(p, (RETRY_FIRST_MS shl (p.retries - 1).coerceIn(0, 5)).coerceAtMost(RETRY_MAX_MS))
+                    if (p.error != CODE_CHANGED) scheduleRetry(p, (RETRY_FIRST_MS shl (p.retries - 1).coerceIn(0, 5)).coerceAtMost(RETRY_MAX_MS))
+                    if (e is LanConnectException) PeerCodes.Outcome.UNREACHABLE else PeerCodes.Outcome.FAILED
                 }
+                codes.done(phone, p.code, outcome)
             }
         }, delayMs, TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * T96: [p]'s own code was refused by its phone (a retry, a refresh, a download or a tile got 403): it is `codeChanged`,
+     * its retry is cancelled, it stops being a fetcher source, and the refusal is written down so a relaunch does not
+     * send that code again. Listed until the code its screen shows now is entered (Use its maps) or it is forgotten.
+     */
+    private fun codeChanged(p: Peer) {
+        if (p.error == CODE_CHANGED) return
+        p.setState(CODE_CHANGED)
+        p.nextRetryAt = null
+        retries.remove(p.addr)?.cancel(false)
+        if (peers[p.addr] === p) {
+            updateSources()
+            save()
+        }
     }
 
     /** T90: [addr] answered: the time is kept (and written now and then, so the list's "last seen" survives a restart). */
@@ -198,29 +263,23 @@ object PeerSources {
         }
     }
 
-    /** The peers the online fetcher asks: those with a catalog that answered since the app started. */
-    private fun updateSources() = OnlineService.get(app).setPeers(peers.values.filter { it.catalog != null && !it.restored }.map { it.url })
+    /** The peers the online fetcher asks: those with a catalog that answered since the app started (T96: and whose code still opens). */
+    private fun updateSources() = OnlineService.get(app).setPeers(peers.values.filter { it.catalog != null && !it.restored && it.error != CODE_CHANGED }.map { it.url })
 
     fun all(): List<Peer> = peers.values.sortedByDescending { it.addedAt }
 
     /** A peer by address, `peer://` URL, NSD name or display name. */
     fun find(key: String): Peer? = peers[key.removePrefix(SCHEME)] ?: peers.values.firstOrNull { it.name == key || it.nsdName == key || it.device == key }
 
-    fun codeFor(addr: String): String? = peers[addr]?.code
+    /** The code to reach [addr] with; T96: none for a peer whose code changed (the fetcher and downloads stop there). */
+    fun codeFor(addr: String): String? = peers[addr]?.takeIf { it.error != CODE_CHANGED }?.code
 
-    val knownCodes: List<String> get() = synchronized(known) { known.toList() }
+    val knownCodes: List<String> get() = codes.codes
 
     fun learnCode(code: String, tryDiscovered: Boolean = true): String {
         val c = ShareClient.requireCode(code)
-        val changed = synchronized(known) {
-            // T90: the newest last, and at most MAX_CODES: every known code is tried on each phone discovery finds, and a
-            // wrong one costs that phone one of the five failures that replace its code, so dead codes must not pile up.
-            val had = known.remove(c)
-            known.add(c)
-            while (known.size > MAX_CODES) known.remove(known.first())
-            !had
-        }
-        if (changed) {
+        // T90: the newest last, and at most MAX_CODES. T96: learned now, so fresh ([PeerCodes]): tried once on each phone.
+        if (codes.learn(c)) {
             save()
             if (!tryDiscovered) return c
             // T90: phones discovery already resolved get the new code too (it may arrive after their announcement).
@@ -229,14 +288,14 @@ object PeerSources {
         return c
     }
 
-    /** T90: [code] is no longer any peer's (the phone it opened shows a new one): it is not tried on discovered phones again. */
-    private fun retireCode(code: String) {
-        if (peers.values.any { it.code == code }) return
-        if (synchronized(known) { known.remove(code) }) save()
+    /** T90: [code] is no longer any peer's (the phone it opened shows a new one, T96: or it was forgotten): not tried again. */
+    private fun retireCode(code: String): Boolean {
+        if (peers.values.any { it.code == code }) return false
+        return codes.retire(code)
     }
 
     fun forgetCodes() {
-        synchronized(known) { known.clear() }
+        codes.clear()
         save()
     }
 
@@ -245,26 +304,46 @@ object PeerSources {
         save()
     }
 
-    /** One request to [peer] over the sealed link (`by=` added). */
+    /** T96: the phone at [addr] as [PeerCodes] knows it (with the kept peer's NSD name and device id when there is one). */
+    private fun phoneAt(addr: String): PeerCodes.Phone = peers[addr]?.phone ?: PeerCodes.Phone(addr)
+
+    /**
+     * One request to [peer] over the sealed link (`by=` added). T96: through [PeerCodes.send], so a code that phone
+     * refused before is not sent again (a [ShareClient.WrongCodeException] without a request: each wrong one spends one
+     * of its five failures), and a burst (a map view's tiles, a download's pieces) sends one request first when the code
+     * has not answered for a second and the rest only once it opened. A refusal is written down; when it is the peer's
+     * own code, the peer is `codeChanged` ([codeChanged]).
+     */
     fun request(addr: String, code: String, method: String, path: String, body: ByteArray = ByteArray(0), readMs: Int = 30_000): SealedLink.Response {
         val target = path + (if ('?' in path) "&" else "?") + "by=" + self.first
-        return ShareClient.sealed(ShareClient.Target("http://$addr", code), code, method, target, body, readMs).also { seen(addr) }
+        try {
+            return codes.send(phoneAt(addr), code, waitMs = readMs + 15_000L) {
+                ShareClient.sealed(ShareClient.Target("http://$addr", code), code, method, target, body, readMs)
+            }.also { seen(addr) }
+        } catch (e: ShareClient.WrongCodeException) {
+            val p = peers[addr]?.takeIf { it.code == code }
+            if (p != null) codeChanged(p) else save()
+            throw e
+        }
     }
 
     /**
      * Adds (or refreshes) the phone at [addr] (`host[:port]` or a share link) as a source: hello with its name, then its
-     * catalog and areas. Throws on a wrong code or no answer (also kept as the peer's `error`).
+     * catalog and areas. Throws on a wrong code or no answer (also kept as the peer's `error`; T96: a wrong code typed for
+     * a known peer leaves it as it was, and its own code refused makes it `codeChanged`).
      */
     fun add(addr: String, code: String?, nsdName: String? = null, discoveredAt: Long? = null, resolvedAt: Long? = null, auto: Boolean = false): Peer {
         val t = ShareClient.parse(addr)
         val c = ShareClient.requireCode(code?.takeIf { it.isNotBlank() } ?: t.code)
         val hostPort = t.baseUrl.removePrefix("http://")
         val reach = via[hostPort] ?: hostPort
-        val p = peers[reach] ?: Peer(reach, c)
+        val existing = peers[reach]
+        val p = existing ?: Peer(reach, c)
         nsdName?.let { p.nsdName = it }
         discoveredAt?.let { p.discoveredAt = it }
         resolvedAt?.let { p.resolvedAt = it }
-        p.auto = auto
+        // T96: a code kept from before counts toward this phone's one per session, also when the user sends it.
+        codes.noteSent(phoneAt(reach), c)
         try {
             val hello = request(reach, c, "POST", "/peer/hello", MiniJson.encode(mapOf("device" to self.first, "name" to self.second)).toByteArray(), readMs = 15_000)
             if (hello.status == 404) throw java.io.IOException("$reach shares sync only (an app without peer sources)")
@@ -275,22 +354,28 @@ object PeerSources {
             p.name = h["name"] as? String
             p.device = h["device"] as? String
             p.helloAt = System.currentTimeMillis()
+            // T96 (a T90 follow-up): a peer added by hand stays one when discovery reaches it again.
+            p.auto = if (existing != null) existing.auto && auto else auto
+            codes.opened(p.phone, c)
             learnCode(c, tryDiscovered = false)
             peers[reach] = p
             refresh(p)
-            p.error = null
-            p.restored = false
+            p.setState(null, restored = false)
             p.nextRetryAt = null
+            retries.remove(reach)?.cancel(false) // T96: it answered: no retry pending
             // T90: the same phone at another address (the network gave it a new one) replaces its old entry once it answers.
             peers.values.filter { q -> q !== p && q.addr != reach && ((q.device != null && q.device == p.device) || (q.nsdName != null && q.nsdName == p.nsdName)) }
-                .forEach { peers.remove(it.addr, it); retireCode(it.code) }
+                .forEach { peers.remove(it.addr, it); retries.remove(it.addr)?.cancel(false); retireCode(it.code) }
             if (oldCode != c) retireCode(oldCode)
             updateSources()
             save()
             Log.i(TAG, "peer ${p.name} at $reach: ${p.catalog?.packs?.size} packs, ${p.areas.size} areas")
             return p
         } catch (e: Exception) {
-            p.error = if (e is ShareClient.WrongCodeException) "wrong code" else (e.message ?: e.javaClass.simpleName)
+            when {
+                e is ShareClient.WrongCodeException -> if (existing == null) p.setState("wrong code") // a kept peer: request() decided
+                existing == null || c == p.code -> p.setState(e.message ?: e.javaClass.simpleName)
+            }
             throw e
         }
     }
@@ -310,45 +395,55 @@ object PeerSources {
         return p
     }
 
-    /** T90: [refresh] for a peer that answered since the app started; a restored one is added again (hello, catalog, a source again). */
-    fun reach(p: Peer): Peer = if (p.restored) add(p.addr, p.code, nsdName = p.nsdName, auto = p.auto) else refresh(p)
+    /**
+     * T90: [refresh] for a peer that answered since the app started; a restored one is added again (hello, catalog, a source
+     * again). T96: so is one whose code changed, which [request] answers at once (`codeChanged`, nothing sent).
+     */
+    fun reach(p: Peer): Peer = if (p.restored || p.error == CODE_CHANGED) add(p.addr, p.code, nsdName = p.nsdName, auto = p.auto) else refresh(p)
 
+    /** Stops using [key] and forgets it (Forget on the Share screen); T96: its code is retired too, so discovery does not try it elsewhere. */
     fun remove(key: String): Boolean {
         val p = find(key) ?: return false
         peers.remove(p.addr)
+        retries.remove(p.addr)?.cancel(false)
+        retireCode(p.code)
         updateSources()
         save()
         return true
     }
 
-    /** Discovery found and resolved [d]: try each known code on it once (in the background). */
+    /**
+     * Discovery found and resolved [d]: try the codes [PeerCodes] allows on it, one at a time, in the background. T96: the
+     * kept peer this phone is (same device id in its NSD record, else same address or NSD name with no other device id)
+     * gives its own code first; codes other kept peers hold are not tried here; a refused code is never sent again, and a
+     * code kept from before goes at most once per session per phone (the launch retry's included).
+     */
     fun onDiscovered(d: PeerList.Peer) {
         val hostPort = d.hostPort ?: return
         if (d.self) return
         // Our own announcement can resolve before NSD reports the name we registered under: skip our own address and port.
         val me = ShareSession.of(app)
         if (d.port == me.port && d.host in me.addresses()) return
-        val codes = knownCodes
-        if (codes.isEmpty()) return
         val reach = via[hostPort] ?: hostPort
-        val here = peers[reach]
-        if (here?.catalog != null && !here.restored) return
-        // T90: a restored peer at this address or under this NSD name: its own code first, now rather than at its next retry.
-        val first = (here ?: peers.values.firstOrNull { it.restored && it.nsdName == d.name })?.code?.takeIf { it in codes }
+        val kept = peers.values.firstOrNull { d.device != null && it.device == d.device }
+            ?: (listOfNotNull(peers[reach]) + peers.values.filter { it.nsdName == d.name }).firstOrNull { d.device == null || it.device == null || it.device == d.device }
+        if (kept != null && kept.addr == reach && kept.catalog != null && !kept.restored && kept.error == null) return // connected
+        val phone = PeerCodes.Phone(reach, d.name, d.device ?: kept?.device)
+        val plan = codes.plan(phone, kept?.code, peers.values.filter { it !== kept }.map { it.code }.toSet())
+        if (plan.isEmpty()) return
         worker.execute {
-            // T90: the newest code first (the trip's current one), so a phone is not handed old codes before the right one.
-            for (c in listOfNotNull(first) + (codes.reversed() - setOfNotNull(first))) {
-                if (!tried.add("${d.name}|$reach|$c")) continue
-                autoTries++
+            codes.attempt(phone, plan) { c ->
                 try {
                     add(hostPort, c, d.name, d.firstSeenAt, d.resolvedAt, auto = true)
-                    return@execute
+                    PeerCodes.Outcome.OPENED
                 } catch (e: ShareClient.WrongCodeException) {
-                    continue
-                } catch (e: Exception) {
-                    tried.remove("${d.name}|$reach|$c") // not reachable now: may be tried again when it is resolved again
+                    PeerCodes.Outcome.WRONG
+                } catch (e: LanConnectException) {
                     Log.w(TAG, "peer ${d.name} at $hostPort: ${e.message}")
-                    return@execute
+                    PeerCodes.Outcome.UNREACHABLE // not reachable now: tried again when it is resolved again
+                } catch (e: Exception) {
+                    Log.w(TAG, "peer ${d.name} at $hostPort: ${e.message}")
+                    PeerCodes.Outcome.FAILED
                 }
             }
         }
@@ -357,8 +452,15 @@ object PeerSources {
     /** Downloads pack [id] of peer [key] (resumable, every archive checked against the peer's SHA-256). */
     fun download(key: String, id: String, activate: Boolean = false): PackDownloader.Job {
         val p = find(key) ?: throw NoSuchElementException("no peer '$key'; POST /share/peers/add first")
-        // T90: a restored peer is tried at once; when it does not answer, its kept catalog plans the download, which then resumes or fails as usual.
-        val c = runCatching { reach(p) }.getOrNull()?.catalog ?: p.catalog ?: throw IllegalStateException("no catalog from ${p.addr}")
+        // T90: a restored peer is tried at once; when it does not answer, its kept catalog plans the download, which then
+        // resumes or fails as usual. T96: a changed code fails here (`codeChanged`) instead of starting a download that cannot.
+        val c = try {
+            reach(p).catalog
+        } catch (e: ShareClient.WrongCodeException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: p.catalog ?: throw IllegalStateException("no catalog from ${p.addr}")
         return PackManager.get(app).catalogClient.downloadFrom(p.url, c, id, activate, label = "peer ${p.name ?: p.addr}")
     }
 
@@ -384,6 +486,7 @@ object PeerSources {
         "peers" to all().map { it.json() },
         "knownCodes" to knownCodes.size, "autoTries" to autoTries, "via" to via.toSortedMap(),
         "restoredPeers" to restoredPeers, "saves" to saves, "file" to STORE_FILE, // T90
+        "codes" to codes.json(), // T96: known, fresh, refusals kept, tries sent and held back
     )
 }
 
