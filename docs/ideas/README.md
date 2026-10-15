@@ -67,7 +67,7 @@ names (`CLAUDE.md`, Rules).
 | `2026-10-13-no-other-product-names.md` | chore | done | Rule: our user-visible text does not name other mapping software (CLAUDE.md, 2026-10-14); T104 renamed the two hits and added `tools/user-text-check.py` (in `./gradlew check`). |
 | `2026-10-13-route-waypoints-and-reroute.md` | feature | new | Route to a destination with waypoints dropped when passed, rerouting, all modes. |
 | `2026-10-13-cache-budgets.md` | feature | new | One total cache budget plus per-kind budgets, LRU or LFU (T74 has per-store caps). |
-| `2026-10-13-settings-tabs.md` | feature | planned | Settings sheet grouped into thematic tabs (T103, wave 14). |
+| `2026-10-13-settings-tabs.md` | feature | done | Settings sheet grouped by theme: a list of groups, each a page (T103, wave 14). |
 | `2026-10-13-s-pen-features.md` | feature | new | Niche: useful S Pen behaviour. |
 | `2026-10-13-battery-efficiency.md` | feature | new | Battery doctrine, a measurement mode and an automatic low-battery mode. |
 | `2026-10-13-external-integrations.md` | feature | new | Import, export and sync with outside services (route services, cloud drive, OSM, fitness). |

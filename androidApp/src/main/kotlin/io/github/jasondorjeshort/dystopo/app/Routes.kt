@@ -31,7 +31,7 @@ import java.io.File
  *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes.
  * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; the puck shows it and the
  *   device's own location engine stays detached until `POST /location?device=1`. `GET /location`.
- * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`: user settings ([SettingsRoutes]).
+ * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`, T103 `GET /settings/layout` and `POST /settings/open?group=`: user settings and the sheet's groups ([SettingsRoutes]).
  * - `GET /features` (alias `/labels`), `GET /features/text`: what the map drew ([FeatureRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
  */

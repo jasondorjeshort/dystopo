@@ -262,7 +262,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                     BasicText(
                         text,
                         style = TextStyle(color = if (catalogError != null) Color(0xFFB0302A) else if (linked) Color(0xFF2C7BB6) else Muted, fontSize = 13.sp, fontWeight = if (linked) FontWeight.SemiBold else FontWeight.Normal),
-                        modifier = if (linked) Modifier.clickable { close(); io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = true }.padding(vertical = 4.dp) else Modifier,
+                        modifier = if (linked) Modifier.clickable { close(); io.github.jasondorjeshort.dystopo.app.SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp) else Modifier,
                     )
                 }
                 items(rows, key = { "cat-" + it.pack.id }) { r ->

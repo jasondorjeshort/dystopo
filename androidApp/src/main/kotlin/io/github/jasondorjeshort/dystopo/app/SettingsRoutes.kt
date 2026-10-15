@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup
+import io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
@@ -23,7 +25,14 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   when no server is set) and `directOnMobileData` (1/0, default 1 since T83: no Wi-Fi gates); also in Settings › Sources.
  *   `onlineCacheMb` and `contourCacheMb` (T41) cap the online tile cache and the contour cache (all packs),
  *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
- * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]).
+ * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
+ * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
+ *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
+ *   that draws it, `since`: the task that added it); `serverGroup` (the group with the server field, which the
+ *   first-run card's Settings link opens), and what is shown now: `open`, `group` (null: the list), `twoPane` (null
+ *   until the sheet was drawn once).
+ * - T103 `POST /settings/open?group=data|map|display|navigation|sync|about|list`: opens the sheet on that group's page
+ *   (`list` or no `group`: the list of groups), for tours and screenshots; an unknown group is a 400 naming the ids.
  */
 class SettingsRoutes(private val app: DystopoApp) {
     /** The response for `/settings`, or null for any other path. */
@@ -32,6 +41,14 @@ class SettingsRoutes(private val app: DystopoApp) {
             // Opens (open=1, default) or closes (open=0) the settings sheet, for screenshots.
             app.map.onMain { SettingsUi.visible = r.query["open"] != "0" }
             return Response.json(mapOf("open" to (r.query["open"] != "0")))
+        }
+        if (r.path == "/settings/layout" && r.method == "GET") return Response.json(layout())
+        if (r.path == "/settings/open" && r.method == "POST") {
+            val id = r.query["group"]?.trim().orEmpty()
+            val group = if (id.isEmpty() || id == "list") null else SettingsGroup.byId(id)
+                ?: return Response.json(mapOf("error" to "group must be one of ${SettingsGroup.entries.map { it.id } + "list"} (got $id)"), 400)
+            app.map.onMain { SettingsUi.open(group) }
+            return Response.json(SettingsLayout.json(open = true, group = group, twoPane = SettingsUi.twoPane) + mapOf("rows" to group?.let { g -> SettingsLayout.rows(g).map { it.label } }))
         }
         if (r.path != "/settings") return null
         return when (r.method) {
@@ -106,6 +123,9 @@ class SettingsRoutes(private val app: DystopoApp) {
     }
 
     companion object {
+        /** T103: `GET /settings/layout` ([SettingsLayout.json] with what the sheet shows now). */
+        fun layout(): Map<String, Any?> = SettingsLayout.json(SettingsUi.visible, SettingsUi.group, SettingsUi.twoPane)
+
         /** T41: cache caps in MB, within [AppSettings.CACHE_MB_RANGE] (declared before [KEYS], which uses it). */
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb", "pinnedCacheMb") // T91: pinnedCacheMb
 

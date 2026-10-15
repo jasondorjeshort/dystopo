@@ -715,12 +715,27 @@ def find_edit_below(dev, heading, nodes=None):
     return below[0] if below else None
 
 
-def open_settings(dev):
+SETTINGS_GROUPS = ["Data and storage", "Map options", "Units and display", "Navigation and tracking", "Sync and sharing", "About and advanced"]
+
+
+def open_settings(dev, group="Data and storage", anchor="^Sources$"):
+    """T103: Settings opens on its list of groups (the first-run card's Settings opens Data and storage itself): tap the
+    group, scrolling the list when large text pushed it below the fold, until its page shows `anchor`."""
     dev.tap_text("^Settings$")
-    n, nodes = dev.wait_for("^Sources$", 10)
-    if not n:
-        raise RuntimeError(f"Settings has no Sources section (texts: {dev.texts(nodes)[:25]})")
-    return nodes
+    n, nodes = dev.wait_for(f"{anchor}|^{group}$", 10)
+    for _ in range(4):
+        if dev.find(anchor, nodes):
+            return nodes
+        g = dev.find(f"^{group}$", nodes)
+        back = dev.find("^‹ Settings$", nodes)  # on another group's page: back to the list
+        if g or back:
+            dev.tap(g or back)
+        else:
+            w, h, _d = screen(dev)
+            dev.shell("input", "swipe", str(w // 2), str(h * 4 // 5), str(w // 2), str(h // 2), "500")
+            time.sleep(1)
+        n, nodes = dev.wait_for(anchor, 5)
+    raise RuntimeError(f"Settings > {group} has no {anchor} (texts: {dev.texts(nodes)[:25]})")
 
 
 def close_sheet(dev):
@@ -748,7 +763,7 @@ def set_server(dev, url):
 
 
 def set_units(dev, label="Metres"):
-    open_settings(dev)
+    open_settings(dev, "Units and display", "^Units$")
     dev.tap_text(f"^{label}$")
     time.sleep(1)
     close_sheet(dev)
@@ -895,12 +910,14 @@ def part_features(args):
 
     def settings():
         close_tracks(dev)
-        nodes = open_settings(dev)
-        texts = dev.texts(nodes)
-        # The first screen of the sheet; the map options (Hillshade) sit below the fold since T83 added Updates.
-        want = ["Sources", "Updates", "Units", "Text size"]
-        missing = [w for w in want if w not in texts]
+        # T103: the sheet opens on its groups; Data and storage holds Sources.
+        dev.tap_text("^Settings$")
+        _n, nodes = dev.wait_for("^Data and storage$", 10)
+        missing = [w for w in SETTINGS_GROUPS if w not in dev.texts(nodes)]
         png = dev.screencap("settings")[0]
+        close_sheet(dev)
+        if "Sources" not in dev.texts(open_settings(dev)):
+            missing.append("Sources")
         close_sheet(dev)
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
@@ -1731,8 +1748,8 @@ UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|U
 
 
 def check_for_updates(dev, timeout=240):
-    """Settings > Updates > Check for updates; returns the result line once the check has finished."""
-    nodes = open_settings(dev)
+    """Settings > About and advanced > Check for updates; returns the result line once the check has finished."""
+    nodes = open_settings(dev, "About and advanced", "^Updates$")
     btn = dev.find("^Check for updates$", nodes)
     for _ in range(3):
         if btn:
@@ -1947,9 +1964,10 @@ def part_update(args):
         r = map_settled(dev, "new-map")
         tracks = track_rows(dev)
         close_tracks(dev)
-        nodes = open_settings(dev)
+        nodes = open_settings(dev, "Units and display", "^Units$")
         metric = dev.find("^Metres$", nodes) is not None
-        version_line = dev.find(r"^This build: ", nodes)
+        close_sheet(dev)
+        version_line = dev.find(r"^This build: ", open_settings(dev, "About and advanced", "^Updates$"))
         close_sheet(dev)
         checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": tracks[:1] == st["tracks"][:1],
                   "runningNew": bool(version_line and new_name in version_line["text"])}

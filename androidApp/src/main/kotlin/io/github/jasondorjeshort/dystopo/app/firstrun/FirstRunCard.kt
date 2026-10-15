@@ -113,7 +113,7 @@ fun FirstRunCard(fallback: String?) {
             ui.progress?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Download failed")) Red else Accent, fontSize = 13.sp)) }
             FirstRun.message?.let { BasicText(it, style = TextStyle(color = if (it.contains("failed") || it.contains("permission")) Red else Accent, fontSize = 13.sp)) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                BasicText(Screens.SETTINGS, Modifier.clickable { SettingsUi.visible = true }.padding(vertical = 4.dp), style = TextStyle(color = Color(0xFF2C7BB6), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                BasicText(Screens.SETTINGS, Modifier.clickable { SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp), style = TextStyle(color = Color(0xFF2C7BB6), fontSize = 14.sp, fontWeight = FontWeight.Bold))
                 BasicText("Not now", Modifier.clickable { FirstRun.dismissed = true }.padding(vertical = 4.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
             }
         }

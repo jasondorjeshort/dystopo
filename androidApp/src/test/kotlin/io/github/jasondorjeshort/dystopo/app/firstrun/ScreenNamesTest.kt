@@ -60,7 +60,7 @@ class ScreenNamesTest {
             val opener = Regex("""(?:Chip|BasicText)\(\s*(?:"${Regex.escape(screen)}"|Screens\.$const)\s*[,)]""")
             assertTrue(opener.containsMatchIn(all), "no Chip(\"$screen\") or text link with that label opens the $screen screen")
         }
-        val settings = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/SettingsSheet.kt").readText()
+        val settings = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/settings/SettingsPages.kt").readText() // T103: the sheet's rows
         assertTrue("BasicText(Screens.SOURCES" in settings, "the settings sheet has no Sources heading")
         val packs = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/packs/PacksScreen.kt").readText()
         assertTrue("\"From server\"" in packs, "the pack list has no From server section")

@@ -16,7 +16,7 @@ them, in the same PR.
 | `code-layout.md` | The modules (`shared`, `devtool`, `serverlib`/`server`, `tilebuild`, `tools`, `areas.json`) with the detail an editing agent needs | 2026-10-12 |
 | `devtool-commands.md` | Every devtool command with its options, fonts in PNGs, working directory and cache | 2026-10-12 |
 | `live-server.md` | Browser demo, live world mode and map options, trip editor, `devtool serve` as the phone stand-in, the coordinator's servers | 2026-10-12 |
-| `android-app.md` | What the app serves, the build and emulator scripts, the device tour, the loopback token and the debug port | 2026-10-12 |
+| `android-app.md` | What the app serves, the build and emulator scripts, the settings sheet's groups, the device tour, the loopback token and the debug port | 2026-10-12 |
 | `android-emulator.md` | Several emulators side by side, host virtualization, GPU and API quirks | 2026-10-12 |
 | `android-debug-routes.md` | Every debug route family (health, screenshot, camera, stats, settings, storage, packs, routes, navigation, areas, probe) | 2026-10-12 |
 | `android-tracks-and-sync.md` | Tracks and GPX, phone-to-phone sync and the relay, sync with the server | 2026-10-12 |

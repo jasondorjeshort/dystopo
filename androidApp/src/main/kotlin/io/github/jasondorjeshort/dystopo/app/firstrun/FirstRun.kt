@@ -64,7 +64,7 @@ object FirstRun {
         if (online.fetcher == null) {
             // T80: only when the phone's own source reading is off (no server and direct sources disabled).
             message = "Set your Dystopo server in ${Screens.SETTINGS} › ${Screens.SOURCES} first, then tap Download again."
-            app.map.onMain { SettingsUi.visible = true }
+            app.map.onMain { SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) } // T103: the page with the server field
             return json()
         }
         val region = online.region

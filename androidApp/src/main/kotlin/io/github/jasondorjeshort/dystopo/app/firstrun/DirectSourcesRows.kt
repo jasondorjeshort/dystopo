@@ -5,7 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -32,14 +33,15 @@ import kotlin.concurrent.thread
  * `directOnMobileData` and `directSessionMb` in `POST /settings`.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 fun DirectSourcesRows() {
     val app = DystopoApp.instance
     var mobile by remember { mutableStateOf(DirectPrefs.onMobileData(app)) }
     var mb by remember { mutableStateOf(DirectPrefs.sessionMb(app)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         BasicText("With no server the phone reads the public sources itself.", style = TextStyle(color = Muted, fontSize = 11.sp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            BasicText("Mobile data", style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { // T103: wraps at font scale 2.0
+            BasicText("Mobile data", Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
             for ((label, value) in listOf("Use" to true, "Off" to false)) {
                 Choice(label, mobile == value) {
                     mobile = value
@@ -47,8 +49,8 @@ fun DirectSourcesRows() {
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            BasicText("Limit per session", style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { // T103: wraps at font scale 2.0
+            BasicText("Limit per session", Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
             for (value in (DirectPrefs.SESSION_MB_CHOICES + mb).distinct().sorted()) {
                 Choice(if (value >= 1000) "${value / 1000} GB" else "$value MB", mb == value) {
                     mb = value
