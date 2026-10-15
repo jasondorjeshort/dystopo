@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-15
 
+- T104: Two slope shadings, the shade tiles' hole over a pack edge, no product names in user text (#103)
 - T101: A scale bar, and miles above feet (#102)
 
 ## v0.1.6-alpha (2026-10-14)
