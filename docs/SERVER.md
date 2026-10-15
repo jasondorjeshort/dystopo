@@ -158,7 +158,7 @@ key with its default.
 | `relay.maxSlots` | `10000` | Slots (share codes in use) at once; beyond, 507. |
 | `relay.maxSides` | `4` | Phones per slot. |
 | `relay.requestsPerMinute` | `120` | Relay requests per client address per minute (token bucket; 429 with `Retry-After`). A phone polls every 5 s. |
-| `extractDownloads.urls` | `[]` | Geofabrik regions the server may download into `extractsDir` when an outdoors build needs one (T66, below), e.g. `["https://download.geofabrik.de/europe/alps"]` (a `-latest.osm.pbf` or `.poly` URL works too). `devtool serve` reads `DYSTOPO_EXTRACT_DOWNLOADS` (comma-separated) instead. |
+| `extractDownloads.urls` | `[]` | Geofabrik regions the server may download into `extractsDir` when an outdoors build needs one (T66, below), e.g. `["https://download.geofabrik.de/europe/alps"]` (a `-latest.osm.pbf`, `-YYMMDD.osm.pbf` or `.poly` URL, or one with a trailing slash, works too; T107: the config check reads them exactly as the downloader does, so it takes all of these and refuses what the downloader would). `devtool serve` reads `DYSTOPO_EXTRACT_DOWNLOADS` (comma-separated) instead. |
 | `extractDownloads.maxMb` | `4096` | Largest extract downloaded (by `Content-Length`, checked again while streaming). |
 | `extractDownloads.sha256` | `{}` | T92: region name to the SHA-256 (hex) its download must have, e.g. `{"liechtenstein": "38c2..."}`; a mismatch fails the build and nothing is kept. Pair it with a dated Geofabrik snapshot URL (`https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf`, kept as `liechtenstein-260101.osm.pbf`) so the bytes never change; CI does. T97: a key must be the name of a region in `extractDownloads.urls` (the last segment of its URL without `-latest.osm.pbf`, `-YYMMDD.osm.pbf` or `.poly`, compared exactly: `liechtenstein`, not `Liechtenstein` or `europe/liechtenstein`); a key that names none, which would let a misspelt region download unchecked, fails the config check at start (`config_invalid` in the log, exit code 2). |
 | `log.file` | `null` | T82: write the JSON log to this file instead of stdout, rotating it (below, Operations). Null: stdout (cap it in journald or Docker). |
@@ -506,7 +506,13 @@ rebuilt graph (the pack changed, an older `DYSG` version, the graph file deleted
 warm-up then builds again and overwrites it, as it does for a file that cannot be read (a truncated one, say).
 Delete it to force a rebuild; nothing else reads it. It is not written when the cells no longer all fit in
 memory (a pack with more than 65,536 of them; `file` and `bytes` are null in its `warm` entry), and a pack
-without drive data (outdoors profile 1) has neither a cell file nor a `warm` entry.
+without drive data (outdoors profile 1) has neither a cell file nor a `warm` entry. T107: a pack file replaced
+while the server runs (a new modification time or size) reopens its graph on the next route that uses it, and the
+warm-up runs again for the new open: when the content is unchanged the graph file is reused and its cell file
+registered again (`warm` says `loaded`, the vector archive is back in `cellFiles`); when it changed, the graph is
+rebuilt and the cells are built and written again (`done`). Each pack keeps one `warm` entry, the current open's.
+Before T107 the old entry stayed, so a reused graph lost its cell file (`cellFiles` empty, level-2 cells unused)
+until a restart.
 
 - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
@@ -519,17 +525,27 @@ without drive data (outdoors profile 1) has neither a cell file nor a `warm` ent
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
   `show`. Only the legs next to a moved, added or removed point are rerouted.
 - Both answer `pack`, `mode`, `path` (the encoded route: the `path` field value a trip stores in the sync log),
-  `via`, `legs` (`kind` trail/straight/fixed, `coordinates` as `[lon, lat, ele]`), `summary` (distance, ascent,
-  descent, hike-model time, `straightM`, a 100-sample profile), `notes` (why a leg is straight), `graph`
-  (`built`, `loaded` or `cached`, the reported pack's; every pack used under `graphs`; T77: `searches`, one per
-  leg searched, with `ms`, `tiles`, `overlayTiles`, T89 `level2Tiles` (the z8 cells it went through), `expanded`
-  and the search's memory) and `ms`. Bad input is a 400 with `error`. `notice` (drive only) is the one sentence on
-  what drive mode does and does not do (`Router.DRIVE_NOTICE`, ADR 0032). T102: `instructions`, the turn directions
+  `via`, `legs` (`kind` trail/straight/fixed, `points`, `coordinates` as `[lon, lat, ele]`), `summary` (`mode`,
+  `distanceM`, `ascentM`, `descentM`, `minEleM`, `maxEleM`, `timeS` and `time` (the hike or bike model; for a drive
+  the router's sum of each road's time), `points`, `viaPoints`, `legs`, `straightM`, `waypoints`, and `profile`, 100
+  samples), `notes` (why a leg is straight, one code each: `no_graph` (no pack's graph near the points),
+  `empty_graph`, `start_off_network` and `end_off_network` (no trail, or for a drive no road open to cars, within
+  `snap` of that end), `not_connected` (both ends on the network but no way between them), `drive_unsupported` (a
+  pack built before the road data; rebuild it), `search_limit` (the search gave up at its node budget, which is no
+  proof there is no way)), `messages` (T73: the router's sentence for each note, e.g. "no road open to cars within
+  300 m of the end point (the nearest is 3192 m away)"), `notice` (for `mode=drive`: it follows the packs' roads and
+  is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; null otherwise), `waypointsValue` (the empty `waypoints` value a page saves with a new
+  trip), `graph` (`action` `built`, `loaded` or `cached` and `file`, the reported pack's; every pack used under
+  `graphs` with its `pack` and `action`; T77: `searches`, one per leg searched, with `ms`, `found`, `tiles`,
+  `graphBytes`, `searchBytes`, `searchNodes`, `expanded`, and `overlayTiles` and T89 `level2Tiles` (the z8 cells it
+  went through) when it used the overlay) and `ms`. Bad input is a 400 with `error`. T102: `instructions`, the turn directions
   along the whole path (every leg, kept or rerouted; via points and straight legs too): each with `type` (`depart`,
   `left`, `keep-right`, `continue`, `via`, `off-network`, `arrive`, ...), `priority` (1 major, 2 normal, 3 minor; the
   apps show 1 and 2), `text` (English, no distance), `alongM`, `lat`, `lon`, `name`, `class`, `sameWay`, `turnDeg`,
   `bearingDeg`, `leadM` (how far ahead to announce it) and `stretchM` (to the next one); the phone's remote router
   reads them. PLANNING › Routing, Turn directions.
+  (The phone's own router has one
+  more code, `remote_unavailable`, for a server it asked that did not answer.)
 - `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
   what the phone exports for the same trip.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one
@@ -540,7 +556,8 @@ without drive data (outdoors profile 1) has neither a cell file nor a `warm` ent
   server has empty `graphs` and `warm`):
   - `outDir`, `requests` (counts by kind), `errors`, `lastMs`, `building` (packs whose graph is being built),
     `graphs` (per open pack, how its graph was opened: `action` `built` or `loaded`, `file`, `bytes`, `buildMs` or
-    `loadMs`, `rebuildReason` after a build, `nodes`, `tiles`);
+    `loadMs`, `rebuildReason` after a build, `nodes` after a build, `tiles`, and after a build `demTilesDecoded`,
+    the DEM pack's tiles decoded to sample the graph's elevations, null when the pack has no DEM);
   - `tileCache`: graph tiles in memory (`tiles`, `bytes` of `maxBytes`, `loads`, `hits`, `evictions`) and, T89,
     `loadErrors` (tiles that failed their checksum or were cut short), `corruptTiles` (how many are remembered)
     and `corruptHits` (lookups answered from that memory without reading the file again);
@@ -548,8 +565,8 @@ without drive data (outdoors profile 1) has neither a cell file nor a `warm` ent
     `overlayTiles` and `level2Tiles` when its search used the overlay;
   - `corruptGraphTiles` (T89): `[]`, or one `{file, x, y, error}` per remembered corrupt graph tile (`file` is the
     pack's vector archive name, `x` and `y` the z11 tile). Such a tile is skipped for the life of the process, so
-    a route that needs it behaves as if the roads there were missing (`start_off_network` or `not_connected`
-    notes, not an error). The list lives in memory only: a restart starts it empty and the next route that
+    a route that needs it behaves as if the roads there were missing (`start_off_network`, `end_off_network` or
+    `not_connected` notes, not an error). The list lives in memory only: a restart starts it empty and the next route that
     reaches the tile finds it again. To repair, stop the server, delete `<vector archive>-graph.idx` (and the
     `-overlay.idx` beside it), start it and route: the graph is rebuilt (`rebuildReason` `missing`), the list is
     empty and the warm-up writes the cell file again;
@@ -922,7 +939,13 @@ pack's tiles at z8 to z14 with styles, glyphs, `/out/` ranges, routes, sync, rel
 every 10 minutes, a build every hour, the quick probe every hour and a new live tile column every two
 minutes, samples `/metrics`, the OS process and a class histogram (a full GC, so the live heap is exact)
 every 10 minutes into `soak.jsonl`, and ends with the full probe, `soak.svg` and `summary.json`. The
-nightly workflow runs a 20-minute version (`server-soak` job) on a pack it builds itself.
+nightly workflow runs a 20-minute version (`server-soak` job) on a pack it builds itself. T107: each sample
+also carries `/stats` `sourceDownloads` (the elevation readers' downloads under the T92 budget), which the chart
+draws in its own panel (downloaded since start, in the last hour, the largest one) and `summary.json` summarises
+(`sourceMb`, `sourceRequests`, `sourceLastHourMb`, `sourceRefusedRequestCap`, `sourceRefusedHourCap`); each URL of
+a round is its own curl operation, so a header (the sync lines' token, the `/out/` line's `Range`) goes only
+with its own request; and the trip's route and bundle carry the soak user's token, which the T92 route gate
+had refused since, so no trip had been saved or shared (a failed trip route is now a `tripRoute` event).
 
 T92: the soak ends with a verdict, printed one check per line (`PASS name: why` / `FAIL name: why`) and kept
 under `verdict` in `summary.json`, and exits 0 only when every check passes: the server alive when the load

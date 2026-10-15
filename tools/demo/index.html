@@ -26,15 +26,15 @@
   out/<name>-outdoors.pmtiles (OpenFreeMap tiles, OpenMapTiles schema) for the current view and shows progress.
 
   Map options (T50; the phone's T47 options, same keys as devtool serve's /style.json): the "Map options" section of the
-  panel, or the query string: hillshade=off|single|multi, hillshadeIntensity=0..1, slope=on (slope-angle bands; served
+  panel, or the query string: hillshade=off|single|multi, hillshadeIntensity=0..1, slope=off|avalanche|steepness (T104's two slope shadings, on is avalanche; served
   by devtool serve as /shade/ tiles, so live mode only), contourInterval=auto|<n> in the shown units, night=on, and
   trails|water|landcover|pois|boundaries=off. Changes apply at once and are written back to the URL;
   window.dystopoOptions has the current set.
 
-  Trip editor (T68, live mode only): tools/demo/trips.js adds "Plan a trip" to the panel (click start and end, drag
-  numbered via points, right-click to remove, a summary card with the profile, GPX, Save as trip into this browser's
-  sync replica and on to the server's sync peer); see the top of trips.js. T92: tools/demo/trip-sync.js adds the pull side
-  ("Get trips from the server") and waypoint editing for the open trip; see the top of trip-sync.js.
+  Trip editor (T68, live mode only): tools/demo/trips.js adds a Trips box at the top right (T107: planning, the open
+  route's card with its profile, GPX file and Save trip into this browser's sync replica and on to the server's sync
+  peer, the saved trips); see the top of trips.js. T92: tools/demo/trip-sync.js adds the pull side ("Get from server")
+  and waypoint editing for the open trip; see the top of trip-sync.js. Both send the panel's Server token.
 -->
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
@@ -44,17 +44,26 @@
   :root { --paper: #f6f1e4; --ink: #2b2420; --panel: rgba(255, 252, 245, 0.92); }
   html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
   #map { position: absolute; inset: 0; }
-  #panel { position: absolute; top: 12px; left: 12px; background: var(--panel); border-radius: 8px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); max-width: 260px; }
+  #panel { position: absolute; top: 12px; left: 12px; background: var(--panel); border-radius: 8px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); max-width: 260px;
+           max-height: calc(100% - 80px); overflow-y: auto; box-sizing: border-box; }
+  #build { margin: 6px 0; } #build summary { font-size: 13px; font-weight: 600; margin: 0; }
   #panel summary { font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 4px; }
   #panel label { display: block; margin: 4px 0; }
   #panel label[hidden] { display: none; }
   #panel .hint { color: #6b5f55; font-size: 12px; margin-top: 6px; }
   @media (max-width: 520px) { #panel { max-width: 200px; padding: 6px 8px; } #panel .hint { display: none; } }
-  @media (max-width: 520px) { #sources { top: auto; right: auto; bottom: 56px; left: 12px; } }
-  #status { position: absolute; bottom: 30px; left: 12px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+  #status { position: absolute; bottom: 34px; left: 12px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
   #sources { position: absolute; top: 12px; right: 52px; background: var(--panel); border-radius: 6px; padding: 4px 8px; font-size: 12px; max-width: calc(100% - 40px); }
+  /* T107: after the rule above (it came first, so a phone kept top: 12px too and the box stretched over the whole map). */
+  @media (max-width: 520px) { #sources { top: auto; right: auto; bottom: 56px; left: 12px; } }
   #options { margin: 6px 0; } #options summary { font-size: 13px; font-weight: 600; margin: 0; }
   #options .row { display: flex; flex-wrap: wrap; gap: 0 10px; } #options .row label { margin: 2px 0; }
+  #slope-legend { font-size: 11px; color: #4a3f36; margin: 2px 0 6px; }
+  #slope-legend .bands { display: flex; flex-wrap: wrap; gap: 2px 6px; margin: 2px 0; }
+  #slope-legend .bands span { white-space: nowrap; } #slope-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 2px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.25); }
+  #slope-legend .safety { font-weight: 600; margin-top: 2px; }
+  /* T107: the live credits line wraps within the right 60% instead of running over the scale bar on the left. */
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib:not(.maplibregl-compact) { max-width: 60vw; }
   #buildcmd { white-space: pre-wrap; word-break: break-all; font-size: 11px; background: #fffaf0; border: 1px solid #e0d6c4; padding: 4px; max-height: 40vh; overflow: auto; }
 </style>
 </head>
@@ -71,7 +80,8 @@
   <details id="options">
     <summary>Map options</summary>
     <label>Hillshade <select id="opt-hillshade"><option value="single">single light</option><option value="multi">multidirectional</option><option value="off">off</option></select></label>
-    <label id="opt-slope-row"><input type="checkbox" id="opt-slope"> Slope-angle bands</label>
+    <label id="opt-slope-row">Slope shading <select id="opt-slope"><option value="off">off</option><option value="avalanche">avalanche</option><option value="steepness">steepness</option></select></label>
+    <div id="slope-legend" hidden></div>
     <label>Contour interval <select id="opt-interval"><option value="auto">auto</option></select></label>
     <label><input type="checkbox" id="opt-night"> Night</label>
     <div class="row">
@@ -84,15 +94,18 @@
   </details>
   <div class="hint" id="hint">Scroll to zoom, drag to pan. Demo data covers Rainier NP and surroundings at z8–14; the blank beyond is simply ungenerated. <span id="dem-mode"></span></div>
   <div id="live-tools" hidden>
-    <label>Pack name <input id="packname" size="14" placeholder="from the view"></label>
-    <label>Zooms <input id="packmin" type="number" min="0" max="15" value="8" style="width:3.2em"> to <input id="packmax" type="number" min="6" max="15" value="13" style="width:3.2em"></label>
-    <label>Vector <select id="packprofile"><option value="outdoors">outdoors profile (tilebuild)</option><option value="openmaptiles">OpenMapTiles (OpenFreeMap tiles)</option></select></label>
-    <label>OSM from <select id="packsource"><option value="auto">auto: a server extract, else Overpass</option><option value="extract">an extract on the server</option><option value="overpass">Overpass (small boxes)</option></select></label>
-    <button id="packsources" type="button">What would it use?</button>
-    <label><input type="checkbox" id="packreplace"> replace a pack of that name</label>
-    <label title="The server's bearer token, when it has one (kept in this browser only)">Token <input id="packtoken" type="password" size="12" autocomplete="off" placeholder="none"></label>
-    <button id="buildpack" type="button">Build pack here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
-    <pre id="buildcmd" hidden></pre>
+    <details id="build" open>
+      <summary>Build a pack here</summary>
+      <label>Pack name <input id="packname" size="14" placeholder="from the view"></label>
+      <label>Zooms <input id="packmin" type="number" min="0" max="15" value="8" style="width:3.2em"> to <input id="packmax" type="number" min="6" max="15" value="13" style="width:3.2em"></label>
+      <label>Vector <select id="packprofile"><option value="outdoors">outdoors profile (tilebuild)</option><option value="openmaptiles">OpenMapTiles (OpenFreeMap tiles)</option></select></label>
+      <label>OSM from <select id="packsource"><option value="auto">auto: a server extract, else Overpass</option><option value="extract">an extract on the server</option><option value="overpass">Overpass (small boxes)</option></select></label>
+      <button id="packsources" type="button">What would it use?</button>
+      <label><input type="checkbox" id="packreplace"> replace a pack of that name</label>
+      <button id="buildpack" type="button">Build pack here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
+      <pre id="buildcmd" hidden></pre>
+    </details>
+    <label id="token-row" title="The server's bearer token, when it has one: for building packs and for saving trips there (kept in this browser only)">Server token <input id="packtoken" type="password" size="12" autocomplete="off" placeholder="none"></label>
   </div>
 </details>
 <div id="sources" hidden></div>
@@ -424,7 +437,45 @@ map.on("styleimagemissing", e => {
   if (m && !map.hasImage(e.id)) map.addImage(e.id, markerImage(m), { pixelRatio: MARKER_RATIO });
 });
 map.addControl(new maplibregl.NavigationControl(), "top-right");
-map.addControl(new maplibregl.ScaleControl({ unit: UNITS === "m" ? "metric" : "imperial" }));
+// T107: the scale bar by T101's nice-length rule, the phone's (UnitFormat.scaleBar and metersPerPixel in
+// shared/.../render/UnitFormat.kt; keep the two in step, tools/demo-check.py checks this port against the Kotlin
+// test's cases): the longest 1, 2 or 5 times a power of ten in the unit the distance rule picks that fits in 100 px at
+// the centre's metres per pixel. Metric reads in metres up to 500 m and kilometres from 1 km; imperial in feet up to
+// 500 ft and in miles from 0.1 mi (never "1000 ft"). MapLibre's own control read feet up to a mile.
+const SCALE_UNITS = { ft: { big: ["mi", 1609.344], small: ["ft", 0.3048], threshold: 0.1 }, m: { big: ["km", 1000], small: ["m", 1], threshold: 1 } };
+function niceFloor(x) {
+  const p = 10 ** Math.floor(Math.log10(x)), f = x / p;
+  return (f >= 10 * (1 - 1e-9) ? 10 : f >= 5 * (1 - 1e-9) ? 5 : f >= 2 * (1 - 1e-9) ? 2 : 1) * p;
+}
+function scaleBar(metersPerPixel, maxPx, units) {
+  if (!(metersPerPixel > 0) || !(maxPx > 0) || !isFinite(metersPerPixel) || !isFinite(maxPx)) return null;
+  const u = SCALE_UNITS[units === "m" ? "m" : "ft"], maxM = metersPerPixel * maxPx;
+  const inBig = niceFloor(maxM / u.big[1]);
+  const [unit, size] = inBig >= u.threshold * (1 - 1e-9) ? u.big : u.small;
+  const value = unit === u.big[0] ? inBig : niceFloor(maxM / size);
+  const text = value >= 1 - 1e-9 ? String(Math.round(value)) : value.toFixed(Math.min(9, Math.max(1, -Math.floor(Math.log10(value) + 1e-9))));
+  return { value, unit, meters: value * size, px: value * size / metersPerPixel, label: text + " " + unit };
+}
+const metersPerPixel = (zoom, lat) => 2 * Math.PI * 6378137 * Math.cos(Math.max(-85.051129, Math.min(85.051129, lat)) * Math.PI / 180) / (512 * 2 ** zoom);
+window.dystopoScaleBar = scaleBar; window.dystopoMetersPerPixel = metersPerPixel; // for tools/demo-check.py
+class ScaleBarControl {
+  onAdd(m) {
+    this.el = document.createElement("div");
+    this.el.className = "maplibregl-ctrl maplibregl-ctrl-scale";
+    this.update = () => {
+      const b = scaleBar(metersPerPixel(m.getZoom(), m.getCenter().lat), 100, UNITS);
+      if (!b) return;
+      this.el.style.width = Math.round(b.px) + "px";
+      this.el.textContent = b.label;
+      window.dystopoScale = b;
+    };
+    m.on("move", this.update);
+    this.update();
+    return this.el;
+  }
+  onRemove(m) { m.off("move", this.update); this.el.remove(); }
+}
+map.addControl(new ScaleBarControl(), "bottom-left");
 
 const textLayers = ["contour-labels", "trail-names", "ridge-names", "poi-markers", "water-names", "peaks", "places"];
 const baseSizes = { "contour-labels": 13, "trail-names": 13, "ridge-names": 13, "poi-markers": 12, "water-names": 13, "peaks": 14, "places": 16 };
@@ -469,13 +520,43 @@ const NIGHT = { // layer -> paint overrides at night (dark base, dimmed relief, 
   ...Object.fromEntries(textLayers.map(id => [id, { "text-color": "#e8ddd0", "text-halo-color": "#1f1d1b" }])),
 };
 const dayPaint = {};
+// T104's two slope shadings and their legend, as on the phone (Slope.avalancheBands and Slope.steepnessBands in
+// shared/.../render/Slope.kt and the phone's Map options legend; keep them in step, SlopeLegendTest compares them):
+// band label (whole degrees, "25-29" is 25 <= slope < 30) and colour.
+const SLOPE_BANDS = {
+  avalanche: [["25-29", "#f0e000"], ["30-34", "#f59000"], ["35-45", "#e02020"], ["46-50", "#b01890"], ["51-59", "#6030b0"], ["60+", "#2040d0"]],
+  steepness: [["10-19", "#fecf92"], ["20-29", "#fe9f6d"], ["30-39", "#f7705c"], ["40-49", "#de4968"], ["50-59", "#8c2981"], ["60+", "#3b0f70"]],
+};
+const SLOPE_TEXT = {
+  avalanche: "Slope angle in degrees. Most avalanches start on 30 to 45\u00b0 slopes, most often near 38\u00b0 (red); " +
+    "fewer on 25 to 29\u00b0 (yellow) and above 45\u00b0 (purple, blue). Avalanches from steeper slopes above can reach gentle ground.",
+  steepness: "Slope angle in degrees. Darker is steeper; no avalanche meaning.",
+};
+const SLOPE_SAFETY = "Slope shading is not an avalanche forecast.";
+const slopeKey = v => { const s = String(v).toLowerCase(); return ["avalanche", "on", "1", "true", "yes"].includes(s) ? "avalanche" : ["steepness", "steep"].includes(s) ? "steepness" : "off"; };
+function drawSlopeLegend() {
+  const el = document.getElementById("slope-legend"), bands = SLOPE_BANDS[opts.slope];
+  el.hidden = !LIVE || !bands;
+  if (el.hidden) return;
+  el.innerHTML = "";
+  const row = document.createElement("div"); row.className = "bands";
+  for (const [label, color] of bands) {
+    const b = document.createElement("span"), sw = document.createElement("i");
+    sw.style.background = color;
+    b.append(sw, label.endsWith("+") ? label.slice(0, -1) + "\u00b0+" : label + "\u00b0");
+    row.appendChild(b);
+  }
+  const text = document.createElement("div"); text.textContent = SLOPE_TEXT[opts.slope];
+  const safety = document.createElement("div"); safety.className = "safety"; safety.textContent = SLOPE_SAFETY;
+  el.append(row, text, safety);
+}
 const truthy = v => ["1", "true", "on", "yes"].includes(String(v).toLowerCase());
 const opts = (() => {
-  const q = new URLSearchParams(location.search), o = { hillshade: "single", hillshadeIntensity: 1, slope: false, contourInterval: "auto", night: false };
+  const q = new URLSearchParams(location.search), o = { hillshade: "single", hillshadeIntensity: 1, slope: "off", contourInterval: "auto", night: false };
   for (const k of Object.keys(OPTION_GROUPS)) o[k] = true;
   if (["off", "single", "multi"].includes(q.get("hillshade"))) o.hillshade = q.get("hillshade");
   const hi = parseFloat(q.get("hillshadeIntensity")); if (hi >= 0 && hi <= 1) o.hillshadeIntensity = hi;
-  if (q.has("slope")) o.slope = truthy(q.get("slope")) && !!LIVE;
+  if (q.has("slope") && LIVE) o.slope = slopeKey(q.get("slope")); // T104: off, avalanche or steepness (on is avalanche)
   if (INTERVALS.includes(Number(q.get("contourInterval")))) o.contourInterval = String(Number(q.get("contourInterval")));
   if (q.has("night")) o.night = truthy(q.get("night"));
   for (const k of Object.keys(OPTION_GROUPS)) if (q.has(k)) o[k] = truthy(q.get(k));
@@ -483,7 +564,7 @@ const opts = (() => {
 })();
 window.dystopoOptions = opts;
 function writeOptions() {
-  const u = new URL(location.href), d = { hillshade: "single", hillshadeIntensity: 1, slope: false, contourInterval: "auto", night: false };
+  const u = new URL(location.href), d = { hillshade: "single", hillshadeIntensity: 1, slope: "off", contourInterval: "auto", night: false };
   for (const [k, v] of Object.entries(opts)) {
     const def = k in d ? d[k] : true;
     if (v === def) u.searchParams.delete(k); else u.searchParams.set(k, typeof v === "boolean" ? (v ? "on" : "off") : String(v));
@@ -507,14 +588,15 @@ function applyOptions() {
   const tiles = LIVE ? base + "/contours/{z}/{x}/{y}.pbf?units=" + UNITS + (interval ? "&interval=" + interval : "") : contourUrl(interval);
   const src = map.getSource("contours");
   if (src && src.tiles && src.tiles[0] !== tiles) src.setTiles([tiles]);
-  // Slope bands: devtool serve's shade tiles (hillshade off there: this page draws its own).
-  const shadeUrl = base + "/shade/{z}/{x}/{y}.png?hillshade=off&slope=on&night=" + (opts.night ? "on" : "off");
+  // Slope shading: devtool serve's shade tiles in the chosen shading (hillshade off there: this page draws its own).
+  const shadeUrl = base + "/shade/{z}/{x}/{y}.png?hillshade=off&slope=" + opts.slope + "&night=" + (opts.night ? "on" : "off");
   if (map.getLayer("slope")) map.removeLayer("slope");
   if (map.getSource("slope")) map.removeSource("slope");
-  if (LIVE && opts.slope) {
+  if (LIVE && opts.slope !== "off") {
     map.addSource("slope", { type: "raster", tiles: [shadeUrl], tileSize: 256, minzoom: LIVE.demMinZoom, maxzoom: LIVE.demMaxZoom + 2 });
     map.addLayer({ id: "slope", type: "raster", source: "slope", paint: { "raster-fade-duration": 0 } }, "contour-minor");
   }
+  drawSlopeLegend();
   writeOptions();
 }
 map.on("load", () => {
@@ -523,15 +605,15 @@ map.on("load", () => {
   for (const v of INTERVALS) sel.add(new Option(v + " " + UNITS, String(v)));
   sel.value = opts.contourInterval;
   $("opt-hillshade").value = opts.hillshade;
-  $("opt-slope").checked = opts.slope;
+  $("opt-slope").value = opts.slope;
   $("opt-slope").disabled = !LIVE;
-  if (!LIVE) $("opt-slope-row").title = "Slope bands come from devtool serve (/shade/ tiles): open the page from serve --live.";
+  if (!LIVE) $("opt-slope-row").title = "Slope shading comes from devtool serve (/shade/ tiles): open the page from serve --live.";
   $("opt-night").checked = opts.night;
   for (const k of Object.keys(OPTION_GROUPS)) $("opt-" + k).checked = opts[k];
   if (new URLSearchParams(location.search).toString().match(/hillshade|slope|contourInterval|night|trails|water|landcover|pois|boundaries/)) $("options").open = true;
   const on = (id, f) => { $(id).onchange = e => { f(e.target); applyOptions(); }; };
   on("opt-hillshade", t => { opts.hillshade = t.value; document.getElementById("hill").checked = t.value !== "off"; });
-  on("opt-slope", t => { opts.slope = t.checked; });
+  on("opt-slope", t => { opts.slope = slopeKey(t.value); });
   on("opt-interval", t => { opts.contourInterval = t.value; });
   on("opt-night", t => { opts.night = t.checked; });
   for (const k of Object.keys(OPTION_GROUPS)) on("opt-" + k, t => { opts[k] = t.checked; });
@@ -645,18 +727,8 @@ if (LIVE) {
   cancelBtn.onclick = async () => { if (buildId) await fetch(base + "/build/" + buildId, authed({ method: "DELETE" })); };
 }
 // T68: the trip editor (tools/demo/trips.js, served as /trips.js) plans on the server's /route routes, so live mode only.
-// T92: a server with users keeps /route* behind its tokens, and trips.js sends the Token field only with its sync push,
-// so the page adds it to this server's /route requests here (until trips.js sends it itself).
-if (LIVE) {
-  const pageFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    const url = typeof input === "string" ? input : (input && input.url) || "";
-    const t = document.getElementById("packtoken").value.trim();
-    if (t && url.startsWith(base + "/route") && !(init && init.headers && init.headers.Authorization))
-      init = { ...(init || {}), headers: { ...((init && init.headers) || {}), Authorization: "Bearer " + t } };
-    return pageFetch(input, init);
-  };
-}
+// It has its own Trips box at the top right (T107) and sends the Server token with every request (a server with users
+// keeps /route* behind its tokens, T92), so the page passes it the field and nothing more.
 const tripToken = () => document.getElementById("packtoken").value.trim();
 if (LIVE) import(base + "/trips.js").then(m => m.install({ map, base, units: UNITS, panel: document.getElementById("panel"), token: tripToken }))
   // T92: the pull side of the trip replica and waypoint editing (tools/demo/trip-sync.js), on top of the trip editor.

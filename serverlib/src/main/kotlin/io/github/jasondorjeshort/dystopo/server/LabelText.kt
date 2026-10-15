@@ -47,9 +47,12 @@ object LabelText {
     /**
      * [text] in visual order (left to right on the page): right-to-left runs reversed and the runs reordered by
      * the Unicode bidi algorithm, for curved labels, which draw one character at a time from the left. Hebrew
-     * reads right; Arabic letters keep their isolated forms (no joining one character at a time).
+     * reads right. T107: Arabic letters are first put in their joined forms ([shapeArabic]), so a character drawn
+     * alone is still the right initial, medial or final form (before, every letter drew isolated, unjoined).
      */
-    fun visualOrder(text: String): String {
+    fun visualOrder(text: String): String = reorder(shapeArabic(text))
+
+    private fun reorder(text: String): String {
         val bidi = java.text.Bidi(text, java.text.Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT)
         if (bidi.isLeftToRight) return text
         val n = bidi.runCount
@@ -60,6 +63,87 @@ object LabelText {
         }
         java.text.Bidi.reorderVisually(levels, 0, runs, 0, n)
         return runs.joinToString("")
+    }
+
+    /**
+     * T107: [text] (logical order) with each Arabic letter replaced by its contextual presentation form (U+FB50..U+FBFF,
+     * U+FE70..U+FEFF): isolated, final, initial or medial by whether it joins the letter before and the one after
+     * (marks are skipped when looking for neighbours), and lam followed by alef as one lam-alef ligature. A curved
+     * label draws one character at a time, so the font's own shaping never sees the word; with the forms written out,
+     * each character is already the glyph the joined word uses. The bundled Noto Sans Arabic has these forms. Text
+     * without Arabic letters comes back unchanged.
+     */
+    fun shapeArabic(text: String): String {
+        if (text.none { it in 'ؠ'..'ۿ' }) return text
+        val f = ArabicForms
+        val out = StringBuilder(text.length)
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            val forms = f.forms[c]
+            if (forms == null) { out.append(c); i++; continue }
+            var p = i - 1
+            while (p >= 0 && f.transparent(text[p])) p--
+            var n = i + 1
+            while (n < text.length && f.transparent(text[n])) n++
+            val joinsBefore = p >= 0 && f.joinsNext(text[p]) && f.joinsPrevious(c)
+            val next = text.getOrNull(n)
+            val ligature = if (c == LAM && next != null) f.lamAlef[next] else null
+            if (ligature != null) {
+                // Lam-alef: one glyph, final when the letter before joins it; the marks on the lam follow it.
+                out.appendCodePoint(ligature[if (joinsBefore && ligature[1] != 0) 1 else 0])
+                out.append(text, i + 1, n)
+                i = n + 1
+                continue
+            }
+            val joinsAfter = next != null && f.joinsNext(c) && f.joinsPrevious(next)
+            val form = when {
+                joinsBefore && joinsAfter -> 3
+                joinsBefore -> 1
+                joinsAfter -> 2
+                else -> 0
+            }
+            out.appendCodePoint(forms[form].takeIf { it != 0 } ?: forms[if (form == 3) 1 else 0].takeIf { it != 0 } ?: c.code)
+            i++
+        }
+        return out.toString()
+    }
+
+    private const val LAM = 'ل'
+
+    /**
+     * The presentation forms of each Arabic letter, read once from the JDK's Unicode data: every code point of
+     * Arabic Presentation Forms-A (the letters, U+FB50..U+FBFF) and -B whose name ends in ISOLATED, FINAL, INITIAL or
+     * MEDIAL FORM, keyed by its compatibility decomposition (the base letter; lam + alef for the ligatures).
+     */
+    private object ArabicForms {
+        /** Base letter -> [isolated, final, initial, medial] code points (0: the letter has no such form). */
+        val forms = HashMap<Char, IntArray>()
+        /** Alef (any of its forms) -> the lam-alef ligature's [isolated, final]. */
+        val lamAlef = HashMap<Char, IntArray>()
+        private val FORMS = listOf("ISOLATED", "FINAL", "INITIAL", "MEDIAL")
+
+        init {
+            for (cp in (0xFB50..0xFBFF) + (0xFE70..0xFEFC)) {
+                val name = Character.getName(cp) ?: continue
+                val form = FORMS.indexOfFirst { name.endsWith(" $it FORM") }.takeIf { it >= 0 } ?: continue
+                val base = java.text.Normalizer.normalize(String(Character.toChars(cp)), java.text.Normalizer.Form.NFKC)
+                when {
+                    base.length == 1 && base[0] in 'ؠ'..'ۿ' && Character.isLetter(base[0]) -> forms.getOrPut(base[0]) { IntArray(4) }.let { if (it[form] == 0) it[form] = cp }
+                    base.length == 2 && base[0] == LAM && form < 2 -> lamAlef.getOrPut(base[1]) { IntArray(2) }[form] = cp
+                }
+            }
+        }
+
+        /** Marks (harakat, the superscript alef) sit on a letter and are skipped when finding its neighbours. */
+        fun transparent(c: Char): Boolean = Character.getType(c).let { it == Character.NON_SPACING_MARK.toInt() || it == Character.ENCLOSING_MARK.toInt() }
+
+        /** [c] joins the letter after it: a dual-joining letter (it has an initial form), tatweel or a zero-width joiner. */
+        fun joinsNext(c: Char): Boolean = c == 'ـ' || c == '‍' || (forms[c]?.get(2) ?: 0) != 0
+
+        /** [c] joins the letter before it: any letter with a final form, tatweel or a zero-width joiner. */
+        fun joinsPrevious(c: Char): Boolean = c == 'ـ' || c == '‍' || (forms[c]?.get(1) ?: 0) != 0
+
     }
 
     /** Every character of [text] is in the label font or one of the script fallbacks. */

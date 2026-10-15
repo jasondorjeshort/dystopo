@@ -1,8 +1,11 @@
 // The pull side of the browser's trip replica and waypoint editing (T92). Loaded by tools/demo/index.html in live mode
 // after trips.js (T68), whose replica it shares: the operation log in localStorage (dystopo.trips) and window.dystopoTrips.
 //
-// Pull: "Get trips from the server" asks the server's sync peer for this user's routes (GET /sync/routes?full=1, with the
-// page's Token when set) and merges them into the browser replica's trip list: a route the browser does not have, or whose
+// T107: both parts live in trips.js's Trips box: "Get from server" beside "Send to server", the waypoints in the open
+// route's card.
+//
+// Pull: "Get from server" asks the server's sync peer for this user's routes (GET /sync/routes?full=1, with the
+// page's Server token when set) and merges them into the browser replica's trip list: a route the browser does not have, or whose
 // server copy changed after the browser last saved it, is taken from the server (so trips made or edited on a phone show
 // up here); a trip the browser had pushed (or pulled) that the server no longer lists was deleted elsewhere and goes. The
 // operations stay where they were made: the server already holds them, and the browser's next push sends only its own.
@@ -41,57 +44,79 @@ function tick(r) {
 
 export function install({ map, base, panel, token, units }) {
   const metric = units === "m";
-  const fmtDist = m => metric ? (m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m") : (m / 1609.344).toFixed(2) + " mi";
+  // trips.js's distance rule (T101's) when it is there; this older form only for a page without it.
+  const fmtDist = m => window.dystopoTrips && window.dystopoTrips.fmtDist ? window.dystopoTrips.fmtDist(m) : metric ? (m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m") : (m / 1609.344).toFixed(2) + " mi";
   const auth = (opts = {}) => { const t = token ? token() : ""; return t ? { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + t } } : opts; };
   const trips = () => window.dystopoTrips;
+  const NEEDS_TOKEN = "the server wants its token (Server token, in the panel on the left)";
 
+  // T107: no box of its own any more. The waypoints of the open trip sit in trips.js's route card (#trip-extra) and
+  // "Get from server" beside "Send to server" (#trip-sync-row), with this script's status line under them; without
+  // trips.js's box (an older page) it falls back to a box of its own in the panel.
   const css = document.createElement("style");
   css.textContent = `
-    #trip-sync { margin: 4px 0 2px; } #trip-sync summary { font-size: 13px; font-weight: 600; }
-    #trip-sync button { margin: 2px 4px 2px 0; } #trip-sync button[aria-pressed="true"] { background: #1f78c8; color: #fff; border-color: #155a96; }
-    #wpt-list { list-style: none; margin: 4px 0; padding: 0; max-height: 18vh; overflow: auto; font-size: 12px; }
+    #trip-waypoints h4 { font-size: 12px; margin: 8px 0 2px; }
+    #trip-waypoints button[aria-pressed="true"] { background: #1f78c8; color: #fff; border-color: #155a96; }
+    #trip-waypoints .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0; }
+    #wpt-name { flex: 1; min-width: 8em; }
+    #wpt-list { list-style: none; margin: 2px 0; padding: 0; max-height: 18vh; overflow: auto; font-size: 12px; }
     #wpt-list li { display: flex; gap: 4px; align-items: center; } #wpt-list input { flex: 1; min-width: 0; }
     #sync-status { font-size: 12px; color: #6b5f55; white-space: pre-wrap; }
     .trip-wpt { width: 14px; height: 14px; border-radius: 3px 3px 3px 0; transform: rotate(-45deg); background: #1f78c8; border: 2px solid #fff;
                 box-shadow: 0 1px 3px rgba(0,0,0,.4); cursor: grab; }
     .trip-adding .maplibregl-canvas { cursor: copy; }`;
   document.head.appendChild(css);
-  const box = document.createElement("details");
-  box.id = "trip-sync";
-  box.open = true;
-  box.innerHTML = `<summary>Trips on the server and waypoints</summary>
-    <button id="sync-pull" type="button" title="Trips saved on a phone or another browser, from this server's sync peer">Get trips from the server</button>
-    <div><b>Waypoints</b> <span id="wpt-trip">open a saved trip</span></div>
-    <button id="wpt-add" type="button" aria-pressed="false" disabled>Add waypoint</button>
-    <input id="wpt-name" placeholder="Waypoint name" size="14">
-    <ul id="wpt-list"></ul>
-    <div id="sync-status"></div>`;
-  const tripBox = document.getElementById("trip");
-  if (tripBox && tripBox.parentNode) tripBox.parentNode.insertBefore(box, tripBox.nextSibling); else (panel || document.body).appendChild(box);
+  const wbox = document.createElement("div");
+  wbox.id = "trip-waypoints";
+  wbox.innerHTML = `<h4>Waypoints <span id="wpt-trip"></span></h4>
+    <div class="row"><button id="wpt-add" type="button" aria-pressed="false" disabled title="Then click the map where the waypoint goes">Add waypoint</button>
+      <input id="wpt-name" placeholder="Name (optional)" aria-label="Waypoint name"></div>
+    <ul id="wpt-list"></ul>`;
+  const pullBtn = document.createElement("button");
+  pullBtn.id = "sync-pull";
+  pullBtn.type = "button";
+  pullBtn.title = "Trips saved on a phone or in another browser, from this server";
+  pullBtn.textContent = "Get from server";
+  const status = document.createElement("div");
+  status.id = "sync-status";
+  status.setAttribute("role", "status");
+  const extra = document.getElementById("trip-extra"), row = document.getElementById("trip-sync-row");
+  if (extra && row) {
+    extra.appendChild(wbox);
+    row.insertBefore(pullBtn, row.firstChild);
+    row.parentNode.insertBefore(status, row.nextSibling);
+  } else {
+    const box = document.createElement("details");
+    box.open = true;
+    box.innerHTML = "<summary>Trips on the server and waypoints</summary>";
+    box.append(pullBtn, wbox, status);
+    (panel || document.body).appendChild(box);
+  }
   const $ = id => document.getElementById(id);
   const say = text => { $("sync-status").textContent = text; };
 
   const st = { adding: false, open: null, lastPull: null, busy: 0, error: null, edits: 0 };
   let markers = [];
   let queue = Promise.resolve();
-  const enqueue = job => (queue = queue.then(job).catch(e => { st.error = String(e.message || e); say("error: " + st.error); }));
+  const enqueue = job => (queue = queue.then(job).catch(e => { st.error = String(e.message || e); say("Error: " + st.error); }));
 
   // ---- the trip list (the same rows as trips.js draws, refreshed after a pull) ---------------------------------
   function renderTrips() {
-    const ul = document.getElementById("trip-list");
     const t = trips();
+    if (t && t.renderList) { t.renderList(); return; } // T107: trips.js draws the list (pulled trips say "from the server")
+    const ul = document.getElementById("trip-list");
     if (!ul || !t) return;
     ul.innerHTML = "";
     for (const trip of t.trips()) {
       const li = document.createElement("li");
       const label = document.createElement("span");
-      label.textContent = trip.name + " · " + fmtDist(trip.distanceM || 0) + (trip.pulled ? " (server)" : "");
+      label.textContent = trip.name + " · " + fmtDist(trip.distanceM || 0) + (trip.pulled ? " (from the server)" : "");
       const open = document.createElement("button"); open.type = "button"; open.textContent = "Open"; open.onclick = () => t.load(trip.id);
       const del = document.createElement("button"); del.type = "button"; del.textContent = "Delete"; del.onclick = () => t.del(trip.id);
       li.append(label, open, del);
       ul.appendChild(li);
     }
-    if (!ul.children.length) ul.innerHTML = "<li><span>none yet</span></li>";
+    if (!ul.children.length) ul.innerHTML = "<li><span>No saved trips yet.</span></li>";
   }
 
   // ---- pull ------------------------------------------------------------------------------------------------------
@@ -101,7 +126,7 @@ export function install({ map, base, panel, token, units }) {
       const r = await fetch(base + "/sync/routes?full=1", auth());
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const result = { ok: false, status: r.status, error: r.status === 401 ? "the server needs its token (Token field)" : (j.error || "HTTP " + r.status) };
+        const result = { ok: false, status: r.status, error: r.status === 401 ? NEEDS_TOKEN : (j.error || "HTTP " + r.status) };
         st.lastPull = result;
         return result;
       }
@@ -174,7 +199,7 @@ export function install({ map, base, panel, token, units }) {
       li.append(name, go, del);
       ul.appendChild(li);
     }
-    $("wpt-trip").textContent = id ? (replica().trips[id].name + ": " + listOf(id).length) : "open a saved trip";
+    $("wpt-trip").textContent = id ? "(" + listOf(id).length + ")" : "\u2014 save the trip to add them";
     $("wpt-add").disabled = !id;
     if (!id) setAdding(false);
   }
@@ -201,7 +226,7 @@ export function install({ map, base, panel, token, units }) {
         const r = await fetch(base + "/sync/waypoints/encode", auth({ method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ waypoints: changed.map(w => ({ id: w.id, name: w.name, lat: w.lat, lon: w.lon, ele: w.ele })) }) }));
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(r.status === 401 ? "the server needs its token (Token field)" : (j.error || "HTTP " + r.status));
+        if (!r.ok) throw new Error(r.status === 401 ? NEEDS_TOKEN : (j.error || "HTTP " + r.status));
         values = j.values;
       }
       const rep = replica();
@@ -214,9 +239,9 @@ export function install({ map, base, panel, token, units }) {
       st.edits++;
       draw();
       const pushed = await trips().push();
-      say((changed.length ? changed.length + " waypoint" + (changed.length === 1 ? "" : "s") + " written" : "") +
-          (gone.length ? (changed.length ? ", " : "") + gone.length + " removed" : "") + "; " +
-          (pushed.ok ? "sent to the server" : "kept in this browser only: " + pushed.error));
+      const what = (changed.length ? (changed.length === 1 ? "Waypoint saved" : changed.length + " waypoints saved") : "") +
+                   (gone.length ? (changed.length ? ", " : "") + (gone.length === 1 ? "waypoint removed" : gone.length + " waypoints removed") : "");
+      say(what.charAt(0).toUpperCase() + what.slice(1) + (pushed.ok ? " here and on the server." : " in this browser only: " + pushed.error + "."));
       return pushed;
     } finally { st.busy--; }
   });
@@ -246,7 +271,7 @@ export function install({ map, base, panel, token, units }) {
   // ---- wiring ----------------------------------------------------------------------------------------------------
   $("sync-pull").onclick = async () => {
     const r = await api.pull();
-    say(r && r.ok ? `${r.routes} trips on the server: ${r.added} new here, ${r.updated} updated, ${r.removed} removed` : "not pulled: " + (r ? r.error : "error"));
+    say(r && r.ok ? `${r.routes} ${r.routes === 1 ? "trip" : "trips"} on the server: ${r.added} new here, ${r.updated} changed, ${r.removed} removed.` : "Could not get trips: " + (r ? r.error : "error") + ".");
   };
   $("wpt-add").onclick = () => setAdding(!st.adding);
   map.on("click", e => {

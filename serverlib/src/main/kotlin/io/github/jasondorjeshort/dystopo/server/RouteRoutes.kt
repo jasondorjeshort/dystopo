@@ -241,9 +241,11 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
      * (z11), then level 2 (z8, T89), then writes them to the pack's cell file ([OverlayCellFile]). T89: when that
      * file already holds this graph's cells it is read instead (registered with [driveOverlay]) and nothing is built.
      */
+    private fun warmKey(pack: Pack, archive: GraphTileArchive) = pack.name + "|" + archive.source.builtAtMs
+
     private fun warm(pack: Pack, archive: GraphTileArchive) {
         if (!warmOverlay || !archive.source.drive) return
-        val key = pack.name + "|" + archive.source.builtAtMs
+        val key = warmKey(pack, archive)
         if (warm.putIfAbsent(key, mapOf("pack" to pack.name, "state" to "queued")) != null) return
         val cellFile = File(pack.vector.absoluteFile.parentFile, OverlayCellFile.fileNameFor(pack.vector.name))
         if (cellFile.isFile) {
@@ -344,7 +346,15 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             building += pack.name
             try {
                 val (a, info) = openOrBuild(pack)
-                graphs.put(id, Loaded(a, key, info))?.let { tileCache.forget(it.archive); driveOverlay.unregister(it.archive.source) }
+                graphs.put(id, Loaded(a, key, info))?.let { old ->
+                    tileCache.forget(old.archive)
+                    driveOverlay.unregister(old.archive.source)
+                    // T107: the old open's warm-up entry goes with it, so warm() below runs for this one. A pack whose
+                    // file only changed its timestamp reopens the same graph file (the same source and key): without
+                    // this, warm() returned early and the cell file unregistered above stayed unregistered until a
+                    // restart (new cells built at level 1 only, `cellFiles` empty while `warm` still said loaded).
+                    warm.remove(warmKey(pack, old.archive))
+                }
                 warm(pack, a) // T77
                 failures.remove(pack.name)
                 return a to info

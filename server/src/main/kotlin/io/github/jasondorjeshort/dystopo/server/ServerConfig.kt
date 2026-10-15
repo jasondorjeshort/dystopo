@@ -221,8 +221,10 @@ data class ServerConfig(
         }
         if (sources.maxRequestMb < 0 || sources.maxHourMb < 0) add("sources.maxRequestMb and sources.maxHourMb must be >= 0 (0: no cap)")
         if (relay.ttlSeconds < 1 || relay.maxBlobBytes < 1024 || relay.maxTotalBytes < relay.maxBlobBytes || relay.maxSlots < 1 || relay.maxSides < 2 || relay.requestsPerMinute < 1) add("relay limits: ttlSeconds >= 1, maxBlobBytes >= 1024, maxTotalBytes >= maxBlobBytes, maxSlots >= 1, maxSides >= 2, requestsPerMinute >= 1")
+        // T107: the downloader's own reading of a URL (ExtractDownloads.regionName), so what it accepts passes here
+        // (a trailing slash, `.poly`, `-latest.osm.pbf`, a dated snapshot) and what it refuses fails here too.
         extractDownloads.urls.forEachIndexed { i, u ->
-            if (!Regex("https?://[^\\s]+/[^/\\s]+").matches(u.trim())) add("extractDownloads.urls[$i] must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got $u)")
+            if (ExtractDownloads.regionName(u) == null) add("extractDownloads.urls[$i] must be an http(s) region URL like https://download.geofabrik.de/europe/alps (got $u)")
         }
         // T97: a checksum is looked up by region name, so a key that names no configured region would let that
         // download through unchecked (a misspelt name, another case, a path instead of the last segment).

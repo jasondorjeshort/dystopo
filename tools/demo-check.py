@@ -33,7 +33,9 @@ two polls in a row with every tile loaded; a view that is not idle after --timeo
 given another --timeout (--retries, default 1: the host under load, T66), and the report lists the misses
 under `notIdle` with the flags that were false.
 T92: --trip-sync (live mode, with --route) checks waypoint editing and the pull side of the browser's trip replica
-(tools/demo/trip-sync.js: check_trip_sync); --token types a server's bearer token into the page's Token field.
+(tools/demo/trip-sync.js: check_trip_sync); --token types a server's bearer token into the page's Server token field.
+T107: --late-trips Z/LAT/LON (live mode) holds trips.js back and releases it while the style is loading tiles elsewhere,
+then checks the editor's layers went in anyway (late_trips; with --route after it, the route line must draw).
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -137,6 +139,70 @@ STATE_JS = """() => {
 }"""
 LAYERS_JS = """() => { const out = {}; for (const l of map.getStyle().layers) {
      const n = map.queryRenderedFeatures({layers: [l.id]}).length; out[l.id] = n; } return out; }"""
+# T107: the trip editor's Trips box starts closed at phone width; the checks open it before they click in it.
+# T107: the demo page's scale bar is a port of T101's UnitFormat.scaleBar (shared/.../render/UnitFormat.kt). These are
+# the Kotlin test's cases (UnitFormatTest: scaleBarPicksTheDistanceRulesUnit, the z8 cases of
+# scaleBarFitsAndAgreesWithTheDistanceRuleAtEveryZoom, metersPerPixel): (metres per pixel or [zoom, lat], max px, units,
+# label or None). A page that has the port (window.dystopoScaleBar) must give every label; the phone-style page has none.
+SCALE_CASES = [(m / 100, 100, "m", lbl) for m, lbl in ((999, "500 m"), (1000, "1 km"), (1999, "1 km"), (4999, "2 km"), (60000, "50 km"), (45, "20 m"))] + \
+    [(m / 100, 100, "ft", lbl) for m, lbl in ((150, "200 ft"), (160, "500 ft"), (161, "0.1 mi"), (500, "0.2 mi"), (1500, "0.5 mi"), (1700, "1 mi"), (40000, "20 mi"), (2, "5 ft"))] + \
+    [([8, 46.85], 110, "m", "20 km"), ([8, 78.2], 110, "m", "5 km"), ([8, 46.85], 110, "ft", "10 mi"), ([8, 78.2], 110, "ft", "2 mi"),
+     (0, 100, "m", None), (float("nan"), 100, "ft", None), (1, 0, "ft", None)]
+# T107: the Trips box's distances are a port of T101's UnitFormat.distance; these are UnitFormatTest's cases
+# (metres, metric?, text), checked by check_route against window.dystopoTrips.distanceText.
+MI = 1609.344
+DISTANCE_CASES = [(850.0, True, "850 m"), (8141.0, True, "8.14 km"), (23456.0, True, "23.5 km"), (312400.0, True, "312 km"),
+                  (0.0, True, "0 m"), (999.4, True, "999 m"), (999.6, True, "1.00 km"), (9994.0, True, "9.99 km"), (9996.0, True, "10.0 km"),
+                  (99940.0, True, "99.9 km"), (99960.0, True, "100 km"), (81937.1, True, "81.9 km"), (4500000.0, True, "4500 km"),
+                  (137.16, False, "450 ft"), (8141.0, False, "5.1 mi"), (0.0, False, "0 ft"), (9.144, False, "30 ft"), (152.4, False, "500 ft"),
+                  (527.4 * 0.3048, False, "527 ft"), (527.6 * 0.3048, False, "0.1 mi"), (0.1 * MI, False, "0.1 mi"), (1000.0, False, "0.6 mi"),
+                  (MI, False, "1.0 mi"), (9.94 * MI, False, "9.9 mi"), (9.96 * MI, False, "10.0 mi"), (81937.1, False, "50.9 mi"),
+                  (99.94 * MI, False, "99.9 mi"), (99.96 * MI, False, "100 mi"), (4500000.0, False, "2796 mi")]
+DISTANCE_JS = """cases => cases.map(([m, metric, want]) => [m, metric, want, window.dystopoTrips.distanceText(m, metric)]).filter(c => c[2] !== c[3])"""
+SCALE_JS = """cases => { if (!window.dystopoScaleBar) return null; const out = [];
+    for (const [mpp, px, units, want] of cases) {
+        const m = Array.isArray(mpp) ? window.dystopoMetersPerPixel(mpp[0], mpp[1]) : (mpp === null ? NaN : mpp);
+        const b = window.dystopoScaleBar(m, px, units), got = b ? b.label : null;
+        if (got !== want) out.push({ mpp, px, units, want, got });
+    }
+    const mpp0 = window.dystopoMetersPerPixel(0, 0);
+    if (Math.abs(mpp0 - 78271.517) > 0.001) out.push({ metersPerPixel: mpp0, want: 78271.517 });
+    return { cases: cases.length, mismatches: out, shown: window.dystopoScale ? window.dystopoScale.label : null }; }"""
+OPEN_TRIPS_JS = "() => { const b = document.getElementById('trips'); if (b) b.open = true; }"
+
+
+def late_trips(page, hold, jump, timeout):
+    """T107: the load-before-style race. trips.js was held back (`hold` has its request); with the map loaded, jump to
+    `jump` (z/lat/lon, somewhere whose tiles are not loaded yet), release trips.js while the style reports not loaded
+    (tiles in flight), and check that the editor still adds its map layers (before T107 it waited for a "load" event
+    that had already fired, so no route line ever drew). Returns a report with `ok`."""
+    out = {"ok": False, "jump": jump}
+    try:
+        if not hold:
+            raise RuntimeError("trips.js was never requested (not live mode?)")
+        z, lat, lon = (float(x) for x in jump.split("/"))
+        # Jump (a little further each try) until the map is fetching tiles, so the style reports not loaded.
+        for k in range(6):
+            page.evaluate("v => map.jumpTo({ center: [v[2], v[1]], zoom: v[0] })", [z, lat + 0.07 * k, lon + 0.11 * k])
+            try:
+                page.wait_for_function("() => !map.isStyleLoaded()", timeout=3000, polling=10)
+                break
+            except Exception:
+                continue
+        out["styleLoadedAtRelease"] = page.evaluate("() => map.isStyleLoaded()")
+        out["mapLoadedEventFired"] = page.evaluate("() => map._loaded === true")
+        hold[0].continue_()
+        page.wait_for_function("() => window.dystopoTrips", timeout=timeout * 1000)
+        out["layersRightAway"] = page.evaluate("() => !!map.getSource('trip')")
+        page.wait_for_function("() => map.getSource('trip')", timeout=timeout * 1000)
+        out["layers"] = page.evaluate("() => window.dystopoTrips.state().layers")
+        # The race needs the style still loading when the script arrives; a run that never caught it proves nothing.
+        out["ok"] = not out["styleLoadedAtRelease"]
+        if out["styleLoadedAtRelease"]:
+            out["error"] = "the style was loaded when trips.js arrived: the race was not set up"
+    except Exception as e:  # report, do not crash the tour
+        out["error"] = str(e)[:500]
+    return out
 
 
 def check_route(page, spec, shot, timeout, mode=""):
@@ -150,9 +216,10 @@ def check_route(page, spec, shot, timeout, mode=""):
     step = lambda name, **kw: out["steps"].append({"step": name, **kw})
     try:
         page.wait_for_function("() => window.dystopoTrips", timeout=timeout * 1000)
+        page.evaluate(OPEN_TRIPS_JS)
         a, b = pts[0], pts[1]
         page.evaluate("""([a, b]) => map.fitBounds([[Math.min(a[1], b[1]), Math.min(a[0], b[0])], [Math.max(a[1], b[1]), Math.max(a[0], b[0])]],
-                         { padding: { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
+                         { padding: innerWidth < 600 ? { top: 100, bottom: 260, left: 40, right: 70 } : { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
         page.wait_for_timeout(800)
         if mode:  # T73: plan in this mode (hike, bike, drive) through the page's Mode select
             page.select_option("#trip-mode", mode)
@@ -172,6 +239,11 @@ def check_route(page, spec, shot, timeout, mode=""):
         if mode and r.get("mode") != mode:
             raise RuntimeError("planned in %s, not %s" % (r.get("mode"), mode))
         out["planned"] = r["summary"]
+        # T107: the box's distances follow the phone's rule (T101).
+        wrong = page.evaluate(DISTANCE_JS, [list(c) for c in DISTANCE_CASES])
+        step("distance rule", cases=len(DISTANCE_CASES), mismatches=wrong, card=page.inner_text("#trip-dist"))
+        if wrong:
+            raise RuntimeError("distance rule: %s" % wrong)
         # Add a via point on the route (a click on the line inserts it into that leg), then drag its marker.
         page.mouse.click(*px(r["middle"]))
         s = page.evaluate("() => window.dystopoTrips.idle()")
@@ -197,6 +269,7 @@ def check_route(page, spec, shot, timeout, mode=""):
         gpx = page.evaluate("() => window.dystopoTrips.gpx(false)")
         gpx_ok = gpx.startswith("<?xml") and "<rte>" in gpx and gpx.count("<rtept") >= after["summary"]["points"]
         step("gpx", bytes=len(gpx), rtept=gpx.count("<rtept"), ok=gpx_ok)
+        page.evaluate(OPEN_TRIPS_JS)  # a phone closes the box while planning
         page.fill("#trip-name", "demo-check trip")
         page.click("#trip-save")
         page.wait_for_function("() => { const s = window.dystopoTrips.state(); return s.saved && s.lastPush; }", timeout=timeout * 1000)
@@ -229,10 +302,11 @@ def check_long_route(page, spec, shot, timeout, mode="drive", max_ms=10000, min_
     out = {"ok": False, "spec": spec, "mode": mode, "maxMs": max_ms, "minPacks": min_packs, "screenshot": shot}
     try:
         page.wait_for_function("() => window.dystopoTrips", timeout=timeout * 1000)
+        page.evaluate(OPEN_TRIPS_JS)
         page.evaluate("() => window.dystopoTrips.clear && window.dystopoTrips.clear()")
         a, b = pts[0], pts[1]
         page.evaluate("""([a, b]) => map.fitBounds([[Math.min(a[1], b[1]), Math.min(a[0], b[0])], [Math.max(a[1], b[1]), Math.max(a[0], b[0])]],
-                         { padding: { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
+                         { padding: innerWidth < 600 ? { top: 100, bottom: 260, left: 40, right: 70 } : { top: 120, bottom: 300, left: 340, right: 380 }, duration: 0 })""", [a, b])
         page.wait_for_timeout(800)
         page.select_option("#trip-mode", mode)
         if not page.evaluate("() => window.dystopoTrips.state().planning"):
@@ -301,6 +375,7 @@ def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280
     base = f"{u.scheme}://{u.netloc}"
     try:
         page.wait_for_function("() => window.dystopoTripSync && window.dystopoTrips", timeout=timeout * 1000)
+        page.evaluate(OPEN_TRIPS_JS)
         trip = page.evaluate("() => window.dystopoTrips.state()")
         if not trip["id"] or not trip["saved"]:
             raise RuntimeError("no saved trip open: run --trip-sync with --route")
@@ -372,6 +447,7 @@ def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280
         fresh = ctx.new_page()
         fresh.goto(page_url, wait_until="load", timeout=timeout * 1000)
         fresh.wait_for_function("() => window.dystopoTripSync && window.dystopoTrips", timeout=timeout * 1000)
+        fresh.evaluate(OPEN_TRIPS_JS)
         if token:
             fresh.fill("#packtoken", token)
             fresh.dispatch_event("#packtoken", "change")
@@ -441,6 +517,9 @@ def main() -> int:
     ap.add_argument("--long-route-ms", type=int, default=10000, help="T77: the server's time limit for --long-route, ms (default 10000)")
     ap.add_argument("--long-route-packs", type=int, default=2, help="T77: how many packs --long-route must cross (default 2)")
     ap.add_argument("--trip-sync", action="store_true", help="T92, live mode, with --route: waypoint editing and the pull side of the browser's trip replica (check_trip_sync)")
+    ap.add_argument("--late-trips", default="", metavar="Z/LAT/LON",
+                    help="T107, live mode: hold trips.js back until the first view is idle, jump to Z/LAT/LON (tiles not loaded yet), "
+                         "release it while the style is still loading and check the editor adds its layers anyway (late_trips; the load-before-style race)")
     ap.add_argument("--token", default="", help="T92: the server's bearer token, typed into the page's Token field (a server with users keeps /route* and /sync* behind it)")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
@@ -483,6 +562,9 @@ def main() -> int:
 
         page.on("requestfailed", on_request_failed)
         page.on("response", on_response)
+        held = []  # T107 --late-trips: the held trips.js request
+        if args.late_trips:
+            page.route(re.compile(r".*/trips\.js(\?.*)?$"), lambda route: held.append(route))
 
         for i, v in enumerate(views):
             url = args.url + ("#" + v["view"] if v["view"] else "")
@@ -555,7 +637,14 @@ def main() -> int:
             del report["tile404"]
             if report["idle"]:
                 report["units"] = page.evaluate("() => window.dystopoUnits || null")
+                # T107: the scale bar shown, and on the first view the port's rule against T101's cases.
+                report["scale"] = page.evaluate("() => window.dystopoScale ? window.dystopoScale.label : null")
+                if i == 0:
+                    rule = page.evaluate(SCALE_JS, [[None if (isinstance(c[0], float) and math.isnan(c[0])) else c[0], c[1], c[2], c[3]] for c in SCALE_CASES])
+                    if rule is not None:
+                        report["scaleRule"] = rule
             ok = report["idle"] and not report["pageErrors"] and not report["failedRequests"] and not any(c["type"] == "error" for c in report["console"])
+            ok = ok and not (report.get("scaleRule") or {}).get("mismatches")
             if tour and v["z"] is not None:
                 inside = live or covered(v["z"], v["lat"], v["lon"])
                 report["inCoverage"] = inside
@@ -578,6 +667,11 @@ def main() -> int:
                     ok = ok and not report["missingRequired"]
             report["ok"] = ok
             reports.append(dict(report))
+        if args.late_trips:
+            lt = late_trips(page, held, args.late_trips, args.timeout)
+            if views[-1].get("z") is not None:  # back to the last view for the checks below
+                page.evaluate("v => map.jumpTo({ center: [v.lon, v.lat], zoom: v.z })", {"lon": views[-1]["lon"], "lat": views[-1]["lat"], "z": views[-1]["z"]})
+            reports[-1].update(lateTrips=lt, ok=reports[-1]["ok"] and lt["ok"])
         if args.token:
             page.fill("#packtoken", args.token)
             page.dispatch_event("#packtoken", "change")

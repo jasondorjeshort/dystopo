@@ -14,6 +14,7 @@ import io.github.jasondorjeshort.dystopo.style.Placement
 import io.github.jasondorjeshort.dystopo.style.SourceTile
 import io.github.jasondorjeshort.dystopo.style.StyleLayer
 import io.github.jasondorjeshort.dystopo.style.TextTemplate
+import io.github.jasondorjeshort.dystopo.testing.SyntheticTerrain
 import java.awt.font.FontRenderContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -64,6 +65,51 @@ class LocalNamesTest {
         assertEquals("םדק לחנ", LabelText.visualOrder("נחל קדם"))
         assertEquals("Nahal Kedem", LabelText.visualOrder("Nahal Kedem"))
         assertEquals("ם 2 לחנ", LabelText.visualOrder("נחל 2 ם"))
+    }
+
+    @Test
+    fun arabicIsJoinedBeforeItIsDrawnOneCharacterAtATime() {
+        // T107: a curved label draws each character alone, so the joined forms are written out first.
+        // "nahr" (river, noon heh reh): noon initial, heh medial, reh final; in visual order the final reh comes first.
+        val nahr = "نهر"
+        assertEquals("ﻧﻬﺮ", LabelText.shapeArabic(nahr))
+        assertEquals("ﺮﻬﻧ", LabelText.visualOrder(nahr))
+        // "wadi" (waw alef dal yeh): waw, alef and dal join nothing after them, so every letter stands alone.
+        assertEquals("ﻭﺍﺩﻱ", LabelText.shapeArabic("وادي"))
+        // "jabal" (mountain, jeem beh lam) twice: jeem initial, beh medial, lam final; the space ends the word.
+        assertEquals("ﺟﺒﻞ ﺟﺒﻞ", LabelText.shapeArabic("جبل جبل"))
+        // Lam then alef is one ligature: isolated at the start of a word, final after a joining letter ("salam": seen
+        // initial, lam-alef final, meem isolated since alef does not join forward).
+        assertEquals("ﻻ", LabelText.shapeArabic("لا"))
+        assertEquals("ﺳﻼﻡ", LabelText.shapeArabic("سلام"))
+        // A mark (fatha) on a letter does not break the join: beh, fatha, reh is beh initial + fatha + reh final.
+        assertEquals("ﺑَﺮ", LabelText.shapeArabic("بَر"))
+        // Text without Arabic letters comes back unchanged; Persian letters have forms too (gaf initial before lam).
+        assertEquals("Wadi Rum 2", LabelText.shapeArabic("Wadi Rum 2"))
+        assertEquals("נחל קדם", LabelText.shapeArabic("נחל קדם"))
+        assertEquals('ﮔ', LabelText.shapeArabic("گل")[0])
+        // Every form drawn is in a bundled face (the fallback a curved label picks per character).
+        val font = AwtTextMeasurer.font(14.0)
+        val phrase = "سلام عليكم $nahr الأردن"
+        for (c in LabelText.visualOrder(phrase)) if (c != ' ') assertTrue(LabelText.fontFor(c.toString(), font).canDisplay(c), "U+%04X".format(c.code))
+    }
+
+    @Test
+    fun aCurvedArabicRiverNameIsDrawnJoined() {
+        // T107: a river with only an Arabic name ("nahr al-wadi", river of the valley; synthetic) over the golden
+        // fixture's window, rendered as `render --osm` would: its curved label's glyphs are the joined forms, in
+        // visual order. The image goes to build/ to look at (not a golden).
+        val name = "نهر الوادي"
+        val fixture = OsmFixture { c ->
+            c.line("waterway", listOf(10.0 to 200.0, 70.0 to 170.0, 130.0 to 160.0, 190.0 to 130.0, 250.0 to 70.0), "class" to "river", "name" to name)
+        }
+        val r = Goldens.render(GoldenCase(SyntheticTerrain.CONE, zoom = 15, sizePx = 256, centerX = 2500.0, osm = fixture))
+        javax.imageio.ImageIO.write(r.image, "png", java.io.File("build/arabic-curved-label.png"))
+        val curved = r.osmLabels.filter { it.glyphs != null }
+        assertEquals(1, curved.size, "one curved label: ${r.osmLabels.map { it.lines }}")
+        val drawn = curved.single().glyphs!!.joinToString("") { it.text }
+        assertEquals(LabelText.visualOrder(name), drawn)
+        assertEquals("ﻱﺩﺍﻮﻟﺍ ﺮﻬﻧ", drawn)
     }
 
     @Test

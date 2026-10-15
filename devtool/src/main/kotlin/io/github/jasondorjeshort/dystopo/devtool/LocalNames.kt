@@ -20,7 +20,7 @@ import io.github.jasondorjeshort.dystopo.style.TextTemplate
  * line (a line whose placeholders are all missing is dropped, so features without one are unchanged). Line
  * labels (roads, rivers along their line) keep one line, as curved text, drawn from [LINE_KEY]: the same name in
  * visual order, since a curved label is laid out one character at a time from the left (a Hebrew river name read
- * backwards before; Arabic letters stay unjoined there, a follow-up).
+ * backwards before; T107: Arabic letters are put in their joined forms first, LabelText.shapeArabic).
  */
 object LocalNames {
     const val KEY = "dystopo:local"

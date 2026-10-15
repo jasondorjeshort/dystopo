@@ -18,9 +18,10 @@
     - every -BuildMinutes a small /build (same name, overwrite=1) that replaces a pack under out/;
     - every -ProbeMinutes tools/server-probe.py --quick --no-bomb (the error paths, again and again).
   Every -SampleMinutes it appends one JSON line to <Root>/soak.jsonl: /metrics (heap, heap after GC,
-  threads, GC, disk under cache/ and out/, log), the OS view of the process (working set, private bytes,
-  handles, threads, CPU seconds) and the client side of the interval (requests, statuses, p50/p95/max per
-  group). At the end: a full probe, a class histogram, <Root>/soak.svg (the chart), <Root>/summary.json
+  threads, GC, disk under cache/ and out/, log), T107: /stats sourceDownloads (the elevation readers' own
+  downloads under the T92 byte budget: requests, bytes, last hour, largest, refusals per cap), the OS view of
+  the process (working set, private bytes, handles, threads, CPU seconds) and the client side of the interval
+  (requests, statuses, p50/p95/max per group). At the end: a full probe, a class histogram, <Root>/soak.svg (the chart), <Root>/summary.json
   (first, last and per-hour growth of each series), and the server is stopped by its PID.
 
   -ChartOnly redraws soak.svg and summary.json from an existing soak.jsonl (also while a soak runs), prints the
@@ -100,6 +101,10 @@ function Write-Chart {
         @{ title = "Handles and threads"; unit = "count"; series = @(
             @("OS handles / open files", "process.handles", 1, "#7c3aed"),
             @("JVM threads", "metrics.jvm.threads", 1, "#db2777")) },
+        @{ title = "Source downloads (T92 budget)"; unit = "MB"; series = @(
+            @("downloaded since start", "sourceDownloads.bytes", $mb, "#2563eb"),
+            @("in the last hour", "sourceDownloads.lastHourBytes", $mb, "#b45309"),
+            @("largest one", "sourceDownloads.largestRequestBytes", $mb, "#6b7280")) },
         @{ title = "Disk"; unit = "MB"; series = @(
             @("cache/", "metrics.disk.cacheDir.bytes", $mb, "#2563eb"),
             @("out/", "metrics.disk.outDir.bytes", $mb, "#b45309"),
@@ -175,6 +180,8 @@ function Write-Chart {
         cacheMb = @("metrics.disk.cacheDir.bytes", $mb); cacheFiles = @("metrics.disk.cacheDir.files", 1)
         outMb = @("metrics.disk.outDir.bytes", $mb); logMbOnDisk = @("logBytesOnDisk", $mb)
         packP95Ms = @("client.groups.pack.p95Ms", 1); liveP95Ms = @("client.groups.live.p95Ms", 1); otherP95Ms = @("client.groups.other.p95Ms", 1)
+        sourceMb = @("sourceDownloads.bytes", $mb); sourceRequests = @("sourceDownloads.requests", 1); sourceLastHourMb = @("sourceDownloads.lastHourBytes", $mb)
+        sourceRefusedRequestCap = @("sourceDownloads.refused.requestCap", 1); sourceRefusedHourCap = @("sourceDownloads.refused.hourCap", 1)
     }
     $sum = [ordered]@{ hours = [math]::Round($hoursSpan, 2); samples = $rows.Count; startedAt = $rows[0].ts; lastSampleAt = $rows[-1].ts
         requests = ($rows | ForEach-Object { [double](Get-Path $_ "client.requests") } | Measure-Object -Sum).Sum
@@ -388,7 +395,7 @@ $liveStep = 0
 
 $cxx = 0
 $unitsCycle = @("m", "ft")
-$mapOptions = @("", "hillshade=multi", "slope=on", "contourInterval=40", "night=on", "hillshade=off&trails=off")
+$mapOptions = @("", "hillshade=multi", "slope=on", "contourInterval=40", "night=on", "hillshade=off&trails=off", "slope=steepness") # T107: both T104 shadings (on is avalanche)
 $paradise = "46.7864,-121.7366"; $panorama = "46.8024,-121.7289"
 
 function New-Round([int]$round) {
@@ -396,6 +403,10 @@ function New-Round([int]$round) {
     function add([string]$group, [string]$path, [string[]]$hdr = @()) {
         $ln = "url = `"$base$path`"`noutput = `"" + ($(if ($onWindows) { "NUL" } else { "/dev/null" })) + "`"`n"
         foreach ($hh in $hdr) { $ln += "header = `"$hh`"`n" }
+        # T107: each URL is its own operation (the round file joins them with `next`), with its own write-out and
+        # time limit: curl applies a config file's header lines to every URL of one operation, so before this every
+        # request of a round carried the sync lines' token and the /out/ line's Range header.
+        $ln += "write-out = `"%{http_code} %{time_total} %{url_effective}\n`"`nmax-time = 120`n"
         [void]$lines.Add(@{ group = $group; text = $ln; url = "$base$path" })
     }
     for ($k = 0; $k -lt 12; $k++) {
@@ -415,7 +426,7 @@ function New-Round([int]$round) {
     add "other" "/stats"
     $off = ($round * 7919) % 100000000
     add "other" "/out/$($pack.files[0].file)" @("Range: bytes=$off-$($off + 65535)")
-    if ($round % 3 -eq 0) { add "other" "/route?from=$paradise&to=$panorama" }
+    if ($round % 3 -eq 0) { add "other" "/route?from=$paradise&to=$panorama" @("Authorization: Bearer $userToken") }
     add "other" "/sync/status" @("Authorization: Bearer $userToken")
     if ($round % 5 -eq 0) { add "other" "/sync/pull" @("Authorization: Bearer $userToken") }
     add "other" "/sync/relay/status"
@@ -474,6 +485,8 @@ function Get-LiveHeap([string]$label = "") {
 function Get-Sample {
     $live = if ($NoFullGc) { $null } else { Get-LiveHeap }
     $m = Get-JsonUrl "/metrics"
+    $stats = Get-JsonUrl "/stats"
+    $src = if ($stats) { $stats.sourceDownloads } else { $null }
     $p = Get-Process -Id $srvPid -ErrorAction SilentlyContinue
     $proc = $null
     if ($p) {
@@ -492,7 +505,7 @@ function Get-Sample {
     }
     $logBytes = (Get-ChildItem $logDir -Filter "server.log*" -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
     $s = [ordered]@{ kind = "sample"; ts = (Get-Date).ToUniversalTime().ToString("o"); epochS = [math]::Round(((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds, 1)
-        port = $Port; alive = [bool]($p -and -not $srv.HasExited); process = $proc; metrics = $m; liveHeap = $live; logBytesOnDisk = $logBytes; logFiles = @(Get-ChildItem $logDir -Filter "server.log*").Count
+        port = $Port; alive = [bool]($p -and -not $srv.HasExited); process = $proc; metrics = $m; sourceDownloads = $src; liveHeap = $live; logBytesOnDisk = $logBytes; logFiles = @(Get-ChildItem $logDir -Filter "server.log*").Count
         client = [ordered]@{ requests = $script:client.requests; failures = $script:client.failures; status = $script:client.status; groups = $groups } }
     (Write-Json $s) | Add-Content -Encoding utf8 $logFile
     Reset-Client
@@ -534,9 +547,9 @@ while ((Get-Date) -lt $end) {
     if ($srv.HasExited) { Add-Event @{ type = "serverExited"; exitCode = $srv.ExitCode }; break }
     $round++
     $lines = New-Round $round
-    [IO.File]::WriteAllText($curlCfg, (($lines | ForEach-Object { $_.text }) -join ""))
+    [IO.File]::WriteAllText($curlCfg, (($lines | ForEach-Object { $_.text }) -join "next`n"))
     # curl --parallel reports in completion order, so each line names its URL; the group comes from the URL.
-    $res = Invoke-Curl @("--parallel", "--parallel-max", "$Parallel", "--max-time", "120", "-w", "%{http_code} %{time_total} %{url_effective}\n", "-K", $curlCfg)
+    $res = Invoke-Curl @("--parallel", "--parallel-max", "$Parallel", "-K", $curlCfg)
     $groupOf = @{}
     foreach ($l in $lines) { $groupOf[$l.url] = $l.group }
     $seen = 0
@@ -556,18 +569,21 @@ while ((Get-Date) -lt $end) {
     $now = Get-Date
     if ($now -ge $nextTrip) {
         $nextTrip = $now.AddMinutes($TripMinutes)
-        $route = Get-JsonUrl "/route?from=$paradise&to=$panorama"
+        # T107: a server with users keeps /route* behind its tokens (T92), so the trip's route and bundle send the
+        # soak user's; without it every trip since T92 got a 401 and none was saved or shared.
+        $route = Get-JsonUrl "/route?from=$paradise&to=$panorama" $userToken
         if ($route -and $route.path) {
             $id = [guid]::NewGuid().ToString()
             $ops = @(
                 [ordered]@{ hlc = (Get-Hlc); type = "put"; id = $id; name = "Soak trip $($trips.Count + 1)" },
                 [ordered]@{ hlc = (Get-Hlc); type = "set"; id = $id; field = "path"; value = $route.path })
             (Write-Json @{ device = $deviceId; ops = $ops }) | Out-File -Encoding ascii $tmpBody
-            $bc = Invoke-Curl @("-o", $tmpBundle, "-w", "%{http_code}", "-X", "POST", "-H", "Content-Type: application/json", "--data-binary", "@$tmpBody", "$base/route/bundle")
+            $bc = Invoke-Curl @("-o", $tmpBundle, "-w", "%{http_code}", "-X", "POST", "-H", "Authorization: Bearer $userToken", "-H", "Content-Type: application/json", "--data-binary", "@$tmpBody", "$base/route/bundle")
             $pc = Invoke-Curl @("-o", $(if ($onWindows) { "NUL" } else { "/dev/null" }), "-w", "%{http_code}", "-X", "POST", "-H", "Authorization: Bearer $userToken", "-H", "Content-Type: application/octet-stream", "--data-binary", "@$tmpBundle", "$base/sync/push")
             Add-Result "sync" "$pc" 0
             if ("$pc" -eq "200") { [void]$trips.Add($id) } else { Add-Event @{ type = "tripPush"; ok = $false; bundle = "$bc"; push = "$pc" } }
         }
+        else { Add-Event @{ type = "tripRoute"; ok = $false; error = $(if ($route) { "$($route.error)" } else { "no answer" }) } }
     }
     if ($now -ge $nextShare -and $trips.Count -gt 0) {
         $nextShare = $now.AddMinutes(60)

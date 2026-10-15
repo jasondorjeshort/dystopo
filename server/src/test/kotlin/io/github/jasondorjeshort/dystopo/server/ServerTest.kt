@@ -84,6 +84,36 @@ class ServerTest {
     }
 
     @Test
+    fun extractDownloadUrlsPassValidateExactlyWhenTheDownloaderTakesThem() {
+        // T107: validate read URLs with its own pattern, which refused a trailing slash the downloader accepts.
+        fun valid(u: String) = ServerConfig(extractDownloads = ServerConfig.ExtractDownloadConfig(urls = listOf(u))).validate().isEmpty()
+        fun downloaderTakes(u: String) = runCatching { ExtractDownloads(listOf(u), null) }.isSuccess
+        val good = listOf(
+            "https://download.geofabrik.de/europe/alps",
+            "https://download.geofabrik.de/europe/alps/",
+            "https://download.geofabrik.de/europe/alps//",
+            "  https://download.geofabrik.de/europe/alps/  ",
+            "https://download.geofabrik.de/europe/alps.poly",
+            "https://download.geofabrik.de/europe/alps-latest.osm.pbf",
+            "https://download.geofabrik.de/europe/liechtenstein-260101.osm.pbf",
+            "http://mirror.example.org/osm/europe/alps",
+        )
+        val bad = listOf("alps", "europe/alps", "https://download.geofabrik.de", "https://download.geofabrik.de/", "ftp://download.geofabrik.de/europe/alps", "https://download geofabrik.de/europe/alps", "")
+        for (u in good) {
+            assertTrue(downloaderTakes(u), "the downloader takes '$u'")
+            assertTrue(valid(u), "validate takes '$u'")
+        }
+        for (u in bad) {
+            assertFalse(downloaderTakes(u), "the downloader refuses '$u'")
+            assertFalse(valid(u), "validate refuses '$u'")
+        }
+        // A trailing slash names the same region, so its checksum key is found.
+        val withSum = ServerConfig(extractDownloads = ServerConfig.ExtractDownloadConfig(urls = listOf("https://download.geofabrik.de/europe/alps/"), sha256 = mapOf("alps" to "0".repeat(64))))
+        assertEquals(emptyList(), withSum.validate())
+        assertEquals(listOf("alps"), ExtractDownloads(listOf("https://download.geofabrik.de/europe/alps/"), null).regions.map { it.name })
+    }
+
+    @Test
     fun gateRules() {
         val open = Gate(null, listOf("*"), log, false)
         assertTrue(open.authorized(null))

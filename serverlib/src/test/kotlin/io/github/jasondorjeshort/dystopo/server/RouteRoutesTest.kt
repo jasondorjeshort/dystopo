@@ -18,6 +18,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesWriter
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
+import io.github.jasondorjeshort.dystopo.routing.OverlayCellFile
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import io.github.jasondorjeshort.dystopo.sync.Materializer
 import java.awt.image.BufferedImage
@@ -162,6 +163,94 @@ class RouteRoutesTest {
         @Suppress("UNCHECKED_CAST")
         val via = tap["via"] as List<List<Double>>
         assertTrue(kotlin.math.abs(via[0][0] - at(420, 2400).first) < 1e-4, "start snapped to the road: ${via[0]}")
+    }
+
+    /**
+     * T107: a pack replaced under a running server. Its graph reopens on the next route, and the overlay warm-up
+     * must run again for the new open: when only the file's timestamp changed (the graph file is reused, same
+     * source) the cell file is registered again; when its content changed the graph and the cells are built again.
+     * Before the fix `warm()` returned early on the old entry, so `cellFiles` stayed empty until a restart.
+     */
+    @Test
+    fun aPackReplacedUnderARunningServerKeepsItsOverlayCells() {
+        // Two z14 tiles on either side of a z11 tile border, a tertiary road across it: one overlay cell each side.
+        val x0 = tx or 7
+        val x1 = x0 + 1
+        val west = WebMercator.xToLon(x0.toDouble(), z); val east = WebMercator.xToLon(x1 + 1.0, z)
+        val north = WebMercator.yToLat(ty.toDouble(), z); val south = WebMercator.yToLat(ty + 1.0, z)
+        fun road(name: String, a: Int, b: Int, y: Int) = VectorTile(listOf(Layer("transportation", listOf(Feature(
+            null, mapOf("class" to Value.StringValue("tertiary"), "name" to Value.StringValue(name)),
+            Geometry.Lines(listOf(listOf(TilePoint(a, y), TilePoint(b, y)))),
+        ))))).encode()
+        val vector = File(dir, "w-outdoors.pmtiles")
+        fun writePack(extra: Boolean) {
+            val tiles = mutableMapOf(Triple(z, x0, ty) to road("Rim Road", 400, 4096, 2048), Triple(z, x1, ty) to road("Rim Road", 0, 3600, 2048))
+            if (extra) tiles[Triple(z, x1, ty)] = VectorTile(listOf(Layer("transportation", listOf(
+                Feature(null, mapOf("class" to Value.StringValue("tertiary"), "name" to Value.StringValue("Rim Road")), Geometry.Lines(listOf(listOf(TilePoint(0, 2048), TilePoint(3600, 2048))))),
+                Feature(null, mapOf("class" to Value.StringValue("minor"), "name" to Value.StringValue("Spur")), Geometry.Lines(listOf(listOf(TilePoint(2000, 2048), TilePoint(2000, 3500))))),
+            )))).encode()
+            val w = PmtilesWriter(TileType.MVT, staging = MemoryTileStaging())
+            for ((t, b) in tiles) w.addTile(t.first, t.second, t.third, b)
+            vector.outputStream().buffered().use { os ->
+                w.finish(ByteSink { os.write(it) }, """{"dystopo:profile":"outdoors","dystopo:profile_version":"2"}""", west, south, east, north,
+                    centerZoom = z, minZoom = z, maxZoom = z, centerLon = (west + east) / 2, centerLat = (south + north) / 2)
+            }
+        }
+        writePack(false)
+        val lat = WebMercator.yToLat(ty + 0.5, z)
+        val from = lat to WebMercator.xToLon(x0 + 0.2, z)
+        val to = lat to WebMercator.xToLon(x1 + 0.8, z)
+        val cellFile = File(dir, "w-outdoors-overlay.idx")
+
+        @Suppress("UNCHECKED_CAST")
+        fun overlay(p: RoutePlanner) = p.status()["driveOverlay"] as Map<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        fun warm(p: RoutePlanner) = overlay(p)["warm"] as List<Map<String, Any?>>
+        fun settled(p: RoutePlanner): Map<String, Any?> {
+            val until = System.currentTimeMillis() + 20_000
+            while (System.currentTimeMillis() < until) {
+                warm(p).singleOrNull()?.takeIf { it["state"] != "queued" }?.let { return it }
+                Thread.sleep(20)
+            }
+            error("the warm-up did not finish: ${warm(p)}")
+        }
+        @Suppress("UNCHECKED_CAST")
+        fun drive(p: RoutePlanner) = p.plan(listOf(from, to), "drive").also { assertEquals(listOf("trail"), kinds(it), it.toString()) }["graph"] as Map<String, Any?>
+
+        // A first server builds the graph and, in the background, the cells and their file.
+        val first = RoutePlanner(dir, flat)
+        assertEquals("built", drive(first)["action"])
+        val built = settled(first)
+        assertEquals("done", built["state"], built.toString())
+        assertEquals(2, built["cells"], built.toString())
+        assertTrue(cellFile.isFile)
+
+        // A restarted server reads the cell file.
+        val p = RoutePlanner(dir, flat)
+        assertEquals("loaded", drive(p)["action"])
+        assertEquals("loaded", settled(p)["state"])
+        assertEquals(listOf("w-outdoors.pmtiles"), overlay(p)["cellFiles"])
+
+        // The pack's file is copied over with the same bytes (a new timestamp): the same graph file reopens, and
+        // its cell file is registered again (the bug: `cellFiles` empty here while `warm` still said loaded).
+        assertTrue(vector.setLastModified(vector.lastModified() + 10_000))
+        assertEquals("loaded", drive(p)["action"])
+        val again = settled(p)
+        assertEquals("loaded", again["state"], again.toString())
+        assertEquals(2, again["cells"], again.toString())
+        assertEquals(listOf("w-outdoors.pmtiles"), overlay(p)["cellFiles"], overlay(p).toString())
+
+        // The pack is rebuilt with other content: the graph is built again, the stale cell file is replaced by new
+        // cells (one entry, this graph's), and the drive still follows the road.
+        writePack(true)
+        val before = cellFile.lastModified()
+        assertEquals("built", drive(p)["action"])
+        val rebuilt = settled(p)
+        assertEquals("done", rebuilt["state"], rebuilt.toString())
+        assertEquals(2, rebuilt["cells"], rebuilt.toString())
+        val src = FileRangeSource(cellFile)
+        assertEquals(2, OverlayCellFile.open { o, l -> src.read(o, l) }.cellCount, "the cell file holds the new graph's cells")
+        assertTrue(cellFile.lastModified() >= before)
     }
 
     @Test

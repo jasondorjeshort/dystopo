@@ -2,7 +2,13 @@
 // standalone server), because it plans on the server: GET /route and POST /route/edit run the phone's shared router and
 // route editor (serverlib RouteRoutes.kt), so a route planned here has the phone's numbers.
 //
-// Use: "Plan route", click the start and the end (the route follows trails; a dashed straight line where no trail
+// T107: everything about trips is in one "Trips" box at the top right (the layer panel on the left is the map's): the
+// planner, the open route (name, numbers, notes, profile, Save trip / GPX file / Clear, and its waypoints from
+// trip-sync.js), the saved trips, and Send to server / .dsync file (and Get from server, trip-sync.js). On a phone
+// width both boxes start closed and opening one closes the other. Every request carries the page's Server token
+// when one is set. The map layers go in whenever the style takes them (the script often arrives after "load").
+//
+// Use: "Plan a route", click the start and the end (the route follows trails; a dashed straight line where no trail
 // connects), click again to add a via point (into the nearest leg when it passes close, else as the new end), drag a
 // numbered point to move it (only its two legs are rerouted), right-click a point to remove it. The card shows
 // distance, climb, the time and the elevation profile (hover it to see the place on the map). The time is the server's
@@ -11,12 +17,12 @@
 // Mode drive (T73) follows the packs' roads (one-ways, roads closed to cars) to and between trailheads; the card says
 // it is not a road navigator, and a pack built before the road data says it must be rebuilt (the server's messages).
 //
-// "Save as trip" writes the route into this browser's own sync replica: an operation log in localStorage
+// "Save trip" writes the route into this browser's own sync replica: an operation log in localStorage
 // (dystopo.trips: a device id, a hybrid logical clock and route ops, the same put + path + waypoints ops the phone
 // writes), then sends it to the server's sync peer (POST /route/bundle turns the ops into a sync bundle, POST
-// /sync/push merges it; with the page's Token when set, so a server with per-user tokens stores it in that user's
-// replica). Where the server refuses (no token on a server that wants one, or offline) the trip stays in this browser
-// only; "Send to server" retries, ".dsync" saves the same bundle as a file the phone can sync with. A phone syncing
+// /sync/push merges it; with the page's Server token when set, so a server with per-user tokens stores it in that
+// user's replica). Where the server refuses (no token on a server that wants one, or offline) the trip stays in this
+// browser only; "Send to server" retries, ".dsync file" saves the same bundle as a file the phone can sync with. A phone syncing
 // with the server then has the trip in its Routes list.
 //
 // Long drives (T77): the server plans across every pack near the route, searching the tiles away from the ends through
@@ -53,27 +59,54 @@ function tick(r) {
   return r.wall.toString(16).padStart(12, "0") + "." + r.counter.toString(16).padStart(6, "0") + "." + r.device;
 }
 
+// T107: a distance as the phone writes it (T101's distance rule, UnitFormat.distance in shared/.../render/UnitFormat.kt;
+// keep the two in step): metres below 1 km, then kilometres with two decimals below 10, one below 100, none above;
+// feet below a tenth of a mile (528 ft), then miles with one decimal below 100 and none above. The unit is judged on
+// the value as shown, so 999.6 m reads "1.00 km".
+export function distanceText(m, metric) {
+  const digits = (v, most, step) => { let d = most; while (d > 0 && Math.abs(v) >= step - 0.5 / 10 ** d) { d--; step *= 10; } return d; };
+  if (metric) {
+    if (Math.abs(m) < 999.5) return Math.round(m) + " m";
+    const v = m / 1000;
+    return v.toFixed(digits(v, 2, 10)) + " km";
+  }
+  if (Math.abs(m) / 0.3048 < 0.1 * 1609.344 / 0.3048 - 0.5) return Math.round(m / 0.3048) + " ft";
+  const v = m / 1609.344;
+  return v.toFixed(digits(v, 1, 100)) + " mi";
+}
+
 export function install({ map, base, units, panel, token }) {
   const metric = units === "m";
-  const fmtDist = m => metric ? (m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m") : (m / 1609.344).toFixed(2) + " mi";
+  const fmtDist = m => distanceText(m, metric);
   const fmtEle = m => m == null ? "–" : metric ? Math.round(m) + " m" : Math.round(m * 3.28084) + " ft";
+  // T107: every request to the server carries the page's token when one is set (a server with users keeps /route*
+  // behind it, T92), so the page needs no fetch wrapper.
   const auth = (opts = {}) => { const t = token ? token() : ""; return t ? { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + t } } : opts; };
-  const postJson = (path, body) => fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const postJson = (path, body) => fetch(base + path, auth({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+  const NEEDS_TOKEN = "the server wants its token (Server token, in the panel on the left)";
 
   // ---- UI ----------------------------------------------------------------------------------------------------
+  // T107: one Trips box on the right (the layer panel on the left is the map's): planning, the open route with its
+  // numbers, profile and waypoints, then the saved trips and the server buttons. trip-sync.js fills #trip-extra (the
+  // open trip's waypoints) and #trip-sync-row (Get from server).
   const css = document.createElement("style");
   css.textContent = `
-    #trip { margin: 8px 0 2px; } #trip summary { font-size: 13px; font-weight: 600; margin: 0; }
-    #trip button { margin: 2px 4px 2px 0; } #trip button[aria-pressed="true"] { background: #e8590c; color: #fff; border-color: #b84808; }
-    #trip-list { list-style: none; margin: 4px 0; padding: 0; max-height: 22vh; overflow: auto; font-size: 12px; }
-    #trip-list li { display: flex; gap: 4px; align-items: center; } #trip-list li span { flex: 1; }
-    #trip-status { font-size: 12px; color: #6b5f55; white-space: pre-wrap; }
-    #trip-card { position: absolute; right: 12px; bottom: 40px; width: 300px; background: rgba(255, 252, 245, 0.95); border-radius: 8px;
-                 padding: 8px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.2); font-size: 13px; z-index: 3; }
+    #trips { position: absolute; top: 46px; right: 52px; width: 300px; max-height: calc(100% - 96px); overflow-y: auto; box-sizing: border-box;
+             background: var(--panel, rgba(255, 252, 245, 0.95)); border-radius: 8px; padding: 8px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.15); font-size: 13px; z-index: 3; }
+    #trips > summary { font-size: 15px; font-weight: 600; cursor: pointer; }
+    #trips h3 { font-size: 13px; margin: 10px 0 2px; }
+    #trips .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 4px 0; }
+    #trips .hint { color: #6b5f55; font-size: 12px; margin: 2px 0; }
+    #trips button[aria-pressed="true"] { background: #e8590c; color: #fff; border-color: #b84808; }
+    #trip-list { list-style: none; margin: 2px 0; padding: 0; max-height: 22vh; overflow: auto; font-size: 12px; }
+    #trip-list li { display: flex; gap: 4px; align-items: center; margin: 1px 0; } #trip-list li span { flex: 1; }
+    #trip-list li.open span { font-weight: 600; }
+    #trip-status { font-size: 12px; color: #6b5f55; white-space: pre-wrap; min-height: 1.2em; }
+    #trip-card { border-top: 1px solid #e0d6c4; border-bottom: 1px solid #e0d6c4; margin: 6px 0; padding: 6px 0; }
     #trip-card[hidden] { display: none; }
     #trip-card .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; margin: 4px 0; }
     #trip-card .stats b { font-weight: 600; }
-    #trip-card input { width: 100%; box-sizing: border-box; }
+    #trip-name { width: 100%; box-sizing: border-box; font-weight: 600; }
     #trip-card svg { display: block; width: 100%; height: 80px; background: #fffaf0; border: 1px solid #e0d6c4; border-radius: 4px; }
     #trip-card .readout { font-size: 11px; color: #6b5f55; min-height: 1.2em; }
     #trip-card .notes { font-size: 11px; color: #9a4a12; }
@@ -81,64 +114,88 @@ export function install({ map, base, units, panel, token }) {
                 font: bold 11px/20px system-ui, sans-serif; text-align: center; cursor: grab; background: #e8590c; }
     .trip-via.start { background: #2e7d32; } .trip-via.end { background: #b0281c; }
     .trip-planning .maplibregl-canvas { cursor: crosshair; }
-    @media (max-width: 520px) { #trip-card { left: 8px; right: 8px; width: auto; bottom: 30px; } }`;
+    @media (max-width: 520px) { #trips { top: 12px; width: auto; left: 8px; right: 52px; max-height: calc(100% - 120px); padding: 6px 8px; }
+                                #trips[open] { top: 56px; max-height: calc(100% - 164px); } #trips:not([open]) { left: auto; } }`;
   document.head.appendChild(css);
 
   const box = document.createElement("details");
-  box.id = "trip";
-  box.open = true;
-  box.innerHTML = `<summary>Plan a trip</summary>
-    <button id="trip-plan" type="button" aria-pressed="false">Plan route</button>
-    <label style="display:inline">Mode <select id="trip-mode"><option value="hike">hike</option><option value="bike">bike</option><option value="drive">drive</option></select></label>
-    <div class="hint">Click the start and the end; click again to add a point, drag a numbered point to move it, right-click it to remove it.</div>
-    <div id="trip-status"></div>
-    <div><b>Saved trips</b> <button id="trip-push" type="button" title="Send this browser's trips to the server's sync peer">Send to server</button><button id="trip-dsync" type="button" title="The same as a .dsync file a phone can sync with">.dsync</button></div>
-    <ul id="trip-list"></ul>`;
-  (panel || document.body).appendChild(box);
-  const card = document.createElement("div");
-  card.id = "trip-card";
-  card.hidden = true;
-  card.innerHTML = `<input id="trip-name" placeholder="Trip name" value="Route">
-    <div class="stats"><span>Distance <b id="trip-dist"></b></span><span>Time <b id="trip-time"></b></span>
-      <span>Climb <b id="trip-up"></b></span><span>Descent <b id="trip-down"></b></span></div>
-    <div class="notes" id="trip-notes"></div>
-    <svg id="trip-profile" viewBox="0 0 280 80" preserveAspectRatio="none"></svg>
-    <div class="readout" id="trip-readout"></div>
-    <button id="trip-gpx" type="button">GPX</button><button id="trip-save" type="button">Save as trip</button><button id="trip-clear" type="button">Clear</button>`;
-  map.getContainer().appendChild(card);
+  box.id = "trips";
+  box.innerHTML = `<summary>Trips</summary>
+    <div class="row"><button id="trip-plan" type="button" aria-pressed="false">Plan a route</button>
+      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option></select></label></div>
+    <div class="hint">Click the start, then the end. Click again to add a stop; drag a numbered point to move it, right-click it to remove it.</div>
+    <div id="trip-status" role="status"></div>
+    <section id="trip-card" hidden>
+      <input id="trip-name" placeholder="Trip name" value="Route" aria-label="Trip name">
+      <div class="stats"><span>Distance <b id="trip-dist"></b></span><span>Time <b id="trip-time"></b></span>
+        <span>Climb <b id="trip-up"></b></span><span>Descent <b id="trip-down"></b></span></div>
+      <div class="notes" id="trip-notes"></div>
+      <svg id="trip-profile" viewBox="0 0 280 80" preserveAspectRatio="none" aria-label="Elevation profile"></svg>
+      <div class="readout" id="trip-readout"></div>
+      <div class="row"><button id="trip-save" type="button">Save trip</button><button id="trip-gpx" type="button" title="Download the route as a GPX file">GPX file</button><button id="trip-clear" type="button" title="Remove the route from the map (a saved trip stays saved)">Clear</button></div>
+      <div id="trip-extra"></div>
+    </section>
+    <h3>Saved trips</h3>
+    <ul id="trip-list"></ul>
+    <div class="row" id="trip-sync-row"><button id="trip-push" type="button" title="Send the trips saved in this browser to this server, where a phone that syncs with it finds them">Send to server</button><button id="trip-dsync" type="button" title="Download this browser's trips as a .dsync file a phone can sync with">.dsync file</button></div>`;
+  document.body.appendChild(box);
+  // Open on a wide screen; on a phone both boxes start closed and opening one closes the other (they would overlap).
+  const phone = matchMedia("(max-width: 520px)");
+  box.open = !phone.matches;
+  box.addEventListener("toggle", () => { if (box.open && phone.matches && panel) panel.open = false; });
+  if (panel) panel.addEventListener("toggle", () => { if (panel.open && phone.matches) box.open = false; });
+  const card = box.querySelector("#trip-card");
   const $ = id => document.getElementById(id);
   const say = text => { $("trip-status").textContent = text; };
 
   // ---- Map layers ----------------------------------------------------------------------------------------------
+  // T107: the layers go in as soon as the style takes them. trips.js loads after the page script, often after the
+  // map's "load" event, and isStyleLoaded() is false while any tile is loading, so the old "added now, else on the
+  // next load" missed them for good when the script arrived mid-pan: no route line ever drew. Now: try at once,
+  // else on every style or idle event until it works; a route that arrives first waits in `drawn`.
   const empty = { type: "FeatureCollection", features: [] };
-  const addLayers = () => {
-    if (map.getSource("trip")) return;
-    map.addSource("trip", { type: "geojson", data: empty });
-    map.addSource("trip-hover", { type: "geojson", data: empty });
-    map.addLayer({ id: "trip-casing", type: "line", source: "trip", layout: { "line-join": "round", "line-cap": "round" },
-      paint: { "line-color": "#fffdf7", "line-width": 7, "line-opacity": 0.9 } });
-    map.addLayer({ id: "trip-line", type: "line", source: "trip", filter: ["!=", ["get", "kind"], "straight"], layout: { "line-join": "round", "line-cap": "round" },
-      paint: { "line-color": "#e8590c", "line-width": 4 } });
-    map.addLayer({ id: "trip-straight", type: "line", source: "trip", filter: ["==", ["get", "kind"], "straight"],
-      paint: { "line-color": "#e8590c", "line-width": 3.5, "line-dasharray": [1.5, 1.2] } });
-    map.addLayer({ id: "trip-hover", type: "circle", source: "trip-hover",
-      paint: { "circle-radius": 6, "circle-color": "#1f78c8", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+  let drawn = empty;
+  let layersAt = null; // how the layers got in (window.dystopoTrips.state().layers): "install" or the event's type
+  const addLayers = how => {
+    if (map.getSource("trip")) return true;
+    try {
+      map.addSource("trip", { type: "geojson", data: drawn });
+      map.addSource("trip-hover", { type: "geojson", data: empty });
+      map.addLayer({ id: "trip-casing", type: "line", source: "trip", layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": "#fffdf7", "line-width": 7, "line-opacity": 0.9 } });
+      map.addLayer({ id: "trip-line", type: "line", source: "trip", filter: ["!=", ["get", "kind"], "straight"], layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": "#e8590c", "line-width": 4 } });
+      map.addLayer({ id: "trip-straight", type: "line", source: "trip", filter: ["==", ["get", "kind"], "straight"],
+        paint: { "line-color": "#e8590c", "line-width": 3.5, "line-dasharray": [1.5, 1.2] } });
+      map.addLayer({ id: "trip-hover", type: "circle", source: "trip-hover",
+        paint: { "circle-radius": 6, "circle-color": "#1f78c8", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+      layersAt = how;
+      return true;
+    } catch (e) { // the style is not ready yet ("Style is not done loading"); undo a half-added set and wait
+      for (const id of ["trip-hover", "trip-straight", "trip-line", "trip-casing"]) if (map.getLayer(id)) map.removeLayer(id);
+      for (const id of ["trip-hover", "trip"]) if (map.getSource(id)) map.removeSource(id);
+      return false;
+    }
   };
-  if (map.isStyleLoaded()) addLayers(); else map.once("load", addLayers);
+  if (!addLayers("install")) {
+    const retry = e => { if (addLayers(e.type)) for (const t of ["styledata", "load", "idle"]) map.off(t, retry); };
+    for (const t of ["styledata", "load", "idle"]) map.on(t, retry);
+  }
+  const setLine = fc => { drawn = fc; const s = map.getSource("trip"); if (s) s.setData(fc); else addLayers("draw"); };
 
   // ---- State -------------------------------------------------------------------------------------------------
   const st = { planning: false, mode: "hike", pending: [], reply: null, id: null, edits: 0, error: null, busy: 0, lastPush: null, lastGpx: null, savedPath: null };
   let markers = [];
   let queue = Promise.resolve();
   // Requests run one after another, each on the newest path (a quick second drag must not edit a stale route).
-  const enqueue = job => (queue = queue.then(job).catch(e => { st.error = String(e.message || e); say("error: " + st.error); }));
+  const enqueue = job => (queue = queue.then(job).catch(e => { st.error = String(e.message || e); say("Error: " + st.error); }));
 
   async function call(promise) {
     st.busy++;
     try {
       const r = await promise;
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+      if (!r.ok) throw new Error(r.status === 401 ? NEEDS_TOKEN : (j.error || "HTTP " + r.status));
       return j;
     } finally { st.busy--; }
   }
@@ -148,7 +205,7 @@ export function install({ map, base, units, panel, token }) {
     st.error = null;
     const fc = { type: "FeatureCollection", features: reply.legs.map((l, i) => ({ type: "Feature", properties: { kind: l.kind, leg: i },
       geometry: { type: "LineString", coordinates: l.coordinates.map(c => [c[0], c[1]]) } })) };
-    if (map.getSource("trip")) map.getSource("trip").setData(fc);
+    setLine(fc);
     drawMarkers(reply.via.map(([lat, lon]) => [lat, lon]));
     const s = reply.summary;
     $("trip-dist").textContent = fmtDist(s.distanceM);
@@ -158,27 +215,41 @@ export function install({ map, base, units, panel, token }) {
     $("trip-down").textContent = signed("−", s.descentM);
     const notes = [];
     if (s.straightM > 0) notes.push(fmtDist(s.straightM) + (reply.mode === "drive" ? " off road (dashed)" : " off trail (dashed)"));
-    if (reply.notes.includes("no_graph")) notes.push("no trail data here: straight lines");
-    if (!reply.pack) notes.push("outside every pack");
+    if (reply.notes.includes("no_graph")) notes.push("No trail data here: straight lines");
+    if (!reply.pack) notes.push("Outside every pack");
     const msgs = reply.messages || {};
     if (msgs.drive_unsupported) notes.push(msgs.drive_unsupported); // T73: the pack predates the road data
     else if (reply.mode === "drive" && reply.notes.length) for (const n of reply.notes) if (msgs[n]) notes.push(msgs[n]);
     if (reply.notice) notes.push(reply.notice);
     const long = longRoute(reply);
     if (long && (long.packs.length > 1 || long.overlayTiles > 0)) // T77: a long route across packs
-      notes.push("planned by the server across " + long.packs.length + (long.packs.length === 1 ? " pack" : " packs") + " (" + long.packs.join(", ") + ") in " +
-                 (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? ", " + long.overlayTiles + " tiles through the drive overlay" : "") +
-                 (long.level2Tiles ? " and " + long.level2Tiles + " of its z8 cells" : ""));
+      notes.push("Planned across " + long.packs.length + (long.packs.length === 1 ? " pack" : " packs") + " (" + long.packs.join(", ") + ") in " +
+                 (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? "; " + long.overlayTiles + " tiles through the drive overlay" : "") +
+                 (long.level2Tiles ? ", " + long.level2Tiles + " z8 cells" : ""));
     $("trip-notes").textContent = notes.join("; ");
     drawProfile(s.profile);
     card.hidden = false;
     if (fit) {
       const b = new maplibregl.LngLatBounds();
       for (const l of reply.legs) for (const c of l.coordinates) b.extend([c[0], c[1]]);
-      if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 220, left: 300, right: 340 }, maxZoom: 15, duration: 0 });
+      if (!b.isEmpty()) map.fitBounds(b, { padding: fitPadding(), maxZoom: 15, duration: 0 });
     }
     const n = (k, w) => k + " " + w + (k === 1 ? "" : "s");
-    say((reply.pack ? "pack " + reply.pack : "no pack") + ", " + n(reply.via.length, "point") + ", " + n(reply.legs.length, "leg") + (st.savedPath && st.savedPath !== reply.path ? " (unsaved changes)" : ""));
+    say((reply.pack ? "On pack " + reply.pack : "Outside every pack") + ": " + n(reply.via.length, "point") + ", " + n(reply.legs.length, "leg") + "." +
+        (st.savedPath && st.savedPath !== reply.path ? " Changed since it was saved." : ""));
+    renderList();
+  }
+
+  // Room around a route fitted to the view: clear of the layer panel on the left and this box on the right.
+  function fitPadding() {
+    const c = map.getContainer().getBoundingClientRect(), pad = { top: 40, bottom: 70, left: 40, right: 40 }; // bottom: the credits line
+    const p = panel && panel.getBoundingClientRect(), r = box.getBoundingClientRect();
+    if (p && p.width && p.right < c.left + c.width / 2) pad.left = Math.round(p.right - c.left + 20);
+    if (r.width && r.left > c.left + c.width / 2) pad.right = Math.round(c.right - r.left + 20);
+    // A small window: shrink the side margins until the route has at least a third of the width.
+    while (pad.left + pad.right > c.width * 0.66 && pad.left + pad.right > 80) { pad.left = Math.max(40, pad.left * 0.8); pad.right = Math.max(40, pad.right * 0.8); }
+    if (pad.top + pad.bottom > c.height * 0.66) { pad.top = 20; pad.bottom = 20; }
+    return pad;
   }
 
   function drawMarkers(via) {
@@ -246,7 +317,7 @@ export function install({ map, base, units, panel, token }) {
     plan(points, mode = st.mode) {
       return enqueue(async () => {
         const q = new URLSearchParams({ points: points.map(([lat, lon]) => lat.toFixed(7) + "," + lon.toFixed(7)).join(";"), mode });
-        const j = await call(fetch(base + "/route?" + q));
+        const j = await call(fetch(base + "/route?" + q, auth()));
         st.pending = [];
         if (!st.id) st.id = uuid4(); // the trip id the GPX and the saved trip carry
         st.edits++;
@@ -258,7 +329,7 @@ export function install({ map, base, units, panel, token }) {
     click(lat, lon) {
       if (!st.reply) {
         st.pending.push([lat, lon]);
-        if (st.pending.length === 1) { drawMarkers(st.pending); say("start set; click the end"); return queue; }
+        if (st.pending.length === 1) { drawMarkers(st.pending); say("Start set: click the end."); return queue; }
         return api.plan(st.pending.slice(0, 2));
       }
       return api.add(lat, lon);
@@ -266,16 +337,17 @@ export function install({ map, base, units, panel, token }) {
     add: (lat, lon) => edit({ op: "add", lat, lon }),
     move: (index, lat, lon) => edit({ op: "move", index, lat, lon }),
     remove(index) {
-      if (st.reply && st.reply.via.length <= 2) { say("a route needs a start and an end (Clear removes it)"); drawMarkers(st.reply.via); return queue; }
+      if (st.reply && st.reply.via.length <= 2) { say("A route needs a start and an end; Clear removes the whole route."); drawMarkers(st.reply.via); return queue; }
       return edit({ op: "remove", index });
     },
     setMode(mode) { st.mode = mode; $("trip-mode").value = mode; return st.reply ? edit({ op: "mode", mode }) : queue; },
     clear() {
       st.reply = null; st.pending = []; st.id = null; st.savedPath = null;
       drawMarkers([]);
-      map.getSource("trip")?.setData(empty);
+      setLine(empty);
       card.hidden = true;
       say("");
+      renderList();
     },
     async gpx(download = true) {
       await queue;
@@ -310,7 +382,8 @@ export function install({ map, base, units, panel, token }) {
       st.savedPath = st.reply.path;
       renderList();
       const pushed = await api.push();
-      say("saved \"" + nm + "\" in this browser" + (memoryOnly ? " (storage blocked: this page load only)" : "") + "; " + pushText(pushed));
+      say("Saved \u201c" + nm + "\u201d " + (pushed.ok ? "in this browser and on the server." : "in this browser only: " + pushed.error + ". Send to server tries again.") +
+          (memoryOnly ? " This browser blocks storage: the trip is kept until the page closes." : ""));
       return { id, pushed };
     },
     async del(id) {
@@ -322,7 +395,7 @@ export function install({ map, base, units, panel, token }) {
       if (st.id === id) { st.id = null; st.savedPath = null; }
       renderList();
       const pushed = await api.push();
-      say("deleted; " + pushText(pushed));
+      say(pushed.ok ? "Deleted here and on the server." : "Deleted here; the server still has it: " + pushed.error + ".");
       return pushed;
     },
     load(id) {
@@ -352,7 +425,7 @@ export function install({ map, base, units, panel, token }) {
           const r = await fetch(base + "/sync/push", auth({ method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: bytes }));
           const j = await r.json().catch(() => ({}));
           result = r.ok ? { ok: true, received: j.received, applied: j.applied, duplicate: j.duplicate, vector: j.vector }
-                        : { ok: false, status: r.status, error: r.status === 401 ? "the server needs its token (Token field)" : (j.error || "HTTP " + r.status) };
+                        : { ok: false, status: r.status, error: r.status === 401 ? NEEDS_TOKEN : (j.error || "HTTP " + r.status) };
         }
       } catch (e) { result = { ok: false, error: String(e.message || e) }; }
       result.at = new Date().toISOString();
@@ -371,7 +444,7 @@ export function install({ map, base, units, panel, token }) {
     replica: () => { const r = loadReplica(); return { device: r.device, ops: r.ops.length, trips: Object.keys(r.trips).length, lastPush: r.lastPush }; },
     idle: () => queue.then(() => api.state()),
     state: () => ({
-      planning: st.planning, mode: st.mode, pending: st.pending.length, id: st.id, edits: st.edits, busy: st.busy, error: st.error,
+      planning: st.planning, mode: st.mode, pending: st.pending.length, id: st.id, edits: st.edits, busy: st.busy, error: st.error, layers: layersAt,
       saved: !!st.id && st.savedPath === (st.reply && st.reply.path), lastPush: st.lastPush,
       route: st.reply && { pack: st.reply.pack, via: st.reply.via, legs: st.reply.legs.map(l => l.kind), notes: st.reply.notes, messages: st.reply.messages, notice: st.reply.notice, mode: st.reply.mode, path: st.reply.path,
                            summary: Object.fromEntries(Object.entries(st.reply.summary).filter(([k]) => k !== "profile")), profileSamples: st.reply.summary.profile.length,
@@ -391,7 +464,8 @@ export function install({ map, base, units, panel, token }) {
   }
   // The route's middle point [lat, lon] (by point count; for scripted clicks on the line).
   const middle = reply => { const all = reply.legs.flatMap(l => l.coordinates); const c = all[Math.floor(all.length / 2)]; return c ? [c[1], c[0]] : null; };
-  const pushText = p => p.ok ? "sent to the server (" + p.applied + " new of " + p.received + " ops)" : "kept in this browser only: " + p.error;
+  const pushText = p => p.ok ? (p.applied ? "Sent to the server (" + p.applied + (p.applied === 1 ? " change" : " changes") + " it did not have)." : "The server already had every trip from this browser.")
+                             : "Not sent: " + p.error + ".";
   function save(blob, name) {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = name;
@@ -403,14 +477,16 @@ export function install({ map, base, units, panel, token }) {
     ul.innerHTML = "";
     for (const t of api.trips()) {
       const li = document.createElement("li");
+      if (t.id === st.id) li.className = "open";
       const label = document.createElement("span");
-      label.textContent = t.name + " · " + fmtDist(t.distanceM);
+      label.textContent = t.name + " · " + fmtDist(t.distanceM || 0) + (t.pulled ? " (from the server)" : "");
+      label.title = t.mode ? t.mode + (t.pack ? ", pack " + t.pack : "") : "";
       const open = document.createElement("button"); open.type = "button"; open.textContent = "Open"; open.onclick = () => api.load(t.id);
       const del = document.createElement("button"); del.type = "button"; del.textContent = "Delete"; del.onclick = () => api.del(t.id);
       li.append(label, open, del);
       ul.appendChild(li);
     }
-    if (!ul.children.length) ul.innerHTML = "<li><span>none yet</span></li>";
+    if (!ul.children.length) ul.innerHTML = "<li><span>No saved trips yet.</span></li>";
   }
 
   // ---- Wiring --------------------------------------------------------------------------------------------------
@@ -418,15 +494,18 @@ export function install({ map, base, units, panel, token }) {
     st.planning = on;
     $("trip-plan").setAttribute("aria-pressed", String(on));
     map.getContainer().classList.toggle("trip-planning", on);
-    if (on && !st.reply) say("click the start");
+    if (on && !st.reply) say("Click the start.");
+    // T107: on a phone the open box covers the map, so planning closes it; its title says planning is on.
+    box.querySelector("summary").textContent = on && phone.matches ? "Trips (planning)" : "Trips";
+    if (on && phone.matches) box.open = false;
   };
   $("trip-plan").onclick = () => setPlanning(!st.planning);
   $("trip-mode").onchange = e => api.setMode(e.target.value);
-  $("trip-gpx").onclick = () => api.gpx().catch(e => say("error: " + e.message));
-  $("trip-save").onclick = () => api.save().catch(e => say("error: " + e.message));
+  $("trip-gpx").onclick = () => api.gpx().catch(e => say("Error: " + e.message));
+  $("trip-save").onclick = () => api.save().catch(e => say("Error: " + e.message));
   $("trip-clear").onclick = () => api.clear();
   $("trip-push").onclick = async () => say(pushText(await api.push()));
-  $("trip-dsync").onclick = () => api.dsync().catch(e => say("error: " + e.message));
+  $("trip-dsync").onclick = () => api.dsync().catch(e => say("Error: " + e.message));
   map.on("click", e => {
     if (!st.planning) return;
     if (e.originalEvent && e.originalEvent.target.closest && e.originalEvent.target.closest(".trip-via")) return;
@@ -434,7 +513,7 @@ export function install({ map, base, units, panel, token }) {
   });
   renderList();
   const last = loadReplica().lastPush;
-  if (last && !last.ok) say("trips not on the server yet: " + last.error);
-  window.dystopoTrips = { ...api, setPlanning };
+  if (last && !last.ok) say("Some trips are only in this browser: " + last.error + ". Send to server tries again.");
+  window.dystopoTrips = { ...api, setPlanning, renderList, fmtDist, distanceText };
   return window.dystopoTrips;
 }
