@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-15
 
+- T107: Desktop and server leftover sweep 7 (#105)
 - T103: Settings in tabs (#107)
 - T102: Turn directions in hike, bike and drive (#106)
 - T104: Two slope shadings, the shade tiles' hole over a pack edge, no product names in user text (#103)
