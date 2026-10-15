@@ -55,7 +55,7 @@ names (`CLAUDE.md`, Rules).
 
 | File | Kind | Status | One line |
 |---|---|---|---|
-| `2026-10-13-recenter-button.md` | feature | planned | Recenter button cycling north-up, free and facing; the plain button is T93 (wave 13), the cycling T100 (wave 14). |
+| `2026-10-13-recenter-button.md` | feature | done | Recenter button cycling north-up, free and facing; the plain button is T93 (wave 13), the cycling T100 (wave 14). |
 | `2026-10-13-map-scale-bar.md` | feature | done | Scale bar on the phone map, own units by default, optional both (T101, wave 14). |
 | `2026-10-13-large-distance-units.md` | feature | done | Imperial distances switch to miles at large scales (T101, wave 14); inches someday. |
 | `2026-10-13-driving-is-in-scope.md` | question | done | Doctrine: hike first, driving a full second mode; ADR 0032 (2026-10-14); T102 rewrites the T73 wording. |

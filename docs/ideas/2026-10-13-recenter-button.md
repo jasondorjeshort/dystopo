@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
-pipeline: T93 built the plain button (wave 13: `controls/Recenter.kt`, `RecenterButton.kt`; the seam is `Recenter.Orientation`); T100 (wave 14) builds the three-state logic
+status: done
+pipeline: T93 built the plain button (wave 13: `controls/Recenter.kt`, `RecenterButton.kt`); T100 (wave 14) built the three orientation modes and the tap rule (`controls/MapOrientation.kt`, `Orientation.kt`, `Heading.kt`), one state shared with navigation's camera modes
 related: [2026-10-13-map-scale-bar.md, 2026-10-13-turn-directions.md]
 ---
 
@@ -44,3 +44,15 @@ The tap rule follows the backcountry navigation app the owner thinks has the bes
   orientation toggle, a locate button that cycles off, follow and follow-with-heading). Public
   documentation of the mainstream map apps and the backcountry navigation apps is enough; no names
   go into our own text.
+
+## Built (T100, 2026-10-14)
+
+- Icons: north-up a compass needle under an N; free rotate two turning arrows with a red pointer to
+  north on the turned map; facing a beam from a dot. Blue while the camera follows the fix, dark
+  after a pan (the next tap recentres), grey without a fix. Paths, not text, so font scale leaves
+  them alone; the button keeps the name "Recenter" with the mode as its state description.
+- The open points: the button keeps its corner above the bottom panels (T93); facing uses the
+  course over ground above 1 m/s, else the compass, which runs only while facing is on and the app
+  is in the foreground. No separate compass needle: the free-rotate icon shows north and a tap on
+  a centred map snaps north. MapLibre's own compass (top right, shown on a rotated map) is still
+  there, mostly under the status bar; whether to keep it is a follow-up.

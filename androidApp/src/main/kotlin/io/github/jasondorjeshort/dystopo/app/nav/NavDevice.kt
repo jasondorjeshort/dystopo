@@ -78,20 +78,23 @@ class NavAlerts(private val context: Context) {
 
 /**
  * The compass (T61): the rotation-vector sensor's azimuth (magnetic, corrected for how the screen is
- * turned) into [Compass], which adds the WMM declination and smooths it. Runs only while navigating.
+ * turned) into [Compass], which adds the WMM declination and smooths it. T100: the app's one compass
+ * (controls/Heading), running only while the map is in facing and the app is in the foreground; the azimuth is
+ * where the phone points however it is held (see [onSensorChanged]).
  */
 class HeadingSensor(private val context: Context, val compass: Compass) : SensorEventListener {
     private val manager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val sensor: Sensor? = manager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
     private val rot = FloatArray(9)
-    private val remapped = FloatArray(9)
-    private val orientation = FloatArray(3)
 
     @Volatile var running = false
         private set
     @Volatile var lastReadingAt = 0L
         private set
     @Volatile var accuracy: Int? = null
+        private set
+    /** T100: the screen's tilt from lying flat (0) to upright (90), degrees, at the last reading. */
+    @Volatile var tiltDeg: Double? = null
         private set
 
     val available: Boolean get() = sensor != null
@@ -114,15 +117,21 @@ class HeadingSensor(private val context: Context, val compass: Compass) : Sensor
         SensorManager.getRotationMatrixFromVector(rot, event.values)
         @Suppress("DEPRECATION")
         val rotation = (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.rotation
-        val (x, y) = when (rotation) {
-            Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
-            Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
-            Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
-            else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
+        // The top of the screen in the phone's own axes, as the display is turned.
+        val (ux, uy) = when (rotation) {
+            Surface.ROTATION_90 -> -1f to 0f
+            Surface.ROTATION_180 -> 0f to -1f
+            Surface.ROTATION_270 -> 1f to 0f
+            else -> 0f to 1f
         }
-        SensorManager.remapCoordinateSystem(rot, x, y, remapped)
-        SensorManager.getOrientation(remapped, orientation)
-        compass.onMagnetic(Math.toDegrees(orientation[0].toDouble()))
+        // T100: rot maps the phone's axes to east, north, up. Where the phone points is the top of the screen when it
+        // lies flat and the back when it is held upright; tilted between, the level parts of both point the same way,
+        // so their sum is steady at any tilt (the azimuth of the top edge alone swings wildly near upright).
+        val e = rot[0] * ux + rot[1] * uy - rot[2]
+        val n = rot[3] * ux + rot[4] * uy - rot[5]
+        tiltDeg = Math.toDegrees(Math.acos(rot[8].toDouble().coerceIn(-1.0, 1.0)))
+        if (e * e + n * n < 1e-6f) return
+        compass.onMagnetic(Math.toDegrees(Math.atan2(e.toDouble(), n.toDouble())))
         lastReadingAt = SystemClock.elapsedRealtime()
     }
 
@@ -131,7 +140,7 @@ class HeadingSensor(private val context: Context, val compass: Compass) : Sensor
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "available" to available, "running" to running, "fresh" to fresh, "accuracy" to accuracy,
+        "available" to available, "running" to running, "fresh" to fresh, "accuracy" to accuracy, "tiltDeg" to tiltDeg?.let(::r1),
         "readings" to compass.readings, "magneticDeg" to compass.magneticHeadingDeg?.let(::r1),
         "trueDeg" to compass.trueHeadingDeg?.let(::r1), "declinationDeg" to compass.declinationDeg?.let { Math.round(it * 100) / 100.0 },
     )

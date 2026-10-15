@@ -16,6 +16,7 @@ import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -195,7 +196,9 @@ class MapController {
                 lastCameraAt = SystemClock.elapsedRealtime()
                 runCatching { onCameraIdle() } // T41: online mode retries negative-cached tiles, refreshes its credits
                 runCatching { MapViewport.update(m) } // T49: the credit line covers the packs in view
+                runCatching { MapOrientation.onCameraIdle(m) } // T100: a move that was not ours ends following
             }
+            MapOrientation.install(m) // T100: pan, fling and rotate gestures; the persisted orientation
             loadStyle(styleJson(), onStyle)
         }
     }
@@ -457,6 +460,7 @@ class MapController {
         } else {
             puckUpdatesSkipped++
         }
+        runCatching { MapOrientation.onFix(loc) } // T100: the camera follows the puck; facing turns to the heading
     }
 
     @Volatile var puckUpdates = 0L
@@ -536,35 +540,11 @@ class MapController {
         )
     }
 
-    // ---- T93: recentre on the current fix (the map screen's bullseye button, POST /camera/recenter) ----
-    @Volatile var recenters = 0L
-        private set
+    // ---- T93, T100: recentre (controls/Recenter, controls/MapOrientation) ----
 
-    /**
-     * Centres the camera on [lastLocation] at the current zoom, bearing and tilt (the orientation is never
-     * changed here; see controls/Recenter). [animateMs] 0 moves at once. [done] runs on the main thread once
-     * the camera is there (or the move was cancelled by a gesture). Returns the fix used, null when there is none.
-     */
-    fun recenter(animateMs: Int = 300, done: () -> Unit = {}): Location? {
-        val fix = lastLocation ?: return null
-        main.post {
-            val m = map ?: return@post done()
-            val update = CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder(m.cameraPosition).target(LatLng(fix.latitude, fix.longitude)).build(),
-            )
-            lastCameraAt = SystemClock.elapsedRealtime()
-            recenters++
-            if (animateMs <= 0) {
-                m.moveCamera(update)
-                done()
-            } else {
-                m.easeCamera(update, animateMs, object : MapLibreMap.CancelableCallback {
-                    override fun onFinish() = done()
-                    override fun onCancel() = done()
-                })
-            }
-        }
-        return fix
+    /** T100: our own camera moves (controls/MapOrientation) count as camera activity for [idle]. */
+    fun noteCameraMove() {
+        lastCameraAt = SystemClock.elapsedRealtime()
     }
 
     /** Screen distance (px) of the last fix from the map view's centre; null without a fix or a map. */
@@ -576,29 +556,24 @@ class MapController {
         Math.hypot((p.x - v.width / 2f).toDouble(), (p.y - v.height / 2f).toDouble())
     }
 
-    // ---- T61: camera modes for navigation (driven by nav/NavSession) ----
+    // ---- T61: camera modes for navigation; T100: a view of the app's one orientation state ----
+
+    /**
+     * FREE: the user moves the map (not following). FOLLOW: centred on each fix, north up (or as the user turned
+     * it). HEADING_UP: centred and turned to the heading. Since T100 these are [MapOrientation]'s state seen from
+     * navigation ([io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.cameraMode]); setting one sets it.
+     */
     enum class CameraMode { FREE, FOLLOW, HEADING_UP }
 
-    /** FREE: the user moves the map. FOLLOW: centred on each fix, north up. HEADING_UP: centred and turned to the heading. */
-    @Volatile var cameraMode = CameraMode.FREE
-    @Volatile var followMoves = 0L
-        private set
+    var cameraMode: CameraMode
+        get() = MapOrientation.cameraMode
+        set(v) { MapOrientation.setCameraMode(v, "nav") }
 
-    /** Eases the camera to a fix in FOLLOW and HEADING_UP (keeps zoom and tilt unless [zoom] is given); no-op in FREE. */
-    fun follow(lat: Double, lon: Double, headingDeg: Double?, zoom: Double? = null) {
-        if (cameraMode == CameraMode.FREE) return
-        main.post {
-            val m = map ?: return@post
-            val mode = cameraMode
-            if (mode == CameraMode.FREE) return@post
-            val c = m.cameraPosition
-            val bearing = if (mode == CameraMode.HEADING_UP) headingDeg ?: c.bearing else 0.0
-            lastCameraAt = SystemClock.elapsedRealtime()
-            val to = CameraPosition.Builder().target(LatLng(lat, lon)).zoom(zoom ?: c.zoom).bearing(bearing).tilt(c.tilt).build()
-            m.easeCamera(CameraUpdateFactory.newCameraPosition(to), 400)
-            followMoves++
-        }
-    }
+    val followMoves: Long get() = MapOrientation.followMoves
+
+    /** Eases the camera to a fix when following, at [zoom] if given (navigation's first fix); the bearing follows the orientation. */
+    @Suppress("UNUSED_PARAMETER")
+    fun follow(lat: Double, lon: Double, headingDeg: Double?, zoom: Double? = null) = MapOrientation.followTo(lat, lon, zoom)
 
     companion object {
         /** How long everything must stay settled before the map counts as idle. */

@@ -75,6 +75,19 @@ object AppSettings {
         navStaleS = p.getInt(KEY_NAV_STALE_S, DEFAULT_NAV_STALE_S).coerceIn(NAV_STALE_RANGE) // T91
         navStartM = p.getInt(KEY_NAV_START_M, DEFAULT_NAV_START_M).coerceIn(NAV_START_RANGE)
         navSnoozeMin = p.getInt(KEY_NAV_SNOOZE_MIN, DEFAULT_NAV_SNOOZE_MIN).coerceIn(NAV_SNOOZE_RANGE)
+        mapOrientation = p.getString(KEY_MAP_ORIENTATION, null) ?: "north-up" // T100
+    }
+
+    // ---- T100: the map orientation kept across restarts (controls/MapOrientation): north-up or facing ----
+
+    private const val KEY_MAP_ORIENTATION = "mapOrientation"
+
+    @Volatile var mapOrientation: String = "north-up"
+        private set
+
+    fun setMapOrientation(key: String) {
+        mapOrientation = key
+        prefs?.edit()?.putString(KEY_MAP_ORIENTATION, key)?.apply()
     }
 
     // ---- T91: navigation thresholds (the T65 constants) ----

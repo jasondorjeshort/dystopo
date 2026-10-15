@@ -17,7 +17,6 @@ import io.github.jasondorjeshort.dystopo.app.tracking.GpsLocationSource
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.nav.AlertSnooze
-import io.github.jasondorjeshort.dystopo.nav.Compass
 import io.github.jasondorjeshort.dystopo.nav.FixFreshness
 import io.github.jasondorjeshort.dystopo.nav.FixOrigin
 import io.github.jasondorjeshort.dystopo.nav.NavEvent
@@ -40,9 +39,10 @@ import java.util.concurrent.Executors
  * (the device GPS while navigating, `POST /location`, GPX replays), moves the camera
  * ([CameraMode.FOLLOW] or [CameraMode.HEADING_UP]), draws the line and the way back ([NavMapLayer]),
  * keeps the screen on, beeps and buzzes on an off-route event ([NavAlerts]) and publishes the large-type
- * stats bar state ([ui], drawn by [NavOverlay]). The heading for heading-up comes from, in order: a
- * simulated one (`POST /location?bearing=` or `/nav/heading`, while fixes are injected), the compass
- * (rotation vector + WMM declination, [HeadingSensor]) for device fixes, the course between fixes.
+ * stats bar state ([ui], drawn by [NavOverlay]). T100: the camera modes are a view of the app's one
+ * orientation state (controls/MapOrientation: the recentre button, this bar's camera actions and the
+ * follow-me agree), and the heading is the app's one heading source (controls/Heading: a simulated one
+ * while fixes are injected, the course while moving, the compass while facing and slow or still).
  * Debug routes in [io.github.jasondorjeshort.dystopo.app.NavRoutes]. T102: a route's turn directions
  * ([NavSources.Resolved.directions]) ride along; the card shows the next one at the default detail level with its
  * distance ([Directions.next], passed [Directions.passM] after the junction), and `/nav/status` lists them.
@@ -113,11 +113,8 @@ object NavSession {
     @Volatile private var travel: TravelMode = TravelMode.HIKE
 
     val layer = NavMapLayer()
-    private val compass = Compass()
-    private val sensor by lazy { HeadingSensor(app, compass) }
     private val alerts by lazy { NavAlerts(app) }
 
-    @Volatile private var simulatedHeading: Double? = null
     @Volatile private var lastFix: LocationFix? = null
     @Volatile private var lastFixOrigin: String? = null
     @Volatile private var courseFrom: LocationFix? = null
@@ -131,8 +128,6 @@ object NavSession {
     @Volatile private var ignored = 0
     @Volatile private var injectedHooked = false
     private var gpsListener: LocationListener? = null
-    @Volatile private var lastCameraHeading: Double? = null
-    @Volatile private var hookedMap: Any? = null
 
     val active: Boolean get() = navigator != null
 
@@ -176,7 +171,6 @@ object NavSession {
             courseDeg = null
             headingDeg = null
             headingSource = null
-            lastCameraHeading = null
         }
         app.map.cameraMode = camera
         layer.show(path.points, null, null)
@@ -187,8 +181,6 @@ object NavSession {
             // Again on the main thread, after any cleanup a previous stop() posted (a first start lost its line once).
             if (navigator != null) layer.show(path.points, null, null)
             app.map.activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            hookGestures()
-            sensor.start()
             startGps()
             ui = waitingUi(path)
             tick()
@@ -251,7 +243,6 @@ object NavSession {
         main.post {
             stopGps()
             if (navigator == null) {
-                sensor.stop()
                 app.map.mapView?.keepScreenOn = false
                 app.map.activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 layer.show(emptyList(), null, null)
@@ -261,12 +252,10 @@ object NavSession {
         return mapOf("stopped" to was)
     }
 
-    /** Camera mode from the debug route or the stats bar buttons. */
+    /** Camera mode from the debug route (T100: onto the app's one orientation state, controls/MapOrientation). */
     fun setCamera(mode: CameraMode) {
         app.map.cameraMode = mode
-        lastCameraHeading = null
-        lastFix?.let { f -> app.map.follow(f.lat, f.lon, headingDeg, null) }
-        main.post { ui = ui?.copy(camera = mode) }
+        main.post { ui = ui?.copy(camera = app.map.cameraMode) }
     }
 
     /**
@@ -274,7 +263,7 @@ object NavSession {
      * last fix with it (`/nav/heading`); `POST /location?bearing=` sets it just before its own fix arrives.
      */
     fun simulateHeading(deg: Double?, apply: Boolean = true) {
-        simulatedHeading = deg?.let { Compass.norm(it) }
+        io.github.jasondorjeshort.dystopo.app.controls.Heading.simulate(deg) // T100: the app's one simulated heading
         if (apply && active) lastFix?.let { f -> runCatching { worker.submit { onFix(f, lastFixOrigin ?: "injected", repeat = true) }.get(5, java.util.concurrent.TimeUnit.SECONDS) } }
     }
 
@@ -283,19 +272,6 @@ object NavSession {
         if (injectedHooked) return
         injectedHooked = true
         Tracking.of(app).injected.start { f -> if (navigator != null) worker.execute { onFix(f, "injected") } }
-    }
-
-    /** A pan or rotate by hand stops following, as in every map app; the stats bar offers Recenter. */
-    private fun hookGestures() {
-        val m = app.map.map ?: return
-        if (hookedMap === m) return
-        hookedMap = m
-        m.addOnCameraMoveStartedListener { reason ->
-            if (reason == org.maplibre.android.maps.MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE && active && app.map.cameraMode != CameraMode.FREE) {
-                app.map.cameraMode = CameraMode.FREE
-                ui = ui?.copy(camera = CameraMode.FREE)
-            }
-        }
     }
 
     @SuppressLint("MissingPermission")
@@ -339,7 +315,6 @@ object NavSession {
                 return
             }
         }
-        compass.locate(fix.lat, fix.lon, if (fix.time > 0) fix.time else System.currentTimeMillis())
         // Course over ground: the GPS's own, else between fixes at least 5 m apart.
         if (!repeat) {
             val from = courseFrom
@@ -372,39 +347,28 @@ object NavSession {
             if (rejoin != null && s.offRoute) NavPoint(fix.lat, fix.lon) else null,
             if (rejoin != null && s.offRoute) NavPoint(rejoin.lat, rejoin.lon) else null,
         )
-        lastCameraHeading = headingDeg
-        app.map.follow(fix.lat, fix.lon, headingDeg, if (nav.fixes == 1) zoom else null)
+        // T100: the camera follows every fix the puck shows (controls/MapOrientation); navigation sets the zoom once.
+        if (nav.fixes == 1 && !repeat) app.map.follow(fix.lat, fix.lon, headingDeg, zoom)
         val u = uiOf(nav, s)
         main.post { if (navigator === nav) ui = u }
     }
 
-    private fun chooseHeading(origin: String) {
-        val sim = simulatedHeading
-        val (h, src) = when {
-            sim != null && origin != "gps" -> sim to "simulated"
-            origin == "gps" && sensor.fresh -> compass.trueHeadingDeg to "compass"
-            courseDeg != null -> courseDeg to "course"
-            sensor.fresh -> compass.trueHeadingDeg to "compass"
-            else -> null to null
-        }
-        headingDeg = h
-        headingSource = src
+    /** T100: the app's one heading (controls/Heading); navigation's own course between its fixes when that has none. */
+    private fun chooseHeading(@Suppress("UNUSED_PARAMETER") origin: String) {
+        val r = io.github.jasondorjeshort.dystopo.app.controls.Heading.current()
+        headingDeg = r?.deg ?: courseDeg
+        headingSource = r?.source ?: courseDeg?.let { "course" }
     }
 
-    /** Twice a second: turns a heading-up camera with the compass between fixes, refreshes the compass readout. */
+    /** Twice a second: refreshes the heading readout (the compass turns between fixes; T100: the camera turns itself). */
     private val ticker = object : Runnable {
         override fun run() {
             val nav = navigator ?: return
             val f = lastFix
-            if (f != null && headingSource == "compass") {
-                val h = compass.trueHeadingDeg
-                headingDeg = h
-                val last = lastCameraHeading
-                if (h != null && app.map.cameraMode == CameraMode.HEADING_UP && (last == null || kotlin.math.abs(Navigator.rel(h - last)) >= 3.0)) {
-                    lastCameraHeading = h
-                    app.map.follow(f.lat, f.lon, h)
-                }
-                nav.state?.let { s -> ui = uiOf(nav, s) }
+            if (f != null) {
+                val before = headingDeg?.let { Math.round(it) } to headingSource
+                chooseHeading("tick")
+                if ((headingDeg?.let { Math.round(it) } to headingSource) != before) nav.state?.let { s -> ui = uiOf(nav, s) }
             }
             // T65: the fix age and the snooze line follow the clock between fixes.
             val now = System.currentTimeMillis()
@@ -464,8 +428,8 @@ object NavSession {
         }
     }
 
-    /** The map's bearing as last eased to (the camera follows the heading in heading-up), else north. */
-    private fun lastMapBearing(): Double = if (app.map.cameraMode == CameraMode.HEADING_UP) (lastCameraHeading ?: 0.0) else 0.0
+    /** The map's bearing as last moved or seen at rest (T100: also a free-rotated map's). */
+    private fun lastMapBearing(): Double = io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.bearing
 
     private fun clock(ms: Long): String {
         val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
@@ -502,8 +466,8 @@ object NavSession {
                 linkedMapOf("offRouteM" to o.offRouteM, "offRouteSeconds" to o.offRouteSeconds, "backOnRouteM" to o.backOnRouteM, "arriveM" to o.arriveM, "mode" to o.mode.label, "sound" to sound, "vibrate" to vibrate)
             },
             "state" to s?.let { stateJson(it) },
-            "heading" to linkedMapOf("deg" to headingDeg?.let(::r1), "source" to headingSource, "simulated" to simulatedHeading, "courseDeg" to courseDeg?.let(::r1)),
-            "compass" to sensor.json(),
+            "heading" to linkedMapOf("deg" to headingDeg?.let(::r1), "source" to headingSource, "simulated" to io.github.jasondorjeshort.dystopo.app.controls.Heading.simulated, "courseDeg" to courseDeg?.let(::r1)),
+            "compass" to io.github.jasondorjeshort.dystopo.app.controls.Heading.compassJson(), // T100: runs only while facing
             "camera" to linkedMapOf("mode" to app.map.cameraMode.name.lowercase(), "followMoves" to app.map.followMoves),
             "keepScreenOn" to keepScreenOn(),
             "layer" to linkedMapOf("installed" to layer.installedOnStyle, "updates" to layer.updates) +

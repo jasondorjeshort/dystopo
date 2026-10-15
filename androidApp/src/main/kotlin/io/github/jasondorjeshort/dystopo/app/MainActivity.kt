@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
         mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
         mapView.onCreate(savedInstanceState)
         app.map.activity = this
+        io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
         app.map.attach(mapView, styleJson = { app.tiles.style() })
         DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
         io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(intent) // T57: dystopo://share links
@@ -97,6 +98,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         mapView.onStart()
+        io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
     }
 
     override fun onResume() {
@@ -110,6 +112,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(false) // T100: no compass in the background
         mapView.onStop()
         super.onStop()
     }
@@ -148,7 +151,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
         io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
-        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93: bullseye lower right, under the cards and sheets below
+        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused

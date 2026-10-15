@@ -29,7 +29,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.jasondorjeshort.dystopo.app.MapController.CameraMode
+import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
+import io.github.jasondorjeshort.dystopo.app.controls.Orientation
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xF2FFFCF5)
@@ -119,10 +120,14 @@ fun NavOverlay() {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                when (u.camera) {
-                    CameraMode.FREE -> Action("Recenter") { NavSession.setCamera(CameraMode.FOLLOW) }
-                    CameraMode.FOLLOW -> Action("Heading up") { NavSession.setCamera(CameraMode.HEADING_UP) }
-                    CameraMode.HEADING_UP -> Action("North up") { NavSession.setCamera(CameraMode.FOLLOW) }
+                // T100: the app's one orientation state, as the recentre button shows it: Recenter when the camera
+                // is off the fix (the orientation stays), else the change of orientation (from north-up to heading
+                // up; from heading up or free rotate to north-up).
+                val o = io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.state
+                when {
+                    !o.following -> Action("Recenter") { io.github.jasondorjeshort.dystopo.app.controls.Recenter.tap(source = "navCard") }
+                    o.orientation == Orientation.NORTH_UP -> Action("Heading up") { MapOrientation.set(Orientation.FACING, "navCard") }
+                    else -> Action("North up") { MapOrientation.set(Orientation.NORTH_UP, "navCard") }
                 }
                 Action("Stop", Alert) { NavSession.stop() }
             }
