@@ -27,8 +27,8 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
    conflict only in two docs files: keep both sides); verify #105 once T107 reports; log each with
    `merge-log.py` (entries drafted in the session scratchpad); a Haiku cleanup chore per task.
 2. T105's report answers two app questions for T106 (`catalogPacks 0`, the features part's route line).
-3. After the last merge: README status paragraph, the post-wave sweep from the main checkout (the key
-   is there; `sweep` skill), then v0.1.7-alpha (`release` skill). Set merged ideas to `done`.
+3. After the last merge: README status, the post-wave sweep from the main checkout (`sweep` skill),
+   then v0.1.7-alpha (`release` skill). Set merged ideas to `done`.
 
 ## Waiting on user
 
