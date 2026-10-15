@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-15
+
+- T101: A scale bar, and miles above feet (#102)
+
 ## v0.1.6-alpha (2026-10-14)
 
 A cold view from the phone's own sources within 15 s to contours, with every stage of it measured; pinned areas and route corridors keep their map across a source version change, and the Offline button shows the size first; waypoints anywhere and a recentre button; kept peers restored across restarts, whole replies over a slow path, and a sharer's code that kept peers cannot rotate; one drive time, a wide overlay level and robustness on long drives; font scale 2.0 without overlaps; contour lines over a pack when the set server is unreachable; a freshly installed build checks for updates at once. Process: an owner override for the usage gate, the hooks run from the project directory, the sweep's update part on the sheet, ADRs 0029 and 0030.
