@@ -166,7 +166,7 @@ object FirstRun {
         return linkedMapOf(
             "noPack" to noPack(app),
             "dismissed" to dismissed,
-            "cardVisible" to FirstRunCardState.visible,
+            "cardVisible" to FirstRunCardState.visible, "cardYieldedTo" to FirstRunCardState.yieldedTo, // T106
             "server" to AppSettings.server.ifEmpty { null },
             "direct" to OnlineService.get(app).isDirect, // T80: no server, the phone reads the sources itself
             "message" to message,
@@ -187,4 +187,6 @@ object FirstRun {
 /** What the card last drew (for `GET /firstrun`). */
 internal object FirstRunCardState {
     @Volatile var visible = false
+    /** T106: why the card is not shown although it would be (`bottomCards`: a trip, a route or navigation owns the bottom). */
+    @Volatile var yieldedTo: String? = null
 }

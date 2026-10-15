@@ -209,6 +209,16 @@ class PeerCodesTest {
         assertEquals(1, b.held)
     }
 
+    /**
+     * T106: blocks the request that went first until [n] others are waiting for its answer (or 10 s), so a burst test does
+     * not depend on every thread arriving within a sleep: under load (several agents running `check`) late threads found
+     * the answer already there and never waited (3 of 15 seen once).
+     */
+    private fun awaitWaiting(b: PeerCodes, n: Int) {
+        val deadline = System.currentTimeMillis() + 10_000
+        while (b.waited < n && System.currentTimeMillis() < deadline) Thread.sleep(2)
+    }
+
     /** [n] requests at once through [b].send to [phone] with [code], each [call]ing after a start line; their outcomes. */
     private fun burst(b: PeerCodes, phone: Phone, code: String, n: Int, call: () -> Unit): List<Result<Unit>> {
         val pool = Executors.newFixedThreadPool(n)
@@ -234,7 +244,7 @@ class PeerCodesTest {
         val sends = java.util.concurrent.atomic.AtomicInteger()
         val results = burst(b, foundA, kept, 16) {
             sends.incrementAndGet()
-            Thread.sleep(100) // the answer takes a while: the others arrive meanwhile
+            awaitWaiting(b, 15) // the answer takes a while: the others arrive meanwhile (T106: all of them, however loaded the host)
             if (send(gate, kept) == Outcome.WRONG) throw ShareClient.WrongCodeException("wrong code")
         }
         assertEquals(1, sends.get(), "one request with the old code")
@@ -255,9 +265,10 @@ class PeerCodesTest {
         val b = PeerCodes(confirmMs = 5_000)
         val inFlight = java.util.concurrent.atomic.AtomicInteger()
         val most = java.util.concurrent.atomic.AtomicInteger()
+        val first = java.util.concurrent.atomic.AtomicBoolean(true)
         val results = burst(b, foundA, kept, 16) {
             most.accumulateAndGet(inFlight.incrementAndGet()) { x, y -> maxOf(x, y) }
-            Thread.sleep(50)
+            if (first.getAndSet(false)) awaitWaiting(b, 15) else Thread.sleep(50) // T106: the first answers once all wait
             assertEquals(Outcome.OPENED, send(gate, kept))
             inFlight.decrementAndGet()
         }

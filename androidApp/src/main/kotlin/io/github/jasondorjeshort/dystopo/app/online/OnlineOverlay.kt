@@ -35,7 +35,6 @@ import java.util.Locale
 import kotlin.concurrent.thread
 
 private val Ink = Color(0xFF2B2420)
-private val Muted = Color(0xFF6B5A4A)
 private val Line = Color(0xFFE2D8C6)
 private val Chip = Color(0xEEFFFCF5)
 private val Green = Color(0xFF3C8A3F)
@@ -43,12 +42,15 @@ private val Grey = Color(0xFF9A8F84)
 private val Red = Color(0xFFB0302A)
 
 /** What the overlay shows, refreshed once a second on the main thread. */
-private class OnlineUi(val state: String, val view: OnlineView?, val download: Map<String, Any?>, val running: Boolean, val credit: String, val notice: String? = null)
+private class OnlineUi(val state: String, val view: OnlineView?, val download: Map<String, Any?>, val running: Boolean, val notice: String? = null)
 
 /**
  * The online indicator over the map (top left): online / offline with the source of the current view
- * (pack, online, cached, none), a credit line while online data is in view, and "Download this region"
- * with its progress. Hidden when no server is set. Drawn by one line in MainActivity's map screen.
+ * (pack, online, cached, none) and "Download this region" with its progress. Hidden when no server is set. Drawn by
+ * one line in MainActivity's map screen. T106: no credit line of its own any more: the map's credit line at the bottom
+ * has named the online sources in view since T41 (from the provenance of the tiles in view), while this one, under the
+ * top chips and over the map's labels, named the server's whole list ("Elevation: Copernicus DEM GLO-30" at Rainier,
+ * where 3DEP is the source).
  */
 @Composable
 fun OnlineOverlay() {
@@ -63,7 +65,7 @@ fun OnlineOverlay() {
         }
     }
     val ui = remember(tick) {
-        OnlineUi(service.state(), OnlineView.currentOnMain(app), service.region.json(), service.region.running, service.attribution(), if (service.isDirect) service.direct.notice() else null)
+        OnlineUi(service.state(), OnlineView.currentOnMain(app), service.region.json(), service.region.running, if (service.isDirect) service.direct.notice() else null)
     }
     if (ui.state == "none" && !ui.running) return io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsHidden() // T57
     io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
@@ -125,9 +127,6 @@ fun OnlineOverlay() {
                 "failed" -> Small("Download failed: ${d["error"]}", Red) {}
             }
             message?.let { Small(it, Red) { message = null } }
-            if (ui.view?.source == OnlineService.ONLINE || ui.view?.source == OnlineService.CACHED) {
-                BasicText(ui.credit, style = TextStyle(color = Muted, fontSize = 10.sp), maxLines = 2, modifier = Modifier.background(Chip, RoundedCornerShape(6.dp)).padding(4.dp))
-            }
         }
     } }
 }

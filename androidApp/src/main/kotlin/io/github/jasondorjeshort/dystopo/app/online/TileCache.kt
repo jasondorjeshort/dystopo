@@ -168,6 +168,26 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     }
 
     /**
+     * T106 (a T88 follow-up): deletes the other variants of tile [key] that sit next to it under a name starting with
+     * `<name without extension>.<infix>` (contour tiles made with out-of-view halo tiles missing:
+     * `<y>.halo-<z-x-y...>.pbf`), all but [kept] (the variant just written: the plain key or one of them). They stayed
+     * until the cache trim reached them. Lists only the tile's own directory (the y files of one x column). Returns how
+     * many went.
+     */
+    fun clearVariants(key: String, kept: String, infix: String = HALO_INFIX): Int {
+        checkKey(key)
+        val name = key.substringAfterLast('/')
+        val parent = key.substringBeforeLast('/', "")
+        val prefix = name.substringBeforeLast('.') + infix
+        val names = File(dir, parent).list()?.filter { it.startsWith(prefix) && !it.endsWith(".tmp") }.orEmpty()
+        val keys = names.map { if (parent.isEmpty()) it else "$parent/$it" }.filter { it != kept }
+        if (keys.isEmpty()) return 0
+        val gone = synchronized(this) { keys.mapNotNull { k -> index.remove(k)?.also { forget(it) } } }
+        gone.forEach { it.file.delete() }
+        return gone.size
+    }
+
+    /**
      * T95: deletes every entry [keep] does not hold (Settings › Storage, the Online tiles row's Clear: the tiles of pinned
      * offline areas are a store of their own and stay); returns how many went.
      */
@@ -213,5 +233,8 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
 
     companion object {
         const val TOUCH_INTERVAL_MS = 60_000L
+
+        /** T106: what follows a contour tile's name in the key of a variant made with halo tiles missing ([OnlineTiles.contourKey]). */
+        const val HALO_INFIX = ".halo-"
     }
 }

@@ -4,7 +4,6 @@ import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.PackSet
-import io.github.jasondorjeshort.dystopo.app.RequestChecks
 import io.github.jasondorjeshort.dystopo.app.Glyphs
 import io.github.jasondorjeshort.dystopo.app.SpriteFiles
 import io.github.jasondorjeshort.dystopo.attribution.PackMetadata
@@ -61,6 +60,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
     val contourCacheHits = AtomicLong()
     val contoursMade = AtomicLong()
     val contourIncomplete = AtomicLong()
+    /** T106: contour tiles' older halo variants deleted when the tile was made again (`<y>.halo-...pbf`, [TileCache.clearVariants]). */
+    val contourHaloVariantsDropped = AtomicLong()
     /** T74: online shade tiles (hillshade, slope) made, answered from the disk cache, and made while a DEM tile was missing (not kept). */
     val shadeCacheHits = AtomicLong()
     val shadeMade = AtomicLong()
@@ -263,16 +264,6 @@ class OnlineService private constructor(private val app: DystopoApp) {
         app.map.onMain { app.map.loadStyle(style) }
     }
 
-    /** A short credit for online data in view, from the server's `/live/info` (plain text). */
-    fun attribution(): String {
-        val i = info ?: return "© OpenStreetMap contributors, OpenFreeMap"
-        val osm = (i["osmAttribution"] as? String)?.let(RequestChecks::htmlToText)?.trim().orEmpty()
-        // The DEM credit is long (every source of `best` plus geoids); the overlay names the elevation sources only.
-        val dem = (i["demAttribution"] as? String)?.let(RequestChecks::htmlToText).orEmpty()
-        val sources = Regex("Elevation: ([^,.(]+?)(?= \\d|,|\\.| \\()").findAll(dem).map { it.groupValues[1].trim() }.distinct().toList()
-        return listOfNotNull(osm.ifEmpty { null }, sources.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Elevation: ")).joinToString(" | ")
-    }
-
     // ---- T41: view changes, online credits, glyphs and sprites ----
 
     /** Registry ids the server reports for the last online view (`/live/sources`), or null before the first. */
@@ -406,6 +397,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "served" to routes.mapValues { it.value.json() },
         "contours" to mapOf(
             "made" to contoursMade.get(), "cacheHits" to contourCacheHits.get(), "incompleteNotCached" to contourIncomplete.get(),
+            "haloVariantsDropped" to contourHaloVariantsDropped.get(), // T106
         ),
         "shade" to mapOf("made" to shadeMade.get(), "cacheHits" to shadeCacheHits.get(), "incompleteNotCached" to shadeIncomplete.get()), // T74
         "versionReloads" to versionReloads.get(),

@@ -34,9 +34,14 @@ import java.util.concurrent.atomic.AtomicLong
  *   could reach the relay while most of a 4 MiB reply was still queued there, and the client got a reply shorter
  *   than its Content-Length (T78; the finding `docs/findings/2026-10-10-emulator-share-direct-connect.md`).
  * - **The wait is bounded** (T96). At most [maxLingerMs] in all (T90's formula gave a 4 MiB reply 11.6 h at
- *   100 B/s), at most [maxLingering] sockets at once (the oldest is closed when one more arrives: it has had the
- *   longest to drain), and no thread per socket: one watcher ([LINGER_POLL_MS]) reads each waiting socket with a 1 ms
- *   timeout to see its close. T90 held a thread and a socket per idle client (300 idle clients, 300 threads, 30 s).
+ *   100 B/s), and no thread per socket: one watcher ([LINGER_POLL_MS]) reads each waiting socket with a 1 ms timeout
+ *   to see its close. T90 held a thread and a socket per idle client (300 idle clients, 300 threads, 30 s). When
+ *   [maxLingering] sockets wait and one more arrives, T106 closes the oldest **idle** one: one that has waited longer
+ *   than its reply needs to drain on any path seen ([idleMs] plus the body at [idleBytesPerSec]; T90 measured whole
+ *   4 MiB replies within a second of the last write). T96 closed the oldest whatever it was, which could cut a reply
+ *   still queued in a relay (the slow path T90 fixed) when more than 32 replies ended within a few seconds. With none
+ *   idle the socket waits too, up to [hardLingering] (a socket and a few kilobytes each, no thread; the watcher's
+ *   pass then takes up to that many milliseconds); only there is the oldest closed whatever it is.
  * - **A write deadline.** The body goes out in [SLICE] slices; a client that takes no slice for [stallMs] (it stopped
  *   reading, or the path died) has its socket closed by a watchdog, so a worker is never held by a dead peer.
  *   Progress, not the total time, is what counts: a slow path that keeps moving keeps its reply.
@@ -56,8 +61,13 @@ class ShareListener(
     private val minBytesPerSec: Long = 100,
     /** T96: the longest a socket waits for the client's close, whatever the body. */
     private val maxLingerMs: Long = MAX_LINGER_MS,
-    /** T96: the most sockets waiting for the client's close at once; one more closes the oldest. */
+    /** T96: sockets waiting for the client's close at once before one more closes another (T106: an idle one). */
     private val maxLingering: Int = MAX_LINGERING,
+    /** T106: the most sockets waiting at once in any case; one more closes the oldest, idle or not. */
+    private val hardLingering: Int = HARD_LINGERING,
+    /** T106: a waiting socket is idle (closed first beyond [maxLingering]) after this long plus its body at [idleBytesPerSec]. */
+    private val idleMs: Long = IDLE_MS,
+    private val idleBytesPerSec: Long = IDLE_BYTES_PER_SEC,
     private val log: (String) -> Unit = {},
 ) {
     private val queue = ArrayBlockingQueue<Runnable>(maxQueued)
@@ -70,11 +80,11 @@ class ShareListener(
     /** Replies being written: socket to the time of its last progress (ms). */
     private val writing = ConcurrentHashMap<Socket, Long>()
 
-    private class Lingering(val socket: Socket, val input: InputStream, val start: Long, val deadline: Long) {
+    private class Lingering(val socket: Socket, val input: InputStream, val start: Long, val deadline: Long, val idleAt: Long) {
         var extra = 0
     }
 
-    /** Replies written, waiting for the client's close, oldest first, at most [maxLingering] (closed by [stop] too). */
+    /** Replies written, waiting for the client's close, oldest first, at most [hardLingering] (closed by [stop] too). */
     private val lingering = ArrayDeque<Lingering>()
 
     @Volatile private var socket: ServerSocket? = null
@@ -90,8 +100,10 @@ class ShareListener(
     /** Replies after which the client closed first (the normal end); [lingerTimeouts] did not within the time allowed. */
     val clientClosed = AtomicLong()
     val lingerTimeouts = AtomicLong()
-    /** T96: waiting sockets closed early because [maxLingering] others were waiting (the oldest goes). */
+    /** T96: waiting sockets closed early because [maxLingering] others were waiting (T106: idle ones only). */
     val lingerEvicted = AtomicLong()
+    /** T106: waiting sockets closed early at [hardLingering], idle or not (a reply could be cut there). */
+    val lingerEvictedHard = AtomicLong()
     /** T96: the most sockets that waited at once. */
     val lingerPeak = AtomicLong()
     /** Replies the client stopped reading before the end (it closed or reset the connection while the body was going). */
@@ -178,7 +190,8 @@ class ShareListener(
     /**
      * Hands [c] to the watcher, which closes it once the client has closed its end ([pollLingers]); true when it was
      * handed off. The request was read completely, so anything the client still sends is discarded. T96: at most
-     * [lingerWait] ([maxLingerMs] in all), and when [maxLingering] sockets are waiting already the oldest is closed now.
+     * [lingerWait] ([maxLingerMs] in all). T106: when [maxLingering] sockets are waiting already the oldest idle one is
+     * closed now ([idleAfter]); with none idle this one waits too, and only at [hardLingering] does the oldest go.
      */
     private fun linger(c: Socket, input: InputStream, bodyBytes: Long): Boolean {
         if (lingerWatch.isShutdown) return false
@@ -188,14 +201,19 @@ class ShareListener(
             return false
         }
         val now = System.currentTimeMillis()
-        val l = Lingering(c, input, now, now + lingerWait(bodyBytes, lingerMs, minBytesPerSec, maxLingerMs))
+        val l = Lingering(c, input, now, now + lingerWait(bodyBytes, lingerMs, minBytesPerSec, maxLingerMs), now + idleAfter(bodyBytes, idleMs, idleBytesPerSec))
+        var hard = false
         val evicted = synchronized(lingering) {
-            val out = if (lingering.size >= maxLingering) lingering.removeFirst() else null
+            val out = when {
+                lingering.size < maxLingering -> null
+                else -> lingering.firstOrNull { now >= it.idleAt }?.also { lingering.remove(it) }
+                    ?: if (lingering.size >= hardLingering) lingering.removeFirst().also { hard = true } else null
+            }
             lingering.addLast(l)
             lingerPeak.accumulateAndGet(lingering.size.toLong()) { a, b -> maxOf(a, b) }
             out
         }
-        evicted?.let { end(it, lingerEvicted) }
+        evicted?.let { end(it, if (hard) lingerEvictedHard else lingerEvicted) }
         return true
     }
 
@@ -330,6 +348,7 @@ class ShareListener(
         "lingerTimeouts" to lingerTimeouts.get(), "lingerMsTotal" to lingerMsTotal.get(), "writing" to writing.size,
         "lingering" to synchronized(lingering) { lingering.size }, "lingerEvicted" to lingerEvicted.get(), "lingerPeak" to lingerPeak.get(), // T96
         "maxLingering" to maxLingering, "maxLingerMs" to maxLingerMs,
+        "lingerEvictedHard" to lingerEvictedHard.get(), "hardLingering" to hardLingering, "idleMs" to idleMs, // T106
     )
 
     companion object {
@@ -345,8 +364,18 @@ class ShareListener(
         /** T96: the longest wait for a client's close (T90 measured whole 4 MiB replies within a second of the last write). */
         const val MAX_LINGER_MS = 120_000L
 
-        /** T96: the most sockets waiting at once: a pack download keeps about four in flight per phone. */
+        /** T96: sockets waiting at once before an idle one is closed (T106): a pack download keeps about four in flight per phone. */
         const val MAX_LINGERING = 32
+
+        /** T106: the most sockets waiting at once, idle or not (each is a socket and a few kilobytes, no thread). */
+        const val HARD_LINGERING = 256
+
+        /** T106: a waiting socket counts as idle after this long plus its body at [IDLE_BYTES_PER_SEC] ([idleAfter]). */
+        const val IDLE_MS = 5_000L
+        const val IDLE_BYTES_PER_SEC = 256L shl 10
+
+        /** T106: how long after its last write a reply of [bodyBytes] may still be draining through a relay. */
+        fun idleAfter(bodyBytes: Long, idleMs: Long, bytesPerSec: Long): Long = idleMs + bodyBytes * 1000 / bytesPerSec.coerceAtLeast(1)
 
         /** T96: how often the watcher looks at the waiting sockets. */
         const val LINGER_POLL_MS = 20L

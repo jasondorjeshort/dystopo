@@ -181,7 +181,8 @@ private fun BoxScope.Controls() {
     Column(
         // T41: above the credit line (its measured top), so the profile panel never covers it.
         Modifier.align(Alignment.BottomCenter).let { m ->
-            val b = io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsFloor // T49: above the route card too
+            // T49: above the route card too; T106: and above the update offer, which covered the long-press card.
+            val b = maxOf(io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsFloor, io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop)
             if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
         }.let { m -> // T49: report where the panels are (GET /route layout)
             val density = androidx.compose.ui.platform.LocalDensity.current

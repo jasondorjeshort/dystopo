@@ -32,9 +32,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -43,7 +46,6 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
-import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
@@ -52,8 +54,6 @@ import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
 import java.util.Locale
-import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.concurrent.thread
 
 private val Ink = Color(0xFF2B2420)
@@ -108,7 +108,8 @@ fun AreasOverlay() {
                 "Pinned areas stay on this phone until you unpin or remove them. A trip's Offline button downloads its corridor.",
                 style = TextStyle(color = Muted, fontSize = 12.sp),
             )
-            progress?.takeIf { it["state"] !in setOf("done", "failed", "cancelled", "partial") }?.let { p ->
+            // T106: a refused job is finished too (it read "Downloading ...: 0 of 0 tiles" for as long as the sheet stayed open).
+            progress?.takeIf { it["state"] !in setOf("done", "failed", "cancelled", "partial", "refused") }?.let { p ->
                 BasicText(
                     "Downloading ${p["name"]}: ${p["done"]} of ${p["planned"]} tiles, ${mb((p["bytes"] as? Number)?.toLong() ?: 0)}",
                     style = TextStyle(color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold),
@@ -133,7 +134,7 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         }
         val kind = when {
             r.pack != null -> "Region pack ${r.pack}"
-            r.area.shape is AreaShape.Corridor -> String.format(Locale.US, "Corridor %.1f km, %d m each side", r.area.lengthM / 1000, (r.area.shape as AreaShape.Corridor).bufferM.toInt())
+            r.area.shape is AreaShape.Corridor -> corridorLine(r.area.lengthM, (r.area.shape as AreaShape.Corridor).bufferM, AppSettings.units) // T106: the units setting
             else -> "Box"
         }
         val share = (cov?.get("share") as? Number)?.toDouble()
@@ -148,12 +149,16 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         )
         if (r.pack != null) BasicText(PACK_NOTE, style = TextStyle(color = Muted, fontSize = 12.sp))
         val older = !Areas.older(r).isNullOrEmpty() // T95
-        if (older) BasicText(OLDER_NOTE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 12.sp, fontWeight = FontWeight.Bold))
+        // T106: from a source the phone no longer reads (its server changed) is older too, said as such.
+        if (older) BasicText(if (Areas.fromOtherSource(r)) OTHER_SOURCE_NOTE else OLDER_NOTE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 12.sp, fontWeight = FontWeight.Bold))
         r.error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 2) }
+        // T106 (a T91 follow-up): a failed, cut short or refused download offers Retry and Dismiss instead of staying listed as failed.
+        val failed = r.pack == null && r.state != "downloading" && (r.error != null || r.state == "failed" || r.state == "partial")
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
             if (r.pack == null) Action(if (r.pinned) "Unpin" else "Pin") { thread { runCatching { Areas.pin(r.id, !r.pinned) } } }
-            if (r.pack == null && r.state != "downloading") Action(if (older) "Update" else "Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
+            if (r.pack == null && r.state != "downloading") Action(if (failed) "Retry" else if (older) "Update" else "Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
+            if (failed) Action("Dismiss", Muted) { thread { runCatching { Areas.dismiss(r.id) } } }
             Action("Remove", Color(0xFFD73027)) { thread { runCatching { Areas.remove(r.id) } } }
         }
     }
@@ -165,6 +170,16 @@ private const val SHEET = 0.55f
 
 /** T95: an area whose source serves a newer version than its tiles were fetched at. */
 internal const val OLDER_NOTE = "Older than the source. Update downloads the newer data."
+
+/** T106: an area fetched from another source than the one set now (the map does not read its tiles any more). */
+internal const val OTHER_SOURCE_NOTE = "Downloaded from another source. Update downloads it from the one set now."
+
+/**
+ * T106 (a T95 follow-up): the area card's corridor line in the units setting, "Corridor 12.4 km, 500 m each side" or
+ * "Corridor 7.7 mi, 1640 ft each side" ([UnitFormat.distance]; it was metric whatever the setting). Pure, tested.
+ */
+internal fun corridorLine(lengthM: Double, bufferM: Double, units: ContourUnits): String =
+    "Corridor ${UnitFormat.distance(lengthM, units)}, ${UnitFormat.distance(bufferM, units)} each side"
 
 /** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). */
 internal const val PACK_NOTE = "A region pack is never evicted, so it needs no pin; it stays until you remove it."
@@ -214,12 +229,10 @@ object AreaOutlines {
                 }
                 is AreaShape.Corridor -> {
                     val pts = s.points.map { Point.fromLngLat(it.lon, it.lat) }.let { if (it.size == 1) listOf(it[0], it[0]) else it }
-                    val lat = s.points.map { it.lat }.average()
-                    // Pixels per metre at zoom 0 for MapLibre's 512-px world, at this latitude.
-                    val pxPerM0 = 512.0 / (2 * PI * 6378137.0 * cos(lat * PI / 180))
-                    fs += Feature.fromGeometry(LineString.fromLngLats(pts)).apply {
-                        addStringProperty("kind", "band"); addStringProperty("id", r.id)
-                        addNumberProperty("w0", 2 * s.bufferM * pxPerM0)
+                    // T106: the band is the corridor's outline filled once (a line as wide as the buffer folded into wedges at bends).
+                    for (p in outline(r.id, s)) {
+                        val rings = (listOf(p.outer) + p.holes).map { ring -> ring.map { Point.fromLngLat(it.lon, it.lat) } }
+                        fs += Feature.fromGeometry(Polygon.fromLngLats(rings)).apply { addStringProperty("kind", "band"); addStringProperty("id", r.id) }
                     }
                     fs += Feature.fromGeometry(LineString.fromLngLats(pts)).apply { addStringProperty("kind", "line"); addStringProperty("id", r.id) }
                 }
@@ -228,6 +241,20 @@ object AreaOutlines {
         data = FeatureCollection.fromFeatures(fs)
         features = fs.size
         main.post { apply() }
+    }
+
+    /** T106: each corridor's outline polygons, made once per area and shape (the sheet redraws every 1.5 s). */
+    private val outlines = HashMap<String, Pair<AreaShape.Corridor, List<CorridorOutline.Polygon>>>()
+
+    @Synchronized
+    private fun outline(id: String, s: AreaShape.Corridor): List<CorridorOutline.Polygon> {
+        outlines[id]?.takeIf { it.first == s }?.let { return it.second }
+        return CorridorOutline.polygons(s.points, s.bufferM).also { outlines[id] = s to it }
+    }
+
+    /** T106: polygons in the band layer, for `GET /areas` checks of the outline (`outline` there). */
+    fun json(): Map<String, Any?> = synchronized(this) {
+        linkedMapOf("features" to features, "corridors" to outlines.map { (id, v) -> mapOf("id" to id, "polygons" to v.second.size, "holes" to v.second.sumOf { it.holes.size }, "points" to v.second.sumOf { p -> p.outer.size + p.holes.sumOf { it.size } }) })
     }
 
     private fun install() {
@@ -243,17 +270,10 @@ object AreaOutlines {
                 FillLayer(FILL, SOURCE).withFilter(Expression.eq(kind, Expression.literal("box")))
                     .withProperties(PropertyFactory.fillColor(COLOR), PropertyFactory.fillOpacity(0.10f)),
             )
-            // Width doubles per zoom: w0 * 2^z pixels, from z0 to z22.
-            val w = Expression.interpolate(
-                Expression.exponential(2), Expression.zoom(),
-                Expression.stop(0, Expression.get("w0")),
-                Expression.stop(22, Expression.product(Expression.get("w0"), Expression.literal(4194304.0))),
-            )
+            // T106: the corridor's outline polygons ([CorridorOutline]), filled once.
             style.addLayer(
-                LineLayer(BAND, SOURCE).withFilter(Expression.eq(kind, Expression.literal("band"))).withProperties(
-                    PropertyFactory.lineColor(COLOR), PropertyFactory.lineOpacity(0.18f), PropertyFactory.lineWidth(w),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                ),
+                FillLayer(BAND, SOURCE).withFilter(Expression.eq(kind, Expression.literal("band")))
+                    .withProperties(PropertyFactory.fillColor(COLOR), PropertyFactory.fillOpacity(0.18f)),
             )
             style.addLayer(
                 LineLayer(LINE, SOURCE).withFilter(Expression.eq(kind, Expression.literal("line"))).withProperties(

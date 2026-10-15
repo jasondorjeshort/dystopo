@@ -37,7 +37,6 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
-import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.ScaleLength
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
@@ -110,6 +109,7 @@ object ScaleBarLayout {
         val routeCard = BottomPanels.routeCardTop.value
         val panelsShown = BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom
         val trackPanels = if (panelsShown) BottomPanels.trackPanelsTop.value else 0f
+        val cards = io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop.value // T106: the trip card and the update offer
         val bottomDp = if (b != null && h > 0) (h - b[3]) / d else null // the bar's bottom edge from the window bottom
         val visible = shown && b != null
         val drawn = drawnPx
@@ -132,9 +132,9 @@ object ScaleBarLayout {
             },
             "boundsPx" to b?.map { Math.round(it) },
             "bottomFromWindowBottomDp" to bottomDp?.let { round(it.toDouble(), 1) },
-            "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels,
-            // Clear: the bar's bottom edge is above the credit line, the route card and the track panels.
-            "clear" to if (!visible || bottomDp == null) null else bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels,
+            "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "bottomCardsTopDp" to cards, // T106
+            // Clear: the bar's bottom edge is above the credit line, the route card, the track panels, the trip card and the update offer.
+            "clear" to if (!visible || bottomDp == null) null else bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards,
         )
     }
 
@@ -153,8 +153,8 @@ private data class ScaleView(val zoom: Double, val lat: Double, val units: Conto
 /**
  * T101: the scale bar, lower left on the map, above the credit line and above whatever bottom panel shows (the
  * route card, the track profile and waypoint panels: [BottomPanels]), so it moves up with them like the
- * recentre button on the right; hidden while the trip card is open (that card spans the bottom and reports no
- * edge). The length is [UnitFormat.scaleBar] at the camera's zoom and centre latitude in the units preference;
+ * recentre button on the right (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`).
+ * The length is [UnitFormat.scaleBar] at the camera's zoom and centre latitude in the units preference;
  * with [ScaleBarSettings.bothUnits] it is a two-sided ruler, the user's units above the line and the other
  * system below. Follows the camera during gestures (a camera-move listener) and the units, the night style
  * and the option within half a second. Dark ink on paper, light ink on a dark plate in the night style.
@@ -162,10 +162,6 @@ private data class ScaleView(val zoom: Double, val lat: Double, val units: Conto
 @Composable
 fun ScaleBar() {
     val app = DystopoApp.instance
-    if (Trips.editing != null) {
-        SideEffect { ScaleBarLayout.hide("tripCard") }
-        return
-    }
     var view by remember { mutableStateOf<ScaleView?>(null) }
     LaunchedEffect(Unit) {
         var attached: MapLibreMap? = null
@@ -204,7 +200,7 @@ fun ScaleBar() {
     val ink = if (v.night) NightInk else Ink
     val plate = if (v.night) NightPlate else Plate
     val panels = if (BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom) BottomPanels.trackPanelsTop else 0.dp
-    val floor = maxOf(AttributionInsets.bottom, BottomPanels.routeCardTop, panels)
+    val floor = maxOf(AttributionInsets.bottom, BottomPanels.routeCardTop, panels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop) // T106
     val density = LocalDensity.current
     val labelStyle = TextStyle(color = ink, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     val widest = bars.maxOf { it.px }

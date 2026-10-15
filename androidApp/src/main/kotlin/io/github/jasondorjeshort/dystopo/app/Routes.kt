@@ -28,7 +28,10 @@ import java.io.File
  *   T93: `POST /camera/recenter` (the recentre button's tap) and the button's state in `GET /camera`
  *   ([io.github.jasondorjeshort.dystopo.app.controls.ControlRoutes]).
  * - `GET /stats`: tiles served per source, contour generation timings (min/avg/max and recent tiles),
- *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes.
+ *   cache hits, DEM decode cache, memory (Java heap, native heap, PSS), APK and pack sizes; `server.pools` the
+ *   loopback server's queue waits and run times per pool (T63: `tile`, `generation`, `debug`; T88: `wait`, up to 48
+ *   workers and no queue, where DEM, contour and shade requests waiting on the phone's own source reads run, with
+ *   `maxThreads`, `threads`, `largest` and `active`).
  * - `POST /location` (lat, lon[, accuracy, bearing]): injects a location fix; the puck shows it and the
  *   device's own location engine stays detached until `POST /location?device=1`. `GET /location`.
  * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`, T103 `GET /settings/layout` and `POST /settings/open?group=`: user settings and the sheet's groups ([SettingsRoutes]).

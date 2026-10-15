@@ -1,0 +1,78 @@
+package io.github.jasondorjeshort.dystopo.app.online
+
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * T106 (a T88 follow-up): a DEM render interrupted while it waits (for the coarse renders, or for a permit) gives its
+ * counters back. Before, `rendering` and `coarseActive` were raised outside the `try`: one interrupt left the map never
+ * counting its renders done and every later render at the view's zoom waiting the whole coarse hold.
+ */
+class RenderSlotsTest {
+    private fun interruptWhileWaiting(slots: RenderSlots, coarse: Boolean): Throwable? {
+        val failure = AtomicReference<Throwable?>()
+        val t = thread { runCatching { slots.run(coarse) { "rendered" } }.onFailure { failure.set(it) } }
+        Thread.sleep(150) // it is waiting now (for a permit, or for the coarse render in flight)
+        t.interrupt()
+        t.join(5_000)
+        assertTrue(!t.isAlive)
+        return failure.get()
+    }
+
+    @Test
+    fun anInterruptWhileWaitingForAPermitLeaksNothing() {
+        val slots = RenderSlots(permits = 1, coarseFirstMs = 1_500, coarseGraceMs = 0)
+        val hold = CountDownLatch(1)
+        val inside = CountDownLatch(1)
+        val busy = thread { slots.run(coarse = true) { inside.countDown(); hold.await(5, TimeUnit.SECONDS) } }
+        assertTrue(inside.await(5, TimeUnit.SECONDS))
+        assertEquals(1, slots.coarseActive.get())
+        // A second coarse render waits for the only permit, and is interrupted there.
+        assertTrue(interruptWhileWaiting(slots, coarse = true) is InterruptedException)
+        assertEquals(1, slots.rendering.get(), "only the render that runs")
+        assertEquals(1, slots.coarseActive.get())
+        assertEquals(0, slots.available, "the permit is the running render's")
+        hold.countDown()
+        busy.join(5_000)
+        assertEquals(0, slots.rendering.get())
+        assertEquals(0, slots.coarseActive.get())
+        assertEquals(1, slots.available, "no permit given back twice, none kept")
+    }
+
+    @Test
+    fun anInterruptDuringTheCoarseHoldLeaksNothing() {
+        val slots = RenderSlots(permits = 4, coarseFirstMs = 10_000, coarseGraceMs = 0)
+        val hold = CountDownLatch(1)
+        val inside = CountDownLatch(1)
+        val coarse = thread { slots.run(coarse = true) { inside.countDown(); hold.await(5, TimeUnit.SECONDS) } }
+        assertTrue(inside.await(5, TimeUnit.SECONDS))
+        // A render at the view's zoom holds for the coarse one (up to 10 s), and is interrupted there.
+        assertTrue(interruptWhileWaiting(slots, coarse = false) is InterruptedException)
+        assertEquals(1, slots.rendering.get())
+        assertEquals(3, slots.available, "the interrupted render never took a permit")
+        hold.countDown()
+        coarse.join(5_000)
+        assertEquals(0, slots.rendering.get())
+        assertEquals(0, slots.coarseActive.get())
+        assertEquals(4, slots.available)
+        // Afterwards a view render does not wait for a coarse render that is not there.
+        val t0 = System.nanoTime()
+        assertEquals("rendered", slots.run(coarse = false) { "rendered" })
+        assertTrue((System.nanoTime() - t0) / 1_000_000 < 1_000)
+    }
+
+    @Test
+    fun aRenderThatThrowsGivesEverythingBack() {
+        val slots = RenderSlots(permits = 2, coarseFirstMs = 1_500, coarseGraceMs = 0)
+        repeat(3) { runCatching { slots.run(coarse = it % 2 == 0) { error("a source failed") } } }
+        assertEquals(0, slots.rendering.get())
+        assertEquals(0, slots.coarseActive.get())
+        assertEquals(2, slots.available)
+        assertTrue(slots.lastDoneAt > 0)
+    }
+}

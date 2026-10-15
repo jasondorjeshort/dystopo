@@ -147,15 +147,26 @@ object Areas : VersionPins {
 
     /**
      * T95: the content names (`dem`, `osm`) whose version [r] was fetched at differs from what its source serves
-     * now ("older than the source"); empty when they agree, null when the source is not in use or not known.
+     * now ("older than the source"); empty when they agree, null when not known (no online source, or none recorded).
+     * T106 (ADR 0030's deferred item): an area fetched from another source than the one the phone uses now
+     * ([fromOtherSource]) is older too, in every name it holds: its tiles sit under that source's key, which no lookup
+     * reads any more, so the map finds none of them and Update fetches them from the source set now.
      */
     fun older(r: Record): List<String>? {
         if (r.pack != null || r.source == null) return null
         val f = runCatching { OnlineService.get(app).fetcher }.getOrNull() ?: return null
         val key = OnlineFetcher.keyFor(r.source)
-        val s = f.sourceList.firstOrNull { it.key == key } ?: return null
+        val s = f.sourceList.firstOrNull { it.key == key } ?: return otherSourceNames(r.versions[key])
         val recorded = r.versions[key] ?: return null
         return AreaPins.older(recorded, HashMap(s.versions))
+    }
+
+    /** T106: [r] was fetched from a source the phone no longer uses (its server changed, or no server became one). */
+    fun fromOtherSource(r: Record): Boolean {
+        if (r.pack != null || r.source == null) return false
+        val f = runCatching { OnlineService.get(app).fetcher }.getOrNull() ?: return false
+        val key = OnlineFetcher.keyFor(r.source)
+        return f.sourceList.none { it.key == key }
     }
 
     @Synchronized
@@ -214,6 +225,21 @@ object Areas : VersionPins {
         val n = update(r.id) { it.copy(pinned = on) }!!
         if (!on) dropUnheld() // T95: its tiles of an older version are reachable no more
         return n
+    }
+
+    /**
+     * T106 (a T91 follow-up): Dismiss on an area whose download failed, was cut short or was refused: the message goes. An
+     * area with nothing on the phone (no tile of its manifest) is removed; any other keeps what it has, `done` when every
+     * tile is there, else `partial` (Retry finishes it). Returns the record, or null when it was removed.
+     */
+    fun dismiss(id: String): Record? {
+        val r = get(id) ?: throw NoSuchElementException("no area '$id'")
+        check(r.state != "downloading" || AreaDownload.job?.let { it.id == r.id && it.running } != true) { "area ${r.name} is downloading; DELETE /areas/download first" }
+        val share = (coverage(r)["share"] as? Number)?.toDouble()
+        return when (val next = dismissedState(r.pack != null, share, r.bytes, r.state)) {
+            null -> { remove(r.id); null }
+            else -> update(r.id) { it.copy(state = next, error = null) }
+        }
     }
 
     /** T95: the fetcher's [OnlineFetcher.dropUnheld] after the pins changed (an area refreshed, unpinned or removed). */
@@ -361,11 +387,51 @@ object Areas : VersionPins {
 
     fun json(withCoverage: Boolean = true): Map<String, Any?> {
         val all = all()
-        val cache = OnlineService.get(app).cache
+        val service = OnlineService.get(app)
+        val cache = service.cache
+        val current = runCatching { service.fetcher?.sourceList?.map { it.key } }.getOrNull().orEmpty()
         return linkedMapOf(
-            "areas" to all.map { r -> r.json() + mapOf("olderThanSource" to older(r)) + if (withCoverage) mapOf("coverage" to coverage(r)) else emptyMap() },
+            "areas" to all.map { r ->
+                r.json() + mapOf("olderThanSource" to older(r), "fromOtherSource" to fromOtherSource(r)) + if (withCoverage) mapOf("coverage" to coverage(r)) else emptyMap()
+            },
             "pinned" to all.count { it.pinned }, "transientPins" to transientCount,
+            "pinnedBySource" to pinnedBySource(cache.byPrefix(1, pinned = true), current), // T106 (ADR 0030's deferred item)
             "cache" to cache.json(), "download" to AreaDownload.json(), "prefetch" to AheadPrefetch.json(),
+            "outline" to AreaOutlines.json(), // T106: the sheet's corridor polygons
         )
     }
 }
+
+/**
+ * T106 (ADR 0030's deferred item): the pinned tiles per source cache key ([TileCache.byPrefix] of the pinned entries:
+ * key to tiles and bytes), with whether the phone reads that source now ([current]): after a server switch the old
+ * source's pinned tiles stay on the phone, counted against the offline areas' budget, until their area is updated
+ * (then they go) or unpinned. Biggest first. Pure, tested.
+ */
+internal fun pinnedBySource(byKey: Map<String, Pair<Int, Long>>, current: Collection<String>): List<Map<String, Any?>> =
+    byKey.entries.sortedByDescending { it.value.second }.map { (key, v) ->
+        linkedMapOf("source" to key, "tiles" to v.first, "bytes" to v.second, "inUse" to (key in current))
+    }
+
+/**
+ * T106: the state an area takes when its failure is dismissed, from whether it is a pack, the share of its manifest's
+ * tiles the map finds now ([share], null when unknown), the bytes it recorded and its [state]: `done` for a pack or a
+ * whole corridor, `partial` for some tiles; null (remove it) when nothing of it was ever downloaded. An area whose tiles
+ * the map does not find although it has bytes (fetched from another source, its Update refused) keeps them and its state.
+ * Pure, tested.
+ */
+internal fun dismissedState(isPack: Boolean, share: Double?, bytes: Long, state: String): String? = when {
+    isPack -> "done"
+    share != null && share >= 1.0 -> "done"
+    share != null && share > 0.0 -> "partial"
+    bytes <= 0 -> null
+    state == "done" || state == "partial" -> state
+    else -> "partial"
+}
+
+/**
+ * T106: the names an area fetched from a source the phone no longer reads is older in: the ones it recorded for that
+ * source ([recorded]), else `dem` and `osm` (an area from before T95 recorded none). Pure, tested.
+ */
+internal fun otherSourceNames(recorded: Map<String, String>?): List<String> =
+    recorded?.keys?.sorted()?.takeIf { it.isNotEmpty() } ?: listOf("dem", "osm")

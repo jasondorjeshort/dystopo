@@ -2,10 +2,10 @@ package io.github.jasondorjeshort.dystopo.app.update
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -17,7 +17,9 @@ import kotlin.concurrent.thread
 /**
  * T83: the Updates row of the settings sheet: this build's version, "Check for updates" (a manual check, which
  * also shows a version declined earlier), what the last check found, and Install when a verified update waits.
+ * T106: the two buttons wrap (a row that did not wrap could push Install off the sheet at font scale 2.0).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UpdateRow() {
     if (!Updater.initialized()) Updater.start(DystopoApp.instance)
@@ -25,7 +27,7 @@ fun UpdateRow() {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         BasicText("Updates", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
         BasicText("This build: ${Updater.ownName} (${Updater.ownCode}). New alphas come from the GitHub releases page; checked daily on any network.", style = TextStyle(color = Muted, fontSize = 11.sp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val busy = s.phase == Updater.Phase.CHECKING || s.phase == Updater.Phase.DOWNLOADING
             Button(if (busy) "Checking..." else "Check for updates", false) { if (!busy) thread(name = "dystopo-update-check") { Updater.check(manual = true) } }
             if (Updater.readyFile != null && (s.phase == Updater.Phase.READY || s.phase == Updater.Phase.DECLINED)) {

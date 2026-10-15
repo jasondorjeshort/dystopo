@@ -4,7 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -93,7 +94,11 @@ private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xEEFFFCF5)
 private val Link = Color(0xFF2C7BB6)
 
-/** The long-press card (bottom of the map, with the waypoint sheet). */
+/**
+ * The long-press card (bottom of the map, with the waypoint sheet). T106: its actions wrap (at font scale 2.0 "Cancel" was
+ * squeezed into a column of letters), and the column it sits in stays above the update offer.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LongPressCard() {
     val p = LongPressMenu.point ?: return
@@ -102,7 +107,7 @@ internal fun LongPressCard() {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), style = TextStyle(color = Ink, fontSize = 12.sp))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             MenuAction("Waypoint here") { LongPressMenu.waypoint() }
             MenuAction("Route from here") { LongPressMenu.route() }
             MenuAction("Cancel") { LongPressMenu.cancel() }

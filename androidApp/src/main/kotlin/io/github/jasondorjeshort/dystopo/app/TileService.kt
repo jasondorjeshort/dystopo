@@ -65,10 +65,21 @@ class TileCounters {
     /**
      * T98: contour tiles whose sampled DEM was all NaN although a DEM pack's bounds overlap them
      * (`contourGeneration.noDemOverPack`). The pack has elevations there, so such a tile is a bug: the z8 tiles over the
-     * Rainier pack with the server unreachable were exactly that, served as empty tiles the map then kept.
+     * Rainier pack with the server unreachable were exactly that, served as empty tiles the map then kept. T106: only
+     * when the pack itself has an elevation in the tile's window ([noDemWherePackHasData]); a tile inside a pack's box
+     * where the pack has none either (the sea off a coast) is no defect and is not counted.
      */
     val contourNoDemOverPack = TileTally()
 }
+
+/**
+ * T106 (a T98 follow-up): whether a contour tile sampled with no elevation at all ([grid] all NaN) over the DEM packs whose
+ * bounds overlap it is the T98 defect: true when one of [packWindows] (each such pack's own elevations in the tile's
+ * window, read from its first zoom up) has a value. A pack's box is a box: off a coast the pack has no data either, and
+ * an empty contour tile there is right. [packWindows] is read only when the grid is all NaN. Pure, tested.
+ */
+internal fun noDemWherePackHasData(grid: FloatArray, packWindows: Sequence<FloatArray>): Boolean =
+    grid.all { it.isNaN() } && packWindows.any { w -> w.any { !it.isNaN() } }
 
 /** T98: how often something that should not happen happened, and the last few tiles it happened to (`/stats`). */
 class TileTally(private val keep: Int = 8) {
@@ -562,6 +573,15 @@ class TileService(
         }
     }
 
+    /**
+     * T106: [pack]'s own elevations in contour tile z/x/y's window, read at least at the pack's first zoom
+     * ([io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.readFrom]) from the pack alone; empty when that fails.
+     */
+    private fun packWindow(pack: Pack, z: Int, x: Int, y: Int, options: ContourTileOptions, tileSize: Int): FloatArray = runCatching {
+        val o = io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.readFrom(options, pack.header.minZoom, z, x, y)
+        ContourTiles.sample(pyramid(pack), ContourTiles.plan(z, x, y, o, tileSize)).values
+    }.getOrDefault(FloatArray(0))
+
     /** [cancel] (T42, the warm-up's): polled between steps; true abandons the tile with [ContourBuildCancelled]. */
     private fun generateContourTile(p: DemPyramid, z: Int, x: Int, y: Int, cacheKey: String?, stats: ContourTileStats, cancel: (() -> Boolean)? = null, options: ContourTileOptions = contourOptions): ByteArray {
         val requested = System.nanoTime()
@@ -573,8 +593,14 @@ class TileService(
             if (cancel != null && cancel()) throw ContourBuildCancelled("contour tile $z/$x/$y cancelled before sampling")
             val grid = ContourTiles.sample(p, plan)
             val sampled = System.nanoTime()
-            // T98: a pack's bounds overlap the tile but the window has no elevation at all: an empty tile where the pack has data.
-            if (grid.values.all { it.isNaN() } && packs.demCandidates(z, x, y, PackRoleZooms.CONTOUR).isNotEmpty()) counters.contourNoDemOverPack.add("$z/$x/$y")
+            // T98: a pack's bounds overlap the tile but the window has no elevation at all: an empty tile where the pack has data
+            // (T106: the pack's own window has some; a coast inside the pack's box has none and is not counted).
+            if (grid.values.all { it.isNaN() }) {
+                val overlapping = packs.demCandidates(z, x, y, PackRoleZooms.CONTOUR)
+                if (overlapping.isNotEmpty() && noDemWherePackHasData(grid.values, overlapping.asSequence().map { packWindow(it, z, x, y, options, p.tileSize) })) {
+                    counters.contourNoDemOverPack.add("$z/$x/$y")
+                }
+            }
             val tile = ContourTiles.build(grid, plan, contourOptions, cancel)
             val done = System.nanoTime()
             if (cacheKey != null) contourCache.put(cacheKey, tile.bytes) // T41: the shared LRU cache (atomic rename inside)

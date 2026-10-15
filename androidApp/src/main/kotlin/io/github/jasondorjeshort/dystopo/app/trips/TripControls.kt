@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +32,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -147,15 +150,21 @@ private fun RouteRow(r: RouteListItem) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun TripCard(modifier: Modifier) {
     val p = Trips.editing ?: return
     val s = Trips.summary ?: return
     val u = AppSettings.units
-    val b = AttributionInsets.bottom
+    val b = AttributionInsets.bottom // T106: the update offer waits while this card is open (UpdateOverlay)
+    val density = LocalDensity.current
+    // T106 (a T93 follow-up): the card reports its top edge, so the recentre button rides above it instead of hiding.
+    DisposableEffect(Unit) { onDispose { io.github.jasondorjeshort.dystopo.app.MapInsets.tripCardTop = 0.dp } }
     Column(
         modifier.let { m -> if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp) }
-            .widthIn(max = 440.dp).background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+            .widthIn(max = 440.dp)
+            .onGloballyPositioned { c -> io.github.jasondorjeshort.dystopo.app.MapInsets.let { i -> i.topFromWindowBottom(c, density).let { if (it != i.tripCardTop) i.tripCardTop = it } } }
+            .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -169,6 +178,13 @@ private fun TripCard(modifier: Modifier) {
         )
         if (s.straightM > 0) BasicText(UnitFormat.distance(s.straightM, u) + (if (s.mode == "drive") " off road (dashed)" else " off trail (dashed)"), style = TextStyle(color = Ink, fontSize = 12.sp))
         if (s.mode == "drive") BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T73
+        // T106 (a T89 follow-up): a drive planned before road speeds says its time is the flat estimate, and offers Re-plan.
+        if (untimedDriveLegs(p.path) > 0) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(driveTimeEstimated(u), style = TextStyle(color = Ink, fontSize = 12.sp), modifier = Modifier.weight(1f))
+                Action("Re-plan") { Trips.background { Trips.replan(p.id) } }
+            }
+        }
         Profile(s.profile, s.waypoints, Modifier.fillMaxWidth().height(84.dp))
         if (s.waypoints.isNotEmpty()) {
             BasicText(
@@ -185,13 +201,14 @@ private fun TripCard(modifier: Modifier) {
                 Action(if (o.canDownload) "Cancel" else "Close") { Trips.cancelOffline() }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        // T106: the tools and the actions wrap (at font scale 2.0 they were squeezed into columns of letters).
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
                 Toggle(label, Trips.tool == t) { Trips.tool = t }
             }
             for (m in listOf("hike", "bike", "drive")) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (p.path.via.size > 2) {
                 BasicText("Remove via:", style = TextStyle(color = Ink, fontSize = 12.sp))
                 for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }

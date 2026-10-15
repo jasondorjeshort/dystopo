@@ -14,6 +14,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -172,14 +173,15 @@ class ShareListenerTest {
     /**
      * T96: 300 idle clients (each reads its reply and never closes). T90 held a socket and a thread per client for the whole
      * 30 s; now at most [ShareListener.MAX_LINGERING] wait at once (the oldest is closed when one more arrives), on one
-     * watcher thread, and each is closed within the cap.
+     * watcher thread, and each is closed within the cap. T106: the oldest *idle* one; here every client counts as idle at
+     * once (`idleMs` 0, a 100-byte reply), as T96's rule treated them all.
      */
     @Test
     fun idleClientsAreReleasedWithinTheCapOnOneThread() {
         val cap = 16
         val maxMs = 1_500L
         val before = lingerThreads()
-        val l = ShareListener(0, handler = { Response(200, "text/plain", ByteArray(100)) }, bindAddress = "127.0.0.1", lingerMs = 30_000, maxLingerMs = maxMs, maxLingering = cap)
+        val l = ShareListener(0, handler = { Response(200, "text/plain", ByteArray(100)) }, bindAddress = "127.0.0.1", lingerMs = 30_000, maxLingerMs = maxMs, maxLingering = cap, idleMs = 0)
         l.start()
         closers += AutoCloseable { l.stop() }
         val clients = (1..300).map {
@@ -206,6 +208,77 @@ class ShareListenerTest {
         assertTrue(l.lingerEvicted.get() >= 300L - cap - 1)
         assertEquals(0L, l.clientClosed.get())
         assertEquals(0, l.json()["lingering"])
+    }
+
+    /** [n] clients that each read their reply and keep the socket open (as a client behind a slow relay is, to the listener). */
+    private fun waitingClients(l: ShareListener, n: Int): List<Socket> = (1..n).map {
+        Socket(InetAddress.getLoopbackAddress(), l.localPort).also { s ->
+            closers += s
+            s.soTimeout = 10_000
+            s.getOutputStream().write("GET /x HTTP/1.1\r\n\r\n".toByteArray())
+            assertEquals(100, readReply(s))
+        }
+    }
+
+    /** True when the listener has not closed [s] (a read times out instead of seeing the end). */
+    private fun stillOpen(s: Socket): Boolean {
+        s.soTimeout = 50
+        return try {
+            s.getInputStream().read() >= 0
+        } catch (_: java.net.SocketTimeoutException) {
+            true
+        }
+    }
+
+    /**
+     * T106 (a T96 follow-up): more than [ShareListener.MAX_LINGERING] replies ending within a few seconds (a download's
+     * pieces from several phones, a burst of tiles) no longer close the oldest, which may still be draining through a
+     * relay: none of them has waited long enough to be idle, so all wait, and each closes when its client does.
+     */
+    @Test
+    fun repliesStillDrainingAreNotCutBeyondTheSoftBound() {
+        val l = ShareListener(0, handler = { Response(200, "text/plain", ByteArray(100)) }, bindAddress = "127.0.0.1", maxLingering = 4, hardLingering = 64, idleMs = 60_000)
+        l.start()
+        closers += AutoCloseable { l.stop() }
+        val clients = waitingClients(l, 20)
+        Thread.sleep(100)
+        assertEquals(0L, l.lingerEvicted.get() + l.lingerEvictedHard.get(), "none closed early")
+        assertEquals(20, l.json()["lingering"])
+        assertTrue(clients.all(::stillOpen))
+        clients.forEach { it.close() }
+        val deadline = System.currentTimeMillis() + 3_000
+        while (l.clientClosed.get() < 20 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertEquals(20L, l.clientClosed.get(), "each ended by its client")
+        assertEquals(0, l.json()["lingering"])
+    }
+
+    /** T106: beyond the soft bound an idle one goes (the oldest of those that waited long enough); at the hard bound the oldest. */
+    @Test
+    fun beyondTheSoftBoundAnIdleOneGoesAndAtTheHardBoundTheOldest() {
+        val l = ShareListener(0, handler = { Response(200, "text/plain", ByteArray(100)) }, bindAddress = "127.0.0.1", maxLingering = 4, hardLingering = 8, idleMs = 1_500)
+        l.start()
+        closers += AutoCloseable { l.stop() }
+        val old = waitingClients(l, 4)
+        Thread.sleep(1_700) // these four are idle now; the ones below stay younger than 1.5 s to the end
+        val fresh = waitingClients(l, 2) // over the soft bound: the two oldest idle ones go
+        Thread.sleep(100)
+        assertEquals(2L, l.lingerEvicted.get())
+        assertFalse(stillOpen(old[0]))
+        assertFalse(stillOpen(old[1]))
+        assertTrue(stillOpen(old[2]) && stillOpen(old[3]))
+        assertTrue(fresh.all(::stillOpen), "the replies just written stay")
+        // Two more: the two old ones left are idle, so they go first.
+        waitingClients(l, 2)
+        Thread.sleep(100)
+        assertEquals(4L, l.lingerEvicted.get())
+        assertEquals(0L, l.lingerEvictedHard.get())
+        // Now nothing waiting is idle: four more fill the hard bound, the fifth closes the oldest anyway.
+        val more = waitingClients(l, 5)
+        Thread.sleep(100)
+        assertEquals(1L, l.lingerEvictedHard.get())
+        assertFalse(stillOpen(fresh[0]), "the oldest went at the hard bound")
+        assertTrue(more.all(::stillOpen))
+        assertEquals(8, l.json()["lingering"])
     }
 
     /** T96: a 4 MiB reply whose client never closes waited 30 s + 11.6 h under T90's rule; now at most the cap. */

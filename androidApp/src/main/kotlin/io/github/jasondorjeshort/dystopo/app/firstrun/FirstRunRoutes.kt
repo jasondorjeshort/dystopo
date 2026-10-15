@@ -16,7 +16,15 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  * - `POST /firstrun/download[?lat=&lon=]`: "Download the map around me" (the device's fix unless given).
  * - T80 `POST /firstrun/show[?lat=&lon=]`: "Show the map around me" (camera to the fix, card aside, nothing saved).
  * - T80 `GET /firstrun/direct`: the phone's own source reading (`enabled`, `active`, session bytes and cap, requests,
- *   DEM tiles rendered and their ms, OpenFreeMap tiles, the source cache). `POST /firstrun/direct?on=0|1&sessionMb=`:
+ *   DEM tiles rendered and their ms, OpenFreeMap tiles, the source cache). T88: `rangeStalls` (range reads that got no
+ *   byte for 4 s, dropped and retried), `stages` (ms summed over threads: `renderWaitMs` waiting for a render permit,
+ *   `coarseFirstHeldMs` the part held for coarse tiles, `renderFetchMs` inside `best`, `renderEncodeMs`,
+ *   `contourDemWaitMs` contour tiles waiting for their DEM, and `sources`: `rangeReads`, `rangeMs`, `rangeShared`,
+ *   `diskHits`, `blocksDecoded`, `decodeMs`, `blockWaits`, `geoidMs`, `resampleMs`) and `timeline` (`startElapsedMs`,
+ *   `events`, `lines`: the first 800 events in ms from the first; `dem?`, `dem>`, `dem. <ms>` a render queued, started,
+ *   done; `read <file> <KB> <ms>`; `d?`, `d200`, `d503` the map's DEM tiles; `c?`, `c200`, `c200p`, `c503` contour
+ *   tiles; `refresh` a style reload; release builds write them to logcat, tag `DystopoDirect`, T106: without tile
+ *   columns, rows and file names, `DirectTrace.redact`). `POST /firstrun/direct?on=0|1&sessionMb=`:
  *   turn it off (no server: offline only) or on, set the per-session download budget, `maxZoom` the deepest DEM zoom rendered (8..15; deeper is synthesized). `POST /firstrun/direct/trim`: trim
  *   `cache/sources/` to its cap now.
  * - `POST /firstrun/test[?server=]`: Settings › Sources › Test (the saved server unless given; not saved):

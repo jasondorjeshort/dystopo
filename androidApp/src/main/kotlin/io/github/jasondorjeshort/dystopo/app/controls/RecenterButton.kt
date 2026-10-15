@@ -42,7 +42,6 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.TopChips
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
-import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF2B2420)
@@ -75,6 +74,7 @@ object RecenterLayout {
         val panelsShown = BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom
         val trackPanels = if (panelsShown) BottomPanels.trackPanelsTop.value else 0f
         val navBottom = TopChips.navCardBottom.value
+        val cards = io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop.value // T106: the trip card and the update offer
         val bottomDp = if (b != null && h > 0) (h - b[3]) / d else null // the button's bottom edge from the window bottom
         val topDp = b?.let { it[1] / d } // its top edge from the window top
         val visible = shown && b != null
@@ -84,9 +84,10 @@ object RecenterLayout {
             "boundsPx" to b?.map { Math.round(it) },
             "bottomFromWindowBottomDp" to bottomDp?.let { Math.round(it * 10) / 10.0 },
             "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "navCardBottomDp" to navBottom,
+            "tripCardTopDp" to io.github.jasondorjeshort.dystopo.app.MapInsets.tripCardTop.value, "updateCardTopDp" to io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop.value, // T106
             // Clear: the button's bottom is above every bottom panel's top edge, and its top below the nav card.
             "clear" to if (!visible || bottomDp == null || topDp == null) null else
-                bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && (navBottom == 0f || topDp >= navBottom),
+                bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards && (navBottom == 0f || topDp >= navBottom),
             "icon" to icon,
         )
     }
@@ -94,8 +95,8 @@ object RecenterLayout {
 
 /**
  * T93: the recentre button, round, lower right on the map. It sits above the credit line and above whatever bottom
- * panel shows (the route card, the track profile and waypoint panels: [BottomPanels]), so it moves up with them,
- * and hides while the trip card is open (that card spans the bottom and reports no edge). Greyed out without a
+ * panel shows (the route card, the track profile and waypoint panels: [BottomPanels]), so it moves up with them
+ * (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`). Greyed out without a
  * fix; a tap without the location permission asks for it. Logic in [Recenter].
  *
  * T100: the icon shows the orientation before the tap ([MapOrientation]): north-up a compass needle under an N,
@@ -106,10 +107,6 @@ object RecenterLayout {
 @Composable
 fun RecenterButton() {
     val app = DystopoApp.instance
-    if (Trips.editing != null) {
-        SideEffect { RecenterLayout.shown = false; RecenterLayout.hiddenBecause = "tripCard" }
-        return
-    }
     // Fixes and the permission are not Compose state: poll them (cheap) for the enabled look.
     var state by remember { mutableStateOf(Recenter.state(app)) }
     LaunchedEffect(Unit) {
@@ -123,7 +120,7 @@ fun RecenterButton() {
         state = Recenter.state(app)
     }
     val panels = if (BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom) BottomPanels.trackPanelsTop else 0.dp
-    val floor = maxOf(AttributionInsets.bottom, BottomPanels.routeCardTop, panels)
+    val floor = maxOf(AttributionInsets.bottom, BottomPanels.routeCardTop, panels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop) // T106: above the trip card and the update offer
     val density = LocalDensity.current
     val enabled = state == "recenter"
     val o = OrientationUi.state

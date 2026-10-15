@@ -31,6 +31,13 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   again is its Update.
  * - `POST /areas/{id}/pin?on=0|1`: pin or unpin (T91: 409 for a pack-backed area, which is never evicted); `DELETE /areas/{id}`: remove (a box's pack is deleted, a corridor's
  *   tiles leave the cache).
+ * - T106: `POST /areas/{id}/retry` is the card's Retry (the corridor downloaded again, as Download again; 409 for a
+ *   pack-backed area); `POST /areas/{id}/dismiss` its Dismiss on a failed, partial or refused download: the message
+ *   goes, the area keeps what it has (`done` when whole, else `partial`) or is removed when nothing of it is on the
+ *   phone (`removed` true). `GET /areas` also has `fromOtherSource` per area (fetched from a source the phone no
+ *   longer reads: then `olderThanSource` names what it holds, and Update fetches it from the source set now and
+ *   deletes the old source's tiles in its cover) and `pinnedBySource` (pinned tiles and bytes per source cache key,
+ *   `inUse` when the phone reads that source now).
  * - `POST /areas/trim?mb=N`: sets the online cache's cap to N MB now (not saved; `restore=1` goes back to the
  *   setting) and evicts unpinned tiles down to it; answers the cache before and after and every area's coverage,
  *   which is how "pinned areas survive a trim" is checked.
@@ -38,7 +45,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  * - `POST /areas/ui?open=1|0`: the Areas screen.
  */
 object AreaRoutes {
-    private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin)?$")
+    private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss)?$")
 
     fun handle(app: DystopoApp, r: Request): Response? {
         if (r.path != "/areas" && !r.path.startsWith("/areas/")) return null
@@ -79,9 +86,17 @@ object AreaRoutes {
             "GET" to "" -> Response.json(rec.json() + mapOf("olderThanSource" to Areas.older(rec), "coverage" to Areas.coverage(rec), "manifest" to Areas.manifest(rec.id)?.summary()))
             "GET" to "/manifest" -> Response.json(Areas.manifest(rec.id)?.json() ?: throw NoSuchElementException("area $id has no manifest (a pack-backed area: see its pack)"))
             "POST" to "/pin" -> Response.json(Areas.pin(rec.id, r.query["on"] != "0").json())
+            "POST" to "/retry" -> Response.json(retry(rec), 202) // T106: the card's Retry (a download again)
+            "POST" to "/dismiss" -> Response.json(mapOf("area" to Areas.dismiss(rec.id)?.json(), "removed" to (Areas.get(rec.id) == null))) // T106
             "DELETE" to "" -> Response.json(Areas.remove(rec.id))
             else -> Response.notFound()
         }
+    }
+
+    /** T106: Retry on an area card: the same corridor downloaded again (a pack-backed area is a region pack: 409). */
+    private fun retry(rec: Areas.Record): Map<String, Any?> {
+        check(rec.pack == null) { "area ${rec.name} is the pack ${rec.pack}: download a region again from the pack list" }
+        return AreaDownload.start(rec.area, rec.name, rec.tripId)
     }
 
     private fun download(r: Request): Map<String, Any?> {

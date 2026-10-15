@@ -22,7 +22,9 @@ package io.github.jasondorjeshort.dystopo.app.share
  *   included): a code that has not answered for [confirmMs] goes out as one request; the others to that address
  *   with that code wait for its answer, then go together if it opened, or fail without being sent if it was
  *   refused. T96's verifier: a cold map view right after the other phone reopened its screen sent seven tiles with
- *   the old code at once (seven failures, a new code), eight parallel pieces three.
+ *   the old code at once (seven failures, a new code), eight parallel pieces three. T106: and within a second of an
+ *   answer at most [MAX_UNANSWERED] go out before one of them answers (a code a third phone rotated meanwhile costs at
+ *   most four failures); only a reply confirms a code, an [Error] does not.
  *
  * So a kept peer whose screen was reopened costs its phone one failure (the first 403, from whichever path sent the
  * old code), however often this phone relaunches, unless the code changes within [confirmMs] of an answer while
@@ -37,6 +39,8 @@ internal class PeerCodes(
     /** How long after an answer requests with that code go out without waiting for one to answer first ([send]). */
     private val confirmMs: Long = CONFIRM_MS,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** T106: the most requests with one code out at once to one phone before one of them answers ([send]). */
+    private val maxUnanswered: Int = MAX_UNANSWERED,
 ) {
     /** A phone as this phone knows it; any part may be missing. Two phones with one key in common are the same phone. */
     data class Phone(val addr: String? = null, val nsdName: String? = null, val device: String? = null) {
@@ -208,6 +212,8 @@ internal class PeerCodes(
         /** Counts finished probes; [failure] is how the last one failed (not a 403), for the requests that waited on it. */
         var round = 0
         var failure: Exception? = null
+        /** T106: requests out now with this code (probes and the rest) that have not answered yet. */
+        var outstanding = 0
     }
 
     private val flights = java.util.concurrent.ConcurrentHashMap<String, Flight>()
@@ -225,6 +231,12 @@ internal class PeerCodes(
      * answered, they go together; failed otherwise (no connection, a timeout), they fail the same way at once instead
      * of each trying in turn. A 403 is recorded as a refusal ([refuse]); any other failure means the next burst asks
      * first again (the other phone may have closed its screen, which gives it a new code).
+     *
+     * T106, two follow-ups of T96's verifier: (1) Even within [confirmMs] of an answer at most [maxUnanswered] requests are
+     * out at once (the rest wait for one of them to answer): a third phone could make the other phone replace its code
+     * in that second, and every request already let through then went out with the old code, one failure each; now at
+     * most four do, under the five that replace a code. (2) Only a reply confirms a code: a request that ends in an
+     * [Error] (out of memory, an assertion) counted as one, so the next burst went out unprobed.
      */
     fun <T> send(phone: Phone, code: String, waitMs: Long, call: () -> T): T {
         val f = flights.computeIfAbsent("${phone.addr}|$code") { Flight() }
@@ -239,12 +251,15 @@ internal class PeerCodes(
                     if (hadToWait) sparedCount.incrementAndGet()
                     throw ShareClient.WrongCodeException("${phone.addr} refused this code before: ${PeerSources.CODE_CHANGED}")
                 }
-                if (clock() - f.confirmedAt <= confirmMs) break
-                if (hadToWait && f.round != round) f.failure?.let { throw it }
-                if (!f.probing) {
-                    f.probing = true
-                    probe = true
-                    break
+                if (clock() - f.confirmedAt <= confirmMs) {
+                    if (f.outstanding < maxUnanswered) break
+                } else {
+                    if (hadToWait && f.round != round) f.failure?.let { throw it }
+                    if (!f.probing) {
+                        f.probing = true
+                        probe = true
+                        break
+                    }
                 }
                 val left = deadline - clock()
                 if (left <= 0) throw java.io.IOException("${phone.addr}: no answer to the request this one waited for")
@@ -252,26 +267,32 @@ internal class PeerCodes(
                 hadToWait = true
                 f.answered.await(left, java.util.concurrent.TimeUnit.MILLISECONDS)
             }
+            f.outstanding++
         } finally {
             f.lock.unlock()
         }
-        var failure: Exception? = null
+        var failure: Throwable? = null
         try {
             return call()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             failure = e
             if (e is ShareClient.WrongCodeException) refuse(phone, code)
             throw e
         } finally {
             f.lock.lock()
             try {
+                f.outstanding--
                 f.confirmedAt = if (failure == null) clock() else Long.MIN_VALUE / 2
                 if (probe) {
                     f.probing = false
-                    f.failure = failure?.takeIf { it !is ShareClient.WrongCodeException }
+                    f.failure = when (failure) {
+                        null, is ShareClient.WrongCodeException -> null
+                        is Exception -> failure
+                        else -> java.io.IOException("${phone.addr}: the request this one waited for failed: $failure", failure)
+                    }
                     f.round++
-                    f.answered.signalAll()
                 }
+                f.answered.signalAll() // T106: every answer frees a place ([maxUnanswered]), not only a probe's
             } finally {
                 f.lock.unlock()
             }
@@ -287,5 +308,11 @@ internal class PeerCodes(
     companion object {
         /** [send]: after an answer, a second of requests go out without asking first (a screen reopened by hand takes longer). */
         const val CONFIRM_MS = 1_000L
+
+        /**
+         * T106: [send]'s cap on requests out at once with one code to one phone: under the five wrong codes that replace
+         * a code, and as many pieces as a pack download asks for ahead ([PeerFiles.AHEAD]).
+         */
+        const val MAX_UNANSWERED = 4
     }
 }

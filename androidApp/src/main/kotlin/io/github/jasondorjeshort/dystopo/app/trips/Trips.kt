@@ -196,6 +196,13 @@ object Trips {
     fun setMode(id: String, mode: String) = edit(id, "mode $mode") { ed, p -> ed.setMode(p, mode) }
     fun reroute(id: String) = edit(id, "reroute") { ed, p -> ed.reroute(p) }
 
+    /**
+     * T106 (a T89 follow-up): Re-plan on a drive planned before T89 ([untimedDriveLegs]): its trail and straight legs
+     * routed again in the same mode, so each routed leg gets the router's per-road time (fixed legs, imported lines,
+     * stay as they are). A leg the router cannot route now stays straight, as in any edit.
+     */
+    fun replan(id: String) = edit(id, "replan") { ed, p -> ed.setMode(p, p.mode) }
+
     fun addWaypoint(id: String, lat: Double, lon: Double, name: String, symbol: String? = null): Waypoint {
         val w = Waypoint(ids.next(), name, lat, lon, elevation()?.elevation(lat, lon)?.takeUnless { it.isNaN() }?.let { Math.round(it * 10) / 10.0 }, System.currentTimeMillis(), symbol = symbol)
         val p = plan(id) ?: throw NoSuchElementException("no route $id")
@@ -415,6 +422,23 @@ object Trips {
  * editor holds [nowId]: only to the same route (a refresh that read none has nothing to apply). Pure, tested.
  */
 internal fun refreshApplies(readId: String?, nowId: String?): Boolean = readId != null && readId == nowId
+
+/**
+ * T106 (a T89 follow-up): the legs of a drive [path] that the router planned but that carry no router time: a drive
+ * planned before T89 (its `path` value is version 1, [io.github.jasondorjeshort.dystopo.model.RoutePath.VERSION]) or
+ * synced from a build before it. Their time is the flat [io.github.jasondorjeshort.dystopo.routing.CostModel.DRIVE_SUMMARY_KMH]
+ * estimate, not the per-road time every other surface shows, until the trip is re-planned ([Trips.replan]); the trip
+ * card says so. 0 for anything else (hike and bike model their time; fixed legs are imported lines). Pure, tested.
+ */
+internal fun untimedDriveLegs(path: RoutePath): Int =
+    if (path.mode != "drive") 0 else path.legs.count { it.kind == io.github.jasondorjeshort.dystopo.model.LegKind.TRAIL && it.timeS == null }
+
+/** T106: the trip card's line on a drive with [untimedDriveLegs] (Re-plan follows it), the flat speed in [units]. Pure, tested. */
+internal fun driveTimeEstimated(units: io.github.jasondorjeshort.dystopo.render.ContourUnits): String {
+    val kmh = io.github.jasondorjeshort.dystopo.routing.CostModel.DRIVE_SUMMARY_KMH
+    val speed = if (units == io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET) "${Math.round(kmh / 1.609344)} mph" else "${Math.round(kmh)} km/h"
+    return "Drive time estimated at a flat $speed: planned before road speeds. Re-plan for the road time."
+}
 
 /** T95: the Offline offer while the corridor's manifest is being made. */
 internal const val OFFLINE_WORKING = "Working out the offline size…"

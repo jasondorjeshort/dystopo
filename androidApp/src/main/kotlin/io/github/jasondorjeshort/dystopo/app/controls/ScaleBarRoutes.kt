@@ -7,7 +7,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
 
 /**
  * T101, the scale bar's debug routes (debug builds only, on the debug port):
- * - `GET /scalebar`: what the bar shows ([ScaleBarLayout]): `shown` or `hiddenBecause` (`tripCard`, `noCamera`),
+ * - `GET /scalebar`: what the bar shows ([ScaleBarLayout]): `shown` or `hiddenBecause` (`noCamera`, `noScale`; T106: no longer `tripCard`, it rides above the trip card and the update offer, `bottomCardsTopDp`),
  *   `bothUnits`, `units`, `night`, the camera's `zoom` and `lat` it was fitted at, `metersPerDp` (the shared Web
  *   Mercator rule), `density`, and per bar (the user's units first) `label`, `value`, `unit`, `meters`, `widthDp`,
  *   `widthPx` and `drawnPx` (tick to tick as drawn); where it sits (`boundsPx` in window pixels, its bottom edge,

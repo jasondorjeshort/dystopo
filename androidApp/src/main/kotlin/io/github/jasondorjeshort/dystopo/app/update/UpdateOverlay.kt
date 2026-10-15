@@ -14,9 +14,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import io.github.jasondorjeshort.dystopo.app.MapInsets
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,17 +32,34 @@ import kotlin.concurrent.thread
 /**
  * T83: the update offer on the map, above the credit line: "Update to <version>" with Install and Not now once a
  * download has been verified ([Updater]), or why an update was refused (checksum or certificate) with OK. Hidden
- * while the settings sheet is open (its Updates row has the same buttons) and after the user answered.
+ * while the settings sheet is open (its Updates row has the same buttons) and after the user answered. T106: also while
+ * a trip, the Routes list or a planned route's card is open; it reports its top edge (`MapInsets.updateCardTop`), above
+ * which the recentre button, the scale bar, the long-press card (with the other track panels) and the first-run card sit.
  */
 @Composable
 fun UpdateOverlay() {
-    if (!Updater.initialized() || SettingsUi.visible) return
+    // T106: it waits while a trip, the Routes list or a planned route's card is open (cards the user works in that span
+    // the bottom: stacked, the map was gone at font scale 2.0) and comes back when they close; the long-press card and
+    // the first-run card stack above it instead.
+    val waits = io.github.jasondorjeshort.dystopo.app.trips.Trips.editing != null || io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen ||
+        io.github.jasondorjeshort.dystopo.app.routing.RouteSession.phase != "idle"
+    val shown = !waits && Updater.initialized() && !SettingsUi.visible && Updater.state.let { s ->
+        s.phase == Updater.Phase.READY || s.phase == Updater.Phase.INSTALLING || (s.phase == Updater.Phase.REFUSED && s.tag != null && s.tag != Updater.acknowledgedTag)
+    }
+    // T106 (a T93 follow-up): the offer reports its top edge while it shows, so the recentre button rides above it
+    // instead of sharing its corner (release builds; debug builds never check by themselves).
+    if (!shown) {
+        SideEffect { if (MapInsets.updateCardTop != 0.dp) MapInsets.updateCardTop = 0.dp }
+        return
+    }
     val s = Updater.state
     val refusedShown = s.phase == Updater.Phase.REFUSED && s.tag != null && s.tag != Updater.acknowledgedTag
-    if (s.phase != Updater.Phase.READY && s.phase != Updater.Phase.INSTALLING && !refusedShown) return
+    val density = LocalDensity.current
+    DisposableEffect(Unit) { onDispose { MapInsets.updateCardTop = 0.dp } }
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 34.dp).widthIn(max = 420.dp)
+                .onGloballyPositioned { c -> MapInsets.topFromWindowBottom(c, density).let { if (it != MapInsets.updateCardTop) MapInsets.updateCardTop = it } }
                 .background(Paper, RoundedCornerShape(12.dp)).border(1.dp, Line, RoundedCornerShape(12.dp)).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {

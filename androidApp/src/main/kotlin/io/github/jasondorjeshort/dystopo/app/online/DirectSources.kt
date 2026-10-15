@@ -88,12 +88,12 @@ class DirectSources(private val context: android.content.Context, private val ca
     @Volatile var sessionCapBytes: Long = DEFAULT_SESSION_MB * 1024 * 1024
     @Volatile var sourceCacheCapBytes: Long = DEFAULT_SOURCE_CACHE_MB * 1024 * 1024
 
-    private val renderPermits = Semaphore(MAX_TILES_IN_FLIGHT)
+    /** T106: the render slots and their counters ([RenderSlots]: given back however a render ends, an interrupt included). */
+    private val slots = RenderSlots(MAX_TILES_IN_FLIGHT, COARSE_FIRST_MS, COARSE_GRACE_MS)
 
     /** DEM tiles being rendered or waiting to (OnlineService reloads the map once they are done, see [ANSWER_WITHIN_MS]). */
-    val rendering = java.util.concurrent.atomic.AtomicInteger()
-    @Volatile var lastRenderDoneAt = 0L
-        private set
+    val rendering: java.util.concurrent.atomic.AtomicInteger get() = slots.rendering
+    val lastRenderDoneAt: Long get() = slots.lastDoneAt
 
     /**
      * T88, coarse first: a view's coarser DEM tiles (below [COARSER_OVERVIEW_BELOW]: MapLibre's fallback tiles and
@@ -102,25 +102,7 @@ class DirectSources(private val context: android.content.Context, private val ca
      * view's zoom waits for the coarse renders in flight (at most [COARSE_FIRST_MS]); at the start of a burst it
      * gives them [COARSE_GRACE_MS] to be asked for (MapLibre asks for them just after the view's own tiles).
      */
-    private val coarseActive = java.util.concurrent.atomic.AtomicInteger()
-    private val coarseGate = Object()
-    @Volatile private var burstStartedAt = 0L
-    val coarseHeldMs = AtomicLong()
-
-    private fun holdForCoarse() {
-        val start = System.currentTimeMillis()
-        synchronized(coarseGate) {
-            while (true) {
-                val now = System.currentTimeMillis()
-                val inGrace = coarseActive.get() == 0 && now - burstStartedAt < COARSE_GRACE_MS
-                if (!inGrace && coarseActive.get() == 0) break
-                val left = if (inGrace) burstStartedAt + COARSE_GRACE_MS - now else start + COARSE_FIRST_MS - now
-                if (left <= 0) break
-                coarseGate.wait(left)
-            }
-        }
-        coarseHeldMs.addAndGet(System.currentTimeMillis() - start)
-    }
+    val coarseHeldMs: AtomicLong get() = slots.coarseHeldMs
 
     /** T88: cache keys of the DEM renders a map request was answered "not ready" (503) for while waiting on them. */
     private val awaited = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -302,15 +284,12 @@ class DirectSources(private val context: android.content.Context, private val ca
         // Renders take their own permits, so OpenFreeMap tiles never queue behind them (MapLibre gives up on a
         // tile after its timeout, and the map then never counts as loaded).
         val coarse = t.z < COARSER_OVERVIEW_BELOW
-        if (rendering.getAndIncrement() == 0) burstStartedAt = System.currentTimeMillis()
-        if (coarse) coarseActive.incrementAndGet()
-        val queued = System.nanoTime()
         DirectTrace.mark("dem? ${t.z}/${t.x}/${t.y}")
-        if (!coarse) holdForCoarse()
-        renderPermits.acquire()
-        val started = System.nanoTime()
-        renderWaitMs.addAndGet((started - queued) / 1_000_000)
-        val (png, ids) = try {
+        var started = 0L
+        // T106: the coarse hold and the permit are inside [RenderSlots.run], so an interrupt there leaks no counter.
+        val (png, ids) = slots.run(coarse) { waited ->
+            started = System.nanoTime()
+            renderWaitMs.addAndGet(waited / 1_000_000)
             if (wanted != null && !wanted()) {
                 contourStale.incrementAndGet()
                 throw StaleRender(t)
@@ -318,14 +297,6 @@ class DirectSources(private val context: android.content.Context, private val ca
             DirectTrace.mark("dem> ${t.z}/${t.x}/${t.y}")
             // T88: block reads of the coarse tiles first, then the view's own, then out-of-view ones (synthesis edges).
             SourceIo.withPriority(if (coarse) 1 else if (inView(t)) 0 else -1) { renderDem(t) }
-        } finally {
-            renderPermits.release()
-            if (coarse) {
-                coarseActive.decrementAndGet()
-                synchronized(coarseGate) { coarseGate.notifyAll() }
-            }
-            rendering.decrementAndGet()
-            lastRenderDoneAt = System.currentTimeMillis()
         }
         val ms = (System.nanoTime() - started) / 1_000_000
         demRendered.incrementAndGet()
@@ -334,7 +305,7 @@ class DirectSources(private val context: android.content.Context, private val ca
         demMaxMs.accumulateAndGet(ms, ::maxOf)
         recordProvenance(t, ids)
         DirectTrace.mark("dem. ${t.z}/${t.x}/${t.y} $ms ms")
-        Log.d(TAG, "rendered ${t.z}/${t.x}/${t.y} in $ms ms on ${Thread.currentThread().name}")
+        if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG) Log.d(TAG, "rendered ${t.z}/${t.x}/${t.y} in $ms ms on ${Thread.currentThread().name}") // T106: no tile coordinates in a release build's logcat
         return png
     }
 
@@ -1001,6 +972,11 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
  * (`dem. <ms>`), cold source reads (`read <file> <KB> <ms>`), the map's DEM tiles asked for (`d?`) and answered (`d200`,
  * `d503`), contour tiles asked for (`c?`) and answered (`c200` with bytes, `c200p` partial, `c503`), and the style
  * reloads for tiles answered 503 (`refresh`). The first [CAP] events, which is the cold first view the 15 s target is about.
+ *
+ * T106 (the privacy rule: nothing reveals where a user is without need): a release build writes the lines [redact]ed,
+ * with the zoom and the timings but no tile column or row and no source file name (a 3DEP cell names a one-degree
+ * square), so the release timeline still says where a cold view's seconds go while logcat, which `adb logcat` and a bug
+ * report read, says nothing of where the phone looked. Debug builds keep the whole lines, in logcat and in the route.
  */
 object DirectTrace {
     const val CAP = 800
@@ -1014,10 +990,17 @@ object DirectTrace {
             if (events.size >= CAP) return
             "${now - start} $event".also { events += it }
         }
-        Log.i(DirectSources.TAG, "trace $line") // release builds have no debug routes: logcat carries the same lines
+        // Release builds have no debug routes: logcat carries the lines, without the places (T106).
+        Log.i(DirectSources.TAG, "trace " + if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG) line else redact(line))
     }
 
     fun json(): Map<String, Any?> = synchronized(events) { mapOf("startElapsedMs" to start, "events" to events.size, "lines" to events.toList()) }
+
+    private val tile = Regex("""(?<![\w/])(\d{1,2})/\d+/\d+(?![\w/])""")
+    private val read = Regex("""(?<!\w)read \S+""")
+
+    /** T106: [line] without places: `12/661/1442` becomes `12/-/-`, `read <file>` becomes `read -`. Pure, tested. */
+    fun redact(line: String): String = read.replace(tile.replace(line) { "${it.groupValues[1]}/-/-" }, "read -")
 }
 
 internal fun logDirect(message: String) = Log.i(DirectSources.TAG, message)

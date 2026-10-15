@@ -134,8 +134,11 @@ object AreaDownload {
         val fetcher = OnlineService.get(app).fetcher ?: throw IllegalStateException(NO_SOURCE)
         val fromServer = if (fetcher.server == DirectSources.SERVER) null else serverManifest(fetcher.server, area, null)
         val m = fromServer ?: localManifest(area, fetcher.server)
-        return Plan(area, m, if (fromServer != null) "server" else "phone", OnlineService.get(app).cache.pinnedBytes, Areas.get(area.id)?.bytes ?: 0L, AppSettings.pinnedCacheMb)
+        return Plan(area, m, if (fromServer != null) "server" else "phone", OnlineService.get(app).cache.pinnedBytes, pinnedOwn(Areas.get(area.id)), AppSettings.pinnedCacheMb)
     }
+
+    /** T106: the bytes of [r] already counted as pinned (none while it is unpinned: they are not in the pinned total). */
+    private fun pinnedOwn(r: Areas.Record?): Long = r?.takeIf { it.pinned }?.bytes ?: 0L
 
     /**
      * Starts downloading [area]. A box goes to "Download this region" (its pack); a corridor is fetched here.
@@ -153,13 +156,16 @@ object AreaDownload {
         val fetcher = service.fetcher ?: throw IllegalStateException(NO_SOURCE)
         val old = Areas.get(area.id)
         val planned = manifest?.takeIf { it.id == area.id }
-        planned?.let { m -> budgetError(service.cache.pinnedBytes, m.bytes, old?.bytes ?: 0L, AppSettings.pinnedCacheMb)?.let { throw IllegalStateException(it) } }
+        planned?.let { m -> budgetError(service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw IllegalStateException(it) } }
         val label = name ?: area.name ?: "Corridor ${area.id.take(7)}"
         val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null).also { it.stateBefore = old?.state }
         job = j
+        // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
+        // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
+        val pinNow = old?.pinned ?: true
         Areas.put(
             Areas.Record(
-                id = area.id, name = label, area = area.withName(label), createdAt = old?.createdAt ?: System.currentTimeMillis(), pinned = true,
+                id = area.id, name = label, area = area.withName(label), createdAt = old?.createdAt ?: System.currentTimeMillis(), pinned = pinNow,
                 state = "downloading", source = fetcher.server, tripId = tripId ?: old?.tripId, bytes = old?.bytes ?: 0L,
                 estimateBytes = old?.estimateBytes ?: 0L, tiles = old?.tiles ?: 0, versions = old?.versions.orEmpty(), // T95: held until it completes
             ),
@@ -192,7 +198,9 @@ object AreaDownload {
             j.manifest = m
             Areas.saveManifest(m)
             // T91: pinned tiles have their own budget (pinnedCacheMb, Settings › Storage); refuse a download that would pass it.
-            budgetError(OnlineService.get(app).cache.pinnedBytes, m.bytes, Areas.get(j.id)?.bytes ?: 0L, AppSettings.pinnedCacheMb)?.let { throw Refused(it) }
+            budgetError(OnlineService.get(app).cache.pinnedBytes, m.bytes, pinnedOwn(Areas.get(j.id)), AppSettings.pinnedCacheMb)?.let { throw Refused(it) }
+            // T106: it fits, so it is pinned now, before any tile is fetched (nothing fetched for it is evicted on the way).
+            Areas.update(j.id) { if (it.pinned) it else it.copy(pinned = true) }
             val wants = m.items.filterIsInstance<TilesItem>().flatMap { item -> item.tiles.flatMap { (z, set) -> set.tiles().map { (x, y) -> Want(item, z, x, y) } } }
                 .sortedWith(compareBy({ it.z }, { it.item.route }))
             j.planned.set(wants.size)
@@ -258,8 +266,24 @@ object AreaDownload {
         if (before.isEmpty() || before == now) return
         val pins = AreaPins(listOf(AreaPins.cover(j.area)))
         val derived = if (now.any { (k, v) -> before[k]?.get("dem").let { b -> b != null && b != v["dem"] } }) fetcher.dropDerived { z, x, y -> pins.contains(z, x, y) } else 0
-        j.refreshDropped = derived + Areas.dropUnheld()
+        j.refreshDropped = derived + Areas.dropUnheld() + dropOtherSources(j, before.keys - now.keys, pins)
         Log.i(Areas.TAG, "area ${j.name} refreshed from $before to $now: ${j.refreshDropped} old tiles deleted")
+    }
+
+    /**
+     * T106: an area updated from a new source (the phone's server changed) no longer needs what it held under the old
+     * ones ([gone], cache keys): their tiles in its cover go, unless another pinned area fetched from that source holds
+     * them. Without this they stayed pinned (pins are spatial, whatever the source), unreachable, in the pinned budget.
+     */
+    private fun dropOtherSources(j: Job, gone: Set<String>, cover: AreaPins): Int {
+        if (gone.isEmpty()) return 0
+        val others = Areas.all().filter { it.id != j.id && it.pinned && it.pack == null && it.versions.keys.any { k -> k in gone } }
+        val keep = gone.associateWith { src -> AreaPins(others.filter { src in it.versions.keys }.map { AreaPins.cover(it.area) }) }
+        return OnlineService.get(app).cache.clearWhere { k ->
+            val src = k.substringBefore('/')
+            val held = keep[src] ?: return@clearWhere false
+            AreaPins.tileOf(k)?.let { (z, x, y) -> cover.contains(z, x, y) && !held.contains(z, x, y) } == true
+        }
     }
 
     /** Fetches [wants] on [pool]; returns the ones that failed (network or server). */

@@ -11,7 +11,8 @@ import java.security.SecureRandom
  * What the LAN listener answers (T54, encrypted since T72), free of Android so it is unit-tested on the JVM.
  * The only route is `POST /share/sealed`: its body is a [SealedLink] request frame, ChaCha20-Poly1305 under
  * a key derived from the share code on the screen ([ShareCode], 80 bits) and the frame's random salt, and
- * the answer is the reply sealed the same way. Inside the frame are the T54 routes:
+ * the answer is the reply sealed the same way (T106: a wrong code counts toward the five for [FAILURE_WINDOW_MS]).
+ * Inside the frame are the T54 routes:
  * - `GET /share/hello`: this device's id, name and clock (the connecting phone calls it first, so a wrong
  *   code is reported as such before any sync).
  * - `POST /sync/pull?since=`, `POST /sync/push`, `GET /sync/status`: the T44 sync peer routes ([sync], a
@@ -32,11 +33,33 @@ class ShareGate(
     private val maxFailures: Int = 5,
     private val newCode: () -> String = ::randomCode,
     private val random: (Int) -> ByteArray = ::randomBytes,
+    /** T106: a wrong code counts toward [maxFailures] for this long, then it is forgotten. */
+    private val failureWindowMs: Long = FAILURE_WINDOW_MS,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     @Volatile var code: String = newCode()
         private set
-    @Volatile var failures = 0
+
+    /** T106: when each wrong code still counted came, oldest first (at most [maxFailures]). */
+    private val failureTimes = ArrayDeque<Long>()
+
+    /**
+     * Wrong codes in the last [failureWindowMs] (T106: they age; before, every wrong code counted until the code changed,
+     * so phones that each spent one failure now and then while the screen stayed open added up to a new code).
+     */
+    val failures: Int @Synchronized get() = prune().let { failureTimes.size }
+
+    /** T106: wrong codes forgotten because they were older than [failureWindowMs]. */
+    @Volatile var failuresAged = 0L
         private set
+
+    private fun prune() {
+        val cutoff = clock() - failureWindowMs
+        while (failureTimes.isNotEmpty() && failureTimes.first() <= cutoff) {
+            failureTimes.removeFirst()
+            failuresAged++
+        }
+    }
     @Volatile var refused = 0L
         private set
     @Volatile var rotations = 0
@@ -88,24 +111,35 @@ class ShareGate(
     @Synchronized
     private fun failed() {
         refused++
-        if (++failures >= maxFailures) rotate()
+        prune()
+        failureTimes.addLast(clock())
+        if (failureTimes.size >= maxFailures) rotate()
     }
 
     /** A new code (also when the screen reopens); the failure count starts again. */
     @Synchronized
     fun rotate() {
         code = newCode()
-        failures = 0
+        failureTimes.clear()
         rotations++
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "refused" to refused, "failures" to failures, "rotations" to rotations, "served" to served,
         "plainRefused" to plainRefused, "replays" to replays, "encrypted" to true,
+        "failureWindowMs" to failureWindowMs, "failuresAged" to failuresAged, // T106
     )
 
     companion object {
         const val SEALED_PATH = "/share/sealed"
+
+        /**
+         * T106: how long a wrong code counts toward the five that replace the code. Guessing an 80-bit code stays
+         * hopeless either way (five wrong ones within ten minutes still replace it), while phones whose kept codes went
+         * stale, each spending one failure when it relaunches or rediscovers this one, no longer add up over an
+         * afternoon with the screen open.
+         */
+        const val FAILURE_WINDOW_MS = 10 * 60_000L
 
         /** T78: the peer-source routes ([PeerServe]); refused (426) when they arrive unencrypted. */
         const val PEER_PREFIX = "/peer/"

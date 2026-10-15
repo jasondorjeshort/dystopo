@@ -78,11 +78,18 @@ fun FirstRunCard(fallback: String?) {
         }
         OnlineService.get(app).let { o -> CardUi(FirstRun.noPack(app), AppSettings.server, progress, manager.importRunning, o.isDirect, if (o.isDirect) o.direct.notice() else null) }
     }
-    val show = ui.noPack && !FirstRun.dismissed && !PacksUi.visible && !SettingsUi.visible
+    // T106 (a T95 follow-up): a trip, a planned route or navigation owns the bottom of the map; the card, drawn after
+    // them, covered the trip card after a relaunch with no pack (online, or a trip synced in). It comes back when they close.
+    val cardsBelow = cardsOwnTheBottom(
+        io.github.jasondorjeshort.dystopo.app.trips.Trips.editing != null || io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen,
+        io.github.jasondorjeshort.dystopo.app.routing.RouteSession.phase, io.github.jasondorjeshort.dystopo.app.nav.NavSession.active,
+    )
+    val show = ui.noPack && !FirstRun.dismissed && !PacksUi.visible && !SettingsUi.visible && !cardsBelow
     FirstRunCardState.visible = show
+    FirstRunCardState.yieldedTo = if (ui.noPack && !FirstRun.dismissed && cardsBelow) "bottomCards" else null
     Box(Modifier.fillMaxSize()) {
         if (!show) {
-            if (ui.noPack && fallback != null && !PacksUi.visible && !SettingsUi.visible) {
+            if (ui.noPack && fallback != null && !PacksUi.visible && !SettingsUi.visible && !cardsBelow) {
                 BasicText(
                     fallback,
                     style = TextStyle(color = Ink, fontSize = 16.sp, textAlign = TextAlign.Center),
@@ -91,8 +98,12 @@ fun FirstRunCard(fallback: String?) {
             }
             return@Box
         }
+        // T106: above the update offer when one shows (it covered the card's lower buttons).
+        val above = io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop
         Column(
-            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 36.dp).widthIn(max = 460.dp).fillMaxWidth()
+            Modifier.align(Alignment.BottomCenter)
+                .let { m -> if (above > 0.dp) m.padding(start = 12.dp, end = 12.dp, bottom = above + 8.dp) else m.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 36.dp) }
+                .widthIn(max = 460.dp).fillMaxWidth()
                 .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -134,3 +145,9 @@ private fun CardButton(label: String, primary: Boolean = false, onClick: () -> U
 }
 
 private fun mb(bytes: Long) = String.format(Locale.US, "%.1f MB", bytes / 1048576.0)
+
+/**
+ * T106: whether the bottom of the map belongs to another card the first-run card must not cover: the trip card or the
+ * Routes list ([trip]), a planned route's card (route [routePhase] other than `idle`), or navigation ([navigating]). Pure, tested.
+ */
+internal fun cardsOwnTheBottom(trip: Boolean, routePhase: String, navigating: Boolean): Boolean = trip || routePhase != "idle" || navigating

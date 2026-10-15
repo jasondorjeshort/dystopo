@@ -225,7 +225,10 @@ class OnlineTiles(
             // A one-off failure while the server is up: forget the pyramid's missing-tile memory now.
             if (fetcher.state == "online") dropPyramid()
         } else if (keep) {
-            service.cache.put(contourKey(key, skipped), bytes)
+            val stored = contourKey(key, skipped)
+            service.cache.put(stored, bytes)
+            // T106 (a T88 follow-up): the variants made earlier with other halo tiles missing are stale now; they stayed until the trim.
+            service.contourHaloVariantsDropped.addAndGet(service.cache.clearVariants(key, stored).toLong())
         }
         service.contoursMade.incrementAndGet()
         return bytes

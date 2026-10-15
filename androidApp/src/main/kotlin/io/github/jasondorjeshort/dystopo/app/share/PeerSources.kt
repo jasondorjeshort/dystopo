@@ -354,8 +354,11 @@ object PeerSources {
             p.name = h["name"] as? String
             p.device = h["device"] as? String
             p.helloAt = System.currentTimeMillis()
-            // T96 (a T90 follow-up): a peer added by hand stays one when discovery reaches it again.
-            p.auto = if (existing != null) existing.auto && auto else auto
+            // T90: the same phone at another address (the network gave it a new one) replaces its old entry once it answers.
+            val elsewhere = peers.values.filter { q -> q !== p && q.addr != reach && ((q.device != null && q.device == p.device) || (q.nsdName != null && q.nsdName == p.nsdName)) }
+            // T96 (a T90 follow-up): a peer added by hand stays one when discovery reaches it again; T106: also when
+            // discovery reaches it at another address than the one it was added at (the entry it replaces was by hand).
+            p.auto = staysAuto(existing?.auto, elsewhere.map { it.auto }, auto)
             codes.opened(p.phone, c)
             learnCode(c, tryDiscovered = false)
             peers[reach] = p
@@ -363,9 +366,7 @@ object PeerSources {
             p.setState(null, restored = false)
             p.nextRetryAt = null
             retries.remove(reach)?.cancel(false) // T96: it answered: no retry pending
-            // T90: the same phone at another address (the network gave it a new one) replaces its old entry once it answers.
-            peers.values.filter { q -> q !== p && q.addr != reach && ((q.device != null && q.device == p.device) || (q.nsdName != null && q.nsdName == p.nsdName)) }
-                .forEach { peers.remove(it.addr, it); retries.remove(it.addr)?.cancel(false); retireCode(it.code) }
+            elsewhere.forEach { peers.remove(it.addr, it); retries.remove(it.addr)?.cancel(false); retireCode(it.code) }
             if (oldCode != c) retireCode(oldCode)
             updateSources()
             save()
@@ -489,6 +490,16 @@ object PeerSources {
         "codes" to codes.json(), // T96: known, fresh, refusals kept, tries sent and held back
     )
 }
+
+/**
+ * T106 (a T90 follow-up): whether a peer that answered is one discovery found ([PeerSources.Peer.auto]) or one the user
+ * added: discovery's add ([auto] true) keeps a peer added by hand as one, whether it is the entry at the same address
+ * ([existing]) or the entries of the same phone at other addresses it replaces ([replaced]). `onDiscovered` added the
+ * phone at the address NSD resolved; a peer added by hand at another one (a typed address, an adb forward) was
+ * replaced by a new entry with `auto` set. Pure, tested.
+ */
+internal fun staysAuto(existing: Boolean?, replaced: List<Boolean>, auto: Boolean): Boolean =
+    auto && existing != false && replaced.all { it }
 
 /**
  * T78: [HttpGet] for the online fetcher: `peer://<host:port>/<path>` goes to that phone over the sealed link (its code

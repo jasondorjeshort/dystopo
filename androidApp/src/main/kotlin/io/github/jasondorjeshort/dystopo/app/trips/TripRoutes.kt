@@ -28,6 +28,9 @@ import java.security.MessageDigest
  *   sent to the map view (the finger path: the route must be open and the point on screen).
  * - `POST /routes/{id}/waypoint?lat=&lon=&name=[&sym=]`, `DELETE /routes/{id}/waypoint/{wid}`.
  * - `POST /routes/{id}/mode?mode=`, `/rename?name=`, `/reroute`, `/open`, `/export`; `DELETE /routes/{id}`.
+ * - T106: `GET /routes/{id}` has each leg's `timeS` and `untimedDriveLegs` (a drive planned before T89: routed legs
+ *   with no router time, so the flat 45 km/h estimate; the trip card says so with Re-plan); `POST /routes/{id}/replan`
+ *   is that Re-plan (trail and straight legs routed again in the same mode, fixed legs kept).
  * - T67: `POST /routes/{id}/share`: the trip card's "Share link" (syncs with the sync peer, asks it for a
  *   read-only link, copies it; answers `url`, `gpx`, `token`, `existing`, `copied`, `sync`);
  *   `GET /routes/{id}/share`: the last link made here; `DELETE /routes/{id}/share`: revokes it.
@@ -154,6 +157,7 @@ object TripRoutes {
                 return Response.json(planJson(Trips.setMode(id, mode!!), false))
             }
             r.method == "POST" && suffix == "/reroute" -> return Response.json(planJson(Trips.reroute(id), false) + mapOf("edit" to Trips.lastEdit))
+            r.method == "POST" && suffix == "/replan" -> return Response.json(planJson(Trips.replan(id), false) + mapOf("edit" to Trips.lastEdit)) // T106
             r.method == "POST" && suffix == "/rename" -> {
                 val name = q["name"]?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("name required")
                 return Response.json(mapOf("renamed" to Trips.rename(id, name)))
@@ -192,7 +196,8 @@ object TripRoutes {
         return linkedMapOf(
             "id" to p.id, "name" to p.name, "mode" to p.path.mode, "type" to p.type, "description" to p.description,
             "via" to p.path.via.map { listOf(it.lat, it.lon) },
-            "legs" to p.path.legs.map { linkedMapOf("kind" to it.kind.label, "points" to it.points.size) },
+            "legs" to p.path.legs.map { linkedMapOf("kind" to it.kind.label, "points" to it.points.size, "timeS" to it.timeS) },
+            "untimedDriveLegs" to untimedDriveLegs(p.path), // T106: a drive planned before T89 (the card says so and offers Re-plan)
             "waypoints" to p.waypoints.map { linkedMapOf("id" to it.id, "name" to it.name, "lat" to it.lat, "lon" to it.lon, "ele" to it.ele, "sym" to it.symbol) },
             "summary" to RouteSummary.of(p).json(profile),
             "gpxBytes" to gpx.size, "gpxSha256" to MessageDigest.getInstance("SHA-256").digest(gpx).joinToString("") { "%02x".format(it) },

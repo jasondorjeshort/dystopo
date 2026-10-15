@@ -12,7 +12,8 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  * - `POST /online/download[?bbox=w,s,e,n][&zooms=8-13][&name=][&profile=outdoors|openmaptiles]`: "Download this region" for the box
  *   (default: the visible map) through the server's `/build` and the pack downloader. `GET /online/download`:
  *   progress. `DELETE /online/download`: cancel.
- * - `POST /online/retry`: forget the backoff and recent failures; `POST /online/cache/clear`: empty the tile cache.
+ * - `POST /online/retry`: forget the backoff and recent failures; `POST /online/cache/clear[?pinned=1]`: empty the tile
+ *   cache but the pinned offline areas' tiles (T106; with `pinned=1` those too), answering `deleted` and `pinnedKept`.
  * - The server itself is a setting: `POST /settings?server=http://10.0.2.2:8765` (empty for offline only), see [setServer].
  */
 object OnlineRoutes {
@@ -29,7 +30,7 @@ object OnlineRoutes {
                     s.fetcher?.retryNow()
                     Response.json(s.json(null))
                 }
-                "POST" to "/online/cache/clear" -> Response.json(mapOf("deleted" to s.cache.clear()))
+                "POST" to "/online/cache/clear" -> Response.json(clearCache(s.cache, pinnedToo = r.query["pinned"] == "1"))
                 else -> Response.notFound()
             }
         } catch (e: IllegalArgumentException) {
@@ -37,6 +38,17 @@ object OnlineRoutes {
         } catch (e: IllegalStateException) {
             Response.json(mapOf("error" to e.message), 409)
         }
+    }
+
+    /**
+     * T106 (a T95 follow-up): `POST /online/cache/clear` empties the tile cache but the tiles of pinned offline areas, as
+     * Settings › Storage's Clear does ([TileCache.clearUnkept]); it removed them too, so a check that cleared the cache
+     * took the pinned corridor with it. `pinned=1` removes those too (the old behaviour), and the areas then report
+     * the tiles missing. Answers `deleted` and `pinnedKept`.
+     */
+    internal fun clearCache(cache: io.github.jasondorjeshort.dystopo.app.online.TileCache, pinnedToo: Boolean): Map<String, Any?> {
+        val deleted = if (pinnedToo) cache.clear() else cache.clearUnkept()
+        return linkedMapOf("deleted" to deleted, "pinnedKept" to cache.size, "pinnedToo" to pinnedToo)
     }
 
     private fun startDownload(app: DystopoApp, s: OnlineService, r: Request): Map<String, Any?> {
