@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.7-alpha (2026-10-15)
+
+Turn directions in hike, bike and drive, text first; the recentre button's north-up, free-rotate and facing modes with one orientation state for the app; a scale bar and miles with one decimal everywhere; avalanche and steepness slope shadings with a legend, on the phone, the server and the devtool; settings grouped by theme; offline areas from another source update, pinned tiles survive a cache clear, the cards report their edges and wrap at font scale 2.0; the share gate hardened; the demo page's Trips box, the browser's slope select and scale bar, joined curved Arabic labels; the shade tiles' hole over a pack edge with a dead server closed. Process: the poisoned build-cache entry understood and the app's main compiles uncached, the sweep sets the app's server and waits for a quiet emulator, the status line in exec form, no product names in user-visible text with a check in `check`, ADRs 0031 and 0032.
+
 ### 2026-10-15
 
 - T106: Android leftover sweep 7 (#109)
