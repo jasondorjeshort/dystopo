@@ -22,7 +22,7 @@ class OffNetworkTest {
     @Test
     fun beyondTheLargestSnapOnlySuggestsMovingCloser() {
         val m = OffNetwork.message("end", 1000.0, 1000.0, "an unnamed path", 2400.0, "west", ContourUnits.FEET)
-        assertTrue(m.startsWith("No trail or road within 0.62 mi of the end. Nearest: an unnamed path, 1.49 mi to the west."), m)
+        assertTrue(m.startsWith("No trail or road within 0.6 mi of the end. Nearest: an unnamed path, 1.5 mi to the west."), m)
         assertTrue(m.endsWith("Long-press closer to it."), m)
     }
 

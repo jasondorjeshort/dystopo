@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
+status: done
 pipeline: T101
 related: [2026-10-13-large-distance-units.md, 2026-10-13-recenter-button.md]
 ---
@@ -22,3 +22,12 @@ preference; the Android app has none.
 - Rounding rule: a "nice" length (1, 2, 5 times a power of ten) fitted to a target pixel width.
   The unit choice for that length is the large-distance-units idea.
 - The look is ours to iterate on in alpha.
+
+## Resolved
+
+T101 (wave 14): a scale bar lower left on the phone map, above the credit line and whatever bottom panel
+shows (route card, track profile), hidden while the trip card is open. Its length is 1, 2 or 5 times a power
+of ten in the unit the distance rule gives it (`UnitFormat.scaleBar`), at most 100 dp, at the camera's zoom
+and centre latitude. Map options › Scale bar: One unit (the default) or Both units, a two-sided ruler with
+the user's units above the line and the other system below. Light ink on a dark plate in the night style.
+Debug: `GET /scalebar`, `POST /scalebar?both=on|off`. The browser's bar adopts the same rule in T107.

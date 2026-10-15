@@ -56,8 +56,8 @@ names (`CLAUDE.md`, Rules).
 | File | Kind | Status | One line |
 |---|---|---|---|
 | `2026-10-13-recenter-button.md` | feature | planned | Recenter button cycling north-up, free and facing; the plain button is T93 (wave 13), the cycling T100 (wave 14). |
-| `2026-10-13-map-scale-bar.md` | feature | planned | Scale bar on the phone map, own units by default, optional both (T101, wave 14). |
-| `2026-10-13-large-distance-units.md` | feature | planned | Imperial distances switch to miles at large scales (T101, wave 14); inches someday. |
+| `2026-10-13-map-scale-bar.md` | feature | done | Scale bar on the phone map, own units by default, optional both (T101, wave 14). |
+| `2026-10-13-large-distance-units.md` | feature | done | Imperial distances switch to miles at large scales (T101, wave 14); inches someday. |
 | `2026-10-13-driving-is-in-scope.md` | question | done | Doctrine: hike first, driving a full second mode; ADR 0032 (2026-10-14); T102 rewrites the T73 wording. |
 | `2026-10-13-cannot-create-waypoints-android.md` | bug | done | A waypoint can be dropped on the phone at the fix or at a long-press, recording or not (T91, wave 13). |
 | `2026-10-13-turn-directions.md` | feature | planned | "Turn left in 30 feet onto Trail F" in every mode (T102, wave 14); optional voice later. |

@@ -83,6 +83,12 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
             Chip("On", o.night) { change(mapOf("night" to "on")) }
             Chip("Off", !o.night) { change(mapOf("night" to "off")) }
         }
+        // T101: the scale bar lower left on the map; a device setting of its own (POST /scalebar?both=on|off).
+        val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
+        OptionRow("Scale bar", "both units adds the other system below the line, as on printed maps") {
+            Chip("One unit", !both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(false) }
+            Chip("Both units", both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(true) }
+        }
     }
 }
 

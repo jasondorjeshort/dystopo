@@ -352,9 +352,11 @@ private fun CatalogRow(r: PackCatalogClient.Row, onShow: () -> Unit, onDownload:
 
 /** A box's rough size and corners, for the catalog list. */
 private fun area(b: PackBounds): String {
-    val w = (b.maxLon - b.minLon) * 111.32 * cos(b.centerLat * PI / 180)
-    val h = (b.maxLat - b.minLat) * 110.57
-    return String.format(Locale.US, "%.0f x %.0f km  ·  %.2f, %.2f to %.2f, %.2f", w, h, b.minLat, b.minLon, b.maxLat, b.maxLon)
+    val w = (b.maxLon - b.minLon) * 111_320 * cos(b.centerLat * PI / 180)
+    val h = (b.maxLat - b.minLat) * 110_570
+    // T101: in the user's units ("120 x 85 km", "75 x 53 mi").
+    val size = io.github.jasondorjeshort.dystopo.render.UnitFormat.size(w, h, io.github.jasondorjeshort.dystopo.app.AppSettings.units)
+    return size + String.format(Locale.US, "  ·  %.2f, %.2f to %.2f, %.2f", b.minLat, b.minLon, b.maxLat, b.maxLon)
 }
 
 @Composable

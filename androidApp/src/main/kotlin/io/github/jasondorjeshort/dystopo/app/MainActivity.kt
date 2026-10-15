@@ -149,6 +149,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
         io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93: bullseye lower right, under the cards and sheets below
+        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
         SettingsSheet() // T33: units, text size, warm-up
