@@ -37,6 +37,9 @@ Parts:
                posted) and denied (recording still works).
   background   Record, press Home, force doze (`dumpsys deviceidle force-idle`), feed fixes for --bg-seconds,
                leave doze, come back and Stop: the foreground service must have kept recording through doze.
+  recenter     (T105, from T93) the map opens on a fix at Paradise, a slow drag moves the puck away, one tap on the
+               Recenter button brings it back to where it was (within --recenter-tol px, found by the puck's dot colour
+               in raw frames); screenshots on the fix, panned and recentred.
   network      the emulator's network throttled (`emu network speed/delay`) and the server killed mid-download
                (Packs > From server, a pack from --server's catalog) and mid-sync (the sync sheet): the app says the
                transfer failed, stays alive, and the retry succeeds once the server is back. Needs --server-cmd
@@ -661,8 +664,43 @@ def track_rows(dev):
     return rows
 
 
-def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13):
-    """Long-press start and end on the map, read the route card, tap Keep; returns the card's numbers line."""
+ROUTE_LINE = (0xe6, 0x61, 0x01)  # routing/RouteOverlay.kt COLOR: the planned route
+TRIP_LINE = (0x7b, 0x32, 0x94)  # trips/TripOverlay.kt COLOR: a kept route open in the editor (the Routes chip has it too)
+
+
+def color_pixels(r, rgb, tol=30, top=0.22, bottom=0.72):
+    """Pixels (on a 2 px grid, so about a quarter of them) within tol of rgb in the band of the screen between the
+    chips (top) and the cards (bottom)."""
+    n = 0
+    d = r.data
+    for y in range(int(r.h * top), int(r.h * bottom), 2):
+        row = y * r.w * 3
+        for x in range(0, r.w, 2):
+            i = row + x * 3
+            if abs(d[i] - rgb[0]) <= tol and abs(d[i + 1] - rgb[1]) <= tol and abs(d[i + 2] - rgb[2]) <= tol:
+                n += 1
+    return n
+
+
+def line_frame(dev, name, rgb, timeout=20, min_px=150):
+    """T105: the screen once the line of colour rgb is drawn (at least min_px samples) and two frames agree, saved
+    as a PNG; returns (png, samples). The features part's route screenshot used to be taken after Keep and Done,
+    when the planned line is gone by design (Keep clears it, Done closes the trip's)."""
+    deadline = time.time() + timeout
+    prev = None
+    while True:
+        _, r = dev.frame()
+        n = color_pixels(r, rgb)
+        if (n >= min_px and prev is not None and check.changed_share(prev, r) < 0.002) or time.time() > deadline:
+            return dev.save(name, r), n
+        prev = r
+        time.sleep(0.5)
+
+
+def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None):
+    """Long-press start and end on the map, read the route card, tap Keep; returns the card's numbers line. With
+    [shots] (a dict), also screenshots the route card with its line (`routePng`, `routeLinePx`) and the kept trip in
+    its editor (`tripPng`, `tripLinePx`) before Done."""
     c = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)  # centred between the two, away from the chips and the card
     open_map(dev, *c, z)
     time.sleep(5)  # the link's camera move ends before the presses
@@ -686,8 +724,12 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13):
         raise RuntimeError(f"no route card after two long-presses (texts: {dev.texts(nodes)[:25]})")
     line = card["text"]
     via = next((t for t in dev.texts(nodes) if t.startswith("via ")), None)
+    if shots is not None:
+        shots["routePng"], shots["routeLinePx"] = line_frame(dev, "route-card", ROUTE_LINE)
     dev.tap_text("^Keep$")
     done, _ = dev.wait_for("^Done$", 8)  # Keep opens the kept route's editor
+    if shots is not None and done:
+        shots["tripPng"], shots["tripLinePx"] = line_frame(dev, "route-kept", TRIP_LINE)
     if done:
         dev.tap(done)
         time.sleep(1)
@@ -837,9 +879,14 @@ def part_features(args):
 
     def route():
         clear_search(dev)
-        line, via = plan_and_keep(dev)
+        shots = {}
+        line, via = plan_and_keep(dev, shots=shots)
         st["route"] = line
-        return {"card": line, "via": via}
+        # T105: the step's screenshot is the route card with its line (before Keep); the kept trip's line is in
+        # route-kept. Before, the screenshot came after Done, which closes the trip and its line by design.
+        drawn = shots.get("routeLinePx", 0) >= 150 and shots.get("tripLinePx", 0) >= 150
+        return {"ok": drawn, "card": line, "via": via, "png": shots.get("routePng"), **shots,
+                **({} if drawn else {"error": f"route line not drawn (route {shots.get('routeLinePx')}, kept {shots.get('tripLinePx')} samples)"})}
 
     def trips():
         rows, png = routes_list(dev)
@@ -1151,6 +1198,108 @@ def part_background(args):
             break
     run.step("alive", lambda: alive_and_clean(dev))
     return run.report()
+
+
+# --- recenter (T105, from T93) ---------------------------------------------------------------------------------------
+
+PUCK_DOT = (0x1a, 0x66, 0xd9)  # LocationPuck.kt: the fix's dot (#1a66d9) inside a white ring
+
+
+def find_puck(r, cell=8, window=6, tol=28):
+    """Screen position (x, y) of the location puck's dot in a frame, or None: the window of window x window cells of
+    cell px with the most pixels within tol of the dot's colour (a river or a blue label is thin; the dot is a disc
+    of about 15 dp), and the centroid of those pixels."""
+    gw, gh = r.w // cell, r.h // cell
+    counts = [[0] * gw for _ in range(gh)]
+    pts = []
+    d = r.data
+    for y in range(0, gh * cell, 2):
+        row = y * r.w * 3
+        for x in range(0, gw * cell, 2):
+            i = row + x * 3
+            if abs(d[i] - PUCK_DOT[0]) <= tol and abs(d[i + 1] - PUCK_DOT[1]) <= tol and abs(d[i + 2] - PUCK_DOT[2]) <= tol:
+                counts[y // cell][x // cell] += 1
+                pts.append((x, y))
+    ii = [[0] * (gw + 1) for _ in range(gh + 1)]  # summed-area table of the cell counts
+    for gy in range(gh):
+        acc = 0
+        for gx in range(gw):
+            acc += counts[gy][gx]
+            ii[gy + 1][gx + 1] = ii[gy][gx + 1] + acc
+    best, at = 0, None
+    for gy in range(gh - window + 1):
+        for gx in range(gw - window + 1):
+            s = ii[gy + window][gx + window] - ii[gy][gx + window] - ii[gy + window][gx] + ii[gy][gx]
+            if s > best:
+                best, at = s, (gx, gy)
+    if not at or best < 40:  # 40 samples on a 2 px grid: about 160 px of dot
+        return None
+    x0, y0, x1, y1 = at[0] * cell, at[1] * cell, (at[0] + window) * cell, (at[1] + window) * cell
+    inside = [(x, y) for x, y in pts if x0 <= x < x1 and y0 <= y < y1]
+    return (round(sum(p[0] for p in inside) / len(inside), 1), round(sum(p[1] for p in inside) / len(inside), 1))
+
+
+def part_recenter(args):
+    """T93's follow-up: the bullseye button on the release build, by taps. With the Rainier pack and a fix at Paradise,
+    the map opens on the fix; a pan moves the puck away; one tap on Recenter brings it back where it was (within
+    --recenter-tol px), at the zoom the map had. Screenshots of the three moments."""
+    dev = device(args, "")
+    run = Run(dev)
+    st = {}
+
+    def still(name, timeout=30):
+        """A frame once two in a row agree (the camera animation over), saved as a PNG; returns (raster, path)."""
+        prev = None
+        deadline = time.time() + timeout
+        while True:
+            _, r = dev.frame()
+            if prev is not None and (check.changed_share(prev, r) < 0.002 or time.time() > deadline):
+                return r, dev.save(name, r)
+            prev = r
+            time.sleep(0.5)
+
+    def setup():
+        release_with_pack(dev, args)
+        r = map_settled(dev, "map")
+        if not r["ok"]:
+            return {"ok": False, "error": r.get("error"), "png": r.get("png")}
+        ras, png = still("on-fix")
+        st["p0"] = find_puck(ras)
+        st["size"] = (ras.w, ras.h)
+        return {"ok": st["p0"] is not None, "puck": st["p0"], "screen": f"{ras.w}x{ras.h}", "png": png,
+                **({} if st["p0"] else {"error": "no location puck on the map (#1a66d9 dot)"})}
+
+    def pan():
+        w, h = st["size"]
+        # Slow drag, no fling: the map follows the finger, so the puck moves by the drag.
+        dev.shell("input", "swipe", str(w // 2), str(h * 3 // 5), str(w // 2 - w // 4), str(h * 3 // 5 - h // 6), "800")
+        ras, png = still("panned")
+        p = find_puck(ras)
+        st["p1"] = p
+        moved = math.dist(p, st["p0"]) if p else None
+        ok = p is None or moved >= 100  # off screen counts as moved
+        return {"ok": ok, "puck": p, "movedPx": round(moved, 1) if moved is not None else None, "png": png,
+                **({} if ok else {"error": f"the pan moved the puck only {moved:.0f} px"})}
+
+    def tap():
+        n, nodes = dev.wait_for("^Recenter$", 10)
+        if not n:
+            return fail("no Recenter button on screen", texts=dev.texts(nodes)[:20])
+        st["button"] = n["bounds"]
+        dev.tap(n)
+        time.sleep(1.0)
+        ras, png = still("recentred")
+        p = find_puck(ras)
+        off = math.dist(p, st["p0"]) if p else None
+        ok = off is not None and off <= args.recenter_tol
+        return {"ok": ok, "puck": p, "offsetPx": round(off, 1) if off is not None else None, "button": n["bounds"], "png": png,
+                **({} if ok else {"error": f"after the tap the puck is {off:.1f} px from where the fix was" if p else "no puck after the tap"})}
+
+    for name, fn in (("install-map", setup), ("pan", pan), ("tap", tap)):
+        if not run.step(name, fn, shot=False):
+            break
+    run.step("alive", lambda: alive_and_clean(dev), shot=False)
+    return run.report(puckBefore=st.get("p0"), puckPanned=st.get("p1"))
 
 
 # --- network (g) -----------------------------------------------------------------------------------------------------
@@ -2001,7 +2150,8 @@ def part_update(args):
 
 
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,
-         "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions, "background": part_background}
+         "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions,
+         "background": part_background, "recenter": part_recenter}
 
 
 def main():
@@ -2030,6 +2180,7 @@ def main():
     ap.add_argument("--sync-kill-ms", type=int, default=300, help="network: kill the server this long after Sync now")
     ap.add_argument("--fail-timeout", type=float, default=90, help="network: seconds for the app to show a failure")
     ap.add_argument("--bg-seconds", type=float, default=60)
+    ap.add_argument("--recenter-tol", type=float, default=4.0, help="recenter: px between the puck before the pan and after the tap")
     ap.add_argument("--font-scale", type=float, default=0)
     ap.add_argument("--dark", action="store_true")
     ap.add_argument("--locale", default="")

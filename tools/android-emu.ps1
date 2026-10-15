@@ -34,6 +34,10 @@
 #   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo26-T81 -EmuPort 5662 -Port 9055 -Api 26 -BootOnly -AvdHome E:\dystopo-avd
 #   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-tab -EmuPort 5664 -Port 9056 -Device pixel_tablet -Locale de-DE -BootOnly
 #
+# T105: -Server <url>|none sets the app's server from its first start (written into a fresh install's preferences with
+# run-as, then POST /settings?server= once it runs); without it a debug build on an emulator uses the host's 8765, the
+# coordinator's live viewer, so a task or sweep emulator should pass its own server or none.
+#
 # Needs tools\android-sdk.ps1 first. The AVD lives under -AvdHome (default ANDROID_AVD_HOME, else <sdk>\avd);
 # each takes about 6 GB, so put several on a big disk. -Stop -Delete removes the AVD after stopping it.
 # The emulator needs CPU virtualization: Windows Hypervisor Platform (WHPX) or the Android Emulator
@@ -92,7 +96,11 @@ param(
     [switch]$BootOnly,
     # T81: emulator feature flags at boot (-feature X), e.g. GLESDynamicVersion: older images otherwise offer only
     # OpenGL ES 2 and MapLibre (ES 3) crashes in its render thread.
-    [string[]]$Feature = @()
+    [string[]]$Feature = @(),
+    # T105: the app's server (Settings > Sources) from its first start: a URL the emulator reaches (the host is 10.0.2.2),
+    # or 'none' for no server (the packs and the public sources). Not given: the debug build's own default on an
+    # emulator, the host's 8765 (AppSettings.EMULATOR_DEBUG_SERVER).
+    [string]$Server = ''
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -428,6 +436,22 @@ Write-Host "installing $Apk"
 $install = Adb install -r -g $apkPath
 if (($install -join ' ') -notmatch 'Success') { throw "install failed: $install" }
 Adb shell am force-stop $package | Out-Null
+$serverValue = if ($Server -eq 'none') { '' } else { $Server }
+if ($Server) {
+    # T105: a fresh install has no preferences yet; write the server into them before the first start, so the app never
+    # asks the default server for anything. An install that has them gets the setting through the debug route below.
+    $prefs = (Adb shell "run-as $package ls shared_prefs/dystopo-settings.xml") -join ' '
+    if ($prefs -notmatch 'dystopo-settings\.xml' -or $prefs -match 'No such file') {
+        $xmlValue = [System.Security.SecurityElement]::Escape($serverValue)
+        $local = Join-Path $repoRoot "out\dystopo-settings-$($script:serial).xml"
+        [IO.File]::WriteAllText($local, "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>`n<map>`n    <string name=`"server`">$xmlValue</string>`n</map>`n")
+        $staged = "/data/local/tmp/dystopo-settings-$($script:serial).xml"
+        Adb push $local $staged | Out-Null
+        Adb shell "chmod 644 $staged && run-as $package sh -c 'mkdir -p shared_prefs && cp $staged shared_prefs/dystopo-settings.xml'; rm -f $staged" | Out-Null
+        Remove-Item -LiteralPath $local -Force
+        Write-Host "server before the first start: $(if ($serverValue) { $serverValue } else { 'none' })"
+    }
+}
 if (-not $NoPush) {
     & (Join-Path $PSScriptRoot 'android-push-pack.ps1') -Dem $Dem -Osm $Osm -Package $package -Serial $script:serial -Name $PackName
 }
@@ -450,6 +474,12 @@ while ($true) {
     } catch { $token = $null }
     if ((Get-Date) -gt $deadline) { Write-Warning 'app did not report a loaded style within 5 minutes'; break }
     Start-Sleep -Seconds 3
+}
+if ($Server -and $token) {
+    # T105: the same setting through the debug route (persisted; the app reloads its style), for an install that kept
+    # its preferences from an earlier run.
+    $set = Invoke-RestMethod -Method Post -TimeoutSec 30 -Headers @{ 'X-Dystopo-Token' = $token } "$url/settings?server=$([uri]::EscapeDataString($serverValue))"
+    Write-Host "server: $(if ($set.server) { $set.server } else { 'none' })"
 }
 $stopArgs = if ($NoEmulator) { '' } else { "-Avd $Avd -EmuPort $($script:serial -replace 'emulator-', '') -Port $Port" + $(if ($AvdHome) { " -AvdHome $env:ANDROID_AVD_HOME" } else { '' }) + " -Stop [-Delete]" }
 Write-Host ''

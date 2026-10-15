@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-12
+verified: 2026-10-14
 source: observed on this machine (Windows 11, Windows PowerShell 5.1.26100, Git Bash); findings linked below
 ---
 
@@ -66,3 +66,7 @@ What holds on the development machine for every agent. The rules these facts sup
 - The shared download cache (`DYSTOPO_CACHE`) is safe for concurrent readers; agents never delete
   inside it and never bump a cache version that would wipe it for the others.
 - Agent shells delete permanently; a folder in the Recycle Bin was deleted by a person.
+- The Gradle build cache (`~/.gradle/caches/build-cache-1`) is one per account, so a bad entry reaches every
+  checkout whose inputs match it: a cached `androidApp` compile with a partial module file broke the unit-test
+  compile in every worktree at one commit, and `androidApp`'s main compiles are not cached since (finding
+  `../findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md`).

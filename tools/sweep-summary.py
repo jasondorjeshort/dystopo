@@ -9,9 +9,10 @@ hand. The folder holds steps.tsv, one line per part the sweep ran or skipped:
 
 and each part's own outputs under fixed names (the table PARTS below). The summary keeps per part `ok`,
 `seconds`, the exit code and the few numbers the dated sweep log entries quote (tour passed/failed, demo
-views ok, live DEM sources, sync convergence, device views, probe count, release timings, the first-run steps, and T81's
-release realism parts: routing and search tours, APK string scan, features, upgrade, permissions, background, network,
-update, the device matrix with any known defects); `ok` overall is
+views ok, live DEM sources, sync convergence, device views (T105: with the app's server and the wait for a quiet
+device), probe count, release timings, the first-run steps (T105: and the --direct run's timings and screenshots), and
+T81's release realism parts: routing and search tours, APK string scan, features, recenter, upgrade, permissions,
+background, network, update, the device matrix with any known defects); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -122,9 +123,15 @@ def device_tour(d, part):
             continue
         cg = s.get("contourGeneration") or {}
         mem = s.get("memory") or {}
+        setup = s.get("setup") or {}
+        views = s.get("views") or []
         res.append({"viewsOk": s.get("viewsOk"), "viewsTotal": s.get("viewsTotal"),
                     "glyphsOk": (s.get("glyphs") or {}).get("ok"),
-                    "failedViews": [v.get("label") for v in s.get("views") or [] if not v.get("ok")],
+                    "failedViews": [v.get("label") for v in views if not v.get("ok")],
+                    # T105: the app's server during the tour, the wait for a quiet device, the first view's seconds
+                    "server": (s.get("online") or setup.get("online") or {}).get("server") or "none",
+                    "quietWaitS": (setup.get("quiet") or {}).get("waitedS"),
+                    "firstViewS": views[0].get("seconds") if views else None,
                     "contourMs": {k: cg.get(k) for k in ("count", "avgMs", "maxMs")},
                     "pssMb": mb(mem.get("totalPssKb"), 1024), "javaHeapMb": mb(mem.get("javaHeapUsedBytes"), 1 << 20),
                     "nativeHeapMb": mb(mem.get("nativeHeapAllocatedBytes"), 1 << 20)})
@@ -168,17 +175,43 @@ def release(d, part):
     return out
 
 
-def first_run(d, part):
-    """T79: the release first run driven by taps (tools/android-firstrun.py): per step ok, and the screenshots."""
-    r = load_last_json(os.path.join(d, "first-run.json"))
+def first_run_direct(d):
+    """T105 (T91's follow-up): the --direct run (no server: the public sources, then the phone's own download and
+    offline), per step ok, the timings per place and the screenshots."""
+    r = load_last_json(os.path.join(d, "first-run-direct.json"))
     if not isinstance(r, dict):
-        return {}
+        return None
+    steps = [s for s in r.get("steps") or [] if isinstance(s, dict)]
+    out = {"ok": r.get("ok"), "steps": {s.get("step"): s.get("ok") for s in steps}, "places": {}}
+    for s in steps:
+        t = {k: s.get(k) for k in ("firstContoursS", "fullContoursS", "settledS", "contourShare") if s.get(k) is not None}
+        if s.get("skipped"):
+            t["skipped"] = s["skipped"]
+        if t:
+            out["places"][s.get("step")] = t
+        if s.get("step") == "download" and s.get("waitS") is not None:
+            out["downloadWaitS"] = s["waitS"]
+        if not s.get("ok"):
+            out.setdefault("error", f"{s.get('step')}: {s.get('error')}")
+    out["screenshots"] = sorted(os.path.relpath(p, d).replace(os.sep, "/") for p in glob.glob(os.path.join(d, "first-run", "direct", "*.png")))
+    return out
+
+
+def first_run(d, part):
+    """T79: the release first run driven by taps (tools/android-firstrun.py): per step ok, and the screenshots;
+    T105: the --direct run under `direct`."""
+    r = load_last_json(os.path.join(d, "first-run.json"))
+    direct = first_run_direct(d)
+    if not isinstance(r, dict):
+        return {"direct": direct} if direct else {}
     steps = [s for s in r.get("steps") or [] if isinstance(s, dict)]
     out = {"steps": {s.get("step"): s.get("ok") for s in steps},
            "screenshots": [os.path.relpath(s["png"], d).replace(os.sep, "/") for s in steps if s.get("png") and os.path.isabs(s["png"])]}
+    if direct:
+        out["direct"] = direct
     for s in steps:
         if s.get("step") == "test":
-            out["catalogPacks"] = s.get("packs")
+            out["catalogPacks"] = s.get("packs")  # the sweep's server starts with an empty out\: 0 until the download builds one
         if s.get("step") in ("map", "import-map"):
             out[s["step"] + "ContourShare"] = s.get("contourShare")
         if s.get("step") == "download":
@@ -208,6 +241,7 @@ def ui_part(d, part):
     steps = {s.get("step"): s for s in r.get("steps") or [] if isinstance(s, dict)}
     if part == "features":
         out["route"] = (steps.get("route") or {}).get("card")
+        out["routeLine"] = {k: (steps.get("route") or {}).get(k) for k in ("routeLinePx", "tripLinePx")}  # T105
         out["sync"] = (steps.get("sync") or {}).get("result")
     elif part == "upgrade":
         out["from"] = (steps.get("install-new") or {}).get("from")
@@ -222,6 +256,9 @@ def ui_part(d, part):
         out["syncMessage"] = (steps.get("sync-killed") or {}).get("message")
     elif part == "permissions":
         out["api"] = r.get("api")
+    elif part == "recenter":  # T105
+        out["movedPx"] = (steps.get("pan") or {}).get("movedPx")
+        out["offsetPx"] = (steps.get("tap") or {}).get("offsetPx")
     elif part == "update":  # T99
         out["versions"] = r.get("versions")
         out["previousCheckAsked"] = (steps.get("create-data") or {}).get("previousCheckAsked")
@@ -272,6 +309,7 @@ PARTS = {
     "search": tour_part,
     "apk-strings": apk_strings,
     "features": ui_part,
+    "recenter": ui_part,
     "upgrade": ui_part,
     "permissions": ui_part,
     "background": ui_part,
@@ -326,7 +364,9 @@ def sheet_images(d):
     add("Device tour", os.path.join("device", "tour*-sheet.png"))
     add("Release smoke tour", os.path.join("release", "*.png"))
     add("First run (release, by taps)", os.path.join("first-run", "*.png"))
-    for part, title in (("features", "Release features (by taps)"), ("upgrade", "Upgrade in place"), ("permissions", "Permissions"),
+    add("First run, no server (release, by taps)", os.path.join("first-run", "direct", "*.png"))  # T105
+    for part, title in (("features", "Release features (by taps)"), ("recenter", "Recenter (by taps)"), ("upgrade", "Upgrade in place"),
+                        ("permissions", "Permissions"),
                         ("background", "Background recording under doze"), ("network", "Network: throttled, server killed"),
                         ("update", "In-app update (mock releases API)")):
         add(title, os.path.join("ui", part, "*.png"))

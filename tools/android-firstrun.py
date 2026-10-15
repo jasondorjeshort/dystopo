@@ -19,16 +19,20 @@ Flow (each step is one entry in the JSON report, with the screenshot it took):
   test        tap Test; again "Connected: N packs on <server>" (N is reported)
   download    close Settings, tap "Download the map around me"; wait until the card is gone and the region pack
               is on the map (the server builds it first: up to --timeout seconds)
-  map         screencaps until two in a row agree and contour brown covers at least --contour-min of the map area
-              (the rule tools/android-release.ps1 uses: contours #8c5523 over paper or hillshade)
+  map         raw frames (`screencap` without -p, T105) until contour brown covers at least --contour-min of the map
+              area (the rule tools/android-release.ps1 uses: contours #8c5523 over paper or hillshade) and the screen
+              holds still for 2 s; the settled frame is saved as a PNG
 With --import (files on the host): uninstall and install again, push the files to the phone's Download folder,
 tap "Import pack files" on the card, pick them in the system file picker, and wait for the map the same way
 (`import` and `import-map` steps). Exit 0 when every step passed; one JSON object on stdout.
 
 T80, --direct (no --server): the release install with no server and no pack reads the public sources itself.
   install          fresh install (network on)
-  show-rainier     geo fix at Rainier, launch, the card, "Show the map around me": seconds to the first contours and
-                   to a settled screen (`firstContoursS`, `settledS`); over --direct-budget (90 s) fails the step
+  show-rainier     geo fix at Rainier, launch, the card, "Show the map around me": seconds from the tap, by raw frames
+                   (T105), to the first contours (`firstContoursS`: MapLibre's coarse fallback lines count), to the
+                   view's own lines (`fullContoursS`: the first frame with half the settled contour share) and to a
+                   screen that then holds still for 5 s (`settledS`); a settle over --direct-budget (90 s) fails the
+                   step. PNGs of those three frames only.
   show-mont-blanc  the same at Mont Blanc (Copernicus and swissALTI3D) after a restart (the card is back)
   mobile-data      T83 (no Wi-Fi gates): wifi off, mobile data on, "Show the map around me" at Paradise renders from
                    the sources, and no screen text asks for Wi-Fi or mentions mobile data; wifi back on
@@ -40,10 +44,12 @@ import importlib.util
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -70,6 +76,7 @@ class Device:
         self.serial = serial
         self.out = out
         self.shots = 0
+        self.dismissed = []  # other apps' ANR dialogs closed (close_other_anr)
 
     def adb(self, *args, timeout=120, check_ok=True):
         code, text = debug.adb(self.exe, self.serial, *args, timeout=timeout)
@@ -88,6 +95,26 @@ class Device:
         with open(path, "wb") as f:
             f.write(raw)
         return path, raw
+
+    def frame(self):
+        """T105 (T88's follow-up): (time grabbed, Raster) from a raw `screencap` (no -p): no PNG encoding on the device
+        and none to decode here, so a frame takes a fraction of a second instead of 1 to 4 s and its time is the
+        moment it was grabbed. Falls back to a PNG frame when the raw format is not RGBA or RGBX."""
+        t = time.time()
+        p = subprocess.run([self.exe, "-s", self.serial, "exec-out", "screencap"], capture_output=True, timeout=60)
+        try:
+            return t, raw_raster(p.stdout)
+        except ValueError:
+            t = time.time()
+            p = subprocess.run([self.exe, "-s", self.serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
+            return t, check.decode_png(p.stdout)
+
+    def save(self, name, raster):
+        """A frame from frame() as the next numbered PNG under --out."""
+        self.shots += 1
+        path = os.path.join(self.out, f"{self.shots:02d}-{name}.png")
+        check.encode_png(raster, path)
+        return path
 
     def nodes(self):
         """Every node of the current screen: text, desc, class, clickable, bounds (x0, y0, x1, y1)."""
@@ -131,7 +158,20 @@ class Device:
             n = self.find(pattern, nodes, exact)
             if n or time.time() > deadline:
                 return n, nodes
+            self.close_other_anr(nodes)
             time.sleep(1)
+
+    def close_other_anr(self, nodes):
+        """T105: closes another app's "isn't responding" dialog (Messages on a loaded emulator, 2026-10-14), which
+        covers the screen until answered; one about Dystopo is left for the step to report. Each one closed is listed
+        in `dismissed`."""
+        anr = next((n for n in nodes if re.search(r"isn.t responding$", n["text"] or "") and not n["text"].startswith("Dystopo")), None)
+        close = self.find(r"^Close app$", nodes) if anr else None
+        if close:
+            self.dismissed.append(anr["text"])
+            self.tap(close)
+            return True
+        return False
 
     def tap(self, node):
         x0, y0, x1, y1 = node["bounds"]
@@ -144,6 +184,23 @@ class Device:
             raise RuntimeError(f"no '{pattern}' on screen (texts: {self.texts(nodes)[:25]})")
         self.tap(n)
         return n
+
+
+def raw_raster(raw):
+    """A raw `screencap` (little-endian width, height, pixel format, and since API 28 a colour space, then 4 bytes a
+    pixel) as an RGB Raster."""
+    if len(raw) < 16:
+        raise ValueError("short raw screencap")
+    w, h, fmt = struct.unpack_from("<III", raw, 0)
+    head = len(raw) - w * h * 4
+    if head not in (12, 16) or fmt not in (1, 2):  # 1 RGBA_8888, 2 RGBX_8888
+        raise ValueError(f"unsupported raw screencap: format {fmt}, {len(raw)} bytes for {w}x{h}")
+    px = raw[head:]
+    rgb = bytearray(w * h * 3)
+    rgb[0::3] = px[0::4]
+    rgb[1::3] = px[1::4]
+    rgb[2::3] = px[2::4]
+    return check.Raster(w, h, rgb)
 
 
 def contour_share(r):
@@ -161,22 +218,60 @@ def contour_share(r):
     return hits / max(1, n)
 
 
-def settle_map(dev, name, contour_min, timeout):
-    """Screencaps until two in a row agree (changed share < 0.002) with contours shown; returns the step."""
-    deadline = time.time() + timeout
-    prev = None
-    last = None
+def watch_map(dev, name, contour_min, timeout, t0=None, hold=2.0):
+    """T105: raw frames (Device.frame) from t0 (default now; the tap for a timed view) until the map shows contours
+    and stays unchanged (under 0.002 of the samples against the first frame of the run) for `hold` seconds. Reports,
+    in seconds from t0 by when each frame was grabbed:
+      firstContoursS  the first frame with contour pixels (MapLibre's coarse fallback lines already count)
+      fullContoursS   the first frame with at least half the settled frame's contour share (the view's own lines)
+      settledS        the first frame of the run that then held still, with contours
+    Before T105 frames were PNGs decoded here (1 to 4 s each without Pillow, the clock late by that), and two frames
+    in a row that agreed counted as settled, which a map holding only the coarse lines while the fine tiles render
+    passed. Saves the settled frame (`png`) and the first-contours and full-contours frames (`firstPng`, `fullPng`)."""
+    t0 = time.time() if t0 is None else t0
+    deadline = t0 + timeout
+    run = None  # (seconds, raster) of the first frame of the current unchanged run
+    best = 0.0
+    rising = []  # frames that set a new highest contour share: (seconds, share, w, h, compressed RGB)
+    first = None
+    frames = 0
+    ras, share, settled = None, 0.0, False
     while time.time() < deadline:
-        path, raw = dev.screencap(name)
-        raster = check.decode_png(raw)
-        share = contour_share(raster)
-        changed = check.changed_share(prev, raster) if prev is not None else 1.0
-        last = {"png": path, "contourShare": round(share, 4), "changed": round(changed, 4)}
-        if share >= contour_min and changed < 0.002:
-            return dict(ok=True, **last)
-        prev = raster
-        time.sleep(2)
-    return dict(ok=False, error=f"no settled map with contours within {timeout} s", **(last or {}))
+        t, ras = dev.frame()
+        frames += 1
+        rel = round(t - t0, 1)
+        share = contour_share(ras)
+        if share > best:
+            best = share
+            rising.append((rel, share, ras.w, ras.h, zlib.compress(bytes(ras.data), 1)))
+        if first is None and share >= contour_min:
+            first = rel
+        if run is None or check.changed_share(run[1], ras) >= 0.002:
+            run = (rel, ras)
+        elif share >= contour_min and rel - run[0] >= hold:
+            settled = True
+            break
+        time.sleep(0.3)
+    out = {"contourShare": round(share, 4), "frames": frames, "firstContoursS": first}
+    goal = (share if settled else best) / 2
+    full = next((r for r in rising if r[1] >= max(goal, contour_min)), None)
+    out["fullContoursS"] = full[0] if full else None
+    saved = set()
+    for key, fr in (("firstPng", next((r for r in rising if r[1] >= contour_min), None)), ("fullPng", full)):
+        # In time order, each frame once; one already inside the settled run is the settled frame's picture.
+        if fr and fr[0] not in saved and not (settled and fr[0] >= run[0]):
+            saved.add(fr[0])
+            out[key] = dev.save(f"{name}-{key[:-3]}", check.Raster(fr[2], fr[3], bytearray(zlib.decompress(fr[4]))))
+    if ras is not None:
+        out["png"] = dev.save(name, ras)
+    if settled:
+        return dict(ok=True, settledS=run[0], **out)
+    return dict(ok=False, error=f"no settled map with contours within {timeout:g} s", **out)
+
+
+def settle_map(dev, name, contour_min, timeout):
+    """A map with contours that holds still (watch_map from now); returns the step."""
+    return watch_map(dev, name, contour_min, timeout)
 
 
 def default_apk(dev):
@@ -367,29 +462,15 @@ def run(args):
 
     report["ok"] = ok and all(s["ok"] for s in steps)
     report["screenshots"] = [s.get("png") for s in steps if s.get("png")]
+    if dev.dismissed:
+        report["otherAppDialogsClosed"] = dev.dismissed
     return report
 
 
-def timed_map(dev, name, contour_min, timeout, t0):
-    """Like settle_map, timed from [t0] (the tap): seconds to the first contours and to a settled screen with contours."""
-    deadline = t0 + timeout
-    prev = None
-    first = None
-    last = None
-    while time.time() < deadline:
-        now = round(time.time() - t0, 1)  # T88: when the frame was grabbed, not after its PNG encoding and decoding (seconds under load)
-        path, raw = dev.screencap(name)
-        raster = check.decode_png(raw)
-        share = contour_share(raster)
-        changed = check.changed_share(prev, raster) if prev is not None else 1.0
-        if share >= contour_min and first is None:
-            first = now
-        last = {"png": path, "contourShare": round(share, 4), "changed": round(changed, 4)}
-        if share >= contour_min and changed < 0.002:
-            return dict(ok=True, firstContoursS=first, settledS=now, **last)
-        prev = raster
-        time.sleep(1)
-    return dict(ok=False, error=f"no settled map with contours within {timeout} s", firstContoursS=first, **(last or {}))
+def timed_map(dev, name, contour_min, timeout, t0, hold=5.0):
+    """watch_map timed from [t0] (the tap), with a longer hold: a cold view's fine tiles can take several seconds after
+    the coarse lines, so the first two frames that agree are not yet the settled view."""
+    return watch_map(dev, name, contour_min, timeout, t0=t0, hold=hold)
 
 
 # T80: the places the direct-sources flow shows (public areas from areas.json).
@@ -525,7 +606,9 @@ def run_direct(args):
         try:
             dev.shell("am", "force-stop", PACKAGE)
             time.sleep(1)
-            dev.shell("am", "start", "-n", ACTIVITY)
+            # T105: -W, so the clock starts with the app on screen: the launcher's wallpaper behind a cold start has specks
+            # the contour rule counts (firstContoursS 0.0 in the first raw-frame runs).
+            dev.shell("am", "start", "-W", "-n", ACTIVITY, timeout=60)
             t0 = time.time()
             r = timed_map(dev, "offline", args.contour_min, args.settle_timeout, t0)
             r["network"] = "wifi and data disabled"
@@ -538,6 +621,8 @@ def run_direct(args):
     ok = all(step(n, fn) for n, fn in flow)
     report["ok"] = ok and all(s["ok"] for s in steps)
     report["screenshots"] = [s.get("png") for s in steps if s.get("png")]
+    if dev.dismissed:
+        report["otherAppDialogsClosed"] = dev.dismissed
     return report
 
 

@@ -203,6 +203,16 @@ kotlin {
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
+// T105: the app's own Kotlin compiles (debug and release main, not the tests) never go through the build cache. An entry
+// whose META-INF/androidApp_debug.kotlin_module listed two file facades instead of all of them (145 bytes, a whole one
+// is about 1.4 KB) sat in this machine's shared cache under main's sources; every worktree at that commit restored it,
+// and the unit-test compile, which finds main's top-level functions through that file, failed with "Unresolved
+// reference" on every internal top-level function the tests call (finding
+// docs/findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md). Compiling instead costs about 21 s
+// per variant on a fresh checkout (a cache hit took 0.5 s); incremental builds in a checkout are unchanged.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().matching { it.name == "compileDebugKotlin" || it.name == "compileReleaseKotlin" }
+    .configureEach { outputs.cacheIf("the module file of a restored entry can be partial (T105)") { false } }
+
 dependencies {
     implementation(project(":shared"))
     implementation(platform(libs.compose.bom))

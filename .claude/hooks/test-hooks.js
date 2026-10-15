@@ -5,7 +5,8 @@
 // differs here names the exception it tests (E1 to E5, A1, A2:
 // docs/design/decisions/0021-git-guard-exceptions.md). The usage-gate and status line cases run
 // the base's scripts under this project's policy (hold 75, deny 100, the override file per meter,
-// DYSTOPO_GATE_OVERRIDE): U01 to U15, S01 to S05, LIVE01 and LIVE02.
+// DYSTOPO_GATE_OVERRIDE): U01 to U15, S01 to S05, LIVE01 and LIVE02. H00 to H03 (T99) and SL00 to SL04 (T105) run
+// settings.json's hook and status line commands from a subfolder.
 // Each case runs a hook as a child process with JSON on stdin, exactly as Claude Code does,
 // and checks exit code and stdout.
 //
@@ -525,6 +526,53 @@ for (const [id, label, stdin, check] of S) {
     }
   }
   if (selected('H99')) report('H99', 'settings.json has the three command hooks', n === 3, `found ${n}`);
+
+  // T105: the status line. Its settings have no exec form (type, command, padding, refreshInterval), so the command runs
+  // through a shell (Git Bash on Windows, else PowerShell) in the session's current directory, with CLAUDE_PROJECT_DIR in
+  // its environment (forward slashes under Git Bash; under PowerShell Claude Code rewrites ${CLAUDE_PROJECT_DIR} to
+  // ${env:CLAUDE_PROJECT_DIR}). SL00 is the control (the old relative command from a subfolder writes nothing); SL01..
+  // run settings.json's command from a subfolder, with a captured stdin, through each such shell present, here and
+  // under a path with a space: the line is printed and usage-state.json written.
+  fs.copyFileSync(path.join(ROOT, '.claude', 'statusline.js'), path.join(spaced, '.claude', 'statusline.js'));
+  const slCommand = (settings.statusLine || {}).command || '';
+  const shells = [];
+  if (process.platform === 'win32') {
+    const bash = [process.env.CLAUDE_CODE_GIT_BASH_PATH, 'C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files (x86)\\Git\\bin\\bash.exe']
+      .find((p) => p && fs.existsSync(p));
+    if (bash) shells.push({ name: 'Git Bash', exe: bash, argv: (c) => ['-c', c], dir: (d) => d.replace(/\\/g, '/'), cmd: (c) => c });
+    shells.push({ name: 'PowerShell', exe: 'powershell.exe', argv: (c) => ['-NoProfile', '-NonInteractive', '-Command', c], dir: (d) => d,
+      cmd: (c) => c.split('${CLAUDE_PROJECT_DIR}').join('${env:CLAUDE_PROJECT_DIR}') });
+  } else {
+    shells.push({ name: 'sh', exe: '/bin/sh', argv: (c) => ['-c', c], dir: (d) => d, cmd: (c) => c });
+  }
+  let slRuns = 0;
+  function runStatusLine(command, shell, projectDir) {
+    const home = path.join(scratch, `sl-shell-home-${++slRuns}`);
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    const r = spawnSync(shell.exe, shell.argv(shell.cmd(command)), { input: rl(22, 33), encoding: 'utf8', timeout: 60000, cwd: sub,
+      env: envWith({ HOME: home, USERPROFILE: home, HOOK_POLICY_FILE: POLICY, CLAUDE_PROJECT_DIR: shell.dir(projectDir) }) });
+    let file = null;
+    try { file = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'usage-state.json'), 'utf8')); } catch (_) { /* not written */ }
+    return { code: r.status, stdout: (r.stdout || '').trim(), stderr: r.stderr || (r.error ? String(r.error) : ''), file };
+  }
+  if (selected('SL00')) {
+    const r = runStatusLine('node .claude/statusline.js', shells[0], ROOT);
+    report('SL00', `control: the old status line \`node .claude/statusline.js\` from a subfolder (${shells[0].name}) writes nothing`,
+      r.file === null && r.stdout === '', `exit ${r.code}, file ${JSON.stringify(r.file)}, line ${r.stdout}`);
+  }
+  let k = 0;
+  for (const shell of shells) {
+    for (const [projectDir, where] of [[ROOT, 'this checkout'], [spaced, 'a project path with a space']]) {
+      const id = `SL${String(++k).padStart(2, '0')}`;
+      if (!selected(id)) continue;
+      const r = runStatusLine(slCommand, shell, projectDir);
+      const named = slCommand.includes('${CLAUDE_PROJECT_DIR}');
+      const ok = named && r.code === 0 && r.stdout.includes('5h 22%') && !!r.file && r.file.five_hour.used_percentage === 22;
+      report(id, `settings.json status line from a subfolder through ${shell.name} (${where}) prints and writes usage-state.json`, ok,
+        (named ? '' : 'the command does not name its script through ${CLAUDE_PROJECT_DIR}; ') +
+          `exit ${r.code}, file ${JSON.stringify(r.file)}, stderr ${r.stderr.trim().slice(0, 300)}`, r.stdout);
+    }
+  }
 }
 
 if (opt.keep) process.stdout.write(`scratch tree kept at ${scratch}\n`);

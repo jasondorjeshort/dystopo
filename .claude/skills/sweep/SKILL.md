@@ -22,7 +22,9 @@ Android stand-in), one live view per elevation source through `serve --live` (`|
 British Columbia view where 3DEP outranks HRDEM), `sync-sim` with skew, crash-restarts and paging,
 then on a fresh emulator (`-Avd`, default `dystopo35-sweep-<date>`, deleted afterwards unless
 `-KeepEmulator`; `-EmuPort` 5640, `-Port` 8990, `-AvdHome`) `android-emu.ps1 -Build`, the device tour
-twice, the routing and search tours (T81, debug build), `android-probe.py`, the release build (once per
+twice (T105: the debug build's server is the sweep's own `serve --live` on `-BasePort`+2, or none with
+`-DeviceServer direct`, never the build's default 8765; the first view waits for a quiet device by its
+load), the routing and search tours (T81, debug build), `android-probe.py`, the release build (once per
 sweep, with `-PdystopoVersion=<describe>-sweep -PdystopoVersionCode=<commit count>` so it installs over
 the published release), `android-release.ps1 -Port`, `apk-strings` (the release APK's strings through
 `PrivacyCheck`; also with `-NoDevice`), and `first-run` (T79: the release build from a fresh install
@@ -30,8 +32,10 @@ with no pack and no assets, driven only by taps through `tools/android-firstrun.
 own standalone server at the host's LAN IPv4: Settings › Sources, Test shows the catalog count,
 "Download the map around me" at a mock fix at Rainier renders contours, then a second fresh install
 imports the Rainier pair through the file picker; per-step ok and the screenshots under `first-run` in
-`summary.json` and on the sheet), then T81's release realism parts through `tools/android-ui.py`
-(`docs/reference/release-realism.md`): `features`, `permissions`, `upgrade` (from `-PrevRelease`,
+`summary.json` and on the sheet; T105: the `--direct` run's steps, timings per place and screenshots too,
+under `first-run.direct` and its own section of the sheet), then T81's release realism parts through `tools/android-ui.py`
+(`docs/reference/release-realism.md`; T105: every one installs the sweep's own copies of the release
+APKs in `apk\`): `features`, `recenter` (T105), `permissions`, `upgrade` (from `-PrevRelease`,
 default the latest published release, its APK for the emulator's ABI downloaded with `gh`),
 `background`, `network` and `update` (T83: the in-app update by taps against a mock releases API on
 `-BasePort`+7, from the previous release's universal APK to this build to a second build of the same
@@ -40,9 +44,12 @@ on the sweep's emulator, then a fresh emulator per `-MatrixDevices` entry, defau
 phone and an API 35 tablet in German, on `-MatrixEmuPort` (EmuPort+2) upwards, each deleted afterwards;
 slow, so not in every sweep).
 
-`-Known` (default `overlap:search/Settings`) lists filed defects those parts report without failing;
-drop an entry when its fix lands. Its servers use `-BasePort` (8980) to +6 and are stopped by PID; it
-refuses 8765, 8686, 8687 and console 5554.
+`-Known` (empty by default since T91 fixed `overlap:search/Settings`) lists filed defects those parts
+report without failing; drop an entry when its fix lands. Its servers use `-BasePort` (8980) to +7 and are
+stopped by PID; it refuses 8765, 8686, 8687 and console 5554. The `check` part retries once after
+`:androidApp:clean` with `--no-build-cache` when a unit-test compile reports "Unresolved reference" (the
+stale build state of finding `docs/findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md`)
+and says so on its `steps.tsv` line.
 
 ## Output
 

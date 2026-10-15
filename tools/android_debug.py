@@ -56,10 +56,18 @@ class LaunchCrash(RuntimeError):
     """T86: the app died with an uncaught exception (the message carries its first line from logcat)."""
 
 
+DATE_FORMAT = "'+%m-%d %H:%M:%S.000'"
+
+
 def device_now(exe, serial):
-    """The device clock in logcat's `-t` format, to pass as `since` to `launch_crash` (taken before a launch)."""
-    code, out = adb(exe, serial, "shell", "date", "+%m-%d %H:%M:%S.000", timeout=30)
-    return out.strip() if code == 0 and re.match(r"\d\d-\d\d \d\d:\d\d:\d\d", out.strip()) else None
+    """The device clock in logcat's `-t` format, to pass as `since` to `launch_crash` (taken before a launch).
+
+    T105: `adb shell` joins its arguments with spaces and the device's shell splits them again, so the format goes
+    quoted as one word (unquoted, `date` got `+%m-%d` and `%H:%M:%S.000`, refused them, and this always returned None,
+    so a crash lookup read the whole crash buffer)."""
+    code, out = adb(exe, serial, "shell", "date", DATE_FORMAT, timeout=30)
+    out = out.strip()
+    return out if code == 0 and re.fullmatch(r"\d\d-\d\d \d\d:\d\d:\d\d\.000", out) else None
 
 
 def launch_crash(exe, serial, since=None):
@@ -123,6 +131,58 @@ def bootstrap(exe, serial, host_port, timeout=30.0, since=None):
     if code != 0:
         raise RuntimeError(f"adb forward tcp:{host_port} tcp:{port} failed: {out.strip()}")
     return port, token
+
+
+def parse_cpu(text):
+    """(system busy ticks, total ticks, cores, process ticks or None) from `cat /proc/stat; cat /proc/<pid>/stat` output.
+    Idle, iowait and steal count as not busy (steal is the host's other emulators, not work in this guest)."""
+    busy = total = cores = 0
+    proc = None
+    for line in text.splitlines():
+        f = line.split()
+        if not f:
+            continue
+        if f[0] == "cpu":
+            v = [int(x) for x in f[1:9]] + [0] * (8 - len(f[1:9]))
+            total = sum(v)
+            busy = total - v[3] - v[4] - v[7]
+        elif f[0].startswith("cpu") and f[0][3:].isdigit():
+            cores += 1
+        elif ")" in line and f[0].isdigit():
+            rest = line.rsplit(")", 1)[1].split()  # after the command name, which may hold spaces: state is field 3
+            proc = int(rest[11]) + int(rest[12])  # utime, stime (fields 14 and 15)
+    return busy, total, cores, proc
+
+
+def wait_quiet(exe, serial, pid=None, max_busy=1.0, window=3.0, need=2, timeout=240.0):
+    """T105: waits until the device is quiet: the CPU the system uses besides process `pid` (the app, which may be warming
+    up on purpose) is at most `max_busy` cores in `need` windows of `window` s in a row, or until `timeout`. A just-booted
+    emulator spends one to two minutes near all of its four cores on first-boot work (package optimisation, the
+    installs), during which the debug build decodes a block in seconds instead of a tenth of one (T88, T98): a cold
+    view started then missed the tour's 30 s idle. Returns {"quiet", "waitedS", "windows": [[others, app], ...]}."""
+    cmd = "cat /proc/stat" + (f"; cat /proc/{pid}/stat" if pid else "")
+    t0 = time.time()
+    _, out = adb(exe, serial, "shell", cmd, timeout=30)
+    prev = parse_cpu(out)
+    windows, run = [], 0
+    while True:
+        time.sleep(window)
+        _, out = adb(exe, serial, "shell", cmd, timeout=30)
+        cur = parse_cpu(out)
+        dt = cur[1] - prev[1]
+        if dt <= 0 or not cur[2]:
+            return {"quiet": None, "waitedS": round(time.time() - t0, 1), "windows": windows, "error": "no /proc/stat"}
+        cores = cur[2]
+        busy = (cur[0] - prev[0]) / dt * cores
+        app = ((cur[3] - prev[3]) / dt * cores) if cur[3] is not None and prev[3] is not None else 0.0
+        others = max(0.0, busy - app)
+        windows.append([round(others, 2), round(app, 2)])
+        run = run + 1 if others <= max_busy else 0
+        prev = cur
+        if run >= need:
+            return {"quiet": True, "waitedS": round(time.time() - t0, 1), "windows": windows[-40:]}
+        if time.time() - t0 >= timeout:
+            return {"quiet": False, "waitedS": round(time.time() - t0, 1), "windows": windows[-40:]}
 
 
 def health_token(base, timeout=10.0):

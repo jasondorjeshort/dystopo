@@ -34,7 +34,11 @@ swiftshader MapLibre draws no text or dash patterns, and the labels check fails 
 
 Before the tour (unless --no-restart) the app is force-stopped and relaunched through adb so counters,
 MapLibre's tile caches and the glyph cache start empty, and the contour disk cache is cleared (unless
---keep-cache) so contour timings measure generation, not disk reads.
+--keep-cache) so contour timings measure generation, not disk reads. T105: --server <url>|none sets the app's
+server first (a debug build on the emulator otherwise uses the host's 8765; the sweep passes its own); and the
+first view waits until the device is quiet, by its load: the CPU used besides the app at most --quiet-cores in two
+3 s windows in a row (setup.quiet in the summary: the wait and the windows). A just-booted emulator runs near all four
+cores for one to two minutes, and a cold view started then missed the 30 s idle (T88, T98).
 
 Every request carries the app's per-launch loopback token (T49). T57: the debug routes answer on a random
 port per launch, announced with the token only in logcat (`debug server on port N token T`, tag Dystopo):
@@ -63,6 +67,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zlib
 import http.client
@@ -441,6 +446,22 @@ def expected_sources(health, v):
     return [s for s in SOURCES if exp[s]]
 
 
+def set_app_server(server, value, timeout=60.0):
+    """T105: the app's server (POST /settings?server=, persisted; '' for none), then the style the setting reloads.
+    Returns the server the app reports."""
+    r = server.json("/settings?server=" + urllib.parse.quote(value, safe=""), method="POST", timeout=30)
+    time.sleep(2)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if server.json("/health", timeout=10).get("map", {}).get("styleLoaded"):
+                break
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+            pass
+        time.sleep(1)
+    return r.get("server")
+
+
 def online_state(server):
     """T98: the app's online target and its state (GET /online): a configured server that does not answer changes what
     the tour measures (a debug build on an emulator defaults to the host's 8765)."""
@@ -502,6 +523,13 @@ def main():
     ap.add_argument("--min-text-pixels", type=int, default=200, help="pixels that must change when text is hidden, where labels are placed")
     ap.add_argument("--no-restart", action="store_true", help="don't relaunch the app first (counters and caches carry over)")
     ap.add_argument("--keep-cache", action="store_true", help="don't clear the contour disk cache first")
+    ap.add_argument("--server", default=None,
+                    help="T105: set the app's server first (POST /settings?server=): a URL the emulator reaches, or 'none' for no "
+                         "server (packs and the public sources). Default: leave it (a debug build on the emulator defaults to the host's 8765)")
+    ap.add_argument("--quiet-cores", type=float, default=1.0,
+                    help="T105: before the first view, wait until the device's CPU use besides the app is at most this many cores "
+                         "in two 3 s windows in a row (a just-booted emulator spends minutes near all its cores on first-boot work)")
+    ap.add_argument("--quiet-timeout", type=float, default=240.0, help="T105: the longest wait for a quiet device (s); 0 skips the wait")
     args = ap.parse_args()
 
     views = read_views(args)
@@ -531,7 +559,15 @@ def main():
 
     summary = {"port": args.port, "serial": serial, "avd": avd, "pngDecoder": "pillow" if HAVE_PIL else "stdlib",
                "contourBudgetMs": args.contour_budget_ms, "setup": {}}
+    want = None if args.server is None else ("" if args.server.lower() in ("none", "direct", "") else args.server)
     try:
+        if want is not None:
+            # T105: before the restart, so the relaunched process starts on it (the setting is persisted). An app that
+            # does not answer yet gets it after the restart below.
+            try:
+                summary["setup"]["serverSet"] = {"before": set_app_server(server, want)}
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:
+                summary["setup"]["serverSet"] = {"beforeError": str(e)[:200]}
         if not args.no_restart:
             if exe and serial:
                 t0 = time.time()
@@ -540,8 +576,18 @@ def main():
             else:
                 server.json("/reload", method="POST", timeout=60)
                 summary["setup"]["restart"] = "no adb device for the port; used POST /reload"
+        now = online_state(server).get("server") or ""
+        if want is not None and (now if not now.startswith("direct://") else "") != want:  # no server reads direct://sources
+            summary["setup"]["serverSet"]["after"] = set_app_server(server, want)
         if not args.keep_cache:
             summary["setup"]["contourCacheCleared"] = server.json("/cache/clear", method="POST")["deleted"]
+        if exe and serial and args.quiet_timeout > 0:
+            # T105 (T88's follow-up): a just-booted emulator is still busy with first-boot work; wait for it by its load.
+            q = android_debug.wait_quiet(exe, serial, android_debug.app_pid(exe, serial), max_busy=args.quiet_cores,
+                                         timeout=args.quiet_timeout)
+            summary["setup"]["quiet"] = q
+            print(f"quiet device after {q['waitedS']} s (cores busy besides the app, per 3 s: "
+                  f"{' '.join(str(w[0]) for w in q['windows'][-12:])})" + ("" if q["quiet"] else " - gave up"), file=sys.stderr)
         since = None
         if exe and serial:
             _, since = adb(exe, serial, "shell", "date '+%m-%d %H:%M:%S.000'", timeout=30)

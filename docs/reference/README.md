@@ -12,14 +12,14 @@ them, in the same PR.
 | File | Topic | Verified |
 |---|---|---|
 | `machines.md` | The two Windows accounts: main checkouts, worktrees, cache, JDK, SDK, AVDs, the coordinator's servers and PIDs, every port in use | 2026-10-12 |
-| `windows-and-shells.md` | PowerShell 5.1 and Git Bash quirks, `git -C`, proving a push, deleting worktrees with long paths, processes by PID, shared state | 2026-10-12 |
+| `windows-and-shells.md` | PowerShell 5.1 and Git Bash quirks, `git -C`, proving a push, deleting worktrees with long paths, processes by PID, shared state | 2026-10-14 |
 | `code-layout.md` | The modules (`shared`, `devtool`, `serverlib`/`server`, `tilebuild`, `tools`, `areas.json`) with the detail an editing agent needs | 2026-10-12 |
 | `devtool-commands.md` | Every devtool command with its options, fonts in PNGs, working directory and cache | 2026-10-12 |
 | `live-server.md` | Browser demo, live world mode and map options, trip editor, `devtool serve` as the phone stand-in, the coordinator's servers | 2026-10-12 |
-| `android-app.md` | What the app serves, the build and emulator scripts, the settings sheet's groups, the device tour, the loopback token and the debug port | 2026-10-12 |
-| `android-emulator.md` | Several emulators side by side, host virtualization, GPU and API quirks | 2026-10-12 |
+| `android-app.md` | What the app serves, the build and emulator scripts, the settings sheet's groups, the device tour, the loopback token and the debug port | 2026-10-14 |
+| `android-emulator.md` | Several emulators side by side, host virtualization, GPU and API quirks, the server a task emulator uses, first-boot load | 2026-10-14 |
 | `android-debug-routes.md` | Every debug route family (health, screenshot, camera, stats, settings, storage, packs, routes, navigation, areas, probe) | 2026-10-12 |
 | `android-tracks-and-sync.md` | Tracks and GPX, phone-to-phone sync and the relay, sync with the server | 2026-10-12 |
 | `android-online.md` | The phone reading the sources with no server, the cold view stage by stage, no Wi-Fi gates, pinned areas and content versions, in-app updates, first run and cleartext | 2026-10-14 |
 | `android-release.md` | The release build and signing, deep links, `android-release.ps1` | 2026-10-12 |
-| `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps | 2026-10-12 |
+| `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, and the sweep's device parts | 2026-10-14 |
