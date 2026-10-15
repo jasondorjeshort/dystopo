@@ -59,7 +59,9 @@ Hatchery's proposal 0003 describes the same workflow for the base.
 4. Confirm from the remote: `gh pr view <n> --json mergedAt` is set. Only then delete the remote
    branch (`git push origin --delete task/Tnn`; the git guard refuses it until GitHub shows the merge,
    ADR 0021) and fast-forward `main`; have a Haiku agent remove the worktree and delete the local
-   branch (`brief` skill, `chore.md`; worktree removal on Windows: `docs/reference/windows-and-shells.md`).
+   branch (`brief` skill, `chore.md`; worktree removal on Windows: `docs/reference/windows-and-shells.md`:
+   give the chore the `\\?\` delete and one git command per call, and launch it only after the
+   verifier has reported its last check, or its emulator and Gradle daemon hold files in the folder).
    If a branch was deleted before the merge succeeded and the PR closed: recreate the branch at the
    recorded SHA and `gh pr reopen <n>`.
 5. Write the dated log entry and the **Status:** line to two files and run
