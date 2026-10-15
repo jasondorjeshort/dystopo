@@ -17,9 +17,8 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
   consoles 5660 to 5670. Cleanup: T101 done, T104's chore running (long paths need the `\\?\` delete).
 - v0.1.6-alpha is published (2026-10-14 22:42 UTC, versionCode 332). Live viewer 8765 and
   standalone server 8800 run on the released build (`out/coordinator-pids.txt`).
-- Owner: HOLD lifted to 100% for this session; the override file (until Oct 15 12:30 UTC) was
-  re-created at 00:55 UTC after going missing; delete it when the session ends. ADR 0031 governs
-  interface changes. Never `cd` into a subfolder in this session's shell (its hooks predate T99).
+- Owner: HOLD lifted to 100% for this session (override file until Oct 15 12:30 UTC, re-created at
+  00:55 UTC; delete it at the end). Never `cd` into a subfolder in this session's shell (old hooks).
 
 ## Next
 
