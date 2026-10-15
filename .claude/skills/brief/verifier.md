@@ -18,7 +18,8 @@ Machine facts for this run: work in the task's worktree `<path>` (or make your o
 6. Scan the PR text: `gh pr view <n> --json title,body --jq '.title + "\n" + .body' | java tools/PrivacyCheck.java scan`.
 
 You do not edit the code. A small fix-up may go to the implementer directly (<its agent id>);
-anything that changes scope goes to the coordinator.
+anything that changes scope goes to the coordinator. Temporary files go in a folder of your own under
+the session scratchpad (`<scratchpad>\Tnn-verify\`): every agent of the session shares its root.
 
 Report: MERGE, MERGE WITH NOTES, or FIX, with specifics (commands run, numbers seen, what each PNG
 showed, each defect with a reproduction). Under 30 lines.

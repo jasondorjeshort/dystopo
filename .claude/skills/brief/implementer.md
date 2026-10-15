@@ -21,7 +21,9 @@ Sequencing: <PRs that touch the same files and the order, or "none">.
 Done when: <the Done-when line>, plus `./gradlew check` green and the docs your change touches
 updated in the same PR (`CLAUDE.md`, Debug before you push).
 
-Process: commit as you go; debug end to end with the real tooling and view the PNGs; before the PR:
+Process: temporary files go in a folder of your own under the session scratchpad (`<scratchpad>\Tnn\`;
+every agent of the session shares the scratchpad root, and files written there have been overwritten
+by another agent); commit as you go; debug end to end with the real tooling and view the PNGs; before the PR:
 `./gradlew check`, `git fetch && git rebase origin/main`, push `task/Tnn`, `gh pr create --fill`
 with a body listing what was run and seen (numbers, screenshots described, public places only), every
 edit outside Owns, and follow-ups. Stop only processes you started, by PID or serial; stop your Gradle
