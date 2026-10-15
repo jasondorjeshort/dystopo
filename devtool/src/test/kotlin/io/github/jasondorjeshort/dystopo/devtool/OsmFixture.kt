@@ -44,7 +44,7 @@ class OsmFixture(private val build: (OsmFixture.Canvas) -> Unit) {
         fun my(py: Double) = case.centerY + (py - half) * cell
 
         /** Elevation at an image pixel position, meters. */
-        fun elevation(x: Double, y: Double): Double = case.terrain.elevationAt(mx(x), my(y))
+        fun elevation(x: Double, y: Double): Double = case.terrain!!.elevationAt(mx(x), my(y))
 
         internal val features = LinkedHashMap<String, MutableList<Pair<Map<String, Value>, List<List<Pair<Double, Double>>>>>>()
         internal val kinds = HashMap<String, Char>()
@@ -118,7 +118,7 @@ class OsmFixture(private val build: (OsmFixture.Canvas) -> Unit) {
          * wilderness boundary, a peak on the cliff top, and one POI of each common kind.
          */
         val LAKE_CLIFF = OsmFixture { c ->
-            val terrain = c.case.terrain
+            val terrain = c.case.terrain!!
             require(terrain === SyntheticTerrain.LAKE_CLIFF) { "laid out for the lake-cliff preset" }
             // The preset's landforms (SyntheticTerrain.LAKE_CLIFF).
             val lake = SyntheticTerrain.Lake(x = -700.0, y = 300.0, radius = 1300.0, depth = 80.0, waterDepth = 37.0)

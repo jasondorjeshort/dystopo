@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.tiles
 
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.render.Slope
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import kotlin.math.hypot
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -34,13 +35,13 @@ class ShadeTilesTest {
         return (peakU * world / 256).toInt() to (peakV * world / 256).toInt()
     }
 
-    private val multiSlope = ShadeOptions(HillshadeMode.MULTI, 0.8, slope = true)
+    private val multiSlope = ShadeOptions(HillshadeMode.MULTI, 0.8, slope = SlopeShading.AVALANCHE)
 
     @Test
     fun edgesMatchTheNeighbourExactly() {
         val dem = pyramid(8, 13)
         val (tx, ty) = peakTile(13)
-        for (options in listOf(multiSlope, ShadeOptions(HillshadeMode.SINGLE, 1.0), ShadeOptions(HillshadeMode.OFF, 0.0, slope = true))) {
+        for (options in listOf(multiSlope, ShadeOptions(HillshadeMode.SINGLE, 1.0), ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.AVALANCHE))) {
             val a = ShadeTiles.generate(dem, 13, tx, ty, options)
             val b = ShadeTiles.generate(dem, 13, tx + 1, ty, options)
             // A tile straddling the seam (half of a, half of b) must agree pixel for pixel with both:
@@ -59,11 +60,11 @@ class ShadeTilesTest {
     fun steepGroundIsTintedFlatGroundIsClear() {
         val dem = pyramid(8, 13)
         val (tx, ty) = peakTile(13)
-        val tile = ShadeTiles.generate(dem, 13, tx, ty, ShadeOptions(HillshadeMode.OFF, 0.0, slope = true))
+        val tile = ShadeTiles.generate(dem, 13, tx, ty, ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.AVALANCHE))
         assertTrue(tile.slopePixels > 10_000, "cone flanks tinted: ${tile.slopePixels}")
         assertEquals(0, tile.noDataPixels)
         // The tint is one of the band colours at the slope opacity.
-        val colours = Slope.bands.map { it.rgb }.toSet()
+        val colours = Slope.avalancheBands.map { it.rgb }.toSet()
         val alpha = (ShadeTiles.SLOPE_OPACITY * 255).toInt()
         for (p in tile.argb) if (p != 0) {
             assertTrue((p and 0xFFFFFF) in colours, "band colour ${p.toString(16)}")
@@ -73,6 +74,43 @@ class ShadeTilesTest {
         val far = ShadeTiles.generate(dem, 13, tx + 6, ty + 6, multiSlope)
         assertTrue(far.argb.all { it == 0 }, "flat ground stays transparent")
         assertEquals(0, ShadeTiles.generate(dem, 13, tx, ty, ShadeOptions(HillshadeMode.MULTI, 1.0)).slopePixels)
+    }
+
+    @Test
+    fun steepnessTintsWithItsOwnRamp() {
+        val dem = pyramid(8, 13)
+        val (tx, ty) = peakTile(13)
+        val steep = ShadeTiles.generate(dem, 13, tx, ty, ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.STEEPNESS))
+        val aval = ShadeTiles.generate(dem, 13, tx, ty, ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.AVALANCHE))
+        assertTrue(steep.slopePixels >= aval.slopePixels, "steepness starts at 10 degrees: ${steep.slopePixels} vs ${aval.slopePixels}")
+        val colours = Slope.steepnessBands.map { it.rgb }.toSet()
+        for (p in steep.argb) if (p != 0) assertTrue((p and 0xFFFFFF) in colours, "steepness colour ${p.toString(16)}")
+        assertTrue(!steep.argb.contentEquals(aval.argb), "the two shadings differ")
+        assertEquals(0, ShadeTiles.generate(dem, 13, tx, ty, ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.OFF)).slopePixels)
+    }
+
+    @Test
+    fun aReadZoomBelowAPackReadsThePackAndAveragesItDown() {
+        // T104: a pyramid from z6 (a server's first zoom) whose only tiles are a region pack's, from z8: the z6 and z7
+        // levels are empty, as with the server unreachable, so the tile's own zoom reads nothing.
+        val dem = pyramid(6, 13) { z, _, _ -> z >= 8 }
+        for (z in listOf(6, 7)) {
+            val (tx, ty) = peakTile(z)
+            val plan = ShadeTiles.plan(z, tx, ty, dem.maxZoom)
+            val before = ShadeTiles.render(ShadeTiles.sample(dem, plan), plan, multiSlope)
+            assertEquals(256 * 256, before.noDataPixels, "z$z from its own zoom only")
+            val grid = ShadeTiles.sample(dem, plan, readZoom = 8)
+            assertEquals(plan.windowSize, grid.width)
+            val coarse = ShadeTiles.sample(pyramid(6, 13), plan)
+            assertEquals(coarse.cellSizeMeters, grid.cellSizeMeters, coarse.cellSizeMeters * 1e-9, "the plan's own cell size")
+            val after = ShadeTiles.render(grid, plan, multiSlope)
+            assertEquals(0, after.noDataPixels, "z$z read at the pack's first zoom")
+            assertTrue(after.argb.any { it != 0 }, "z$z shades the cone")
+        }
+        // Never more than MAX_OVERSAMPLE zooms deeper, and never shallower than the plan.
+        val plan = ShadeTiles.plan(5, 0, 0, 13)
+        assertEquals(plan.windowSize, ShadeTiles.sample(dem, plan, readZoom = 12).width)
+        assertEquals(256 * 256, ShadeTiles.render(ShadeTiles.sample(dem, plan, readZoom = 4), plan, multiSlope).noDataPixels)
     }
 
     @Test
@@ -128,8 +166,9 @@ class ShadeTilesTest {
     fun optionKeysDifferWheneverPixelsDo() {
         val keys = listOf(
             ShadeOptions(HillshadeMode.SINGLE, 1.0), ShadeOptions(HillshadeMode.MULTI, 1.0), ShadeOptions(HillshadeMode.MULTI, 0.5),
-            ShadeOptions(HillshadeMode.MULTI, 0.5, slope = true), ShadeOptions(HillshadeMode.MULTI, 0.5, slope = true, night = true),
-            ShadeOptions(HillshadeMode.OFF, 0.0, slope = true),
+            ShadeOptions(HillshadeMode.MULTI, 0.5, slope = SlopeShading.AVALANCHE), ShadeOptions(HillshadeMode.MULTI, 0.5, slope = SlopeShading.AVALANCHE, night = true),
+            ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.AVALANCHE),
+            ShadeOptions(HillshadeMode.OFF, 0.0, slope = SlopeShading.STEEPNESS), ShadeOptions(HillshadeMode.MULTI, 0.5, slope = SlopeShading.STEEPNESS),
         ).map { it.key }
         assertEquals(keys.size, keys.toSet().size, keys.toString())
         assertTrue(keys.all { it.matches(Regex("[a-z0-9-]+")) }, "url- and path-safe: $keys")

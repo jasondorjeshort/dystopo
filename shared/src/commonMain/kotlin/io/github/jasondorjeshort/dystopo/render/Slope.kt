@@ -76,36 +76,91 @@ class Gradient(val width: Int, val height: Int, val dzdx: DoubleArray, val dzdy:
     }
 }
 
-/** One slope-angle band of the overlay: cells with [minDeg] <= slope < [maxDeg] get [rgb]. */
+/** One slope-angle band of a shading: cells with [minDeg] <= slope < [maxDeg] get [rgb]. */
 data class SlopeBand(val label: String, val minDeg: Double, val maxDeg: Double, val rgb: Int)
+
+/**
+ * T104: what the slope shading draws. [AVALANCHE] colours the slope angles where avalanches release
+ * ([Slope.avalancheBands]); [STEEPNESS] is a plain ramp, darker where steeper, with no avalanche meaning
+ * ([Slope.steepnessBands]). [key] is the spelling of the `slope` map option, `--slope-shading` and shade
+ * tile URLs.
+ */
+enum class SlopeShading(val key: String) {
+    OFF("off"), AVALANCHE("avalanche"), STEEPNESS("steepness");
+
+    /** The bands this shading tints, lowest first; empty when [OFF]. */
+    val bands: List<SlopeBand>
+        get() = when (this) {
+            OFF -> emptyList()
+            AVALANCHE -> Slope.avalancheBands
+            STEEPNESS -> Slope.steepnessBands
+        }
+
+    companion object {
+        /**
+         * The shading named [s], or null. The `on`/`off` spellings of the single overlay before T104 (stored
+         * settings, the browser viewer's `slope=on`) still parse: `on` is [AVALANCHE].
+         */
+        fun parse(s: String): SlopeShading? = when (s.trim().lowercase()) {
+            "off", "0", "false", "no", "none" -> OFF
+            "avalanche", "on", "1", "true", "yes" -> AVALANCHE
+            "steepness", "steep" -> STEEPNESS
+            else -> null
+        }
+    }
+}
 
 object Slope {
     private const val DEG = 180.0 / PI
 
     /**
-     * Slope-angle bands in the style avalanche maps (CalTopo, Gaia, FATMAP) use: no tint below 27
-     * degrees, then yellow through orange and red (35-45, the most avalanche-prone range) to purple
-     * and blue for cliffs. Band edges are whole degrees as listed: "27-29" covers 27 <= s < 30.
-     * The colors are our own choice, picked to read like the familiar CalTopo progression:
+     * T104: the avalanche slope-angle bands, keyed to the slope angles where avalanches release (sources and the
+     * reasoning in docs/PLANNING.md › Slope shading): most release on 30 to 45 degree slopes, most often near 38;
+     * slabs release less often on 25 to 30 degrees and above 45, where the snow sluffs often; above 50 small loose
+     * avalanches run frequently, and above 60 slabs are rare. Reds inside the release window (35-45, the most
+     * frequent part, reddest), yellow below it and purple to blue above it. Edges are whole degrees as listed:
+     * "25-29" covers 25 <= s < 30. Before T104 the edges were 27, 30, 32, 35, 46, 51 and 60: the first moved down
+     * to 25, and 30-31 and 32-34 became one band. Colours are our own.
      *
-     * | band  | color   |                 |
-     * |-------|---------|-----------------|
-     * | 27-29 | #F0E000 | yellow          |
-     * | 30-31 | #F8B000 | amber           |
-     * | 32-34 | #F07800 | orange          |
-     * | 35-45 | #E02020 | red             |
-     * | 46-50 | #B01890 | magenta-purple  |
-     * | 51-59 | #6030B0 | violet          |
-     * | 60+   | #2040D0 | blue            |
+     * | band  | color   |                                    |
+     * |-------|---------|------------------------------------|
+     * | 25-29 | #F0E000 | yellow: below the window, uncommon |
+     * | 30-34 | #F59000 | orange: release window             |
+     * | 35-45 | #E02020 | red: release window, most frequent |
+     * | 46-50 | #B01890 | magenta: above, slabs less likely  |
+     * | 51-59 | #6030B0 | violet: sluffs often               |
+     * | 60+   | #2040D0 | blue: slabs rare                   |
      */
-    val bands: List<SlopeBand> = listOf(
-        SlopeBand("27-29", 27.0, 30.0, 0xF0E000),
-        SlopeBand("30-31", 30.0, 32.0, 0xF8B000),
-        SlopeBand("32-34", 32.0, 35.0, 0xF07800),
+    val avalancheBands: List<SlopeBand> = listOf(
+        SlopeBand("25-29", 25.0, 30.0, 0xF0E000),
+        SlopeBand("30-34", 30.0, 35.0, 0xF59000),
         SlopeBand("35-45", 35.0, 46.0, 0xE02020),
         SlopeBand("46-50", 46.0, 51.0, 0xB01890),
         SlopeBand("51-59", 51.0, 60.0, 0x6030B0),
         SlopeBand("60+", 60.0, 90.01, 0x2040D0),
+    )
+
+    /**
+     * T104: the steepness ramp, ten degrees a band from 10, pale where gentle and dark where steep (sampled from
+     * a perceptually ordered sequential ramp, lightest to darkest), so steeper always reads as more serious and
+     * nothing in it marks an avalanche angle. Untinted below 10 degrees.
+     *
+     * | band  | color   |
+     * |-------|---------|
+     * | 10-19 | #FECF92 |
+     * | 20-29 | #FE9F6D |
+     * | 30-39 | #F7705C |
+     * | 40-49 | #DE4968 |
+     * | 50-59 | #8C2981 |
+     * | 60+   | #3B0F70 |
+     */
+    val steepnessBands: List<SlopeBand> = listOf(
+        SlopeBand("10-19", 10.0, 20.0, 0xFECF92),
+        SlopeBand("20-29", 20.0, 30.0, 0xFE9F6D),
+        SlopeBand("30-39", 30.0, 40.0, 0xF7705C),
+        SlopeBand("40-49", 40.0, 50.0, 0xDE4968),
+        SlopeBand("50-59", 50.0, 60.0, 0x8C2981),
+        SlopeBand("60+", 60.0, 90.01, 0x3B0F70),
     )
 
     /** Slope angle in degrees (0 = flat, 90 = vertical) from a gradient. */
@@ -143,9 +198,9 @@ object Slope {
         return out
     }
 
-    /** Index into [bands] for a slope angle, or -1 below the first band or for NaN. */
-    fun bandIndex(deg: Float): Int {
-        if (deg.isNaN() || deg < bands[0].minDeg) return -1
+    /** Index into [bands] for a slope angle, or -1 below the first band, for NaN, or with no bands. */
+    fun bandIndex(deg: Float, bands: List<SlopeBand>): Int {
+        if (bands.isEmpty() || deg.isNaN() || deg < bands[0].minDeg) return -1
         for (k in bands.indices) if (deg < bands[k].maxDeg) return k
         return bands.size - 1
     }
@@ -154,13 +209,13 @@ object Slope {
      * Fraction of cells with data in each band of [bands], in order. Cells below the first band
      * count toward the total but no band; NaN cells are left out entirely.
      */
-    fun bandFractions(slopes: FloatArray): DoubleArray {
+    fun bandFractions(slopes: FloatArray, bands: List<SlopeBand>): DoubleArray {
         val counts = IntArray(bands.size)
         var valid = 0
         for (s in slopes) {
             if (s.isNaN()) continue
             valid++
-            val k = bandIndex(s)
+            val k = bandIndex(s, bands)
             if (k >= 0) counts[k]++
         }
         return DoubleArray(bands.size) { if (valid == 0) 0.0 else counts[it].toDouble() / valid }

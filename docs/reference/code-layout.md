@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-12
+verified: 2026-10-14
 source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
 ---
 
@@ -13,5 +13,5 @@ The module map with the detail that agents need when they edit a module. The sys
 - `devtool/` — JVM command-line tool that runs shared-core features and prints JSON reports. JVM-only code (image I/O, PNG rendering) lives here.
 - `serverlib/` and `server/` — the server pieces (`LiveTiles`, `BuildRoutes`, `ServeStatic`, `SyncRoutes`, `PackCatalog`, the elevation sources under their old names; package `...dystopo.server`) shared by `devtool serve` and the standalone server (`./gradlew :server:installDist`, config file, `/catalog`, `/healthz`, `/metrics`, token, body and time limits, a rotating JSON log, Dockerfile): see `docs/SERVER.md`, whose Operations section covers running it for real; `python -I tools/server-probe.py` (73 probes, must leave the server alive) and `tools/server-soak.ps1` (hours under load, SVG chart) are the T82 checks, and the nightly workflow runs a 20-minute soak.
 - `tilebuild/` — JVM-only build tool: OSM extract → PMTiles via Planetiler (heavy dependencies stay here, out of devtool). `./gradlew :tilebuild:run --args="--extract liechtenstein --out out/liechtenstein.pmtiles"`; first run downloads ~1.45 GB of aux data into the cache.
-- `tools/` — repo tooling: `PrivacyCheck.java` and the git hooks in `tools/git-hooks`.
+- `tools/` — repo tooling: `PrivacyCheck.java` and the git hooks in `tools/git-hooks`; `user-text-check.py` (T104, run by `./gradlew check` as `userTextCheck`), which fails when user-visible text names another mapping product listed in `user-text-names.txt`.
 - `areas.json` — public named test areas. Personal areas go in `devtool.local.json` (gitignored, same format, main checkout only).

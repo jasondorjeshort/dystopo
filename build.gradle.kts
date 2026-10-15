@@ -21,6 +21,28 @@ tasks.named("check") {
     dependsOn(subprojects.map { "${it.path}:licenseCheck" })
 }
 
+// T104: user-visible text names no other mapping software (CLAUDE.md > Rules): tools/user-text-check.py over the
+// string literals of the app, devtool, server and shared sources, the app's string resources and the browser viewer;
+// the names are in tools/user-text-names.txt. Needs Python 3 (`python` on Windows, `python3` elsewhere).
+val userTextCheck = tasks.register<Exec>("userTextCheck") {
+    group = "verification"
+    description = "Fails when user-visible text names another mapping product (tools/user-text-names.txt)."
+    val report = layout.buildDirectory.file("reports/user-text-check.json")
+    inputs.files("tools/user-text-check.py", "tools/user-text-names.txt")
+    inputs.files(fileTree(".") {
+        include("androidApp/src/main/**/*.kt", "devtool/src/main/**/*.kt", "serverlib/src/main/**/*.kt", "server/src/main/**/*.kt")
+        include("shared/src/*Main/**/*.kt", "androidApp/src/main/res/values*/*.xml", "tools/demo/**/*.html", "tools/demo/**/*.js")
+        exclude("**/build/**")
+    })
+    outputs.file(report)
+    val python = if (System.getProperty("os.name").lowercase().contains("windows")) "python" else "python3"
+    commandLine(python, "-I", "tools/user-text-check.py", "--out", report.get().asFile.path)
+}
+
+tasks.named("check") {
+    dependsOn(userTextCheck)
+}
+
 tasks.register("licenseCheck") {
     group = "verification"
     description = "Runs licenseCheck in every module."

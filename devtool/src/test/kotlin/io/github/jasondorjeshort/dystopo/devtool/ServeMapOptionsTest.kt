@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import io.github.jasondorjeshort.dystopo.tiles.HillshadeMode
@@ -41,7 +42,10 @@ class ServeMapOptionsTest {
         val shade = ServeMapOptions.shadeOptions(ServeMapOptions.query(shadeUrl.substringAfter('?')))
         assertEquals(o.shade, shade)
         assertEquals(HillshadeMode.MULTI, shade.hillshade)
-        assertTrue(shade.slope && shade.night)
+        assertTrue(shade.slope == SlopeShading.AVALANCHE && shade.night) // T104: slope=on is the avalanche shading
+        // T104: the steepness shading travels the same way.
+        val steep = ServeMapOptions.parse(ServeMapOptions.query("hillshade=off&slope=steepness"), ContourUnits.FEET)
+        assertEquals(SlopeShading.STEEPNESS, ServeMapOptions.shadeOptions(ServeMapOptions.query(ServeMapOptions.shadeTiles("http://h", steep)!!.substringAfter('?'))).slope)
         // The contour route applies the interval from the fixed-interval zoom up.
         val c = ServeMapOptions.contourOptions(ContourTileOptions(units = ContourUnits.FEET), ServeMapOptions.query("interval=100"))
         assertEquals(100.0, c.interval)

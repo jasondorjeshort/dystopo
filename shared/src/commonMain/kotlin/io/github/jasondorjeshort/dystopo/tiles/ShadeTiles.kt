@@ -2,7 +2,8 @@ package io.github.jasondorjeshort.dystopo.tiles
 
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.render.Hillshade
-import io.github.jasondorjeshort.dystopo.render.Slope
+import io.github.jasondorjeshort.dystopo.render.SlopeBand
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import kotlin.jvm.Synchronized
 import kotlin.math.floor
 import kotlin.math.pow
@@ -21,23 +22,33 @@ enum class HillshadeMode(val key: String) {
 }
 
 /**
- * What a shade tile draws: a hillshade overlay ([hillshade], [intensity] 0..1 scales its opacity), the
- * CalTopo-style slope bands ([Slope.bands]) on top when [slope], and dimmer colours for a dark base
- * when [night].
+ * What a shade tile draws: a hillshade overlay ([hillshade], [intensity] 0..1 scales its opacity), the bands of
+ * slope shading [slope] on top (T104: the avalanche slope angles or plain steepness, [SlopeShading.bands]), and
+ * dimmer colours for a dark base when [night].
  */
 data class ShadeOptions(
     val hillshade: HillshadeMode,
     val intensity: Double = 1.0,
-    val slope: Boolean = false,
+    val slope: SlopeShading = SlopeShading.OFF,
     val night: Boolean = false,
 ) {
     init {
         require(intensity in 0.0..1.0) { "intensity must be in 0..1" }
     }
 
-    /** Short, stable key for cache directories and tile URLs: changes whenever the pixels would. */
+    /**
+     * Short, stable key for cache directories and tile URLs: changes whenever the pixels would. T104: the slope part
+     * is `noslope`, `aval` or `steep` (before T104 `slope` for the one overlay, whose band edges then changed, so
+     * those tiles are not reused; tiles without slope keep their key).
+     */
     val key: String
-        get() = "${ShadeTiles.VERSION}-${hillshade.key}${(intensity * 100).roundToInt()}-${if (slope) "slope" else "noslope"}-${if (night) "night" else "day"}"
+        get() = "${ShadeTiles.VERSION}-${hillshade.key}${(intensity * 100).roundToInt()}-${slopeKey(slope)}-${if (night) "night" else "day"}"
+
+    private fun slopeKey(s: SlopeShading) = when (s) {
+        SlopeShading.OFF -> "noslope"
+        SlopeShading.AVALANCHE -> "aval"
+        SlopeShading.STEEPNESS -> "steep"
+    }
 }
 
 /**
@@ -67,7 +78,7 @@ class ShadeTile(
     val argb: IntArray,
     /** Pixels left transparent because the DEM has no data there. */
     val noDataPixels: Int,
-    /** Pixels tinted by a slope band. */
+    /** Pixels tinted by a slope band (of [ShadeOptions.slope]). */
     val slopePixels: Int,
     /** Gradient, hillshade and slope, one fused pass over the window. */
     val fieldMs: Double,
@@ -77,7 +88,7 @@ class ShadeTile(
 /**
  * Raster hillshade and slope-angle tiles from a [DemPyramid] (T47): the on-device path for the map
  * options that MapLibre's own `raster-dem` hillshade cannot draw (multidirectional light, an intensity,
- * the slope bands, night colours). Tiles are [TILE_SIZE] px PNG-ready ARGB overlays, transparent where
+ * the slope shadings, night colours). Tiles are [TILE_SIZE] px PNG-ready ARGB overlays, transparent where
  * flat ground needs no shading, drawn by MapLibre as a `raster` layer over the land cover.
  *
  * Each tile samples its DEM window with a [HALO] of real neighbouring cells, so the Horn gradient at
@@ -93,6 +104,12 @@ object ShadeTiles {
 
     /** Deepest overzoom computed from the pack's deepest DEM; beyond it the pyramid's bilinear overzoom is sampled. */
     const val MAX_REDUCTION = 4
+
+    /**
+     * T104: the most zooms deeper than the tile a window is read at and box-averaged down ([sample] with a read
+     * zoom): a z6 tile over a pack that starts at z8 reads 16 times the cells. Deeper floors are not read.
+     */
+    const val MAX_OVERSAMPLE = 2
 
     /** Bumped when the pixels for the same options change, so caches and URLs move on. */
     const val VERSION = "s1"
@@ -117,9 +134,19 @@ object ShadeTiles {
      */
     fun zFactor(sampleZoom: Int): Double = 2.0.pow((13 - sampleZoom) * 0.4).coerceIn(1.0, 4.0)
 
-    /** Samples the plan's window from [dem]: the grid [render] expects. Thread-safe when [dem] is. */
-    fun sample(dem: DemPyramid, plan: ShadeTilePlan): ElevationGrid =
-        dem.window(plan.sampleZoom, plan.windowX, plan.windowY, plan.windowSize, plan.windowSize)
+    /**
+     * Samples the plan's window from [dem]: the grid [render] expects. Thread-safe when [dem] is. With a [readZoom]
+     * deeper than the plan's sample zoom (T104, at most [MAX_OVERSAMPLE] deeper) the same window is read there and
+     * each block of cells box-averaged into one (NaN left out; all NaN stays NaN), as [ContourTiles.sample] does
+     * for a contour tile over a DEM pack: a z6 or z7 shade tile over a pack that starts at z8 then reads the pack.
+     */
+    fun sample(dem: DemPyramid, plan: ShadeTilePlan, readZoom: Int? = null): ElevationGrid {
+        val size = plan.windowSize
+        val k = ((readZoom ?: plan.sampleZoom) - plan.sampleZoom).coerceIn(0, MAX_OVERSAMPLE)
+        if (k == 0) return dem.window(plan.sampleZoom, plan.windowX, plan.windowY, size, size)
+        val fine = dem.window(plan.sampleZoom + k, plan.windowX shl k, plan.windowY shl k, size shl k, size shl k)
+        return ElevationGrid(size, size, fine.cellSizeMeters * (1 shl k), ContourTiles.reduce(fine.values, size shl k, k))
+    }
 
     /** Samples and renders tile z/x/y; see [render]. */
     fun generate(dem: DemPyramid, z: Int, x: Int, y: Int, options: ShadeOptions): ShadeTile {
@@ -142,7 +169,8 @@ object ShadeTiles {
         val clock = TimeSource.Monotonic
         val t0 = clock.markNow()
         val mode = if (options.intensity > 0.0) options.hillshade else HillshadeMode.OFF
-        val f = field(grid, zFactor(plan.sampleZoom), mode, options.slope)
+        val bands = options.slope.bands
+        val f = field(grid, zFactor(plan.sampleZoom), mode, bands.isNotEmpty())
         val shade = f.shade
         val slope = f.tan2
         val t2 = clock.markNow()
@@ -166,8 +194,8 @@ object ShadeTiles {
         val maxShadow = (if (night) 0.6 else 0.7) * options.intensity
         val maxHighlight = (if (night) 0.08 else 0.5) * options.intensity
         val slopeOpacity = if (night) SLOPE_OPACITY_NIGHT else SLOPE_OPACITY
-        val bandRgb = IntArray(Slope.bands.size) { Slope.bands[it].rgb }
-        val bandTan2 = bandTan2()
+        val bandRgb = IntArray(bands.size) { bands[it].rgb }
+        val bandTan2 = bandTan2(bands)
         var noData = 0
         var tinted = 0
         for (j in 0 until size) {
@@ -310,12 +338,12 @@ object ShadeTiles {
     private fun nz(v: Float, centre: Float): Double = if (v.isNaN()) centre.toDouble() else v.toDouble()
 
     /** tan² of each band's lower edge, for [band]. */
-    private fun bandTan2(): DoubleArray = DoubleArray(Slope.bands.size) {
-        val t = kotlin.math.tan(Slope.bands[it].minDeg * kotlin.math.PI / 180.0)
+    private fun bandTan2(bands: List<SlopeBand>): DoubleArray = DoubleArray(bands.size) {
+        val t = kotlin.math.tan(bands[it].minDeg * kotlin.math.PI / 180.0)
         t * t
     }
 
-    /** The [Slope.bands] index for a squared slope tangent, as [Slope.bandIndex] gives for its angle; -1 below the first. */
+    /** The band index for a squared slope tangent, as [io.github.jasondorjeshort.dystopo.render.Slope.bandIndex] gives for its angle; -1 below the first. */
     private fun band(tan2: Double, edges: DoubleArray): Int {
         if (tan2.isNaN() || tan2 < edges[0]) return -1
         var k = 0
@@ -359,7 +387,7 @@ class ShadeTileStats(private val keepRecent: Int = 24) {
 
     /** Records one tile: [totalMs] from start of sampling to encoded bytes, with its parts. */
     @Synchronized
-    fun add(plan: ShadeTilePlan, tile: ShadeTile, totalMs: Double, sampleMs: Double, encodeMs: Double, bytes: Int, options: ShadeOptions, waitMs: Double = 0.0) {
+    fun add(plan: ShadeTilePlan, tile: ShadeTile, totalMs: Double, sampleMs: Double, encodeMs: Double, bytes: Int, options: ShadeOptions, waitMs: Double = 0.0, readZoom: Int? = null) {
         count++
         total += totalMs
         if (totalMs < min) min = totalMs
@@ -371,7 +399,7 @@ class ShadeTileStats(private val keepRecent: Int = 24) {
         if (totalMs > zt.max) zt.max = totalMs
         recent.addLast(
             linkedMapOf(
-                "tile" to "${plan.z}/${plan.x}/${plan.y}", "sampleZoom" to plan.sampleZoom, "grid" to plan.windowSize,
+                "tile" to "${plan.z}/${plan.x}/${plan.y}", "sampleZoom" to plan.sampleZoom, "readZoom" to (readZoom ?: plan.sampleZoom), "grid" to plan.windowSize,
                 "ms" to round1(totalMs), "waitMs" to round1(waitMs), "sampleMs" to round1(sampleMs),
                 "fieldMs" to round1(tile.fieldMs), "composeMs" to round1(tile.composeMs),
                 "encodeMs" to round1(encodeMs), "bytes" to bytes, "slopePixels" to tile.slopePixels, "options" to options.key,

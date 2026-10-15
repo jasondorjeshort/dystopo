@@ -63,8 +63,8 @@ names (`CLAUDE.md`, Rules).
 | `2026-10-13-turn-directions.md` | feature | planned | "Turn left in 30 feet onto Trail F" in every mode (T102, wave 14); optional voice later. |
 | `2026-10-13-auto-download-when-zoomed-in.md` | feature | new | Keep topo and map data automatically when dwelling zoomed in (T75 is manual). |
 | `2026-10-13-routing-modes-crow-bushwhack.md` | feature | new | Crow (straight line) and bushwhack (trails, then gentlest cross-country) modes. |
-| `2026-10-13-avalanche-slope-shading.md` | feature | planned | Separate avalanche-window and plain-steepness slope shadings (T104, wave 14). |
-| `2026-10-13-no-other-product-names.md` | chore | planned | Rule: our user-visible text does not name other mapping software (CLAUDE.md, 2026-10-14); the check and renames are T104. |
+| `2026-10-13-avalanche-slope-shading.md` | feature | done | Separate avalanche-window and plain-steepness slope shadings (T104: slope off, avalanche or steepness, a legend; docs/PLANNING.md › Slope shading). |
+| `2026-10-13-no-other-product-names.md` | chore | done | Rule: our user-visible text does not name other mapping software (CLAUDE.md, 2026-10-14); T104 renamed the two hits and added `tools/user-text-check.py` (in `./gradlew check`). |
 | `2026-10-13-route-waypoints-and-reroute.md` | feature | new | Route to a destination with waypoints dropped when passed, rerouting, all modes. |
 | `2026-10-13-cache-budgets.md` | feature | new | One total cache budget plus per-kind budgets, LRU or LFU (T74 has per-store caps). |
 | `2026-10-13-settings-tabs.md` | feature | planned | Settings sheet grouped into thematic tabs (T103, wave 14). |

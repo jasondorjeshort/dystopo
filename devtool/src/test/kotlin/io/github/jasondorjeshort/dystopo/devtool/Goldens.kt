@@ -32,10 +32,11 @@ fun styleOptions(vararg args: String): StyleOptions {
 /**
  * One golden image: [terrain] rendered through the full pipeline at [zoom], [sizePx] square,
  * with the cell size Web Mercator has at 45 degrees latitude for that zoom, centered on
- * ([centerX], [centerY]) meters of the terrain.
+ * ([centerX], [centerY]) meters of the terrain. T104: or a real DEM tile ([dem], with [terrain] null),
+ * read whole at its own zoom and cell size; [variant] names a case that differs only in [args].
  */
 data class GoldenCase(
-    val terrain: SyntheticTerrain,
+    val terrain: SyntheticTerrain?,
     val zoom: Int,
     val sizePx: Int = 256,
     val centerX: Double = 0.0,
@@ -43,15 +44,22 @@ data class GoldenCase(
     val args: List<String> = emptyList(),
     /** OpenStreetMap data drawn over the terrain (`--osm`), from a synthetic archive. */
     val osm: OsmFixture? = null,
+    val dem: DemFixture? = null,
+    val variant: String? = null,
 ) {
-    val name: String get() = "${terrain.name}${if (osm != null) "-osm" else ""}-z$zoom"
+    init {
+        require((terrain == null) != (dem == null)) { "a golden case has a synthetic terrain or a DEM fixture" }
+        require(dem == null || (zoom == dem.z && sizePx == 256 && osm == null)) { "a DEM fixture renders whole at its own zoom" }
+    }
+
+    val name: String get() = "${terrain?.name ?: dem!!.name}${if (osm != null) "-osm" else ""}${variant?.let { "-$it" } ?: ""}-z$zoom"
     val fileName: String get() = "$name.png"
 
     /** Approved label list next to the image (see [Goldens.formatLabels]). */
     val labelsFileName: String get() = "$name.labels.txt"
-    val cellSizeMeters: Double get() = WebMercator.metersPerPixel(45.0, zoom)
+    val cellSizeMeters: Double get() = dem?.cellSizeMeters ?: WebMercator.metersPerPixel(45.0, zoom)
 
-    fun grid(): ElevationGrid = terrain.grid(sizePx, sizePx, cellSizeMeters, centerX, centerY)
+    fun grid(): ElevationGrid = dem?.grid() ?: terrain!!.grid(sizePx, sizePx, cellSizeMeters, centerX, centerY)
 
     fun style(): StyleOptions = styleOptions(*(args + osmArgs()).toTypedArray())
 
@@ -73,7 +81,8 @@ object Goldens {
     /**
      * The approved set. Three landscapes at two zoom-equivalents each: the low zoom shows each
      * whole preset with sparse contours, the high zoom a close-up with dense contours, cliff
-     * thinning and several labels.
+     * thinning and several labels. Then the OSM case, and (T104) the two slope shadings over a
+     * real DEM tile.
      */
     val cases = listOf(
         GoldenCase(SyntheticTerrain.MIXED, zoom = 12),
@@ -85,6 +94,9 @@ object Goldens {
         // The default map style over a synthetic outdoors-schema archive: trails by difficulty, cliff
         // ticks, POI markers, park and wilderness boundaries, peak, trail and cliff labels.
         GoldenCase(SyntheticTerrain.LAKE_CLIFF, zoom = 15, centerX = 200.0, centerY = 0.0, osm = OsmFixture.LAKE_CLIFF),
+        // T104: the two slope shadings over real terrain, Mount Rainier's summit tile (DemFixture.RAINIER).
+        GoldenCase(null, zoom = 12, dem = DemFixture.RAINIER, variant = "avalanche", args = listOf("--slope-shading", "avalanche")),
+        GoldenCase(null, zoom = 12, dem = DemFixture.RAINIER, variant = "steepness", args = listOf("--slope-shading", "steepness")),
     )
 
     /** Source directory of the approved images (relative to the devtool project dir, where Gradle runs tests). */

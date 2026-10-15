@@ -30,7 +30,7 @@ a release will carry can be built from source today (below). Expect rough edges.
 - Elevation read straight from public cloud files: USGS 3DEP (10 m, and 1 m lidar where flown), swissALTI3D
   (Switzerland, 0.5 to 2 m), Copernicus GLO-30 (the rest of the world, 30 m). All converted to one vertical datum
   (EGM2008) and blended with feathered seams, so source edges do not show.
-- Hillshade (single or multi-directional), CalTopo-style slope-angle shading, contours with readable intervals
+- Hillshade (single or multi-directional), slope shading (avalanche slope angles or plain steepness), contours with readable intervals
   per zoom, index lines and labels in feet or metres.
 
 **Map**

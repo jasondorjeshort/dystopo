@@ -22,7 +22,7 @@ DYSTOPO_3DEP_DESTRIPE=1 ./gradlew :devtool:run --args="render --area rainier --s
 ./gradlew :devtool:run --args="mvt dump --file tile.mvt"  # summarize a Mapbox Vector Tile (--gzip, --layer, --samples)
 ./gradlew :devtool:run --args="pmtiles info --file x.pmtiles"   # PMTiles header, metadata, per-zoom counts (--url for remote, --tile z/x/y)
 ./gradlew :devtool:run --args="tiles --area rainier --min-zoom 8 --max-zoom 13 --verify --preview-zoom 13"   # Terrarium XYZ tiles -> out/rainier-best/
-./gradlew :devtool:run --args="render --area rainier --shading multi --slope-overlay"   # shading hillshade|multi|none; CalTopo-style slope bands
+./gradlew :devtool:run --args="render --area rainier --shading multi --slope-shading avalanche"   # shading hillshade|multi|none; slope shading off|avalanche|steepness (T104; --slope-overlay = avalanche) -> out/rainier-best-z13-avalanche.png, band fractions in shading.slopeBandFractions
 ./gradlew :devtool:run --args="sources --ids best"        # data source registry; composed attribution for a source
 ./gradlew :devtool:run --args="tour --zooms 9,12"          # world sanity sweep: areas.json expectedElevation/tags -> out/tour/summary.json + contact-sheet.png; exit 1 on failure
 ./gradlew :devtool:run --args="gpx info shared/src/commonTest/resources/gpx/skyline-loop.gpx"   # track stats; also gpx render --osm ... and gpx export

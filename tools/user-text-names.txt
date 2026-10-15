@@ -1,0 +1,43 @@
+# Product names that user-visible text must not contain: CLAUDE.md > Rules, "No other product names in
+# user-visible text" (the owner, 2026-10-13; docs/ideas/2026-10-13-no-other-product-names.md). Read by
+# tools/user-text-check.py: one name per line, matched case-insensitively as a whole word; a space matches any
+# run of whitespace. Code comments, KDoc, docs and the README may name other products; this list is only for what
+# the app, the devtool, the server and the browser viewer show or print.
+#
+# Not listed on purpose: data sources and the attribution lines the app must show (OpenStreetMap, USGS, Copernicus,
+# OpenFreeMap, ...), the libraries we credit (MapLibre, ...), and file formats (so not Mapbox, whose name is in
+# "Mapbox Vector Tile", the format's own name, in the devtool's mvt help). A named integration that must name
+# the service it connects to marks its line with `user-text-ok` (see the script). Add a name when one turns up.
+CalTopo
+Gaia GPS
+GaiaGPS
+FATMAP
+onX
+onX Backcountry
+onX Hunt
+onX Offroad
+AllTrails
+Strava
+Komoot
+OsmAnd
+Organic Maps
+MAPS.ME
+Locus Map
+Avenza
+Outdooractive
+Mapy.cz
+Wikiloc
+Google Maps
+Google Earth
+Apple Maps
+Bing Maps
+HERE WeGo
+Waze
+FarOut
+Guthook
+PeakFinder
+PeakVisor
+ViewRanger
+Ride with GPS
+Garmin Explore
+Garmin BaseCamp

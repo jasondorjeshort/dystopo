@@ -10,6 +10,7 @@ import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.file
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.io.File
@@ -56,7 +57,7 @@ class RenderCommand : AreaCommand("render") {
 
     private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
     private val style by StyleOptions()
-    private val out by option("--out", help = "Output PNG (default out/<area>-<source>-z<zoom>.png)").file()
+    private val out by option("--out", help = "Output PNG (default out/<area>-<source>-z<zoom>.png; -avalanche or -steepness before .png with --slope-shading)").file()
 
     override fun run() {
         val (name, box) = Areas.resolve(area, bbox)
@@ -67,7 +68,9 @@ class RenderCommand : AreaCommand("render") {
         val fetched = timings.time("fetch") { src.fetch(window) }
         val grid = fetched.grid
         val (image, contours, shading, osm) = MapRenderer.render(grid, zoom, style, timings, window = window)
-        val outFile = out ?: File("out/${name ?: "bbox"}-$source-z$zoom.png")
+        // T104: a slope-shaded render gets its own default file, so the two shadings and the plain map sit side by side.
+        val shadingSuffix = style.slopeShading.takeIf { it != SlopeShading.OFF }?.let { "-${it.key}" } ?: ""
+        val outFile = out ?: File("out/${name ?: "bbox"}-$source-z$zoom$shadingSuffix.png")
         timings.time("writePng") {
             outFile.absoluteFile.parentFile.mkdirs()
             ImageIO.write(image, "png", outFile)

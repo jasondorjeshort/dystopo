@@ -2,12 +2,14 @@ package io.github.jasondorjeshort.dystopo.maplibre
 
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import io.github.jasondorjeshort.dystopo.style.DefaultOsmStyle
 import io.github.jasondorjeshort.dystopo.tiles.HillshadeMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -44,7 +46,7 @@ class MapOptionsTest {
 
     @Test
     fun generatedShadeReplacesNativeHillshadeAboveLandCover() {
-        for (o in listOf(MapOptions(hillshade = HillshadeMode.MULTI), MapOptions(hillshadeIntensity = 0.6), MapOptions(slope = true, hillshade = HillshadeMode.OFF))) {
+        for (o in listOf(MapOptions(hillshade = HillshadeMode.MULTI), MapOptions(hillshadeIntensity = 0.6), MapOptions(slope = SlopeShading.AVALANCHE, hillshade = HillshadeMode.OFF), MapOptions(slope = SlopeShading.STEEPNESS, hillshade = HillshadeMode.OFF))) {
             val ids = ids(o)
             assertFalse("hillshade" in ids, "$o")
             assertTrue("shade" in ids && "shade" in sourceIds(o), "$o")
@@ -52,7 +54,7 @@ class MapOptionsTest {
             assertTrue(ids.indexOf("shade") < ids.indexOf("water"), "water covers the shade")
         }
         // Single light at full intensity plus slope: MapLibre's hillshade and the slope tiles together.
-        val both = MapOptions(slope = true)
+        val both = MapOptions(slope = SlopeShading.AVALANCHE)
         assertTrue("hillshade" in ids(both) && "shade" in ids(both))
         assertEquals(HillshadeMode.OFF, both.shade?.hillshade)
         // Nothing to shade: neither.
@@ -124,7 +126,7 @@ class MapOptionsTest {
             ),
             MapOptions(), ft,
         )
-        assertEquals(MapOptions(HillshadeMode.MULTI, 0.7, true, 100.0, ContourLabelDensity.DENSE, false, false, false, false, false, true), o)
+        assertEquals(MapOptions(HillshadeMode.MULTI, 0.7, SlopeShading.AVALANCHE, 100.0, ContourLabelDensity.DENSE, false, false, false, false, false, true), o)
         assertNull(MapOptions.parse(mapOf("contourInterval" to "auto"), o, ft).contourInterval)
         assertEquals(20.0, MapOptions.parse(mapOf("contourInterval" to "20m"), o, ContourUnits.METERS).contourInterval)
         assertEquals(100.0, MapOptions.parse(mapOf("contourInterval" to 100), o, ft).contourInterval)
@@ -141,5 +143,24 @@ class MapOptionsTest {
         assertEquals("100", json["contourInterval"])
         assertEquals("on", json["night"])
         assertNotNull(json["contourIntervalChoices"])
+        assertEquals("avalanche", json["slope"])
+        assertEquals(listOf("off", "avalanche", "steepness"), json["slopeChoices"])
+    }
+
+    @Test
+    fun slopeTakesEachShadingAndTheOldOnOff() {
+        // T104: stored settings and the browser viewer still say on/off; on is the avalanche shading.
+        val ft = ContourUnits.FEET
+        for ((raw, want) in listOf("on" to SlopeShading.AVALANCHE, "off" to SlopeShading.OFF, "avalanche" to SlopeShading.AVALANCHE, "steepness" to SlopeShading.STEEPNESS)) {
+            val o = MapOptions.parse(mapOf("slope" to raw), MapOptions(), ft)
+            assertEquals(want, o.slope, raw)
+            // What is stored is read back unchanged (AppSettings writes json(), reads it through parse).
+            assertEquals(o, MapOptions.parse(mapOf("slope" to o.json(ft)["slope"]), MapOptions(), ft))
+        }
+        val steep = MapOptions.parse(mapOf("slope" to "steepness", "hillshade" to "off"), MapOptions(), ft)
+        assertEquals(SlopeShading.STEEPNESS, steep.shade?.slope)
+        assertNotEquals(steep.shade?.key, steep.copy(slope = SlopeShading.AVALANCHE).shade?.key)
+        val e = assertFailsWith<IllegalArgumentException> { MapOptions.parse(mapOf("slope" to "maybe"), MapOptions(), ft) }
+        assertTrue("off, avalanche or steepness" in e.message.orEmpty(), e.message)
     }
 }

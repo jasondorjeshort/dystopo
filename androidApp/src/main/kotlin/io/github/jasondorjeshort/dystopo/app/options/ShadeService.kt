@@ -30,7 +30,9 @@ import java.util.concurrent.atomic.AtomicLong
  * directory, bounded only when the service started; that directory is removed.
  *
  * Tiles the pack does not cover come from the online DEM pyramid when a server is set ([OnlineTiles]), not
- * disk-cached (their DEM may still be arriving).
+ * disk-cached (their DEM may still be arriving). T104: such a tile over a DEM pack's edge whose zoom is above the
+ * pack's first zoom reads at that first zoom ([OnlineTiles.shadeReadZoom]; `packFloorReads`, and `blankAtPackFloor`
+ * for one that still came out with no data at all, which should stay 0).
  */
 /** T65: [ShadeService]'s `/stats` counters (`shadeGeneration`), kept across tile service reopens like the T57 tile counters. */
 class ShadeCounters {
@@ -39,6 +41,12 @@ class ShadeCounters {
     val waits = AtomicLong()
     val transparent = AtomicLong()
     val stats = ShadeTileStats(keepRecent = 64)
+
+    /** T104: online tiles read at a DEM pack's first zoom ([OnlineTiles.shadeReadZoom]). */
+    val packFloorReads = AtomicLong()
+
+    /** T104: such tiles that still had no data in any pixel (should stay 0: the pack under them has elevations). */
+    val blankAtPackFloor = AtomicLong()
 }
 
 class ShadeService(
@@ -89,7 +97,7 @@ class ShadeService(
                 val (p, identity) = pyramidFor(z, x, y) ?: return notFound()
                 cachedOrGenerate(p, identity, o, z, x, y)
             } else {
-                online.shadeTile(o.key, z, x, y) { generate(it, o, z, x, y) } // T74: disk-cached like online contours
+                online.shadeTile(o.key, z, x, y) { p, readZoom -> generate(p, o, z, x, y, readZoom) } // T74: disk-cached like online contours; T104: the pack's first zoom
             }
             served.served.incrementAndGet()
             served.bytes.addAndGet(bytes.size.toLong())
@@ -136,16 +144,20 @@ class ShadeService(
         }
     }
 
-    private fun generate(p: DemPyramid, o: ShadeOptions, z: Int, x: Int, y: Int): ByteArray {
+    private fun generate(p: DemPyramid, o: ShadeOptions, z: Int, x: Int, y: Int, readZoom: Int? = null): ByteArray {
         val requested = System.nanoTime()
         slots.acquire()
         try {
             val started = System.nanoTime()
             val plan = ShadeTiles.plan(z, x, y, p.maxZoom)
-            val grid = ShadeTiles.sample(p, plan)
+            val grid = ShadeTiles.sample(p, plan, readZoom)
             val sampled = System.nanoTime()
             val tile = ShadeTiles.render(grid, plan, o)
             val rendered = System.nanoTime()
+            if (readZoom != null) {
+                counters.packFloorReads.incrementAndGet()
+                if (tile.noDataPixels == tile.size * tile.size) counters.blankAtPackFloor.incrementAndGet()
+            }
             val bytes = if (tile.argb.all { it == 0 }) {
                 transparent.incrementAndGet()
                 emptyPng
@@ -153,7 +165,7 @@ class ShadeService(
                 encode(tile.argb, tile.size)
             }
             val done = System.nanoTime()
-            stats.add(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, (done - rendered) / 1e6, bytes.size, o, (started - requested) / 1e6)
+            stats.add(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, (done - rendered) / 1e6, bytes.size, o, (started - requested) / 1e6, readZoom)
             return bytes
         } finally {
             slots.release()
@@ -168,6 +180,8 @@ class ShadeService(
         "diskCacheHits" to cacheHits.get(),
         "waitedForSameTile" to waits.get(),
         "transparentTiles" to transparent.get(),
+        "packFloorReads" to counters.packFloorReads.get(), // T104
+        "blankAtPackFloor" to counters.blankAtPackFloor.get(), // T104: should stay 0
         "staleCacheFilesDeleted" to staleFilesDeleted.get(),
         "demDecoder" to TileService.decoderName, // T49: the shared pure-Kotlin decoder by default (pyramids from TileService)
         // T49: in the contour LRU; per option set and pack.

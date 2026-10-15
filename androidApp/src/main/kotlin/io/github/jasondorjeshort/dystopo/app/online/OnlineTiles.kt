@@ -236,16 +236,23 @@ class OnlineTiles(
      * [generate] over [pyramid], disk-cached like online contours: in the online cache under the source and its
      * DEM version (`<source>/shade-<options>@<dem version>/z/x/y.png`), kept only when every DEM tile it needed
      * was there and no pack overlaps it.
+     *
+     * T104: [generate] also gets the zoom to read the window at ([shadeReadZoom]): a tile a DEM pack's bounds overlap
+     * whose zoom is above the pack's first zoom (a z6 or z7 tile over a region pack from z8) reads at that first zoom,
+     * box-averaged down, so the pack answers its part when the server does not. Before, such a tile read the
+     * pyramid's own z6 or z7 level, which only the server fills: with the server unreachable it came out blank, as
+     * T98 found for contour tiles ([serverContourOptions]).
      */
-    fun shadeTile(optionsKey: String, z: Int, x: Int, y: Int, generate: (DemPyramid) -> ByteArray): ByteArray {
-        val keep = packs.demPacks.none { overlaps(it, z, x, y) }
+    fun shadeTile(optionsKey: String, z: Int, x: Int, y: Int, generate: (DemPyramid, Int?) -> ByteArray): ByteArray {
+        val floor = packFloor(packs.demPacks.map { bounds(it) to it.header.minZoom }, z, x, y)
+        val keep = floor == null
         val key = "${fetcher.derivedPrefix("shade-" + optionsKey.replace(Regex("[^A-Za-z0-9]"), "_"))}/$z/$x/$y.png"
         if (keep) service.cache.get(key)?.let {
             service.shadeCacheHits.incrementAndGet()
             return it
         }
         incomplete.set(false)
-        val bytes = generate(pyramid())
+        val bytes = generate(pyramid(), shadeReadZoom(floor, z))
         val missed = incomplete.get() == true
         incomplete.remove()
         if (missed) {
@@ -338,6 +345,18 @@ class OnlineTiles(
             val floor = packs.filter { tileOverlaps(it.first, z, x, y) }.maxOfOrNull { it.second } ?: return base
             return readFrom(base, floor, z, x, y)
         }
+
+        /** T104: the deepest first zoom of the DEM packs (bounds, first zoom) whose bounds overlap tile z/x/y; null when none does. */
+        fun packFloor(packs: List<Pair<PackBounds, Int>>, z: Int, x: Int, y: Int): Int? =
+            packs.filter { tileOverlaps(it.first, z, x, y) }.maxOfOrNull { it.second }
+
+        /**
+         * T104: the zoom shade tile z/x/y reads its window at ([io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.sample]):
+         * the pack [floor] ([packFloor]) when it is deeper than [z] by at most
+         * [io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.MAX_OVERSAMPLE], else null (the tile's own zoom).
+         */
+        fun shadeReadZoom(floor: Int?, z: Int): Int? =
+            floor?.takeIf { it > z && it - z <= io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.MAX_OVERSAMPLE }
 
         /** True when tile z/x/y and box [b] overlap (touching edges do not count). */
         fun tileOverlaps(b: PackBounds, z: Int, x: Int, y: Int): Boolean {

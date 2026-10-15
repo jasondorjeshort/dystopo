@@ -20,7 +20,7 @@ import javax.imageio.ImageIO
  * settings: the options travel in the query string, so a page asks for `/style.json?slope=on&night=on` and the
  * style it gets points its tile URLs at the matching routes:
  * - `/style.json` and `/phone` take the [MapOptions.KEYS] (`hillshade=off|single|multi`, `hillshadeIntensity=0..1`,
- *   `slope`, `contourInterval=auto|<n>` in the contour units, `contourLabels`, `trails`, `water`, `landcover`, `pois`,
+ *   `slope=off|avalanche|steepness` (T104; `on` is avalanche), `contourInterval=auto|<n>` in the contour units, `contourLabels`, `trails`, `water`, `landcover`, `pois`,
  *   `boundaries`, `night`); a bad value is a 400 naming it.
  * - `/contours/{z}/{x}/{y}.pbf?interval=<n>` draws a fixed interval from [MapOptions.FIXED_INTERVAL_FROM_ZOOM] up,
  *   as on the phone.
@@ -58,7 +58,7 @@ object ServeMapOptions {
     fun shadeTiles(base: String, o: MapOptions): String? = o.shade?.let { s ->
         val q = linkedMapOf(
             "hillshade" to s.hillshade.key, "hillshadeIntensity" to MapOptions.fmt(s.intensity),
-            "slope" to if (s.slope) "on" else "off", "night" to if (s.night) "on" else "off",
+            "slope" to s.slope.key, "night" to if (s.night) "on" else "off", // T104: off, avalanche or steepness
         )
         "$base/shade/{z}/{x}/{y}.png?" + q.entries.joinToString("&") { (k, v) -> k + "=" + URLEncoder.encode(v, StandardCharsets.UTF_8) }
     }

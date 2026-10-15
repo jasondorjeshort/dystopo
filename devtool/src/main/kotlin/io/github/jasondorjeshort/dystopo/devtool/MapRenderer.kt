@@ -13,6 +13,7 @@ import com.github.ajalt.clikt.parameters.types.restrictTo
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.dem.Smooth
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import java.awt.image.BufferedImage
 
 /** Map style options shared by render and compare. */
@@ -28,8 +29,17 @@ class StyleOptions : OptionGroup("Style") {
     val zFactor by option("--z-factor", help = "Hillshade vertical exaggeration").double().default(1.0)
     val shading by option("--shading", help = "hillshade: single light from the north-west; multi: blend of lights from 225-360 degrees, keeps steep faces readable; none: flat paper")
         .choice("hillshade", "multi", "none").default("hillshade")
-    val slopeOverlay by option("--slope-overlay", help = "Tint slopes of 27 degrees and steeper in CalTopo-style bands").flag()
-    val slopeOpacity by option("--slope-opacity", help = "Opacity of the slope-band tint, 0..1").double().default(0.5)
+    private val slopeShadingOption by option(
+        "--slope-shading",
+        help = "Slope shading: avalanche (the slope angles where avalanches release, banded from 25 to 60+ degrees, reddest at 35 to 45; " +
+            "not an avalanche forecast), steepness (darker where steeper, in 10 degree bands from 10) or off",
+    ).choice(*SlopeShading.entries.map { it.key }.toTypedArray())
+    private val slopeOverlay by option("--slope-overlay", help = "Same as --slope-shading avalanche").flag()
+    val slopeOpacity by option("--slope-opacity", help = "Opacity of the slope shading tint, 0..1").double().default(0.5)
+
+    /** T104: the slope shading drawn: `--slope-shading`, else avalanche with `--slope-overlay`, else off. */
+    val slopeShading: SlopeShading
+        get() = slopeShadingOption?.let { SlopeShading.parse(it) } ?: if (slopeOverlay) SlopeShading.AVALANCHE else SlopeShading.OFF
     val smoothDem by option("--smooth-dem", help = "Smooth the elevation grid with a (2r+1)x(2r+1) Gaussian before hillshade and slope only (contours stay raw); 1 or 2 tames striping, 0 disables")
         .int().restrictTo(0..Smooth.MAX_RADIUS).default(0)
     val noContours by option("--no-contours").flag()

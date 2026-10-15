@@ -86,29 +86,72 @@ class SlopeTest {
         (1 until h - 1).flatMap { y -> (1 until w - 1).map { x -> this[y * w + x] } }
 
     @Test
-    fun bandEdges() {
-        val labels = Slope.bands.map { it.label }
-        assertContentEquals(listOf("27-29", "30-31", "32-34", "35-45", "46-50", "51-59", "60+"), labels)
-        assertEquals(-1, Slope.bandIndex(26.99f))
-        assertEquals(-1, Slope.bandIndex(Float.NaN))
-        assertEquals(0, Slope.bandIndex(27f))
-        assertEquals(0, Slope.bandIndex(29.9f))
-        assertEquals(1, Slope.bandIndex(30f))
-        assertEquals(2, Slope.bandIndex(34.5f))
-        assertEquals(3, Slope.bandIndex(35f))
-        assertEquals(3, Slope.bandIndex(45.9f))
-        assertEquals(4, Slope.bandIndex(46f))
-        assertEquals(5, Slope.bandIndex(59.9f))
-        assertEquals(6, Slope.bandIndex(60f))
-        assertEquals(6, Slope.bandIndex(90f))
+    fun avalancheBandEdges() {
+        val bands = Slope.avalancheBands
+        assertContentEquals(listOf("25-29", "30-34", "35-45", "46-50", "51-59", "60+"), bands.map { it.label })
+        fun band(d: Float) = Slope.bandIndex(d, bands)
+        assertEquals(-1, band(24.99f))
+        assertEquals(-1, band(Float.NaN))
+        assertEquals(0, band(25f))
+        assertEquals(0, band(29.9f))
+        assertEquals(1, band(30f))
+        assertEquals(1, band(34.9f))
+        assertEquals(2, band(35f))
+        assertEquals(2, band(38f))
+        assertEquals(2, band(45.9f))
+        assertEquals(3, band(46f))
+        assertEquals(4, band(59.9f))
+        assertEquals(5, band(60f))
+        assertEquals(5, band(90f))
+    }
+
+    @Test
+    fun steepnessBandEdges() {
+        val bands = Slope.steepnessBands
+        assertContentEquals(listOf("10-19", "20-29", "30-39", "40-49", "50-59", "60+"), bands.map { it.label })
+        assertEquals(-1, Slope.bandIndex(9.99f, bands))
+        assertEquals(0, Slope.bandIndex(10f, bands))
+        assertEquals(2, Slope.bandIndex(38f, bands))
+        assertEquals(5, Slope.bandIndex(89f, bands))
+    }
+
+    @Test
+    fun bandsTileTheRangeWithoutGapsAndSteepnessDarkens() {
+        for (bands in listOf(Slope.avalancheBands, Slope.steepnessBands)) {
+            for (k in 1 until bands.size) assertEquals(bands[k - 1].maxDeg, bands[k].minDeg, "no gap below ${bands[k].label}")
+            assertTrue(bands.last().maxDeg > 90.0, "the last band takes vertical ground")
+            assertEquals(bands.size, bands.map { it.rgb }.toSet().size, "one colour per band")
+        }
+        // Steepness: lightness falls band by band (steeper always reads darker).
+        fun luma(rgb: Int) = 0.299 * ((rgb shr 16) and 0xFF) + 0.587 * ((rgb shr 8) and 0xFF) + 0.114 * (rgb and 0xFF)
+        val l = Slope.steepnessBands.map { luma(it.rgb) }
+        for (k in 1 until l.size) assertTrue(l[k] < l[k - 1], "band ${Slope.steepnessBands[k].label} darker than the one below: $l")
+        // Avalanche: the most frequent release angles (35-45, around 38) are the reddest band.
+        fun redness(rgb: Int) = ((rgb shr 16) and 0xFF) - maxOf((rgb shr 8) and 0xFF, rgb and 0xFF)
+        val reddest = Slope.avalancheBands.maxBy { redness(it.rgb) }
+        assertEquals("35-45", reddest.label)
+    }
+
+    @Test
+    fun shadingsParseTheirKeysAndTheOldOnOff() {
+        for (s in SlopeShading.entries) assertEquals(s, SlopeShading.parse(s.key))
+        assertEquals(SlopeShading.AVALANCHE, SlopeShading.parse("on"))
+        assertEquals(SlopeShading.OFF, SlopeShading.parse(" Off "))
+        assertEquals(SlopeShading.STEEPNESS, SlopeShading.parse("STEEPNESS"))
+        assertEquals(null, SlopeShading.parse("maybe"))
+        assertTrue(SlopeShading.OFF.bands.isEmpty())
+        assertEquals(-1, Slope.bandIndex(40f, SlopeShading.OFF.bands))
     }
 
     @Test
     fun bandFractionsIgnoreNoData() {
-        val f = Slope.bandFractions(floatArrayOf(10f, 28f, 28f, 40f, Float.NaN, 70f))
+        val f = Slope.bandFractions(floatArrayOf(10f, 28f, 28f, 40f, Float.NaN, 70f), Slope.avalancheBands)
         assertEquals(0.4, f[0], 1e-9)
-        assertEquals(0.2, f[3], 1e-9)
-        assertEquals(0.2, f[6], 1e-9)
+        assertEquals(0.2, f[2], 1e-9)
+        assertEquals(0.2, f[5], 1e-9)
         assertEquals(0.0, f[1], 1e-9)
+        val g = Slope.bandFractions(floatArrayOf(5f, 15f, 15f, 45f, Float.NaN), Slope.steepnessBands)
+        assertEquals(0.5, g[0], 1e-9)
+        assertEquals(0.25, g[3], 1e-9)
     }
 }

@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.maplibre
 
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import io.github.jasondorjeshort.dystopo.tiles.HillshadeMode
 import io.github.jasondorjeshort.dystopo.tiles.ShadeOptions
 
@@ -14,8 +15,8 @@ enum class ContourLabelDensity(val key: String, val spacingFactor: Double) {
 }
 
 /**
- * The user's map options (T47, "rebuild the map to taste"): hillshade style and intensity, the slope-angle
- * overlay, the contour interval and label density, layer toggles and night mode. [MapLibreStyle] builds
+ * The user's map options (T47, "rebuild the map to taste"): hillshade style and intensity, the slope shading
+ * (T104: off, avalanche slope angles or steepness), the contour interval and label density, layer toggles and night mode. [MapLibreStyle] builds
  * the style from them; the hillshade and slope rasters come from [io.github.jasondorjeshort.dystopo.tiles.ShadeTiles]
  * except in the default case (single light at full intensity, no slope), which keeps MapLibre's own
  * `raster-dem` hillshade ([nativeHillshade]).
@@ -27,7 +28,7 @@ enum class ContourLabelDensity(val key: String, val spacingFactor: Double) {
 data class MapOptions(
     val hillshade: HillshadeMode = HillshadeMode.SINGLE,
     val hillshadeIntensity: Double = 1.0,
-    val slope: Boolean = false,
+    val slope: SlopeShading = SlopeShading.OFF,
     val contourInterval: Double? = null,
     val contourLabels: ContourLabelDensity = ContourLabelDensity.NORMAL,
     val trails: Boolean = true,
@@ -48,7 +49,7 @@ data class MapOptions(
     val shade: ShadeOptions?
         get() {
             val hs = if (nativeHillshade) HillshadeMode.OFF else hillshade
-            if (hs == HillshadeMode.OFF && !slope) return null
+            if (hs == HillshadeMode.OFF && slope == SlopeShading.OFF) return null
             return ShadeOptions(hs, if (hs == HillshadeMode.OFF) 0.0 else hillshadeIntensity, slope, night)
         }
 
@@ -65,7 +66,8 @@ data class MapOptions(
     fun json(units: ContourUnits): Map<String, Any?> = linkedMapOf(
         "hillshade" to hillshade.key,
         "hillshadeIntensity" to hillshadeIntensity,
-        "slope" to if (slope) "on" else "off",
+        "slope" to slope.key,
+        "slopeChoices" to SlopeShading.entries.map { it.key }, // T104
         "contourInterval" to (contourInterval?.let { fmt(it) } ?: "auto"),
         "contourIntervalUnits" to units.symbol,
         "contourIntervalChoices" to listOf("auto") + intervals(units).map { fmt(it) },
@@ -129,7 +131,7 @@ data class MapOptions(
                 if (v == null || !v.isFinite() || v < 0.0 || v > 1.0) bad("hillshadeIntensity must be a number from 0 to 1 (got $raw)")
                 o = o.copy(hillshadeIntensity = kotlin.math.round(v * 1000) / 1000)
             }
-            params["slope"]?.let { o = o.copy(slope = bool("slope", it)) }
+            params["slope"]?.let { o = o.copy(slope = SlopeShading.parse(it.toString()) ?: bad("slope must be off, avalanche or steepness (got $it)")) }
             params["contourInterval"]?.let { raw ->
                 val s = raw.toString().trim().lowercase()
                 o = if (s == "auto" || s.isEmpty()) o.copy(contourInterval = null) else {

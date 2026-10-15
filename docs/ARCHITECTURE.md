@@ -17,7 +17,7 @@ decisions in [design/decisions/](design/decisions/README.md); one line per merge
 | `server/` | The deployable always-on peer: config file, JSON logs, `/healthz`, catalog, bearer token, CORS, Dockerfile. See SERVER.md. | JVM, Docker |
 | `tilebuild/` | Planetiler with the outdoors profile (OpenMapTiles 3.16 plus trails, cliffs, wilderness, climbing routes); XML-to-PBF for Overpass answers; water polygon indexing. The only module where LGPL dependencies are tolerated. | JVM |
 | `androidApp/` | Compose + MapLibre Native. A loopback HTTP server feeds MapLibre from packs and generates contour, shade and cliff tiles on the device; tiles no pack covers come from a configured server or, with none (T80), from the shared readers and OpenFreeMap on the phone itself (`online/DirectSources.kt`), and "Download the map around me" then builds the pack on the phone. Glyphs and sprites are bundled in the APK. The same server exposes the debug routes in debug builds. | Android 8+ |
-| `tools/` | Repo tooling: privacy hooks, demo page and checkers, emulator and release scripts, CI helpers, notices generator. | host |
+| `tools/` | Repo tooling: privacy hooks, demo page and checkers, emulator and release scripts, CI helpers, notices generator, the user-text product-name check (`user-text-check.py`, in `check`). | host |
 
 ## Data flow
 

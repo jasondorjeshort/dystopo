@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
+status: done
 pipeline: T104
 related: [2026-10-13-no-other-product-names.md]
 ---
@@ -29,3 +29,9 @@ That is the avalanche one, labelled in the UI "CalTopo bands" (`MapOptionsSectio
   not matter (degrees).
 - Add a legend, and a safety line: slope shading is not an avalanche forecast.
 - Renames in code, KDoc, README, the debug routes docs and the `--slope-overlay` help text.
+
+## Done (T104, 2026-10-14)
+
+Built as `slope=off|avalanche|steepness` (the app's Map options, the server's shade tiles, `devtool render
+--slope-shading`), with a legend and the safety line in the Map options. Band edges, sources and colours:
+`docs/PLANNING.md` › Slope shading.

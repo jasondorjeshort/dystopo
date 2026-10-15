@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: chore
-status: planned
+status: done
 pipeline: T104 (the check and the renames); the rule is in CLAUDE.md
 related: [2026-10-13-avalanche-slope-shading.md, 2026-10-13-external-integrations.md]
 ---
@@ -26,3 +26,10 @@ row (`androidApp/.../options/MapOptionsSection.kt`) and the devtool `--slope-ove
   is an exception, as are licence and attribution lines the app shows for a data source.
 - If adopted: a one-line rule in `CLAUDE.md` plus a test over user-visible strings, and a small
   cleanup task (rename the row and the help text; ties to the slope shading idea).
+
+## Done (T104, 2026-10-14)
+
+Renamed the Map options row (now "Slope shading") and the devtool help (`--slope-shading`). The check is
+`tools/user-text-check.py` with the names in `tools/user-text-names.txt`, run by `./gradlew check` (task
+`userTextCheck`): the string literals of the app, devtool, server and shared sources, the app's string resources
+and the browser viewer (`tools/demo/`, no hits there). A named integration marks its line `user-text-ok`.

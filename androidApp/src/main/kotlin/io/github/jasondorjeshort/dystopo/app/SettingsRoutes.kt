@@ -14,7 +14,7 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `warmup` is `1`/`0` (`true`/`false`). Unknown keys and bad values are a 400 and change nothing.
  *   A text scale change reloads the style; a units or warm-up change reopens the tile service (contour
  *   tiles are generated per unit, cached per unit). `server` (T38) sets the online-mode server.
- *   T47 map options ([MapOptions.KEYS]): `hillshade=off|single|multi`, `hillshadeIntensity=0..1`, `slope=on|off`,
+ *   T47 map options ([MapOptions.KEYS]): `hillshade=off|single|multi`, `hillshadeIntensity=0..1`, `slope=off|avalanche|steepness` (T104; `on` is avalanche),
  *   `contourInterval=auto|<one of contourIntervalChoices, in the units>`, `contourLabels=sparse|normal|dense`,
  *   `trails`, `water`, `landcover`, `pois`, `boundaries` and `night` `=on|off`. A contour interval change
  *   reopens the tile service (contour tiles are cached per interval); every other option rebuilds the style
