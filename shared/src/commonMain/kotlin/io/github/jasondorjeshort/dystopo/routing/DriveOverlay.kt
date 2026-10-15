@@ -51,6 +51,13 @@ class DriveOverlay(
     private val clock: () -> Long = { 0L },
     /** T89: the level-2 cell zoom; [tileZoom] or more turns level 2 off. */
     val level2Zoom: Int = tileZoom - LEVEL2_STEP,
+    /**
+     * T102 (from T97): held while a level-1 cell is built, with the cache checked again inside it, so a route that
+     * races the warm-up (or another route) for the same cell waits for that build and takes its cell instead of
+     * building it a second time. A lock of its own, not [lock]: cache lookups go on while a cell is being built. On the
+     * JVM `{ block -> synchronized(obj) { block() } }`.
+     */
+    private val buildLock: (() -> Unit) -> Unit = { it() },
 ) {
     /** One tile's level-1 overlay: the base piece's border nodes, the shortcuts between them, and how to expand them. */
     class Cell(
@@ -148,14 +155,21 @@ class DriveOverlay(
             keep(k, got)
             return got to null
         }
-        val b = base() ?: return null to null
-        val made = build(b)
-        lock {
-            built++
-            if (made != null) { buildMs += made.buildMs; shortcuts += made.cost.size; borderNodes += made.baseNode.size }
+        // T102: one build at a time; whoever waited finds the cell the other built.
+        var result: Pair<Cell?, GraphPiece?> = null to null
+        buildLock l@{
+            val (again, c2) = cached(k)
+            if (again) { result = c2 as Cell? to null; return@l }
+            val b = base() ?: return@l
+            val made = build(b)
+            lock {
+                built++
+                if (made != null) { buildMs += made.buildMs; shortcuts += made.cost.size; borderNodes += made.baseNode.size }
+            }
+            keep(k, made)
+            result = made to b
         }
-        keep(k, made)
-        return made to b
+        return result
     }
 
     /**

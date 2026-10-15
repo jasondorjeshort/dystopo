@@ -77,8 +77,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   trail/straight/fixed, `points`, `coordinates` as [lon, lat, ele]), `summary` ([RouteSummary]:
  *   distance, ascent, descent, hike-model time, metres on straight legs, 100-sample profile),
  *   `notes` (why legs are straight: `start_off_network`, `not_connected`, `no_graph`, `drive_unsupported`, ...),
- *   `messages` (T73: the router's message for each note), `notice` (T73: for `mode=drive`, that it follows
- *   the packs' roads to and between trailheads and is not a road navigator), `graph`
+ *   `messages` (T73: the router's message for each note), `notice` (for `mode=drive`, `Router.DRIVE_NOTICE`: what drive
+ *   mode does and does not do, ADR 0032), `instructions` (T102: the turn directions along the whole path, every leg,
+ *   kept or rerouted: `type`, `priority`, `text`, `alongM`, `lat`, `lon`, `name`, `class`, `turnDeg`, `bearingDeg`,
+ *   `leadM`, `stretchM`, `via`; see `Directions`), `graph`
  *   (`loaded`, `built` or `cached`, with timings: the reported pack's, every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
  * - `POST /route/gpx` with JSON `{"path", "name", "id"}`: the route as GPX ([RouteGpx]: one `rte`,
  *   via marks, our ids), byte for byte what the phone exports for the same trip.
@@ -225,7 +227,11 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
      * the contiguous US at z11). With [warmOverlay] every tile of a pack is built in the background once its
      * graph is open, so the first long drive does not wait for them.
      */
-    val driveOverlay = DriveOverlay(maxTiles = 65_536, lock = { block -> synchronized(tileCache) { block() } }, clock = { System.nanoTime() / 1_000_000 })
+    private val overlayBuild = Any()
+    val driveOverlay = DriveOverlay(
+        maxTiles = 65_536, lock = { block -> synchronized(tileCache) { block() } }, clock = { System.nanoTime() / 1_000_000 },
+        buildLock = { block -> synchronized(overlayBuild) { block() } }, // T102: a route racing the warm-up builds no cell twice
+    )
     var warmOverlay = true
     private val warmer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-overlay-warm").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
     private val warm = ConcurrentHashMap<String, Map<String, Any?>>()
@@ -434,7 +440,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         count("plan")
         val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay)
         val path = ed.create(points, mode)
-        return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages())
+        return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(path))
     }
 
     /** One editor operation on an encoded path (see [RouteRoutes]). */
@@ -468,12 +474,15 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             else -> throw IllegalArgumentException("unknown op '$op' (move, insert, add, remove, mode, reroute, show)")
         }
         require(out.via.size <= MAX_POINTS) { "at most $MAX_POINTS via points" }
-        return reply(pack, out, ed.takeNotes(), info, t0, ed.takeMessages()) + listOfNotNull(added?.let { "index" to it }).toMap()
+        return reply(pack, out, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(out)) + listOfNotNull(added?.let { "index" to it }).toMap()
     }
 
     private fun requireMode(mode: String) = require(TravelMode.of(mode) != null) { "mode must be hike, bike or drive" }
 
-    private fun reply(pack: Pack?, path: RoutePath, notes: List<String>, graph: Map<String, Any?>?, t0: Long, messages: Map<String, String> = emptyMap()): Map<String, Any?> {
+    private fun reply(
+        pack: Pack?, path: RoutePath, notes: List<String>, graph: Map<String, Any?>?, t0: Long, messages: Map<String, String> = emptyMap(),
+        instructions: List<io.github.jasondorjeshort.dystopo.routing.Instruction> = emptyList(),
+    ): Map<String, Any?> {
         val ms = (System.nanoTime() - t0) / 1_000_000
         lastMs = ms
         return linkedMapOf(
@@ -486,6 +495,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             "notes" to notes.distinct(),
             "messages" to messages, // T73: the router's words for each note (drive_unsupported names the pack to rebuild)
             "notice" to if (path.mode == "drive") Router.DRIVE_NOTICE else null,
+            "instructions" to instructions.map { it.json(TravelMode.of(path.mode) ?: TravelMode.HIKE) }, // T102
             "waypointsValue" to EMPTY_WAYPOINTS,
             "graph" to graph, "ms" to ms,
         )

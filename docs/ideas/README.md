@@ -60,7 +60,7 @@ names (`CLAUDE.md`, Rules).
 | `2026-10-13-large-distance-units.md` | feature | done | Imperial distances switch to miles at large scales (T101, wave 14); inches someday. |
 | `2026-10-13-driving-is-in-scope.md` | question | done | Doctrine: hike first, driving a full second mode; ADR 0032 (2026-10-14); T102 rewrites the T73 wording. |
 | `2026-10-13-cannot-create-waypoints-android.md` | bug | done | A waypoint can be dropped on the phone at the fix or at a long-press, recording or not (T91, wave 13). |
-| `2026-10-13-turn-directions.md` | feature | planned | "Turn left in 30 feet onto Trail F" in every mode (T102, wave 14); optional voice later. |
+| `2026-10-13-turn-directions.md` | feature | done | "Turn left in 30 feet onto Trail F" in every mode: text built in T102 (wave 14); voice and the detail-level setting later. |
 | `2026-10-13-auto-download-when-zoomed-in.md` | feature | new | Keep topo and map data automatically when dwelling zoomed in (T75 is manual). |
 | `2026-10-13-routing-modes-crow-bushwhack.md` | feature | new | Crow (straight line) and bushwhack (trails, then gentlest cross-country) modes. |
 | `2026-10-13-avalanche-slope-shading.md` | feature | done | Separate avalanche-window and plain-steepness slope shadings (T104: slope off, avalanche or steepness, a legend; docs/PLANNING.md › Slope shading). |

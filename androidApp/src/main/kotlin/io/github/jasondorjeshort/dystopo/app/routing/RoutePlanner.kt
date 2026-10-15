@@ -108,7 +108,11 @@ object RoutePlanner {
     val tileCache = GraphTileCache(GraphTileCache.DEFAULT_MAX_BYTES) { block -> synchronized(this) { block() } }
 
     /** T77: overlay cells for long drives over the packs on the device, built as drives reach them. */
-    val driveOverlay = DriveOverlay(lock = { block -> synchronized(tileCache) { block() } }, clock = { SystemClock.elapsedRealtime() })
+    private val overlayBuild = Any()
+    val driveOverlay = DriveOverlay(
+        lock = { block -> synchronized(tileCache) { block() } }, clock = { SystemClock.elapsedRealtime() },
+        buildLock = { block -> synchronized(overlayBuild) { block() } }, // T102: two routes never build one cell twice
+    )
 
     /** T77: the server router for the configured server (null when none is set), rebuilt when the setting changes. */
     @Volatile private var remote: RemoteRouter? = null
@@ -117,7 +121,7 @@ object RoutePlanner {
         val s = AppSettings.server.trim().trimEnd('/')
         if (!s.startsWith("http://") && !s.startsWith("https://")) return null
         remote?.takeIf { it.server == s }?.let { return it }
-        return RemoteRouter(s, ::httpGet) { SystemClock.elapsedRealtime() }.also { remote = it }
+        return RemoteRouter(s, ::httpGet, { SystemClock.elapsedRealtime() }, { AppSettings.units }).also { remote = it }
     }
 
     /** GET through the cleartext policy (T79: plain http only to home-network hosts), for [RemoteRouter]. */
@@ -277,11 +281,19 @@ object RoutePlanner {
             if (server != null) return Measured(FallbackRouter(null, server) { _, _ -> false })
             throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
         }
-        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED)
+        // T102: descriptions and messages in the units preference.
+        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units)
         if (server == null) return Measured(local)
         val boxes = states.values.map { it.bounds }
         return Measured(FallbackRouter(local, server) { lat, lon -> boxes.any { b -> lon in b[0]..b[2] && lat in b[1]..b[3] } })
     }
+
+    /**
+     * T102: the junctions of the packs on the device near [points] for turn directions along a line planned earlier (a
+     * kept trip, a saved route), waiting at most [waitMs] for their graphs; null when no pack near it is ready.
+     */
+    fun localJunctions(points: List<Pair<Double, Double>>, waitMs: Long = 2_000): io.github.jasondorjeshort.dystopo.routing.JunctionSource? =
+        runCatching { router(waitMs, points).junctions }.getOrNull()
 
     /** Keeps the memory figures of the last route found, for `/route/status`. */
     private class Measured(private val inner: Router) : Router by inner {

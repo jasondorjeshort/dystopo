@@ -8,7 +8,10 @@ import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
+import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.nav.NavPath
+import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.Instruction
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import java.io.File
 
@@ -20,6 +23,11 @@ import java.io.File
  *
  * T65: a route's planned time ([Resolved.planTimeS]) is its [RouteSummary] time, the same numbers the route
  * card, the trip card and the Routes list show (T24 ascent, the T45 hike model), so `etaVsPlan` starts at 1.
+ *
+ * T102: each route comes with its turn directions ([Resolved.directions], along the [NavPath]): the route on the map
+ * brings the plan's own (local or from the server), moved onto the navigation line; a kept trip or a saved route reads
+ * them from the graphs of the packs on the device (via points and straight legs included for a trip); without a pack
+ * there, only depart and arrive (and a trip's via points). Tracks have none.
  */
 object NavSources {
     class Resolved(
@@ -28,6 +36,8 @@ object NavSources {
         /** The plan's total time (s) for `etaVsPlan`; null for tracks and GPX files (navigation's own model time is used). */
         val planTimeS: Double? = null,
         val mode: TravelMode? = null,
+        /** T102: the turn directions along [path] (every priority; navigation filters by level). */
+        val directions: List<Instruction> = emptyList(),
     )
 
     class NotFound(message: String) : Exception(message)
@@ -35,10 +45,11 @@ object NavSources {
     fun currentRoute(): Resolved {
         val p = RouteSession.plan ?: throw NotFound("no route on the map: plan one first (long-press start and end, or POST /route)")
         val s = RouteSession.summaryOf(p)
+        val path = NavPath.of(RouteSession.unifiedRoute(p))
         return Resolved(
-            NavPath.of(RouteSession.unifiedRoute(p)),
+            path,
             linkedMapOf("kind" to "route", "route" to "current", "id" to p.route.id, "name" to p.route.name, "mode" to p.mode.label),
-            s.timeS, p.mode,
+            s.timeS, p.mode, onto(path, p.instructions),
         )
     }
 
@@ -48,10 +59,12 @@ object NavSources {
         val p: RoutePlan = plans.firstOrNull { it.id == key } ?: plans.filter { key.length >= 4 && it.id.startsWith(key) }.singleOrNull() ?: return null
         require(p.path.points.size >= 2) { "route ${p.id} has fewer than two points" }
         val s = RouteSummary.of(p, samples = 0)
+        // T102: along the trip's own points (NavPath counts consecutive equal points once, as Directions does).
+        val directions = Directions.ofPath(p.path, RoutePlanner.localJunctions(p.path.points.map { it.lat to it.lon }))
         return Resolved(
             NavPath.of(p.toRoute(), p.waypoints),
             linkedMapOf("kind" to "trip", "route" to key, "id" to p.id, "name" to p.name, "mode" to p.path.mode),
-            s.timeS, TravelMode.of(p.path.mode),
+            s.timeS, TravelMode.of(p.path.mode), directions,
         )
     }
 
@@ -62,7 +75,7 @@ object NavSources {
             val doc = runCatching { Gpx.parse(f.readText(Charsets.UTF_8)) }.getOrNull() ?: continue
             val r = doc.routes.firstOrNull() ?: continue
             if (r.id == key || r.id.startsWith(key) || f.name == key || f.name == "$key.gpx") {
-                return Resolved(NavPath.of(r, doc.waypoints), linkedMapOf("kind" to "route", "route" to key, "id" to r.id, "name" to r.name, "file" to f.name))
+                return Resolved(NavPath.of(r, doc.waypoints), linkedMapOf("kind" to "route", "route" to key, "id" to r.id, "name" to r.name, "file" to f.name), directions = alongLine(r.points, r.type))
             }
         }
         throw NotFound("no route $key: not the current route, not a kept route (GET /routes) and not saved in ${dir.path}")
@@ -85,12 +98,24 @@ object NavSources {
         val t = doc.tracks.firstOrNull()
         return when {
             r != null && r.points.size >= 2 && !(preferTrack && t != null) ->
-                Resolved(NavPath.of(r, doc.waypoints), linkedMapOf("kind" to "gpx-route", "id" to r.id, "name" to r.name, "file" to label))
+                Resolved(NavPath.of(r, doc.waypoints), linkedMapOf("kind" to "gpx-route", "id" to r.id, "name" to r.name, "file" to label), directions = alongLine(r.points, r.type))
             t != null && t.points.size >= 2 ->
                 Resolved(NavPath.of(t, doc.waypoints), linkedMapOf("kind" to "gpx-track", "id" to t.id, "name" to t.name, "file" to label))
             else -> throw IllegalArgumentException("the GPX has no route or track with two points")
         }
     }
+
+    /** T102: a planned route's directions moved onto [path] (its points may be quantised or deduplicated differently). */
+    fun onto(path: NavPath, list: List<Instruction>): List<Instruction> {
+        if (list.isEmpty()) return list
+        val scale = list.last().alongM.takeIf { it > 0 }?.let { path.totalM / it } ?: 1.0
+        return Directions.reanchor(list, scale) { lat, lon, near -> path.project(lat, lon, near, behindM = 100.0, aheadM = 300.0, jumpM = 10.0).alongM }
+    }
+
+    /** T102: directions along a GPX route's points from the packs on the device, in the route's mode (its `type`). */
+    private fun alongLine(points: List<RoutePoint>, type: String?): List<Instruction> =
+        if (points.size < 2) emptyList()
+        else Directions.of(points, TravelMode.of(type) ?: TravelMode.HIKE, RoutePlanner.localJunctions(points.map { it.lat to it.lon }))
 
     /** A GPX file under the app's files dir (`tracks/`, `routes/`, `exports/`), by name. */
     fun file(name: String, preferTrack: Boolean): Resolved {

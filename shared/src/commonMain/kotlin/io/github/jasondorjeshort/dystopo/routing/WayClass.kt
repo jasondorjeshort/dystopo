@@ -74,7 +74,8 @@ enum class Surface(val code: Int, val label: String) {
  * [MOTOR_DESTINATION]), the posted speed limit in km/h ([maxspeedKmh], 0 when not tagged; T73),
  * whether it is a bridge or tunnel (no junctions are made where it crosses other lines), and (T49) its
  * name: OSM `name`, else the first `route_name` (the outdoors profile has both on tracks and trails
- * from z13; plain OpenMapTiles keeps names in `transportation_name`, so its lines have none).
+ * from z13; plain OpenMapTiles keeps names in `transportation_name`, so its lines have none), else the
+ * first `ref` (T73 on roads; T102 on tracks and trails too, the turn directions' "name else ref else class").
  */
 data class WayAttrs(
     val cls: WayClass,
@@ -154,7 +155,7 @@ data class WayAttrs(
             val brunnel = s("brunnel") == "bridge" || s("brunnel") == "tunnel"
             val tunnel = s("brunnel") == "tunnel"
             val name = s("name")?.trim()?.ifEmpty { null } ?: s("route_name")?.substringBefore(';')?.trim()?.ifEmpty { null }
-                ?: s("ref")?.takeIf { cls.code >= WayClass.SERVICE.code }?.substringBefore(';')?.trim()?.ifEmpty { null } // T73: a road known by its number
+                ?: s("ref")?.substringBefore(';')?.trim()?.ifEmpty { null } // T73: a road known by its number; T102: a numbered trail too
             return WayAttrs(cls, Surface.of(s("surface")), sac, flags, brunnel, name, maxspeed, tunnel)
         }
     }

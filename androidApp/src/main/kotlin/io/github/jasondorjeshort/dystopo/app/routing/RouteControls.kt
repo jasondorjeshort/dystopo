@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -81,7 +84,8 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * then shows what is happening: waiting for the end point, planning (with the trail-network build
  * progress on first use), the route's distance, climb and time with Hike/Bike, Save, GPX and Clear,
  * or why no route was found. Nothing shows until the first long-press, nor while navigating (T65). The
- * distance, climb and time are [RouteSession.summaryOf], the figures the kept route shows (T65).
+ * distance, climb and time are [RouteSession.summaryOf], the figures the kept route shows (T65). T102: "Show N
+ * directions" opens the turn directions (the default detail level), each with the distance it then runs.
  */
 @Composable
 fun RouteControls() {
@@ -127,6 +131,7 @@ fun RouteControls() {
                         style = TextStyle(color = Ink, fontSize = 13.sp), maxLines = 2,
                     )
                 }
+                Directions(plan)
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
@@ -154,6 +159,24 @@ fun RouteControls() {
                 }
                 Action("Clear") { RouteSession.clear() }
             }
+        }
+    }
+}
+
+/** T102: the count of turn directions, opening their list (scrolls past a few lines). */
+@Composable
+private fun Directions(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute) {
+    val list = RouteSession.shownDirections(plan)
+    if (list.isEmpty()) return
+    val open = RouteSession.directionsOpen
+    Action(if (open) "Hide directions" else "Show ${list.size} directions") { RouteSession.directionsOpen = !open }
+    if (!open) return
+    val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
+    Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        for ((k, ins) in list.withIndex()) {
+            val text = io.github.jasondorjeshort.dystopo.routing.DirectionsText.of(ins, plan.mode)
+            val then = if (ins.stretchM > 0) "  " + io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(ins.stretchM, units) else ""
+            BasicText("${k + 1}. $text$then", style = TextStyle(color = Ink, fontSize = 13.sp))
         }
     }
 }

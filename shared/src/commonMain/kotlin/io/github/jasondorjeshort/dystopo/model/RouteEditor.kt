@@ -40,6 +40,10 @@ class RouteEditor(
     /** The router's message for each reason in the last edit's notes (one per code), then cleared. */
     fun takeMessages(): Map<String, String> = LinkedHashMap(messages).also { messages.clear() }
 
+    /** T102: [path]'s turn directions from this editor's graph (every leg, kept or rerouted; via points; straight legs). */
+    fun directions(path: RoutePath): List<io.github.jasondorjeshort.dystopo.routing.Instruction> =
+        io.github.jasondorjeshort.dystopo.routing.Directions.ofPath(path, graph?.junctions)
+
     /** [lat], [lon] snapped onto the trail network when one is within [snapM]. */
     fun snap(lat: Double, lon: Double): ViaPoint = snap(lat, lon, "hike")
 

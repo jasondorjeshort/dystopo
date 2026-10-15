@@ -4,6 +4,8 @@ import io.github.jasondorjeshort.dystopo.app.MapController.CameraMode
 import io.github.jasondorjeshort.dystopo.app.nav.NavSession
 import io.github.jasondorjeshort.dystopo.app.nav.NavSources
 import io.github.jasondorjeshort.dystopo.nav.NavOptions
+import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 
 /**
@@ -35,6 +37,14 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `POST /nav/stop`; `POST /nav/camera?mode=follow|heading|free`; `POST /nav/heading?deg=` (simulated
  *   heading for injected fixes; no `deg` clears it).
  * - `POST /location?...&bearing=<deg>` (observed, not handled): the bearing becomes the simulated heading.
+ * - T102, turn directions: navigation carries the route's directions (the plan's for `route=current`, read from the
+ *   packs on the device for a kept or saved route). `GET /nav/status` adds `instructions` (those shown at the default
+ *   detail level: `index`, `type`, `priority`, `text`, `alongM`, `leadM`), `nextInstruction` (`index`, `type`, `text`,
+ *   `distanceM` and `distance` ahead in the units preference, `withinLead`; null once none is left) and `passed`;
+ *   `GET /nav` has `directions` (counts) and the card's `ui.turn`, `ui.turnDistance`, `ui.turnSoon`.
+ *   `GET /nav/directions[?route=current|<kept or saved route>][&level=1|2|3]` lists a route's directions without
+ *   navigating (`count`, `shown`, `byPriority`, each with `text` and `inDistance`, "In 300 m, turn left onto ...");
+ *   `POST /nav/directions?open=1|0` opens or closes the list on the route card ("Show N directions").
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate) and the device GPS while navigating.
  */
@@ -50,6 +60,12 @@ object NavRoutes {
             "GET" to "/nav/status" -> Response.json(NavSession.status())
             "POST" to "/nav/stop" -> Response.json(NavSession.stop() + NavSession.json())
             "POST" to "/nav/start" -> start(r)
+            "GET" to "/nav/directions" -> directions(r) // T102
+            "POST" to "/nav/directions" -> {
+                val open = r.query["open"] ?: return bad("open=1 or open=0 required")
+                app.map.onMain { io.github.jasondorjeshort.dystopo.app.routing.RouteSession.directionsOpen = open == "1" }
+                Response.json(io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json())
+            }
             "POST" to "/nav/camera" -> {
                 val m = camera(r.query["mode"]) ?: return bad("mode must be follow, heading or free")
                 NavSession.setCamera(m)
@@ -99,12 +115,32 @@ object NavRoutes {
             )
             val cam = camera(q["camera"] ?: "follow") ?: return bad("camera must be follow, heading or free")
             val zoom = if (q["zoom"] == "keep") null else d("zoom") ?: 15.0
-            Response.json(NavSession.start(res.path, res.source, opts, cam, q["sound"] != "0", q["vibrate"] != "0", zoom, res.planTimeS))
+            Response.json(NavSession.start(res.path, res.source, opts, cam, q["sound"] != "0", q["vibrate"] != "0", zoom, res.planTimeS, res.directions))
         } catch (e: NavSources.NotFound) {
             Response.json(mapOf("error" to e.message), 404)
         } catch (e: IllegalArgumentException) {
             bad(e.message ?: "bad request")
         }
+    }
+
+    /** T102: `GET /nav/directions`: a route's turn directions at a detail level, without navigating. */
+    private fun directions(r: Request): Response = try {
+        val res = NavSources.route(r.query["route"] ?: "current")
+        val level = r.query["level"]?.let { it.toIntOrNull()?.takeIf { l -> l in 1..3 } ?: return bad("level must be 1, 2 or 3") } ?: Directions.DEFAULT_LEVEL
+        val mode = res.mode ?: TravelMode.HIKE
+        val units = AppSettings.units
+        val shown = Directions.shown(res.directions, level)
+        Response.json(
+            linkedMapOf(
+                "source" to res.source, "mode" to mode.label, "level" to level, "count" to res.directions.size, "shown" to shown.size,
+                "byPriority" to res.directions.groupingBy { it.priority }.eachCount().toSortedMap().mapKeys { "p${it.key}" },
+                "instructions" to shown.mapIndexed { i, ins ->
+                    ins.json(mode) + linkedMapOf("index" to i, "inDistance" to (if (i == 0) null else DirectionsText.withDistance(ins, ins.alongM - shown[i - 1].alongM, units, mode)))
+                },
+            ),
+        )
+    } catch (e: NavSources.NotFound) {
+        Response.json(mapOf("error" to e.message), 404)
     }
 
     private fun camera(s: String?): CameraMode? = when (s?.lowercase()) {

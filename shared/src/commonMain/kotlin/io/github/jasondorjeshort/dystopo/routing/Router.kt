@@ -6,15 +6,16 @@ import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
- * How the route is travelled; picks the [CostModel]. [DRIVE] (T73) is for getting to a trailhead and
- * between trailheads inside the packs: it follows the packs' roads (one-ways, motor access, speed
- * limits) and is not a road navigator (no turn restrictions, no traffic, no long distance).
+ * How the route is travelled; picks the [CostModel]. Hiking (and biking) first, [DRIVE] (T73) a full second mode
+ * (ADR 0032): what drive does and does not do is said once, in [Router.DRIVE_NOTICE].
  */
 enum class TravelMode(val label: String) {
     HIKE("hike"), BIKE("bike"), DRIVE("drive");
@@ -238,6 +239,8 @@ data class PlannedRoute(
      * of those tiles), `searchBytes` and `searchNodes` (its own per-node arrays).
      */
     val memory: Map<String, Any?> = emptyMap(),
+    /** T102: the turn directions along [route]'s points ([Directions]); empty when the router has no graph to read them from. */
+    val instructions: List<Instruction> = emptyList(),
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -248,6 +251,7 @@ data class PlannedRoute(
         "metersByClass" to metersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) },
         "via" to via.map { (n, m) -> linkedMapOf("name" to n, "distanceM" to r1(m)) }, // T49: trail names
         "memory" to memory.ifEmpty { null }, // T76
+        "instructions" to instructions.map { it.json(mode) }, // T102
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
     )
 
@@ -298,6 +302,9 @@ interface Router {
     /** [nearest] among the lines [mode] may use (T73: drive mode only roads open to cars, in graphs with the road data). */
     fun nearest(lat: Double, lon: Double, maxDistanceM: Double, mode: TravelMode): EdgeSnap? = nearest(lat, lon, maxDistanceM)
 
+    /** T102: the graph's junctions, for turn directions along any line on it ([Directions]); null without a graph (a remote router). */
+    val junctions: JunctionSource? get() = null
+
     companion object {
         /** How far a tapped point may be from the nearest trail or road. */
         const val DEFAULT_SNAP_M = 300.0
@@ -315,9 +322,12 @@ interface Router {
          */
         const val MIN_VIA_ROAD_M = 100.0
 
-        /** T73: what the trip editors say whenever drive mode is chosen. */
-        const val DRIVE_NOTICE = "Drive follows the roads in your map packs, to and between trailheads. " +
-            "It is not a road navigator: no turn restrictions, traffic or seasonal closures."
+        /**
+         * What drive mode does and does not do, in one sentence and one place (ADR 0032): the route card, the trip card,
+         * the browser's trip card (the server's `notice`) and every drive route's description say this.
+         */
+        const val DRIVE_NOTICE = "Drive routes are planned offline from the roads in the map packs, with their one-way streets " +
+            "and speed limits; they do not know turn restrictions, traffic or seasonal closures."
 
         fun km(m: Double) = (m / 100).roundToLong() / 10.0
     }
@@ -354,7 +364,67 @@ class TileRouter(
      * (about 42 bytes of search state per node: 1.5 million nodes is about 63 MB).
      */
     val maxSettled: Int = Router.DEFAULT_MAX_SETTLED,
-) : Router {
+    /**
+     * T102 (from T101): the units of the distances and heights written into route descriptions and failure messages
+     * ([UnitFormat]); the phone passes the units preference, the server and the devtool keep metres. The numbers in
+     * the results and the failures' details stay metres.
+     */
+    val units: ContourUnits = ContourUnits.METERS,
+) : Router, JunctionSource {
+    private fun d(m: Double) = UnitFormat.distance(m, units)
+
+    override val junctions: JunctionSource get() = this
+
+    /**
+     * T102: the ways at the node at exactly ([lonE6], [latE6]) in every piece that has one there (tile cuts and pack
+     * borders: the twins' ways together), each with its bearing over [Directions.BEARING_M] and whether [mode] may
+     * leave along it; null when no piece has a node there. Drive reads only graphs with the road data.
+     */
+    override fun junction(lonE6: Int, latE6: Int, mode: TravelMode): List<Branch>? {
+        val model = CostModel(mode)
+        val box = TiledGraph.around(latE6 / E6, lonE6 / E6, 1.0)
+        var found = false
+        val out = ArrayList<Branch>()
+        for ((x, y) in tiles.tilesIn(box[0], box[1], box[2], box[3])) for (p in tiles.pieces(x, y)) {
+            if (mode == TravelMode.DRIVE && !p.graph.source.drive) continue
+            for (n in p.nodesAt(lonE6, latE6)) {
+                found = true
+                val g = p.graph
+                for (i in g.adjStart[n] until g.adjStart[n + 1]) out += branch(g, n, g.adjEdge[i], model)
+            }
+        }
+        if (!found) return null
+        // Parallel copies of one way (overlapping packs; twins of one graph file share a cut edge's ends).
+        return out.distinctBy { listOf(it.nextLonE6, it.nextLatE6, it.name, it.wayClass, it.level) }
+    }
+
+    /** Edge `a shr 1` leaving node [n] (`a and 1 == 0`: [n] is its from node), seen from [n]. */
+    private fun branch(g: RoutingGraph, n: Int, a: Int, model: CostModel): Branch {
+        val e = a shr 1
+        val atFrom = a and 1 == 0
+        val last = g.pointCount(e) - 1
+        val step = if (atFrom) 1 else -1
+        var k = if (atFrom) 1 else last - 1
+        val lat0 = g.nodeLat[n] / E6
+        val lon0 = g.nodeLon[n] / E6
+        var plat = lat0
+        var plon = lon0
+        var d = 0.0
+        while (true) {
+            val lat = g.pointLatE6(e, k) / E6
+            val lon = g.pointLonE6(e, k) / E6
+            d += TrackStats.distanceM(plat, plon, lat, lon)
+            plat = lat; plon = lon
+            if (d >= Directions.BEARING_M || k == (if (atFrom) last else 0)) break
+            k += step
+        }
+        val next = if (atFrom) 1 else last - 1
+        return Branch(
+            TrackStats.bearingDeg(lat0, lon0, plat, plon), g.pointLonE6(e, next), g.pointLatE6(e, next), g.name(e), g.wayClass(e),
+            model.usable(g, e) && model.allows(g, e, atFrom), if (model.mode == TravelMode.DRIVE) model.speedKmh(g, e) else 0.0, g.nodeLevel[n].toInt(),
+        )
+    }
+
     /** A snapped end: the piece it lies in and the snap on that piece's graph. */
     private class End(val piece: GraphPiece, val snap: EdgeSnap)
 
@@ -520,16 +590,16 @@ class TileRouter(
             val old = snap(view, lat, lon, maxSnapM) { p, _ -> !p.graph.source.drive }
             if (old != null) return driveUnsupported(old.piece.graph.source.file)
             val nearest = snap(view, lat, lon, Router.FAR_SEARCH_M) { p, e -> p.graph.source.drive && model.usable(p.graph, e) }?.snap?.distanceM
-            val where = if (nearest == null) "none within ${Router.km(Router.FAR_SEARCH_M)} km" else "the nearest is ${nearest.roundToLong()} m away"
+            val where = if (nearest == null) "none within ${d(Router.FAR_SEARCH_M)}" else "the nearest is ${d(nearest)} away"
             return RouteResult.Failed(
-                reason, "no road open to cars within ${maxSnapM.roundToLong()} m of the $which point ($where)",
+                reason, "no road open to cars within ${d(maxSnapM)} of the $which point ($where)",
                 linkedMapOf("maxSnapM" to maxSnapM, "nearestM" to nearest?.let { PlannedRoute.r1(it) }),
             )
         }
         val nearest = snap(view, lat, lon, Router.FAR_SEARCH_M)?.snap?.distanceM
-        val where = if (nearest == null) "none within ${Router.km(Router.FAR_SEARCH_M)} km" else "the nearest is ${nearest.roundToLong()} m away"
+        val where = if (nearest == null) "none within ${d(Router.FAR_SEARCH_M)}" else "the nearest is ${d(nearest)} away"
         return RouteResult.Failed(
-            reason, "no trail or road within ${maxSnapM.roundToLong()} m of the $which point ($where)",
+            reason, "no trail or road within ${d(maxSnapM)} of the $which point ($where)",
             linkedMapOf("maxSnapM" to maxSnapM, "nearestM" to nearest?.let { PlannedRoute.r1(it) }),
         )
     }
@@ -778,8 +848,8 @@ class TileRouter(
                     // T89: the budget: fail plainly instead of searching on through every pack.
                     return RouteResult.Failed(
                         RouteFailure.SEARCH_LIMIT,
-                        "no route found within the search limit ($maxSettled junctions settled, ${Router.km(networkM[0])} km of " +
-                            (if (drive) "road" else "trail and road") + " around the start and ${Router.km(networkM[1])} km around the end); " +
+                        "no route found within the search limit ($maxSettled junctions settled, ${d(networkM[0])} of " +
+                            (if (drive) "road" else "trail and road") + " around the start and ${d(networkM[1])} around the end); " +
                             "the ends may not be connected in the map packs",
                         linkedMapOf("expanded" to expanded, "maxSettled" to maxSettled),
                     )
@@ -794,15 +864,15 @@ class TileRouter(
             if (mu == Double.POSITIVE_INFINITY) {
                 val startKm = Router.km(networkM[0])
                 val endKm = Router.km(networkM[1])
-                val (sAt, eAt) = if (exhausted == 0) "$startKm" to "at least $endKm" else "at least $startKm" to "$endKm"
+                val (sAt, eAt) = if (exhausted == 0) d(networkM[0]) to "at least ${d(networkM[1])}" else "at least ${d(networkM[0])}" to d(networkM[1])
                 return RouteResult.Failed(
                     RouteFailure.NOT_CONNECTED,
                     if (drive) {
                         "no road open to cars connects start and end (one-way streets and roads closed to cars count; " +
-                            "drive mode only knows the roads in the map packs): $sAt km of road reachable from the start, $eAt km to the end"
+                            "drive mode only knows the roads in the map packs): $sAt of road reachable from the start, $eAt to the end"
                     } else {
                         "no trail connects start and end: they are on separate networks " +
-                            "($sAt km of trail and road around the start, $eAt km around the end)"
+                            "($sAt of trail and road around the start, $eAt around the end)"
                     },
                     linkedMapOf("startNetworkKm" to startKm, "endNetworkKm" to endKm, "exhausted" to if (exhausted == 0) "start" else "end", "expanded" to expanded),
                 )
@@ -888,15 +958,15 @@ class TileRouter(
         fun minVia(i: Int) = if (model.mode != TravelMode.DRIVE && runRoadM[i] * 2 > runs[i].second) Router.MIN_VIA_ROAD_M else Router.MIN_VIA_M
         val via = runs.filterIndexed { i, it -> it.first != null && it.second >= minVia(i) }.map { it.first!! to it.second }
             .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
-        val desc = "${Router.km(distance)} km" + (if (hasEle) ", +${ascent.roundToLong()} m / -${descent.roundToLong()} m" else "") +
+        val desc = d(distance) + (if (hasEle) ", +${UnitFormat.elevation(ascent, units)} / -${UnitFormat.elevation(descent, units)}" else "") +
             ", about ${PlannedRoute.hm(time)}" + (if (via.isNotEmpty()) " via " + via.take(3).joinToString(", ") { it.first } else "") +
-            if (model.mode == TravelMode.DRIVE) " (drive; planned offline by Dystopo on the map packs' roads, not a road navigator)"
-            else " (${model.mode.label}; planned offline by Dystopo)"
+            " (${model.mode.label}; planned offline by Dystopo)" + if (model.mode == TravelMode.DRIVE) " " + Router.DRIVE_NOTICE else "" // ADR 0032
         val route = Route(ids.next(), name, pts, description = desc, type = model.mode.label)
         fun named(e: End) = e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
         return PlannedRoute(
             route, model.mode, distance, if (hasEle) ascent else null, if (hasEle) descent else null, time,
             TrackStats.profile(track, Router.PROFILE_SAMPLES), cost, steps.size, named(s), named(t), expanded, byClass, via, memory,
+            Directions.of(pts, model.mode, this), // T102
         )
     }
 

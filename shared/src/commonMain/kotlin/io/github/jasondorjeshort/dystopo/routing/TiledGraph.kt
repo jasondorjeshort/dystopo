@@ -81,6 +81,33 @@ class GraphPiece(
         return best
     }
 
+    /**
+     * T102: every node by exact position (any level), sorted, for the turn directions' junction lookups: 12 bytes a
+     * node, built on the first [nodesAt] (a route's directions read the pieces along it; searches never need it).
+     */
+    private val byPosition: Pair<LongArray, IntArray> by lazy {
+        val g = graph
+        val keys = LongArray(g.nodeCount) { pos(g.nodeLon[it], g.nodeLat[it], 0) }
+        val order = (0 until g.nodeCount).sortedBy { keys[it] }
+        LongArray(order.size) { keys[order[it]] } to IntArray(order.size) { order[it] }
+    }
+
+    /** T102: the nodes of this piece at exactly ([lonE6], [latE6]), any level (a bridge cut and the road below can share a place). */
+    fun nodesAt(lonE6: Int, latE6: Int): List<Int> {
+        val (keys, nodes) = byPosition
+        val k = pos(lonE6, latE6, 0)
+        var lo = 0
+        var hi = keys.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (keys[mid] < k) lo = mid + 1 else hi = mid
+        }
+        if (lo >= keys.size || keys[lo] != k) return emptyList()
+        val out = ArrayList<Int>(2)
+        while (lo < keys.size && keys[lo] == k) out += nodes[lo++]
+        return out
+    }
+
     override fun toString() = "piece $archive:$x/$y (${graph.nodeCount} nodes)"
 
     private companion object {

@@ -27,7 +27,11 @@ import io.github.jasondorjeshort.dystopo.nav.NavPoint
 import io.github.jasondorjeshort.dystopo.nav.NavState
 import io.github.jasondorjeshort.dystopo.nav.Navigator
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DirectionsText
+import io.github.jasondorjeshort.dystopo.routing.Instruction
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import java.util.concurrent.Executors
 
@@ -39,7 +43,9 @@ import java.util.concurrent.Executors
  * stats bar state ([ui], drawn by [NavOverlay]). The heading for heading-up comes from, in order: a
  * simulated one (`POST /location?bearing=` or `/nav/heading`, while fixes are injected), the compass
  * (rotation vector + WMM declination, [HeadingSensor]) for device fixes, the course between fixes.
- * Debug routes in [io.github.jasondorjeshort.dystopo.app.NavRoutes].
+ * Debug routes in [io.github.jasondorjeshort.dystopo.app.NavRoutes]. T102: a route's turn directions
+ * ([NavSources.Resolved.directions]) ride along; the card shows the next one at the default detail level with its
+ * distance ([Directions.next], passed [Directions.passM] after the junction), and `/nav/status` lists them.
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -66,6 +72,15 @@ object NavSession {
         val fixAge: String? = null,
         /** T65: "Alerts snoozed 9 min" or "Alerts quiet until back on route"; null when alerts sound. */
         val snoozed: String? = null,
+        /** T102: the next turn direction ("Turn left onto Wonderland Trail"); null when the route has none left. */
+        val turn: String? = null,
+        /** T102: how far ahead it is, in the units preference. */
+        val turnDistance: String? = null,
+        /** T102: its turn, degrees right of straight on (the arrow), and its type code ([io.github.jasondorjeshort.dystopo.routing.Maneuver]). */
+        val turnDeg: Int? = null,
+        val turnType: String? = null,
+        /** T102: within its lead distance ([Instruction.leadM]): the card shows it in the alert colour. */
+        val turnSoon: Boolean = false,
     )
 
     /** T86: backed by [NavUiState], so touching [NavSession] from a background thread never creates Compose state. */
@@ -92,6 +107,10 @@ object NavSession {
     @Volatile var vibrate = true
         private set
     @Volatile private var zoom: Double? = null
+    /** T102: the route's directions (every priority) and those shown (the default level), along [navigator]'s path. */
+    @Volatile private var directions: List<Instruction> = emptyList()
+    @Volatile private var shownDirections: List<Instruction> = emptyList()
+    @Volatile private var travel: TravelMode = TravelMode.HIKE
 
     val layer = NavMapLayer()
     private val compass = Compass()
@@ -130,6 +149,7 @@ object NavSession {
         vibrate: Boolean = true,
         zoom: Double? = 15.0,
         planTimeS: Double? = null,
+        directions: List<Instruction> = emptyList(),
     ): Map<String, Any?> {
         stop()
         hookInjected()
@@ -137,6 +157,9 @@ object NavSession {
             navigator = Navigator(path, options)
             source = src
             this.planTimeS = planTimeS
+            this.directions = directions
+            shownDirections = Directions.shown(directions)
+            travel = options.mode
             snooze.clear()
             // T91: the thresholds are settings now (navStaleS, navStartM), read at each start.
             val stale = io.github.jasondorjeshort.dystopo.app.AppSettings.navStaleS.toDouble()
@@ -174,7 +197,7 @@ object NavSession {
         app.map.lastLocation?.let { l ->
             worker.execute { onFix(LocationFix(l.latitude, l.longitude, null, l.time, l.accuracy.toDouble(), l.provider ?: "last"), "last") }
         }
-        Log.i(TAG, "navigating ${path.name}: ${path.points.size} points, ${path.totalM.toInt()} m")
+        Log.i(TAG, "navigating ${path.name}: ${path.points.size} points, ${path.totalM.toInt()} m, ${shownDirections.size} directions")
         return json()
     }
 
@@ -186,7 +209,7 @@ object NavSession {
 
     private fun startFrom(resolve: () -> NavSources.Resolved) {
         runCatching { resolve() }
-            .onSuccess { r -> start(r.path, r.source, NavOptions(mode = r.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE), planTimeS = r.planTimeS) }
+            .onSuccess { r -> start(r.path, r.source, NavOptions(mode = r.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE), planTimeS = r.planTimeS, directions = r.directions) }
             .onFailure { Log.w(TAG, "cannot navigate", it) }
     }
 
@@ -401,7 +424,11 @@ object NavSession {
         name = path.name, next = null, nextDistance = null, nextTime = null,
         endDistance = UnitFormat.distance(path.totalM, AppSettings.units), endTime = PlannedRoute.hm(navigator?.plannedTimeS ?: 0.0), endClock = "",
         offRoute = false, offEdge = false, rejoin = null, rejoinArrowDeg = null, heading = null, camera = app.map.cameraMode, arrived = false, waiting = true,
+        turn = shownDirections.firstOrNull()?.let { DirectionsText.of(it, travel) }, // T102: the first direction until a fix places the walker
     )
+
+    /** T102: the next direction shown at [progressM] along the line, as an index into [shownDirections], -1 when none is left. */
+    private fun nextTurn(progressM: Double): Int = Directions.next(shownDirections, progressM, passM = Directions.passM(travel))
 
     private fun uiOf(nav: Navigator, s: NavState): Ui {
         val u = AppSettings.units
@@ -425,7 +452,16 @@ object NavSession {
             waiting = false,
             fixAge = fixAgeText(System.currentTimeMillis()),
             snoozed = snoozedText(System.currentTimeMillis()),
-        )
+        ).let { ui ->
+            // T102: the next turn direction and how far ahead it is.
+            val k = if (s.arrived) -1 else nextTurn(s.progress)
+            val ins = shownDirections.getOrNull(k) ?: return@let ui
+            val ahead = (ins.alongM - s.progress).coerceAtLeast(0.0)
+            ui.copy(
+                turn = DirectionsText.of(ins, travel), turnDistance = UnitFormat.distance(ahead, u), turnDeg = ins.turnDeg,
+                turnType = ins.type.code, turnSoon = ahead <= ins.leadM,
+            )
+        }
     }
 
     /** The map's bearing as last eased to (the camera follows the heading in heading-up), else north. */
@@ -476,7 +512,8 @@ object NavSession {
             "alerts" to alerts.json(),
             "snooze" to synchronized(this) { snooze.json(now) }, // T65
             "fix" to synchronized(this) { freshness.json(now, startedAt) }, // T65: stale-fix handling
-            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed) },
+            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon) },
+            "directions" to linkedMapOf("count" to directions.size, "shown" to shownDirections.size, "level" to Directions.DEFAULT_LEVEL), // T102
             "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null)), // T65
         )
     }
@@ -497,6 +534,30 @@ object NavSession {
             "events" to ev.map { it.json() },
             "alerts" to alerts.json(),
             "snooze" to synchronized(this) { snooze.json(System.currentTimeMillis()) }, // T65
+        ) + directionsJson(s?.progress, s?.arrived == true)
+    }
+
+    /**
+     * T102, `/nav/status`: `instructions`, the directions navigation shows (the default level, each with its `index`,
+     * `type`, `priority`, `text`, `alongM`, `leadM`), and `nextInstruction` at the walker's progress (`index`, `type`,
+     * `text`, `distanceM` and `distance` ahead, `withinLead`), null when none is left; `passed`, how many lie behind.
+     */
+    private fun directionsJson(progressM: Double?, arrived: Boolean): Map<String, Any?> {
+        val list = shownDirections
+        val k = if (progressM == null) 0 else if (arrived) -1 else nextTurn(progressM)
+        val next = list.getOrNull(k)
+        val ahead = next?.let { (it.alongM - (progressM ?: 0.0)).coerceAtLeast(0.0) } ?: 0.0
+        return linkedMapOf(
+            "instructions" to list.mapIndexed { i, ins ->
+                linkedMapOf("index" to i, "type" to ins.type.code, "priority" to ins.priority, "text" to DirectionsText.of(ins, travel), "alongM" to r1(ins.alongM), "leadM" to r1(ins.leadM))
+            },
+            "nextInstruction" to next?.let {
+                linkedMapOf(
+                    "index" to k, "type" to it.type.code, "text" to DirectionsText.of(it, travel), "distanceM" to r1(ahead),
+                    "distance" to UnitFormat.distance(ahead, AppSettings.units), "withinLead" to (ahead <= it.leadM),
+                )
+            },
+            "passed" to if (k < 0) list.size else k,
         )
     }
 

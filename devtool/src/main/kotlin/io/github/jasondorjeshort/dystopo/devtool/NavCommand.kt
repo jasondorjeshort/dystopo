@@ -18,12 +18,17 @@ import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
 import io.github.jasondorjeshort.dystopo.nav.NavOptions
 import io.github.jasondorjeshort.dystopo.nav.NavPath
 import io.github.jasondorjeshort.dystopo.nav.NavReplay
+import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
+import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DirectionsText
+import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.server.reportJson
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.io.File
+import kotlin.math.roundToLong
 
 /**
  * `devtool nav replay` (T65): the phone's navigation (T61) on the JVM. Follows the line of `--path` (a
@@ -35,6 +40,11 @@ import java.io.File
  *
  *   devtool nav replay --path shared/src/commonTest/resources/gpx/skyline-loop.gpx --path-track \
  *       --fixes shared/src/commonTest/resources/gpx/skyline-offroute.gpx --expect-off 1 --expect-arrive
+ *
+ * T102: with `--pack <vector pack>` the line's turn directions are read from that pack's graph (as the phone reads
+ * them for a kept or saved route) and the report has `directions` (those shown at the default level, as text) and,
+ * in each progress sample, `next` (the direction navigation shows there) and `aheadM`; `directionsPassed` counts
+ * those behind the walker at the end. `--expect-directions N` exits 1 unless N are shown.
  */
 class NavCommand : CliktCommand(name = "nav") {
     init {
@@ -57,7 +67,9 @@ class NavReplayCommand : CliktCommand(name = "replay") {
     private val offRouteS by option("--off-route-s", help = "...for this long (s of fix time)").double().default(NavOptions().offRouteSeconds)
     private val backOnRouteM by option("--back-on-route-m", help = "Back on route within this (m)").double()
     private val arriveM by option("--arrive-m", help = "Arrived within this of the end (m)").double().default(NavOptions().arriveM)
-    private val mode by option("--mode", help = "hike (default) or bike: the time model").choice("hike", "bike").default("hike")
+    private val mode by option("--mode", help = "hike (default), bike or drive: the time model (and the directions' mode)").choice("hike", "bike", "drive").default("hike")
+    private val pack by option("--pack", help = "T102: vector pack whose graph gives the line's turn directions (graph file next to it, built when missing)").file(mustExist = true, canBeDir = false)
+    private val expectDirections by option("--expect-directions", help = "Exit 1 unless this many directions are shown (with --pack)").int()
     private val samples by option("--samples", help = "Progress samples in the report").int().default(20)
     private val expectOff by option("--expect-off", help = "Exit 1 unless exactly this many off-route events happen").int()
     private val expectArrive by option("--expect-arrive", help = "Exit 1 unless the walk arrives").flag()
@@ -83,11 +95,30 @@ class NavReplayCommand : CliktCommand(name = "replay") {
         val t0 = System.nanoTime()
         val report = linkedMapOf<String, Any?>("command" to "nav replay", "pathFile" to pathFile.path, "fixesFile" to (fixesFile ?: pathFile).path)
         report += NavReplay.run(path, walk.map { NavReplay.Fix(it.lat, it.lon, it.time!!) }, options, samples)
+        // T102: the directions along the line from the pack's graph, and which one navigation shows at each sample.
+        val shown = pack?.let { f ->
+            val (graph, _) = RouteGraphs.openOrBuild(f, RouteGraphs.defaultDem(f), null)
+            val points = path.points.map { RoutePoint(it.lat, it.lon, it.ele) }
+            Directions.shown(Directions.of(points, options.mode, Router(graph).junctions))
+        }
+        if (shown != null) {
+            val passM = Directions.passM(options.mode)
+            report["directions"] = shown.map { "${DirectionsText.of(it, options.mode)} at ${it.alongM.roundToLong()} m" }
+            @Suppress("UNCHECKED_CAST")
+            report["progress"] = (report["progress"] as List<Map<String, Any?>>).map { sample ->
+                val at = (sample["progressM"] as Number).toDouble()
+                val k = Directions.next(shown, at, passM = passM)
+                sample + linkedMapOf("next" to shown.getOrNull(k)?.let { DirectionsText.of(it, options.mode) }, "aheadM" to shown.getOrNull(k)?.let { (it.alongM - at).roundToLong() })
+            }
+            val end = (report["finalProgressM"] as Number?)?.toDouble() ?: 0.0
+            report["directionsPassed"] = Directions.next(shown, end, passM = passM).let { if (it < 0) shown.size else it }
+        }
         report["elapsedMs"] = (System.nanoTime() - t0) / 1_000_000
         val offEvents = (report["counts"] as Map<*, *>)["offRoute"] as Int? ?: 0
         val failures = buildList {
             expectOff?.let { if (offEvents != it) add("expected $it off-route events, got $offEvents") }
             if (expectArrive && report["arrived"] != true) add("expected to arrive")
+            expectDirections?.let { n -> val got = (report["directions"] as List<*>?)?.size; if (got != n) add("expected $n directions, got $got") }
         }
         report["ok"] = failures.isEmpty()
         report["failures"] = failures

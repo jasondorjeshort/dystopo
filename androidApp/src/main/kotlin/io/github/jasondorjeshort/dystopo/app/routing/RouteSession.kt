@@ -41,6 +41,13 @@ object RouteSession {
     var plan by mutableStateOf<PlannedRoute?>(null)
         private set
 
+    /** T102: the route card's list of turn directions is open (the "Directions" action, `POST /nav/directions?open=1`). */
+    var directionsOpen by mutableStateOf(false)
+
+    /** T102: the directions the card counts and lists: the plan's at the default detail level. */
+    fun shownDirections(p: PlannedRoute): List<io.github.jasondorjeshort.dystopo.routing.Instruction> =
+        io.github.jasondorjeshort.dystopo.routing.Directions.shown(p.instructions)
+
     @Volatile var start: LatLng? = null
         private set
     @Volatile var end: LatLng? = null
@@ -156,7 +163,7 @@ object RouteSession {
         start = null
         end = null
         failure = null
-        ui { phase = "idle"; plan = null; message = null }
+        ui { phase = "idle"; plan = null; message = null; directionsOpen = false }
         overlay.show(null, null, null)
     }
 
@@ -229,6 +236,7 @@ object RouteSession {
         "summary" to plan?.let { summary(it) }, "lastFile" to lastFile?.path,
         "cardHidden" to (io.github.jasondorjeshort.dystopo.app.nav.NavSession.active && phase != "idle"), // T65: hidden while navigating
         "via" to plan?.via?.map { it.first }, // T49: trail names
+        "directions" to plan?.let { shownDirections(it).size }, "directionsOpen" to directionsOpen, // T102
         "lastFit" to lastFit, "layout" to BottomPanels.json(), // T49
     )
 

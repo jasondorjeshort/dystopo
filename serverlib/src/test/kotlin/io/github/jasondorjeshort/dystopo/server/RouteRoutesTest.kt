@@ -113,6 +113,11 @@ class RouteRoutesTest {
         assertEquals("t", r["pack"])
         assertEquals(listOf("trail"), kinds(r))
         assertEquals(emptyList<String>(), r["notes"])
+        // T102: the turn directions ride along: straight past Side Trail says nothing; to Side Trail's end, a left turn.
+        @Suppress("UNCHECKED_CAST")
+        fun texts(m: Map<String, Any?>) = (m["instructions"] as List<Map<String, Any?>>).map { it["text"] }
+        assertEquals(listOf("Head east on Main Trail", "Arrive at the end of the route"), texts(r))
+        assertEquals(listOf("Head east on Main Trail", "Turn left onto Side Trail", "Arrive at the end of the route"), texts(p.plan(listOf(at(420, 2048), at(2048, 620)), "hike")))
         val d = (summary(r)["distanceM"] as Number).toDouble()
         val expected = 3160.0 / 4096 * WebMercator.metersPerPixel(46.79, z, 256) * 256
         assertTrue(kotlin.math.abs(d - expected) < 0.02 * expected, "distance $d vs $expected")
@@ -138,7 +143,7 @@ class RouteRoutesTest {
         @Suppress("UNCHECKED_CAST")
         val msg = (old["messages"] as Map<String, String>).getValue("drive_unsupported")
         assertTrue("t-outdoors.pmtiles was built before it" in msg, msg)
-        assertTrue((old["notice"] as String).contains("not a road navigator"))
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, old["notice"]) // ADR 0032 (T102)
         assertEquals(null, p.plan(listOf(at(420, 2048), at(3580, 2048)), "hike")["notice"])
         assertFailsWith<IllegalArgumentException> { p.plan(listOf(at(420, 2048), at(3580, 2048)), "car") }
         // An outdoors pack from profile 2 on: the road is driven, the trail beside it is not.

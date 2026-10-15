@@ -44,6 +44,8 @@ private val Link = Color(0xFF2C7BB6)
  * pan) and Stop. Nothing shows when not navigating. T65: Snooze 10 min / Quiet until back in the off-route
  * banner (Unsnooze while snoozed), "No GPS fix for N s" when the position is old, and the card's bottom
  * edge goes to [io.github.jasondorjeshort.dystopo.app.TopChips] so the Tracks and Routes chips stack below it.
+ * T102: the next turn direction first, in large type with its distance and an arrow for the turn, in the alert
+ * colour once it is within its lead distance.
  */
 @Composable
 fun NavOverlay() {
@@ -81,6 +83,7 @@ fun NavOverlay() {
             }
             // T65: an old position says so (the numbers below are as of the last fix).
             u.fixAge?.let { BasicText(it, style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold)) }
+            u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102
             if (u.next != null && u.nextDistance != null) {
                 Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
             }
@@ -139,9 +142,30 @@ private fun Stat(label: String, name: String?, distance: String, time: String) {
     }
 }
 
-/** A white arrow pointing [deg] clockwise from the top of the screen. */
+/**
+ * T102: the next turn direction: an arrow bent like the turn (straight up for depart, continue and arrive), the
+ * distance to it in large type, the text below; purple with white type within the lead distance ([soon]).
+ */
 @Composable
-private fun Arrow(deg: Float) {
+private fun Turn(text: String, distance: String?, turnDeg: Int?, type: String?, soon: Boolean) {
+    val ink = if (soon) Color.White else Ink
+    Row(
+        Modifier.fillMaxWidth().background(if (soon) Purple else Color(0x1F7B3294), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val straight = type == null || type in setOf("depart", "continue", "arrive", "via", "off-network")
+        Arrow(if (straight) 0f else (turnDeg ?: 0).coerceIn(-150, 150).toFloat(), if (soon) Color.White else Purple)
+        Spacer(Modifier.size(10.dp))
+        Column(Modifier.weight(1f)) {
+            distance?.let { BasicText(it, style = TextStyle(color = ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)) }
+            BasicText(text, maxLines = 2, style = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold))
+        }
+    }
+}
+
+/** An arrow (white unless [color]) pointing [deg] clockwise from the top of the screen. */
+@Composable
+private fun Arrow(deg: Float, color: Color = Color.White) {
     Canvas(Modifier.size(36.dp).rotate(deg)) {
         val w = size.width
         val h = size.height
@@ -155,7 +179,7 @@ private fun Arrow(deg: Float) {
             lineTo(0f, h * 0.55f)
             close()
         }
-        drawPath(p, Color.White)
+        drawPath(p, color)
     }
 }
 

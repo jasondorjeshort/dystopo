@@ -92,7 +92,11 @@ class RouterTest {
         val r = Router(g).route(0.01, 0.0, 0.0, 0.002)
         assertIs<RouteResult.Failed>(r)
         assertEquals(RouteFailure.START_OFF_NETWORK, r.reason)
-        assertTrue(r.message.contains("nearest is 111"), r.message)
+        assertTrue(r.message.contains("nearest is 1.11 km"), r.message)
+        // T102: in the units given (the phone's preference, UnitFormat's rule); the details stay metres.
+        val feet = TileRouter(WholeGraph(g), units = io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET).route(0.01, 0.0, 0.0, 0.002)
+        assertTrue((feet as RouteResult.Failed).message.contains(" mi away") && " mi of the start point" in feet.message, feet.message)
+        assertEquals(1111.9, (feet.details["nearestM"] as Double), 0.2)
         val r2 = Router(g).route(0.0, 0.0, 0.0, 0.03)
         assertEquals(RouteFailure.END_OFF_NETWORK, (r2 as RouteResult.Failed).reason)
     }

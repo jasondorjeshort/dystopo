@@ -523,7 +523,13 @@ without drive data (outdoors profile 1) has neither a cell file nor a `warm` ent
   descent, hike-model time, `straightM`, a 100-sample profile), `notes` (why a leg is straight), `graph`
   (`built`, `loaded` or `cached`, the reported pack's; every pack used under `graphs`; T77: `searches`, one per
   leg searched, with `ms`, `tiles`, `overlayTiles`, T89 `level2Tiles` (the z8 cells it went through), `expanded`
-  and the search's memory) and `ms`. Bad input is a 400 with `error`.
+  and the search's memory) and `ms`. Bad input is a 400 with `error`. `notice` (drive only) is the one sentence on
+  what drive mode does and does not do (`Router.DRIVE_NOTICE`, ADR 0032). T102: `instructions`, the turn directions
+  along the whole path (every leg, kept or rerouted; via points and straight legs too): each with `type` (`depart`,
+  `left`, `keep-right`, `continue`, `via`, `off-network`, `arrive`, ...), `priority` (1 major, 2 normal, 3 minor; the
+  apps show 1 and 2), `text` (English, no distance), `alongM`, `lat`, `lon`, `name`, `class`, `sameWay`, `turnDeg`,
+  `bearingDeg`, `leadM` (how far ahead to announce it) and `stretchM` (to the next one); the phone's remote router
+  reads them. PLANNING › Routing, Turn directions.
 - `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
   what the phone exports for the same trip.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one

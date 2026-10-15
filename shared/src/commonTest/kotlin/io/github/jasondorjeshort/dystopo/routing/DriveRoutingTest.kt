@@ -115,7 +115,7 @@ class DriveRoutingTest {
         )
         val car = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
         assertEquals(setOf(WayClass.MINOR), car.metersByClass.keys)
-        assertTrue(car.route.description!!.contains("not a road navigator"), car.route.description)
+        assertTrue(car.route.description!!.contains(Router.DRIVE_NOTICE), car.route.description) // ADR 0032: the one sentence
         // 1.2 km at 40 km/h.
         assertEquals(car.distanceM / (40 / 3.6), car.timeS, 2.0)
         val hike = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))

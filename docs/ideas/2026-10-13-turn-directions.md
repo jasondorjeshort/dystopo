@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
-pipeline: T102 (text; voice later)
+status: done
+pipeline: T102 (text built; voice and the detail level later)
 related: [2026-10-13-large-distance-units.md, 2026-10-13-route-waypoints-and-reroute.md, 2026-10-13-driving-is-in-scope.md]
 ---
 
@@ -34,3 +34,12 @@ off-route alert; the router returns edges with class and names but not manoeuvre
 - Voice: the platform text-to-speech engine, an offline-capable voice, ducking audio. A setting,
   off by default; consider battery and the screen-off case.
 - Testable through the existing replay (`POST /location/replay`) and `/nav/status` events.
+
+## Built (T102, wave 14)
+
+Text directions in hike, bike and drive: `shared/.../routing/Directions.kt` (the rules in PLANNING ›
+Routing, Turn directions), on the route card ("Show N directions"), the navigation card and
+`/nav/status`, in the server's `/route` reply and `devtool route`. Each instruction has a type, a
+priority (1 to 3; the apps show 1 and 2) and a lead distance, so the two later pieces need no format
+change. Not built, for a later task: voice (the open lines above), the detail-level setting, cues
+beyond turns.

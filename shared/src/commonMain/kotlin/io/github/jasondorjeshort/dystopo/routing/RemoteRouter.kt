@@ -6,6 +6,8 @@ import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlin.math.roundToLong
 
 /**
@@ -22,6 +24,8 @@ class RemoteRouter(
     val server: String,
     private val fetch: (url: String) -> Pair<Int, String>,
     private val clock: () -> Long = { 0L },
+    /** T102 (from T101): the units of the route description ([UnitFormat]; the phone's preference, read per route). */
+    private val units: () -> ContourUnits = { ContourUnits.METERS },
 ) : Router {
     /** The last request: URL, status or error, milliseconds (for status pages). */
     var last: Map<String, Any?>? = null
@@ -91,9 +95,12 @@ class RemoteRouter(
         // T89: the server's summary time (for a drive, the sum of its router's per-road times), else the model's.
         val time = (summary["timeS"] as? Number)?.toDouble() ?: CostModel(mode).timeS(stats.distanceM, ascent ?: 0.0)
         val host = server.substringAfter("://").trimEnd('/')
-        val desc = "${Router.km(stats.distanceM)} km" + (if (ascent != null) ", +${ascent.roundToLong()} m / -${(descent ?: 0.0).roundToLong()} m" else "") +
-            ", about ${PlannedRoute.hm(time)} (${mode.label}; planned by the Dystopo server at $host" +
-            (if (mode == TravelMode.DRIVE) " on its packs' roads, not a road navigator" else "") + "; download its corridor to follow it offline)"
+        val u = units()
+        val desc = UnitFormat.distance(stats.distanceM, u) + (if (ascent != null) ", +${UnitFormat.elevation(ascent, u)} / -${UnitFormat.elevation(descent ?: 0.0, u)}" else "") +
+            ", about ${PlannedRoute.hm(time)} (${mode.label}; planned by the Dystopo server at $host; download its corridor to follow it offline)" +
+            if (mode == TravelMode.DRIVE) " " + Router.DRIVE_NOTICE else "" // ADR 0032
+        // T102: the server's turn directions along its path (absent from servers before T102).
+        val instructions = (json["instructions"] as? List<*>)?.mapNotNull { Instruction.parse(it as? Map<*, *>) } ?: emptyList()
         val route = Route(ids.next(), name, pts, description = desc, type = mode.label)
         fun end(lat: Double, lon: Double, p: RoutePoint) = EdgeSnap(-1, 0, 0.0, p.lat, p.lon, TrackStats.distanceM(lat, lon, p.lat, p.lon))
         return RouteResult.Found(
@@ -102,6 +109,7 @@ class RemoteRouter(
                 cost = 0.0, edges = 0, start = end(fromLat, fromLon, pts.first()), end = end(toLat, toLon, pts.last()), expanded = 0,
                 metersByClass = emptyMap(), via = emptyList(),
                 memory = linkedMapOf("remote" to server, "remoteMs" to ms, "serverMs" to json["ms"], "pack" to json["pack"]),
+                instructions = instructions,
             ),
         )
     }
@@ -147,6 +155,7 @@ class FallbackRouter(
 
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = local?.nearest(lat, lon, maxDistanceM)
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double, mode: TravelMode): EdgeSnap? = local?.nearest(lat, lon, maxDistanceM, mode)
+    override val junctions: JunctionSource? get() = local?.junctions // T102: the packs on the device
 
     companion object {
         val REMOTE_REASONS = setOf(RouteFailure.START_OFF_NETWORK, RouteFailure.END_OFF_NETWORK, RouteFailure.NOT_CONNECTED, RouteFailure.EMPTY_GRAPH, RouteFailure.SEARCH_LIMIT)

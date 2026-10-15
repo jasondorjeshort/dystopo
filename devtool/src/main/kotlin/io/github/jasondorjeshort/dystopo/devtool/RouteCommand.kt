@@ -30,7 +30,11 @@ import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
+import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
@@ -51,6 +55,9 @@ import kotlin.math.cos
  *   (the archive's whole file name, T49: `rainier-outdoors-graph.idx`)
  *   (building it first when missing or stale), plans the route, renders it over the DEM pack's terrain
  *   with an elevation profile (`out/route-<pack>.png`) and prints the route as JSON. Exit 1 when no route.
+ *   T102: the route's turn directions are in `route.instructions` (type, priority, distance along, way, turn,
+ *   lead distance, the stretch after it) and, as text with the stretch each one starts, in `directions`
+ *   (in `--units`, ft by default as for the render; every priority, the default level's count in `shown`).
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters.
  *
  * Elevations come from the pack's DEM archive (`<name>-dem.pmtiles` next to it, or `--dem`).
@@ -69,7 +76,7 @@ class RouteCommand : CliktCommand(name = "route") {
     private val dem by option("--dem", help = "DEM pack for elevation and the render (default: <name>-dem.pmtiles next to --pack)").file(mustExist = true, canBeDir = false)
     private val from by option("--from", help = "Start lat,lon")
     private val to by option("--to", help = "End lat,lon")
-    private val mode by option("--mode", help = "hike (default), bike or drive (T73: the pack's roads, to and between trailheads)").choice("hike", "bike", "drive").default("hike")
+    private val mode by option("--mode", help = "hike (default), bike or drive (T73: the roads in the pack, one-ways and speed limits)").choice("hike", "bike", "drive").default("hike")
     private val snap by option("--snap", help = "How far (m) a point may be from the nearest trail or road").double().default(Router.DEFAULT_SNAP_M)
     private val name by option("--name", help = "Route name").default("Route")
     private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
@@ -102,6 +109,13 @@ class RouteCommand : CliktCommand(name = "route") {
             is RouteResult.Found -> {
                 val plan = result.plan
                 report["route"] = plan.json()
+                // T102: the directions as text, each with the stretch it starts (P1 major, P2 normal, P3 minor).
+                val u = if (style.units == "ft") ContourUnits.FEET else ContourUnits.METERS // the render's --units
+                report["directions"] = linkedMapOf(
+                    "count" to plan.instructions.size, "shown" to Directions.shown(plan.instructions).size,
+                    "byPriority" to plan.instructions.groupingBy { "P${it.priority}" }.eachCount().toSortedMap(),
+                    "text" to plan.instructions.map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, u)})" else "" },
+                )
                 // Drawn as a track: a solid line with direction chevrons, start ring, end square and the elevation profile.
                 val asTrack = Track(plan.route.id, plan.route.name, listOf(TrackSegment(plan.route.points.map { TrackPoint(it.lat, it.lon, it.ele) })))
                 val doc = GpxDocument(tracks = listOf(asTrack))
