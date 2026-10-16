@@ -8,8 +8,8 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 ## Now
 
-- Wave 15 launched 2026-10-16 about 05:40 UTC after a critic pass on the plan (now a standard step of the
-  `wave` skill, owner's word): five Opus implementers, worktrees `~\Documents\src\dystopo-wt\T1nn`,
+- Wave 15 launched 2026-10-16 about 05:40 UTC after a critic pass (now standard in the `wave` skill, owner's
+  word): five Opus implementers, worktrees `~\Documents\src\dystopo-wt\T1nn`,
   AVDs `dystopo35-T1nn` under `E:\dystopo-avd`. T108 directions with a trip and crow mode (console 5572,
   ports 8700, 8701); T109 help pop-ups (5574; 8702, 8703); T110 Android sweep 8 (5576 and 5578; 8704 to
   8706); T111 desktop and tooling sweep 8 (5580; 8708, 8709, soaks 8790, sweeps 8900 to 8907); T112 cache
