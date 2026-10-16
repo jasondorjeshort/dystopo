@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -21,6 +23,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
 import java.util.Locale
 
@@ -84,6 +88,17 @@ object LongPressMenu {
         lastAction = "cancel"
     }
 
+    /**
+     * T109: opens the card at the map's centre, for `POST /help/open?key=longPress.menu` (main thread); not while a route
+     * waits for its end, where a long-press goes to the route.
+     */
+    fun showAtCentre() {
+        if (point != null || RouteSession.phase == "start" || RouteSession.phase == "planning") return
+        val c = DystopoApp.instance.map.map?.cameraPosition?.target ?: return
+        point = c.latitude to c.longitude
+        lastAction = "menu"
+    }
+
     fun json(): Map<String, Any?> = linkedMapOf(
         "open" to (point != null), "lat" to point?.first, "lon" to point?.second,
         "presses" to presses, "lastAction" to lastAction, "routePhase" to RouteSession.phase,
@@ -106,7 +121,10 @@ internal fun LongPressCard() {
         Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(8.dp)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), style = TextStyle(color = Ink, fontSize = 12.sp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 12.sp))
+            HelpIcon("longPress.menu") // T109: dropping a waypoint, which was hard to find
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             MenuAction("Waypoint here") { LongPressMenu.waypoint() }
             MenuAction("Route from here") { LongPressMenu.route() }
@@ -114,6 +132,18 @@ internal fun LongPressCard() {
         }
     }
 }
+
+/**
+ * T109: the help pop-up of the card above, by the key its [HelpIcon] names (the owner found dropping a waypoint hard
+ * to find); removing the card's icon removes its text. `POST /help/open` opens the card at the map's centre.
+ */
+internal val LONG_PRESS_HELP: List<HelpText> = listOf(
+    HelpText("longPress.menu", "Long-press menu", "The map: long-press anywhere", show = { LongPressMenu.showAtCentre() }) {
+        "A long-press on the map opens this card. Waypoint here marks the point with a waypoint you can name; while a " +
+            "track records, it joins the track. Route from here starts a route: long-press again where it should end. " +
+            "The Waypoint button at the top marks where you are now."
+    },
+)
 
 @Composable
 private fun MenuAction(text: String, onClick: () -> Unit) {

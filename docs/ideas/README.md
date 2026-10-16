@@ -72,5 +72,5 @@ names (`CLAUDE.md`, Rules).
 | `2026-10-13-battery-efficiency.md` | feature | new | Battery doctrine, a measurement mode and an automatic low-battery mode. |
 | `2026-10-13-external-integrations.md` | feature | new | Import, export and sync with outside services (route services, cloud drive, OSM, fitness). |
 | `2026-10-13-download-by-region.md` | feature | new | Download topo by county, state, park, drawn region, or distance around a point or route. |
-| `2026-10-13-help-popups.md` | feature | new | Help text pop-ups behind a question-mark icon. |
+| `2026-10-13-help-popups.md` | feature | done | Help text pop-ups behind a question-mark icon. |
 | `2026-10-13-alpha-interface-freedom.md` | question | done | Doctrine: interface changes are fine while in alpha; ADR 0031 (2026-10-14) and the CLAUDE.md Decisions line. |

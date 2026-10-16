@@ -34,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
+import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -75,6 +78,14 @@ private val Teal = Color(0xFF00796B)
  */
 @Composable
 fun AreasOverlay() {
+    AreasSheet()
+    // T109: the open help pop-up, over every screen drawn before this one (all but Share and its scanner, which have
+    // no help icons). It belongs last in MainActivity's MapScreen; this file is the last of the overlays T109 owns.
+    io.github.jasondorjeshort.dystopo.app.help.HelpHost()
+}
+
+@Composable
+private fun AreasSheet() {
     val app = DystopoApp.instance
     val open = Areas.screenOpen
     LaunchedEffect(open) {
@@ -101,13 +112,20 @@ fun AreasOverlay() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                BasicText("Offline areas", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    BasicText("Offline areas", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                    HelpIcon("areas.offline") // T109
+                }
                 Action("Close") { Areas.screenOpen = false }
             }
-            BasicText(
-                "Pinned areas stay on this phone until you unpin or remove them. A trip's Offline button downloads its corridor.",
-                style = TextStyle(color = Muted, fontSize = 12.sp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicText(
+                    "Pinned areas stay on this phone until you unpin or remove them. A trip's Offline button downloads its corridor.",
+                    Modifier.weight(1f, fill = false),
+                    style = TextStyle(color = Muted, fontSize = 12.sp),
+                )
+                HelpIcon("areas.corridor") // T109
+            }
             // T106: a refused job is finished too (it read "Downloading ...: 0 of 0 tiles" for as long as the sheet stayed open).
             progress?.takeIf { it["state"] !in setOf("done", "failed", "cancelled", "partial", "refused") }?.let { p ->
                 BasicText(
@@ -180,6 +198,29 @@ internal const val OTHER_SOURCE_NOTE = "Downloaded from another source. Update d
  */
 internal fun corridorLine(lengthM: Double, bufferM: Double, units: ContourUnits): String =
     "Corridor ${UnitFormat.distance(lengthM, units)}, ${UnitFormat.distance(bufferM, units)} each side"
+
+/**
+ * T109: the help pop-ups of the sheet's header and its first line, by the key each [HelpIcon] names; a control removed
+ * here takes its text with it. `POST /help/open` opens the sheet. The budget and the corridor width are read when the
+ * pop-up opens: the pinned budget as set, the corridor in the units setting ([UnitFormat.distance]).
+ */
+internal val AREAS_HELP: List<HelpText> = run {
+    val show = { Areas.screenOpen = true }
+    listOf(
+        HelpText("areas.offline", "Offline areas", "Offline areas (Settings > Data and storage, or Packs)", show = show) {
+            "Offline areas keep part of the map on this phone for use with no signal. A pinned area stays until you " +
+                "unpin or remove it; an unpinned one is cleared first when space runs short. A region pack is never " +
+                "cleared and needs no pin. Pinned areas share a budget of ${AppSettings.pinnedCacheMb} MB, set in " +
+                "Storage; a download past it is refused."
+        },
+        HelpText("areas.corridor", "Corridors", "Offline areas, the line under the title", show = show) { units ->
+            "A trip's Offline button offers its corridor for download, with its size: the map within " +
+                "${UnitFormat.distance(AreaOfInterest.DEFAULT_BUFFER_M, units)} each side of the route, at the zooms " +
+                "you need to follow it. While this sheet is open, a corridor shows on the map as a shaded band. Update " +
+                "downloads an area again when its source has newer data."
+        },
+    )
+}
 
 /** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). */
 internal const val PACK_NOTE = "A region pack is never evicted, so it needs no pin; it stays until you remove it."

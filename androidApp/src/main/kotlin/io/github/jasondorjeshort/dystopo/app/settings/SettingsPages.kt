@@ -39,6 +39,8 @@ import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.firstrun.FirstRun
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.app.firstrun.Sources
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -97,13 +99,13 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             Option("${row.label} ›", false) { leaveFor { io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true } }
         }
         SettingsRow.MAP_OPTIONS -> io.github.jasondorjeshort.dystopo.app.options.MapOptionsSection { change(SettingsRoutes.Parsed.Ok(null, false, null, null, it)) } // T47, placed whole
-        SettingsRow.UNITS -> Setting(row.label, if (AppSettings.unitPreference.units == null) "from your region until you choose" else null) {
+        SettingsRow.UNITS -> Setting(row.label, if (AppSettings.unitPreference.units == null) "from your region until you choose" else null, help = "settings.units") {
             Option("Feet", units == ContourUnits.FEET) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.FEET, null)) }
             Option("Metres", units == ContourUnits.METERS) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.METERS, null)) }
         }
         SettingsRow.TEXT_SIZE -> {
             val scale = AppSettings.textScale
-            Setting(row.label, null) {
+            Setting(row.label, null, help = "settings.textSize") {
                 Option("-", false) { change(SettingsRoutes.Parsed.Ok(stepScale(scale, -1), false, null, null)) }
                 BasicText(String.format(Locale.US, "%.1fx", scale), Modifier.padding(horizontal = 6.dp, vertical = 8.dp), style = TextStyle(color = Ink, fontSize = 14.sp))
                 Option("+", false) { change(SettingsRoutes.Parsed.Ok(stepScale(scale, 1), false, null, null)) }
@@ -112,7 +114,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.ROUTE_SNAP -> {
             // T57: how far a long-pressed route start or end may be from the nearest trail or road.
             val snap = AppSettings.routeSnapM
-            Setting(row.label, "how far a route's start or end may be from a trail or road") {
+            Setting(row.label, "how far a route's start or end may be from a trail or road", help = "settings.routeSnap") {
                 for (m in SNAP_CHOICES) {
                     Option(io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(m.toDouble(), units), snap == m) {
                         change(SettingsRoutes.Parsed.Ok(null, false, null, null, routeSnapM = m))
@@ -123,28 +125,28 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.NAV_STALE -> {
             // T91: the navigation thresholds (T65's constants).
             val stale = AppSettings.navStaleS
-            Setting(row.label, "an older fix is not used, and the bar says the fix is lost") {
+            Setting(row.label, "an older fix is not used, and the bar says the fix is lost", help = "settings.navStale") {
                 for (s in STALE_CHOICES) Option("$s s", stale == s) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navStaleS = s)) }
             }
         }
         SettingsRow.NAV_SNOOZE -> {
             val snoozeMin = AppSettings.navSnoozeMin
-            Setting(row.label, "how long the off-route banner's Snooze holds the alert") {
+            Setting(row.label, "how long the off-route banner's Snooze holds the alert", help = "settings.navSnooze") {
                 for (m in SNOOZE_CHOICES) Option("$m min", snoozeMin == m) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSnoozeMin = m)) }
             }
         }
-        SettingsRow.SYNC_STATUS -> Setting(row.label, "the last sync of tracks and routes, what it moved and what is still waiting") {
+        SettingsRow.SYNC_STATUS -> Setting(row.label, "the last sync of tracks and routes, what it moved and what is still waiting", help = "settings.syncStatus") {
             Option("${row.label} ›", false) {
                 leaveFor { io.github.jasondorjeshort.dystopo.app.sync.SyncUi.visible = true; io.github.jasondorjeshort.dystopo.app.sync.SyncUi.refresh() }
             }
         }
-        SettingsRow.SHARE -> Setting(row.label, "sync tracks and routes with a nearby phone, and send or receive maps") {
+        SettingsRow.SHARE -> Setting(row.label, "sync tracks and routes with a nearby phone, and send or receive maps", help = "settings.share") {
             Option("${row.label} ›", false) { leaveFor { io.github.jasondorjeshort.dystopo.app.share.ShareUi.visible = true } }
         }
         SettingsRow.UPDATES -> io.github.jasondorjeshort.dystopo.app.update.UpdateRow() // T83: version, Check for updates, Install
         SettingsRow.WARMUP -> {
             val warmup = AppSettings.warmup
-            Setting(row.label, "prepares contours in the background after a pack opens") {
+            Setting(row.label, "prepares contours in the background after a pack opens", help = "settings.warmup") {
                 Option("On", warmup) { change(SettingsRoutes.Parsed.Ok(null, false, null, true)) }
                 Option("Off", !warmup) { change(SettingsRoutes.Parsed.Ok(null, false, null, false)) }
             }
@@ -176,7 +178,10 @@ private fun SourcesSection() {
     LaunchedEffect(Unit) { while (true) { delay(500); tick++ } }
     val testLine = remember(tick, SettingsUi.revision) { Sources.summary() }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        BasicText(Screens.SOURCES, style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+        Row(verticalAlignment = Alignment.CenterVertically) { // T109: the heading and its help
+            BasicText(Screens.SOURCES, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+            HelpIcon("settings.sources")
+        }
         BasicText("Dystopo server, for example http://192.168.1.20:8080. Plain http only on your home network; https anywhere.", style = TextStyle(color = Muted, fontSize = 11.sp))
         BasicTextField(
             text, { text = it; error = null },
@@ -227,6 +232,58 @@ private fun SourcesSection() {
     }
 }
 
+/**
+ * T109: the help pop-ups of the rows on these pages, by the key each row's [HelpIcon] names (`help = "settings.…"` in
+ * its [Setting], and the Sources heading); a row removed here takes its text with it. Each opens its group's page for
+ * `POST /help/open`. Rows that link to a screen named for what it holds (Storage, Offline areas, Credits) and Updates
+ * have none.
+ */
+internal val SETTINGS_HELP: List<HelpText> = run {
+    fun page(g: SettingsGroup): () -> Unit = { SettingsUi.open(g) }
+    fun at(g: SettingsGroup, row: String) = "Settings > ${g.title} > $row"
+    listOf(
+        HelpText("settings.sources", "Server", at(SettingsGroup.DATA, Screens.SOURCES), show = page(SettingsGroup.DATA)) {
+            "A Dystopo server (your own computer, or one you trust) sends map tiles where no pack covers the view, " +
+                "packs to download, and Download the map around me. Test checks an address; Save keeps it. Plain http " +
+                "works only on your home network, https anywhere. With no server, the phone reads the public sources itself."
+        },
+        HelpText("settings.units", "Units", at(SettingsGroup.DISPLAY, "Units"), show = page(SettingsGroup.DISPLAY)) { units ->
+            "Feet or metres for elevations and contours everywhere in the app; long distances read in " +
+                "${if (units == ContourUnits.FEET) "miles" else "kilometres"}. Until you choose, the units come from the " +
+                "region of your first map or GPS fix, and they do not change when you travel."
+        },
+        HelpText("settings.textSize", "Text size", at(SettingsGroup.DISPLAY, "Text size"), show = page(SettingsGroup.DISPLAY)) {
+            "Makes the map's labels and markers larger or smaller. Menus and sheets follow the phone's own font size " +
+                "setting instead."
+        },
+        HelpText("settings.routeSnap", "Route snap", at(SettingsGroup.NAVIGATION, "Route snap"), show = page(SettingsGroup.NAVIGATION)) {
+            "A route follows trails and roads, so its start and end move to the nearest one. Route snap is how far they " +
+                "may move: a point farther off is refused, and the card names the nearest trail and how far away it is."
+        },
+        HelpText("settings.navStale", "GPS fix stale after", at(SettingsGroup.NAVIGATION, "Navigation: GPS fix stale after"), show = page(SettingsGroup.NAVIGATION)) {
+            "While you navigate, a position older than this is not used: the bar says the fix is lost rather than " +
+                "measuring from where you were. Raise it if your phone's GPS updates slowly, under heavy tree cover for example."
+        },
+        HelpText("settings.navSnooze", "Snooze", at(SettingsGroup.NAVIGATION, "Navigation: Snooze"), show = page(SettingsGroup.NAVIGATION)) {
+            "When you leave the route while navigating, a banner warns you. Its Snooze button silences the warning for " +
+                "this long, while you take a detour on purpose for example."
+        },
+        HelpText("settings.syncStatus", "Sync status", at(SettingsGroup.SYNC, "Sync status"), show = page(SettingsGroup.SYNC)) {
+            "Tracks, waypoints, routes and your settings sync with your server when one is set, and with the phones " +
+                "you share with. This shows when the last sync ran, what it sent and received, and what is still waiting."
+        },
+        HelpText("settings.share", "Share", at(SettingsGroup.SYNC, Screens.SHARE), show = page(SettingsGroup.SYNC)) {
+            "Syncs tracks and routes with a phone nearby and sends or receives maps over the same Wi-Fi, no internet " +
+                "needed: one phone shows a code and a QR code, the other scans or types it. Via server reaches a phone " +
+                "elsewhere through your server."
+        },
+        HelpText("settings.warmup", "Contour warm-up", at(SettingsGroup.ABOUT, "Contour warm-up"), show = page(SettingsGroup.ABOUT)) {
+            "After a pack opens, the phone prepares its contour lines in the background, so the map draws faster as you " +
+                "move around. Turn it off to save battery; contours are then made when they are first shown."
+        },
+    )
+}
+
 /** T57: the snap distances the sheet offers (any value in [AppSettings.ROUTE_SNAP_RANGE] through `/settings`). */
 private val SNAP_CHOICES = listOf(300, 500, 1000)
 private val STALE_CHOICES = listOf(15, 30, 60, 120) // T91
@@ -238,15 +295,20 @@ private fun stepScale(scale: Double, dir: Int): Double =
 /**
  * A row: its label, the hint under it, then its choices. T103: the choices wrap onto further lines instead of
  * running off the right edge (the label used to sit in a fixed column to their left, which at font scale 2.0
- * pushed "1 km" and "120 s" out of the sheet).
+ * pushed "1 km" and "120 s" out of the sheet). T109: [help] is the key of the row's help pop-up ([SETTINGS_HELP]);
+ * its question mark sits right after the label, clear of the choices.
  */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun Setting(label: String, hint: String?, options: @Composable () -> Unit) {
+private fun Setting(label: String, hint: String?, help: String? = null, options: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        BasicText(label, style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(label, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+            help?.let { HelpIcon(it) }
+        }
         hint?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
-        FlowRow(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { options() }
+        // T109: 6 dp more under a help icon, so its 48 dp target stays clear of the choices' own touch targets.
+        FlowRow(Modifier.padding(top = if (help != null) 8.dp else 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { options() }
     }
 }
 

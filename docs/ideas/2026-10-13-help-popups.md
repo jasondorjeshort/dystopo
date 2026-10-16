@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
+status: done
 pipeline: T109
 related: [2026-10-13-cannot-create-waypoints-android.md, 2026-10-13-settings-tabs.md]
 ---
@@ -22,3 +22,10 @@ is looking.
   preference.
 - Testable: a debug route that lists the help keys and opens one, and a test that every key has
   text.
+
+## Done (T109)
+
+Built as `docs/reference/android-app.md` › Help pop-ups describes: the registry, `HelpIcon(key)`, the
+pop-up, `GET /help` and `POST /help/open`, and icons on Map options, Offline areas, the Settings rows
+that need one, the track bar and the long-press card. Left for later placements: the Storage screen
+(its rows changed in T112 the same wave) and the navigation bar (`nav/**`, T108's that wave).

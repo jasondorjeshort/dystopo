@@ -82,7 +82,8 @@ private fun BoxScope.Controls() {
     val ui = tracking.ui
     var listOpen by remember { mutableStateOf(false) }
     // T49: the track chips fold into one chip, so they cover as little of the map (and its peak labels) as the Packs button.
-    var barOpen by remember { mutableStateOf(false) }
+    // T109: held in [TrackBar], so `POST /help/open?key=tracks.bar` can unfold it.
+    var barOpen by TrackBar::open
     var importOpen by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) Thread { importUri(tracking, uri) }.start()
@@ -117,6 +118,7 @@ private fun BoxScope.Controls() {
                 Modifier.widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW),
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
+                itemVerticalAlignment = Alignment.CenterVertically, // T109: the chips centred on the help icon's taller target
             ) {
                 // T91: a waypoint at the current fix at any time, folded or not, recording or not.
                 Chip("Waypoint") { Thread { dropHere(tracking) }.start() }
@@ -133,6 +135,7 @@ private fun BoxScope.Controls() {
                         Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
                         if (starting && NotificationPrompt.shouldAsk(context)) notificationAsk.launch(NotificationPrompt.PERMISSION)
                     }
+                    io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, stop and keep
                     Chip("\u00D7") { barOpen = false; listOpen = false }
                 }
             }
@@ -216,6 +219,24 @@ private fun ImportList(tracking: Tracking, onDone: () -> Unit) {
         )
     }
 }
+
+/** T109: whether the track bar is unfolded (Record, Pause, Tracks); Compose state, main thread. */
+object TrackBar {
+    var open by mutableStateOf(false)
+}
+
+/**
+ * T109: the help pop-up of the unfolded track bar, by the key its [io.github.jasondorjeshort.dystopo.app.help.HelpIcon]
+ * names; removing the bar's icon removes its text. `POST /help/open` unfolds the bar.
+ */
+internal val TRACK_BAR_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.bar", "Recording tracks", "The map, top right: Tracks, then the bar", show = { TrackBar.open = true }) {
+        "Record starts a track of where you go; it keeps recording with the screen off, with a notification while it " +
+            "runs. Pause stops adding points without ending the track. Stop ends it and keeps it in the Tracks list " +
+            "(profile, Go to follow it, GPX to save a file). Waypoint marks where you are; long-press the map to mark " +
+            "another place."
+    },
+)
 
 /** The Waypoint chip (T91): a waypoint at the current fix, or a short note when there is none yet. Off the main thread. */
 internal fun dropHere(tracking: Tracking) {

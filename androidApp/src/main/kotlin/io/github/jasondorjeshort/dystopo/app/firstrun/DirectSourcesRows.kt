@@ -23,8 +23,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.SettingsUi
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.online.DirectPrefs
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup
 import kotlin.concurrent.thread
 
 /**
@@ -40,8 +44,9 @@ fun DirectSourcesRows() {
     var mb by remember { mutableStateOf(DirectPrefs.sessionMb(app)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         BasicText("With no server the phone reads the public sources itself.", style = TextStyle(color = Muted, fontSize = 11.sp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { // T103: wraps at font scale 2.0
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) { // T103: wraps at font scale 2.0; T109: choices centred on the help icon
             BasicText("Mobile data", Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+            HelpIcon("direct.mobileData", Modifier.align(Alignment.CenterVertically)) // T109
             for ((label, value) in listOf("Use" to true, "Off" to false)) {
                 Choice(label, mobile == value) {
                     mobile = value
@@ -49,8 +54,9 @@ fun DirectSourcesRows() {
                 }
             }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { // T103: wraps at font scale 2.0
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) { // T103: wraps at font scale 2.0; T109: choices centred on the help icon
             BasicText("Limit per session", Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+            HelpIcon("direct.sessionLimit", Modifier.align(Alignment.CenterVertically)) // T109
             for (value in (DirectPrefs.SESSION_MB_CHOICES + mb).distinct().sorted()) {
                 Choice(if (value >= 1000) "${value / 1000} GB" else "$value MB", mb == value) {
                     mb = value
@@ -59,6 +65,27 @@ fun DirectSourcesRows() {
             }
         }
     }
+}
+
+/**
+ * T109: the help pop-ups of the two rows above, by the key each row's [HelpIcon] names; a row removed here takes its
+ * text with it. The rows show only while no server is set ([needs]); `POST /help/open` opens Data and storage.
+ */
+internal val DIRECT_SOURCES_HELP: List<HelpText> = run {
+    val place = "Settings > ${SettingsGroup.DATA.title} > ${Screens.SOURCES}"
+    val show = { SettingsUi.open(SettingsGroup.DATA) }
+    listOf(
+        HelpText("direct.mobileData", "Mobile data", "$place > Mobile data", needs = "no server set", show = show) {
+            "With no server set, the phone downloads map data from the public sources itself as you move the map. Use " +
+                "lets it do so over mobile data as well as Wi-Fi; Off downloads only on Wi-Fi. The limit per session " +
+                "caps how much it takes either way."
+        },
+        HelpText("direct.sessionLimit", "Limit per session", "$place > Limit per session", needs = "no server set", show = show) {
+            "The most map data the phone downloads from the public sources from opening the app until you close it. " +
+                "A first look at new ground can take 75 to 100 MB. At the limit the map says so and keeps what it has: " +
+                "download the area for offline use, or raise the limit."
+        },
+    )
 }
 
 @Composable

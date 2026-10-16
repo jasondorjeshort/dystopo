@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
+import io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup
 import io.github.jasondorjeshort.dystopo.maplibre.ContourLabelDensity
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
@@ -55,13 +58,13 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
     val units = AppSettings.units
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         BasicText("Map", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-        OptionRow("Hillshade", null) {
+        OptionRow("Hillshade", null, help = "map.hillshade") {
             for (m in HillshadeMode.entries) {
                 Chip(m.key.replaceFirstChar { it.uppercase() }, o.hillshade == m) { change(mapOf("hillshade" to m.key)) }
             }
         }
         if (o.hillshade != HillshadeMode.OFF) {
-            OptionRow("Intensity", null) {
+            OptionRow("Intensity", null, help = "map.intensity") {
                 Stepper(
                     String.format(Locale.US, "%d%%", Math.round(o.hillshadeIntensity * 100)), 56,
                     { change(mapOf("hillshadeIntensity" to step(o.hillshadeIntensity, -0.1))) },
@@ -69,14 +72,14 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
                 )
             }
         }
-        OptionRow("Slope shading", SAFETY_LINE) {
+        OptionRow("Slope shading", SAFETY_LINE, help = "map.slope") {
             Chip("Off", o.slope == SlopeShading.OFF) { change(mapOf("slope" to SlopeShading.OFF.key)) }
             Chip("Avalanche", o.slope == SlopeShading.AVALANCHE) { change(mapOf("slope" to SlopeShading.AVALANCHE.key)) }
             Chip("Steepness", o.slope == SlopeShading.STEEPNESS) { change(mapOf("slope" to SlopeShading.STEEPNESS.key)) }
         }
         if (o.slope != SlopeShading.OFF) SlopeLegend(o.slope)
         val choices = MapOptions.intervals(units)
-        OptionRow("Contours", "fixed interval from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM}; coarser below") {
+        OptionRow("Contours", "fixed interval from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM}; coarser below", help = "map.contours") {
             Chip("Auto", o.contourInterval == null) { change(mapOf("contourInterval" to "auto")) }
             val i = o.contourInterval?.let { choices.indexOf(it) } ?: -1
             Stepper(
@@ -86,25 +89,25 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
                 "<", ">",
             )
         }
-        OptionRow("Contour labels", null) {
+        OptionRow("Contour labels", null, help = "map.contourLabels") {
             for (d in ContourLabelDensity.entries) {
                 Chip(d.key.replaceFirstChar { it.uppercase() }, o.contourLabels == d) { change(mapOf("contourLabels" to d.key)) }
             }
         }
-        OptionRow("Layers", "tap to show or hide") {
+        OptionRow("Layers", "tap to show or hide", help = "map.layers") {
             Chip("Trails", o.trails) { change(mapOf("trails" to !o.trails)) }
             Chip("Water", o.water) { change(mapOf("water" to !o.water)) }
             Chip("Land cover", o.landcover) { change(mapOf("landcover" to !o.landcover)) }
             Chip("POIs", o.pois) { change(mapOf("pois" to !o.pois)) }
             Chip("Boundaries", o.boundaries) { change(mapOf("boundaries" to !o.boundaries)) }
         }
-        OptionRow("Night", "dark base, dimmed relief") {
+        OptionRow("Night", "dark base, dimmed relief", help = "map.night") {
             Chip("On", o.night) { change(mapOf("night" to "on")) }
             Chip("Off", !o.night) { change(mapOf("night" to "off")) }
         }
         // T101: the scale bar lower left on the map; a device setting of its own (POST /scalebar?both=on|off).
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
-        OptionRow("Scale bar", "both units adds the other system below the line, as on printed maps") {
+        OptionRow("Scale bar", "both units adds the other system below the line, as on printed maps", help = "map.scaleBar") {
             Chip("One unit", !both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(false) }
             Chip("Both units", both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(true) }
         }
@@ -130,7 +133,10 @@ internal fun legendCaption(shading: SlopeShading): String = when (shading) {
 @OptIn(ExperimentalLayoutApi::class)
 private fun SlopeLegend(shading: SlopeShading) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        BasicText(legendCaption(shading), style = TextStyle(color = Muted, fontSize = 12.sp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(legendCaption(shading), Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp))
+            HelpIcon("map.slopeLegend")
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (band in shading.bands) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -157,13 +163,20 @@ private const val PAPER_RGB = 0xF6F1E4
 
 private fun step(v: Double, d: Double): String = String.format(Locale.US, "%.1f", (Math.round((v + d) * 10) / 10.0).coerceIn(0.0, 1.0))
 
-/** Label above, choices below in a [FlowRow] that wraps at large font scales, then the hint. */
+/**
+ * Label above, choices below in a [FlowRow] that wraps at large font scales, then the hint. T109: [help] is the key of
+ * the row's help pop-up ([MAP_OPTIONS_HELP]); its question mark sits right after the label, clear of the choices.
+ */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun OptionRow(label: String, hint: String?, options: @Composable () -> Unit) {
+private fun OptionRow(label: String, hint: String?, help: String? = null, options: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        BasicText(label, style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { options() }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(label, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+            help?.let { HelpIcon(it) }
+        }
+        // T109: 6 dp more under a help icon, so its 48 dp target stays clear of the chips' own touch targets.
+        FlowRow(Modifier.padding(top = if (help != null) 6.dp else 0.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { options() }
         hint?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
     }
 }
@@ -198,3 +211,53 @@ private val Muted = Color(0xFF6B5A4A)
 private val Paper = Color(0xFFFFFCF5)
 private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
+
+/**
+ * T109: the help pop-ups of the rows above, by the key each row's [HelpIcon] names (`help = "map.…"` in its
+ * [OptionRow]); a row removed here takes its text with it. Each opens Settings › Map options for `POST /help/open`.
+ */
+internal val MAP_OPTIONS_HELP: List<HelpText> = run {
+    val place = "Settings > Map options"
+    val show = { SettingsUi.open(SettingsGroup.MAP) }
+    listOf(
+        HelpText("map.hillshade", "Hillshade", "$place > Hillshade", show = show) {
+            "Shades the terrain as if lit from one side, so ridges and valleys stand out. Single lights it from the " +
+                "north-west, as printed maps do; Multi blends lights from several directions, so slopes facing away " +
+                "from the light keep their detail. Off leaves the map flat, with contours only."
+        },
+        HelpText("map.intensity", "Hillshade intensity", "$place > Intensity", needs = "hillshade on", show = show) {
+            "How dark the hillshade is. Lower it when the shading makes labels, trails or the slope colours hard to read."
+        },
+        HelpText("map.slope", "Slope shading", "$place > Slope shading", show = show) {
+            "Colours the ground by how steep it is, worked out on this phone from the elevation data. Avalanche marks " +
+                "the angles where most avalanches start; Steepness just gets darker as the ground gets steeper. Neither " +
+                "is an avalanche forecast: it knows nothing of snow, weather or what lies above you."
+        },
+        HelpText("map.slopeLegend", "Slope colours", "$place > Slope shading, the legend", needs = "slope shading on", show = show) {
+            "Each colour is a band of slope angle in degrees, as the swatches show. The angle is measured over the " +
+                "elevation grid at the map's zoom: zoomed out, a short steep step blurs into a gentler slope, so zoom " +
+                "in before you judge a slope."
+        },
+        HelpText("map.contours", "Contours", "$place > Contours", show = show) {
+            "Lines of equal elevation, in your units. Auto picks the interval from the zoom. A fixed interval applies " +
+                "from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM} in; zoomed out, coarser lines keep the map readable. " +
+                "The thicker index lines carry the elevation labels."
+        },
+        HelpText("map.contourLabels", "Contour labels", "$place > Contour labels", show = show) {
+            "How many elevation labels sit on the thicker contour lines: Sparse, Normal or Dense. A label is only " +
+                "drawn where it fits along its line."
+        },
+        HelpText("map.layers", "Layers", "$place > Layers", show = show) {
+            "Shows or hides parts of the map. Trails: paths and tracks. Water: lakes, rivers, streams. Land cover: " +
+                "forest, wetland, rock and glacier. POIs: huts, trailheads, campsites, viewpoints, springs, parking. " +
+                "Boundaries: parks and wilderness. Roads, peaks, places and contours always show."
+        },
+        HelpText("map.night", "Night", "$place > Night", show = show) {
+            "A dark map for use in the dark: a dark base with dimmed relief, easier on your eyes than a bright screen."
+        },
+        HelpText("map.scaleBar", "Scale bar", "$place > Scale bar", show = show) {
+            "The bar in the lower left shows a round distance at the map's zoom, in your units. Both units adds the " +
+                "other system below the line, as on printed maps."
+        },
+    )
+}
