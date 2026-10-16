@@ -8,7 +8,7 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 ## Now
 
-- Updated from Hatchery (`0ce6670` to `c50b0da`) on `main`, committed, not yet pushed: hooks, harness and
+- Updated from Hatchery (`0ce6670` to `c50b0da`) on `main`, pushed (749392b): hooks, harness and
   status line are the base's under `policy.json` (ADR 0035 supersedes 0021). New for a session: the usage
   cache is `~/.claude/usage-state/<session_id>.json`, grants go in `~/.claude/usage-gate-overrides/`, a
   subagent's `git pull` on `main` is denied. Restart the session so the new hooks load, then run the harness.
@@ -18,13 +18,12 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 ## Next
 
-1. Push the update (`bash tools/push-verified.sh`) once the owner says so.
-2. Plan wave 16 (`wave` skill, critic pass before launch). Candidates: the wave 15 paragraph's deferred list
+1. Plan wave 16 (`wave` skill, critic pass before launch). Candidates: the wave 15 paragraph's deferred list
    (T98's coast tile, T100's course tracking, T101's tilt, T103's rows, browser-side directions op, a phone
    request log); the Status-line follow-ups of T108 to T112 (`/help/close`, `HelpHost()` in `MainActivity`,
    Storage help icons, `DirectSources`' trim, `pinnedCacheMb` cap, roundabouts and "then" cues, nav bar help
    icons); the open finding below; bushwhack (proposal first); route-to, auto-download, by region, battery.
-3. Carry to Hatchery with PR #1: the critic-pass step of the `wave` skill, the settings-command harness
+2. Carry to Hatchery with PR #1: the critic-pass step of the `wave` skill, the settings-command harness
    group (H, HS, SL cases), `--ff-only` pulls under the guard's rule 4, elided `...` paths in the anchor check.
 
 ## Waiting on user
