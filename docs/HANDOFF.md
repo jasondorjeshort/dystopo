@@ -8,13 +8,12 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 ## Now
 
-- Wave 15 launched 2026-10-16 about 05:40 UTC after a critic pass (now standard in the `wave` skill, owner's
-  word): five Opus implementers, worktrees `~\Documents\src\dystopo-wt\T1nn`,
-  AVDs `dystopo35-T1nn` under `E:\dystopo-avd`. T108 directions with a trip and crow mode (console 5572,
-  ports 8700, 8701); T109 help pop-ups (5574; 8702, 8703); T110 Android sweep 8 (5576 and 5578; 8704 to
-  8706); T111 desktop and tooling sweep 8 (5580; 8708, 8709, soaks 8790, sweeps 8900 to 8907); T112 cache
-  budget (5582; 8710 to 8712). T108 done: PR #110 (head c2d027c), Sonnet verifier running (worktree
-  `dystopo-wt\T108-verify`, AVD `dystopo35-T108-verify` on 5584, ports 8720, 8721); the T108 AVD is kept.
+- Wave 15 launched 2026-10-16 about 05:40 UTC after a critic pass (now standard in the `wave` skill): five Opus
+  implementers, worktrees `~\Documents\src\dystopo-wt\T1nn`, AVDs `dystopo35-T1nn` under `E:\dystopo-avd`.
+  T108 directions with a trip and crow (console 5572, ports 8700, 8701); T109 help pop-ups (5574; 8702, 8703);
+  T110 Android sweep 8 (5576, 5578; 8704 to 8706); T111 desktop and tooling sweep 8 (5580; 8708, 8709, soaks
+  8790, sweeps 8900 to 8907); T112 cache budget (5582; 8710 to 8712). T108 done: PR #110 (head c2d027c), Sonnet
+  verifier running (worktree `dystopo-wt\T108-verify`, AVD `dystopo35-T108-verify` on 5584, ports 8720, 8721).
 - Coordinator's servers run from the main checkout (started this session): live viewer 8765 and
   standalone server 8800, PIDs in `out/coordinator-pids.txt`. The T107 soak is archived in `out/soak-T107`
   and its folder removed; its one oddity is the open finding below (T111's item 1). Harmless leftovers:
