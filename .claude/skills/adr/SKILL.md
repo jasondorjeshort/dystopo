@@ -13,7 +13,9 @@ proposal; major choices arrive here through the `proposal` skill. From the Hatch
 
 1. Number: if promoting a proposal, reuse its `NNNN`; otherwise the highest number across
    `docs/design/decisions/` and `docs/design/proposals/` plus one. This project's numbers start at
-   0020 (ADR 0020).
+   0020 (ADR 0020). This tree adopted the base (the `Hatchery base:` line in ADR 0020), so it keeps
+   its own numbering whatever `git merge-base HEAD hatchery/main` says (Hatchery's ADRs 0008 to
+   0010); a proposal takes the number of the ADR it will become.
 2. Write from `template.md` in this directory with the Write tool. Status `accepted` for a technical
    decision the coordinator settled after the critic step, or an owner's decision; `proposed` while
    the owner must still decide (anything humans see or touch: front end, flows, wording, visuals).

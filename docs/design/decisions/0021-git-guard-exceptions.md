@@ -1,7 +1,8 @@
 # 0021. git-guard with the exceptions the wave workflow needs
 
 Date: 2026-10-12
-Status: accepted; since T94 (2026-10-13) the exceptions are also written as policy, in the `git` block of `.claude/hooks/policy.json`, to be superseded when `git-guard.js` comes from the base and reads it
+Status: superseded by 0035
+Since 2026-10-16 the scripts are the base's and read the `git` block of `.claude/hooks/policy.json`, which still encodes E1 to E5, A1 and A2: `0035-hooks-from-the-base-under-project-policy.md`.
 
 Record: Hatchery's `git-guard.js` and its specification (Hatchery ADR 0002 companion "hook
 specifications", section 1); Hatchery proposal 0003 item 2 (rules 3 and 4 keyed off the phase or

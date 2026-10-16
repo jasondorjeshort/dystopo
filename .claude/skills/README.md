@@ -2,8 +2,8 @@
 
 A skill is loaded with the Skill tool when its description fits the moment; only the descriptions are
 always in context. Procedures live here, not in `CLAUDE.md` or `docs/` (ADR 0020). Ported from the
-Hatchery base: `brief`, `handoff`, `adr`, `proposal`, `finding`. This project's own: `wave`,
-`release`, `sweep`.
+Hatchery base: `brief`, `handoff`, `adr`, `proposal`, `finding`, `update-from-hatchery`. This
+project's own: `wave`, `release`, `sweep`.
 
 | Skill | Use it to |
 |---|---|
@@ -15,3 +15,4 @@ Hatchery base: `brief`, `handoff`, `adr`, `proposal`, `finding`. This project's 
 | `proposal` | Proposal, critic and revision for a major choice (with `brief-critic.md`) |
 | `adr` | Write, promote or supersede an ADR in `docs/design/decisions/` |
 | `finding` | Record, resolve or supersede a finding in `docs/findings/` |
+| `update-from-hatchery` | Patch the base's improvements in from the `Hatchery base:` line of ADR 0020 and bump it (ADR 0035 records what this project keeps) |

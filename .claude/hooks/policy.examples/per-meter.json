@@ -1,0 +1,22 @@
+{
+  "$comment": "Per-meter model: a live service on one branch (master) with several sessions a day. Among subagents only the runner commits and only the pusher pushes; the main session may do both. Usage is judged per meter: the session meter strands in-flight agents when it hits its cap, so it holds earlier than the weekly one, which runs down slowly. The design docs and three legacy folders are exempt from the line cap, and the history folder from the path check as well.",
+  "git": {
+    "commit": { "subagents": ["runner"], "protectedBranches": [] },
+    "push": { "subagents": ["pusher"], "branches": ["master"], "mainSession": true, "forceWithLease": [] },
+    "branchDelete": { "branches": [], "requireMergedPr": false },
+    "hooksPath": null
+  },
+  "usage": {
+    "hold": 60,
+    "deny": 80,
+    "fiveHour": { "hold": 60, "deny": 80 },
+    "sevenDay": { "hold": 75, "deny": 90 },
+    "staleSeconds": 7200,
+    "whenStale": "allow"
+  },
+  "edit": {
+    "capExempt": ["docs/design/*.md", "docs/game/*", "docs/projects/*", "docs/history/*"],
+    "anchorExempt": ["docs/design/proposals/*", "docs/design/decisions/*", "docs/findings/*", "docs/history/*"],
+    "formatters": {}
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$comment": "Task-branch model: implementers commit and push their own task/* branch and lease-push it after a rebase; nobody but the main session commits on main or master; a task branch is deleted only after GitHub shows its PR merged; the project keeps its own git hooks under tools/git-hooks. One usage line at 75% that the owner's override may lift, on either meter, up to and past saturation; no stop line.",
+  "git": {
+    "commit": { "subagents": "any", "protectedBranches": ["main", "master"] },
+    "push": { "subagents": "any", "branches": ["task/*"], "mainSession": true, "forceWithLease": ["task/*"] },
+    "branchDelete": { "branches": ["task/*"], "requireMergedPr": true },
+    "hooksPath": "tools/git-hooks"
+  },
+  "usage": {
+    "hold": 75,
+    "deny": null,
+    "staleSeconds": 7200,
+    "whenStale": "allow",
+    "holdAdvice": "No new implementers. Finish work already in flight; a verifier for an already-launched task needs the owner's override. Otherwise wait for the reset or the owner's word."
+  },
+  "edit": { "capExempt": ["docs/PLANNING.md", "docs/TASKS.md", "docs/SERVER.md"], "formatters": {} }
+}

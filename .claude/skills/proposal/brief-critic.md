@@ -12,7 +12,10 @@ source, a measurement you can run without a device) and cite what you found. The
 case against the recommendation and for the best alternative. Weigh this project's constraints:
 offline first, `shared` commonMain pure Kotlin for every target, permissive dependencies only (LGPL
 only in `tilebuild`), every feature agent-drivable, the design goals (ADR 0025). Look for hidden
-coupling: does this decision quietly make a later one for us? Produce a numbered list of objections
+coupling: does this decision quietly make a later one for us? For every mechanism in the proposal
+that refuses, denies or fails closed, say who can lift it, from where, while a session is running,
+and whether its refusal message says so; a refusal with no documented lift is an objection. Produce a
+numbered list of objections
 with severity (blocking, serious, minor), evidence, and what would resolve each; then one paragraph
 with your own recommendation and confidence. If the proposal is right, say so plainly and list the
 residual risks; manufactured objections waste the budget.

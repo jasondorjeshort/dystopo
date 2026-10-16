@@ -74,7 +74,7 @@ the release smoke tour through a deep link, and the sync simulator. CI runs the 
 - Raw ideas, bugs and missing features awaiting triage, one file each: `docs/ideas/` (index in its README).
 - Procedures (task briefs, the wave and merge sequence, sweeps, releases, the handoff, proposals, ADRs, findings): skills in `.claude/skills/` (index in its README).
 - Conventions that load only when matching files are edited (docs caps and indexes, Kotlin, the track database): `.claude/rules/`.
-- Hooks (usage gate, `git-guard`, `post-edit` doc checks; `node .claude/hooks/test-hooks.js`): `.claude/hooks/`, exceptions in ADR 0021. The privacy and commit-message git hooks: `tools/git-hooks/`.
+- Hooks (usage gate, `git-guard`, `post-edit` doc checks; `node .claude/hooks/test-hooks.js`): `.claude/hooks/`, the base's scripts under this project's `policy.json` (ADR 0035). The privacy and commit-message git hooks: `tools/git-hooks/`.
 - Design detail and the dated log of every task with measurements: `docs/PLANNING.md`.
 - Task board, ownership, done criteria, follow-ups: `docs/TASKS.md`.
 - Server deployment, config keys, catalog, token, Docker: `docs/SERVER.md`.

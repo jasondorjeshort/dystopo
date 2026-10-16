@@ -33,6 +33,8 @@ base; the resume pointers are this project's.
 
    ## Now
    1-4 bullets: what is in flight, which agent has it (id, worktree, emulator, ports), exact state.
+   The account the session ran on (the status line's account segment) and, if the gate named
+   another account with room, which one.
 
    ## Next
    Ordered, 3-7 items, each one brief's worth. Name the kind of agent when it is obvious.

@@ -43,6 +43,9 @@ Hatchery base, with this project's exemptions.
 - `docs/design/decisions/README.md` lists every ADR; `docs/findings/README.md` shows status per file.
 - A new directory under `docs/` or a new kind of document gets a line in the last section of
   `docs/ARCHITECTURE.md`.
+- An index is the one list a doc may carry. Prose never inventories files, fields, routes or counts
+  ("the twelve commands", "a 400-line file"): every ordinary commit moves the figure, and a later
+  session then "corrects" it. Write the rule that generates the list instead.
 
 ## Frontmatter
 
@@ -65,7 +68,15 @@ Hatchery base, with this project's exemptions.
   decisions. Do not mix: a provisional result in a design doc reads as truth later.
 - Public places only: names from `areas.json` and well-known public places; never a personal area,
   its coordinates, nearby place names, lidar project or DEM cell names (`CLAUDE.md`, Rules).
-- Write files that contain apostrophes or backticks with the Write or Edit tool, not a Bash heredoc.
-  The same goes for any text that mentions a destructive git command: the `git-guard` hook matches the
-  command text, so a heredoc containing a force push is denied even though nothing runs it.
-- A path written in a doc names a file that exists; a moved paragraph leaves a pointer behind.
+- The code wins. A doc explains intent; it does not define behaviour. Where a doc contradicts the
+  code, the doc is stale: fix it in the same change that found the conflict, and bump `verified:`.
+- A change that alters behaviour, an invariant or an entry point a doc describes updates that doc in
+  the same commit (`CLAUDE.md`, Documentation is part of done).
+- Write files that contain apostrophes or backticks with the Write or Edit tool, not a Bash heredoc
+  (`docs/reference/windows-and-shells.md`, Shells). The `git-guard` hook reads quoted text and heredoc
+  bodies as data, so text that only mentions a git command is not denied unless the command line
+  hands it to a shell.
+- A path written in a doc names a file that exists; the post-edit hook warns about one that does
+  not. A paragraph or list item that must name a path that is gone or not yet there carries
+  `[no-check: <reason>]`; closed records (proposals, decisions, findings) are exempt by policy. A
+  moved paragraph leaves a pointer behind.

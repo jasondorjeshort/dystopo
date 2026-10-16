@@ -1,0 +1,18 @@
+{
+  "$comment": "Single-branch model: one branch (master); any subagent commits its own step wherever it works; only the pusher agent, started fresh for each push, pushes among subagents; the main session may too. Delegation slows at 80% and stops at 90%.",
+  "git": {
+    "commit": { "subagents": "any", "protectedBranches": [] },
+    "push": { "subagents": ["pusher"], "branches": ["*"], "mainSession": true, "forceWithLease": [] },
+    "branchDelete": { "branches": [], "requireMergedPr": false },
+    "hooksPath": null
+  },
+  "usage": {
+    "hold": 80,
+    "deny": 90,
+    "staleSeconds": 7200,
+    "whenStale": "allow",
+    "holdAdvice": "Do not start new subagents. Let in-flight agents finish and commit, then report.",
+    "denyAdvice": "Stop all work; commit what is green and end the turn."
+  },
+  "edit": { "capExempt": [], "formatters": {} }
+}

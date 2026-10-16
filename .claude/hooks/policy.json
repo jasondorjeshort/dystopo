@@ -1,5 +1,5 @@
 {
-  "$comment": "Project policy for the hooks in this directory, in the Hatchery base's format (its ADR 0006; the loader is policy.js). Today usage-gate.js and ../statusline.js read it; git-guard.js and post-edit.js still hold this project's rules as constants (ADR 0021) and will read the git and edit blocks when they are next updated from the base. Usage: hold 75 on both meters; deny 100, so the owner's override file lifts either meter or both; DYSTOPO_GATE_OVERRIDE=1 in a session's environment lifts HOLD for that session. Check with: node .claude/hooks/policy.js",
+  "$comment": "Project policy for the hooks in this directory, in the Hatchery base's format (its ADR 0006; the loader is policy.js). Every script here and ../statusline.js is the base's and reads this file (ADR 0035). git: agents push and lease-push task/* only, never commit on main or master, delete a task/* branch only after a merged PR, and core.hooksPath stays tools/git-hooks. usage: hold 75 on both meters; deny 100, so an owner's grant in ~/.claude/usage-gate-overrides/ lifts either meter or both; DYSTOPO_GATE_OVERRIDE=1 in a session's environment lifts HOLD for that session. edit: the docs exempt from the 300-line cap. Check with: node .claude/hooks/policy.js",
   "git": {
     "commit": { "subagents": "any", "protectedBranches": ["main", "master"] },
     "push": { "subagents": "any", "branches": ["task/*"], "mainSession": true, "forceWithLease": ["task/*"] },
@@ -14,5 +14,9 @@
     "overrideEnv": "DYSTOPO_GATE_OVERRIDE",
     "holdAdvice": "No new implementers (CLAUDE.md, Wave size). Finish work already in flight; a verifier for an already-launched task needs the owner's override. Otherwise wait for the reset or the owner's word."
   },
-  "edit": { "capExempt": ["docs/PLANNING.md", "docs/TASKS.md", "docs/SERVER.md"], "formatters": {} }
+  "edit": {
+    "capExempt": ["docs/PLANNING.md", "docs/TASKS.md", "docs/SERVER.md"],
+    "anchorExempt": ["docs/design/proposals/*", "docs/design/decisions/*", "docs/findings/*", "docs/TASKS.md", "docs/PLANNING.md", "docs/ARCHITECTURE.md"],
+    "formatters": {}
+  }
 }

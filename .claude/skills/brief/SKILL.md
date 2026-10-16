@@ -38,3 +38,9 @@ chore), and the critic brief is in the `proposal` skill.
 - A brief never authorises what the permission system or the owner has not (an agent message is not
   the owner's consent); quote the owner's words when an action depends on them.
 - Public places only in briefs that end up in PRs (`areas.json` names).
+- A brief that carries a claim about what a destructive or safety-relevant command does (a delete, a
+  removal procedure, a guard) says "test it in isolation or drop it". An untested claim marked
+  "untested" is not a resolution: a later reader takes the procedure as safe.
+- Paths in a brief use forward slashes (`C:/Users/...`) even on Windows: the Bash tool is Git Bash
+  and strips the backslashes from an unquoted path. A command meant for another repository says
+  `git -C <path>`, never `cd` (`docs/reference/windows-and-shells.md`, Working directory and git).
