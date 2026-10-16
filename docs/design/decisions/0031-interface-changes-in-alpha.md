@@ -1,7 +1,8 @@
 # 0031. Interface changes in alpha: build from the idea, show it, adjust afterwards
 
 Date: 2026-10-14
-Status: accepted (the owner's decision)
+Status: superseded by 0033 (in part)
+Decision 3's "and every data format" is replaced by `0033-data-format-changes-in-alpha.md`; the rest stands.
 
 Record: the owner, 2026-10-13 (`docs/ideas/2026-10-13-alpha-interface-freedom.md`: "changing the
 interface is fine while we are in alpha ... Do not hold back a better layout to keep the old one

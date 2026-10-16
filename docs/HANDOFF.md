@@ -26,13 +26,13 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
    follow-ups (the sheet taller than the 16,384 px capture; the no-server cold z8 view at 43 s on a
    fresh AVD; whether `release.yml` renders the device tour sheet or copies a static one), the ideas
    still `new` (route-to, cache budgets, help pop-ups, auto-download, download by region, crow and
-   bushwhack, battery, integrations, S Pen), and the owner's items below.
+   bushwhack, battery, integrations, S Pen), directions stored with a trip (ADR 0033), and the owner's items below.
 
 ## Waiting on user
 
 - Real-phone checks of 0.1.7 (install from the release, `android-firstrun.py` and `features` on the
   phone); Hatchery PR #1 (T99 hooks too); Google developer registration; delete `task/T87-ci`? The z12
-  hillshade overview (T88); MapLibre's own compass (T100)? Store directions with a trip (T102)? T104's
+  hillshade overview (T88); MapLibre's own compass (T100)? T104's
   steepness palette and legend captions; the T106 and T107 wording (new strings listed in their PRs).
 
 ## Open findings

@@ -76,7 +76,7 @@ The implementer debugs the change; the reviewer confirms. Before opening a PR:
 
 ## Decisions
 - A major choice (a format other tools or phones read, a protocol or API, a routing or rendering engine, a build system, a dependency the whole project leans on) goes through a proposal, a critic and an ADR before building (`proposal` and `adr` skills). A decision made in prose gets an ADR.
-- Technical decisions are the coordinator's after the critic, reported to the owner. **What humans see and touch** (the front end, flows, wording, visuals): in alpha, a change that an idea or a task entry describes is built without asking and shown in the PR with screenshots and its new strings; the owner adjusts it afterwards (ADR 0031). A removed flow, the app's identity, new data flows and data formats are still flagged, not guessed.
+- Technical decisions are the coordinator's after the critic, reported to the owner. **What humans see and touch** (the front end, flows, wording, visuals): in alpha, a change that an idea or a task entry describes is built without asking and shown in the PR with screenshots and its new strings; the owner adjusts it afterwards (ADR 0031). Data format changes are built the same way in alpha, listed in the PR, user data migrated (ADR 0033). A removed flow, the app's identity and new data flows are still flagged, not guessed.
 - **No other product names in user-visible text** (owner, 2026-10-13): labels, options, help, errors and `--help` output name no other mapping software; code, KDoc, docs and the log may.
 
 ## Rules
