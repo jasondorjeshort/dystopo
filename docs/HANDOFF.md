@@ -10,11 +10,11 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 - Wave 15 launched 2026-10-16 about 05:40 UTC after a critic pass (now standard in the `wave` skill): five Opus
   implementers, worktrees `~\Documents\src\dystopo-wt\T1nn`, AVDs `dystopo35-T1nn` under `E:\dystopo-avd`.
-  Still running: T109 help pop-ups (5574; 8702, 8703); T111 desktop and tooling sweep 8 (5580; 8708, 8709,
-  soaks 8790, sweeps 8900 to 8907). T108 (PR #110) and T112 (PR #111, ADR 0034) merged, logged, cleaned up.
-  T110 done: PR #112 (head 3ea835c), Sonnet verifier running (`dystopo-wt\T110-verify`, AVD `dystopo35-T110-verify`
-  on 5586, ports 8724, 8725). T113 (git guard, added mid-wave: a `2>&1` suffix is read as a push refspec): PR #113
-  open, being extended; verify and merge it too.
+  Still running: T111 desktop and tooling sweep 8 (5580; 8708, 8709, soaks 8790, sweeps 8900 to 8907). T108
+  (PR #110) and T112 (PR #111, ADR 0034) merged, logged, cleaned up. Sonnet verifiers running: T110 PR #112
+  (`dystopo-wt\T110-verify`, AVD `dystopo35-T110-verify` on 5586, ports 8724, 8725); T109 PR #114
+  (`T109-verify`, AVD `dystopo35-T109` on 5574, ports 8726, 8727); T113 PR #113 (git guard, added mid-wave: a
+  `2>&1` suffix was read as a push refspec; `T113-verify`, hook tests only). Log entries drafted in the scratchpad.
 - Coordinator's servers run from the main checkout (started this session): live viewer 8765 and
   standalone server 8800, PIDs in `out/coordinator-pids.txt`. The T107 soak is archived in `out/soak-T107`
   and its folder removed; its one oddity is the open finding below (T111's item 1). Harmless leftovers:
