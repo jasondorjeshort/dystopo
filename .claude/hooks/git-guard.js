@@ -89,7 +89,11 @@ function invocations(unit, baseDir) {
     if (j >= toks.length || SEPARATORS.has(raw[j])) continue;
     const sub = toks[j];
     const args = [];
-    for (let k = j + 1; k < toks.length && !SEPARATORS.has(raw[k]); k++) args.push(toks[k]);
+    for (let k = j + 1; k < toks.length && !SEPARATORS.has(raw[k]); k++) {
+      const rd = /^(\d*|&)(>>?|<)(.*)$/.exec(toks[k]); // shell redirection, not a git argument
+      if (rd) { if (rd[3] === '') k++; continue; } // split form "2> file": the target is the next token
+      args.push(toks[k]);
+    }
     let lead = 0;
     while (lead < i && isEnvAssign(toks[lead])) lead++;
     let dir = baseDir;
@@ -120,7 +124,9 @@ function currentBranch(dir) {
 }
 
 // The branches a push updates on the remote: { refs: [...], all: bool, unknown: bool }.
-// With no refspec the current branch is pushed (push.default simple or current).
+// With no refspec the current branch is pushed (push.default simple or current). A refspec
+// src:dst counts by its destination only (HEAD:task/T5 and T5-verify:task/T5 update task/T5); a bare
+// name is its own destination. bareHead: a bare HEAD (destination left to git); deletes: a :dst.
 function pushTargets(inv) {
   const words = [];
   let all = false;
@@ -133,7 +139,7 @@ function pushTargets(inv) {
   }
   const specs = words.slice(1); // words[0] is the remote
   const refs = [];
-  let unknown = false;
+  let unknown = false, bareHead = false, deletes = false;
   const here = () => {
     const b = currentBranch(inv.dir);
     if (!b || b === 'HEAD') { unknown = true; return null; }
@@ -146,13 +152,16 @@ function pushTargets(inv) {
   for (const s of specs) {
     const spec = s.replace(/^\+/, '');
     let dst = spec.includes(':') ? spec.slice(spec.indexOf(':') + 1) : spec;
-    if (dst === '') continue; // deletion, rule 2
+    if (dst === '') { deletes = true; continue; } // deletion, rule 2
+    if (spec === 'HEAD') bareHead = true;
     dst = dst.replace(/^refs\/heads\//, '');
     if (dst === 'HEAD') { const b = here(); if (b) refs.push(b); continue; }
     refs.push(dst);
   }
-  return { refs, all, unknown };
+  return { refs, all, unknown, bareHead, deletes };
 }
+// Rule 1 is stricter: a bare HEAD or a deletion has no destination it can vouch for.
+const onlyExplicitTaskRefs = (t) => !t.bareHead && !t.deletes && onlyTaskRefs(t);
 const onlyTaskRefs = (t) => !t.all && !t.unknown && t.refs.length > 0 && t.refs.every(isTaskRef);
 
 // Remote branches a push deletes (--delete args or :ref), as names.
@@ -199,12 +208,12 @@ const isHooksPathKey = (s) => /^core\.hookspath(=|$)/i.test(s);
 const RULES = [
   {
     n: 1, prefix: 'force push',
-    advice: 'Never a plain force push. After a rebase, push your own task branch with --force-with-lease and an explicit refspec (git push --force-with-lease origin task/Tnn); anything else, ask the coordinator.',
+    advice: 'Never a plain force push. After a rebase, push your own task branch with --force-with-lease and an explicit destination (task/Tnn, or HEAD:task/Tnn from a detached worktree); anything else, ask the coordinator.',
     test: (inv) => {
       if (inv.sub !== 'push') return false;
       if (inv.args.some(isPlainForce)) return true;
       if (!inv.args.some((a) => a.startsWith('--force-with-lease'))) return false;
-      return !onlyTaskRefs(pushTargets(inv)); // E3
+      return !onlyExplicitTaskRefs(pushTargets(inv)); // E3
     },
   },
   {

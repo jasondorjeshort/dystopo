@@ -184,6 +184,19 @@ const G = [
   ['D06', 'git push --force-with-lease', 'general-purpose', 'allow', null, null, repoTask], // E3
   ['D07', 'git push --force-with-lease origin main', null, 1],
   ['D08', 'git push --force origin task/T1', 'general-purpose', 1],
+  ['D08b', 'git push --force-with-lease origin HEAD:task/T112', 'general-purpose', 'allow'], // E3, destination side
+  ['D08c', 'git push --force-with-lease origin T112-verify:task/T112', 'general-purpose', 'allow'],
+  ['D08d', 'git push --force-with-lease origin HEAD:main', 'general-purpose', 1],
+  ['D08e', 'git push --force-with-lease origin task/T1:main', null, 1],
+  ['D08f', 'git push --force-with-lease origin HEAD', 'general-purpose', 1, null, null, repoTask], // destination unknown
+  ['D08g', 'git push -u origin HEAD:task/T5', 'general-purpose', 'allow'], // rule 3, destination side
+  ['D08h', 'git push -u origin HEAD:main', 'general-purpose', 3],
+  ['D08i', 'git push --force-with-lease origin HEAD:task/T112 2>&1 | tail -2', 'general-purpose', 'allow'], // redirection is not a refspec
+  ['D08j', 'git push --force-with-lease=task/T112:6c3068c origin T112-verify:task/T112 2>&1 | tail -3', 'general-purpose', 'allow'],
+  ['D08k', 'git push origin --delete task/T1 2>&1 | tail -2', null, 'allow'], // as the bare form (D11)
+  ['D08l', 'git push --force origin task/T1 2>&1', 'general-purpose', 1],
+  ['D08m', 'git push --force-with-lease origin HEAD:main 2>/dev/null', 'general-purpose', 1],
+  ['D08n', 'git push --force-with-lease origin HEAD:main 2> err.txt', 'general-purpose', 1],
   ['D09', 'git push origin +task/T1', 'general-purpose', 1],
   ['D10', 'git commit -m x', 'general-purpose', 'allow', null, null, repoTask], // E2
   ['D11', 'git push origin --delete task/T1', null, 'allow'], // E4, merged
