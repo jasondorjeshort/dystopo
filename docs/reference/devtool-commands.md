@@ -32,6 +32,7 @@ DYSTOPO_3DEP_DESTRIPE=1 ./gradlew :devtool:run --args="render --area rainier --s
 ./gradlew :devtool:run --args="nav replay --path out/route.gpx --fixes out/fixes.gpx --mode drive --pack out/rainier-outdoors.pmtiles"   # T65 navigation on the JVM (events, max distance off, progress, etaVsPlan); T102 --pack: the line's turn directions from that pack's graph, the one navigation shows at each progress sample (`next`, `aheadM`), `directionsPassed`; --expect-directions N
 ./gradlew :devtool:run --args="sync-sim --peers 3 --ops 2000 --seed 42 --partitions 5 --reorder"   # sync simulator: in-process peers over a faulty network; --seeds N, --store sql
 ./gradlew :devtool:run --args="sync with --db out/sync/a.db --peer http://localhost:8687"          # a sync replica: status, with (peer URL or .dsync file), export, import, import-gpx, gpx
+./gradlew :devtool:run --args="cache-replay --log out/server-local/server-json.log --totals 64,256"   # T112: a standalone server's request log (log.file) against the phone's cache budget: /dem, /osm, /glyphs as downloaded tiles, /contours, /shade as derived; hit rate and bytes evicted per kind per total and --rules lru,gdsf,lru-global (--floors, --protect-seconds, --repeat); a Markdown table in "table"
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```
 

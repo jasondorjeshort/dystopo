@@ -14,6 +14,10 @@ import java.util.concurrent.atomic.AtomicLong
  * T91: [maxBytes] caps the entries [keep] does not hold (the pinned tiles of offline areas have their own budget,
  * `pinnedCacheMb`, checked when an area downloads); [pinnedBytes] is what the kept entries take. Each entry
  * remembers whether it was kept when last seen; [recountPinned] refreshes that after the pins change.
+ *
+ * T112: a cache also reports to the one cache budget over the phone's caches ([onWrite],
+ * `io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget`), which evicts across caches with [evictOldest]; [maxBytes]
+ * stays this cache's own ceiling.
  */
 class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = System::currentTimeMillis) {
     /** The cap; [resize] changes it (a setting, T41). */
@@ -155,6 +159,64 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         }
         writes.incrementAndGet()
         trim()
+        onWrite?.invoke() // T112: outside the lock; the budget only reads totals here
+    }
+
+    /** T112: called after every [put], outside the cache's lock (the cache budget checks the total over all caches). */
+    @Volatile var onWrite: (() -> Unit)? = null
+
+    /** T112: entries [evictOldest] removed for the cache budget (also counted in [evictions]). */
+    val budgetEvictions = AtomicLong()
+
+    /**
+     * T112: deletes the least recently used entries until [bytes] are freed, skipping those [keep] holds (pinned areas),
+     * those [eligible] rejects (the budget's derived-first pass) and those [spare] keeps (tiles in view or ahead on the
+     * route), and stopping at an entry last used after [notAfter] (the budget merges two caches' oldest-first order);
+     * returns the bytes freed (less when nothing else may go). The cache budget's eviction; [maxBytes] is untouched.
+     */
+    fun evictOldest(bytes: Long, eligible: (String) -> Boolean = { true }, spare: (String) -> Boolean = { false }, notAfter: Long = Long.MAX_VALUE): Long {
+        if (bytes <= 0) return 0
+        val victims = ArrayList<File>()
+        var freed = 0L
+        synchronized(this) {
+            val it = index.entries.iterator()
+            while (freed < bytes && it.hasNext()) {
+                val n = it.next()
+                val e = n.value
+                if (e.pinned || !eligible(n.key) || spare(n.key)) continue
+                if (e.touchedAt > notAfter) break
+                if (keep(n.key)) { // pinned since the last count
+                    e.pinned = true
+                    pinnedTotal += e.bytes
+                    continue
+                }
+                it.remove()
+                forget(e)
+                freed += e.bytes
+                victims += e.file
+            }
+        }
+        victims.forEach { it.delete() }
+        evictions.addAndGet(victims.size.toLong())
+        budgetEvictions.addAndGet(victims.size.toLong())
+        return freed
+    }
+
+    /**
+     * T112: when the least recently used entry [evictOldest] would take with the same [eligible] and [spare] was last used
+     * (ms, to the minute: a hit touches an entry at most once a [TOUCH_INTERVAL_MS]), or null when none may go. The budget
+     * compares two caches with it to evict oldest-used first across both.
+     */
+    fun oldestTouch(eligible: (String) -> Boolean = { true }, spare: (String) -> Boolean = { false }): Long? = synchronized(this) {
+        for ((k, e) in index) if (!e.pinned && eligible(k) && !spare(k) && !keep(k)) return e.touchedAt
+        null
+    }
+
+    /** T112: bytes of the entries [matches] accepts, only the unpinned ones by default ([pinned] null: all). */
+    fun bytesWhere(pinned: Boolean? = false, matches: (String) -> Boolean): Long = synchronized(this) {
+        var n = 0L
+        for ((k, e) in index) if ((pinned == null || e.pinned == pinned) && matches(k)) n += e.bytes
+        n
     }
 
     /** Deletes every entry whose key starts with [prefix] (all with ""); returns how many went. */
@@ -229,6 +291,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     fun json(): Map<String, Any?> = linkedMapOf(
         "dir" to dir.path, "entries" to size, "bytes" to bytes, "maxBytes" to maxBytes, "pinnedBytes" to pinnedBytes,
         "hits" to hits.get(), "misses" to misses.get(), "writes" to writes.get(), "evictions" to evictions.get(),
+        "budgetEvictions" to budgetEvictions.get(), // T112
     )
 
     companion object {

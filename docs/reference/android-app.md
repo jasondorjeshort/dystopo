@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-14
+verified: 2026-10-16
 source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
 ---
 
@@ -26,6 +26,10 @@ The Settings chip opens the settings sheet (`SettingsSheet.kt`, rows in `setting
 ## Map options (the Map section of the settings sheet)
 
 `androidApp/.../options/MapOptionsSection.kt`; each choice is the `POST /settings` key of the same name (`android-debug-routes.md`), except the Scale bar row (T101, `POST /scalebar?both=on|off`). Rows: Hillshade (Off, Single, Multi) and its Intensity, **Slope shading** (T104: Off, Avalanche, Steepness, with "Slope shading is not an avalanche forecast." under it and, when on, a legend: a caption and one swatch per band, the band colour at the map's tint opacity over the paper tone; bands and wording in `GET /shade` `slopeLegend`, sources in docs/PLANNING.md › Slope shading), Contours, Contour labels, Layers, Night, Scale bar. Each row has its label above its choices, which wrap (a `FlowRow`), so nothing is squeezed at font scale 2.0. To screenshot it: `POST /settings/ui?open=1`, scroll the sheet to its end, `GET /screenshot`.
+
+## Storage and the cache budget (T112)
+
+Settings › Data and storage › Storage › (`storage/StorageScreen.kt`, `storage/Storage.kt`) shows what the app keeps on disk. At the top is the **cache budget** (`cachebudget/CacheBudget.kt`; ADR 0025 principle 3, ADR 0034): one total over three kinds, Online tiles (DEM, map and glyph tiles downloaded from a server or OpenFreeMap), Contours and shading (every contour, shade and cliff tile the phone made, from packs in `cache/contours/` or from downloaded DEM tiles in `cache/online/tiles/`) and Source data (the phone's own source downloads when no server is set), with presets Small 1 GB (the default), Medium 8 GB and Large 128 GB, and Custom: a size in GB, or 10, 25 or 50% of the free space turned into a fixed size once (never a live share). A stacked bar shows each kind's part; each kind's row shows its bytes, its share of the total and its floor (Online tiles 25%, Contours and shading 15%, Source data 5% of the total). When the kinds pass the total (checked after every tile write, every 30 s, and at once when the total is set) a run evicts contour and shade tiles first, then from the kind furthest above its floor, least recently used first and across both caches that hold a kind, never below a floor and never a tile in view (the visible box grown by half on every side) or within 300 m of the next 3 km of a navigated route, until 1% of the total (at least 4 MB) is free. Pinned offline areas (their own budget, `pinnedCacheMb`) and packs are outside it; Clear stays per row. `onlineCacheMb` and `contourCacheMb` stay as each cache's ceiling; setting the total sets both to it. An install from before T112 starts at the small preset, or at its two caps together when they were raised past it. Routes: `GET /storage` (`budget`) and `POST /storage?budgetMb=` (`android-debug-routes.md`); the rule was measured with `devtool cache-replay` (`devtool-commands.md`).
 
 ## The device tour (`android-check.py`)
 

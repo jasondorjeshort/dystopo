@@ -34,6 +34,7 @@ class DystopoApp : Application() {
         map.onUnitsSeeded = { Thread({ reload() }, "units-reload").start() } // T33: a first fix seeded the units
         io.github.jasondorjeshort.dystopo.app.firstrun.BundledAssets.install(this) // T80: glyphs and sprites from the APK
         tiles = openTiles()
+        io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) // T112: one budget over the caches (its own thread)
         io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)
         // T57: in debug builds the debug routes live on a second loopback server on a random port, announced

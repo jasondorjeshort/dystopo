@@ -7,18 +7,25 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,18 +35,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.concurrent.thread
+import kotlin.math.roundToLong
 
 /** Whether the Storage screen is open (Settings, or `POST /storage/ui?open=1` in debug builds). */
 object StorageUi {
@@ -48,12 +62,15 @@ object StorageUi {
     var message by mutableStateOf<String?>(null)
     /** Bumped after a change, so the screen reads the numbers again at once. */
     var revision by mutableStateOf(0)
+    /** T112: the custom budget row (a size, or a share of the free space) is open. */
+    var custom by mutableStateOf(false)
 }
 
 /**
  * T74: the Storage screen: what the app keeps on disk per store ([Storage]: packs, online tiles, contours and
- * shading, source data), each with what it uses against its budget, budget choices (the `onlineCacheMb` and
- * `contourCacheMb` settings) and Clear. Numbers refresh every two seconds while it is open.
+ * shading, source data), each with what it uses and Clear. T112: the one cache budget first (presets, a custom size,
+ * or a share of the free space picked once), with each budgeted kind against its floor and its share of the total;
+ * the pinned areas keep their own budget chips. Numbers refresh every two seconds while it is open.
  */
 @Composable
 fun StorageScreen() {
@@ -106,28 +123,160 @@ fun StorageScreen() {
                 @Suppress("UNCHECKED_CAST")
                 val stores = i["stores"] as Map<String, Map<String, Any?>>
                 @Suppress("UNCHECKED_CAST")
+                val budget = i["budget"] as? Map<String, Any?>
+                if (budget != null) BudgetSection(budget, stores, (i["freeBytes"] as? Number)?.toLong() ?: 0L, ::act)
+                @Suppress("UNCHECKED_CAST")
                 val choices = (i["budgetChoicesMb"] as List<Long>)
-                for ((key, s) in stores) StoreRow(key, s, choices, ::act)
+                val totalBytes = ((budget?.get("totalMb") as? Number)?.toLong() ?: 0L) * BudgetPlan.MB
+                for ((key, s) in stores) StoreRow(key, s, choices, totalBytes, ::act)
             }
             StorageUi.message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp)) }
         }
     }
 }
 
+/** T112: the one cache budget: the total and what each kind takes of it, the presets and the custom size. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act: (String, () -> String) -> Unit) {
+private fun BudgetSection(b: Map<String, Any?>, stores: Map<String, Map<String, Any?>>, freeBytes: Long, act: (String, () -> String) -> Unit) {
+    val totalMb = (b["totalMb"] as? Number)?.toLong() ?: return
+    val total = totalMb * BudgetPlan.MB
+    val kinds = budgetKinds(stores)
+    val used = kinds.sumOf { it.second }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText("Cache budget", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+            BasicText("${mb(used)} of ${size(totalMb)}", style = TextStyle(color = Ink, fontSize = 13.sp))
+        }
+        // One bar for the total: each kind's part in its colour, then what is left.
+        Row(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(Line)) {
+            var shown = 0f
+            for ((key, bytes) in kinds) {
+                val f = if (total > 0) (bytes.toDouble() / total).toFloat().coerceIn(0f, 1f - shown) else 0f
+                if (f > 0.001f) {
+                    Box(Modifier.weight(f).fillMaxHeight().background(kindColor(key)))
+                    shown += f
+                }
+            }
+            if (shown < 0.999f) Spacer(Modifier.weight(1f - shown))
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            for ((key, bytes) in kinds) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(10.dp).height(10.dp).background(kindColor(key), RoundedCornerShape(2.dp)))
+                    BasicText(" ${stores[key]?.get("label")} ${mb(bytes)}", style = TextStyle(color = Muted, fontSize = 11.sp))
+                }
+            }
+        }
+        BasicText(
+            "Online tiles, contours and shading, and source data share it. When it is full, contours and shading go first " +
+                "(the phone can make them again), then the tiles used longest ago; never what is on the map now or on the " +
+                "route ahead, and no kind below its floor. Offline areas and packs are not part of it.",
+            style = TextStyle(color = Muted, fontSize = 11.sp),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val preset = b["preset"] as? String
+            for (p in BudgetPlan.Preset.entries) {
+                Chip("${p.label} ${size(p.mb)}", preset == p.key) {
+                    act("Setting the budget") { setBudget(mapOf("preset" to p.key), "${p.label}: ${size(p.mb)}") }
+                }
+            }
+            Chip(if (preset == null) "Custom ${size(totalMb)}" else "Custom", preset == null) { StorageUi.custom = !StorageUi.custom }
+        }
+        if (StorageUi.custom) CustomBudget(totalMb, freeBytes, used, act)
+        if (total > freeBytes + used) {
+            BasicText(
+                "This is more than the free space (${mb(freeBytes)}): the phone fills up before the budget does.",
+                style = TextStyle(color = Older, fontSize = 12.sp, fontWeight = FontWeight.Bold),
+            )
+        }
+    }
+}
+
+/** T112: a size typed in GB, or a share of the free space turned into a fixed size once. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CustomBudget(totalMb: Long, freeBytes: Long, usedBytes: Long, act: (String, () -> String) -> Unit) {
+    var text by remember { mutableStateOf(gbText(totalMb)) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText("Size in GB", Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 13.sp))
+            BasicTextField(
+                text, { text = it.filter { c -> c.isDigit() || c == '.' }.take(7) },
+                singleLine = true,
+                textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                modifier = Modifier.widthIn(min = 72.dp, max = 140.dp).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            Chip("Set", false) {
+                val mb = text.toDoubleOrNull()?.let { (it * 1024).roundToLong() }
+                act("Setting the budget") {
+                    if (mb == null || mb !in BudgetPlan.RANGE_MB) "Pick a size from ${size(BudgetPlan.RANGE_MB.first)} to ${size(BudgetPlan.RANGE_MB.last)}"
+                    else setBudget(mapOf("budgetMb" to mb), "Budget: ${size(mb)}")
+                }
+            }
+        }
+        BasicText("Or a share of the free space, kept as a fixed size from now on:", style = TextStyle(color = Muted, fontSize = 12.sp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (pct in BudgetPlan.FREE_PERCENTS) {
+                val mb = BudgetPlan.percentOfFreeMb(pct, freeBytes, usedBytes)
+                Chip("$pct% · ${size(mb)}", false) {
+                    text = gbText(mb)
+                    act("Setting the budget") { setBudget(mapOf("budgetMb" to mb), "Budget: ${size(mb)} ($pct% of the free space)") }
+                }
+            }
+        }
+    }
+}
+
+private fun setBudget(params: Map<String, Any?>, done: String): String =
+    Storage.setBudget(DystopoApp.instance, params) ?: run {
+        val run = Storage.lastBudgetRun
+        val freed = (run?.get("freedByKind") as? Map<*, *>)?.values?.sumOf { (it as Number).toLong() } ?: 0L
+        if (freed > 0) "$done; ${mb(freed)} freed" else done
+    }
+
+/** The budgeted kinds in the order of the rows, with their bytes. */
+private fun budgetKinds(stores: Map<String, Map<String, Any?>>): List<Pair<String, Long>> =
+    stores.filter { it.value["inBudget"] == true }.map { (k, s) -> k to ((s["bytes"] as? Number)?.toLong() ?: 0L) }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, totalBytes: Long, act: (String, () -> String) -> Unit) {
     val bytes = (s["bytes"] as? Number)?.toLong() ?: 0L
+    val inBudget = s["inBudget"] == true
     val budget = (s["budgetMb"] as? Number)?.toLong()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (inBudget) {
+                Box(Modifier.width(10.dp).height(10.dp).background(kindColor(key), RoundedCornerShape(2.dp)))
+                Spacer(Modifier.width(6.dp))
+            }
             BasicText(s["label"] as String, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
             BasicText(
-                if (budget != null) "${mb(bytes)} of ${budget} MB" else mb(bytes),
+                when {
+                    inBudget -> mb(bytes) // T112: the share goes under the bar (it squeezed the label at font scale 2.0)
+                    budget != null -> "${mb(bytes)} of ${size(budget)}"
+                    else -> mb(bytes)
+                },
                 style = TextStyle(color = Ink, fontSize = 13.sp),
             )
         }
-        if (budget != null) {
+        if (inBudget && totalBytes > 0) {
+            // T112: the kind against the whole budget, with its floor marked.
+            val share = (bytes.toDouble() / totalBytes).coerceIn(0.0, 1.0).toFloat()
+            val floor = ((s["floorBytes"] as? Number)?.toDouble() ?: 0.0) / totalBytes
+            var widthPx by remember { mutableStateOf(0) }
+            val density = LocalDensity.current
+            Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(Line).onSizeChanged { widthPx = it.width }) {
+                if (share > 0f) Box(Modifier.fillMaxWidth(share).fillMaxHeight().background(kindColor(key)))
+                Box(Modifier.offset(x = with(density) { (widthPx * floor).toFloat().toDp() }).width(2.dp).fillMaxHeight().background(Ink))
+            }
+            BasicText(
+                "${pct(s["share"])} of the budget. Never cut below its floor of ${mb(s["floorBytes"])} (the mark) to make room for the others.",
+                style = TextStyle(color = Muted, fontSize = 11.sp),
+            )
+        } else if (budget != null) {
             val share = (bytes.toDouble() / (budget * 1024.0 * 1024.0)).coerceIn(0.0, 1.0).toFloat()
             Box(Modifier.fillMaxWidth().height(6.dp).background(Line, RoundedCornerShape(3.dp))) {
                 Box(Modifier.fillMaxWidth(share).height(6.dp).background(Accent, RoundedCornerShape(3.dp)))
@@ -144,12 +293,13 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, act
                     "Cleared ${s["label"]}: ${mb(r["bytes"])}"
                 }
             }
+            // T112: only the pinned areas keep budget chips of their own; the other caches share the budget above.
             val setting = s["setting"] as? String
-            if (setting != null && budget != null) {
+            if (!inBudget && setting != null && budget != null) {
                 for (c in (choices + budget).distinct().sorted()) {
-                    Chip(if (c >= 1024 && c % 1024 == 0L) "${c / 1024} GB" else "$c MB", c == budget) {
+                    Chip(size(c), c == budget) {
                         act("Setting the budget") {
-                            Storage.setBudgets(DystopoApp.instance, mapOf(setting to c)) ?: "Budget for ${s["label"]}: ${c} MB"
+                            Storage.setBudgets(DystopoApp.instance, mapOf(setting to c)) ?: "Budget for ${s["label"]}: ${size(c)}"
                         }
                     }
                 }
@@ -174,7 +324,7 @@ private fun holdsLine(key: String, s: Map<String, Any?>): String? {
     val holds = s["holds"] as? Map<String, Map<String, Any?>>
     val kinds = holds?.entries?.joinToString(", ") { (k, v) -> "$k ${mb(v["bytes"])}" }
     // T95: what the pinned tiles are, as for the online row (which counts its unpinned tiles only).
-    if (key == Storage.PINNED) return "${s["areas"]} pinned" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; kept out of Online tiles' budget until unpinned"
+    if (key == Storage.PINNED) return "${s["areas"]} pinned" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; outside the cache budget, kept until unpinned"
     if (holds == null) return null
     if (holds.isEmpty()) return "Empty"
     return kinds
@@ -194,6 +344,26 @@ private fun mb(v: Any?): String {
         m >= 10 -> String.format(Locale.US, "%.0f MB", m)
         else -> String.format(Locale.US, "%.1f MB", m)
     }
+}
+
+/** A budget in MB as the chips say it: whole GB where it is one, else MB. */
+private fun size(mb: Long): String = when {
+    mb >= 1024 && mb % 1024 == 0L -> "${mb / 1024} GB"
+    mb >= 1024 -> String.format(Locale.US, "%.1f GB", mb / 1024.0)
+    else -> "$mb MB"
+}
+
+private fun gbText(mb: Long): String = if (mb % 1024 == 0L) "${mb / 1024}" else String.format(Locale.US, "%.2f", mb / 1024.0).trimEnd('0').trimEnd('.')
+
+private fun pct(v: Any?): String {
+    val f = (v as? Number)?.toDouble() ?: return "?"
+    return if (f > 0 && f < 0.01) "<1%" else "${(f * 100).roundToLong()}%"
+}
+
+private fun kindColor(key: String): Color = when (key) {
+    Storage.ONLINE -> Accent
+    Storage.DERIVED -> Color(0xFF4F7A3A)
+    else -> Color(0xFF3A6A8A)
 }
 
 @Composable

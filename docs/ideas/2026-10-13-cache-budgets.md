@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
+status: done
 pipeline: T112 (T74 partial before)
 related: [2026-10-13-auto-download-when-zoomed-in.md]
 ---
@@ -62,3 +62,9 @@ Principles floated:
   ADR if the on-disk layout changes.
 - Pinned areas and packs are never evicted; they need their own budget, shown in the Storage
   screen.
+
+## Done (T112, 2026-10-16)
+
+Built as a layer over the caps: ADR 0034 (one total with presets, floors per kind, derived data first,
+least recently used within a kind, never the view or the route ahead; frequency scoring and an index
+database rejected on `devtool cache-replay` numbers, to revisit with a phone request log).

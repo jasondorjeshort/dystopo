@@ -3,6 +3,7 @@
 Date: 2026-10-10 (no Wi-Fi gates added 2026-10-11)
 Status: accepted (owner's goals; principles bind every task that touches tiles, caches, packs,
 routing or sharing)
+Principle 3 amended by `0034-one-cache-budget.md` (2026-10-16): one total over the phone's caches with floors and derived data first; LRU within a kind.
 
 Record: `docs/PLANNING.md` › "Design goals (set 2026-10-10): one data path online and offline,
 precaching, long routes, sharing on a trip" (goals, what already fits, principles, gaps); tasks T73

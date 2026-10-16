@@ -154,23 +154,61 @@ object AppSettings {
 
     private const val KEY_ONLINE_CACHE_MB = "onlineCacheMb"
     private const val KEY_CONTOUR_CACHE_MB = "contourCacheMb"
-    const val DEFAULT_ONLINE_CACHE_MB = 256L
-    const val DEFAULT_CONTOUR_CACHE_MB = 256L
-    /** Allowed range of either cap, in MB. */
+    private const val KEY_CACHE_BUDGET_MB = "cacheBudgetMb" // T112
+
+    /** T112: the caps default to the default total ([BudgetPlan.DEFAULT_MB]): each is a ceiling under the one budget. */
+    const val DEFAULT_ONLINE_CACHE_MB = 1024L
+    const val DEFAULT_CONTOUR_CACHE_MB = 1024L
+
+    /** The caps before T112 (what an install that never set one had), for [BudgetPlan.migrate]. */
+    private const val PRE_BUDGET_CAP_MB = 256L
+
+    /** Allowed range of either cap set on its own (`POST /settings`), in MB. */
     val CACHE_MB_RANGE = 16L..8192L
 
-    /** Cap of the online tile cache (fetched DEM, OSM, glyphs and online contours), MB. */
+    /** T112: the range a stored cap may have: the cache budget sets both caps to its total, up to 1 TB. */
+    val CACHE_CAP_MB_RANGE = CACHE_MB_RANGE.first..io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan.RANGE_MB.last
+
+    /** Cap of the online tile cache (fetched DEM, OSM, glyphs and online contours), MB; T112: a ceiling under [cacheBudgetMb]. */
     @Volatile var onlineCacheMb: Long = DEFAULT_ONLINE_CACHE_MB
         private set
 
-    /** Cap of the contour tile cache over every pack's directory, MB. */
+    /** Cap of the contour tile cache over every pack's directory, MB; T112: a ceiling under [cacheBudgetMb]. */
     @Volatile var contourCacheMb: Long = DEFAULT_CONTOUR_CACHE_MB
         private set
 
+    /**
+     * T112: the one cache budget over online tiles, contours and shading, and source data (MB;
+     * [io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget]). An install from before T112 gets the small preset, or
+     * its two caps together when they were raised past it ([BudgetPlan.migrate]), stored at first load.
+     */
+    @Volatile var cacheBudgetMb: Long = io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan.DEFAULT_MB
+        private set
+
     private fun loadCaches(p: SharedPreferences) {
-        onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_MB_RANGE)
-        contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+        onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
+        contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
         pinnedCacheMb = p.getLong(KEY_PINNED_CACHE_MB, DEFAULT_PINNED_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+        val plan = io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan
+        cacheBudgetMb = if (p.contains(KEY_CACHE_BUDGET_MB)) {
+            p.getLong(KEY_CACHE_BUDGET_MB, plan.DEFAULT_MB).coerceIn(plan.RANGE_MB)
+        } else {
+            plan.migrate(p.getLong(KEY_ONLINE_CACHE_MB, PRE_BUDGET_CAP_MB), p.getLong(KEY_CONTOUR_CACHE_MB, PRE_BUDGET_CAP_MB))
+                .also { p.edit().putLong(KEY_CACHE_BUDGET_MB, it).apply() }
+        }
+    }
+
+    /** T112: sets and persists the total (the caller checked [BudgetPlan.RANGE_MB] and runs the budget). */
+    fun setCacheBudgetMb(mb: Long) {
+        cacheBudgetMb = mb
+        prefs?.edit()?.putLong(KEY_CACHE_BUDGET_MB, mb)?.apply()
+    }
+
+    /** T112: both caps to the total [mb] (the budget's ceilings; the caller resizes the caches). */
+    fun setCapsFromBudget(mb: Long) {
+        onlineCacheMb = mb
+        contourCacheMb = mb
+        prefs?.edit()?.putLong(KEY_ONLINE_CACHE_MB, mb)?.putLong(KEY_CONTOUR_CACHE_MB, mb)?.apply()
     }
 
     private const val KEY_PINNED_CACHE_MB = "pinnedCacheMb"
@@ -294,6 +332,7 @@ object AppSettings {
         "onlineCacheMb" to onlineCacheMb, // T41
         "pinnedCacheMb" to pinnedCacheMb, // T91
         "contourCacheMb" to contourCacheMb,
+        "cacheBudgetMb" to cacheBudgetMb, // T112
         "routeSnapM" to routeSnapM, // T57
         "routeSnapRange" to listOf(ROUTE_SNAP_RANGE.first, ROUTE_SNAP_RANGE.last),
         "debugFixedPort" to debugFixedPort,
