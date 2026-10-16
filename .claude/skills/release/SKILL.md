@@ -60,7 +60,8 @@ locally:
 2. `./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist -PdystopoVersion=<tag without v> -PdystopoVersionCode=$(git rev-list --count HEAD)`.
 3. Name and zip the assets as the workflow's "Collect artifacts" step does
    (`dystopo-<tag>-universal.apk` only during alpha, `dystopo-server-<tag>.zip`,
-   `dystopo-devtool-<tag>.zip`, `NOTICES.md` from `notices.py --out`, the tour sheets, `version.json` as
+   `dystopo-devtool-<tag>.zip`, `NOTICES.md` from `notices.py --out`, the world tour sheet (T111: no
+   device tour sheet; the notes link the repository's), `version.json` as
    the workflow writes it (T83: tag, versionCode, versionName, apk, sha256 of the universal APK),
    `SHA256SUMS.txt`).
 4. `gh release create <tag> --draft --prerelease --verify-tag --notes-file <notes> out/release/*`, then
