@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-16, at commit c129d71, by main session (second account, Fable 5.1)
+Updated: 2026-10-16, at commit e94566c, by main session (second account, Fable 5.1)
 Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
 `~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
 `wave` skill, and the wave 15 section of `docs/TASKS.md` (open: T109 to T111); rewrite with the `handoff` skill.
@@ -25,8 +25,7 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 1. Per PR (T109, T110, T111): a Sonnet verifier (`brief` skill, `verifier.md`), the merge sequence (`wave` skill), a Haiku cleanup chore.
 2. After the last merge: README status paragraph, the post-wave sweep (`sweep` skill, with `-Matrix` if
    time allows), then v0.1.8-alpha (`release` skill) without asking again (ADR 0024).
-3. Wave 16 candidates: the deferred list in the wave 15 paragraph, the Status-line follow-ups of T108 to
-   T112, bushwhack (proposal first), route-to, auto-download, download by region, battery.
+3. Wave 16 candidates: the wave 15 paragraph's deferred list, the Status-line follow-ups, the open finding below, bushwhack (proposal first), route-to, auto-download, download by region, battery.
 
 ## Waiting on user
 
@@ -37,4 +36,5 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 ## Open findings
 
-- `docs/findings/2026-10-16-soak-route-requests-without-status.md` (T111)
+- `docs/findings/2026-10-16-soak-route-requests-without-status.md` (T111 resolves it at merge)
+- `docs/findings/2026-10-16-cold-view-gap-on-a-quiet-device.md` (wave 16 Android sweep)
