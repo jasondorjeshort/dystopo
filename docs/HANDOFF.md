@@ -4,7 +4,7 @@ Coordinator state. Subagents follow their brief, not this file. Format from the 
 Updated: 2026-10-16, at commit 020b9a6, by main session (second account, Fable 5.1)
 Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
 `~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
-`wave` skill, and the wave 15 section of `docs/TASKS.md` (open: T109 to T112); rewrite with the `handoff` skill.
+`wave` skill, and the wave 15 section of `docs/TASKS.md` (open: T109 to T113); rewrite with the `handoff` skill.
 
 ## Now
 
@@ -22,8 +22,7 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 ## Next
 
-1. As each PR arrives: a Sonnet verifier (`brief` skill, `verifier.md`), then the merge sequence
-   (`wave` skill), a Haiku cleanup chore after the verifier's last check.
+1. Per PR (T109, T110, T111, T113): a Sonnet verifier (`brief` skill, `verifier.md`), the merge sequence (`wave` skill), a Haiku cleanup chore.
 2. After the last merge: README status paragraph, the post-wave sweep (`sweep` skill, with `-Matrix` if
    time allows), then v0.1.8-alpha (`release` skill) without asking again (ADR 0024).
 3. Wave 16 candidates: the deferred list in the wave 15 paragraph, the Status-line follow-ups of T108 to
