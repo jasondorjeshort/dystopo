@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-16, at commit 96f6d25, by main session (second account, Fable 5.1)
+Updated: 2026-10-16, at commit 020b9a6, by main session (second account, Fable 5.1)
 Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
 `~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
 `wave` skill, and the wave 15 section of `docs/TASKS.md` (open: T109 to T112); rewrite with the `handoff` skill.
@@ -10,10 +10,11 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 
 - Wave 15 launched 2026-10-16 about 05:40 UTC after a critic pass (now standard in the `wave` skill): five Opus
   implementers, worktrees `~\Documents\src\dystopo-wt\T1nn`, AVDs `dystopo35-T1nn` under `E:\dystopo-avd`.
-  Still running: T109 help pop-ups (5574; 8702, 8703); T110 Android sweep 8 (5576, 5578; 8704 to 8706); T111
-  desktop and tooling sweep 8 (5580; 8708, 8709, soaks 8790, sweeps 8900 to 8907). T108 merged (PR #110, logged,
-  cleaned up). T112 done: PR #111 (head 6c3068c, ADR 0034), Sonnet verifier running (worktree
-  `dystopo-wt\T112-verify`, emulator-5582, ports 8722, 8723); it rebases over T108 (shared reference-doc lines).
+  Still running: T109 help pop-ups (5574; 8702, 8703); T111 desktop and tooling sweep 8 (5580; 8708, 8709,
+  soaks 8790, sweeps 8900 to 8907). T108 (PR #110) and T112 (PR #111, ADR 0034) merged, logged, cleaned up.
+  T110 done: PR #112 (head 3ea835c), Sonnet verifier running (`dystopo-wt\T110-verify`, AVD `dystopo35-T110-verify`
+  on 5586, ports 8724, 8725). T113 (git guard, added mid-wave: a `2>&1` suffix is read as a push refspec): PR #113
+  open, being extended; verify and merge it too.
 - Coordinator's servers run from the main checkout (started this session): live viewer 8765 and
   standalone server 8800, PIDs in `out/coordinator-pids.txt`. The T107 soak is archived in `out/soak-T107`
   and its folder removed; its one oddity is the open finding below (T111's item 1). Harmless leftovers:
