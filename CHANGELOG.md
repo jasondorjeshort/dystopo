@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-16
 
+- T111: Desktop, server and tooling leftover sweep 8 (#115)
 - T110: Android leftover sweep 8 (#112)
 - T113: The git guard and a force push from a detached verifier worktree (#113)
 - T112: One cache budget over the per-kind caps (#111)
