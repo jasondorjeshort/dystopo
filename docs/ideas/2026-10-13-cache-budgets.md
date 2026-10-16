@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T74 partial
+status: planned
+pipeline: T112 (T74 partial before)
 related: [2026-10-13-auto-download-when-zoomed-in.md]
 ---
 

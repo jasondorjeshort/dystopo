@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: none
+status: planned
+pipeline: T109
 related: [2026-10-13-cannot-create-waypoints-android.md, 2026-10-13-settings-tabs.md]
 ---
 

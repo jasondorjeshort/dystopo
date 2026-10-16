@@ -33,11 +33,18 @@ Hatchery's proposal 0003 describes the same workflow for the base.
    Make the Owns lines disjoint; two tasks that must touch one file go in different waves, or one task
    owns the file and the other records a follow-up. A wave paragraph at the top states ownership
    resolved for the wave and the machine's paths when they differ from `docs/reference/machines.md`.
-2. 5 to 8 implementers at once; when a wave would not fit the budget, launch it in halves with
+2. Run the written plan past a critic before launching anything (the most capable model, read-only;
+   owner, 2026-10-16: standard for every wave). Its brief names the wave section, the previous wave's
+   Status lines, the ideas and ADRs the plan draws on, and asks for numbered objections with severity
+   and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
+   observable, premises checked against the code, major choices that need a proposal, follow-ups
+   dropped silently, cross-task sequencing. Answer every objection by editing the plan or by writing
+   why not in the wave paragraph; launch after the edits, re-plan on a blocking one.
+3. 5 to 8 implementers at once; when a wave would not fit the budget, launch it in halves with
    disjoint ownership.
-3. Brief each implementer with the `brief` skill (`implementer.md`), its own worktree, ports and
+4. Brief each implementer with the `brief` skill (`implementer.md`), its own worktree, ports and
    emulator; set the model explicitly (Opus-class).
-4. A task that faces a major choice writes a proposal first (`proposal` skill).
+5. A task that faces a major choice writes a proposal first (`proposal` skill).
 
 ## Verify
 
