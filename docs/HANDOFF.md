@@ -17,8 +17,8 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
   `dystopo-wt\T108-verify`, AVD `dystopo35-T108-verify` on 5584, ports 8720, 8721); the T108 AVD is kept.
 - Coordinator's servers run from the main checkout (started this session): live viewer 8765 and
   standalone server 8800, PIDs in `out/coordinator-pids.txt`. The T107 soak is archived in `out/soak-T107`
-  and its folder removed; its one oddity is the open finding below (T111's item 1).
-- Harmless leftovers: local branches `T104-verify`, `t107-slope-scratch`, `task/T87-ci`; the locked empty `dystopo-wt\T85`.
+  and its folder removed; its one oddity is the open finding below (T111's item 1). Harmless leftovers:
+  local branches `T104-verify`, `t107-slope-scratch`, `task/T87-ci`; the locked empty `dystopo-wt\T85`.
 
 ## Next
 
