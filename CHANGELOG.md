@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.8-alpha (2026-10-16)
+
+Help pop-ups behind a question-mark icon on every Map options row, the Offline areas sheet, the Settings rows, the track bar and the long-press card; turn directions saved with a trip, so a trip synced to a phone with no map pack still navigates, and a crow mode (a straight line with bearing and elevation profile) in the devtool, the server, the browser and the phone; one cache budget over online tiles, contours and shading, and source data, with presets, floors and derived-first eviction, the rule chosen by replaying a server log; the drive no longer cuts the Sunrise Point hairpin, an unsaved route survives a font scale restart, the credit line keeps up with the view, the update offer asks during navigation and installs when it ends, the share gate counts wrong codes per phone, the recentre button hides when the chips leave no room, a hidden scale bar reads back nothing; the server answers a stalled request body with 408 and the soak counts unanswered requests; the browser's Trips box lists directions and offers crow; the sweep sheet fits one capture; the release ships no stale tour sheet. Process: a critic pass on every wave plan, the git guard ignores shell redirections, ADRs 0033 and 0034.
+
 ### 2026-10-16
 
 - T109: Help pop-ups behind a question-mark icon (#114)
