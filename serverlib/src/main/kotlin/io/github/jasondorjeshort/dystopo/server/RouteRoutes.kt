@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   distance, ascent, descent, hike-model time, metres on straight legs, 100-sample profile),
  *   `notes` (why legs are straight: `start_off_network`, `not_connected`, `no_graph`, `drive_unsupported`, ...),
  *   `messages` (T73: the router's message for each note), `notice` (for `mode=drive`, `Router.DRIVE_NOTICE`: what drive
- *   mode does and does not do, ADR 0032), `instructions` (T102: the turn directions along the whole path, every leg,
+ *   mode does and does not do, ADR 0032; T111: for `mode=crow`, `TravelMode.CROW_NOTICE`), `instructions` (T102: the turn directions along the whole path, every leg,
  *   kept or rerouted: `type`, `priority`, `text`, `alongM`, `lat`, `lon`, `name`, `class`, `turnDeg`, `bearingDeg`,
  *   `leadM`, `stretchM`, `via`; see `Directions`), `graph`
  *   (`loaded`, `built` or `cached`, with timings: the reported pack's, every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
@@ -504,7 +504,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             "summary" to RouteSummary.of(path, emptyList()).json(),
             "notes" to notes.distinct(),
             "messages" to messages, // T73: the router's words for each note (drive_unsupported names the pack to rebuild)
-            "notice" to if (path.mode == "drive") Router.DRIVE_NOTICE else null,
+            "notice" to when (path.mode) { "drive" -> Router.DRIVE_NOTICE; "crow" -> TravelMode.CROW_NOTICE; else -> null }, // T111: crow's line
             "instructions" to instructions.map { it.json(TravelMode.of(path.mode) ?: TravelMode.HIKE) }, // T102
             "waypointsValue" to EMPTY_WAYPOINTS,
             "graph" to graph, "ms" to ms,

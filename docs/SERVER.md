@@ -166,7 +166,7 @@ key with its default.
 | `log.keep` | `5` | Rotated files kept (`server.log.1` .. `.5`); the log never takes more than about `(keep + 1) * maxMb`. |
 | `metrics.enabled` | `true` | `GET /metrics` (below). |
 | `metrics.diskScanMinutes` | `10` | How often `/metrics` re-measures `cacheDir` and `outDir` (a walk of every file, in the background, at low priority); `0` turns it off. |
-| `http.maxRequestSeconds` | `60` | A client must send its whole request (headers and body) within this time, else the connection is closed. Bounds slow-header clients; a sync push slower than this fails (behind a proxy that buffers requests it only bounds the proxy's hop). |
+| `http.maxRequestSeconds` | `60` | A client must send its whole request (headers and body) within this time, else the connection is closed. Bounds slow-header clients; a sync push slower than this fails (behind a proxy that buffers requests it only bounds the proxy's hop). T111: a body still arriving at this limit is answered 408 with `Connection: close` (counted as a 4xx, logged `outcome: requestTimeout`, `/metrics` `requestTimeouts`); the listener's own timer runs 5 s later and closes a connection whose headers are still arriving, without an answer. |
 | `http.idleSeconds` | `30` | Idle keep-alive connections are closed after this. |
 | `http.maxConnections` | `1000` | Open connections at once; beyond, new ones are closed at once. |
 | `cache.tileDir` | `null` | T74: where the tile stores live (`live/`, `openfreemap/`, `derived/`); null: `cacheDir`. `devtool serve` reads `DYSTOPO_TILE_CACHE`. |
@@ -534,7 +534,8 @@ until a restart.
   pack built before the road data; rebuild it), `search_limit` (the search gave up at its node budget, which is no
   proof there is no way)), `messages` (T73: the router's sentence for each note, e.g. "no road open to cars within
   300 m of the end point (the nearest is 3192 m away)"), `notice` (for `mode=drive`: it follows the packs' roads and
-  is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; null otherwise), `waypointsValue` (the empty `waypoints` value a page saves with a new
+  is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; T111: for `mode=crow` the phone's line
+  under its mode picker, `TravelMode.CROW_NOTICE`; null otherwise), `waypointsValue` (the empty `waypoints` value a page saves with a new
   trip), `graph` (`action` `built`, `loaded` or `cached` and `file`, the reported pack's; every pack used under
   `graphs` with its `pack` and `action`; T77: `searches`, one per leg searched, with `ms`, `found`, `tiles`,
   `graphBytes`, `searchBytes`, `searchNodes`, `expanded`, and `overlayTiles` and T89 `level2Tiles` (the z8 cells it
@@ -754,10 +755,12 @@ fields.
   CORS origins, whether tilebuild is available.
 - `request`: `method`, `path` (no query string), `status`, `ms`, `bytes`, `remote` (`X-Forwarded-For`
   first), `source` for tile routes (`pack`, `live-3dep`, `live-copernicus`, `openfreemap`, ...), `outcome`
-  when the gate answered itself (`unauthorized`, `refused`, `preflight`, `tooLarge`, `connectionLost`,
-  `exception`). 5xx at `error`, 401/403/413/429 at `warn`.
-- `connection_lost` (warn, T82): the client went away mid-answer, or `http.maxRequestSeconds` closed a slow
-  upload. Not a server error; the request line keeps the status that was actually sent.
+  when the gate answered itself (`unauthorized`, `refused`, `preflight`, `tooLarge`, `requestTimeout` (T111: a body
+  still arriving at `http.maxRequestSeconds`, answered 408), `connectionLost`, `exception`). 5xx at `error`,
+  401/403/408/413/429 at `warn`.
+- `connection_lost` (warn, T82): the client went away mid-answer (or, before T111, `http.maxRequestSeconds`
+  closed a slow upload without an answer). Not a server error; the request line keeps the status that was actually
+  sent, 0 when nothing was (`/metrics` counts those under status `none`).
 - `glyphs_fetched`, `request_failed`, `config_invalid`, `bind_failed`, `stopping`, `stopped`.
 - T82: every string field is cut at 512 characters (`...(N chars)` says how long it was) and lists at 100
   items, so a client cannot make one request write kilobytes of log.
@@ -851,8 +854,9 @@ volumes: { cache: {}, out: {}, caddy-data: {} }
 
 The JDK HTTP listener reads a request's headers on a worker thread (`threads`, 32). The probe's slowloris
 test (64 connections that send one header line a second) stalled `/healthz` for exactly
-`http.maxRequestSeconds` (60 s), when the listener closed them; with the JDK default (no limit) it never
-answered and the connections were never closed. nginx and Caddy read the whole request before they forward
+`http.maxRequestSeconds` (60 s), when the listener closed them (T111: the listener's timer now runs 5 s after that
+limit, so slow headers are closed at 65 s; a slow body gets the gate's 408 at 60 s); with the JDK default (no limit)
+it never answered and the connections were never closed. nginx and Caddy read the whole request before they forward
 it (nginx: `proxy_request_buffering on`, the default), so behind them a slow client costs the proxy a
 connection, not the server a thread. Expose the server directly only on a trusted network. Request bodies
 are capped by the server whatever the proxy does: 256 MiB on `/sync*` (a whole-log push), the relay's
@@ -882,7 +886,9 @@ users keep their data on their devices and push it again.
 - `jvm.heapUsedBytes` against `heapMaxBytes`, and the trend of `heapAfterGcBytes` (what survived the last
   collection): a steady climb over hours is a leak; the soak's numbers below say what is expected.
 - `requests.<route>.status.5xx` (`dystopo_requests_total{status="5xx"}`): any rise; `live.errors` counts tile
-  route exceptions.
+  route exceptions. `status.none` counts requests that were never answered (the client went away first); T111:
+  a body still arriving at `http.maxRequestSeconds` is answered 408 and counted under `4xx` and `requestTimeouts`
+  (`dystopo_request_timeouts_total`), so a rising `none` means clients giving up on slow answers.
 - `requests.<route>.p95Ms` for `dem`, `osm`, `contours`, `shade`: pack tiles answer in tens of
   milliseconds; live tiles of a place nobody viewed take seconds (10 to 30 s at worst).
 - `disk.freeBytes`, and the growth of `disk.cacheDir.bytes` (per directory under `children`): the tile
@@ -926,6 +932,7 @@ python -I tools/server-probe.py --port 8080 --token <token> [--admin-token <admi
 python -I tools/server-probe.py --port 9090 --quick   # T87: an open server (no token): sync, catalog refresh and /admin get their open answers, builds are still refused for their bbox; `serverOpen` in the JSON
 powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -Hours 12 -Port 9090 -Root E:\soak -Packs out\rainier-dem.pmtiles,out\rainier-outdoors.pmtiles -HeapMb 6144
 powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -ChartOnly -Root E:\soak         # redraw soak.svg and summary.json, also while it runs
+powershell -ExecutionPolicy Bypass -File tools\server-soak.ps1 -Minutes 60 -Port 9091 -Root out\soak-hourly -SampleMinutes 5 -TripMinutes 5 -ShareMinutes 5 -BuildMinutes 5 -ProbeMinutes 5 -Packs out\rainier-dem.pmtiles,out\rainier-outdoors.pmtiles   # T111: the hourly items every 5 minutes, to catch what happens once an hour
 ```
 
 The probe sends malformed tile coordinates, map options, traversal attempts on `/out/`, `/glyphs/` and
@@ -945,7 +952,13 @@ draws in its own panel (downloaded since start, in the last hour, the largest on
 (`sourceMb`, `sourceRequests`, `sourceLastHourMb`, `sourceRefusedRequestCap`, `sourceRefusedHourCap`); each URL of
 a round is its own curl operation, so a header (the sync lines' token, the `/out/` line's `Range`) goes only
 with its own request; and the trip's route and bundle carry the soak user's token, which the T92 route gate
-had refused since, so no trip had been saved or shared (a failed trip route is now a `tripRoute` event).
+had refused since, so no trip had been saved or shared (a failed trip route is now a `tripRoute` event). T111:
+every trip (`routeMs`, `bundleMs`, `pushMs` and their statuses) and share link (`ms`) is an event in `soak.jsonl`,
+so a slow request lines up with what the soak did; `-ShareMinutes` sets the share link's interval (60); the
+server logs every request (`logRequests`, the default) to `<Root>/logs/server.log`; `summary.json` `unanswered`
+has the requests the server never answered (its own `/metrics` status `none`) per route, the slowest of each
+such route and the samples at which a count grew (counted after the final probe, which the soak follows with one
+more `/metrics` read, else at the last sample: `countedAt`), and the chart's request panel draws their total.
 
 T92: the soak ends with a verdict, printed one check per line (`PASS name: why` / `FAIL name: why`) and kept
 under `verdict` in `summary.json`, and exits 0 only when every check passes: the server alive when the load
@@ -957,8 +970,11 @@ and the live heap after full GC growing at most `-MaxHeapGrowthMbPerHour` (defau
 FAIL. A run that did not reach its end (no `summary-extra.json`: the account signed out, the machine slept, the
 script was killed; or one still going) gets a partial verdict from the samples: the server alive at the last
 sample with no `serverExited` event, the last hourly probe in place of the final one, no `OutOfMemoryError`, the
-failure rate and the live heap growth; its last line reads `verdict: PASS [partial run: 6.34 of 12 h planned, no
-final probe]`, and a server that exited on its own or an out-of-memory line is still a FAIL. The probe (T92) carries the token on its route
+failure rate, the unanswered requests and the live heap growth; its last line reads `verdict: PASS [partial run:
+6.34 of 12 h planned, no final probe]`, and a server that exited on its own or an out-of-memory line is still a
+FAIL. T111: the `unanswered` check fails when the server left more than `-MaxUnanswered` (0) requests without an
+answer, and its line names each route with its count and slowest request (`FAIL unanswered: 12 requests never
+answered (server /metrics status none): route 12 (slowest 60914.6 ms); limit 0` for T107's soak). The probe (T92) carries the token on its route
 probes when `/healthz` says `routeGate` and checks that `/route*` answers 401 without one (and stays open on a
 server without users); run it once against each kind of server.
 
@@ -986,7 +1002,8 @@ judged the 39 samples (21:24 to 03:44 UTC): PASS on all five checks of a partial
 - **Requests.** 53,356 from the load, 0 failed (no 5xx, no timeout): 51,232 answered 200, 1,062 206, 1,062 204.
   The server log has 0 `5xx` and 0 `OutOfMemoryError`. The hourly quick probe ran 7 times, 72 probes each, 0
   unexpected, and left 14 `connection_lost` warnings, `live.errors` 14 and 7 `/route/edit` requests of 60.9 s
-  with no status (the probe's short-body case, cut at `http.maxRequestSeconds`; they are the `route` maximum).
+  with no status (the probe's short-body case, cut at `http.maxRequestSeconds`; they are the `route` maximum;
+  answered 408 since T111).
   The hourly rebuild of a small pack finished 7 of 7.
 - **Heap: flat after warm-up, a slow drift.** Live heap after a full GC went from 6 MB to 181 MB in the first 10
   minutes (97 MB of float arrays that never change after that, 66 MB of byte arrays) and then stayed between 172
@@ -1019,6 +1036,20 @@ judged the 39 samples (21:24 to 03:44 UTC): PASS on all five checks of a partial
   9.4 s; `/metrics` p50 at most 250 ms, slowest 2.7 s.
 - **Log.** 55,312 lines and 10.0 MB at 6.4 hours (about 190 bytes a line, 1.6 MB/h), no rotation, 0 write
   errors.
+
+### Measured (T107 and T111, October 2026)
+
+**11.4 hours flat; the hourly request with no status was the probe's.** T107's soak (15 October UTC,
+the T92 load plus trips with the user's token, cut at 11.4 h by a restart): 97,366 requests, 0 failures, live heap
+187 to 200 MB after the first half hour (+1.1 MB/h over the second half), working set 0.96 to 1.06 GB, handles
+1,303 to 1,430, every hourly probe green; but `/metrics` counted one more `route` request with status `none` after
+each hourly probe, 12 in all, the slowest 60.9 s. T111 named it with two one-hour soaks that ran every hourly
+item every 5 minutes (the recipe under Soak and probe): on the old server 12 requests were left unanswered, every
+one the quick probe's `short-body` case (`POST /route/edit`, 50 bytes declared and 6 sent), closed by the JDK
+listener at 60.0 to 61.0 s (`outcome: connectionLost`); the 12 trips (route 22 to 82 ms), 11 share links, 11
+builds and the full GC every 5 minutes never left one. With the gate's 408 the same hour had the 12 short bodies
+answered 408 at 60.0 s and 0 unanswered (`verdict: PASS`, 5,593 requests, live heap 185.8 MB, -1.2 MB/h).
+Finding `docs/findings/2026-10-16-soak-route-requests-without-status.md`.
 
 ## Limits
 

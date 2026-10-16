@@ -146,6 +146,9 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
     @Volatile private var stopping = false
     private lateinit var http: HttpServer
     private lateinit var executor: ExecutorService
+    /** The filter in front of every route (T111: its request timer stops with the server). */
+    var gate: Gate? = null
+        private set
     lateinit var live: LiveTiles
         private set
     /** T82: `GET /metrics` (null when `metrics.enabled` is false). */
@@ -198,7 +201,8 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         )
         val token = config.effectiveToken()
         metrics = if (config.metrics.enabled) Metrics(cacheDir, outDir, config.metrics.diskScanMinutes) else null
-        val gate = Gate(users, config.corsOrigins, log, config.logRequests, metrics, config.relay.maxBlobBytes.toLong())
+        val gate = Gate(users, config.corsOrigins, log, config.logRequests, metrics, config.relay.maxBlobBytes.toLong(), config.http.maxRequestSeconds * 1000L)
+        this.gate = gate
         val fallbackBase = config.publicUrl?.trimEnd('/') ?: "http://127.0.0.1:${config.port}"
         val base: (com.sun.net.httpserver.HttpExchange) -> String =
             if (config.publicUrl != null) { _ -> fallbackBase } else { ex -> LiveTiles.requestBase(ex, fallbackBase) }
@@ -283,6 +287,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
             "replicas" to SyncRoutes.replicaFiles().size,
             "shareLinks" to SyncRoutes.shares.count(),
             "catalog" to live.catalog.warmState(),
+            "requestTimeouts" to gate?.requestTimeouts?.get(), // T111: bodies answered 408 at http.maxRequestSeconds
         )
     }
 
@@ -295,6 +300,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
             "live_inflight_dem" to inflight["dem"] as Number?, "live_inflight_osm" to inflight["osm"] as Number?,
             "log_lines_total" to log.lines.get(), "log_bytes_total" to log.bytes.get(), "log_rotations_total" to log.rotations.get(),
             "log_write_errors_total" to log.writeErrors.get(),
+            "request_timeouts_total" to gate?.requestTimeouts?.get(), // T111
             "sync_replicas" to SyncRoutes.replicaFiles().size,
             "stopping" to if (stopping) 1 else 0,
         )
@@ -311,6 +317,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
         metrics?.stop()
         http.stop(maxOf(0, grace / 2))
         executor.shutdown()
+        gate?.close()
         executor.awaitTermination(1, TimeUnit.SECONDS)
         log.info("stopped", mapOf("reason" to reason, "buildsCancelled" to cancelled, "ms" to (System.nanoTime() - started) / 1_000_000))
         log.close()
@@ -354,11 +361,13 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
          * T82: the JDK listener's limits are system properties read once, when the first listener is made: a
          * request must arrive within `maxReqTime` seconds, idle keep-alive connections close after
          * `idleInterval`, and `jdk.httpserver.maxConnections` caps open connections. A value already set
-         * (`JAVA_OPTS=-Dsun.net.httpserver.maxReqTime=...`) wins.
+         * (`JAVA_OPTS=-Dsun.net.httpserver.maxReqTime=...`) wins. T111: the listener's request timer closes a
+         * connection without an answer, so it runs [Gate.TIMEOUT_GRACE_S] after `http.maxRequestSeconds`: a body
+         * still arriving at that limit gets the gate's 408 first, and the timer bounds slow headers.
          */
         fun applyHttpLimits(h: ServerConfig.HttpConfig) {
             fun set(k: String, v: Any) { if (System.getProperty(k) == null) System.setProperty(k, v.toString()) }
-            set("sun.net.httpserver.maxReqTime", h.maxRequestSeconds)
+            set("sun.net.httpserver.maxReqTime", h.maxRequestSeconds + Gate.TIMEOUT_GRACE_S)
             set("sun.net.httpserver.idleInterval", h.idleSeconds)
             set("jdk.httpserver.maxConnections", h.maxConnections)
         }

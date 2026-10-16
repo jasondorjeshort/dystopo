@@ -123,7 +123,8 @@ data class ServerConfig(
     /**
      * T82: [maxRequestSeconds] is how long a client may take to send a whole request, headers and body (a
      * slow-header drip holds a worker thread until then; a sync push slower than this is cut off, so behind
-     * a reverse proxy, which buffers requests, it only bounds the proxy's hop); [idleSeconds] closes keep-alive connections nobody uses;
+     * a reverse proxy, which buffers requests, it only bounds the proxy's hop; T111: a body still arriving then is
+     * answered 408 and the connection closed, see [Gate]); [idleSeconds] closes keep-alive connections nobody uses;
      * [maxConnections] caps open connections (beyond it new ones are closed at once). Each sets the matching
      * `sun.net.httpserver` / `jdk.httpserver` system property unless `JAVA_OPTS` already set it.
      */

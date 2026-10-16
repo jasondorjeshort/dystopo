@@ -22,6 +22,11 @@ own view list. Nothing here reads devtool.local.json.
 The sheet (sheet.png, plus sheet.html beside it) puts every PNG the sweep produced on one page: the world
 tour contact sheet, the device tour sheets, the demo, serve and live screenshots, the release smoke views.
 It is rendered with Playwright (already needed by demo-check.py); without it the HTML is still written.
+T111: Chrome captures at most 16,384 px of a page (a taller full-page capture repeats the top and cuts the end:
+the 2026-10-14 sheet was 17,383 px and lost the last demo-tour section), so a page taller than SHEET_MAX_PX gets
+more thumbnail columns (6, then 7, 8, 10, 12; the big world and device tour sheets 2, then 3) and, if that is not
+enough, is rendered at a device scale factor below 1 (fewer pixels for the same layout); `sheetSize` in the summary has the PNG's width and height (read from the file),
+the page height before fitting, the columns and the scale, and `cut` true if the PNG still reached the limit.
 Prints the summary JSON; exit 1 when any part failed, 0 otherwise.
 """
 import argparse
@@ -400,7 +405,7 @@ def write_sheet(d, summary, channel, render):
     doc = ("<!doctype html><meta charset='utf-8'><title>Sweep sheet</title><style>"
            "body{font:13px system-ui,sans-serif;margin:16px;background:#fff;color:#222;width:1568px}"
            "h1{font-size:20px}h2{font-size:15px;margin:18px 0 6px}table{border-collapse:collapse}td{padding:1px 10px 1px 0}"
-           ".grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}.grid.big{grid-template-columns:repeat(2,1fr)}"
+           ".grid{display:grid;grid-template-columns:repeat(var(--cols,6),1fr);gap:6px}.grid.big{grid-template-columns:repeat(var(--bigcols,2),1fr)}"
            "figure{margin:0}img{width:100%;display:block;border:1px solid #ccc}figcaption{font-size:11px;color:#555}"
            f"</style>{head}<table>{rows}</table>{''.join(parts)}")
     html_path = os.path.join(d, "sheet.html")
@@ -419,14 +424,64 @@ def write_sheet(d, summary, channel, render):
             if channel:
                 launch["channel"] = channel
             b = p.chromium.launch(**launch)
+            url = "file:///" + os.path.abspath(html_path).replace(os.sep, "/")
             page = b.new_page(viewport={"width": 1600, "height": 900})
-            page.goto("file:///" + os.path.abspath(html_path).replace(os.sep, "/"), wait_until="load")
+            page.goto(url, wait_until="load")
+            fit = fit_sheet(page)
+            if fit["scale"] < 1:
+                # Still too tall at the most columns: render the same layout with fewer device pixels per CSS pixel
+                # (the capture limit is in device pixels; CSS zoom does not shrink what the full-page capture takes).
+                page.close()
+                page = b.new_page(viewport={"width": 1600, "height": 900}, device_scale_factor=fit["scale"])
+                page.goto(url, wait_until="load")
+                set_columns(page, fit["columns"], fit["bigColumns"])
             page.screenshot(path=png, full_page=True)
             b.close()
     except Exception as e:  # the sheet is a convenience; never fail the sweep over it
         summary["sheetError"] = str(e)[:300]
         return None
+    w, h = png_size(png)
+    summary["sheetSize"] = {"width": w, "height": h, **fit, "cut": h is not None and h >= SHEET_CAPTURE_PX}
     return png
+
+
+# T111: Chrome's full-page capture is at most this tall; a taller page repeats its top and loses its end.
+SHEET_CAPTURE_PX = 16384
+SHEET_MAX_PX = 16000  # what the sheet is fitted to, with room for rounding
+
+
+def set_columns(page, cols, big):
+    page.evaluate("([c, b]) => { document.body.style.setProperty('--cols', c); document.body.style.setProperty('--bigcols', b); }", [cols, big])
+
+
+def fit_sheet(page):
+    """Fits the open sheet page into SHEET_MAX_PX: more thumbnail columns first; if the most columns are still too
+    tall, the device scale factor the caller renders with (`scale`, below 1). Returns the page height before, the
+    columns, the big columns, the scale and the fitted height in CSS pixels."""
+    height = lambda: page.evaluate("() => document.documentElement.scrollHeight")
+    before = height()
+    out = {"pageHeight": before, "columns": 6, "bigColumns": 2, "scale": 1.0}
+    if before <= SHEET_MAX_PX:
+        return out
+    for cols, big in ((7, 2), (8, 2), (10, 3), (12, 3)):
+        set_columns(page, cols, big)
+        out.update(columns=cols, bigColumns=big, fittedHeight=height())
+        if out["fittedHeight"] <= SHEET_MAX_PX:
+            return out
+    out["scale"] = int(SHEET_MAX_PX / out["fittedHeight"] * 1000) / 1000  # rounded down
+    return out
+
+
+def png_size(path):
+    """(width, height) from a PNG's header, or (None, None)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    except OSError:
+        pass
+    return None, None
 
 
 def main():

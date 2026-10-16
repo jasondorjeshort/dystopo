@@ -158,6 +158,68 @@ class OperationsTest {
         assertEquals(2, lines.count { it.contains("/route/edit") && it.contains("\"status\":413") }, lines.filter { it.contains("route/edit") }.joinToString(" | "))
     }
 
+    /**
+     * T111: a request body still arriving at `http.maxRequestSeconds` is answered 408 and counted as a 4xx, not left
+     * unanswered (status `none` in /metrics). The soak's hourly probe sends exactly that (a short body to
+     * `/route/edit`); before, the JDK listener's timer closed the connection without an answer.
+     */
+    @Test
+    fun aBodyStillArrivingAtTheLimitIsAnswered408() {
+        // The listener's own timer is JVM-wide and fixed by the first listener: keep it at the default config's value
+        // (60 + grace) so this test's 2-second limit does not leak into other tests; the gate's limit is per server.
+        if (System.getProperty("sun.net.httpserver.maxReqTime") == null) System.setProperty("sun.net.httpserver.maxReqTime", (60 + Gate.TIMEOUT_GRACE_S).toString())
+        val logFile = File(dir, "logs/server.log")
+        val config = ServerConfig(
+            bind = "127.0.0.1", port = 0, cacheDir = File(dir, "cache").path, outDir = File(dir, "out").apply { mkdirs() }.path, fetchGlyphs = false,
+            shutdownGraceSeconds = 1, log = ServerConfig.LogConfig(file = logFile.path), http = ServerConfig.HttpConfig(maxRequestSeconds = 2),
+        )
+        val log = JsonLog(file = logFile, maxBytes = 1 shl 20, keep = 1)
+        server = Server(config, null, log).also { it.start() }
+        val port = server!!.port
+        fun timed(block: () -> Int): Pair<Int, Long> { val t0 = System.nanoTime(); val s = block(); return s to (System.nanoTime() - t0) / 1_000_000 }
+
+        // The probe's case: 50 bytes declared, 6 sent, then nothing.
+        val (short, shortMs) = timed { rawStatus(port, "POST /route/edit HTTP/1.1\r\nHost: x\r\nContent-Length: 50\r\n\r\n{\"op\":") }
+        assertEquals(408, short)
+        assertTrue(shortMs in 1_500..6_000, "408 after $shortMs ms")
+        // A chunked body that stops after its first chunk.
+        val (chunk, _) = timed { rawStatus(port, "POST /route/edit HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n{\"op\":\r\n") }
+        assertEquals(408, chunk)
+        // A slow body that arrives within the limit is answered by the route (a 400: no path), not cut.
+        val slow = Socket("127.0.0.1", port).use { s ->
+            s.soTimeout = 10_000
+            val body = "{\"op\":\"show\"}"
+            s.getOutputStream().write("POST /route/edit HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.length}\r\n\r\n${body.take(5)}".toByteArray())
+            Thread.sleep(1_000)
+            s.getOutputStream().write(body.drop(5).toByteArray())
+            statusOf(s)
+        }
+        assertEquals(400, slow)
+        // A request without a body is never timed: /healthz answers at once.
+        val client = HttpClient.newHttpClient()
+        assertEquals(200, client.send(HttpRequest.newBuilder(URI("http://127.0.0.1:$port/healthz")).build(), HttpResponse.BodyHandlers.ofString()).statusCode())
+
+        // Counted as 4xx answers of the route group, none unanswered (the gate records the two timed-out requests
+        // once the route's thread gives up on the body, which is when the client closes).
+        var route: Map<*, *>? = null
+        var m: Map<String, Any?> = emptyMap()
+        val until = System.currentTimeMillis() + 15_000
+        while (System.currentTimeMillis() < until) {
+            m = MiniJson.parseObject(client.send(HttpRequest.newBuilder(URI("http://127.0.0.1:$port/metrics")).build(), HttpResponse.BodyHandlers.ofString()).body())
+            route = (m["requests"] as Map<*, *>)["route"] as Map<*, *>?
+            if (route != null && (route["count"] as Number).toLong() >= 3) break
+            Thread.sleep(200)
+        }
+        val status = route!!["status"] as Map<*, *>
+        assertEquals(3L, (status["4xx"] as Number).toLong(), route.toString())
+        assertEquals(0L, (status["none"] as Number).toLong(), route.toString())
+        assertEquals(2L, (m["requestTimeouts"] as Number).toLong())
+        server!!.stop("test")
+        val timedOut = logFile.readLines().filter { it.contains("\"outcome\":\"requestTimeout\"") }
+        assertEquals(2, timedOut.size, timedOut.joinToString(" | "))
+        assertTrue(timedOut.all { it.contains("\"status\":408") && it.contains("\"level\":\"warn\"") }, timedOut.joinToString(" | "))
+    }
+
     private fun rawStatus(port: Int, request: String): Int = Socket("127.0.0.1", port).use { s ->
         s.soTimeout = 10_000
         s.getOutputStream().write(request.toByteArray())

@@ -10,6 +10,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.URI
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * In front of every route: the bearer tokens on `/build`, `/sync` and `/admin`, CORS by allowlist,
@@ -24,6 +26,14 @@ import java.net.URI
  * stay open: the link is the secret. T92: with users configured, `/route` and `/route/...` (route planning,
  * GPX and bundles for the browser) need a known token too (any user, the admin or the T52 token); a server
  * without users keeps them open as before.
+ *
+ * T111: a request whose body is still arriving [requestTimeoutMs] after the gate saw its headers
+ * (`http.maxRequestSeconds`) is answered `408` with `Connection: close`, and the request is counted and logged
+ * as a 408 (`outcome: requestTimeout`). Before, the JDK listener's own request timer closed such a connection
+ * without a word, and `/metrics` counted the request under status `none` (never answered): the hourly soak
+ * probe's short body to `/route/edit` was one such request an hour (finding
+ * `docs/findings/2026-10-16-soak-route-requests-without-status.md`). The listener's timer still bounds the
+ * headers; [Server.applyHttpLimits] sets it [TIMEOUT_GRACE_S] later, so the 408 goes out first.
  */
 class Gate(
     val users: Users,
@@ -34,10 +44,23 @@ class Gate(
     private val metrics: Metrics? = null,
     /** T82: the relay's own blob cap (`relay.maxBlobBytes`); its bodies may be that large and no larger. */
     private val relayMaxBody: Long = 16L shl 20,
+    /** T111: a body still arriving this long after the headers gets a 408 (`http.maxRequestSeconds`); 0: never. */
+    private val requestTimeoutMs: Long = 0,
 ) : Filter() {
     /** The T52 form: one token (or none) for everything. */
     constructor(token: String?, corsOrigins: List<String>, log: JsonLog, logRequests: Boolean) :
         this(Users(legacyToken = token?.trim()?.takeIf { it.isNotEmpty() }), corsOrigins, log, logRequests)
+
+    /** T111: one daemon thread that answers 408 to the bodies still arriving at [requestTimeoutMs]. */
+    private val timer: ScheduledThreadPoolExecutor? = if (requestTimeoutMs > 0) {
+        ScheduledThreadPoolExecutor(1) { r -> Thread(r, "request-timeout").apply { isDaemon = true } }.apply { removeOnCancelPolicy = true }
+    } else null
+
+    /** T111: requests answered 408 because their body was still arriving at [requestTimeoutMs]. */
+    val requestTimeouts = java.util.concurrent.atomic.AtomicLong()
+
+    /** Stops the request timer (the server is stopping). */
+    fun close() { timer?.shutdownNow() }
 
     private val anyOrigin = "*" in corsOrigins
     private val origins = corsOrigins.filter { it != "*" }.map { it.trimEnd('/').lowercase() }.toSet()
@@ -88,10 +111,15 @@ class Gate(
         val origin = raw.requestHeaders.getFirst("Origin")
         val path = raw.requestURI.path
         val cap = maxBody(path, relayMaxBody)
-        val ex = Exchange(raw, allowOrigin(origin), origin != null && origins.isNotEmpty() && !anyOrigin, cap)
+        val declared = raw.requestHeaders.getFirst("Content-Length")?.trim()
+        val ex = Exchange(raw, allowOrigin(origin), origin != null && origins.isNotEmpty() && !anyOrigin, cap, declared?.toLongOrNull())
         var outcome: String? = null
+        // T111: a request with a body (declared or chunked) gets a 408 if the body is still arriving at the deadline.
+        val chunked = raw.requestHeaders.getFirst("Transfer-Encoding")?.contains("chunked", ignoreCase = true) == true
+        val deadline = timer?.takeIf { (declared?.toLongOrNull() ?: 0L) > 0 || chunked }?.let { t ->
+            runCatching { t.schedule({ if (ex.timeOut(requestTimeoutMs)) requestTimeouts.incrementAndGet() }, requestTimeoutMs, TimeUnit.MILLISECONDS) }.getOrNull()
+        }
         try {
-            val declared = raw.requestHeaders.getFirst("Content-Length")?.trim()
             when {
                 // T82: a body over the route's cap is refused before any route reads it; a chunked body (no
                 // Content-Length) is cut off at the cap while the route reads it (BodyTooLarge: a 413 below, or
@@ -121,6 +149,12 @@ class Gate(
             }
         } catch (e: Throwable) {
             when {
+                ex.timedOut -> {
+                    // T111: answered 408 while the route waited for the body; the route then failed reading it or
+                    // answering. The 408 is the answer; closing the exchange lets the listener close the connection.
+                    outcome = "requestTimeout"
+                    runCatching { raw.close() }
+                }
                 e is BodyTooLarge || ex.bodyCapHit -> {
                     // Over the cap while a route read it (or the route caught that and failed its own way): a 413.
                     outcome = "tooLarge"
@@ -140,10 +174,15 @@ class Gate(
                 }
             }
         } finally {
+            deadline?.cancel(false)
+            if (ex.timedOut && outcome == null) {
+                outcome = "requestTimeout" // the route returned without noticing; close the exchange it left open
+                runCatching { raw.close() }
+            }
             val status = ex.status
             val ms = (System.nanoTime() - started) / 1e6
             metrics?.request(path, status, ms, ex.length)
-            if (logRequests || status >= 500 || outcome == "unauthorized" || outcome == "refused" || outcome == "tooLarge") {
+            if (logRequests || status >= 500 || outcome == "unauthorized" || outcome == "refused" || outcome == "tooLarge" || outcome == "requestTimeout") {
                 val fields = linkedMapOf<String, Any?>(
                     "method" to raw.requestMethod, "path" to logPath(path), "status" to status,
                     "ms" to Math.round(ms * 10) / 10.0,
@@ -154,7 +193,7 @@ class Gate(
                 outcome?.let { fields["outcome"] = it }
                 when {
                     status >= 500 -> log.error("request", fields)
-                    status == 401 || status == 403 || status == 413 || status == 429 -> log.warn("request", fields)
+                    status == 401 || status == 403 || status == 408 || status == 413 || status == 429 -> log.warn("request", fields)
                     else -> log.info("request", fields)
                 }
             }
@@ -165,13 +204,50 @@ class Gate(
      * The request's exchange with CORS fixed up at send time, and the status and length recorded for
      * the log. Everything else goes straight to [inner].
      */
-    private class Exchange(private val inner: HttpExchange, private val allow: String?, private val vary: Boolean, private val cap: Long) : HttpExchange() {
+    private class Exchange(
+        private val inner: HttpExchange, private val allow: String?, private val vary: Boolean, private val cap: Long,
+        /** The declared `Content-Length` (null: none, or chunked). */
+        private val declared: Long?,
+    ) : HttpExchange() {
         @Volatile var status = 0
         @Volatile var length = -1L
         @Volatile var bodyCapHit = false
-        private val body: InputStream by lazy { CappedInput(inner.requestBody, cap) { bodyCapHit = true } }
+        /** T111: the whole request body has been read (end of stream, or the declared length). */
+        @Volatile var bodyDone = false
+        /** T111: answered 408 by [timeOut]; nothing else may answer. */
+        @Volatile var timedOut = false
+        /** T111: one answer at a time: the route's and the request timer's (which runs on another thread). */
+        private val answer = Any()
+        private val body: InputStream by lazy { CappedInput(inner.requestBody, cap, declared, { bodyCapHit = true }, { bodyDone = true }) }
 
-        override fun sendResponseHeaders(code: Int, responseLength: Long) {
+        /**
+         * T111: answers 408 with `Connection: close` when no answer has started and the body is still arriving;
+         * true when it did. Runs on the request timer's thread while the route's thread waits for the body: the
+         * answer is written and flushed but the exchange is not closed here (closing reads the rest of the body,
+         * which would wait for the client). The route's thread then wakes when the client goes or the listener
+         * closes the connection, and the gate closes the exchange.
+         */
+        fun timeOut(afterMs: Long): Boolean = synchronized(answer) {
+            if (status != 0 || bodyDone || timedOut) return false
+            timedOut = true
+            runCatching {
+                val msg = "the request body did not arrive within ${afterMs / 1000} s"
+                val bytes = (JsonWriter.write(mapOf("error" to msg, "status" to 408)) + "\n").toByteArray()
+                inner.responseHeaders.set("Content-Type", "application/json")
+                inner.responseHeaders.set("Connection", "close")
+                send(408, bytes.size.toLong())
+                inner.responseBody.write(bytes)
+                inner.responseBody.flush()
+            }
+            true
+        }
+
+        override fun sendResponseHeaders(code: Int, responseLength: Long) = synchronized(answer) {
+            if (timedOut) throw java.io.IOException("the request timed out and was answered 408")
+            send(code, responseLength)
+        }
+
+        private fun send(code: Int, responseLength: Long) {
             // T82: a route that caught the cap's exception answers with its generic 500; the client is told 413.
             val rCode = if (bodyCapHit && code >= 500) 413 else code
             val h = inner.responseHeaders
@@ -223,17 +299,24 @@ class Gate(
     /** T82: thrown by a capped request body once more than the route's cap has been read. */
     class BodyTooLarge(cap: Long) : java.io.IOException("request body larger than $cap bytes")
 
-    /** Reads at most [cap] bytes of [inner]; one more is a [BodyTooLarge]. */
-    private class CappedInput(private val inner: InputStream, private val cap: Long, private val onHit: () -> Unit) : InputStream() {
+    /**
+     * Reads at most [cap] bytes of [inner]; one more is a [BodyTooLarge]. T111: [onDone] once the end of the stream
+     * or the [declared] length has been read.
+     */
+    private class CappedInput(
+        private val inner: InputStream, private val cap: Long, private val declared: Long?,
+        private val onHit: () -> Unit, private val onDone: () -> Unit,
+    ) : InputStream() {
         private var read = 0L
         private fun count(n: Int): Int {
             if (n > 0) {
                 read += n
                 if (read > cap) { onHit(); throw BodyTooLarge(cap) }
-            }
+                if (declared != null && read >= declared) onDone()
+            } else if (n < 0) onDone()
             return n
         }
-        override fun read(): Int = inner.read().also { if (it >= 0) count(1) }
+        override fun read(): Int = inner.read().also { count(if (it >= 0) 1 else -1) }
         override fun read(b: ByteArray, off: Int, len: Int): Int =
             if (len == 0) 0 else count(inner.read(b, off, minOf(len.toLong(), cap + 1 - read).toInt()))
         override fun available(): Int = inner.available()
@@ -250,6 +333,12 @@ class Gate(
             path.startsWith("/sync/share/") && path.length > "/sync/share/".length -> "/sync/share/…"
             else -> path
         }
+
+        /**
+         * T111: the listener's own request timer (`sun.net.httpserver.maxReqTime`) is set this much later than the
+         * gate's 408, so a body still arriving gets the answer before the listener closes the connection.
+         */
+        const val TIMEOUT_GRACE_S = 5
 
         /** T82: the sync peer takes bundles up to 256 MiB (SyncRoutes), everything else far less. */
         const val SYNC_MAX_BODY = 256L shl 20

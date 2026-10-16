@@ -36,6 +36,8 @@ T92: --trip-sync (live mode, with --route) checks waypoint editing and the pull 
 (tools/demo/trip-sync.js: check_trip_sync); --token types a server's bearer token into the page's Server token field.
 T107: --late-trips Z/LAT/LON (live mode) holds trips.js back and releases it while the style is loading tiles elsewhere,
 then checks the editor's layers went in anyway (late_trips; with --route after it, the route line must draw).
+T111: --route also checks the Trips card's turn directions (check_directions: the count, the first five lines, "Show N
+more" unfolds the rest; `route.directions` in the JSON, `<out>-route-directions.png` while unfolded).
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -205,12 +207,59 @@ def late_trips(page, hold, jump, timeout):
     return out
 
 
+def check_directions(page, shot):
+    """T111: the Trips card's turn directions (T102's `instructions`, from the server's reply): the count in the title,
+    the first five lines with the server's texts, a real click on "Show N more" lists every one and a second click
+    ("Show fewer") folds them again; screenshot `<shot stem>-directions<ext>` while unfolded. Returns (ok, report)."""
+    page.evaluate(OPEN_TRIPS_JS)
+    d = page.evaluate("() => window.dystopoTrips.state().directions")
+    crow = page.evaluate("() => window.dystopoTrips.state().route.mode") == "crow"
+    lines = lambda: page.locator("#trip-dirs-list li").all_inner_texts()
+    first = lines()
+    shown, texts = d["shown"], d["texts"]
+    rep = {"count": d["count"], "shown": shown, "title": page.inner_text("#trip-dirs-title"), "listed": len(first), "first": first[:5]}
+    problems = []
+    if shown < (1 if crow else 2):  # T108: a crow route has its via points and the arrival only
+        problems.append("too few directions: %d (a route has at least its start and its arrival; crow its arrival)" % shown)
+    if not rep["title"].startswith(str(shown)):
+        problems.append("title %r does not give the count %d" % (rep["title"], shown))
+    if len(first) != min(5, shown):
+        problems.append("%d lines listed folded, want %d" % (len(first), min(5, shown)))
+    if any(not line.startswith(t) for line, t in zip(first, texts)):
+        problems.append("listed lines differ from the server's texts")
+    if texts and not texts[-1].startswith("Arrive"):
+        problems.append("the last direction is not the arrival: %r" % texts[-1])
+    if shown > 5:
+        more = page.locator("#trip-dirs-more")
+        rep["more"] = more.inner_text()
+        if rep["more"] != "Show %d more" % (shown - 5):
+            problems.append("button says %r" % rep["more"])
+        more.click()
+        page.wait_for_timeout(200)
+        unfolded = lines()
+        rep.update(unfolded=len(unfolded), last=unfolded[-1] if unfolded else None)
+        if len(unfolded) != shown or any(not line.startswith(t) for line, t in zip(unfolded, texts)):
+            problems.append("unfolded %d lines, want the %d shown" % (len(unfolded), shown))
+        page.locator("#trip-dirs-more").scroll_into_view_if_needed()
+        stem, ext = os.path.splitext(shot)
+        rep["screenshot"] = stem + "-directions" + ext
+        page.screenshot(path=rep["screenshot"])
+        page.locator("#trip-dirs-more").click()  # "Show fewer"
+        page.wait_for_timeout(100)
+        rep["refolded"] = len(lines())
+        if rep["refolded"] != 5:
+            problems.append("%d lines after folding again, want 5" % rep["refolded"])
+    rep["problems"] = problems
+    return not problems, rep
+
+
 def check_route(page, spec, shot, timeout, mode=""):
     """T68: drive the trip editor (tools/demo/trips.js, live mode) with the real mouse. `spec` is
     `lat,lon;lat,lon[;lat,lon]`: click the start and the end with "Plan route" on, wait for the route, click the
     middle of the route to add a via point, drag that point's marker to the third place (default: 300 m east of
-    where it was), check the route was rerouted, export GPX, "Save as trip" (into the browser replica and on to the
-    server's sync peer), and screenshot `shot`. Returns a report with `ok`."""
+    where it was), check the route was rerouted, T111: check the card's turn directions (check_directions), export
+    GPX, "Save as trip" (into the browser replica and on to the server's sync peer), and screenshot `shot`. Returns a
+    report with `ok`."""
     pts = [tuple(float(v) for v in p.split(",")) for p in spec.split(";") if p.strip()]
     out = {"ok": False, "spec": spec, "screenshot": shot, "steps": []}
     step = lambda name, **kw: out["steps"].append({"step": name, **kw})
@@ -238,6 +287,14 @@ def check_route(page, spec, shot, timeout, mode=""):
              cardNotes=page.inner_text("#trip-notes"), summary=r["summary"])
         if mode and r.get("mode") != mode:
             raise RuntimeError("planned in %s, not %s" % (r.get("mode"), mode))
+        if mode == "crow":  # T111: T108's straight line, said under the select and on the card
+            crow = page.evaluate("() => ({ note: document.getElementById('trip-mode-note').hidden ? null : document.getElementById('trip-mode-note').textContent })")
+            bearing = page.evaluate("() => window.dystopoTrips.state().bearing")
+            want = "Bearing %d\u00b0" % r["summary"]["bearings"][0]["bearingDeg"] if r["summary"].get("bearings") else None
+            step("crow", legs=r["legs"], modeNote=crow["note"], notice=r.get("notice"), bearing=bearing)
+            if set(r["legs"]) != {"straight"} or not crow["note"] or r.get("notice") != crow["note"] \
+                    or not want or not (bearing or "").startswith(want):
+                raise RuntimeError("crow: legs %s, note under the select %r, the route's notice %r, bearing %r (want %r)" % (r["legs"], crow["note"], r.get("notice"), bearing, want))
         out["planned"] = r["summary"]
         # T107: the box's distances follow the phone's rule (T101).
         wrong = page.evaluate(DISTANCE_JS, [list(c) for c in DISTANCE_CASES])
@@ -266,6 +323,9 @@ def check_route(page, spec, shot, timeout, mode=""):
         rerouted = after["path"] != before["path"] and moved > 50
         step("drag via", movedM=round(moved), legs=after["legs"], notes=after["notes"], distanceM=after["summary"]["distanceM"], rerouted=rerouted)
         out["dragged"] = after["summary"]
+        # T111: the card lists T102's directions: the first five and a count, the rest unfolded by a click on "Show N more".
+        dirs_ok, dirs = check_directions(page, shot)
+        step("directions", **dirs)
         gpx = page.evaluate("() => window.dystopoTrips.gpx(false)")
         gpx_ok = gpx.startswith("<?xml") and "<rte>" in gpx and gpx.count("<rtept") >= after["summary"]["points"]
         step("gpx", bytes=len(gpx), rtept=gpx.count("<rtept"), ok=gpx_ok)
@@ -282,7 +342,8 @@ def check_route(page, spec, shot, timeout, mode=""):
         page.screenshot(path=shot)
         layers = page.evaluate("() => ({ line: map.queryRenderedFeatures({ layers: ['trip-line', 'trip-straight'] }).length, markers: document.querySelectorAll('.trip-via').length })")
         step("drawn", **layers)
-        out["ok"] = bool(r["legs"]) and len(via) >= 3 and rerouted and gpx_ok and push.get("ok") and layers["line"] > 0 and layers["markers"] == len(after["via"])
+        out["directions"] = dirs
+        out["ok"] = bool(r["legs"]) and len(via) >= 3 and rerouted and gpx_ok and push.get("ok") and layers["line"] > 0 and layers["markers"] == len(after["via"]) and dirs_ok
     except Exception as e:  # report, do not crash the tour
         out["error"] = str(e)[:500]
         try:
@@ -511,7 +572,7 @@ def main() -> int:
                     help="when a view is not idle after --timeout, jump to it again and wait again, this many times (default 1); "
                          "each miss is listed under notIdle, and a view that never goes idle still fails")
     ap.add_argument("--channel", default="chrome", help="playwright browser channel; use '' for bundled chromium")
-    ap.add_argument("--route-mode", default="", choices=["", "hike", "bike", "drive"], help="T73: the trip editor's mode for --route (default: the page's, hike)")
+    ap.add_argument("--route-mode", default="", choices=["", "hike", "bike", "drive", "crow"], help="T73: the trip editor's mode for --route (default: the page's, hike; T111: crow, T108's straight line)")
     ap.add_argument("--long-route", default="", help="T77, live mode: after the views (and --route), plan lat,lon;lat,lon in the trip editor "
                     "(--route-mode, default drive) and check it follows the network across at least --long-route-packs packs in under --long-route-ms (check_long_route)")
     ap.add_argument("--long-route-ms", type=int, default=10000, help="T77: the server's time limit for --long-route, ms (default 10000)")

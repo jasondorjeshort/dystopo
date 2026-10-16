@@ -14,8 +14,9 @@
 // distance, climb, the time and the elevation profile (hover it to see the place on the map). The time is the server's
 // summary: the hike or bike model, and for a drive (T89) the router's own sum of each road's time, the number the phone's
 // route and trip cards and `devtool route` show for the same drive.
-// Mode drive (T73) follows the packs' roads (one-ways, roads closed to cars) to and between trailheads; the card says
-// it is not a road navigator, and a pack built before the road data says it must be rebuilt (the server's messages).
+// Mode drive (T73) follows the packs' roads (one-ways, roads closed to cars) to and between trailheads; the card shows
+// the server's drive notice (`notice`, Router.DRIVE_NOTICE, ADR 0032), and a pack built before the road data says it
+// must be rebuilt (the server's messages).
 //
 // "Save trip" writes the route into this browser's own sync replica: an operation log in localStorage
 // (dystopo.trips: a device id, a hybrid logical clock and route ops, the same put + path + waypoints ops the phone
@@ -25,6 +26,11 @@
 // browser only; "Send to server" retries, ".dsync file" saves the same bundle as a file the phone can sync with. A phone syncing
 // with the server then has the trip in its Routes list.
 //
+// Directions (T111, from T102): the card lists the route's turn directions as the phone's route card does: the server's
+// `instructions` (in /route and every /route/edit reply, `show` included) at the default detail level (priority 1 and 2,
+// `Directions.shown` in shared/.../routing/Directions.kt), each with the distance to the next one shown in the page's
+// units; the first five and a count, the rest unfolded by "Show N more".
+//
 // Long drives (T77): the server plans across every pack near the route, searching the tiles away from the ends through
 // its drive overlay; the card then says how many packs the route crossed and how long the server took
 // (`longRoute` in state(); T89: `level2Tiles`, the z8 overlay cells the searches went through). Before navigating such a route offline the phone downloads its corridor (T75).
@@ -32,6 +38,9 @@
 // window.dystopoTrips is the scripting surface (tools/demo-check.py --route and --long-route drive the real mouse and read it).
 
 const KEY = "dystopo.trips";
+// T111: the line under the mode picker when crow is chosen: TravelMode.CROW_NOTICE in shared/.../routing/Router.kt
+// (BrowserTripsTextTest keeps the two equal; the server also sends it as the crow route's `notice`).
+const CROW_NOTICE = "A crow route is a straight line between the points, not a path to walk.";
 
 function uuid4() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -75,6 +84,10 @@ export function distanceText(m, metric) {
   return v.toFixed(digits(v, 1, 100)) + " mi";
 }
 
+// T111: the eight compass words of Directions.compass in shared/.../routing/Directions.kt (keep the two in step).
+const COMPASS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+export function compass(deg) { return COMPASS[Math.floor((((deg % 360) + 360) % 360 + 22.5) / 45) % 8]; }
+
 export function install({ map, base, units, panel, token }) {
   const metric = units === "m";
   const fmtDist = m => distanceText(m, metric);
@@ -110,6 +123,10 @@ export function install({ map, base, units, panel, token }) {
     #trip-card svg { display: block; width: 100%; height: 80px; background: #fffaf0; border: 1px solid #e0d6c4; border-radius: 4px; }
     #trip-card .readout { font-size: 11px; color: #6b5f55; min-height: 1.2em; }
     #trip-card .notes { font-size: 11px; color: #9a4a12; }
+    #trip-dirs[hidden] { display: none; }
+    #trip-dirs h4 { font-size: 12px; font-weight: 600; margin: 6px 0 2px; }
+    #trip-dirs ol { margin: 0 0 2px; padding-left: 22px; font-size: 12px; }
+    #trip-dirs li { margin: 1px 0; } #trip-dirs li .then { margin-left: 6px; color: #6b5f55; white-space: nowrap; }
     .trip-via { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); color: #fff;
                 font: bold 11px/20px system-ui, sans-serif; text-align: center; cursor: grab; background: #e8590c; }
     .trip-via.start { background: #2e7d32; } .trip-via.end { background: #b0281c; }
@@ -122,16 +139,19 @@ export function install({ map, base, units, panel, token }) {
   box.id = "trips";
   box.innerHTML = `<summary>Trips</summary>
     <div class="row"><button id="trip-plan" type="button" aria-pressed="false">Plan a route</button>
-      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option></select></label></div>
+      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Crow</option></select></label></div>
+    <div class="hint" id="trip-mode-note" hidden>${CROW_NOTICE}</div>
     <div class="hint">Click the start, then the end. Click again to add a stop; drag a numbered point to move it, right-click it to remove it.</div>
     <div id="trip-status" role="status"></div>
     <section id="trip-card" hidden>
       <input id="trip-name" placeholder="Trip name" value="Route" aria-label="Trip name">
       <div class="stats"><span>Distance <b id="trip-dist"></b></span><span>Time <b id="trip-time"></b></span>
         <span>Climb <b id="trip-up"></b></span><span>Descent <b id="trip-down"></b></span></div>
+      <div class="hint" id="trip-bearing" hidden></div>
       <div class="notes" id="trip-notes"></div>
       <svg id="trip-profile" viewBox="0 0 280 80" preserveAspectRatio="none" aria-label="Elevation profile"></svg>
       <div class="readout" id="trip-readout"></div>
+      <section id="trip-dirs" hidden><h4 id="trip-dirs-title"></h4><ol id="trip-dirs-list"></ol><button id="trip-dirs-more" type="button" hidden></button></section>
       <div class="row"><button id="trip-save" type="button">Save trip</button><button id="trip-gpx" type="button" title="Download the route as a GPX file">GPX file</button><button id="trip-clear" type="button" title="Remove the route from the map (a saved trip stays saved)">Clear</button></div>
       <div id="trip-extra"></div>
     </section>
@@ -184,7 +204,7 @@ export function install({ map, base, units, panel, token }) {
   const setLine = fc => { drawn = fc; const s = map.getSource("trip"); if (s) s.setData(fc); else addLayers("draw"); };
 
   // ---- State -------------------------------------------------------------------------------------------------
-  const st = { planning: false, mode: "hike", pending: [], reply: null, id: null, edits: 0, error: null, busy: 0, lastPush: null, lastGpx: null, savedPath: null };
+  const st = { planning: false, mode: "hike", pending: [], reply: null, id: null, edits: 0, error: null, busy: 0, lastPush: null, lastGpx: null, savedPath: null, dirsOpen: false };
   let markers = [];
   let queue = Promise.resolve();
   // Requests run one after another, each on the newest path (a quick second drag must not edit a stale route).
@@ -214,20 +234,26 @@ export function install({ map, base, units, panel, token }) {
     $("trip-up").textContent = signed("+", s.ascentM);
     $("trip-down").textContent = signed("−", s.descentM);
     const notes = [];
-    if (s.straightM > 0) notes.push(fmtDist(s.straightM) + (reply.mode === "drive" ? " off road (dashed)" : " off trail (dashed)"));
+    // T111: a crow route is straight by definition (T108); its notice says so instead of an "off trail" count.
+    if (s.straightM > 0 && reply.mode !== "crow") notes.push(fmtDist(s.straightM) + (reply.mode === "drive" ? " off road (dashed)" : " off trail (dashed)"));
     if (reply.notes.includes("no_graph")) notes.push("No trail data here: straight lines");
     if (!reply.pack) notes.push("Outside every pack");
     const msgs = reply.messages || {};
     if (msgs.drive_unsupported) notes.push(msgs.drive_unsupported); // T73: the pack predates the road data
     else if (reply.mode === "drive" && reply.notes.length) for (const n of reply.notes) if (msgs[n]) notes.push(msgs[n]);
-    if (reply.notice) notes.push(reply.notice);
+    if (reply.notice && reply.mode !== "crow") notes.push(reply.notice); // T111: crow's is the line under the select
     const long = longRoute(reply);
     if (long && (long.packs.length > 1 || long.overlayTiles > 0)) // T77: a long route across packs
       notes.push("Planned across " + long.packs.length + (long.packs.length === 1 ? " pack" : " packs") + " (" + long.packs.join(", ") + ") in " +
                  (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? "; " + long.overlayTiles + " tiles through the drive overlay" : "") +
                  (long.level2Tiles ? ", " + long.level2Tiles + " z8 cells" : ""));
     $("trip-notes").textContent = notes.join("; ");
+    // T111: a crow route's bearing, as the phone's route card has it (T108), one per leg from the server's summary.
+    const bearings = reply.mode === "crow" ? (s.bearings || []).map(b => b.bearingDeg + "\u00b0 (" + compass(b.bearingDeg) + ")") : [];
+    $("trip-bearing").hidden = !bearings.length;
+    $("trip-bearing").textContent = (bearings.length === 1 ? "Bearing " : "Bearings ") + bearings.join(", ");
     drawProfile(s.profile);
+    drawDirections(reply);
     card.hidden = false;
     if (fit) {
       const b = new maplibregl.LngLatBounds();
@@ -266,6 +292,36 @@ export function install({ map, base, units, panel, token }) {
       return m;
     });
   }
+
+  // T111: the turn directions (T102's `instructions`) at the default detail level, each with the distance to the next
+  // one shown (a port of Directions.shown: keep the two in step), the first DIRS_FIRST and a count, the rest on click.
+  const DIRS_FIRST = 5;
+  function shownDirections(list) {
+    const s = (list || []).filter(i => (i.priority == null ? 2 : i.priority) <= 2);
+    return s.map((i, k) => ({ ...i, stretchM: k + 1 < s.length ? s[k + 1].alongM - i.alongM : 0 }));
+  }
+  function drawDirections(reply) {
+    const shown = shownDirections(reply.instructions);
+    $("trip-dirs").hidden = shown.length === 0;
+    $("trip-dirs-title").textContent = shown.length === 1 ? "1 direction" : shown.length + " directions";
+    const ol = $("trip-dirs-list");
+    ol.innerHTML = "";
+    for (const i of shown.slice(0, st.dirsOpen ? shown.length : DIRS_FIRST)) {
+      const li = document.createElement("li");
+      li.textContent = i.text;
+      if (i.stretchM > 0) {
+        const then = document.createElement("span");
+        then.className = "then";
+        then.textContent = " " + fmtDist(i.stretchM);
+        li.append(then);
+      }
+      ol.appendChild(li);
+    }
+    const more = $("trip-dirs-more"), rest = shown.length - DIRS_FIRST;
+    more.hidden = rest <= 0;
+    more.textContent = st.dirsOpen ? "Show fewer" : "Show " + rest + " more";
+  }
+  $("trip-dirs-more").addEventListener("click", () => { st.dirsOpen = !st.dirsOpen; if (st.reply) drawDirections(st.reply); });
 
   let profileGeo = null; // cumulative distance along the drawn route, for the hover readout
   function drawProfile(profile) {
@@ -340,7 +396,9 @@ export function install({ map, base, units, panel, token }) {
       if (st.reply && st.reply.via.length <= 2) { say("A route needs a start and an end; Clear removes the whole route."); drawMarkers(st.reply.via); return queue; }
       return edit({ op: "remove", index });
     },
-    setMode(mode) { st.mode = mode; $("trip-mode").value = mode; return st.reply ? edit({ op: "mode", mode }) : queue; },
+    setMode(mode) { st.mode = mode; $("trip-mode").value = mode; showModeNote(); return st.reply ? edit({ op: "mode", mode }) : queue; },
+    // T111: unfold (true) or fold (false) the card's directions list, as "Show N more" and "Show fewer" do.
+    directions(open = !st.dirsOpen) { st.dirsOpen = !!open; if (st.reply) drawDirections(st.reply); return api.state().directions; },
     clear() {
       st.reply = null; st.pending = []; st.id = null; st.savedPath = null;
       drawMarkers([]);
@@ -403,7 +461,7 @@ export function install({ map, base, units, panel, token }) {
       if (!t) return Promise.reject(new Error("no trip " + id));
       return enqueue(async () => {
         const j = await call(postJson("/route/edit", { path: t.path, op: "show", pack: t.pack }));
-        st.id = id; st.savedPath = t.path; st.mode = j.mode; $("trip-mode").value = j.mode; $("trip-name").value = t.name;
+        st.id = id; st.savedPath = t.path; st.mode = j.mode; $("trip-mode").value = j.mode; showModeNote(); $("trip-name").value = t.name;
         show(j, true);
         return j;
       });
@@ -446,9 +504,13 @@ export function install({ map, base, units, panel, token }) {
     state: () => ({
       planning: st.planning, mode: st.mode, pending: st.pending.length, id: st.id, edits: st.edits, busy: st.busy, error: st.error, layers: layersAt,
       saved: !!st.id && st.savedPath === (st.reply && st.reply.path), lastPush: st.lastPush,
+      bearing: $("trip-bearing").hidden ? null : $("trip-bearing").textContent, // T111: crow only
       route: st.reply && { pack: st.reply.pack, via: st.reply.via, legs: st.reply.legs.map(l => l.kind), notes: st.reply.notes, messages: st.reply.messages, notice: st.reply.notice, mode: st.reply.mode, path: st.reply.path,
                            summary: Object.fromEntries(Object.entries(st.reply.summary).filter(([k]) => k !== "profile")), profileSamples: st.reply.summary.profile.length,
                            middle: middle(st.reply), longRoute: longRoute(st.reply) },
+      // T111: the reply's directions (every priority), those the card counts (the default level), the lines listed now.
+      directions: st.reply && { count: (st.reply.instructions || []).length, shown: shownDirections(st.reply.instructions).length, open: st.dirsOpen,
+                                listed: document.querySelectorAll("#trip-dirs-list li").length, texts: shownDirections(st.reply.instructions).map(i => i.text) },
       markers: markers.map(m => { const p = m.getLngLat(); return [p.lat, p.lng]; }),
     }),
   };
@@ -488,6 +550,9 @@ export function install({ map, base, units, panel, token }) {
     }
     if (!ul.children.length) ul.innerHTML = "<li><span>No saved trips yet.</span></li>";
   }
+
+  // T111: crow (T108) says under the select what it is, as the phone's mode picker does.
+  function showModeNote() { $("trip-mode-note").hidden = $("trip-mode").value !== "crow"; }
 
   // ---- Wiring --------------------------------------------------------------------------------------------------
   const setPlanning = on => {

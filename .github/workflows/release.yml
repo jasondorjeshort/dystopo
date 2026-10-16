@@ -1,8 +1,9 @@
 # Release (T62). On a v* tag: the per-ABI release APKs (signed with the release key from repository
 # secrets when they are set, else with a throwaway debug key and labelled so), the server and devtool
-# distributions as zips, NOTICES.md regenerated from the licence reports, the world tour contact sheet
-# rendered here (z9, from the network) and the device tour sheet committed under docs/images, all
-# attached to a DRAFT GitHub release. Publishing the draft is a person's decision.
+# distributions as zips, NOTICES.md regenerated from the licence reports and the world tour contact sheet
+# rendered here (z9, from the network), all attached to a DRAFT GitHub release. Publishing the draft is a
+# person's decision. T111: no emulator runs here, so the release has no device tour sheet (the static copy
+# from docs/images was the same PNG in v0.1.6 and v0.1.7); the notes point at the one in the repository.
 #
 # Secrets (all optional, all four together): RELEASE_KEYSTORE_B64 (base64 of a PKCS12 keystore),
 # RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD. Make the keystore with the keytool
@@ -90,9 +91,6 @@ jobs:
           (cd server/build/install && zip -qr "../../../out/release/dystopo-server-$TAG.zip" server)
           (cd devtool/build/install && zip -qr "../../../out/release/dystopo-devtool-$TAG.zip" devtool)
           python3 tools/notices.py --out out/release/NOTICES.md
-          if [ -f docs/images/android-tour-sheet.png ]; then
-            cp docs/images/android-tour-sheet.png "out/release/dystopo-$TAG-device-tour.png"
-          fi
           # T83: what the app's update check reads without unpacking the APK: the tag, the versionCode the build
           # got (the commit count, as above) and the universal APK's SHA-256 (also in SHA256SUMS.txt; they must agree).
           universal="out/release/dystopo-$TAG-universal$suffix.apk"
@@ -138,9 +136,7 @@ jobs:
             echo "- \`dystopo-devtool-$TAG.zip\`: the command-line tool (\`bin/devtool\`; Java 21), run from a checkout of the repo."
             echo "- \`NOTICES.md\`: third-party licences; \`SHA256SUMS.txt\`: checksums; \`version.json\`: tag, versionCode and the universal APK's checksum (the app's update check reads it)."
             echo "- \`dystopo-$TAG-world-tour.png\`: world tour contact sheet rendered by this workflow (z9; exit status ${TOUR_STATUS:-not run})."
-            if [ -f "out/release/dystopo-$TAG-device-tour.png" ]; then
-              echo "- \`dystopo-$TAG-device-tour.png\`: device tour contact sheet from an emulator (committed in docs/images)."
-            fi
+            echo "- Device tour: no emulator runs in this workflow, so there is no device tour sheet here; the tour sheets are in the repository ([docs/images/android-tour-sheet.png](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/images/android-tour-sheet.png), from the last device tour committed)."
             echo
             echo "Changes: see CHANGELOG.md. Code: GPL-3.0; map data keeps its sources' licences (NOTICES.md)."
           } > out/release-notes.md
