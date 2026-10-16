@@ -16,8 +16,8 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
   budget (5582; 8710 to 8712). No PR yet.
 - Coordinator's servers run from the main checkout (started this session): live viewer 8765 and
   standalone server 8800, PIDs in `out/coordinator-pids.txt`. The T107 soak is archived in `out/soak-T107`
-  and its folder removed; its one oddity is the open finding below (T111's item 1).
-- Checked: the exec-form status line writes `~/.claude/usage-state.json`; the expired gate override was deleted.
+  and its folder removed; its one oddity is the open finding below (T111's item 1). The exec-form status
+  line writes `~/.claude/usage-state.json`; the expired gate override file was deleted.
 - Harmless leftovers: local branches `T104-verify`, `t107-slope-scratch`, `task/T87-ci`; the locked empty `dystopo-wt\T85`.
 
 ## Next
