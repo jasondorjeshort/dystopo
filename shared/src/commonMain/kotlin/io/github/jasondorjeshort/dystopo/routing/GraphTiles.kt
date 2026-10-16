@@ -195,7 +195,7 @@ object GraphTiler {
  * into tiles ([GraphTiler]) behind a small directory, so a reader loads only the tiles a route touches.
  *
  * ```
- * "DYSG" u8 version(=4) u32 headerLength          (bytes from here to the end of the header checksum)
+ * "DYSG" u8 version(=6) u32 headerLength          (bytes from here to the end of the header checksum)
  * str sourceFile, str fingerprint, str demFingerprint, u8 sourceZoom, u64 builtAtMs, u8 tileZoom,
  * u8 capabilities (1: drive, [GraphSource.drive]; version 4, T73)
  * varint tileCount, per tile (rows north to south, west to east):
@@ -211,12 +211,14 @@ object GraphTiler {
  * parts at once ([RoutingGraph.footComponent]).
  * Edge flags carry the T73 drive bits ([WayAttrs.ONEWAY], [WayAttrs.MOTOR_NO], ...) relative to the
  * edge's from -> to direction. Version 2 files (one graph per pack, before T76), version 3 files
- * (before T73: no speed limits, no drive flag) and version 4 files (before T89) are refused with a message saying so; the phone, the
- * server and `devtool route` then rebuild the file. The directory is all a reader keeps in memory
+ * (before T73: no speed limits, no drive flag), version 4 files (before T89) and version 5 files (T108: one built
+ * before T102 has no name on a trail known only by its `ref`, [WayAttrs.of], and a reader cannot tell which version 5
+ * files those are, so all are rebuilt once; version 6 has the same layout) are refused with a message saying so; the phone, the server and `devtool route` then rebuild
+ * the file (the reason is their `rebuildReason`). The directory is all a reader keeps in memory
  * besides the tiles it loads; tile offsets are the sums of the body lengths before them.
  */
 object GraphTileFile {
-    const val VERSION = 5
+    const val VERSION = 6
     /** Header capability bit: the graph supports drive mode ([GraphSource.drive]). */
     private const val CAP_DRIVE = 1
     private val MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x47) // "DYSG", as RoutingGraph
@@ -257,7 +259,7 @@ object GraphTileFile {
     /**
      * Opens a graph file through [read] (offset, length) -> bytes, reading only its header; tiles are
      * read by [GraphTileArchive.tile]. Throws IllegalArgumentException for anything but a valid
-     * version 4 file (an older file says so, so callers can name the rebuild's reason).
+     * [VERSION] file (an older file says so, so callers can name the rebuild's reason).
      */
     fun open(read: (Long, Int) -> ByteArray): GraphTileArchive {
         val first = read(0, 9)
@@ -266,7 +268,8 @@ object GraphTileFile {
         require(version == VERSION) {
             if (version < 3) "routing graph version $version (one graph per pack, before T76), expected $VERSION: rebuild as tiles"
             else if (version < 4) "routing graph version $version (before T73's drive data), expected $VERSION: rebuild"
-            else if (version < VERSION) "routing graph version $version (before T89's bridge levels and component summary), expected $VERSION: rebuild"
+            else if (version < 5) "routing graph version $version (before T89's bridge levels and component summary), expected $VERSION: rebuild"
+            else if (version < VERSION) "routing graph version $version (from before T108; files built before T102 lack the names of trails known only by their ref), expected $VERSION: rebuild"
             else "routing graph version $version, expected $VERSION"
         }
         val headerLength = ByteReader(first, 5).u32()

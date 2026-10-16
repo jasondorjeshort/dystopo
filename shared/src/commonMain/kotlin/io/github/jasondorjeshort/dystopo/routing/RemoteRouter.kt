@@ -37,6 +37,8 @@ class RemoteRouter(
         fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
         mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
     ): RouteResult {
+        // T108: a crow line needs no server (and servers before T108 refuse the mode).
+        if (mode == TravelMode.CROW) return RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, null, name, ids, units()))
         val base = server.trimEnd('/')
         val snap = maxSnapM.coerceIn(10.0, 2000.0).roundToLong()
         val url = "$base/route?from=${c(fromLat)},${c(fromLon)}&to=${c(toLat)},${c(toLon)}&mode=${mode.label}&snap=$snap"

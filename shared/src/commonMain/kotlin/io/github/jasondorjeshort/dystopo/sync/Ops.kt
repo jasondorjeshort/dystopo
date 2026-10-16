@@ -27,8 +27,9 @@ enum class EntityKind(val code: Int) {
         private val TRACK_FIELDS = FieldSet(setOf("name", "description", "comment", "source", "type", "extensions"))
         private val WAYPOINT_FIELDS = FieldSet(setOf("name", "description", "comment", "symbol", "type", "extensions"))
         // T60: `path` (RoutePath.encode) and `waypoints` (RouteWaypoints.encode) are the route's shape and waypoints;
-        // T65: `wpt:<id>` is one waypoint (RouteOps.encodeWaypoint; null = removed), so concurrent waypoint edits merge.
-        private val ROUTE_FIELDS = FieldSet(setOf("name", "description", "comment", "type", "extensions", "path", "waypoints"), RouteOps.WAYPOINT_FIELD_PREFIX)
+        // T65: `wpt:<id>` is one waypoint (RouteOps.encodeWaypoint; null = removed), so concurrent waypoint edits merge;
+        // T108: `directions` (RouteDirections.encode) are the turn directions for one path value (builds before T108 ignore it).
+        private val ROUTE_FIELDS = FieldSet(setOf("name", "description", "comment", "type", "extensions", "path", "waypoints", "directions"), RouteOps.WAYPOINT_FIELD_PREFIX)
         private val SETTING_FIELDS = FieldSet(setOf("value"))
     }
 }

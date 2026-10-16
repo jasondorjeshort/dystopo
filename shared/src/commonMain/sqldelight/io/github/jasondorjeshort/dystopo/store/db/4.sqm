@@ -1,0 +1,6 @@
+-- Version 4 -> 5 (T108): the route table keeps each route's turn directions (the `directions` field,
+-- RouteDirections), NULL when none were saved for its current path. Existing rows start NULL; SqlTrackStore
+-- rebuilds every route row from the log on the first open after this migration (sync_meta `routes` is "1"
+-- until it has), so directions a newer peer synced into the log before this update are not lost.
+
+ALTER TABLE route ADD COLUMN directions TEXT;

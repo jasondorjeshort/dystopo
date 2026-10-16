@@ -67,7 +67,7 @@ class NavReplayCommand : CliktCommand(name = "replay") {
     private val offRouteS by option("--off-route-s", help = "...for this long (s of fix time)").double().default(NavOptions().offRouteSeconds)
     private val backOnRouteM by option("--back-on-route-m", help = "Back on route within this (m)").double()
     private val arriveM by option("--arrive-m", help = "Arrived within this of the end (m)").double().default(NavOptions().arriveM)
-    private val mode by option("--mode", help = "hike (default), bike or drive: the time model (and the directions' mode)").choice("hike", "bike", "drive").default("hike")
+    private val mode by option("--mode", help = "hike (default), bike, drive or crow (T108: one arrival, the hike time model): the time model (and the directions' mode)").choice("hike", "bike", "drive", "crow").default("hike")
     private val pack by option("--pack", help = "T102: vector pack whose graph gives the line's turn directions (graph file next to it, built when missing)").file(mustExist = true, canBeDir = false)
     private val expectDirections by option("--expect-directions", help = "Exit 1 unless this many directions are shown (with --pack)").int()
     private val samples by option("--samples", help = "Progress samples in the report").int().default(20)

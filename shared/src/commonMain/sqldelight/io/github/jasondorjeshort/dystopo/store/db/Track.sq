@@ -2,7 +2,7 @@
 -- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
 -- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
 --
--- This file is the CURRENT schema (version 4). Changing it needs a migration: see 1.sqm, 2.sqm, 3.sqm and the
+-- This file is the CURRENT schema (version 5). Changing it needs a migration: see 1.sqm to 4.sqm and the
 -- "Track database migrations" paragraph in CLAUDE.md. New columns go at the END of a table, in the
 -- order the migration adds them.
 --
@@ -119,7 +119,9 @@ CREATE TABLE route (
     via_count INTEGER NOT NULL,
     waypoint_count INTEGER NOT NULL,
     straight_m REAL NOT NULL,
-    mode TEXT NOT NULL
+    mode TEXT NOT NULL,
+    -- Version 5 (T108): the saved turn directions (RouteDirections) when made for this row's path, else NULL.
+    directions TEXT
 );
 
 CREATE INDEX route_order ON route(created_hlc, id);
@@ -313,8 +315,8 @@ INSERT OR REPLACE INTO sync_meta(key, value) VALUES (?, ?);
 
 upsertRoute:
 INSERT OR REPLACE INTO route(id, name, description, comment, type, extensions, path, waypoints, created_hlc, updated_at,
-    distance_m, ascent_m, descent_m, time_s, via_count, waypoint_count, straight_m, mode)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    distance_m, ascent_m, descent_m, time_s, via_count, waypoint_count, straight_m, mode, directions)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deleteRouteRow:
 DELETE FROM route WHERE id = ?;

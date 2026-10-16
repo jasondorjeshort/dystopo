@@ -346,6 +346,7 @@ class InMemoryTrackStore(
         emit(PutRoute(Route(plan.id, plan.name, emptyList(), plan.description, plan.comment, plan.type, plan.extensions)), now)
         emit(SetField(EntityKind.ROUTE, plan.id, "path", plan.path.quantized().encode()), now)
         emit(SetField(EntityKind.ROUTE, plan.id, "waypoints", RouteWaypoints.encode(plan.waypoints)), now)
+        plan.directions?.let(io.github.jasondorjeshort.dystopo.model.RouteDirections::encode)?.let { emit(SetField(EntityKind.ROUTE, plan.id, "directions", it), now) } // T108
         rematerialize(Key(EntityKind.ROUTE, plan.id))
     }
 

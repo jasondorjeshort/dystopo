@@ -9,13 +9,17 @@ import kotlin.math.roundToLong
 /** A route waypoint placed on the route: [alongM] from the start, [offM] beside it. */
 data class WaypointAt(val id: String, val name: String, val alongM: Double, val offM: Double, val eleM: Double?)
 
+/** T108: one leg's length along it and the initial bearing from its start to its end via point (whole degrees). */
+data class LegBearing(val distanceM: Double, val bearingDeg: Int)
+
 /**
  * The trip summary of a [RoutePlan] (T60): distance, ascent and descent by T24's rules
  * ([TrackStats]: the 3 m turning-point hysteresis), the estimated time by T45's hike model
  * ([CostModel.timeS]: Naismith for hiking; T89: for driving the sum of the legs' router times,
  * [RouteLeg.timeS], with [CostModel.DRIVE_SUMMARY_KMH] only for legs that have none), T24's profile sampling ([TrackStats.profile]) and where
  * each waypoint sits along the route (profile markers). A pure function of the plan, so every replica
- * shows the same numbers.
+ * shows the same numbers. T108: [bearings], each leg's length and the initial bearing from its start to its end
+ * via point (for a crow route, the line's own bearing).
  */
 data class RouteSummary(
     val mode: String,
@@ -32,6 +36,7 @@ data class RouteSummary(
     val straightM: Double,
     val profile: List<ProfileSample>,
     val waypoints: List<WaypointAt>,
+    val bearings: List<LegBearing> = emptyList(),
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "mode" to mode, "distanceM" to r1(distanceM), "ascentM" to ascentM?.let(::r1), "descentM" to descentM?.let(::r1),
@@ -39,6 +44,7 @@ data class RouteSummary(
         "timeS" to timeS.roundToLong(), "time" to hm(timeS), "points" to points, "viaPoints" to viaPoints, "legs" to legs,
         "straightM" to r1(straightM),
         "waypoints" to waypoints.map { linkedMapOf("id" to it.id, "name" to it.name, "alongM" to r1(it.alongM), "offM" to r1(it.offM), "eleM" to it.eleM?.let(::r1)) },
+        "bearings" to bearings.map { linkedMapOf("distanceM" to r1(it.distanceM), "bearingDeg" to it.bearingDeg) }, // T108
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
     )
 
@@ -59,9 +65,14 @@ data class RouteSummary(
                 val p = RouteGeometry.nearestOnLine(pts, w.lat, w.lon)
                 WaypointAt(w.id, w.name, if (pts.isEmpty()) 0.0 else p.alongM, if (pts.isEmpty()) 0.0 else p.distanceM, w.ele ?: eleAt(profile, p.alongM))
             }
+            val bearings = path.legs.map { leg ->
+                val a = leg.points.first()
+                val b = leg.points.last()
+                LegBearing(leg.points.zipWithNext { p, q -> TrackStats.distanceM(p.lat, p.lon, q.lat, q.lon) }.sum(), io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(a.lat, a.lon, b.lat, b.lon))
+            }
             return RouteSummary(
                 path.mode, stats.distanceM, stats.ascentM, stats.descentM, stats.minEleM, stats.maxEleM, time,
-                pts.size, path.via.size, path.legs.size, straight, profile, along,
+                pts.size, path.via.size, path.legs.size, straight, profile, along, bearings,
             )
         }
 

@@ -27,7 +27,9 @@ import java.io.File
  * T102: each route comes with its turn directions ([Resolved.directions], along the [NavPath]): the route on the map
  * brings the plan's own (local or from the server), moved onto the navigation line; a kept trip or a saved route reads
  * them from the graphs of the packs on the device (via points and straight legs included for a trip); without a pack
- * there, only depart and arrive (and a trip's via points). Tracks have none.
+ * there, only depart and arrive (and a trip's via points). Tracks have none. T108: a kept trip's saved directions come
+ * first (no graph needed: a trip synced from another phone, offline), moved onto the navigation line; only a trip
+ * without them is read from the packs as before.
  */
 object NavSources {
     class Resolved(
@@ -59,11 +61,13 @@ object NavSources {
         val p: RoutePlan = plans.firstOrNull { it.id == key } ?: plans.filter { key.length >= 4 && it.id.startsWith(key) }.singleOrNull() ?: return null
         require(p.path.points.size >= 2) { "route ${p.id} has fewer than two points" }
         val s = RouteSummary.of(p, samples = 0)
-        // T102: along the trip's own points (NavPath counts consecutive equal points once, as Directions does).
-        val directions = Directions.ofPath(p.path, RoutePlanner.localJunctions(p.path.points.map { it.lat to it.lon }))
+        val path = NavPath.of(p.toRoute(), p.waypoints)
+        // T108: the directions saved with the trip; else (T102) along the trip's own points from the packs here.
+        val saved = p.savedDirections
+        val directions = if (saved != null) onto(path, saved) else Directions.ofPath(p.path, RoutePlanner.localJunctions(p.path.points.map { it.lat to it.lon }))
         return Resolved(
-            NavPath.of(p.toRoute(), p.waypoints),
-            linkedMapOf("kind" to "trip", "route" to key, "id" to p.id, "name" to p.name, "mode" to p.path.mode),
+            path,
+            linkedMapOf("kind" to "trip", "route" to key, "id" to p.id, "name" to p.name, "mode" to p.path.mode, "directions" to if (saved != null) "saved" else "packs"),
             s.timeS, TravelMode.of(p.path.mode), directions,
         )
     }

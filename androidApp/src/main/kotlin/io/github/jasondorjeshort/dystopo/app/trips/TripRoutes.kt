@@ -15,7 +15,7 @@ import java.security.MessageDigest
  * same [Trips] calls as the UI, so through the store's operation log and sync.
  * - `GET /routes`: the Routes list (summary numbers) and the editor state (open route, tool, last edit,
  *   overlay with drag counts).
- * - `POST /routes?points=lat,lon;lat,lon[;...][&name=][&mode=hike|bike|drive][&wait=ms]` (or `from=`/`to=`):
+ * - `POST /routes?points=lat,lon;lat,lon[;...][&name=][&mode=hike|bike|drive|crow][&wait=ms]` (or `from=`/`to=`):
  *   creates a route through those via points (snapped to trails, legs routed, straight where there is
  *   no trail), stores it and opens it in the editor. `POST /routes/keep[?name=]`: keeps the current
  *   long-press route (T45 card) as a trip.
@@ -37,6 +37,13 @@ import java.security.MessageDigest
  * - T95: `POST /routes/{id}/offline` is the card's Offline button (opens the route if it is not open, works out the
  *   corridor's size and shows it with Download and Cancel, or Close over the pinned budget; answers the offer with its
  *   `plan`); `?go=1` is Download, `?cancel=1` Cancel or Close; `GET /routes/{id}/offline`: the offer shown now.
+ * - T108: `GET /routes/{id}` has `directions`: `saved` (the trip carries directions made for its path), `count`,
+ *   `shown` (the default detail level), `text` (the shown ones, as the card lists them) and `modeLabel` (an unknown mode
+ *   by its own name); `GET /routes` has `directionsMigrated` (trips given their directions on open since start-up).
+ *   `POST /routes/{id}/directions?open=1|0` opens or closes the card's list (opening the trip first);
+ *   `POST /routes/{id}/directions?save=1` makes and saves them now where the packs allow ([Trips.migrateDirections]).
+ *   Opening a trip without them (the card, `POST /routes/{id}/open`) makes them in the background (`directions.working`
+ *   meanwhile); `POST /routes/{id}/open?wait=1` answers after that.
  * - `POST /routes/import[?replace=1]` with a GPX body. `POST /routes/ui?open=1|0` (the Routes list),
  *   `POST /routes/close` (closes the editor), `POST /routes/tool?tool=none|via|waypoint`,
  *   `POST /routes/tap?lat=&lon=` (a tap on the map with the current tool).
@@ -67,7 +74,7 @@ object TripRoutes {
                     ?: throw IllegalArgumentException("points=lat,lon;lat,lon or from= and to= required")
                 require(pts.size in 2..50) { "2 to 50 points" }
                 val mode = q["mode"] ?: "hike"
-                require(mode == "hike" || mode == "bike" || mode == "drive") { "mode must be hike, bike or drive" }
+                require(io.github.jasondorjeshort.dystopo.routing.TravelMode.known(mode)) { "mode must be ${io.github.jasondorjeshort.dystopo.routing.TravelMode.labels}" }
                 val wait = q["wait"]?.toLongOrNull()?.coerceIn(0, 300_000) ?: 120_000
                 val p = Trips.create(pts, q["name"] ?: "Route", mode, wait)
                 return Response.json(planJson(p, q["profile"] == "1") + mapOf("edit" to Trips.lastEdit))
@@ -153,8 +160,17 @@ object TripRoutes {
             r.method == "DELETE" && suffix.startsWith("/waypoint/") -> return Response.json(mapOf("deleted" to Trips.removeWaypoint(id, suffix.removePrefix("/waypoint/").lowercase())))
             r.method == "POST" && suffix == "/mode" -> {
                 val mode = q["mode"]
-                require(mode == "hike" || mode == "bike" || mode == "drive") { "mode must be hike, bike or drive" }
+                require(io.github.jasondorjeshort.dystopo.routing.TravelMode.known(mode)) { "mode must be ${io.github.jasondorjeshort.dystopo.routing.TravelMode.labels}" }
                 return Response.json(planJson(Trips.setMode(id, mode!!), false))
+            }
+            r.method == "POST" && suffix == "/directions" -> { // T108
+                val p = Trips.plan(id) ?: throw NoSuchElementException("no route $id")
+                if (q["save"] == "1") Trips.migrateDirections(p, q["wait"]?.toLongOrNull()?.coerceIn(0, 120_000) ?: 30_000)
+                q["open"]?.let { o ->
+                    if (Trips.editingId != p.id) Trips.open(p.id, fit = false)
+                    app.map.onMain { Trips.directionsOpen = o != "0" }
+                }
+                return Response.json(planJson(Trips.plan(id)!!, false) + mapOf("directionsOpen" to Trips.directionsOpen))
             }
             r.method == "POST" && suffix == "/reroute" -> return Response.json(planJson(Trips.reroute(id), false) + mapOf("edit" to Trips.lastEdit))
             r.method == "POST" && suffix == "/replan" -> return Response.json(planJson(Trips.replan(id), false) + mapOf("edit" to Trips.lastEdit)) // T106
@@ -162,7 +178,11 @@ object TripRoutes {
                 val name = q["name"]?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("name required")
                 return Response.json(mapOf("renamed" to Trips.rename(id, name)))
             }
-            r.method == "POST" && suffix == "/open" -> return Response.json(planJson(Trips.open(id) ?: throw NoSuchElementException("no route $id"), false))
+            r.method == "POST" && suffix == "/open" -> {
+                val p = Trips.open(id) ?: throw NoSuchElementException("no route $id")
+                if (q["wait"] == "1") Trips.drain() // T108: the answer after the background directions (if any)
+                return Response.json(planJson(Trips.plan(p.id) ?: p, false))
+            }
             r.method == "POST" && suffix == "/offline" -> return Response.json(
                 when {
                     q["go"] == "1" -> Trips.confirmOffline(id)
@@ -188,7 +208,7 @@ object TripRoutes {
     fun state(): Map<String, Any?> = linkedMapOf(
         "routes" to Trips.store { it.routeList() }.map { it.json() },
         "listOpen" to Trips.listOpen, "editing" to Trips.editingId, "tool" to Trips.tool, "message" to Trips.message,
-        "lastEdit" to Trips.lastEdit, "overlay" to Trips.overlay.json(),
+        "lastEdit" to Trips.lastEdit, "overlay" to Trips.overlay.json(), "directionsMigrated" to Trips.directionsMigrated, // T108
     )
 
     fun planJson(p: RoutePlan, profile: Boolean): Map<String, Any?> {
@@ -200,7 +220,21 @@ object TripRoutes {
             "untimedDriveLegs" to untimedDriveLegs(p.path), // T106: a drive planned before T89 (the card says so and offers Re-plan)
             "waypoints" to p.waypoints.map { linkedMapOf("id" to it.id, "name" to it.name, "lat" to it.lat, "lon" to it.lon, "ele" to it.ele, "sym" to it.symbol) },
             "summary" to RouteSummary.of(p).json(profile),
+            "modeLabel" to io.github.jasondorjeshort.dystopo.routing.TravelMode.labelOf(p.path.mode), // T108
+            "directions" to directionsJson(p), // T108
             "gpxBytes" to gpx.size, "gpxSha256" to MessageDigest.getInstance("SHA-256").digest(gpx).joinToString("") { "%02x".format(it) },
+        )
+    }
+
+    /** T108: the directions saved with [p] (`saved` false: none for its path; the card says so). */
+    fun directionsJson(p: RoutePlan): Map<String, Any?> {
+        val list = p.savedDirections ?: return linkedMapOf("saved" to false, "working" to (Trips.directionsWorking == p.id), "text" to DIRECTIONS_NOT_SAVED)
+        val mode = io.github.jasondorjeshort.dystopo.routing.TravelMode.of(p.path.mode) ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE
+        val shown = io.github.jasondorjeshort.dystopo.routing.Directions.shown(list)
+        return linkedMapOf(
+            "saved" to true, "count" to list.size, "shown" to shown.size,
+            "byPriority" to list.groupingBy { "P${it.priority}" }.eachCount().toSortedMap(),
+            "text" to shown.map { io.github.jasondorjeshort.dystopo.routing.DirectionsText.of(it, mode) },
         )
     }
 

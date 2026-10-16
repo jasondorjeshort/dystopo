@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RouteDirections
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
@@ -119,7 +120,8 @@ interface SyncStore : TrackStore, SyncReplica {
 
     /**
      * T60: stores a planned route: a put with its GPX fields, then its `path` and `waypoints` fields, in
-     * one transaction. Replaces a route with the same id (a re-import).
+     * one transaction. Replaces a route with the same id (a re-import). T108: then its `directions`
+     * ([RouteDirections]) when the plan has them (a value over [RouteDirections.MAX_CHARS] is left out).
      */
     fun putRoutePlan(plan: RoutePlan, now: Long)
 
@@ -161,6 +163,16 @@ interface SyncStore : TrackStore, SyncReplica {
         var ok = true
         for ((field, value) in RouteOps.waypointWrites(old, waypoints)) ok = setField(EntityKind.ROUTE, id, field, value, now) && ok
         return ok
+    }
+
+    /**
+     * T108: saves [directions] with route [id] for [path] (one `directions` write: [RouteDirections.encode]); false if
+     * the route does not exist or the list is too long to save. Null clears them. They count only while [path] is
+     * the route's path ([Materializer.routePlan]), so write the path first.
+     */
+    fun setRouteDirections(id: String, directions: List<io.github.jasondorjeshort.dystopo.routing.Instruction>?, path: RoutePath, now: Long): Boolean {
+        val value = if (directions == null) null else RouteDirections.encode(directions, path) ?: return false
+        return setField(EntityKind.ROUTE, id, "directions", value, now)
     }
 
     /** Sets a synced setting; null removes it. */

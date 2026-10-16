@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.RouteDirections
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.Track
@@ -113,13 +114,13 @@ object Materializer {
     fun route(id: String, ops: Collection<Op>): Route? = routePlan(id, ops)?.toRoute()
 
     /**
-     * The fields a route put writes (T60): its GPX fields, and `path` and `waypoints` reset to null (a
-     * put replaces every field; the put's own points stand for the path until a `path` write follows).
+     * The fields a route put writes (T60): its GPX fields, and `path`, `waypoints` and (T108) `directions` reset to
+     * null (a put replaces every field; the put's own points stand for the path until a `path` write follows).
      */
     fun routePutFields(put: PutRoute): Map<String, String?> = put.route.let {
         mapOf(
             "name" to it.name, "description" to it.description, "comment" to it.comment, "type" to it.type, "extensions" to it.extensions,
-            "path" to null, "waypoints" to null,
+            "path" to null, "waypoints" to null, "directions" to null,
         )
     }
 
@@ -128,7 +129,9 @@ object Materializer {
      * waypoint, [RouteOps.waypoints]). The
      * path is the newest live `path` write when it decodes, else the newest put's points as one fixed
      * leg ([RoutePath.fixed]); a value that does not decode (a newer format) counts as absent, the same
-     * way on every replica.
+     * way on every replica. T108: `directions` last writer wins too, taken only when they were made for that path
+     * ([RouteDirections.forPath]); otherwise (none written, a newer format, or written for a path since replaced) the
+     * plan has none, on every replica alike.
      */
     fun routePlan(id: String, ops: Collection<Op>): RoutePlan? {
         val live = live(ops)
@@ -137,7 +140,8 @@ object Materializer {
         val path = RoutePath.decodeOrNull(f["path"]) ?: RoutePath.fixed(last.route.points, modeOf(last.route.type))
         // T65: the `waypoints` list plus the per-waypoint `wpt:` writes, in HLC order (RouteOps).
         val waypoints = RouteOps.waypoints(live)
-        return RoutePlan(id, f["name"] ?: "", path, waypoints, f["description"], f["comment"], f["type"], f["extensions"])
+        val directions = f["directions"]?.let { RouteDirections.forPath(it, path) } // T108
+        return RoutePlan(id, f["name"] ?: "", path, waypoints, f["description"], f["comment"], f["type"], f["extensions"], directions)
     }
 
     private fun modeOf(type: String?): String = if (type?.lowercase() == "bike") "bike" else "hike"

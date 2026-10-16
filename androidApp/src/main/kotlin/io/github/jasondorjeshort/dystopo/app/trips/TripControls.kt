@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -46,6 +47,7 @@ import io.github.jasondorjeshort.dystopo.gpx.ProfileSample
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.model.WaypointAt
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.sync.RouteListItem
 import kotlinx.coroutines.delay
 
@@ -61,7 +63,9 @@ private val Flag = Color(0xFFC79A00)
  * and, while a route is open, the trip card at the bottom: totals, the elevation profile with waypoint
  * markers, and the editor's tools (drag the numbered via points on the map; Via adds a via point where
  * you tap, Waypoint adds a waypoint; Hike/Bike reroutes; the via chips remove one). T67: "Share link"
- * asks the sync server for a read-only link to the trip and copies it.
+ * asks the sync server for a read-only link to the trip and copies it. T108: the card shows the directions saved with
+ * the trip ("Show N directions", the default detail level) or says they were not saved; Crow joins the modes with its
+ * one line; a mode this build does not know is named as it is, not as hike, and the trip is not edited.
  */
 @Composable
 fun TripControls() {
@@ -138,7 +142,7 @@ private fun RouteRow(r: RouteListItem) {
         Column(Modifier.weight(1f)) {
             BasicText(r.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
             BasicText(
-                UnitFormat.distance(r.distanceM, u) + (r.ascentM?.let { " · +" + UnitFormat.elevation(it, u) } ?: "") + " · " + RouteSummary.hm(r.timeS) + " " + r.mode,
+                UnitFormat.distance(r.distanceM, u) + (r.ascentM?.let { " · +" + UnitFormat.elevation(it, u) } ?: "") + " · " + RouteSummary.hm(r.timeS) + " " + TravelMode.labelOf(r.mode), // T108
                 style = TextStyle(color = Ink, fontSize = 13.sp),
             )
             BasicText(
@@ -173,10 +177,16 @@ private fun TripCard(modifier: Modifier) {
         }
         BasicText(
             UnitFormat.distance(s.distanceM, u) + (s.ascentM?.let { " · +" + UnitFormat.elevation(it, u) + " −" + UnitFormat.elevation(s.descentM ?: 0.0, u) } ?: "") +
-                " · " + RouteSummary.hm(s.timeS) + " " + s.mode,
+                " · " + RouteSummary.hm(s.timeS) + " " + TravelMode.labelOf(s.mode), // T108: an unknown mode by its own name
             style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold),
         )
-        if (s.straightM > 0) BasicText(UnitFormat.distance(s.straightM, u) + (if (s.mode == "drive") " off road (dashed)" else " off trail (dashed)"), style = TextStyle(color = Ink, fontSize = 12.sp))
+        val known = TravelMode.known(s.mode)
+        if (!known) BasicText(TravelMode.unknownModeMessage(s.mode).replaceFirstChar { it.uppercase() } + ".", style = TextStyle(color = Ink, fontSize = 12.sp)) // T108
+        if (s.mode == "crow") {
+            // T108: the line's bearing (each leg's, for a trip with via points) and what a crow route is.
+            BasicText(crowBearings(s), style = TextStyle(color = Ink, fontSize = 12.sp))
+            BasicText(TravelMode.CROW_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
+        } else if (s.straightM > 0) BasicText(UnitFormat.distance(s.straightM, u) + (if (s.mode == "drive") " off road (dashed)" else " off trail (dashed)"), style = TextStyle(color = Ink, fontSize = 12.sp))
         if (s.mode == "drive") BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T73
         // T106 (a T89 follow-up): a drive planned before road speeds says its time is the flat estimate, and offers Re-plan.
         if (untimedDriveLegs(p.path) > 0) {
@@ -192,6 +202,7 @@ private fun TripCard(modifier: Modifier) {
                 style = TextStyle(color = Ink, fontSize = 11.sp), maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
         }
+        TripDirections(p)
         Trips.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
         // T95: the Offline button's offer: the size first, then Download and Cancel, or Close when it does not fit.
         Trips.offline?.takeIf { it.tripId == p.id }?.let { o ->
@@ -204,9 +215,9 @@ private fun TripCard(modifier: Modifier) {
         // T106: the tools and the actions wrap (at font scale 2.0 they were squeezed into columns of letters).
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
-                Toggle(label, Trips.tool == t) { Trips.tool = t }
+                if (known || t != "via") Toggle(label, Trips.tool == t) { Trips.tool = t } // T108: no via edits in an unknown mode
             }
-            for (m in listOf("hike", "bike", "drive")) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } }
+            for (m in TravelMode.entries.map { it.label }) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } } // T108: crow too
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (p.path.via.size > 2) {
@@ -219,6 +230,44 @@ private fun TripCard(modifier: Modifier) {
             Action("Share link") { Trips.background { Trips.shareLink(p.id) } } // T67: a read-only link from the sync server
             Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }
         }
+    }
+}
+
+/**
+ * T108: the directions saved with the trip: "Show N directions" opening their list (the default detail level, each with
+ * the distance it then runs), or the line that they were not saved (a trip from before T108 or the browser, with no
+ * graph here to make them).
+ */
+@Composable
+private fun TripDirections(p: io.github.jasondorjeshort.dystopo.model.RoutePlan) {
+    val saved = p.savedDirections
+    if (saved == null) {
+        BasicText(if (Trips.directionsWorking == p.id) DIRECTIONS_WORKING else DIRECTIONS_NOT_SAVED, style = TextStyle(color = Ink, fontSize = 12.sp))
+        return
+    }
+    val list = io.github.jasondorjeshort.dystopo.routing.Directions.shown(saved)
+    if (list.isEmpty()) return
+    val open = Trips.directionsOpen
+    Action(if (open) "Hide directions" else showDirectionsLabel(list.size)) { Trips.directionsOpen = !open }
+    if (!open) return
+    val units = AppSettings.units
+    val mode = TravelMode.of(p.path.mode) ?: TravelMode.HIKE
+    Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        for ((k, ins) in list.withIndex()) {
+            val then = if (ins.stretchM > 0) "  " + UnitFormat.distance(ins.stretchM, units) else ""
+            BasicText("${k + 1}. ${io.github.jasondorjeshort.dystopo.routing.DirectionsText.of(ins, mode)}$then", style = TextStyle(color = Ink, fontSize = 13.sp))
+        }
+    }
+}
+
+/** T108: a crow trip's bearings: "Bearing 47° (northeast)", or one per leg for a trip with via points. */
+internal fun crowBearings(s: RouteSummary): String {
+    val b = s.bearings
+    fun one(x: io.github.jasondorjeshort.dystopo.model.LegBearing) = "${x.bearingDeg}° (${io.github.jasondorjeshort.dystopo.routing.Directions.compass(x.bearingDeg.toDouble())})"
+    return when (b.size) {
+        0 -> "Straight line"
+        1 -> "Bearing " + one(b[0])
+        else -> "Bearings " + b.joinToString(", ") { one(it) }
     }
 }
 

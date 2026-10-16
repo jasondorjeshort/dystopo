@@ -376,7 +376,9 @@ class SyncSimulator(
                 val id = if (existing != null && rnd.nextInt(4) == 0) existing.id else ids.next()
                 val path = editor.create(List(2 + rnd.nextInt(3)) { 46.78 + rnd.nextDouble() * 0.05 to -121.78 + rnd.nextDouble() * 0.05 })
                 val wps = List(rnd.nextInt(3)) { Waypoint(ids.next(), "Stop ${rnd.nextInt(100)}", 46.8 + rnd.nextDouble() * 0.02, -121.75, 1700.0 + rnd.nextInt(500)) }
-                s.putRoutePlan(RoutePlan(id, "Trip ${rnd.nextInt(50)}", path, wps, type = path.mode), t)
+                // T108: with its directions, as the phone keeps a trip (the simulator's editor has no graph: the frame only).
+                val directions = io.github.jasondorjeshort.dystopo.model.SavedDirections.of(editor.directions(path), path)
+                s.putRoutePlan(RoutePlan(id, "Trip ${rnd.nextInt(50)}", path, wps, type = path.mode, directions = directions), t)
                 count("planRoute")
             }
             r < 909 -> {
@@ -390,6 +392,9 @@ class SyncSimulator(
                     else -> editor.moveVia(path, rnd.nextInt(path.via.size), 46.78 + rnd.nextDouble() * 0.05, -121.78 + rnd.nextDouble() * 0.05)
                 }
                 s.setRoutePath(plan.id, next, t)
+                // T108: every other edit also writes the directions (as a T108 phone does); the rest leave them stale, as a
+                // browser or an older build does, so replicas must agree on directions that no longer count.
+                if ((changes["editRoute"] ?: 0) % 2 == 0) s.setRouteDirections(plan.id, editor.directions(next, path, plan.savedDirections), next, t)
                 count("editRoute")
             }
             r < 920 -> {

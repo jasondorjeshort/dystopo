@@ -169,7 +169,7 @@ object Directions {
     fun leadM(mode: TravelMode, speedKmh: Double? = null): Double {
         val v = (speedKmh?.takeIf { it > 0 } ?: defaultKmh(mode)) / 3.6
         return when (mode) {
-            TravelMode.HIKE -> (v * 20).coerceIn(20.0, 60.0)
+            TravelMode.HIKE, TravelMode.CROW -> (v * 20).coerceIn(20.0, 60.0)
             TravelMode.BIKE -> (v * 20).coerceIn(40.0, 200.0)
             TravelMode.DRIVE -> (v * 45).coerceIn(150.0, 3200.0)
         }
@@ -177,14 +177,14 @@ object Directions {
 
     /** The pace [leadM] assumes when no speed is known: 5 km/h walking, 16 km/h cycling, 50 km/h driving. */
     fun defaultKmh(mode: TravelMode): Double = when (mode) {
-        TravelMode.HIKE -> 5.0
+        TravelMode.HIKE, TravelMode.CROW -> 5.0
         TravelMode.BIKE -> 16.0
         TravelMode.DRIVE -> 50.0
     }
 
     /** An instruction this close before the next one that only keeps to the way is left to the next one ([of]). */
     fun mergeM(mode: TravelMode): Double = when (mode) {
-        TravelMode.HIKE -> 15.0
+        TravelMode.HIKE, TravelMode.CROW -> 15.0
         TravelMode.BIKE -> 25.0
         TravelMode.DRIVE -> 60.0
     }
@@ -192,7 +192,7 @@ object Directions {
 
     /** How far past an instruction navigation still shows it (the junction's size and GPS error). */
     fun passM(mode: TravelMode): Double = when (mode) {
-        TravelMode.HIKE -> 10.0
+        TravelMode.HIKE, TravelMode.CROW -> 10.0
         TravelMode.BIKE -> 20.0
         TravelMode.DRIVE -> 40.0
     }
@@ -272,6 +272,59 @@ object Directions {
     }
 
     /**
+     * T108: [path]'s instructions where some legs' inner instructions are already known ([known]: by leg index, each
+     * measured from the start of its leg, as [innerByLeg] gives them): a leg an edit left as it was keeps what was said
+     * along it (perhaps planned on another phone or on the server, where this phone has no graph), and a leg the
+     * server planned brings the server's; every other leg, the via points, the straight legs and the frame come from
+     * [junctions] ([ofPath]). Leads are capped and stretches recomputed over the merged list.
+     */
+    fun splice(path: RoutePath, junctions: JunctionSource?, known: Map<Int, List<Instruction>>): List<Instruction> {
+        val fresh = ofPath(path, junctions)
+        if (known.isEmpty() || path.legs.isEmpty() || TravelMode.of(path.mode) == TravelMode.CROW) return fresh
+        val at = viaAlong(path)
+        fun inside(a: Double, i: Int) = a > at[i] + EDGE_M && a < at[i + 1] - EDGE_M
+        val kept = fresh.filter { ins -> ins.type in FRAME || known.keys.none { i -> i in path.legs.indices && inside(ins.alongM, i) } }
+        val moved = known.flatMap { (i, list) ->
+            if (i !in path.legs.indices) emptyList()
+            else list.filter { it.type !in FRAME }.map { it.copy(alongM = at[i] + it.alongM) }.filter { inside(it.alongM, i) }
+        }
+        val all = (kept + moved).sortedBy { it.alongM }
+        return all.mapIndexed { k, ins ->
+            ins.copy(
+                leadM = if (k == 0) 0.0 else minOf(ins.leadM, ins.alongM - all[k - 1].alongM),
+                stretchM = if (k + 1 < all.size) all[k + 1].alongM - ins.alongM else 0.0,
+            )
+        }
+    }
+
+    /**
+     * T108: [list] (instructions along [path]) cut into its legs: per leg, the instructions strictly inside it (not the
+     * depart, via, off-network start or arrive that frame it), each measured from the start of its leg.
+     */
+    fun innerByLeg(path: RoutePath, list: List<Instruction>): List<List<Instruction>> {
+        if (path.legs.isEmpty()) return emptyList()
+        val at = viaAlong(path)
+        return path.legs.indices.map { i ->
+            list.filter { it.type !in FRAME && it.alongM > at[i] + EDGE_M && it.alongM < at[i + 1] - EDGE_M }.map { it.copy(alongM = it.alongM - at[i]) }
+        }
+    }
+
+    /** The distance along [path] of each via point, measured as [of] measures (consecutive equal points once). */
+    fun viaAlong(path: RoutePath): DoubleArray {
+        val pts = path.points
+        val idx = path.viaIndexes
+        val cum = DoubleArray(pts.size)
+        for (i in 1 until pts.size) cum[i] = cum[i - 1] + TrackStats.distanceM(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon)
+        return DoubleArray(idx.size) { cum[idx[it]] }
+    }
+
+    /** Instructions at a via point or an end; [splice] takes them from the fresh list, never from a kept leg. */
+    private val FRAME = setOf(Maneuver.DEPART, Maneuver.VIA, Maneuver.OFF_NETWORK, Maneuver.ARRIVE)
+
+    /** How close to a via point an instruction counts as at it rather than inside a leg (route points are cm-exact). */
+    private const val EDGE_M = 0.5
+
+    /**
      * The instructions along [points] travelled in [mode]: depart, one at each real decision (see the object's KDoc),
      * a [Maneuver.VIA] at each index in [vias] (numbered by its place in that list, from 1), a [Maneuver.OFF_NETWORK]
      * at the start of each range in [straight] (a straight leg; no lookups inside it), and arrive. Without [junctions]
@@ -281,6 +334,7 @@ object Directions {
         points: List<RoutePoint>, mode: TravelMode, junctions: JunctionSource?,
         vias: List<Int> = emptyList(), straight: List<IntRange> = emptyList(),
     ): List<Instruction> {
+        if (mode == TravelMode.CROW) return arrivalOnly(points)
         val pts = ArrayList<RoutePoint>(points.size)
         val map = IntArray(points.size)
         for ((i, p) in points.withIndex()) {
@@ -437,6 +491,33 @@ object Directions {
                 stretchM = if (k + 1 < kept.size) kept[k + 1].alongM - ins.alongM else 0.0,
             )
         }
+    }
+
+    /**
+     * T108: a crow route's directions: one arrival at the end of the line (a straight line has nothing to turn at; its
+     * legs' bearings are in the summary, [io.github.jasondorjeshort.dystopo.model.RouteSummary.bearings]). Empty for fewer
+     * than two distinct points.
+     */
+    fun arrivalOnly(points: List<RoutePoint>): List<Instruction> {
+        var along = 0.0
+        var last: RoutePoint? = null
+        var before: RoutePoint? = null
+        for (p in points) {
+            val q = last
+            if (q != null && q.lat == p.lat && q.lon == p.lon) continue
+            if (q != null) along += TrackStats.distanceM(q.lat, q.lon, p.lat, p.lon)
+            before = q
+            last = p
+        }
+        val end = last ?: return emptyList()
+        val from = before ?: return emptyList()
+        val bearing = TrackStats.bearingDeg(from.lat, from.lon, end.lat, end.lon)
+        return listOf(
+            Instruction(
+                Maneuver.ARRIVE, Instruction.MAJOR, along, end.lat, end.lon, sameWay = true,
+                bearingDeg = ((bearing + 360) % 360).roundToInt() % 360, leadM = minOf(leadM(TravelMode.CROW), along),
+            ),
+        )
     }
 
     /** Microdegrees, as the graph stores coordinates (route points from the graph come back exactly). */

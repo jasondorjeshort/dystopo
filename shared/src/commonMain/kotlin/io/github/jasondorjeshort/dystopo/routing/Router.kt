@@ -15,13 +15,33 @@ import kotlin.math.roundToLong
 
 /**
  * How the route is travelled; picks the [CostModel]. Hiking (and biking) first, [DRIVE] (T73) a full second mode
- * (ADR 0032): what drive does and does not do is said once, in [Router.DRIVE_NOTICE].
+ * (ADR 0032): what drive does and does not do is said once, in [Router.DRIVE_NOTICE]. [CROW] (T108): a straight line
+ * between the points ([Crow]), no graph and no trail; its line under the mode picker is [CROW_NOTICE].
  */
 enum class TravelMode(val label: String) {
-    HIKE("hike"), BIKE("bike"), DRIVE("drive");
+    HIKE("hike"), BIKE("bike"), DRIVE("drive"), CROW("crow");
 
     companion object {
         fun of(label: String?): TravelMode? = entries.firstOrNull { it.label == label?.lowercase() }
+
+        /** The modes the pickers offer, in their order (the route card, the trip card, the server's message). */
+        val labels: String get() = entries.dropLast(1).joinToString(", ") { it.label } + " or " + entries.last().label
+
+        /**
+         * T108 (ADR 0033 Decision 3): how a stored mode is named on a card: a known mode by its label; a mode this
+         * build does not know (a newer Dystopo's, synced here) plainly as itself, marked as unknown, never as hike.
+         */
+        fun labelOf(mode: String?): String = of(mode)?.label ?: "${mode?.trim()?.ifEmpty { null } ?: "no mode"} (unknown mode)"
+
+        /** T108: true for a mode this build can plan and edit; false for a newer Dystopo's (shown and followed, not edited). */
+        fun known(mode: String?): Boolean = of(mode) != null
+
+        /** T108: why a trip in a mode this build does not know is not edited here (it is shown and can be followed). */
+        fun unknownModeMessage(mode: String?): String =
+            "this route's mode \"${mode ?: ""}\" is from a newer Dystopo: update this app to edit it (it can still be shown and followed)"
+
+        /** T108: the one line under the mode picker when crow is chosen. */
+        const val CROW_NOTICE = "A crow route is a straight line between the points, not a path to walk."
     }
 }
 
@@ -44,7 +64,7 @@ enum class TravelMode(val label: String) {
  *
  * Drive (T73): travel time, as metres at [DRIVE_REF_KMH]: `length x DRIVE_REF_KMH / speed`, with the
  * edge's tagged `maxspeed` (clamped to 5..[DRIVE_REF_KMH]) or the class speed ([driveSpeedKmh]:
- * motorway 105, trunk 85, primary 75, secondary 65, tertiary 55, minor 40, service 20, track 15 km/h);
+ * motorway 105, trunk 85, primary 75, secondary 65, tertiary 55, minor 40, service 15 (T108; 20 before), track 15 km/h);
  * unpaved 1.25x. Paths, footways, cycleways, bridleways and steps are closed, so are lines whose
  * motor access is no or private; one-ways only the way they go ([allows]); `destination` roads only at
  * a route's ends (the router's destination zones). No slope penalty.
@@ -52,7 +72,7 @@ enum class TravelMode(val label: String) {
 class CostModel(val mode: TravelMode) {
     fun classWeight(c: WayClass): Double = when (mode) {
         TravelMode.DRIVE -> driveSpeedKmh(c).let { if (it > 0) DRIVE_REF_KMH / it else Double.POSITIVE_INFINITY }
-        TravelMode.HIKE -> when (c) {
+        TravelMode.HIKE, TravelMode.CROW -> when (c) { // T108: crow never searches the graph; hike's weights if asked
             WayClass.PATH, WayClass.FOOTWAY -> 1.0
             WayClass.TRACK, WayClass.BRIDLEWAY, WayClass.STEPS -> 1.1
             WayClass.CYCLEWAY -> 1.2
@@ -87,7 +107,7 @@ class CostModel(val mode: TravelMode) {
 
     fun sacWeight(sac: Int): Double = when (mode) {
         TravelMode.DRIVE -> 1.0
-        TravelMode.HIKE -> when {
+        TravelMode.HIKE, TravelMode.CROW -> when {
             sac <= 2 -> 1.0
             sac == 3 -> 1.2
             sac == 4 -> 1.6
@@ -106,7 +126,7 @@ class CostModel(val mode: TravelMode) {
         if (mode == TravelMode.DRIVE) return if (flags and WayAttrs.MOTOR_NO != 0) Double.POSITIVE_INFINITY else 1.0
         var w = 1.0
         if (flags and WayAttrs.PRIVATE != 0) w *= 5.0
-        if (flags and WayAttrs.INFORMAL != 0) w *= if (mode == TravelMode.HIKE) 1.3 else 1.5
+        if (flags and WayAttrs.INFORMAL != 0) w *= if (mode == TravelMode.HIKE || mode == TravelMode.CROW) 1.3 else 1.5
         if (flags and WayAttrs.POOR_VISIBILITY != 0) w *= 1.5
         return w
     }
@@ -153,7 +173,7 @@ class CostModel(val mode: TravelMode) {
         val up = ascentM / lengthM
         val down = descentM / lengthM
         return when (mode) {
-            TravelMode.HIKE -> 8 * ascentM + ascentM * max(0.0, up - 0.25) * 20 + descentM * max(0.0, down - 0.15) * 10
+            TravelMode.HIKE, TravelMode.CROW -> 8 * ascentM + ascentM * max(0.0, up - 0.25) * 20 + descentM * max(0.0, down - 0.15) * 10
             TravelMode.BIKE -> 12 * ascentM + ascentM * max(0.0, up - 0.08) * 80 + descentM * max(0.0, down - 0.12) * 30
             TravelMode.DRIVE -> 0.0
         }
@@ -164,10 +184,11 @@ class CostModel(val mode: TravelMode) {
      * Hike: Naismith's rule, 5 km/h plus an hour per 600 m of ascent. Bike: 16 km/h plus an hour per
      * 500 m of ascent (a touring pace; descents are not credited). Drive: [DRIVE_SUMMARY_KMH], used only
      * for a drive leg without a router time (straight or imported; T89): a routed drive leg keeps the
-     * router's own sum of each road's time ([edgeTimeS]) and the summary adds those up.
+     * router's own sum of each road's time ([edgeTimeS]) and the summary adds those up. Crow (T108): Naismith over the
+     * straight line, a lower bound for anyone walking it (a crow route is not a path to walk).
      */
     fun timeS(distanceM: Double, ascentM: Double): Double = when (mode) {
-        TravelMode.HIKE -> distanceM / 5000.0 * 3600 + ascentM / 600.0 * 3600
+        TravelMode.HIKE, TravelMode.CROW -> distanceM / 5000.0 * 3600 + ascentM / 600.0 * 3600
         TravelMode.BIKE -> distanceM / 16000.0 * 3600 + ascentM / 500.0 * 3600
         TravelMode.DRIVE -> distanceM / (DRIVE_SUMMARY_KMH * 1000.0) * 3600
     }
@@ -187,7 +208,10 @@ class CostModel(val mode: TravelMode) {
             WayClass.SECONDARY -> 65.0
             WayClass.TERTIARY -> 55.0
             WayClass.MINOR -> 40.0
-            WayClass.SERVICE -> 20.0
+            // T108: 15, not 20: at 20 a parking lot inside a hairpin (Sunrise Point on Sunrise Park Road: 73 m of lot
+            // against 205 m of road, both 13 s) was as fast as the road and the drive cut through it; parking aisles and
+            // driveways are slower than 20 (the packs do not say which service road is one).
+            WayClass.SERVICE -> 15.0
             WayClass.TRACK -> 15.0
             WayClass.PATH, WayClass.FOOTWAY, WayClass.CYCLEWAY, WayClass.BRIDLEWAY, WayClass.STEPS -> 0.0
         }
@@ -250,6 +274,7 @@ data class PlannedRoute(
         "start" to snapJson(start), "end" to snapJson(end),
         "metersByClass" to metersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) },
         "via" to via.map { (n, m) -> linkedMapOf("name" to n, "distanceM" to r1(m)) }, // T49: trail names
+        "bearingDeg" to if (mode == TravelMode.CROW && route.points.size >= 2) route.points.let { Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) } else null, // T108
         "memory" to memory.ifEmpty { null }, // T76
         "instructions" to instructions.map { it.json(mode) }, // T102
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
@@ -498,6 +523,8 @@ class TileRouter(
         fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
         mode: TravelMode, maxSnapM: Double, name: String, ids: UuidGenerator,
     ): RouteResult {
+        // T108: crow is a straight line, never a search (no heights here: the editor and the phone pass their DEM to Crow).
+        if (mode == TravelMode.CROW) return RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, null, name, ids, units))
         if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the pack has no trails or roads to route on")
         val model = CostModel(mode)
         val long = overlay != null && mode == TravelMode.DRIVE &&

@@ -53,7 +53,7 @@ import java.util.concurrent.atomic.AtomicLong
  * page holds the route as its encoded `path` value (T60's [RoutePath.encode], the value a trip
  * stores in the sync log) and sends it back with each edit.
  *
- * - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m]`
+ * - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive|crow][&pack=<name>][&snap=m]` (T108: crow, straight legs between the points, no graph)
  *   (or `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points (each snapped onto a trail
  *   within `snap` metres, default 300 as on the phone; legs along trails, straight where no trail
  *   connects). The reported pack is `pack=` (a catalog id: `<name>` of `out/<name>-dem.pmtiles` plus
@@ -487,7 +487,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         return reply(pack, out, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(out)) + listOfNotNull(added?.let { "index" to it }).toMap()
     }
 
-    private fun requireMode(mode: String) = require(TravelMode.of(mode) != null) { "mode must be hike, bike or drive" }
+    private fun requireMode(mode: String) = require(TravelMode.of(mode) != null) { "mode must be ${TravelMode.labels}" }
 
     private fun reply(
         pack: Pack?, path: RoutePath, notes: List<String>, graph: Map<String, Any?>?, t0: Long, messages: Map<String, String> = emptyMap(),

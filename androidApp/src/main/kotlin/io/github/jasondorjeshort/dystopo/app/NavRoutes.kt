@@ -14,7 +14,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `POST /nav/start?route=current|<kept route id or id prefix>|<saved route id, id prefix or file>` (T45's plan on
  *   the map; T65: a route kept in the trip store, as `GET /routes` lists them; else a route in `files/routes/`), `?track=<id>` (a stored track), `?file=<name>` (a GPX in `files/tracks|routes|exports`),
  *   or a GPX body (its route, or its track with `prefer=track`). Options: `offRouteM` (50), `offRouteS` (10),
- *   `backOnRouteM` (30), `arriveM` (30), `mode=hike|bike|drive` (the plan's mode for `route=current`),
+ *   `backOnRouteM` (30), `arriveM` (30), `mode=hike|bike|drive|crow` (the plan's mode for `route=current`),
  *   `camera=follow|heading|free` (follow), `zoom` (15; `zoom=keep`), `sound=0`, `vibrate=0`. Answers like `GET /nav`.
  * - `GET /nav`: the path (length, climb, planned time, waypoints), the latest state (progress, distance off
  *   the line, next waypoint and end with distance, climb, time, ETA; the rejoin hint), heading and its
@@ -44,6 +44,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `GET /nav` has `directions` (counts) and the card's `ui.turn`, `ui.turnDistance`, `ui.turnSoon`.
  *   `GET /nav/directions[?route=current|<kept or saved route>][&level=1|2|3]` lists a route's directions without
  *   navigating (`count`, `shown`, `byPriority`, each with `text` and `inDistance`, "In 300 m, turn left onto ...");
+ *   T108: a kept trip's are the directions saved with it (`source.directions` `saved`; no graph needed), else read
+ *   from the packs (`packs`), and `/nav` `source` says the same; a crow route has one, the arrival;
  *   `POST /nav/directions?open=1|0` opens or closes the list on the route card ("Show N directions").
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate) and the device GPS while navigating.
@@ -104,7 +106,7 @@ object NavRoutes {
                 r.body.isNotEmpty() -> NavSources.gpx(r.bodyText, preferTrack, q["name"])
                 else -> return bad("route=, track=, file= or a GPX body required")
             }
-            val mode = q["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be hike, bike or drive") } ?: res.mode ?: TravelMode.HIKE
+            val mode = q["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") } ?: res.mode ?: TravelMode.HIKE
             val defaults = NavOptions()
             val opts = NavOptions(
                 offRouteM = d("offRouteM") ?: defaults.offRouteM,

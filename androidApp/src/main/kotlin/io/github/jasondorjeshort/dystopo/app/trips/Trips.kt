@@ -17,6 +17,7 @@ import io.github.jasondorjeshort.dystopo.model.RouteGpx
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
+import io.github.jasondorjeshort.dystopo.model.SavedDirections
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
@@ -42,6 +43,14 @@ import java.util.concurrent.Executors
  * The editor uses the active pack's trail graph ([RoutePlanner.graph], built on first use) and the
  * DEM pack for the elevation of straight legs; with no graph every leg is straight. Compose state is
  * written on the main thread only.
+ *
+ * T108 (ADR 0033): a trip keeps its turn directions as a sync field (`directions`, [SavedDirections]): Keep saves the
+ * planned route's own (local or from the server), a new trip and every edit save them from the editor (legs an edit
+ * left alone keep theirs, [RouteEditor.directions]), so the trip card and navigation have them with no graph. A trip
+ * without them (saved before T108, in the browser, or edited by an older build since) gets them when it is opened
+ * where a graph covers it ([open], [migrateDirections]), or at once when every leg is straight; otherwise the card
+ * says they were not saved ([DIRECTIONS_NOT_SAVED]). A trip in a mode this build does not know is shown and can be
+ * followed but not edited (the editor refuses it, [io.github.jasondorjeshort.dystopo.routing.TravelMode.unknownModeMessage]).
  */
 object Trips {
     private val app: DystopoApp get() = DystopoApp.instance
@@ -64,6 +73,9 @@ object Trips {
         private set
     var summary by mutableStateOf<RouteSummary?>(null)
         private set
+    /** T108: the trip card's list of directions is open ("Show N directions"; `POST /routes/{id}/directions?open=1`). */
+    var directionsOpen by mutableStateOf(false)
+
     /** What a tap on the map does while a route is open: `via` (add a via point), `waypoint`, or `none` (drag only). */
     var tool by mutableStateOf("none")
     var message by mutableStateOf<String?>(null)
@@ -106,6 +118,9 @@ object Trips {
         dem = p.file.path to safe
         return safe
     }
+
+    /** T108: the active DEM pack's sampler for a crow line on the route card ([RoutePlanner.plan]), or null without one. */
+    fun demSampler(): ElevationSampler? = elevation()
 
     /** T91: the active DEM pack's elevation at a point (metres, one decimal), or null without a DEM or data there. */
     fun elevationAt(lat: Double, lon: Double): Double? =
@@ -155,21 +170,25 @@ object Trips {
 
     // ---- changes ----
 
-    /** Creates a route through [points] (snapped to trails, legs routed), stores it and opens it. */
+    /** Creates a route through [points] (snapped to trails, legs routed), stores it with its directions (T108) and opens it. */
     fun create(points: List<Pair<Double, Double>>, name: String, mode: String = "hike", waitMs: Long = 120_000): RoutePlan {
         val t0 = System.nanoTime()
         val ed = editor(waitMs)
         val path = ed.create(points, mode)
-        val plan = RoutePlan(ids.next(), name, path, type = mode)
+        val plan = RoutePlan(ids.next(), name, path, type = mode, directions = SavedDirections.of(ed.directions(path), path))
         store { it.putRoutePlan(plan, System.currentTimeMillis()) }
         note("create", t0, ed)
         return opened(plan.id)
     }
 
-    /** Keeps the T45 planned route as a trip: its start and end become via points, its line one trail leg. */
+    /**
+     * Keeps the T45 planned route as a trip: its start and end become via points, its line one trail leg (T108: crow,
+     * one straight leg). T108: with the plan's own directions (local, or the server's for a route it planned).
+     */
     fun keep(p: PlannedRoute, name: String = p.route.name): RoutePlan {
         val path = RoutePath.planned(p.route.points, p.mode.label, p.timeS) // T89: a drive keeps the router's time
-        val plan = RoutePlan(p.route.id, name, path, type = p.mode.label, description = p.route.description)
+        val directions = p.instructions.takeIf { it.isNotEmpty() }?.let { SavedDirections.of(it, path) }
+        val plan = RoutePlan(p.route.id, name, path, type = p.mode.label, description = p.route.description, directions = directions)
         store { it.putRoutePlan(plan, System.currentTimeMillis()) }
         return opened(plan.id)
     }
@@ -181,7 +200,9 @@ object Trips {
             val before = plan(id) ?: throw NoSuchElementException("no route $id")
             val ed = editor()
             val path = change(ed, before.path)
-            check(store { it.setRoutePath(id, path, System.currentTimeMillis()) }) { "route $id is gone" }
+            // T108: the directions follow the path (legs the edit left alone keep theirs), written right after it.
+            val directions = ed.directions(path, before.path, before.savedDirections)
+            check(store { s -> s.setRoutePath(id, path, System.currentTimeMillis()).also { ok -> if (ok) s.setRouteDirections(id, directions, path, System.currentTimeMillis()) } }) { "route $id is gone" }
             note(what, t0, ed)
             return opened(id)
         } finally {
@@ -340,9 +361,51 @@ object Trips {
 
     // ---- UI ----
 
-    /** Opens route [id] in the editor (and shows it on the map). */
+    /**
+     * T108, the migration of trips saved without directions (before T108, in the browser, or edited since by a build
+     * that does not write them): their directions made now and saved, when every leg is straight (nothing to look up)
+     * or a graph of the packs on the phone covers the route ([RoutePlanner.localJunctions]); null when neither, and the
+     * card then says they were not saved. [p] already having them returns it unchanged. Not on the main thread.
+     */
+    fun migrateDirections(p: RoutePlan, waitMs: Long = 5_000): RoutePlan? {
+        if (p.savedDirections != null) return p
+        if (p.path.points.size < 2 || !io.github.jasondorjeshort.dystopo.routing.TravelMode.known(p.path.mode)) return null
+        val allStraight = p.path.legs.isNotEmpty() && p.path.legs.all { it.kind == io.github.jasondorjeshort.dystopo.model.LegKind.STRAIGHT }
+        val junctions = if (allStraight || p.path.mode == "crow") null
+        else RoutePlanner.localJunctions(p.path.points.map { it.lat to it.lon }, waitMs) ?: return null
+        val list = io.github.jasondorjeshort.dystopo.routing.Directions.ofPath(p.path, junctions)
+        if (!store { it.setRouteDirections(p.id, list, p.path, System.currentTimeMillis()) }) return null
+        directionsMigrated++
+        Log.i(TAG, "directions saved for trip ${p.id}: ${list.size} (${if (junctions == null) "straight legs" else "from the packs' graph"})")
+        return plan(p.id)
+    }
+
+    /** T108: trips whose directions [migrateDirections] made and saved since the app started (`GET /routes`). */
+    @Volatile var directionsMigrated = 0
+        private set
+
+    /** T108: the trip whose directions [open] is making now (the card says so instead of "not saved"). */
+    var directionsWorking by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * Opens route [id] in the editor (and shows it on the map). T108: a trip without directions shows at once and gets
+     * them in the background where it can ([migrateDirections], waiting up to [MIGRATE_WAIT_MS] for the packs' graphs,
+     * which a first use builds), then the card shows them.
+     */
     fun open(id: String, fit: Boolean = true): RoutePlan? {
         val p = plan(id) ?: return null
+        if (p.savedDirections == null && io.github.jasondorjeshort.dystopo.routing.TravelMode.known(p.path.mode)) {
+            ui { directionsWorking = p.id }
+            worker.execute {
+                try {
+                    runCatching { migrateDirections(p, MIGRATE_WAIT_MS) }.onFailure { Log.w(TAG, "directions for ${p.id}", it) }
+                } finally {
+                    ui { if (directionsWorking == p.id) directionsWorking = null }
+                }
+                if (editingId == p.id) refresh()
+            }
+        }
         ui {
             showPlan(p)
             listOpen = false
@@ -365,7 +428,7 @@ object Trips {
     }
 
     fun close() {
-        ui { showPlan(null); message = null; offline = null }
+        ui { showPlan(null); message = null; offline = null; directionsOpen = false }
         overlay.show(null)
     }
 
@@ -415,6 +478,9 @@ object Trips {
     }
 
     const val TAG = "DystopoTrips"
+
+    /** T108: how long [open]'s background migration waits for the packs' graphs (a first use builds them, about 3 to 6 s for Rainier). */
+    const val MIGRATE_WAIT_MS = 60_000L
 }
 
 /**
@@ -439,6 +505,15 @@ internal fun driveTimeEstimated(units: io.github.jasondorjeshort.dystopo.render.
     val speed = if (units == io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET) "${Math.round(kmh / 1.609344)} mph" else "${Math.round(kmh)} km/h"
     return "Drive time estimated at a flat $speed: planned before road speeds. Re-plan for the road time."
 }
+
+/** T108: the trip card's line when a trip has no saved directions and no graph here to make them (pure text, tested). */
+internal const val DIRECTIONS_NOT_SAVED = "Directions were not saved with this route. Open it with its map pack on this phone to add them."
+
+/** T108: the trip card's line while [Trips.open] makes the directions of a trip saved without them. */
+internal const val DIRECTIONS_WORKING = "Making the directions from the map pack…"
+
+/** T108: the trip card's directions action: "Show N directions", one in the singular (pure, tested). */
+internal fun showDirectionsLabel(n: Int): String = if (n == 1) "Show 1 direction" else "Show $n directions"
 
 /** T95: the Offline offer while the corridor's manifest is being made. */
 internal const val OFFLINE_WORKING = "Working out the offline size…"

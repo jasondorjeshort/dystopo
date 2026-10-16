@@ -32,7 +32,17 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.github.jasondorjeshort.dystopo.model.RouteDirections
+import io.github.jasondorjeshort.dystopo.model.RoutePath
+import io.github.jasondorjeshort.dystopo.model.RoutePlan
+import io.github.jasondorjeshort.dystopo.model.SavedDirections
+import io.github.jasondorjeshort.dystopo.routing.Crow
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
+import io.github.jasondorjeshort.dystopo.store.SqlTrackStore
+import io.github.jasondorjeshort.dystopo.store.db.TrackDb
+import io.github.jasondorjeshort.dystopo.sync.Bundle
+import java.util.Properties
 import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
@@ -58,6 +68,13 @@ import kotlin.math.cos
  *   T102: the route's turn directions are in `route.instructions` (type, priority, distance along, way, turn,
  *   lead distance, the stretch after it) and, as text with the stretch each one starts, in `directions`
  *   (in `--units`, ft by default as for the render; every priority, the default level's count in `shown`).
+ *   T108: `trip` follows the route as a phone keeps it: saved as a trip with its directions (the phone's Keep) in one
+ *   store, synced as a sync bundle (encoded, gzipped, decoded) into a second store with no graph (the stores
+ *   `sync-sim --store sql` uses: SqlTrackStore over in-memory SQLite) and loaded there; `same` says the directions
+ *   loaded there are the ones saved (`text` lists them as `directions` does), with the ops, bundle bytes and the
+ *   `directions` field's size.
+ *   T108: `--mode crow` is the straight line between the points (no graph: `--pack` only names the default DEM, or give
+ *   `--dem`), with `route.bearingDeg`, the profile from the DEM and one arrival in `instructions`.
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters.
  *
  * Elevations come from the pack's DEM archive (`<name>-dem.pmtiles` next to it, or `--dem`).
@@ -76,7 +93,7 @@ class RouteCommand : CliktCommand(name = "route") {
     private val dem by option("--dem", help = "DEM pack for elevation and the render (default: <name>-dem.pmtiles next to --pack)").file(mustExist = true, canBeDir = false)
     private val from by option("--from", help = "Start lat,lon")
     private val to by option("--to", help = "End lat,lon")
-    private val mode by option("--mode", help = "hike (default), bike or drive (T73: the roads in the pack, one-ways and speed limits)").choice("hike", "bike", "drive").default("hike")
+    private val mode by option("--mode", help = "hike (default), bike, drive (T73: the roads in the pack, one-ways and speed limits) or crow (T108: a straight line, no graph)").choice("hike", "bike", "drive", "crow").default("hike")
     private val snap by option("--snap", help = "How far (m) a point may be from the nearest trail or road").double().default(Router.DEFAULT_SNAP_M)
     private val name by option("--name", help = "Route name").default("Route")
     private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
@@ -88,16 +105,25 @@ class RouteCommand : CliktCommand(name = "route") {
 
     override fun run() {
         if (currentContext.invokedSubcommand != null) return
-        val packFile = pack ?: throw UsageError("--pack is required")
+        val crow = mode == "crow"
+        val packFile = pack ?: dem.takeIf { crow } ?: throw UsageError("--pack is required (for --mode crow, --pack or --dem)")
         val (fromLat, fromLon) = latLon(from ?: throw UsageError("--from lat,lon is required"), "--from")
         val (toLat, toLon) = latLon(to ?: throw UsageError("--to lat,lon is required"), "--to")
         val timings = Timings()
         val demFile = dem ?: RouteGraphs.defaultDem(packFile)
-        val (graph, info) = timings.time("graph") { RouteGraphs.openOrBuild(packFile, demFile, graphFile) }
-        val router = Router(graph)
-        timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
-        val result = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
-        val report = linkedMapOf<String, Any?>("pack" to packFile.path, "dem" to demFile?.path, "graph" to info + ("summary" to graph.json()))
+        val report = linkedMapOf<String, Any?>("pack" to pack?.path, "dem" to demFile?.path)
+        val result = if (crow) {
+            // T108: no graph; the DEM pack's heights along the line.
+            val sampler = demFile?.let { DemElevation(RouteGraphs.pyramid(it, cacheTiles = 64)) }
+            report["graph"] = null
+            timings.time("route") { RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, sampler, name)) }
+        } else {
+            val (graph, info) = timings.time("graph") { RouteGraphs.openOrBuild(packFile, demFile, graphFile) }
+            val router = Router(graph)
+            timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
+            report["graph"] = info + ("summary" to graph.json())
+            timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
+        }
         when (result) {
             is RouteResult.Failed -> {
                 report["route"] = null
@@ -116,6 +142,7 @@ class RouteCommand : CliktCommand(name = "route") {
                     "byPriority" to plan.instructions.groupingBy { "P${it.priority}" }.eachCount().toSortedMap(),
                     "text" to plan.instructions.map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, u)})" else "" },
                 )
+                report["trip"] = timings.time("trip") { TripCheck.run(plan, u) } // T108
                 // Drawn as a track: a solid line with direction chevrons, start ring, end square and the elevation profile.
                 val asTrack = Track(plan.route.id, plan.route.name, listOf(TrackSegment(plan.route.points.map { TrackPoint(it.lat, it.lon, it.ele) })))
                 val doc = GpxDocument(tracks = listOf(asTrack))
@@ -174,6 +201,40 @@ class RouteCommand : CliktCommand(name = "route") {
         val lon = parts.getOrNull(1)
         if (parts.size != 2 || lat == null || lon == null || lat !in -90.0..90.0 || lon !in -180.0..180.0) throw UsageError("$opt must be lat,lon in degrees")
         return lat to lon
+    }
+}
+
+/**
+ * T108: a planned route through a phone's life as a trip: kept with its directions (the phone's Keep, [RoutePath.planned]
+ * and [SavedDirections]) in one store, a sync round to a second store (a bundle encoded, gzipped and decoded, as a push
+ * carries it), and loaded there with no graph. Both stores are [SqlTrackStore] over in-memory SQLite, as
+ * `sync-sim --store sql` runs them.
+ */
+internal object TripCheck {
+    fun run(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute, units: ContourUnits): Map<String, Any?> {
+        val now = System.currentTimeMillis()
+        fun store(device: String): SqlTrackStore =
+            SqlTrackStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, Properties(), TrackDb.Schema), { now }) { device }
+        val phone = store("00000000-0000-4000-8000-0000000000a1")
+        val other = store("00000000-0000-4000-8000-0000000000b2")
+        val path = RoutePath.planned(plan.route.points, plan.mode.label, plan.timeS)
+        val saved = SavedDirections.of(plan.instructions, path)
+        phone.putRoutePlan(RoutePlan(plan.route.id, plan.route.name, path, type = plan.mode.label, description = plan.route.description, directions = saved), now)
+        val bundle = phone.bundle()
+        val wire = Gzip.compress(bundle.encode())
+        val applied = other.apply(Bundle.decode(Gzip.decompress(wire)), now)
+        val loaded = other.routePlan(plan.route.id)
+        val list = loaded?.savedDirections
+        fun text(l: List<io.github.jasondorjeshort.dystopo.routing.Instruction>) =
+            l.map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, units)})" else "" }
+        val field = RouteDirections.encode(saved)
+        return linkedMapOf(
+            "id" to plan.route.id, "savedCount" to saved.list.size, "loadedCount" to list?.size,
+            "same" to (list == saved.list && list != null), "sameText" to (list != null && text(list) == text(plan.instructions)),
+            "pathSame" to (loaded?.path == path), "ops" to bundle.ops.size, "applied" to applied.applied,
+            "bundleBytes" to wire.size, "directionsFieldChars" to field?.length,
+            "text" to list?.let { text(it) },
+        )
     }
 }
 

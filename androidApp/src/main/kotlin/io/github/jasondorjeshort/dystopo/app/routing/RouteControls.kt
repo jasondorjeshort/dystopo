@@ -86,6 +86,8 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * or why no route was found. Nothing shows until the first long-press, nor while navigating (T65). The
  * distance, climb and time are [RouteSession.summaryOf], the figures the kept route shows (T65). T102: "Show N
  * directions" opens the turn directions (the default detail level), each with the distance it then runs.
+ * T108: Crow joins the mode chips (they wrap at large font scales) with its one line under them, and a crow route
+ * shows its bearing instead of the trails it follows.
  */
 @Composable
 fun RouteControls() {
@@ -95,6 +97,7 @@ fun RouteControls() {
         mapView?.let { RouteSession.overlay.bind(it) }
         onDispose { RouteSession.overlay.unbind() }
     }
+    LaunchedEffect(Unit) { RouteSession.restoreOnce() } // T108: the unsaved route after a process restart
     val phase = RouteSession.phase
     // T65: hidden while navigating (the stats bar has what matters; the card returns when navigation stops).
     if (phase == "idle" || io.github.jasondorjeshort.dystopo.app.nav.NavSession.ui != null) {
@@ -124,6 +127,11 @@ fun RouteControls() {
             BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
             if (plan != null && phase == "route") {
                 BasicText(RouteSession.summary(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                // T108: a crow line's bearing (it follows no trail).
+                if (plan.mode == TravelMode.CROW) {
+                    val b = plan.route.points.let { io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) }
+                    BasicText("Bearing $b° (${io.github.jasondorjeshort.dystopo.routing.Directions.compass(b.toDouble())})", style = TextStyle(color = Ink, fontSize = 13.sp))
+                }
                 // T49: the trails it follows, by name.
                 if (plan.via.isNotEmpty()) {
                     BasicText(
@@ -135,8 +143,9 @@ fun RouteControls() {
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
-            // T73: the mode chips (hike, bike, drive) on a row of their own, so the actions keep room on a phone.
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            // T73: the mode chips (hike, bike, drive; T108: crow) on a row of their own, so the actions keep room on a phone;
+            // T108: they wrap rather than squeeze at large font scales.
+            ModeChips {
                 for (m in TravelMode.entries) {
                     val on = RouteSession.mode == m
                     BasicText(
@@ -150,6 +159,7 @@ fun RouteControls() {
             if (RouteSession.mode == TravelMode.DRIVE) {
                 BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
             }
+            if (RouteSession.mode == TravelMode.CROW) BasicText(TravelMode.CROW_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T108
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (phase == "route") {
                     Action("Save") { Thread { RouteSession.save() }.start() }
@@ -169,7 +179,7 @@ private fun Directions(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRo
     val list = RouteSession.shownDirections(plan)
     if (list.isEmpty()) return
     val open = RouteSession.directionsOpen
-    Action(if (open) "Hide directions" else "Show ${list.size} directions") { RouteSession.directionsOpen = !open }
+    Action(if (open) "Hide directions" else io.github.jasondorjeshort.dystopo.app.trips.showDirectionsLabel(list.size)) { RouteSession.directionsOpen = !open }
     if (!open) return
     val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
     Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -179,6 +189,13 @@ private fun Directions(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRo
             BasicText("${k + 1}. $text$then", style = TextStyle(color = Ink, fontSize = 13.sp))
         }
     }
+}
+
+/** T108: the mode chips' row, wrapping onto a second line when they do not fit (font scale 2.0, four modes). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ModeChips(content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
 }
 
 /** The graph build progress while a route waits for it (polled; the build runs on its own thread). */

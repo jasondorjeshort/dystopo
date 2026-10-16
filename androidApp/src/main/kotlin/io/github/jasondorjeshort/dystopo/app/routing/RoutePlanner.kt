@@ -307,8 +307,14 @@ object RoutePlanner {
     /**
      * Plans a route over the packs near its ends (blocking; call off the main thread). T57: ends snap within
      * [snapM] (the `routeSnapM` setting), and an off-network failure names the nearest trail ([OffNetwork]).
+     * T108: crow is the straight line with the active DEM pack's heights ([io.github.jasondorjeshort.dystopo.routing.Crow]),
+     * no graph and no wait, so it works on a phone with no vector pack at all.
      */
     fun plan(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, mode: TravelMode, name: String, waitMs: Long, snapM: Double = AppSettings.routeSnapM.toDouble()): RouteResult {
+        if (mode == TravelMode.CROW) {
+            val elevation = runCatching { io.github.jasondorjeshort.dystopo.app.trips.Trips.demSampler() }.getOrNull()
+            return RouteResult.Found(io.github.jasondorjeshort.dystopo.routing.Crow.plan(fromLat, fromLon, toLat, toLon, elevation, name, units = AppSettings.units))
+        }
         val router = router(waitMs, listOf(fromLat to fromLon, toLat to toLon))
         val r = router.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM = snapM, name = name)
         if (r !is RouteResult.Failed) return r

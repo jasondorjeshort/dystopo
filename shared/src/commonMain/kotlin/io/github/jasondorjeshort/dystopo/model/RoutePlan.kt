@@ -1,5 +1,8 @@
 package io.github.jasondorjeshort.dystopo.model
 
+import io.github.jasondorjeshort.dystopo.routing.Instruction
+import io.github.jasondorjeshort.dystopo.routing.Maneuver
+import io.github.jasondorjeshort.dystopo.routing.WayClass
 import io.github.jasondorjeshort.dystopo.sync.ByteReader
 import io.github.jasondorjeshort.dystopo.sync.ByteWriter
 import kotlin.math.roundToLong
@@ -13,7 +16,8 @@ import kotlin.math.roundToLong
  * In the operation log a route is a `PutRoute` (name and the other GPX fields) plus two field writes
  * (`SetField`, last writer wins): `path` ([RoutePath.encode]: mode, via points and every leg's
  * geometry in one value, so a reroute can never pair one device's via points with another's legs) and
- * `waypoints` ([RouteWaypoints.encode]). Older builds ignore fields they do not know.
+ * `waypoints` ([RouteWaypoints.encode]). Older builds ignore fields they do not know. T108 (ADR 0033): a third,
+ * `directions` ([RouteDirections]), keeps the turn directions with the trip, tied to the path they were made for.
  *
  * Coordinates in a path are quantised to 1e-7 degrees (about 1 cm) and elevations to centimetres
  * ([RoutePath.quantized]), so a path decodes to exactly what was encoded and a GPX written from it is
@@ -145,12 +149,13 @@ data class RoutePath(val mode: String, val via: List<ViaPoint>, val legs: List<R
         /**
          * A route the router planned in one piece (the phone's route card, kept as a trip): its start and end as via
          * points and its line as one [LegKind.TRAIL] leg, with the router's [timeS] on a drive (T89; dropped for
-         * hike and bike, whose time the summary models from distance and climb).
+         * hike and bike, whose time the summary models from distance and climb). T108: a crow line is one
+         * [LegKind.STRAIGHT] leg, as every crow leg is.
          */
         fun planned(points: List<RoutePoint>, mode: String, timeS: Double): RoutePath {
             val pts = points.map { RoutePoint(it.lat, it.lon, it.ele) }
             require(pts.size >= 2) { "a planned route has two points or more" }
-            val leg = RouteLeg(LegKind.TRAIL, pts, timeS.takeIf { mode == "drive" })
+            val leg = RouteLeg(if (mode == "crow") LegKind.STRAIGHT else LegKind.TRAIL, pts, timeS.takeIf { mode == "drive" })
             return RoutePath(mode, listOf(ViaPoint(pts.first().lat, pts.first().lon), ViaPoint(pts.last().lat, pts.last().lon)), listOf(leg)).quantized()
         }
 
@@ -247,7 +252,9 @@ object RouteWaypoints {
 
 /**
  * A planned route as the app shows it (T60): the GPX fields of [Route], the [path] it was drawn with
- * and its [waypoints]. [toRoute] is the GPX `rte` (the path's points as `rtept`s).
+ * and its [waypoints]. [toRoute] is the GPX `rte` (the path's points as `rtept`s). T108: [directions], the turn
+ * directions saved with it; a plan read from a store has them only when they were made for its [path] (else null:
+ * not saved, or saved for a path an edit has since replaced), and [savedDirections] checks that for any plan.
  */
 data class RoutePlan(
     val id: String,
@@ -258,11 +265,140 @@ data class RoutePlan(
     val comment: String? = null,
     val type: String? = null,
     val extensions: String? = null,
+    val directions: SavedDirections? = null,
 ) {
     fun toRoute(): Route = Route(id, name, path.points, description, comment, type, extensions)
 
     /** The waypoint by id, or null. */
     fun waypoint(id: String): Waypoint? = waypoints.firstOrNull { it.id == id }
+
+    /** T108: the saved turn directions when they were made for this plan's [path], else null. */
+    val savedDirections: List<Instruction>? get() = directions?.takeIf { it.isFor(path) }?.list
+}
+
+/** T108: turn directions saved with a trip and the key of the path they were made for ([RouteDirections.pathKey]). */
+data class SavedDirections(val pathKey: Long, val list: List<Instruction>) {
+    fun isFor(path: RoutePath): Boolean = pathKey == RouteDirections.pathKey(path)
+
+    companion object {
+        /** [list] saved for [path], quantised as the field keeps it ([RouteDirections.quantized]). */
+        fun of(list: List<Instruction>, path: RoutePath) = SavedDirections(RouteDirections.pathKey(path), RouteDirections.quantized(list))
+    }
+}
+
+/**
+ * T108 (ADR 0033): the `directions` field of a route: the turn directions ([Instruction]) saved with the trip, so the
+ * trip card and navigation have them without a graph (offline, on a phone that never planned the trip, after a sync).
+ * The value carries the key of the path it was made for ([pathKey]: FNV-1a 64 of the path value, [RoutePath.encode] of
+ * the quantised path), and [io.github.jasondorjeshort.dystopo.sync.Materializer.routePlan] takes it only when that is
+ * the route's path now: directions written for another path (an edit on a build that does not write them, a browser
+ * edit, two phones editing at once with the path from one and the directions from the other) count as absent, the
+ * same on every replica, and are made again where a graph is ([io.github.jasondorjeshort.dystopo.routing.Directions]).
+ * Builds before T108 ignore the field (it is not one of their route fields), so they keep working without it.
+ *
+ * Version 1, as base64url: u8 version, u64 path key (8 bytes, big-endian), uvarint count, then per instruction:
+ * string type ([Maneuver.code]), u8 priority, svarint along (decimetres, delta from the previous), svarint lat and lon
+ * (1e-7 degrees, deltas), nstring name, u8 way class ([WayClass.code] + 1, 0 none), u8 flags (1 same way, 2 via),
+ * svarint turn (degrees), uvarint bearing (degrees), uvarint lead and stretch (decimetres), then uvarint via when
+ * flag 2. A value that does not decode (a newer version, an unknown type) counts as absent.
+ */
+object RouteDirections {
+    const val VERSION = 1
+
+    /** The longest `directions` value a device writes (64 KiB of base64url, a couple of thousand instructions); longer lists are not saved. */
+    const val MAX_CHARS = 64 * 1024
+
+    /** The key of [path]: FNV-1a 64 over its quantised value ([RoutePath.encode]). */
+    fun pathKey(path: RoutePath): Long {
+        var h = -0x340d631b7bdddcdbL
+        for (b in path.quantized().encode().encodeToByteArray()) {
+            h = h xor (b.toLong() and 0xff)
+            h *= 0x100000001b3L
+        }
+        return h
+    }
+
+    /** [list] as the field keeps it: distances to decimetres, coordinates to 1e-7 degrees (what [decode] returns). */
+    fun quantized(list: List<Instruction>): List<Instruction> = list.map {
+        it.copy(alongM = dm(it.alongM) / 10.0, lat = e7(it.lat) / 1e7, lon = e7(it.lon) / 1e7, leadM = dm(it.leadM) / 10.0, stretchM = dm(it.stretchM) / 10.0)
+    }
+
+    /** The field value for [saved]; null when it would be longer than [MAX_CHARS]. */
+    fun encode(saved: SavedDirections): String? {
+        val w = ByteWriter()
+        w.byte(VERSION)
+        for (k in 7 downTo 0) w.byte((saved.pathKey ushr (8 * k)).toInt() and 0xff)
+        w.uvarint(saved.list.size.toLong())
+        var along = 0L
+        var lat = 0L
+        var lon = 0L
+        for (i in saved.list) {
+            w.string(i.type.code)
+            w.byte(i.priority.coerceIn(0, 255))
+            val a = dm(i.alongM); w.svarint(a - along); along = a
+            val la = e7(i.lat); val lo = e7(i.lon)
+            w.svarint(la - lat); w.svarint(lo - lon)
+            lat = la; lon = lo
+            w.nstring(i.name)
+            w.byte(i.wayClass?.let { it.code + 1 } ?: 0)
+            w.byte((if (i.sameWay) 1 else 0) or (if (i.via != null) 2 else 0))
+            w.svarint(i.turnDeg.toLong())
+            w.uvarint(((i.bearingDeg % 360 + 360) % 360).toLong())
+            w.uvarint(dm(i.leadM).coerceAtLeast(0))
+            w.uvarint(dm(i.stretchM).coerceAtLeast(0))
+            i.via?.let { w.uvarint(it.toLong().coerceAtLeast(0)) }
+        }
+        return Base64Url.encode(w.toByteArray()).takeIf { it.length <= MAX_CHARS }
+    }
+
+    /** The field value for [list] made for [path]; null when too long. */
+    fun encode(list: List<Instruction>, path: RoutePath): String? = encode(SavedDirections.of(list, path))
+
+    /** Decodes a `directions` value; throws [IllegalArgumentException] for anything malformed or newer. */
+    fun decode(text: String): SavedDirections {
+        val bytes = Base64Url.decode(text)
+        try {
+            val r = ByteReader(bytes)
+            val version = r.byte()
+            require(version == VERSION) { "unknown directions version $version" }
+            var key = 0L
+            repeat(8) { key = (key shl 8) or r.byte().toLong() }
+            val n = r.count()
+            var along = 0L
+            var lat = 0L
+            var lon = 0L
+            val list = List(n) {
+                val code = r.string()
+                val type = Maneuver.of(code) ?: throw IllegalArgumentException("unknown direction type '$code'")
+                val priority = r.byte()
+                along += r.svarint()
+                lat += r.svarint(); lon += r.svarint()
+                val name = r.nstring()
+                val cls = r.byte().let { c -> if (c == 0) null else WayClass.entries.firstOrNull { it.code == c - 1 } ?: throw IllegalArgumentException("unknown way class ${c - 1}") }
+                val flags = r.byte()
+                val turn = r.svarint().toInt()
+                val bearing = r.uvarint().toInt()
+                val lead = r.uvarint()
+                val stretch = r.uvarint()
+                val via = if (flags and 2 != 0) r.uvarint().toInt() else null
+                Instruction(type, priority, along / 10.0, lat / 1e7, lon / 1e7, name, cls, flags and 1 != 0, turn, bearing, lead / 10.0, stretch / 10.0, via)
+            }
+            r.end()
+            return SavedDirections(key, list)
+        } catch (e: IllegalArgumentException) {
+            throw e
+        } catch (e: RuntimeException) {
+            throw IllegalArgumentException("corrupt directions: ${e.message}")
+        }
+    }
+
+    fun decodeOrNull(text: String?): SavedDirections? = text?.let { runCatching { decode(it) }.getOrNull() }
+
+    /** The directions in [text] when they decode and were made for [path], else null (absent, stale or newer). */
+    fun forPath(text: String?, path: RoutePath): SavedDirections? = decodeOrNull(text)?.takeIf { it.isFor(path) }
+
+    private fun dm(m: Double): Long = (m * 10).roundToLong()
+    private fun e7(v: Double): Long = (v * 1e7).roundToLong()
 }
 
 /** RFC 4648 base64url without padding (no platform API in commonMain). */

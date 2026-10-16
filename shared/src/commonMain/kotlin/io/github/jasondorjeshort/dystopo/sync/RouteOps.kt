@@ -22,6 +22,12 @@ import io.github.jasondorjeshort.dystopo.model.Waypoint
  * That keeps one `path` value per route in the log instead of one per edit (about 2.5 kB each).
  *
  * **Size cap** ([checkPath]): a `path` value over [MAX_PATH_CHARS] is refused with [RouteTooLargeException].
+ *
+ * **Directions** (T108, ADR 0033): a `directions` write ([io.github.jasondorjeshort.dystopo.model.RouteDirections],
+ * [SyncStore.setRouteDirections]) follows each `path` write from a T108 build, last writer wins and compacted like any
+ * field; it names the path value it was made for, so a path written without it (a browser, an older build, a
+ * concurrent edit) leaves it stale and [Materializer.routePlan] drops it. Builds before T108 skip the field (not one
+ * of their route fields): they store and forward the write and show the trip without it.
  */
 object RouteOps {
     const val WAYPOINT_FIELD_PREFIX = "wpt:"

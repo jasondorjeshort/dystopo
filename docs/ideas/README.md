@@ -62,7 +62,7 @@ names (`CLAUDE.md`, Rules).
 | `2026-10-13-cannot-create-waypoints-android.md` | bug | done | A waypoint can be dropped on the phone at the fix or at a long-press, recording or not (T91, wave 13). |
 | `2026-10-13-turn-directions.md` | feature | done | "Turn left in 30 feet onto Trail F" in every mode: text built in T102 (wave 14); voice and the detail-level setting later. |
 | `2026-10-13-auto-download-when-zoomed-in.md` | feature | new | Keep topo and map data automatically when dwelling zoomed in (T75 is manual). |
-| `2026-10-13-routing-modes-crow-bushwhack.md` | feature | new | Crow (straight line) and bushwhack (trails, then gentlest cross-country) modes. |
+| `2026-10-13-routing-modes-crow-bushwhack.md` | feature | new | Crow (straight line; done in T108) and bushwhack (trails, then gentlest cross-country; open, a proposal first) modes. |
 | `2026-10-13-avalanche-slope-shading.md` | feature | done | Separate avalanche-window and plain-steepness slope shadings (T104: slope off, avalanche or steepness, a legend; docs/PLANNING.md › Slope shading). |
 | `2026-10-13-no-other-product-names.md` | chore | done | Rule: our user-visible text does not name other mapping software (CLAUDE.md, 2026-10-14); T104 renamed the two hits and added `tools/user-text-check.py` (in `./gradlew check`). |
 | `2026-10-13-route-waypoints-and-reroute.md` | feature | new | Route to a destination with waypoints dropped when passed, rerouting, all modes. |

@@ -1,7 +1,9 @@
 package io.github.jasondorjeshort.dystopo.model
 
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
+import io.github.jasondorjeshort.dystopo.routing.Instruction
 import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
@@ -22,6 +24,11 @@ import kotlin.math.sqrt
  * Straight legs get a point every [STRAIGHT_STEP_M] with elevation from [elevation] when there is a
  * sampler (the DEM pack), else only their two ends. Results are [RoutePath.quantized], so what the
  * editor returns is exactly what the store keeps.
+ *
+ * T108: crow ([TravelMode.CROW]) never snaps and never asks the router: every leg is straight, with no note. A path
+ * in a mode this build does not know (a newer Dystopo's, synced here) is not edited: every edit refuses it with
+ * [TravelMode.unknownModeMessage] (ADR 0033 Decision 3: fail plainly rather than replan it as a hike); [setMode] to a
+ * known mode is the way out. [directions] keeps the directions of legs an edit left alone ([Directions.splice]).
  */
 class RouteEditor(
     private val graph: Router?, // T76: a router (tiles, several packs); Router(graph) for one graph
@@ -40,21 +47,48 @@ class RouteEditor(
     /** The router's message for each reason in the last edit's notes (one per code), then cleared. */
     fun takeMessages(): Map<String, String> = LinkedHashMap(messages).also { messages.clear() }
 
-    /** T102: [path]'s turn directions from this editor's graph (every leg, kept or rerouted; via points; straight legs). */
-    fun directions(path: RoutePath): List<io.github.jasondorjeshort.dystopo.routing.Instruction> =
-        io.github.jasondorjeshort.dystopo.routing.Directions.ofPath(path, graph?.junctions)
+    /** T108: the server's inner instructions of each leg it planned in the last edit (by the leg as stored), for [directions]. */
+    private val remoteInner = HashMap<RouteLeg, List<Instruction>>()
+
+    /**
+     * T102: [path]'s turn directions from this editor's graph (every leg; via points; straight legs). T108: when [path]
+     * came from [before] by an edit and [beforeDirections] are [before]'s saved directions (same mode), a leg the edit
+     * left as it was keeps its instructions from them, and a leg the server planned in this edit keeps the server's
+     * ([Directions.splice]), so a trip planned where this phone has no graph keeps what was said along it.
+     */
+    fun directions(path: RoutePath, before: RoutePath? = null, beforeDirections: List<Instruction>? = null): List<Instruction> {
+        val known = HashMap<Int, List<Instruction>>()
+        val old = if (before != null && beforeDirections != null && before.mode == path.mode) Directions.innerByLeg(before, beforeDirections) else null
+        val used = HashSet<Int>()
+        for ((i, leg) in path.legs.withIndex()) {
+            remoteInner[leg]?.let { known[i] = it; continue }
+            if (old == null) continue
+            val j = before!!.legs.indices.firstOrNull { j -> j !in used && sameLeg(before.legs[j], leg) } ?: continue
+            used += j
+            known[i] = old[j]
+        }
+        return Directions.splice(path, graph?.junctions, known)
+    }
+
+    private fun sameLeg(a: RouteLeg, b: RouteLeg): Boolean =
+        a.points.size == b.points.size && a.points.first() == b.points.first() && a.points.last() == b.points.last() && a == b
 
     /** [lat], [lon] snapped onto the trail network when one is within [snapM]. */
     fun snap(lat: Double, lon: Double): ViaPoint = snap(lat, lon, "hike")
 
-    /** [lat], [lon] snapped onto the network [mode] travels (T73: roads open to cars for drive) when it is within [snapM]. */
+    /** [lat], [lon] snapped onto the network [mode] travels (T73: roads open to cars for drive) when it is within [snapM]; crow: as given. */
     fun snap(lat: Double, lon: Double, mode: String): ViaPoint {
+        if (TravelMode.of(mode) == TravelMode.CROW) return ViaPoint(lat, lon) // T108: a crow line runs between the points themselves
         val s = graph?.nearest(lat, lon, snapM, TravelMode.of(mode) ?: TravelMode.HIKE) ?: return ViaPoint(lat, lon)
         return ViaPoint(s.lat, s.lon)
     }
 
-    /** One leg from [a] to [b]: along trails when they connect, else straight. */
-    fun leg(a: ViaPoint, b: ViaPoint, mode: String): RouteLeg {
+    /** One leg from [a] to [b]: along trails when they connect, else straight; crow: straight (T108). */
+    fun leg(a: ViaPoint, b: ViaPoint, mode: String): RouteLeg = leg(a, b, mode) { }
+
+    /** [leg], handing [planned] the inner instructions of a leg a remote router (the server) planned (T108). */
+    private fun leg(a: ViaPoint, b: ViaPoint, mode: String, planned: (List<Instruction>) -> Unit): RouteLeg {
+        if (TravelMode.of(mode) == TravelMode.CROW) return straight(a, b) // T108: no router, no note
         val g = graph
         if (g == null) {
             notes += "no_graph"
@@ -67,6 +101,8 @@ class RouteEditor(
                 // The router starts and ends on its own snap of the via points: pin the ends to them exactly.
                 pts[0] = pts[0].copy(lat = a.lat, lon = a.lon)
                 pts[pts.size - 1] = pts.last().copy(lat = b.lat, lon = b.lon)
+                // T108: the server's directions along a leg it planned (this phone may have no graph there).
+                if (r.plan.memory["remote"] != null) planned(r.plan.instructions.filter { it.type != io.github.jasondorjeshort.dystopo.routing.Maneuver.DEPART && it.type != io.github.jasondorjeshort.dystopo.routing.Maneuver.ARRIVE })
                 // T89: a drive leg keeps the router's time (per-road speeds), which the summary adds up.
                 RouteLeg(LegKind.TRAIL, pts.map { RoutePoint(it.lat, it.lon, it.ele) }, r.plan.timeS.takeIf { travel == TravelMode.DRIVE })
             }
@@ -78,11 +114,14 @@ class RouteEditor(
         }
     }
 
-    /** A straight leg, with DEM elevations every [STRAIGHT_STEP_M] when there is a sampler. */
+    /**
+     * A straight leg, with DEM elevations every [STRAIGHT_STEP_M] when there is a sampler (T108: at most
+     * [MAX_STRAIGHT_POINTS] points, so a long crow line stays well inside the path's size cap).
+     */
     fun straight(a: ViaPoint, b: ViaPoint): RouteLeg {
         val d = TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon)
         val sampler = elevation ?: return RouteLeg(LegKind.STRAIGHT, listOf(RoutePoint(a.lat, a.lon), RoutePoint(b.lat, b.lon)))
-        val n = max(1, ceil(d / STRAIGHT_STEP_M).toInt())
+        val n = min(MAX_STRAIGHT_POINTS - 1, max(1, ceil(d / STRAIGHT_STEP_M).toInt()))
         val pts = (0..n).map { i ->
             val f = i.toDouble() / n
             val lat = a.lat + (b.lat - a.lat) * f
@@ -161,13 +200,21 @@ class RouteEditor(
     fun reroute(path: RoutePath): RoutePath = build(path.mode, path.via, List(path.legs.size) { null })
 
     private fun build(mode: String, via: List<ViaPoint>, keep: List<RouteLeg?>): RoutePath {
-        val legs = if (via.size < 2) emptyList() else List(via.size - 1) { i -> keep.getOrNull(i) ?: leg(via[i], via[i + 1], mode) }
-        return RoutePath(mode, via, legs).quantized()
+        require(TravelMode.of(mode) != null) { TravelMode.unknownModeMessage(mode) } // T108 (ADR 0033 Decision 3)
+        val planned = HashMap<Int, List<Instruction>>()
+        val legs = if (via.size < 2) emptyList() else List(via.size - 1) { i -> keep.getOrNull(i) ?: leg(via[i], via[i + 1], mode) { planned[i] = it } }
+        val path = RoutePath(mode, via, legs).quantized()
+        remoteInner.clear()
+        for ((i, inner) in planned) remoteInner[path.legs[i]] = inner
+        return path
     }
 
     companion object {
         /** Spacing of elevation samples along a straight leg. */
         const val STRAIGHT_STEP_M = 25.0
+
+        /** T108: the most points a straight leg gets (beyond 50 km the samples spread out). */
+        const val MAX_STRAIGHT_POINTS = 2_001
 
         /** The leg of [path] passing nearest to ([lat], [lon]) and its distance in metres; (-1, inf) when there are no legs. */
         fun nearestLeg(path: RoutePath, lat: Double, lon: Double): Pair<Int, Double> {

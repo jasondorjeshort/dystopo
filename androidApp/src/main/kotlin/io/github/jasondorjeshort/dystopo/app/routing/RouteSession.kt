@@ -27,6 +27,11 @@ import kotlin.math.roundToLong
  * planned in the background and drawn by [overlay]; a third long-press starts over. `POST /route` goes
  * through [plan] too, so the debug route and a user's long-presses end in the same state.
  * The Compose fields are written on the main thread only.
+ *
+ * T108: the route not yet kept also outlives the process ([SessionRoute], `files/route-session.json`): written after
+ * every plan, deleted by Clear and Keep, read back once when the card first composes ([restoreOnce]), so a font size
+ * change made in the system settings while Android stops the app in the background does not lose it. (A recreated
+ * activity in the same process already found it here.)
  */
 object RouteSession {
     val overlay = RouteOverlay().apply { onLongPress = { lat, lon -> longPress(lat, lon) } }
@@ -70,6 +75,43 @@ object RouteSession {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
     }
 
+    /** T108: the saved unsaved route (see the class comment). */
+    private fun sessionFile(): File = File(DystopoApp.instance.filesDir, SessionRoute.FILE_NAME)
+
+    /** T108: whether this process restored a route from [SessionRoute], and when it had been saved (`GET /route` `ui.restored`). */
+    @Volatile var restored: Map<String, Any?>? = null
+        private set
+    private val restoreStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** T108: reads the saved route back once per process (on the planning worker), unless something was planned meanwhile. */
+    fun restoreOnce() {
+        if (!restoreStarted.compareAndSet(false, true)) return
+        worker.execute {
+            val f = sessionFile()
+            val r = runCatching { if (f.isFile) SessionRoute.decode(f.readText(Charsets.UTF_8)) else null }.getOrNull() ?: return@execute
+            if (plan != null || start != null) return@execute
+            start = LatLng(r.start.first, r.start.second)
+            end = LatLng(r.end.first, r.end.second)
+            restored = linkedMapOf("routeId" to r.plan.route.id, "savedAt" to r.savedAt, "points" to r.plan.route.points.size, "directions" to r.plan.instructions.size)
+            ui { if (plan == null && phase == "idle") { phase = "route"; mode = r.plan.mode; plan = r.plan; message = null } }
+            overlay.show(r.plan.route.points, null, null)
+            Log.i(RoutePlanner.TAG, "restored the unsaved route ${r.plan.route.id} (${r.plan.route.points.size} points)")
+        }
+    }
+
+    /** T108: writes [p] as the unsaved route ([SessionRoute]); null deletes it. */
+    private fun persist(p: PlannedRoute?) {
+        val s = start
+        val e = end
+        runCatching {
+            val f = sessionFile()
+            if (p == null || s == null || e == null) { f.delete(); return@runCatching }
+            val tmp = File(f.path + ".tmp")
+            tmp.writeText(SessionRoute.encode(p, s.latitude to s.longitude, e.latitude to e.longitude, System.currentTimeMillis()), Charsets.UTF_8)
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        }.onFailure { Log.w(RoutePlanner.TAG, "could not save the unsaved route", it) }
+    }
+
     /** A long-press at ([lat], [lon]): the start, then the end (which plans the route), then a new start. */
     fun longPress(lat: Double, lon: Double) {
         longPresses++
@@ -110,12 +152,14 @@ object RouteSession {
         when (result) {
             is RouteResult.Found -> {
                 failure = null
+                persist(result.plan) // T108: outlives the process
                 ui { phase = "route"; plan = result.plan; message = null }
                 overlay.show(result.plan.route.points, null, null)
                 ui { fitCamera(result.plan) } // T49: show the whole route
             }
             is RouteResult.Failed -> {
                 failure = result
+                persist(null)
                 ui { phase = "failed"; plan = null; message = result.message }
                 overlay.show(null, start, end)
             }
@@ -163,6 +207,7 @@ object RouteSession {
         start = null
         end = null
         failure = null
+        persist(null) // T108: Clear and Keep drop the saved route (a small file delete)
         ui { phase = "idle"; plan = null; message = null; directionsOpen = false }
         overlay.show(null, null, null)
     }
@@ -238,6 +283,7 @@ object RouteSession {
         "via" to plan?.via?.map { it.first }, // T49: trail names
         "directions" to plan?.let { shownDirections(it).size }, "directionsOpen" to directionsOpen, // T102
         "lastFit" to lastFit, "layout" to BottomPanels.json(), // T49
+        "restored" to restored, // T108: the unsaved route read back after the process restarted
     )
 
     /** How long a long-press waits for the graph to be built on first use. */
