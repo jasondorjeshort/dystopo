@@ -45,11 +45,16 @@ class ShareGateFollowupsTest {
         assertEquals(0, gate.rotations)
         assertEquals(4, gate.failures)
         assertEquals(4L, gate.failuresAged)
-        // Five within the window still replace it.
+        // Five within the window from one address (these requests carry none, so they are one) lock that address out;
+        // T110: the code stays (on T106 the fifth replaced it), and the next request from there is refused unopened.
         assertEquals(Outcome.WRONG, hello(gate, "3333333333333333"))
-        assertEquals(1, gate.rotations)
-        assertEquals(0, gate.failures)
+        assertEquals(0, gate.rotations)
+        assertEquals(5, gate.failures)
+        assertTrue(gate.lockedOut(null))
+        val frame = SealedLink.sealRequest(code, SealedLink.Request("POST", "/peer/hello", ByteArray(0)), ShareGate::randomBytes)
+        assertEquals(429, gate.handle(Request("POST", ShareGate.SEALED_PATH, emptyMap(), frame, loopback = false)).status)
         assertEquals(8L + 1, gate.refused)
+        assertEquals(1L, gate.lockedRefused)
     }
 
     /** Blocks the request that went first until [n] others wait for its answer (or 10 s): load-proof bursts. */

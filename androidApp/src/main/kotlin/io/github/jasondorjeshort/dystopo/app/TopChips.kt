@@ -3,6 +3,9 @@ package io.github.jasondorjeshort.dystopo.app
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.getValue
@@ -38,9 +41,27 @@ object TopChips {
     fun trackColumn(): Modifier =
         if (navCardBottom > 0.dp) Modifier.padding(top = navCardBottom + GAP) else Modifier.statusBarsPadding().padding(top = TRACKS_TOP)
 
-    /** The Routes chip's place (top-right): just below the track controls once they have been measured. */
+    /**
+     * The Routes chip's place (top-right): just below the track controls once they have been measured. T110: it also
+     * measures the chip ([routesChipBottom]; 0 once the chip leaves the screen), the lowest of the top-right chips, which
+     * the recentre button must not reach up to.
+     */
     fun routesChip(): Modifier =
-        if (trackColumnBottom > 0.dp) Modifier.padding(end = 8.dp, top = trackColumnBottom + GAP) else Modifier.statusBarsPadding().padding(end = 8.dp, top = ROUTES_TOP)
+        (if (trackColumnBottom > 0.dp) Modifier.padding(end = 8.dp, top = trackColumnBottom + GAP) else Modifier.statusBarsPadding().padding(end = 8.dp, top = ROUTES_TOP))
+            .composed {
+                val density = LocalDensity.current
+                DisposableEffect(Unit) { onDispose { routesChipBottom = 0.dp } }
+                Modifier.onGloballyPositioned { c -> edge(c, density).let { if (it != routesChipBottom) routesChipBottom = it } }
+            }
+
+    /** T110: bottom edge of the Routes chip from the window top (0 while it is not shown). */
+    var routesChipBottom by mutableStateOf(0.dp)
+
+    /**
+     * T110: the lowest bottom edge of what sits at the top right (the track controls with their open list, the Routes
+     * chip, the navigation card), from the window top; 0 before anything was measured. The recentre button stays below it.
+     */
+    val topRightBottom: Dp get() = maxOf(trackColumnBottom, routesChipBottom, navCardBottom)
 
     /** T91: left edge of the Settings and Packs row, and bottom edge of the search column (0 until measured). */
     var topRowLeft by mutableStateOf(0.dp)
@@ -59,6 +80,7 @@ object TopChips {
         "topRowLeftDp" to topRowLeft.value, "searchBottomDp" to searchBottom.value, "searchWidthDp" to searchWidth().value,
         "navCardBottomDp" to navCardBottom.value, "trackColumnTopDp" to trackColumnTop.value, "trackColumnBottomDp" to trackColumnBottom.value,
         "routesChipTopDp" to if (trackColumnBottom > 0.dp) (trackColumnBottom + GAP).value else null,
+        "routesChipBottomDp" to routesChipBottom.value, "topRightBottomDp" to topRightBottom.value, // T110
         // The track controls clear the navigation card when they start below its bottom edge.
         "tracksClearOfNavCard" to (navCardBottom == 0.dp || trackColumnTop >= navCardBottom),
     )

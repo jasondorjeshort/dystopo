@@ -5,6 +5,7 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
+import io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.sync.SyncStore
@@ -15,17 +16,27 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * `app.map.<key>`), so every device converges on the newest choice per setting (last writer wins per
  * key, docs/PLANNING.md › Sync). Device-local settings (server, warm-up, cache caps, decoder, the sync
  * peer) stay local, and so do units seeded from a region: only a choice the user made is published.
+ * T110: the scale bar's both-units choice (`app.scaleBar.both`, `on` or `off`; [ScaleBarSettings], not a
+ * [SettingsRoutes] key, so it is applied here and not through `POST /settings`) syncs too ([LOCAL_KEYS]).
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
- *   keys that request set, with their values after the change.
+ *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
+ *   (the Map options row, `POST /scalebar?both=`).
  * - [pull] runs after a sync merged something: synced values that differ from the current settings are
  *   applied through the same [SettingsRoutes.apply] (validated by [SettingsRoutes.parse]; a value this
- *   build does not accept is skipped and reported), without publishing them again.
+ *   build does not accept is skipped and reported), [LOCAL_KEYS] through their own setters, without publishing
+ *   them again.
  */
 object SettingsSync {
     const val PREFIX = "app."
     private const val MAP = "map."
     private const val TAG = "DystopoSync"
+
+    /** T110: the scale bar's both-units choice, under its settings-file key. */
+    const val SCALE_BAR_BOTH = "scaleBar.both"
+
+    /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
+    val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
 
     @Volatile private var applyingRemote = false
 
@@ -36,9 +47,22 @@ object SettingsSync {
     @Volatile var published = 0L
         private set
 
-    private fun syncedKey(settingsKey: String) = if (settingsKey in MapOptions.KEYS) PREFIX + MAP + settingsKey else PREFIX + settingsKey
+    fun syncedKey(settingsKey: String) = if (settingsKey in MapOptions.KEYS) PREFIX + MAP + settingsKey else PREFIX + settingsKey
 
     private fun settingsKey(syncedKey: String) = syncedKey.removePrefix(PREFIX).removePrefix(MAP)
+
+    /** T110: a boolean setting's synced value. */
+    fun onOff(on: Boolean) = if (on) "on" else "off"
+
+    /** T110: a synced `on`/`off` value, null for anything else (skipped, as a value this build does not accept). */
+    fun parseOnOff(v: String?): Boolean? = when (v) {
+        "on" -> true
+        "off" -> false
+        else -> null
+    }
+
+    /** T110: the [LOCAL_KEYS] settings as they are now, by synced key. */
+    fun localValues(bothUnits: Boolean): Map<String, String> = mapOf(syncedKey(SCALE_BAR_BOTH) to onOff(bothUnits))
 
     /** The synced settings as they are now, by synced key; null for units the user has not chosen. */
     fun current(): Map<String, String?> {
@@ -47,12 +71,49 @@ object SettingsSync {
         m[syncedKey("textScale")] = AppSettings.textScale.toString()
         val map = AppSettings.mapOptions.json(AppSettings.units)
         for (k in MapOptions.KEYS) m[syncedKey(k)] = map[k]?.toString()
+        m += localValues(ScaleBarSettings.bothUnits) // T110
         return m
+    }
+
+    /**
+     * Writes [keys] with their [values] to [store] where the log holds something else; returns how many were written.
+     * Pure (no Android), so tests run it on an in-memory store.
+     */
+    fun write(store: SyncStore, keys: Collection<String>, values: Map<String, String?>, now: Long): Int {
+        val held = store.settings()
+        var n = 0
+        for (k in keys) if (held[k] != values[k]) { store.setSetting(k, values[k], now); n++ }
+        return n
+    }
+
+    /** What [pull] does with the synced settings against the current ones (pure; tests run it). */
+    data class Plan(
+        /** Values for [SettingsRoutes.parse], by settings key. */
+        val params: Map<String, Any?>,
+        /** T110: [LOCAL_KEYS] values to set, by settings key. */
+        val local: Map<String, Boolean>,
+        /** Synced keys whose values are not taken (unknown keys, values this build does not accept). */
+        val skipped: List<String>,
+    )
+
+    fun plan(synced: Map<String, String>, current: Map<String, String?>, routeKeys: Set<String>): Plan {
+        val params = LinkedHashMap<String, Any?>()
+        val local = LinkedHashMap<String, Boolean>()
+        val skipped = ArrayList<String>()
+        for ((k, v) in synced) {
+            if (!k.startsWith(PREFIX) || current[k] == v) continue
+            val key = settingsKey(k)
+            when (key) {
+                in LOCAL_KEYS -> parseOnOff(v)?.let { local[key] = it } ?: run { skipped += k }
+                in routeKeys -> params[key] = v
+                else -> skipped += k
+            }
+        }
+        return Plan(params, local, skipped)
     }
 
     /** One line in [SettingsRoutes.apply]: writes the settings [parsed] set to the log. */
     fun publish(app: DystopoApp, parsed: SettingsRoutes.Parsed.Ok) {
-        if (applyingRemote) return
         val keys = LinkedHashSet<String>()
         if (parsed.textScale != null) keys += syncedKey("textScale")
         if (parsed.unitsGiven) {
@@ -60,16 +121,22 @@ object SettingsSync {
             keys += syncedKey("contourInterval") // a units change can reset a fixed interval to auto
         }
         parsed.map.keys.forEach { keys += syncedKey(it) }
-        if (keys.isEmpty()) return
+        publishKeys(app, keys)
+    }
+
+    /** T110: after a [LOCAL_KEYS] setting changed on this device ([ScaleBarSettings.setBothUnits]); a pulled value is not sent back. */
+    fun publishLocal(app: DystopoApp, settingsKey: String) {
+        require(settingsKey in LOCAL_KEYS) { "$settingsKey is not a local synced setting" }
+        publishKeys(app, listOf(syncedKey(settingsKey)))
+    }
+
+    private fun publishKeys(app: DystopoApp, keys: Collection<String>) {
+        if (applyingRemote || keys.isEmpty()) return
         val values = current()
         val now = System.currentTimeMillis()
         val t = Tracking.of(app)
         try {
-            t.call {
-                val s = t.store as SyncStore
-                val held = s.settings()
-                for (k in keys) if (held[k] != values[k]) { s.setSetting(k, values[k], now); published++ }
-            }
+            t.call { published += write(t.store as SyncStore, keys, values, now) }
         } catch (e: Exception) {
             Log.w(TAG, "publishing settings failed", e)
         }
@@ -78,16 +145,10 @@ object SettingsSync {
     /** After a merge: applies synced settings that differ from the current ones. Returns what changed. */
     fun pull(app: DystopoApp): Map<String, Any?> {
         val t = Tracking.of(app)
-        val synced = t.call { (t.store as SyncStore).settings() }.filterKeys { it.startsWith(PREFIX) }
-        val current = current()
-        val params = LinkedHashMap<String, Any?>()
-        val skipped = ArrayList<String>()
-        for ((k, v) in synced) {
-            if (current[k] == v) continue
-            val key = settingsKey(k)
-            if (key !in SettingsRoutes.KEYS) { skipped += k; continue }
-            params[key] = v
-        }
+        val synced = t.call { (t.store as SyncStore).settings() }
+        val p = plan(synced, current(), SettingsRoutes.KEYS)
+        val params = LinkedHashMap(p.params)
+        val skipped = ArrayList(p.skipped)
         // Units first decide which contour intervals are valid.
         val units = (SettingsRoutes.parse(params.filterKeys { it == "units" }, AppSettings.units) as? SettingsRoutes.Parsed.Ok)?.units ?: AppSettings.units
         var parsed = SettingsRoutes.parse(params, units)
@@ -98,11 +159,14 @@ object SettingsSync {
             }
             parsed = SettingsRoutes.parse(params, units)
         }
-        val result = linkedMapOf<String, Any?>("at" to System.currentTimeMillis(), "applied" to params, "skipped" to skipped)
-        if (params.isNotEmpty() && parsed is SettingsRoutes.Parsed.Ok) {
+        val applied = LinkedHashMap<String, Any?>(params)
+        p.local.forEach { (k, v) -> applied[k] = onOff(v) }
+        val result = linkedMapOf<String, Any?>("at" to System.currentTimeMillis(), "applied" to applied, "skipped" to skipped)
+        if ((params.isNotEmpty() && parsed is SettingsRoutes.Parsed.Ok) || p.local.isNotEmpty()) {
             applyingRemote = true
             try {
-                SettingsRoutes(app).apply(parsed)
+                if (params.isNotEmpty() && parsed is SettingsRoutes.Parsed.Ok) SettingsRoutes(app).apply(parsed)
+                if (p.local.isNotEmpty()) applyLocal(app, p.local)
             } finally {
                 applyingRemote = false
             }
@@ -112,5 +176,14 @@ object SettingsSync {
         return result
     }
 
-    fun json(): Map<String, Any?> = linkedMapOf("published" to published, "lastPull" to lastPull, "synced" to current())
+    /** T110: sets [LOCAL_KEYS] values a sync brought (on the main thread, where the scale bar reads them). */
+    private fun applyLocal(app: DystopoApp, values: Map<String, Boolean>) {
+        values[SCALE_BAR_BOTH]?.let { on -> app.map.onMain { ScaleBarSettings.setBothUnits(on, publish = false) } }
+    }
+
+    /** For `/sync/status` › `settingsSync`: `synced` is this device's values, `held` (T110) the synced log's `app.` settings. */
+    fun json(held: Map<String, String>? = null): Map<String, Any?> = linkedMapOf(
+        "published" to published, "lastPull" to lastPull, "synced" to current(),
+        "held" to held?.filterKeys { it.startsWith(PREFIX) },
+    )
 }

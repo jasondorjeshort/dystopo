@@ -30,3 +30,6 @@
 # extract has no highway way for the North Kaibab Trail between Phantom Ranch and Ribbon Falls (T77), so the North Rim
 # is a separate network. When OSM gains it, this line fails and should become a dist= check.
 36.0530,-112.0836;36.2167,-112.0567:grand-canyon-rim-to-rim|mode=hike|pack=grand-canyon|expect=422|msg=separate networks
+# T110: |dirs=<n>|turn=<text> checks the planned route's turn directions (T102, GET /nav/directions?route=current): at
+# least n of them, one shown direction naming <text>. Paradise to Panorama Point on foot has 8 (7 shown).
+46.7864,-121.7366;46.8024,-121.7289:paradise-panorama-directions|mode=hike|dirs=5|turn=Alta Vista Trail

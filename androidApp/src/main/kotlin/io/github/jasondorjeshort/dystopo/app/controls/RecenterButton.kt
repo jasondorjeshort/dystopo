@@ -8,12 +8,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -64,16 +68,23 @@ object RecenterLayout {
     /** T100: what the icon drew last (orientation, colour), for `GET /camera`. */
     @Volatile var icon: Map<String, Any?>? = null
 
+    /** T110: not shown (no stale bounds kept); `noRoomBelowChips` when the bottom panels reach up to the top-right chips. */
+    fun hide(reason: String) {
+        shown = false
+        hiddenBecause = reason
+        boundsPx = null
+    }
+
     fun json(): Map<String, Any?> {
         val b = boundsPx
         val d = density
         val h = windowHeightPx
-        // Panel edges as the panels report them (dp from the window bottom; the nav card's from the top).
+        // Panel edges as the panels report them (dp from the window bottom; the nav card's and the chips' from the top).
         val credit = AttributionInsets.bottom.value
         val routeCard = BottomPanels.routeCardTop.value
         val panelsShown = BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom
         val trackPanels = if (panelsShown) BottomPanels.trackPanelsTop.value else 0f
-        val navBottom = TopChips.navCardBottom.value
+        val navBottom = TopChips.topRightBottom.value // T110: the nav card, the track controls and the Routes chip
         val cards = io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop.value // T106: the trip card and the update offer
         val bottomDp = if (b != null && h > 0) (h - b[3]) / d else null // the button's bottom edge from the window bottom
         val topDp = b?.let { it[1] / d } // its top edge from the window top
@@ -83,9 +94,11 @@ object RecenterLayout {
             "hiddenBecause" to if (shown) null else hiddenBecause,
             "boundsPx" to b?.map { Math.round(it) },
             "bottomFromWindowBottomDp" to bottomDp?.let { Math.round(it * 10) / 10.0 },
-            "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "navCardBottomDp" to navBottom,
+            "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "navCardBottomDp" to TopChips.navCardBottom.value,
+            "topRightBottomDp" to navBottom, // T110
             "tripCardTopDp" to io.github.jasondorjeshort.dystopo.app.MapInsets.tripCardTop.value, "updateCardTopDp" to io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop.value, // T106
-            // Clear: the button's bottom is above every bottom panel's top edge, and its top below the nav card.
+            // Clear: the button's bottom is above every bottom panel's top edge, and its top below the nav card and (T110)
+            // the top-right chips.
             "clear" to if (!visible || bottomDp == null || topDp == null) null else
                 bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards && (navBottom == 0f || topDp >= navBottom),
             "icon" to icon,
@@ -96,7 +109,8 @@ object RecenterLayout {
 /**
  * T93: the recentre button, round, lower right on the map. It sits above the credit line and above whatever bottom
  * panel shows (the route card, the track profile and waypoint panels: [BottomPanels]), so it moves up with them
- * (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`). Greyed out without a
+ * (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`), but never up to the top-right
+ * chips (T110: it hides when no room is left below them, `hiddenBecause: noRoomBelowChips`). Greyed out without a
  * fix; a tap without the location permission asks for it. Logic in [Recenter].
  *
  * T100: the icon shows the orientation before the tap ([MapOrientation]): north-up a compass needle under an N,
@@ -136,7 +150,17 @@ fun RecenterButton() {
     }
     // The bearing only means something on the free-rotate icon (its north pointer).
     SideEffect { RecenterLayout.icon = mapOf("orientation" to o.orientation.key, "look" to look, "bearing" to if (o.orientation == Orientation.FREE) o.bearing else null) }
-    Box(Modifier.fillMaxSize()) {
+    DisposableEffect(Unit) { onDispose { RecenterLayout.hide("notComposed") } }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // T110 (T102's follow-up): a tall bottom panel (the route card with its directions open at font scale 2.0) pushed
+        // the button up over the Tracks chip. The button now never reaches up to the top-right chips (the track controls
+        // with their list, the Routes chip, the navigation card): with no room left between them it hides.
+        val bottomGap = if (floor > 0.dp) floor + 8.dp else with(density) { WindowInsets.navigationBars.getBottom(density).toDp() } + 32.dp
+        val ceiling = TopChips.topRightBottom
+        if (ceiling > 0.dp && maxHeight - bottomGap - SIZE < ceiling + CHIP_GAP) {
+            SideEffect { RecenterLayout.hide("noRoomBelowChips") }
+            return@BoxWithConstraints
+        }
         Box(
             Modifier.align(Alignment.BottomEnd)
                 .let { m -> if (floor > 0.dp) m.padding(end = 12.dp, bottom = floor + 8.dp) else m.navigationBarsPadding().padding(end = 12.dp, bottom = 32.dp) }
@@ -256,3 +280,6 @@ private fun FacingIcon(tint: Color) {
 
 private val SIZE = 48.dp
 private val ICON = 28.dp
+
+/** T110: the least gap between the button and the top-right chips above it. */
+private val CHIP_GAP = 8.dp

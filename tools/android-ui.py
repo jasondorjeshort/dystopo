@@ -53,7 +53,9 @@ Parts:
                `pack=<name>` needs that pack on the phone: <name>-outdoors.pmtiles (and <name>-dem.pmtiles when it
                exists) from --pack-dir (default out/) are pushed to the app's external packs dir, the app reloads
                them, and the ones this run pushed are deleted again at the end; without the outdoors file the line is
-               reported `skipped` with the reason and does not fail the part (routesSkipped).
+               reported `skipped` with the reason and does not fail the part (routesSkipped). T110: a line with `dirs=<n>`
+               and/or `turn=<text>` also reads the planned route's turn directions (GET /nav/directions?route=current):
+               at least n of them, and one shown direction's text containing <text>.
   search       (debug build, debug port) the search tour: tools/search-tour.txt, each query's expected top hit.
 
 Privacy: only areas.json places are used (the Rainier pack and the views around it); reports never echo file
@@ -537,11 +539,23 @@ def route_line(srv, args, v, packs):
     if "via" in o:
         want = [w.strip() for w in o["via"].split("+") if w.strip()]
         checks["via"] = all(any(w.lower() in (n or "").lower() for n in via) for w in want)
+    directions = None
+    if code == 200 and ("dirs" in o or "turn" in o):  # T110: the planned route's turn directions (T102)
+        dcode, d = srv.call("GET", "/nav/directions?route=current")
+        texts = [x.get("text") or "" for x in (d or {}).get("instructions") or []]
+        directions = {"status": dcode, "count": (d or {}).get("count"), "shown": (d or {}).get("shown"), "first": texts[:3]}
+        checks["directions"] = dcode == 200
+        if "dirs" in o:
+            checks["directionsCount"] = ((d or {}).get("count") or 0) >= int(o["dirs"])
+        if "turn" in o:
+            checks["directionsTurn"] = any(o["turn"].lower() in t.lower() for t in texts)
     out = {"label": v["label"], "mode": mode, "ok": all(checks.values()), "checks": checks, "status": code,
            "distanceM": dist, "ascentM": asc, "descentM": route.get("descentM"), "timeS": route.get("timeS"),
            "via": via, "ms": round((time.time() - t0) * 1000),
+           **({"directions": directions} if directions is not None else {}),
            **({"error": (r or {}).get("message") or (r or {}).get("error")} if code != 200 else {})}
-    print(f"[ui] route {v['label']}: {'ok' if out['ok'] else 'FAILED'} {dist} m, +{asc} m, via {via}", file=sys.stderr)
+    print(f"[ui] route {v['label']}: {'ok' if out['ok'] else 'FAILED'} {dist} m, +{asc} m, via {via}"
+          + (f", {directions['count']} directions ({directions['shown']} shown)" if directions else ""), file=sys.stderr)
     return out
 
 

@@ -300,6 +300,8 @@ object Updater {
 
     /** "Not now" on the map (or the system installer cancelled): this version is not offered again by the daily check. */
     fun decline(why: String = "you said not now") {
+        installWait.cancel() // T110: an install waiting for navigation to end does not happen
+        waitingForNavigation = false
         val s = state
         val tag = s.tag ?: return
         prefs().edit().putString("declinedTag", tag).apply()
@@ -318,12 +320,49 @@ object Updater {
     var acknowledgedTag by mutableStateOf<String?>(null)
         private set
 
-    /** Install: hands the verified file to the system installer; returns a problem or null. */
-    fun install(): String? {
+    /**
+     * T110: whether an install waits for navigation to end ([InstallWait]); Compose state for the map's offer and the
+     * Settings row. Installing replaces the running app, which ends navigation.
+     */
+    var waitingForNavigation by mutableStateOf(false)
+        private set
+    private val installWait = InstallWait { io.github.jasondorjeshort.dystopo.app.nav.NavSession.active }
+
+    /** T110: the message an install waiting for navigation shows (map card and Settings). */
+    fun waitingMessage(name: String?) = "Update to ${name ?: "the new version"} installs when navigation ends"
+
+    /**
+     * Install: hands the verified file to the system installer; returns a problem or null. T110: while navigating it waits
+     * for the session to end ([waitingForNavigation], then installs by itself), unless [now] (the user's "Install now").
+     */
+    fun install(now: Boolean = false): String? {
         val s = state
         val file = readyFile
         if (s.phase != Phase.READY && s.phase != Phase.INSTALLING && s.phase != Phase.DECLINED || file == null || !file.isFile) return "no verified update to install"
         val expected = prefs().getString("readySha", null) ?: return "no checksum recorded for the update; check for updates again"
+        if (installWait.request(now) == InstallWait.Decision.WAIT) {
+            if (!waitingForNavigation) {
+                waitingForNavigation = true
+                set(s.copy(phase = Phase.READY, message = waitingMessage(s.versionName ?: s.tag)))
+                Thread({
+                    try {
+                        while (installWait.waiting) {
+                            Thread.sleep(1000)
+                            if (installWait.poll()) {
+                                waitingForNavigation = false
+                                Log.i(TAG, "navigation ended: installing ${state.versionName}")
+                                install(now = true)
+                            }
+                        }
+                    } catch (_: InterruptedException) {
+                    } finally {
+                        waitingForNavigation = installWait.waiting
+                    }
+                }, "dystopo-update-after-nav").apply { isDaemon = true }.start()
+            }
+            return null
+        }
+        waitingForNavigation = false
         set(s.copy(phase = Phase.INSTALLING, message = "Installing ${s.versionName}"))
         return try {
             // The installer hashes the bytes it writes into the session and abandons it if they are not the checked ones.
@@ -357,6 +396,8 @@ object Updater {
 
     /** Debug: forget the declined, refused and ready versions and the last check time. */
     fun reset() {
+        installWait.cancel()
+        waitingForNavigation = false
         prefs().edit().clear().apply()
         dropDownloads(keep = null)
         UpdateNotification.cancel(app)
@@ -376,6 +417,9 @@ object Updater {
             "declinedTag" to p.getString("declinedTag", null), "refusedTag" to p.getString("refusedTag", null),
             "readyTag" to p.getString("readyTag", null), "readyFile" to readyFile?.path, "checks" to checks.get(),
             "canRequestInstalls" to (Build.VERSION.SDK_INT < 26 || app.packageManager.canRequestPackageInstalls()),
+            // T110: an install asked for while navigating waits for the session to end; the offer's place on the map
+            "waitingForNavigation" to waitingForNavigation, "installsAfterNavigation" to installWait.waitedInstalls,
+            "navigating" to io.github.jasondorjeshort.dystopo.app.nav.NavSession.active, "overlay" to UpdateOverlayLayout.json(),
         )
     }
 

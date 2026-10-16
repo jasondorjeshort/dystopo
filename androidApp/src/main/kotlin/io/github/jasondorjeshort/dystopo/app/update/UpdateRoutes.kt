@@ -14,7 +14,11 @@ import java.util.concurrent.TimeUnit
  *   declined, refused and ready tags, `canRequestInstalls`.
  * - `POST /update/check[?api=<releases URL>|default][&wait=0]`: a manual check ("Check for updates"); waits for
  *   the result (download and verification included) unless `wait=0`. `api=` is kept for later checks.
- * - `POST /update/install`: hands the verified APK to the system installer (the confirmation screen opens).
+ * - `POST /update/install[?now=1]`: hands the verified APK to the system installer (the confirmation screen opens).
+ *   T110: while navigating it waits for the session to end instead (202, `waitingForNavigation`; it installs by itself
+ *   once navigation stops), unless `now=1` (the offer's "Install now"). `GET /update` adds `waitingForNavigation`,
+ *   `installsAfterNavigation`, `navigating` and `overlay` (the offer on the map: `shown` or `hiddenBecause`,
+ *   `duringNavigation`, `topDp`, `maxHeightDp`, `navCardBottomDp`, `clearOfNavCard`).
  * - `POST /update/dismiss`: "Not now" (declines that version); `POST /update/ack`: "OK" on a refusal.
  * - `POST /update/reset`: forgets declined, refused and ready versions, the download and the last check time.
  */
@@ -31,8 +35,8 @@ object UpdateRoutes {
                 Response.json(Updater.json())
             }
             "POST" to "/update/install" -> {
-                val problem = Updater.install()
-                Response.json(Updater.json() + mapOf("error" to problem), if (problem == null) 200 else 409)
+                val problem = Updater.install(now = r.query["now"] == "1")
+                Response.json(Updater.json() + mapOf("error" to problem), if (problem != null) 409 else if (Updater.waitingForNavigation) 202 else 200)
             }
             "POST" to "/update/dismiss" -> { Updater.decline(); Response.json(Updater.json()) }
             "POST" to "/update/ack" -> { Updater.acknowledge(); Response.json(Updater.json()) }

@@ -157,17 +157,25 @@ class ShareLinkTest {
     }
 
     @Test
-    fun codeRotatesAfterRepeatedFailures() {
+    fun repeatedFailuresLockOutTheAddressAndFromManyAddressesReplaceTheCode() {
         val codes = listOf("1111111111111111", "2222222222222222", "3333333333333333")
         var n = 0
-        val gate = ShareGate(hello = { emptyMap() }, sync = { null }, maxFailures = 3, newCode = { codes[n++] })
-        fun hello(c: String) = gate.handle(Request("POST", "/share/sealed", emptyMap(), SealedLink.sealRequest(c, SealedLink.Request("GET", "/share/hello", ByteArray(0)), ShareGate::randomBytes))).status
+        val gate = ShareGate(hello = { emptyMap() }, sync = { null }, maxFailures = 3, newCode = { codes[n++] }, globalFailures = 5)
+        fun hello(c: String, peer: String) = gate.handle(
+            Request("POST", "/share/sealed", emptyMap(), SealedLink.sealRequest(c, SealedLink.Request("GET", "/share/hello", ByteArray(0)), ShareGate::randomBytes), loopback = false, peer = peer),
+        ).status
         assertEquals(codes[0], gate.code)
-        repeat(3) { assertEquals(403, hello("9999999999999999")) }
+        // T110: three wrong codes from one address lock that address out, even with the right code; the code stays.
+        repeat(3) { assertEquals(403, hello("9999999999999999", "10.0.0.5")) }
+        assertEquals(codes[0], gate.code)
+        assertEquals(429, hello(codes[0], "10.0.0.5"))
+        assertEquals(200, hello(codes[0], "10.0.0.6"))
+        // Five in all from any addresses (globalFailures here) replace the code, which lifts the lockout.
+        repeat(2) { assertEquals(403, hello("9999999999999999", "10.0.0.7")) }
         assertEquals(codes[1], gate.code)
         assertEquals(1, gate.rotations)
-        assertEquals(403, hello(codes[0]))
-        assertEquals(200, hello(codes[1]))
+        assertEquals(403, hello(codes[0], "10.0.0.6"))
+        assertEquals(200, hello(codes[1], "10.0.0.5"))
         assertTrue(ShareCode.normalize(ShareGate.randomCode()) != null)
         assertNotEquals(ShareGate.randomCode(), ShareGate.randomCode())
     }

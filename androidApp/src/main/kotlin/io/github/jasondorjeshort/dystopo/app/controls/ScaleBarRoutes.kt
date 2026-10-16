@@ -7,7 +7,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
 
 /**
  * T101, the scale bar's debug routes (debug builds only, on the debug port):
- * - `GET /scalebar`: what the bar shows ([ScaleBarLayout]): `shown` or `hiddenBecause` (`noCamera`, `noScale`; T106: no longer `tripCard`, it rides above the trip card and the update offer, `bottomCardsTopDp`),
+ * - `GET /scalebar`: what the bar shows ([ScaleBarLayout]): `shown` or `hiddenBecause` (`noCamera`, `noScale`, T110 `notComposed` while the no-pack line shows; T106: no longer `tripCard`, it rides above the trip card and the update offer, `bottomCardsTopDp`),
  *   `bothUnits`, `units`, `night`, the camera's `zoom` and `lat` it was fitted at, `metersPerDp` (the shared Web
  *   Mercator rule), `density`, and per bar (the user's units first) `label`, `value`, `unit`, `meters`, `widthDp`,
  *   `widthPx` and `drawnPx` (tick to tick as drawn); where it sits (`boundsPx` in window pixels, its bottom edge,
@@ -15,8 +15,11 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   against MapLibre itself on the live camera: `mapLibreMetersPerDp` (its projection at the centre latitude; per
  *   logical pixel, which is a dp), `meters` at that scale over `drawnPx` and `errorPct` against the label, and `measuredMeters`
  *   (the ground distance between two screen points `drawnPx` apart across the map's centre) with its `errorPct`.
- * - `POST /scalebar?both=on|off`: the Map options row "Scale bar" (one unit or both); answers like `GET` once the
- *   bar has redrawn. Anything else for `both` is a 400.
+ *   T110: only for a bar that is shown and fitted at the live camera (it refits every 500 ms; the route waits up to
+ *   [FIT_WAIT_MS] for that); otherwise `readBack` is null and `readBackSkipped` says why (`hidden`, `fitBehindCamera`).
+ *   Before, a hidden bar kept its last lengths and the read-back compared them with a camera that had moved.
+ * - `POST /scalebar?both=on|off`: the Map options row "Scale bar" (one unit or both; T110: synced, `app.scaleBar.both`
+ *   in `GET /sync/status` › `settingsSync`); answers like `GET` once the bar has redrawn. Anything else for `both` is a 400.
  */
 object ScaleBarRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
@@ -41,7 +44,24 @@ object ScaleBarRoutes {
         return Response.json(state(app))
     }
 
-    private fun state(app: DystopoApp): Map<String, Any?> = ScaleBarLayout.json() + mapOf("readBack" to readBack(app))
+    private fun state(app: DystopoApp): Map<String, Any?> {
+        val why = awaitFit(app)
+        return ScaleBarLayout.json() + mapOf("readBack" to if (why == null) readBack(app) else null, "readBackSkipped" to why)
+    }
+
+    /** T110: null once the bar is shown and fitted at the live camera, else why not after [FIT_WAIT_MS]. */
+    private fun awaitFit(app: DystopoApp): String? {
+        val until = System.currentTimeMillis() + FIT_WAIT_MS
+        while (true) {
+            val live = runCatching { app.map.onMain { app.map.map?.cameraPosition?.let { c -> c.target?.let { c.zoom to it.latitude } } } }.getOrNull()
+            if (live != null && ScaleBarLayout.fittedAt(live.first, live.second)) return null
+            if (System.currentTimeMillis() >= until) return if (!ScaleBarLayout.shown) "hidden" else "fitBehindCamera"
+            Thread.sleep(50)
+        }
+    }
+
+    /** T110: how long `GET /scalebar` waits for the bar to catch up with the camera (it refits every 500 ms). */
+    private const val FIT_WAIT_MS = 1500L
 
     private fun readBack(app: DystopoApp): List<Map<String, Any?>>? = runCatching {
         app.map.onMain {

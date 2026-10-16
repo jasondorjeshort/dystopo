@@ -97,6 +97,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         probeThread.schedule(::probeLoop, 1, TimeUnit.SECONDS)
         probeThread.scheduleWithFixedDelay(::refreshWhenRendered, 2, 1, TimeUnit.SECONDS) // T80
         app.map.onCameraIdle = ::onViewChanged // T41
+        app.map.onMapIdle = ::onMapIdle // T110
     }
 
 
@@ -295,6 +296,27 @@ class OnlineService private constructor(private val app: DystopoApp) {
         }
     }
 
+    /** T110: when the last idle refresh of the sources was asked (elapsed ms). */
+    @Volatile private var idleRefreshAt = 0L
+    val idleSourceRefreshes = AtomicLong()
+
+    /**
+     * T110: the map went idle (main thread). Right after the camera comes to rest the view's tiles are not made yet, so the
+     * sources the server (or the phone's own reader) reports for the view are the previous view's or the defaults, and the
+     * credit line kept them until the next move (T106's follow-up: it lagged a view behind). Asked again here, once the
+     * view's tiles are in, at most once a second; the line recomposes when the answer changes ([CreditLine]).
+     */
+    fun onMapIdle() {
+        val f = fetcher ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - idleRefreshAt < 1000) return
+        val view = OnlineView.currentOnMain(app) ?: return
+        if (view.source == OnlineTiles.PACK) return
+        idleRefreshAt = now
+        idleSourceRefreshes.incrementAndGet()
+        prefetchPool.execute { runCatching { refreshSources(f, view) } }
+    }
+
     private fun refreshSources(f: OnlineFetcher, view: OnlineView) {
         val b = view.bounds ?: return
         val z = floor(view.zoom).toInt()
@@ -306,8 +328,12 @@ class OnlineService private constructor(private val app: DystopoApp) {
         val ids = (MiniJson.parseObject(body.decodeToString())["registryIds"] as? List<Any?>)?.mapNotNull { it as? String } ?: return
         // The report names only tiles the server has already served for the box: right after a move it may
         // list the DEM and not yet the map (Kilimanjaro: only copernicus). Fill a missing kind with the defaults.
-        viewSourceIds = withDefaults(ids)
+        val next = withDefaults(ids)
+        val changed = next != viewSourceIds
+        viewSourceIds = next
         sourceRefreshes.incrementAndGet()
+        // T110: the credit line reads these; it recomposed at the camera's rest, before this answer came.
+        if (changed) runCatching { app.map.onMain { io.github.jasondorjeshort.dystopo.app.about.CreditLine.revision++ } }
     }
 
     /**
@@ -408,6 +434,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "download" to region.json(),
         "viewChanges" to viewChanges.get(), // T41
         "viewSourceIds" to viewSourceIds,
+        "sourceRefreshes" to sourceRefreshes.get(), "idleSourceRefreshes" to idleSourceRefreshes.get(), // T110
         "credits" to credits().map { mapOf("role" to it.role, "provenance" to it.metadata["provenance"]) },
         "assets" to lastAssets,
         "direct" to if (isDirect) direct.json() + mapOf("notReadyAnswered" to app.tiles.online?.notReady?.get(), "refreshesAfterRendering" to renderRefreshes.get()) else null, // T80

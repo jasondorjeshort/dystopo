@@ -39,6 +39,13 @@ server first (a debug build on the emulator otherwise uses the host's 8765; the 
 first view waits until the device is quiet, by its load: the CPU used besides the app at most --quiet-cores in two
 3 s windows in a row (setup.quiet in the summary: the wait and the windows). A just-booted emulator runs near all four
 cores for one to two minutes, and a cold view started then missed the 30 s idle (T88, T98).
+T110: the first view waits up to --first-wait-ms (60 s) for idle, the others --wait-ms (30 s). The first view is the
+cold one (a new process; with no server its terrain around the packs is rendered from the public sources). Measured on
+fresh API 35 AVDs with no server and two other emulators on the host: 10.3 and 14.5 s after the quiet wait, 24.2 s when
+the view started 19 s after the relaunch while the device still used two of its four cores besides the app; T105's
+43 s (run C) is what a view costs when the device or the host is busy again during it. Each view reports
+`idleSeconds` (how long /screenshot waited for idle) and `deviceCpu` (cores the device used besides the app, and the
+app's, while the view ran), so a slow view says whether it ran on a busy device.
 
 Every request carries the app's per-launch loopback token (T49). T57: the debug routes answer on a random
 port per launch, announced with the token only in logcat (`debug server on port N token T`, tag Dystopo):
@@ -179,6 +186,28 @@ class Server:
 adb_path = android_debug.adb_path
 adb = android_debug.adb
 forward_owner = android_debug.forward_owner
+
+
+def device_cpu(exe, serial):
+    """T110: a /proc/stat sample of the device with the app's own ticks (android_debug.parse_cpu), or None without adb."""
+    if not exe or not serial:
+        return None
+    try:
+        pid = android_debug.app_pid(exe, serial)
+        _, out = adb(exe, serial, "shell", "cat /proc/stat" + (f"; cat /proc/{pid}/stat" if pid else ""), timeout=30)
+        return android_debug.parse_cpu(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def cpu_between(a, b):
+    """T110: cores busy besides the app (`others`) and the app's (`app`) between two device_cpu samples."""
+    if not a or not b or b[1] <= a[1] or not b[2]:
+        return None
+    dt = b[1] - a[1]
+    busy = (b[0] - a[0]) / dt * b[2]
+    app = (b[3] - a[3]) / dt * b[2] if a[3] is not None and b[3] is not None and b[3] >= a[3] else 0.0
+    return {"others": round(max(0.0, busy - app), 2), "app": round(app, 2), "cores": b[2]}
 
 
 def restart_app(exe, serial, server, timeout):
@@ -515,6 +544,8 @@ def main():
     ap.add_argument("--views-file", default="")
     ap.add_argument("--out", default="out/android-tour.png", help="screenshots <stem>-<i>.png, <stem>-sheet.png, <stem>.json")
     ap.add_argument("--wait-ms", type=int, default=30000, help="how long /screenshot waits for the map to go idle")
+    ap.add_argument("--first-wait-ms", type=int, default=60000,
+                    help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one)")
     ap.add_argument("--contour-budget-ms", type=float, default=1000.0, help="contour tiles slower than this are a warning (a failure with --strict)")
     ap.add_argument("--max-settle-change", type=float, default=0.02,
                     help="share of pixels that may change between the screenshot and a second one after the map settled")
@@ -609,11 +640,15 @@ def main():
     reports, rasters = [], []
     for i, v in enumerate(views):
         rep = {"index": i, "label": v["label"], "view": v["view"], "checks": {}, "failed": []}
+        wait_ms = args.first_wait_ms if i == 0 else args.wait_ms  # T110: the cold first view
+        cpu0 = device_cpu(exe, serial)
         t0 = time.time()
         try:
             before = server.json("/stats")
             cam = server.json(f"/camera?lat={v['lat']}&lon={v['lon']}&zoom={v['z']}&bearing=0&tilt=0", method="POST")
-            png = server.get(f"/screenshot?wait={args.wait_ms}", timeout=args.wait_ms / 1000 + 60)
+            png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+            rep["idleSeconds"] = round(time.time() - t0, 1)  # T110
+            rep["deviceCpu"] = cpu_between(cpu0, device_cpu(exe, serial))
             health = server.json("/health")
             try:
                 feats = server.json("/features", timeout=60)

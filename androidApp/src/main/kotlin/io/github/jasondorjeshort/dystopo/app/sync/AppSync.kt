@@ -246,7 +246,7 @@ class AppSync private constructor(private val app: DystopoApp) {
         "pendingOps" to pending(),
         "clockCheck" to clockCheck?.json(), // T57: the last clock comparison with a peer
         "conflicts" to linkedMapOf("total" to conflictsTotal, "concurrent" to conflicts.count { it["concurrent"] == true }, "recent" to conflicts.take(10)),
-        "settingsSync" to SettingsSync.json(),
+        "settingsSync" to SettingsSync.json(runCatching { tracking.call { store.settings() } }.getOrNull()), // T110: and what the log holds
         "files" to filesDir.listFiles { f -> f.isFile && f.name.endsWith(".dsync") }.orEmpty().sortedBy { it.name }.map { mapOf("name" to it.name, "bytes" to it.length()) },
         "seededFromTables" to store.seededFromTables,
     ) + tracking.call {

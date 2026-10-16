@@ -284,20 +284,28 @@ class GeoTiff private constructor(
 
         /**
          * Floating-point predictor (TIFF predictor 3): each row is byte-wise delta coded, with
-         * bytes regrouped so all most-significant bytes come first.
+         * bytes regrouped so all most-significant bytes come first. T110: the running sum in a local and the four planes
+         * by offset, one array read per byte (it read each previous byte back; it matters in an interpreter, T110's Lzw note).
          */
         internal fun undoFloatPredictor(bytes: ByteArray, width: Int, height: Int): FloatArray {
             val rowBytes = width * 4
             val out = FloatArray(width * height)
             for (y in 0 until height) {
                 val base = y * rowBytes
-                for (i in 1 until rowBytes) bytes[base + i] = (bytes[base + i] + bytes[base + i - 1]).toByte()
+                var acc = bytes[base].toInt()
+                for (i in base + 1 until base + rowBytes) {
+                    acc += bytes[i]
+                    bytes[i] = acc.toByte()
+                }
+                var p0 = base
+                var o = y * width
                 for (x in 0 until width) {
-                    val b0 = bytes[base + x].toInt() and 0xFF
-                    val b1 = bytes[base + width + x].toInt() and 0xFF
-                    val b2 = bytes[base + 2 * width + x].toInt() and 0xFF
-                    val b3 = bytes[base + 3 * width + x].toInt() and 0xFF
-                    out[y * width + x] = Float.fromBits((b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3)
+                    val b0 = bytes[p0].toInt() and 0xFF
+                    val b1 = bytes[p0 + width].toInt() and 0xFF
+                    val b2 = bytes[p0 + 2 * width].toInt() and 0xFF
+                    val b3 = bytes[p0 + 3 * width].toInt() and 0xFF
+                    out[o++] = Float.fromBits((b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3)
+                    p0++
                 }
             }
             return out

@@ -37,13 +37,34 @@ object AttributionInsets {
     var bottom by mutableStateOf(0.dp)
 }
 
+/**
+ * T110: what makes the credit line compose again besides the view's box: the online service bumps [revision] (on the
+ * main thread only) when the sources it reports for the view change, which happens after the camera's rest, once the
+ * view's tiles are made. Before, the line recomposed only at the rest and named the previous view's sources until the
+ * next move (T106's follow-up). [shown] is the text it composed last, for `GET /attribution`.
+ */
+object CreditLine {
+    var revision by mutableStateOf(0)
+    @Volatile var shown: String? = null
+        private set
+    @Volatile var composedAt = 0L
+        private set
+
+    internal fun composed(text: String) {
+        shown = text
+        composedAt = System.currentTimeMillis()
+    }
+}
+
 @Composable
 fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val view = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds // T49: recompose when the view moves
+    @Suppress("UNUSED_VARIABLE") val sources = CreditLine.revision // T110: and when the online sources in view change
     val credits = runCatching { AppCredits.compose(DystopoApp.instance, view) }.getOrNull()
     val text = credits?.takeIf { it.packs.isNotEmpty() }?.compact ?: HtmlText.toPlain(fallback)
+    androidx.compose.runtime.SideEffect { CreditLine.composed(text) }
     BasicText(
         text,
         style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp),

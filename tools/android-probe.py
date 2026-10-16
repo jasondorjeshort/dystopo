@@ -23,7 +23,7 @@ GET /health without one (the app's debugFixedPort=1 mode) and expects that boots
 T78: --share probes the phone-to-phone share listener instead (the Share screen must be open: POST /share/start).
 The script reads its port from GET /share/status, forwards a host port to it, and checks that only sealed requests
 get through: plain sync, hello and peer-source routes 426, GET of the sealed route 405, a body that is not a frame
-400, a frame under a wrong code 403 (once: five would replace the code), a valid frame (from the debug route
+400, a frame under a wrong code 403 (once: five would lock this address out for ten minutes, T110), a valid frame (from the debug route
 /share/peers/testframe) 200 and the same frame again 409, an unknown path 404, plus the malformed-request probes.
 """
 import argparse

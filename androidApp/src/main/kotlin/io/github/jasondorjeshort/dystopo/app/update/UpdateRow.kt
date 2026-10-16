@@ -18,6 +18,8 @@ import kotlin.concurrent.thread
  * T83: the Updates row of the settings sheet: this build's version, "Check for updates" (a manual check, which
  * also shows a version declined earlier), what the last check found, and Install when a verified update waits.
  * T106: the two buttons wrap (a row that did not wrap could push Install off the sheet at font scale 2.0).
+ * T110: Install while navigating waits for the session to end (installing replaces the running app); the row then says
+ * so and offers "Install now".
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -31,7 +33,8 @@ fun UpdateRow() {
             val busy = s.phase == Updater.Phase.CHECKING || s.phase == Updater.Phase.DOWNLOADING
             Button(if (busy) "Checking..." else "Check for updates", false) { if (!busy) thread(name = "dystopo-update-check") { Updater.check(manual = true) } }
             if (Updater.readyFile != null && (s.phase == Updater.Phase.READY || s.phase == Updater.Phase.DECLINED)) {
-                Button("Install ${s.versionName ?: ""}".trim(), true) { thread(name = "dystopo-update-install") { Updater.install() } }
+                if (Updater.waitingForNavigation) Button("Install now", true) { thread(name = "dystopo-update-install") { Updater.install(now = true) } }
+                else Button("Install ${s.versionName ?: ""}".trim(), true) { thread(name = "dystopo-update-install") { Updater.install() } }
             }
         }
         val line = when (s.phase) {

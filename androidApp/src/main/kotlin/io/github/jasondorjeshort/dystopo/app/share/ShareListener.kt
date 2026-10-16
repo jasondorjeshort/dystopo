@@ -157,7 +157,7 @@ class ShareListener(
             c.soTimeout = headTimeoutMs
             val input = BufferedInputStream(c.getInputStream())
             val request = try {
-                parse(input, System.currentTimeMillis() + headTimeoutMs, c.inetAddress?.isLoopbackAddress == true)
+                parse(input, System.currentTimeMillis() + headTimeoutMs, c.inetAddress?.isLoopbackAddress == true, c.inetAddress?.hostAddress)
             } catch (e: Exception) {
                 badRequests.incrementAndGet()
                 val (status, text) = when (e) {
@@ -289,7 +289,7 @@ class ShareListener(
         }
     }
 
-    private fun parse(input: InputStream, deadline: Long, loopback: Boolean): Request? {
+    private fun parse(input: InputStream, deadline: Long, loopback: Boolean, peer: String?): Request? {
         val requestLine = readLine(input, deadline, 414) ?: return null
         val parts = requestLine.split(" ")
         if (parts.size != 3 || !parts[2].startsWith("HTTP/") || parts[0].isEmpty() || !parts[0].all { it in 'A'..'Z' } || !parts[1].startsWith("/")) {
@@ -324,7 +324,7 @@ class ShareListener(
                 val e = it.indexOf('=')
                 if (e < 0) URLDecoder.decode(it, "UTF-8") to "" else URLDecoder.decode(it.substring(0, e), "UTF-8") to URLDecoder.decode(it.substring(e + 1), "UTF-8")
             }
-            return Request(parts[0], path, query, body, headers, loopback)
+            return Request(parts[0], path, query, body, headers, loopback, peer)
         } catch (e: IllegalArgumentException) {
             throw ShareHttpError(400, "bad URL encoding")
         }

@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * A parsed HTTP request: method, path (decoded), query parameters, body; [headers] with lower-case
- * names and [loopback] (the peer address is a loopback one) since T49.
+ * names and [loopback] (the peer address is a loopback one) since T49; T110: [peer], the address the request came
+ * from on the share listener (the share gate counts wrong codes per address), null on the loopback server.
  */
 class Request(
     val method: String,
@@ -34,10 +35,11 @@ class Request(
     val body: ByteArray,
     val headers: Map<String, String> = emptyMap(),
     val loopback: Boolean = true,
+    val peer: String? = null,
 ) {
     val bodyText: String get() = body.decodeToString()
 
-    fun copy(query: Map<String, String> = this.query) = Request(method, path, query, body, headers, loopback)
+    fun copy(query: Map<String, String> = this.query) = Request(method, path, query, body, headers, loopback, peer)
 }
 
 class Response(val status: Int, val contentType: String, val body: ByteArray) {

@@ -55,7 +55,8 @@ object ShareClient {
     /**
      * One request through the encrypted link: seals [method] [target] and [body] under [code], posts it to
      * `/share/sealed` and opens the sealed reply. A 403 (the frame did not open there) is a [WrongCodeException];
-     * a 426 means the other phone runs a build without the encrypted link.
+     * a 426 means the other phone runs a build without the encrypted link. T110: a 429 is the other phone refusing this
+     * one for a while after five wrong codes from it ([ShareGate.LOCKED_OUT_MESSAGE]); it is not a wrong code.
      */
     fun sealed(peer: Target, code: String, method: String, target: String, body: ByteArray = ByteArray(0), readMs: Int = 60_000): SealedLink.Response {
         val frame = SealedLink.sealRequest(code, SealedLink.Request(method, target, body), ShareGate::randomBytes)
@@ -64,6 +65,7 @@ object ShareClient {
             200 -> {}
             403 -> throw WrongCodeException("wrong code for ${peer.baseUrl.removePrefix("http://")}")
             404 -> throw java.io.IOException("${peer.baseUrl} has no encrypted link (an older app, or not a Dystopo phone)")
+            429 -> throw LanHttpException(429, "${peer.baseUrl.removePrefix("http://")} refused this phone: ${ShareGate.LOCKED_OUT_MESSAGE}")
             else -> throw LanHttpException(r.status, "${peer.baseUrl}${ShareGate.SEALED_PATH}: HTTP ${r.status} ${r.text.take(200).trim()}")
         }
         return try {

@@ -182,6 +182,7 @@ class MapController {
             idleEvents++
             mapLibreIdle = true
             sampleLoaded(view, true)
+            runCatching { onMapIdle() } // T110: the online credits are asked again once the view's tiles are in
         }
         view.addOnDidFailLoadingMapListener { styleError = it }
         view.getMapAsync { m ->
@@ -443,6 +444,12 @@ class MapController {
 
     /** Called on the main thread when the camera comes to rest (T41; set by the online service). */
     @Volatile var onCameraIdle: () -> Unit = {}
+
+    /**
+     * T110: called on the main thread when MapLibre reports the map idle (every visible tile loaded and drawn, no
+     * transition running); set by the online service, which asks again which sources the view's tiles came from.
+     */
+    @Volatile var onMapIdle: () -> Unit = {}
 
     /** Called (main thread) when a fix seeded the units preference and they changed; set by [DystopoApp]. */
     @Volatile var onUnitsSeeded: () -> Unit = {}

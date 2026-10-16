@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -45,13 +46,14 @@ import org.maplibre.android.maps.MapLibreMap
 
 /**
  * T101: the scale bar's one option, "both units" (a two-sided ruler: the user's units above the line, the
- * other system below). Kept on this device in the settings file (`scaleBar.both`), not synced; Compose state,
- * so the bar and the Map options row follow a change at once. Set by the Map options row and
- * `POST /scalebar?both=on|off` ([ScaleBarRoutes]).
+ * other system below). Kept in the settings file (`scaleBar.both`); Compose state, so the bar and the Map options
+ * row follow a change at once. Set by the Map options row and `POST /scalebar?both=on|off` ([ScaleBarRoutes]).
+ * T110: synced like the other map choices (`app.scaleBar.both` through
+ * [io.github.jasondorjeshort.dystopo.app.sync.SettingsSync]; it is no `MapOptions` key, so a change reloads no style).
  */
 object ScaleBarSettings {
     private const val PREFS = "dystopo-settings" // AppSettings' file; the key is this object's own
-    private const val KEY_BOTH = "scaleBar.both"
+    private const val KEY_BOTH = io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.SCALE_BAR_BOTH
 
     private var both by mutableStateOf(false)
     @Volatile private var loaded = false
@@ -63,10 +65,23 @@ object ScaleBarSettings {
             return both
         }
 
-    fun setBothUnits(on: Boolean) {
+    /** T110: creates the Compose state now; call on the main thread from `Application.onCreate` (sync reads it from other threads). */
+    fun prepare() {
+        if (!loaded) load()
+    }
+
+    /**
+     * Main thread. [publish]: write the choice to the synced log (T110; not for a value a sync brought). The log keeps one
+     * value per key and nothing is written when it already holds this one.
+     */
+    fun setBothUnits(on: Boolean, publish: Boolean = true) {
         if (!loaded) load()
         both = on
         runCatching { prefs().edit().putBoolean(KEY_BOTH, on).apply() }
+        if (publish) {
+            val app = DystopoApp.instance
+            Thread({ io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.publishLocal(app, KEY_BOTH) }, "scalebar-publish").start()
+        }
     }
 
     private fun load() {
@@ -96,10 +111,24 @@ object ScaleBarLayout {
     @Volatile var windowHeightPx = 0f
     @Volatile var density = 1f
 
+    /**
+     * T110: a hidden bar keeps no fit, bounds or drawn lengths, so nothing reads the last shown bar against a camera that
+     * has moved since (`GET /scalebar`'s `readBack` did, T101); the next show fits and draws them again.
+     */
     fun hide(reason: String) {
         shown = false
         hiddenBecause = reason
+        bars = emptyList()
+        drawnPx = emptyList()
+        boundsPx = null
+        zoom = Double.NaN
+        lat = Double.NaN
     }
+
+    /** T110: whether the bar is shown and fitted at [zoom] and [lat] (the live camera), with every bar drawn. */
+    fun fittedAt(liveZoom: Double, liveLat: Double): Boolean =
+        shown && boundsPx != null && bars.isNotEmpty() && drawnPx.size == bars.size &&
+            Math.abs(zoom - liveZoom) < 1e-9 && Math.abs(lat - liveLat) < 1e-9
 
     fun json(): Map<String, Any?> {
         val b = boundsPx
@@ -163,6 +192,8 @@ private data class ScaleView(val zoom: Double, val lat: Double, val units: Conto
 fun ScaleBar() {
     val app = DystopoApp.instance
     var view by remember { mutableStateOf<ScaleView?>(null) }
+    // T110: out of the composition (the no-pack line shows instead) it says so, rather than keeping the last bar as shown.
+    DisposableEffect(Unit) { onDispose { ScaleBarLayout.hide("notComposed") } }
     LaunchedEffect(Unit) {
         var attached: MapLibreMap? = null
         val listener = MapLibreMap.OnCameraMoveListener { attached?.let(::read)?.let { view = it } }
