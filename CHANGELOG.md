@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-16
 
+- T112: One cache budget over the per-kind caps (#111)
 - T108: Directions stored with a trip, a crow mode, and the routing follow-ups of T102 (#110)
 
 ## v0.1.7-alpha (2026-10-15)
