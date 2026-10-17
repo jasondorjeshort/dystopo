@@ -14,7 +14,8 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
   subagent's `git pull` on `main` is denied. Restart the session so the new hooks load, then run the harness.
 - Wave 15 closed, v0.1.8-alpha published (2026-10-16 08:33 UTC, tag on 9b2f723, versionCode 396), sweep
   `out\sweep-20261016-0340` green. No agent is implementing; worktrees and task AVDs removed. Servers: live
-  viewer 8765 and standalone 8800 (PIDs in `out/coordinator-pids.txt`). Leftover local branches are harmless.
+  viewer 8765 and standalone 8800 (PIDs in `out/coordinator-pids.txt`). Local branches: `main` only (the owner deleted the five squash-merged and
+  pre-rewrite leftovers on 2026-10-17; git-guard rule 9 refuses `-D` on a non-`task/*` name for anyone).
 
 ## Next
 
@@ -31,7 +32,7 @@ Resume: this file, `docs/reference/machines.md` › The other account (`second`:
 - ADR 0035's two questions: keep a subagent's pull on `main` denied (the coordinator pulls)? Align
   `docs/ideas/` with the base's queue grammar so the `triage` skill comes in?
 - Real-phone checks of 0.1.8 (`android-firstrun.py` and `features` on the phone); Hatchery PR #1; Google
-  developer registration; delete `task/T87-ci`? MapLibre's own compass (T100)? T104's steepness palette and
+  developer registration; MapLibre's own compass (T100)? T104's steepness palette and
   legend captions; the wave 14 and 15 strings (listed in each PR); the 5 s timeout grace (T111) if a proxy needs 60.
 
 ## Open findings
