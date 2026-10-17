@@ -6,7 +6,7 @@ source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 # Machines, accounts, paths and ports
 
 The development machine is one Windows PC with two user accounts that have both run the coordinator
-(`Dorje`, the owner's, for waves 1 to 12 first half and from wave 13; `second` for the second half of
+(`Dorje`, the owner's, for waves 1 to 12 first half and from wave 13; the second account for the second half of
 wave 12). Briefs name the account's paths explicitly; when this file and a brief disagree, the brief
 wins and this file gets fixed.
 
@@ -27,7 +27,10 @@ wins and this file gets fixed.
 | Private terms | `devtool.local.json` in this main checkout; the privacy hooks read it from the main checkout even in worktrees |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`) |
 
-## The other account (`second`, wave 12 second half and wave 13 second half)
+## The other account (second account, wave 12 second half and wave 13 second half)
+
+`~` is that account's home folder; in an env var or a command spell it out (`%USERPROFILE%` in cmd,
+`$env:USERPROFILE` in PowerShell, `$HOME` with forward slashes in Git Bash).
 
 | What | Where |
 |---|---|

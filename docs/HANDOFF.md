@@ -2,7 +2,7 @@
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-10-16, after the Hatchery update (ADR 0035), by main session (second account, Fable 5.1)
-Resume: this file, `docs/reference/machines.md` › The other account (`second`: checkout
+Resume: this file, `docs/reference/machines.md` › The other account (second account: checkout
 `~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
 `wave` skill, and `docs/TASKS.md` (wave 15 closed: T108 to T113 merged; no open wave); rewrite with the `handoff` skill.
 
