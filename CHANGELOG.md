@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-18
 
+- T117: The guard lets a subagent integrate `main`, and the Hatchery carry-back (#2)
 - T118: The ideas folder in the base's grammar, and the `triage` skill (#1)
 
 ## v0.1.8-alpha (2026-10-16)
