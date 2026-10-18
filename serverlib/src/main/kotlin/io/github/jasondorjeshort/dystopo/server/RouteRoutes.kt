@@ -4,6 +4,8 @@ import com.sun.net.httpserver.HttpExchange
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.LegKind
+import io.github.jasondorjeshort.dystopo.model.RouteDirections
 import io.github.jasondorjeshort.dystopo.model.RouteEditor
 import io.github.jasondorjeshort.dystopo.model.RouteGpx
 import io.github.jasondorjeshort.dystopo.model.RoutePath
@@ -14,6 +16,7 @@ import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
+import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
@@ -80,7 +83,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   `messages` (T73: the router's message for each note), `notice` (for `mode=drive`, `Router.DRIVE_NOTICE`: what drive
  *   mode does and does not do, ADR 0032; T111: for `mode=crow`, `TravelMode.CROW_NOTICE`), `instructions` (T102: the turn directions along the whole path, every leg,
  *   kept or rerouted: `type`, `priority`, `text`, `alongM`, `lat`, `lon`, `name`, `class`, `turnDeg`, `bearingDeg`,
- *   `leadM`, `stretchM`, `via`; see `Directions`), `graph`
+ *   `leadM`, `stretchM`, `via`, T116: `then`, the manoeuvre of a "then" cue, whose words end `text`; see `Directions`),
+ *   `directionsValue` (T116: those directions as the route's `directions` field value, keyed to this `path`
+ *   (`RouteDirections`), for the page to save with the trip; null when no pack's graph was open for a path with a
+ *   trail leg, whose directions would be the frame only, or when longer than the field takes), `graph`
  *   (`loaded`, `built` or `cached`, with timings: the reported pack's, every pack used under `graphs`) and `ms`. Bad input is a 400 with `error`.
  * - `POST /route/gpx` with JSON `{"path", "name", "id"}`: the route as GPX ([RouteGpx]: one `rte`,
  *   via marks, our ids), byte for byte what the phone exports for the same trip.
@@ -88,8 +94,8 @@ import java.util.concurrent.atomic.AtomicLong
  *   (the page keeps a local operation log of its trips) as a gzipped sync bundle, ready for
  *   `POST /sync/push` (with the page's token where the server wants one) or to save as a `.dsync`
  *   file. Ops are route ops of that one device: `{"hlc": "<HLC text>", "type": "put", "id", "name"}`,
- *   `{"hlc", "type": "set", "id", "field": "path|waypoints|name|...", "value"}`, `{"hlc", "type":
- *   "delete", "id"}`; a `path` or `waypoints` value must decode. The bundle's base is empty and it
+ *   `{"hlc", "type": "set", "id", "field": "path|waypoints|directions|name|...", "value"}`, `{"hlc", "type":
+ *   "delete", "id"}`; a `path`, `waypoints` or (T116) `directions` value must decode. The bundle's base is empty and it
  *   holds every op the page sends, so a push is idempotent.
  * - `GET /route/packs`: packs with a vector archive (`name`, files, `bounds`, graph state);
  *   `GET /route/status`: request counts, graph builds and timings, `tileCache` (T76: graph tiles in memory, loads, hits, evictions; T89: `corruptTiles`, `corruptHits`), `corruptGraphTiles` (T89: tiles that failed their checksum, skipped without reading them again) and `lastRouteMemory` (the last route's tiles, their bytes, the search's own).
@@ -450,7 +456,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         count("plan")
         val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay)
         val path = ed.create(points, mode)
-        return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(path))
+        return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(path), graphOpen = info != null)
     }
 
     /** One editor operation on an encoded path (see [RouteRoutes]). */
@@ -484,7 +490,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             else -> throw IllegalArgumentException("unknown op '$op' (move, insert, add, remove, mode, reroute, show)")
         }
         require(out.via.size <= MAX_POINTS) { "at most $MAX_POINTS via points" }
-        return reply(pack, out, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(out)) + listOfNotNull(added?.let { "index" to it }).toMap()
+        return reply(pack, out, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(out), graphOpen = info != null) + listOfNotNull(added?.let { "index" to it }).toMap()
     }
 
     private fun requireMode(mode: String) = require(TravelMode.of(mode) != null) { "mode must be ${TravelMode.labels}" }
@@ -492,9 +498,11 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     private fun reply(
         pack: Pack?, path: RoutePath, notes: List<String>, graph: Map<String, Any?>?, t0: Long, messages: Map<String, String> = emptyMap(),
         instructions: List<io.github.jasondorjeshort.dystopo.routing.Instruction> = emptyList(),
+        graphOpen: Boolean = false,
     ): Map<String, Any?> {
         val ms = (System.nanoTime() - t0) / 1_000_000
         lastMs = ms
+        val travel = TravelMode.of(path.mode) ?: TravelMode.HIKE
         return linkedMapOf(
             "pack" to pack?.name, "mode" to path.mode, "path" to path.encode(),
             "via" to path.via.map { listOf(it.lat, it.lon) },
@@ -505,10 +513,23 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             "notes" to notes.distinct(),
             "messages" to messages, // T73: the router's words for each note (drive_unsupported names the pack to rebuild)
             "notice" to when (path.mode) { "drive" -> Router.DRIVE_NOTICE; "crow" -> TravelMode.CROW_NOTICE; else -> null }, // T111: crow's line
-            "instructions" to instructions.map { it.json(TravelMode.of(path.mode) ?: TravelMode.HIKE) }, // T102
+            "instructions" to Directions.cued(instructions).map { it.json(travel) }, // T102; T116: with the default level's "then" cues
             "waypointsValue" to EMPTY_WAYPOINTS,
+            "directionsValue" to directionsValue(path, instructions, graphOpen), // T116
             "graph" to graph, "ms" to ms,
         )
+    }
+
+    /**
+     * T116: the `directions` field value the page saves with the trip (the browser-side directions op): [instructions]
+     * keyed to [path], as the phone's Keep writes them. Null when they are only the frame because no graph was open
+     * for a path with a trail or fixed leg (a phone with a pack makes better ones when it opens the trip, and a
+     * frame must not replace them), when there are none, or when the value would be longer than the field takes.
+     */
+    private fun directionsValue(path: RoutePath, instructions: List<io.github.jasondorjeshort.dystopo.routing.Instruction>, graphOpen: Boolean): String? {
+        if (instructions.isEmpty() || path.legs.isEmpty()) return null
+        if (!graphOpen && path.legs.any { it.kind != LegKind.STRAIGHT }) return null
+        return RouteDirections.encode(instructions, path)
     }
 
     /** GPX of `{path, name, id}` ([RouteGpx]). */
@@ -561,6 +582,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
                 when (field) {
                     "path" -> runCatching { RoutePath.decode(value ?: "") }.getOrElse { throw IllegalArgumentException("path value does not decode: ${it.message}") }
                     "waypoints" -> runCatching { RouteWaypoints.decode(value ?: "") }.getOrElse { throw IllegalArgumentException("waypoints value does not decode: ${it.message}") }
+                    "directions" -> runCatching { RouteDirections.decode(value ?: "") }.getOrElse { throw IllegalArgumentException("directions value does not decode: ${it.message}") } // T116
                     "name" -> require(!value.isNullOrBlank()) { "a name cannot be empty" }
                 }
                 SetField(EntityKind.ROUTE, id, field, value)

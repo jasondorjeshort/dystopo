@@ -307,6 +307,60 @@ class DirectionsTest {
     }
 
     @Test
+    fun thenCuesJoinInstructionsTooCloseToSayApart() {
+        // T116: Main Road east along the equator; Ridge Road north from 1.1 km; 100 m up it, Summit Road east (Ridge
+        // Road goes on north, so both junctions are choices).
+        val g = graph(
+            line(road("Main Road"), 0.0 to 0.0, 0.0 to 0.03),
+            line(road("Ridge Road"), 0.0 to 0.01, 0.0009 to 0.01, 0.003 to 0.01),
+            line(road("Summit Road"), 0.0009 to 0.01, 0.0009 to 0.03),
+        )
+        fun shownTexts(p: PlannedRoute) = Directions.shown(p.instructions).map { DirectionsText.of(it, p.mode) }
+        // By car the right turn comes 100 m after the left, inside its lead (150 m at least): the left says both.
+        val car = plan(g, 0.0 to 0.0, 0.0009 to 0.03, TravelMode.DRIVE)
+        assertEquals(listOf(Maneuver.DEPART, Maneuver.LEFT, Maneuver.RIGHT, Maneuver.ARRIVE), types(car))
+        assertEquals(100.1, car.instructions[2].leadM, 1.0) // capped at the gap: the cue's trigger
+        assertEquals(
+            listOf("Head east on Main Road", "Turn left onto Ridge Road, then turn right", "Turn right onto Summit Road", "Arrive at the end of the route"),
+            shownTexts(car),
+        )
+        assertEquals(listOf(null, Maneuver.RIGHT, null, null), Directions.shown(car.instructions).map { it.then?.type })
+        // The planned list itself carries no cue (it is saved as it is); the JSON's text and `then` carry the cue.
+        assertTrue(car.instructions.all { it.then == null })
+        assertEquals("Turn left onto Ridge Road", texts(car)[1])
+        @Suppress("UNCHECKED_CAST") val json = car.json()["instructions"] as List<Map<String, Any?>>
+        assertEquals(listOf("Head east on Main Road", "Turn left onto Ridge Road, then turn right", "Turn right onto Summit Road", "Arrive at the end of the route"), json.map { it["text"] })
+        assertEquals(listOf(null, "right", null, null), json.map { it["then"] })
+        assertEquals(car.instructions.map { it.alongM }, Directions.cued(car.instructions).map { it.alongM }) // text only
+        assertEquals("In 300 m, turn left onto Ridge Road, then turn right", DirectionsText.withDistance(Directions.shown(car.instructions)[1], 300.0, ContourUnits.METERS, TravelMode.DRIVE))
+        // On foot the lead is about 28 m: 100 m apart, each is said on its own.
+        val walk = plan(g, 0.0 to 0.0, 0.0009 to 0.03)
+        assertEquals(types(car), types(walk))
+        assertEquals(listOf("Head east on Main Road", "Turn left onto Ridge Road", "Turn right onto Summit Road", "Arrive at the end of the route"), shownTexts(walk))
+        // A short drive: the start 55 m before the left turn and the end 55 m past the right: every step is close.
+        val short = plan(g, 0.0 to 0.0095, 0.0009 to 0.0105, TravelMode.DRIVE)
+        assertEquals(
+            listOf("Head east on Main Road, then turn left", "Turn left onto Ridge Road, then turn right", "Turn right onto Summit Road, then arrive", "Arrive at the end of the route"),
+            shownTexts(short),
+        )
+        // Saved and read back (the field keeps no cue), the list says the same: the cues follow from the list.
+        val path = io.github.jasondorjeshort.dystopo.model.RoutePath.planned(short.route.points, short.mode.label, short.timeS)
+        val back = io.github.jasondorjeshort.dystopo.model.RouteDirections.decode(io.github.jasondorjeshort.dystopo.model.RouteDirections.encode(short.instructions, path)!!).list
+        assertTrue(back.all { it.then == null })
+        assertEquals(shownTexts(short), Directions.shown(back).map { DirectionsText.of(it, TravelMode.DRIVE) })
+        // A hidden (minor) instruction is no cue and gets none; a continue (a new name, nothing to do) is no cue.
+        val list = listOf(
+            Instruction(Maneuver.DEPART, 1, 0.0, 0.0, 0.0), Instruction(Maneuver.SLIGHT_LEFT, 3, 20.0, 0.0, 0.0, leadM = 20.0),
+            Instruction(Maneuver.CONTINUE, 2, 400.0, 0.0, 0.0, name = "Ridge Road", leadM = 380.0),
+            Instruction(Maneuver.KEEP_RIGHT, 1, 1000.0, 0.0, 0.0, leadM = 600.0), Instruction(Maneuver.ARRIVE, 1, 1100.0, 0.0, 0.0, leadM = 100.0),
+        )
+        assertEquals(listOf(null, null, Maneuver.KEEP_RIGHT, Maneuver.ARRIVE, null), Directions.cued(list).map { it.then?.type })
+        assertEquals(listOf(null, null, Maneuver.KEEP_RIGHT, Maneuver.ARRIVE, null), Directions.cued(Directions.cued(list)).map { it.then?.type }) // idempotent
+        assertEquals(listOf(Maneuver.SLIGHT_LEFT, null, Maneuver.KEEP_RIGHT, Maneuver.ARRIVE, null), Directions.cued(list, Instruction.MINOR).map { it.then?.type })
+        assertEquals("Continue onto Ridge Road, then keep right", DirectionsText.of(Directions.cued(list)[2], TravelMode.DRIVE))
+    }
+
+    @Test
     fun aDriveToTheTrailhead() {
         // Paradise to Sunrise in miniature: the visitor centre road, right onto Stevens Canyon Road, straight on where it
         // becomes SR 123 (a road joins), left onto Sunrise Park Road; side roads passed straight through say nothing.

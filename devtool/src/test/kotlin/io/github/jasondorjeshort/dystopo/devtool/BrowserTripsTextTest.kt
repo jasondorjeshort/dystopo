@@ -12,6 +12,7 @@ import kotlin.test.assertTrue
  * select offers every [TravelMode] (T108's crow included) and so does `demo-check.py --route-mode`, its line under
  * the select for crow is [TravelMode.CROW_NOTICE] word for word, a crow route's bearing uses [Directions.compass]'s
  * words, and its directions list counts the priorities up to [Directions.DEFAULT_LEVEL], as the phone's route card does.
+ * T116: saving a trip writes the server's `directionsValue` as its `directions` after each path it writes.
  */
 class BrowserTripsTextTest {
     private val trips = File("../tools/demo/trips.js").readText() // tests run in devtool/
@@ -36,6 +37,23 @@ class BrowserTripsTextTest {
         for (d in -720..720) {
             val js = words[Math.floorDiv(((d % 360 + 360) % 360 * 10 + 225), 450) % 8]
             assertEquals(Directions.compass(d.toDouble()), js, "bearing $d")
+        }
+    }
+
+    @Test
+    fun savingATripWritesItsDirectionsAfterThePath() {
+        // T116: the browser-side directions op. Save writes the reply's directionsValue (the server's RouteDirections
+        // value for the reply's path) as the trip's `directions`, right after each `path` it writes, and never alone.
+        val save = Regex("""async save\(name\) \{(.*?)\n    \},""", RegexOption.DOT_MATCHES_ALL).find(trips)?.groupValues?.get(1) ?: error("no save() in trips.js")
+        assertTrue("const dirs = st.reply.directionsValue;" in save, save)
+        val lines = save.lines().map { it.trim() }
+        val pathOps = lines.indices.filter { """field: "path", value: st.reply.path""" in lines[it] }
+        val dirOps = lines.indices.filter { """field: "directions", value: dirs""" in lines[it] }
+        assertEquals(2, pathOps.size, "a path op on the first save and on a changed path")
+        assertEquals(pathOps.size, dirOps.size, "one directions op per path op")
+        for ((p, d) in pathOps.zip(dirOps)) {
+            assertTrue(d > p && lines[d].startsWith("if (dirs)"), "directions after their path, only when the server gave a value: ${lines[d]}")
+            assertTrue(lines.subList(p + 1, d).none { "field: \"path\"" in it })
         }
     }
 

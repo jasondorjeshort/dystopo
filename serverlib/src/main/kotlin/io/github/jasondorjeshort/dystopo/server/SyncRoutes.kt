@@ -28,7 +28,8 @@ import java.util.concurrent.ConcurrentHashMap
  *   plus `user`, `db` and `tablesMatchLog`.
  * - `GET /sync/tracks`: the tracks this replica holds; `GET /sync/tracks/{id}.gpx`: one as GPX (to
  *   compare with a device's `GET /tracks/{id}.gpx`). T67: `GET /sync/routes`: the routes it holds; T92: with
- *   `?full=1` each route's `path` value and `waypointList` too (the browser's trip editor pulls with it).
+ *   `?full=1` each route's `path` value and `waypointList` too (the browser's trip editor pulls with it); T116:
+ *   and `directions`, how many saved turn directions count for that path (null: none saved, or saved for another path).
  * - T92: `POST /sync/waypoints/encode`: waypoints as `wpt:` field values for the browser's waypoint edits.
  * - T67 share links ([ShareLinks]): `POST /sync/share?route=<id>`, `GET /sync/share`,
  *   `DELETE /sync/share/<token>`, and the open `GET /s/<token>[.gpx|.json]`.
@@ -235,9 +236,13 @@ object SyncRoutes {
         }
     }
 
-    /** T92: what `GET /sync/routes?full=1` adds to a route's list item: its `path` value and its waypoints. */
+    /**
+     * T92: what `GET /sync/routes?full=1` adds to a route's list item: its `path` value and its waypoints; T116: the
+     * number of saved directions made for that path ([RoutePlan.savedDirections], what a phone shows without a graph).
+     */
     fun routeValues(plan: RoutePlan): Map<String, Any?> = linkedMapOf(
         "path" to plan.path.quantized().encode(),
+        "directions" to plan.savedDirections?.size,
         "waypointList" to plan.waypoints.map { w ->
             linkedMapOf("id" to w.id, "name" to w.name, "lat" to w.lat, "lon" to w.lon, "ele" to w.ele, "description" to w.description, "symbol" to w.symbol)
         },

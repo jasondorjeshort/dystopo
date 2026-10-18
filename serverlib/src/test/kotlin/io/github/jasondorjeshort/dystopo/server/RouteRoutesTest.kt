@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.server
 import com.sun.net.httpserver.HttpServer
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.model.RouteDirections
 import io.github.jasondorjeshort.dystopo.model.RouteGpx
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
@@ -17,8 +18,11 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MemoryTileStaging
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesWriter
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
+import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.OverlayCellFile
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import io.github.jasondorjeshort.dystopo.sync.Materializer
 import java.awt.image.BufferedImage
@@ -320,6 +324,29 @@ class RouteRoutesTest {
 
         val deleted = Bundle.decode(Gzip.decompress(p.bundle(mapOf("device" to device, "ops" to ops + mapOf("hlc" to h(3), "type" to "delete", "id" to id)))))
         assertEquals(null, Materializer.routePlan(id, deleted.ops))
+
+        // T116: the browser-side directions op: the reply's directionsValue is the trip's `directions` field for the
+        // reply's path, so the phone reads the saved directions from a trip the browser saved (no graph needed).
+        val value = r["directionsValue"] as String
+        val saved = RouteDirections.decode(value)
+        assertTrue(saved.isFor(RoutePath.decode(path)))
+        @Suppress("UNCHECKED_CAST") val replyTexts = (r["instructions"] as List<Map<String, Any?>>).map { it["text"] }
+        assertEquals(replyTexts, Directions.shown(saved.list).map { DirectionsText.of(it, TravelMode.HIKE) })
+        val withDirections = ops + mapOf("hlc" to h(3), "type" to "set", "id" to id, "field" to "directions", "value" to value)
+        val trip = Materializer.routePlan(id, Bundle.decode(Gzip.decompress(p.bundle(mapOf("device" to device, "ops" to withDirections)))).ops)!!
+        assertEquals(saved.list, trip.savedDirections)
+        // An edit answers the directions of its new path; a value that does not decode is refused.
+        val edited = p.edit(mapOf("path" to path, "op" to "add", "lat" to at(2048, 700).first, "lon" to at(2048, 700).second))
+        val again = RouteDirections.decode(edited["directionsValue"] as String)
+        assertTrue(again.isFor(RoutePath.decode(edited["path"] as String)) && !again.isFor(RoutePath.decode(path)))
+        assertFailsWith<IllegalArgumentException> { p.bundle(mapOf("device" to device, "ops" to listOf(mapOf("hlc" to h(4), "type" to "set", "id" to id, "field" to "directions", "value" to "AAAA")))) }
+        // No graph open for a path with trail legs: only the frame could be said, so nothing is offered to save (a
+        // phone with the pack makes them when it opens the trip); straight legs everywhere: the frame is all there is.
+        val bare = RoutePlanner(Files.createTempDirectory("route-routes-bare").toFile().also { it.deleteOnExit() }, flat)
+        assertEquals(null, bare.edit(mapOf("path" to path, "op" to "show"))["directionsValue"])
+        val straight = bare.plan(listOf(45.83 to 6.86, 45.84 to 6.87), "hike")
+        assertEquals(listOf("straight"), kinds(straight))
+        assertTrue(RouteDirections.decode(straight["directionsValue"] as String).isFor(RoutePath.decode(straight["path"] as String)))
 
         val other = "%012x.%06x.%s".format(1_790_000_000_000L, 9, "someone-else")
         assertFailsWith<IllegalArgumentException> { p.bundle(mapOf("device" to device, "ops" to listOf(mapOf("hlc" to other, "type" to "put", "id" to id)))) }

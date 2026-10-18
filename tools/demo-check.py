@@ -38,6 +38,10 @@ T107: --late-trips Z/LAT/LON (live mode) holds trips.js back and releases it whi
 then checks the editor's layers went in anyway (late_trips; with --route after it, the route line must draw).
 T111: --route also checks the Trips card's turn directions (check_directions: the count, the first five lines, "Show N
 more" unfolds the rest; `route.directions` in the JSON, `<out>-route-directions.png` while unfolded).
+T116: and that the saved trip carries them (check_saved_directions: the browser's `directions` op is the reply's
+`directionsValue`, written after the path, and the server's replica counts as many saved directions for the trip's
+path in GET /sync/routes?full=1); the browser's trips are written as `<out>-route.dsync` (the bundle "Send to server"
+pushes) for `devtool sync-sim --bundle`.
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -253,7 +257,51 @@ def check_directions(page, shot):
     return not problems, rep
 
 
-def check_route(page, spec, shot, timeout, mode=""):
+def check_saved_directions(page, trip_id, token=""):
+    """T116: the saved trip carries its turn directions (the browser-side directions op): the browser's replica holds a
+    `directions` op for the trip whose value is the open reply's `directionsValue` (the server's encoding for that
+    path), written after the trip's `path`; the server's replica, after the push, counts as many saved directions for
+    the trip's path as the reply has instructions (GET /sync/routes?full=1 `directions`, null when the key does not
+    match the path). Returns (ok, report)."""
+    s = page.evaluate("() => window.dystopoTrips.state()")
+    f = page.evaluate("id => window.dystopoTrips.fields(id)", trip_id)
+    ops = page.evaluate("id => JSON.parse(localStorage.getItem('dystopo.trips') || '{\"ops\": []}').ops.filter(o => o.id === id && o.type === 'set').map(o => o.field)", trip_id)
+    value = s["route"].get("directionsValue")
+    count = (s.get("directions") or {}).get("count")
+    rep = {"valueChars": len(value) if value else None, "op": f.get("directions") == value if value else False,
+           "pathOp": f.get("path") == s["route"]["path"], "fieldsWritten": ops, "count": count}
+    problems = []
+    if not value:
+        problems.append("the reply has no directionsValue")
+    elif f.get("directions") != value:
+        problems.append("the browser's directions op is %s" % ("missing" if f.get("directions") is None else "another value"))
+    last = lambda k: len(ops) - 1 - ops[::-1].index(k) if k in ops else -1
+    if last("directions") < last("path"):
+        problems.append("no directions op after the trip's last path op")
+    u = urllib.parse.urlsplit(page.url)
+    try:
+        routes = server_json(f"{u.scheme}://{u.netloc}", "/sync/routes?full=1", token)["routes"]
+        mine = next((r for r in routes if r.get("id") == trip_id), None)
+        rep["server"] = {"listed": mine is not None, "directions": mine and mine.get("directions"), "pathSame": bool(mine) and mine.get("path") == s["route"]["path"]}
+        if not mine:
+            problems.append("the server's replica does not list the trip")
+        elif mine.get("directions") != count:
+            problems.append("the server's replica counts %s saved directions for the trip's path, the reply has %s" % (mine.get("directions"), count))
+    except Exception as e:
+        problems.append("GET /sync/routes?full=1: %s" % str(e)[:200])
+    rep["problems"] = problems
+    return not problems, rep
+
+
+def save_bundle(page, path):
+    """T116: the browser's trip replica as the gzipped sync bundle "Send to server" pushes (POST /route/bundle), to `path`."""
+    data = page.evaluate("async () => Array.from(await window.dystopoTrips.bundle())")
+    with open(path, "wb") as f:
+        f.write(bytes(data))
+    return len(data)
+
+
+def check_route(page, spec, shot, timeout, mode="", token=""):
     """T68: drive the trip editor (tools/demo/trips.js, live mode) with the real mouse. `spec` is
     `lat,lon;lat,lon[;lat,lon]`: click the start and the end with "Plan route" on, wait for the route, click the
     middle of the route to add a via point, drag that point's marker to the third place (default: 300 m east of
@@ -338,12 +386,18 @@ def check_route(page, spec, shot, timeout, mode=""):
         push = s["lastPush"]
         step("save", id=s["id"], replica=rep, push=push)
         out.update(tripId=s["id"], push=push, listed=page.locator("#trip-list li").count())
+        # T116: the trip went with its directions, in the browser's replica and on the server's.
+        saved_ok, saved = check_saved_directions(page, s["id"], token)
+        step("saved directions", **saved)
+        bundle_file = os.path.splitext(shot)[0] + ".dsync"
+        step("bundle", file=bundle_file, bytes=save_bundle(page, bundle_file))
+        out.update(savedDirections=saved, bundle=bundle_file)
         page.wait_for_timeout(500)
         page.screenshot(path=shot)
         layers = page.evaluate("() => ({ line: map.queryRenderedFeatures({ layers: ['trip-line', 'trip-straight'] }).length, markers: document.querySelectorAll('.trip-via').length })")
         step("drawn", **layers)
         out["directions"] = dirs
-        out["ok"] = bool(r["legs"]) and len(via) >= 3 and rerouted and gpx_ok and push.get("ok") and layers["line"] > 0 and layers["markers"] == len(after["via"]) and dirs_ok
+        out["ok"] = bool(r["legs"]) and len(via) >= 3 and rerouted and gpx_ok and push.get("ok") and layers["line"] > 0 and layers["markers"] == len(after["via"]) and dirs_ok and saved_ok
     except Exception as e:  # report, do not crash the tour
         out["error"] = str(e)[:500]
         try:
@@ -737,7 +791,7 @@ def main() -> int:
             page.fill("#packtoken", args.token)
             page.dispatch_event("#packtoken", "change")
         if args.route:
-            route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout, args.route_mode)
+            route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout, args.route_mode, args.token)
             errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
             reports[-1].update(route=route, ok=reports[-1]["ok"] and route["ok"] and not errors)
         if args.trip_sync:
