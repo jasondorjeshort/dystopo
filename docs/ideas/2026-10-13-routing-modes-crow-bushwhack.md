@@ -1,9 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T108 (crow, done); bushwhack none yet (a proposal first)
-related: [2026-10-13-driving-is-in-scope.md, 2026-10-13-route-waypoints-and-reroute.md]
+related: [2026-10-13-route-waypoints-and-reroute.md]
 ---
 
 # Crow and bushwhacking routing modes

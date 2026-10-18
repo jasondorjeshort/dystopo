@@ -1,9 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T75 partial
-related: [2026-10-13-auto-download-when-zoomed-in.md, 2026-10-13-cache-budgets.md]
+related: [2026-10-13-auto-download-when-zoomed-in.md]
 ---
 
 # Download topo by county, state, park, drawn region, or distance around a point or route

@@ -1,9 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T75 partial
-related: [2026-10-13-cache-budgets.md, 2026-10-13-download-by-region.md]
+related: [2026-10-13-download-by-region.md]
 ---
 
 # Online use should download automatically when zoomed in on an area
