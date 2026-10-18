@@ -12,7 +12,8 @@ What was being asked and why it mattered.
 
 ## What was tried
 
-Commands run, versions, environment, inputs. Enough to repeat it.
+Commands run, versions, environment, inputs. Enough to repeat it. Scrub: paths as `~` or
+`<repo>`, output as classes, counts and `file:line`; never a name, email or home path.
 
 ## Result
 

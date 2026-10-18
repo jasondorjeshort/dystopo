@@ -7,7 +7,8 @@ description: Rewrite docs/HANDOFF.md so the next session can resume from it alon
 
 `docs/HANDOFF.md` is imported into every session and every subagent by `CLAUDE.md`, so it is the one
 file that is guaranteed to be read. It is rewritten, not appended. Hard cap 40 lines. From the Hatchery
-base; the resume pointers are this project's.
+base (single-file shape; `split.md` beside this file is the base's split shape, unused here); the
+resume pointers are this project's.
 
 ## When (rule in `CLAUDE.md`)
 
@@ -22,6 +23,12 @@ base; the resume pointers are this project's.
    this session knows that is not yet in a file. Not PIDs, ports, emulator serials or agent ids: they
    die with the session and are one machine's; `out/coordinator-pids.txt` (gitignored) is their
    only record, and the handoff says at most that a server is wanted (owner, 2026-10-17).
+   `git log -1 --format='%h %cs' -- docs/HANDOFF.md` gives the last handoff change; its distance
+   from `HEAD` and from today is the staleness. A claim about the state of another repository or
+   checkout (for example "<sha> in `../<dir>` is held, not pushed") is re-checked against that
+   repository in the same sitting before it is written: `git -C <path> ls-remote --heads origin`
+   compared with `git -C <path> merge-base --is-ancestor <sha> <remote-sha>`. The Updated line dates
+   the file, not the claims it carries forward.
 2. Rewrite the file with the Write tool, keeping exactly these sections:
 
    ```
@@ -35,7 +42,8 @@ base; the resume pointers are this project's.
    ## Now
    1-4 bullets: what is in flight (task, branch, PR, verdict so far), exact state; no process ids,
    ports or serials. The account the session ran on (the status line's account segment) and, if
-   the gate named another account with room, which one.
+   the gate named another account with room, which one. A push refused as behind or diverged, or a
+   conflict on this file, as one bullet: it is how a session learns a parallel session exists.
 
    ## Next
    Ordered, 3-7 items, each one brief's worth. Name the kind of agent when it is obvious.
@@ -62,3 +70,6 @@ base; the resume pointers are this project's.
 - Public places only; local pack names are aliases (`CLAUDE.md`, Privacy at the coordinator too).
 - A fresh session must be able to resume from this file and the files it names: if you needed to
   know something to continue, it is here or one pointer away.
+- The chain is checked, not assumed: `/context` lists `docs/HANDOFF.md` under Memory files; the
+  post-edit hook and `policy.js --claude-check` resolve every `@` line from the importing file's
+  directory. An `@` line that does not resolve loads nothing and says nothing.

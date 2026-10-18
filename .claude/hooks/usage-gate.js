@@ -7,7 +7,7 @@
 // exception (null, the base, means none: HOLD is then the only line). Other tools are never gated.
 // Usage comes from this session's file, ~/.claude/usage-state/<session_id>.json, which
 // .claude/statusline.js writes; session_id is the one in the PreToolUse payload.
-// Spec: docs/design/decisions/0002-hook-specs.md section 3; policy: ADR 0006; the per-session
+// Spec: docs/design/decisions/0002-hook-specs-usage.md (section 3); policy: ADR 0006; the per-session
 // file and the account label: ADR 0011.
 //
 // Fails open: a crash (exit 1, no onFailure in settings.json) lets the launch through, because a

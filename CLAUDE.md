@@ -6,13 +6,27 @@ Where work stands right now (coordinator state; subagents follow their brief, no
 
 Open-source, offline-first topographic maps. This file holds the rules; facts, procedures and decisions are one pointer away.
 **Process base:** the working method is shared with the Hatchery base repository (https://github.com/jasondorjeshort/hatchery), which distils it for new projects; Dystopo is its first build-phase test. What this project takes from the base and what differs: ADR 0020. When a rule proves wrong in practice, fix it in the same sitting, say why in the commit message, and carry the fix back to Hatchery.
+Adopted from Hatchery by hand; provenance, the base line and departures: `docs/design/decisions/0037-adopted-from-hatchery.md`. The base's agreement sections (`.claude/agreement/`) are each replaced by a one-line pointer at this file's own section:
+
+Branch: main
+
+@.claude/project/this-agreement.md
+@.claude/project/where-things-live.md
+@.claude/project/delegation.md
+@.claude/project/debug-interface.md
+@.claude/project/major-decisions.md
+@.claude/project/usage-gating.md
+@.claude/project/model-routing.md
+@.claude/project/one-review.md
+@.claude/project/git.md
+@.claude/project/licensing.md
 
 ## Where things live
 - System map and where every topic is documented: `docs/ARCHITECTURE.md` (its last section is the doc index). Read a directory's `README.md` before its files.
 - Facts (commands, debug routes, emulators, this machine's paths and ports, Windows quirks): `docs/reference/`. Start with `machines.md` for paths and ports.
 - Decisions: ADRs in `docs/design/decisions/`. Design detail, measurements and the dated log: `docs/PLANNING.md` (read it before architectural changes). Tasks: `docs/TASKS.md`.
 - Investigation results: `docs/findings/`. Procedures: skills in `.claude/skills/` (`brief`, `wave`, `sweep`, `release`, `handoff`, `proposal`, `adr`, `finding`). Path-scoped conventions: `.claude/rules/` (docs, Kotlin, the track database).
-- Hooks: `.claude/hooks/` (usage gate, `git-guard`, `post-edit`; `node .claude/hooks/test-hooks.js`; exceptions in ADR 0021) and the git hooks in `tools/git-hooks`.
+- Hooks: `.claude/hooks/` (usage gate, `git-guard` with the base's push scan, `post-edit`; `node .claude/hooks/test-hooks.js`; policy in `policy.json`, ADR 0035) and the git hooks in `tools/git-hooks`. Updates from the base: the `update-from-hatchery` skill (ADR 0037).
 
 ## Layout (detail: `docs/reference/code-layout.md`)
 - `shared/` — Kotlin Multiplatform core (JVM and Android; iOS later). `commonMain` stays pure Kotlin, **no `java.*` imports**; platform pieces come in through small interfaces or `expect`/`actual` (`.claude/rules/kotlin.md`).

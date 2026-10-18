@@ -31,9 +31,11 @@ proposal; major choices arrive here through the `proposal` skill. From the Hatch
 
 ## Supersede an ADR
 
-1. Write the new ADR as above. In its Context, name the ADR it replaces and what changed.
-2. In the old ADR set `Status: superseded by NNNN` and add one line under the status pointing at the
-   new file. Do not edit the old body; it is the record.
+1. Before writing, record the outcome of each prediction on its line in the old ADR, if it carries
+   any (the one edit a closed ADR takes); then write the new ADR as above. In its Context, name the
+   ADR it replaces and what changed.
+2. In the old ADR set `Status: superseded by NNNN` and add one line under the status pointing at
+   the new file. Do not edit the old body beyond those outcome lines; it is the record.
 3. Update the index row so the old entry reads "superseded by NNNN".
 4. Partial supersession (one section of a long ADR) is still a whole new ADR; say which sections of
    the old one still stand.

@@ -5,7 +5,7 @@ Status: draft | under review | promoted to ADR NNNN | withdrawn
 
 ## Question
 
-One paragraph: what is being decided and why now.
+One paragraph: what is being decided and why now, and what the chosen option should look like in ten years.
 
 ## Constraints that matter here
 
@@ -21,6 +21,8 @@ One paragraph: what is being decided and why now.
 
 What it is. How it meets each constraint. Cost (tokens, build time, learning). Risks. Who else
 uses it for a comparable purpose.
+Exit cost: what leaving in two years takes (what is rewritten, what data migrates).
+Moving parts: what runs, is configured or is depended on that was not before.
 
 ### B. Name
 

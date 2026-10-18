@@ -1,5 +1,5 @@
 {
-  "$comment": "Project policy for the hooks in this directory, in the Hatchery base's format (its ADR 0006; the loader is policy.js). Every script here and ../statusline.js is the base's and reads this file (ADR 0035). git: agents push and lease-push task/* only, never commit on main or master, delete a task/* branch only after a merged PR, and core.hooksPath stays tools/git-hooks. usage: hold 75 on both meters; deny 100, so an owner's grant in ~/.claude/usage-gate-overrides/ lifts either meter or both; DYSTOPO_GATE_OVERRIDE=1 in a session's environment lifts HOLD for that session. edit: the docs exempt from the 300-line cap. Check with: node .claude/hooks/policy.js",
+  "$comment": "Project policy for the hooks in this directory, in the Hatchery base's format (its ADR 0006; the loader is policy.js). Every script here and ../statusline.js is the base's and reads this file (ADR 0035, ADR 0037). git: agents push and lease-push task/* only, never commit on main or master, delete a task/* branch only after a merged PR, and core.hooksPath stays tools/git-hooks (the base's .claude/hooks/git/pre-push is not wired). usage: hold 75 on both meters; deny 100, so an owner's grant in ~/.claude/usage-gate-overrides/ lifts either meter or both; DYSTOPO_GATE_OVERRIDE=1 in a session's environment lifts HOLD for that session. edit: the docs exempt from the 300-line cap; CLAUDE.md named exactly lifts the base's 40-line and 190-loaded caps (ADR 0037); docs/hatchery/* is the base's record subtree, exempt from the path check when it arrives. update: base paths this project never takes (ADR 0020, ADR 0037). privacy: the base's push scan (its ADR 0018); identities holds the placeholder the owner chose on 2026-10-17 (obviously fake, so no real address sits in a tracked file); the repository's user.name and user.email are set to it, and the scan exempts only commits made as it. Check with: node .claude/hooks/policy.js",
   "git": {
     "commit": { "subagents": "any", "protectedBranches": ["main", "master"] },
     "push": { "subagents": "any", "branches": ["task/*"], "mainSession": true, "forceWithLease": ["task/*"] },
@@ -15,8 +15,15 @@
     "holdAdvice": "No new implementers (CLAUDE.md, Wave size). Finish work already in flight; a verifier for an already-launched task needs the owner's override. Otherwise wait for the reset or the owner's word."
   },
   "edit": {
-    "capExempt": ["docs/PLANNING.md", "docs/TASKS.md", "docs/SERVER.md"],
-    "anchorExempt": ["docs/design/proposals/*", "docs/design/decisions/*", "docs/findings/*", "docs/TASKS.md", "docs/PLANNING.md", "docs/ARCHITECTURE.md"],
+    "capExempt": ["docs/PLANNING.md", "docs/TASKS.md", "docs/SERVER.md", "CLAUDE.md"],
+    "anchorExempt": ["docs/design/proposals/*", "docs/design/decisions/*", "docs/findings/*", "docs/TASKS.md", "docs/PLANNING.md", "docs/ARCHITECTURE.md", "docs/hatchery/*"],
     "formatters": {}
+  },
+  "update": {
+    "exclude": [".claude/agents/*", ".claude/skills/adopt-hatchery/*", ".claude/skills/commit/*", ".claude/skills/decant/*", ".claude/skills/debug-interface/*", "LICENSES/*"]
+  },
+  "privacy": {
+    "allow": ["user"],
+    "identities": [{ "name": "Dystopo Owner", "email": "owner@dystopo.invalid" }]
   }
 }

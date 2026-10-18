@@ -14,11 +14,13 @@ offline first, `shared` commonMain pure Kotlin for every target, permissive depe
 only in `tilebuild`), every feature agent-drivable, the design goals (ADR 0025). Look for hidden
 coupling: does this decision quietly make a later one for us? For every mechanism in the proposal
 that refuses, denies or fails closed, say who can lift it, from where, while a session is running,
-and whether its refusal message says so; a refusal with no documented lift is an objection. Produce a
-numbered list of objections
-with severity (blocking, serious, minor), evidence, and what would resolve each; then one paragraph
-with your own recommendation and confidence. If the proposal is right, say so plainly and list the
-residual risks; manufactured objections waste the budget.
+and whether its refusal message says so; a refusal with no documented lift is an objection. Then a
+pre-mortem: it is ten years on and this choice is the one the project regrets; say in one paragraph
+what went wrong and which line of the proposal should have caught it. A prediction that cannot fail,
+an exit cost or moving-parts line that is boilerplate, is an objection. Produce a numbered list of
+objections with severity (blocking, serious, minor), evidence, and what would resolve each; then one
+paragraph with your own recommendation and confidence. If the proposal is right, say so plainly and
+list the residual risks; manufactured objections waste the budget.
 
 Write the review to `docs/design/proposals/NNNN-critic-review.md` with the Write tool (Bash heredocs
 with apostrophes fail here). Do not edit the proposal. Do not commit; leave the file for the

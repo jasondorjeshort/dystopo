@@ -19,7 +19,8 @@ decides.
 2. Write `docs/design/proposals/NNNN-<short-title>.md` from `template.md` in this directory (Write
    tool). Status: `draft`. Every option gets the same depth; measure where it is cheap (T77 imported
    GraphHopper before rejecting it). The recommendation names what would reverse it. Claims about
-   tools, licences, platforms or APIs go under "Claims to verify".
+   tools, licences, platforms or APIs go under "Claims to verify". Every option states its exit cost
+   and moving parts; a dependency the project will lean on answers `dependency.md` in the proposal.
 3. Add the proposal to `docs/design/proposals/README.md`.
 4. Set Status to `under review`. Launch a critic (the most capable model) with `brief-critic.md`
    filled in. The critic writes `NNNN-critic-review.md` beside the proposal.
