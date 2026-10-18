@@ -58,7 +58,10 @@ object SettingsLayout {
      * total ([cacheBudgetMb]), the one number on its page a user is most likely to look for.
      */
     fun summary(group: SettingsGroup, cacheBudgetMb: Long): String =
-        if (group == SettingsGroup.DATA) "${group.summary} with a ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(cacheBudgetMb)} cache budget" else group.summary
+        if (group == SettingsGroup.DATA) {
+            // A no-break space inside the size, so "1 GB" never splits across two lines.
+            "${group.summary} with a ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(cacheBudgetMb).replace(' ', '\u00A0')} cache budget"
+        } else group.summary
 
     /** `GET /settings/layout`: the groups in list order, each with its rows in page order, and what is open now. */
     fun json(

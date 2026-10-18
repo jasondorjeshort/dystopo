@@ -147,8 +147,9 @@ private fun BudgetSection(b: Map<String, Any?>, stores: Map<String, Map<String, 
     val kinds = budgetKinds(stores)
     val used = kinds.sumOf { it.second }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+        // T115: the heading with its help icon, and the numbers at the right; they wrap below at large font scales.
+        HeadingRow {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicText("Cache budget", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
                 HelpIcon("storage.budget") // T115 (T109's follow-up)
             }
@@ -253,12 +254,12 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
     val inBudget = s["inBudget"] == true
     val budget = (s["budgetMb"] as? Number)?.toLong()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (inBudget) {
-                Box(Modifier.width(10.dp).height(10.dp).background(kindColor(key), RoundedCornerShape(2.dp)))
-                Spacer(Modifier.width(6.dp))
-            }
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+        HeadingRow {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (inBudget) {
+                    Box(Modifier.width(10.dp).height(10.dp).background(kindColor(key), RoundedCornerShape(2.dp)))
+                    Spacer(Modifier.width(6.dp))
+                }
                 BasicText(s["label"] as String, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
                 StoreHelp(key) // T115 (T109's follow-up)
             }
@@ -330,6 +331,21 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
             }
         }
     }
+}
+
+/**
+ * T115: a heading line: the label with its help icon on the left, the numbers on the right, and the numbers on a line of
+ * their own when both do not fit (at font scale 2.0 a heading squeezed beside them broke into a column of short lines).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HeadingRow(content: @Composable () -> Unit) {
+    FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) { content() }
 }
 
 /** T115: the help icon of a store's row, by the key of its text in [STORAGE_HELP] (one literal key per row, as `HelpRegistryTest` reads them). */
