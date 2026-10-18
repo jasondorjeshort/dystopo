@@ -79,14 +79,15 @@ HERE and Magic Earth. "Observed" means well-known behaviour the pages read do no
 - **The route card.** Road apps show time and distance (Google and Apple add the climb for walking); outdoor
   planners add ascent, descent, an elevation profile, difficulty and way types (Mapy, komoot, Outdooractive, OsmAnd).
 
-### Where the outdoor apps fall short
+### The outdoor apps are the exception, not the road apps
 
 Gaia GPS, CalTopo, onX, Avenza, BackCountry Navigator and Garmin Explore take the user to a point only in a
 straight line with bearing and distance ("Guide Me", "Navigate To", "Go-To Waypoint", GOTO). Trail routing
 exists only in their route builders, and the route must be built and saved before guidance. AllTrails cannot
 route to an arbitrary point at all, and Gaia and AllTrails hand the drive to the trailhead to another app. Only
 the OSM general apps (OsmAnd, Organic Maps, Mapy, Locus) and Ride with GPS (bike) route from the fix to a picked
-point along paths in one step. That is the gap the owner names; Dystopo's trail graph already closes it.
+point along paths in one step. This is not a gap to fill with something new: every road navigation app does
+exactly this, almost all in the same shape (owner, 2026-10-17); Dystopo does the standard thing, for walking too.
 
 ### No fix, offline, no data
 
@@ -100,7 +101,7 @@ says "Unable to calculate route" (routing options or incomplete OSM data); Gaia 
 1. **Long-press card, in this order: "Route to here", "Waypoint here", "Route from here", "Cancel".** "Route to
    here" plans at once from the phone's position to the pressed point in the card's last mode (hike by default):
    the destination-first action of Google, Apple, Mapy and Organic Maps, and the one-step trail route the
-   outdoor apps lack. "Waypoint here" keeps its place near the front (T109: it was hard to find). "Route from
+   outdoor apps leave out. "Waypoint here" keeps its place near the front (T109: it was hard to find). "Route from
    here" keeps today's two long-presses unchanged, as Organic Maps' "Route from" and OsmAnd's "Directions from" do.
 2. **The route card names both ends**: "From: Your location" and "To: 46.85290, -121.76030" (a name when there
    is one). Tapping From offers "Your location" and "Choose on map" (the next long-press sets it), plus "Swap";
