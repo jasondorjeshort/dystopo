@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-18
 
+- T114: Route to here, from where the phone is (#4)
 - T116: Desktop, server and tooling leftover sweep 9 (#3)
 - T117: The guard lets a subagent integrate `main`, and the Hatchery carry-back (#2)
 - T118: The ideas folder in the base's grammar, and the `triage` skill (#1)
