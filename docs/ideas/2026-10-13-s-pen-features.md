@@ -1,8 +1,6 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: none
 ---
 
 # S Pen features (niche)

@@ -71,7 +71,7 @@ the release smoke tour through a deep link, and the sync simulator. CI runs the 
 - Commands, debug routes, emulators, this machine's paths and ports, Windows quirks: `docs/reference/` (index `docs/reference/README.md`, one topic per file with a `verified:` date).
 - Decisions (ADRs, from 0020): `docs/design/decisions/` (index in its README); proposals for major choices before they become ADRs: `docs/design/proposals/` (created with the first one).
 - Investigation results and incidents behind rules, dated and status-tagged: `docs/findings/` (index in its README).
-- Raw ideas, bugs and missing features awaiting triage, one file each: `docs/ideas/` (index in its README).
+- Ideas, bugs nobody has looked into and missing features, one file each ending in at most one block (`Plan:`, `Question:`, `Waits:`; the `triage` skill writes it), deleted when built: `docs/ideas/` (format in its README; listed on demand, `node .claude/hooks/queue-list.js ideas`).
 - Procedures (task briefs, the wave and merge sequence, sweeps, releases, the handoff, proposals, ADRs, findings): skills in `.claude/skills/` (index in its README).
 - Conventions that load only when matching files are edited (docs caps and indexes, Kotlin, the track database): `.claude/rules/`.
 - Hooks (usage gate, `git-guard` with the base's push scan, `post-edit` doc checks; `node .claude/hooks/test-hooks.js`): `.claude/hooks/`, the base's scripts under this project's `policy.json` (ADR 0035). The base's working agreement, `.claude/agreement/`, is replaced section by section by the one-line pointers in `.claude/project/` that `CLAUDE.md` imports (ADR 0037). The privacy and commit-message git hooks, and the pre-push hook that chains the base's personal-data scan: `tools/git-hooks/`.
