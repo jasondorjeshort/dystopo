@@ -35,8 +35,10 @@
 // its policy file through HOOK_POLICY_FILE: the Hatchery fixture, an example, none, or a scratch
 // file. No file of the repository is read except to check that policy.json loads, in F1 the
 // files .claude/hooks/fitness.json names, in O1 the tracked paths against ownership.json and in A1
-// the files under .claude/agreement/ (both skipped where a hatchery remote exists, ADR 0016), and
-// policy.js and imports.js, copied into the O cases' scratch repositories; ~/.claude is never touched.
+// the files under .claude/agreement/ (both skipped where a hatchery remote exists, ADR 0016),
+// policy.js and imports.js, copied into the O cases' scratch repositories, and in groups H, HS and SL
+// .claude/settings.json, whose every command is run from a subfolder, and .claude/statusline.js;
+// ~/.claude is never touched. Group GI covers git.integrate (pull, merge and rebase apart from commit).
 // Groups IM (imports.js), CL (policy.js --claude-check) and O (ownership.js) cover ADR 0016's code;
 // group Q covers queue-list.js and post-edit's marker switch (ADR 0017), on scratch trees, with a
 // scratch copy of the hooks whose queue-list.js throws (Q13); group PV covers privacy-scan.js, rule
@@ -429,7 +431,7 @@ const GR = [
   ['GR40', 'git rebase main', 'Bash', 'coder', 4],
   ['GR41', 'git pull', 'Bash', 'coder', 4],
   ['GR42', 'git rebase --abort', 'Bash', 'coder', 'allow'],
-  ['GR43', 'git merge feature', 'Bash', 'general-purpose', 4, repoMain, POLICIES.taskBranches],
+  ['GR43', 'git merge feature', 'Bash', 'general-purpose', 'allow', repoMain, POLICIES.taskBranches], // the example integrates on main (git.integrate)
   ['GR44', 'git rebase origin/main', 'Bash', 'general-purpose', 'allow', repoTask, POLICIES.taskBranches],
   // Config that redirects hooks by another route.
   ['GR45', 'GIT_CONFIG_GLOBAL=/tmp/evil git commit -m x', 'Bash', null, 14],
@@ -471,6 +473,9 @@ guardCase('GF03', { command: 'git log', policy: badType, policyName: 'wrong type
 guardCase('GF04', { command: 'ls -la', policy: badJson, policyName: 'not JSON' }, 'allow');
 guardCase('GF05', { command: 'git commit -m x', agent: 'coder', policy: POLICIES.none, policyName: 'absent' }, 4);
 guardCase('GF06', { command: 'git commit -m x', agent: 'runner', policy: POLICIES.none, policyName: 'absent' }, 'allow');
+// git.integrate is validated like any other block: a wrong type or an unknown key denies every git command.
+guardCase('GF07', { command: 'git status', policy: scratchPolicy('badintegrate', { git: { integrate: { subagents: 'all' } } }), policyName: 'integrate of the wrong type' }, 'policy');
+guardCase('GF08', { command: 'git status', policy: scratchPolicy('badintegratekey', { git: { integrate: { branches: [] } } }), policyName: 'unknown key in integrate' }, 'policy');
 
 // One command set under every policy. The absent file must behave as the Hatchery one.
 // [id, command, agent, cwd, { hatchery, taskBranches, singleBranch }]
@@ -497,12 +502,59 @@ const GP = [
   ['19', `cd ${fwd(repoMain)} && git commit -m x`, 'general-purpose', repoTask, { hatchery: 4, taskBranches:4, singleBranch:'allow' }],
   ['20', 'git reset --hard', null, repoMain, { hatchery: 5, taskBranches:5, singleBranch:5 }],
   ['21', 'git commit --no-verify -m x', 'general-purpose', repoTask, { hatchery: 4, taskBranches:13, singleBranch:13 }],
+  ['22', 'git pull', 'general-purpose', repoMain, { hatchery: 4, taskBranches:'allow', singleBranch:'allow' }],
+  ['23', 'git cherry-pick abc', 'general-purpose', repoMain, { hatchery: 4, taskBranches:4, singleBranch:'allow' }],
 ];
 for (const [n, command, agent, cwd, want] of GP) {
   for (const p of [H, 'none', 'taskBranches', 'singleBranch']) {
     const tag = { hatchery: 'H', none: 'N', taskBranches: 'T', singleBranch: 'S' }[p];
     guardCase(`GP${n}${tag}`, { command, agent, cwd, policy: POLICIES[p], policyName: p }, want[p === 'none' ? H : p]);
   }
+}
+
+// git.integrate (rule 4): pull, merge and rebase judged apart from commit. GI01 to GI16 under the
+// task-branches example (any subagent integrates on main, none commits there); GI20 to GI23 with
+// main protected and no integrate key, the base's behaviour and wording; GI30 to GI34 with one key
+// of the entry set apart. [id, command, agent, cwd, policy, policyName, expect, extra]
+{
+  const BASE_ON_MAIN = 'Subagents do not make commits on main; work on your own branch.';
+  const reasonIs = (want) => (d) => d.reason.endsWith(`\`. ${want}`) || `reason should end with ${JSON.stringify(want)}`;
+  const reasonHas = (want) => (d) => d.reason.includes(want) || `reason should contain ${JSON.stringify(want)}`;
+  const tb = POLICIES.taskBranches;
+  const protectMain = scratchPolicy('protect-main', { git: { commit: { subagents: 'any', protectedBranches: ['main'] } } });
+  const integrateWho = scratchPolicy('integrate-who', { git: { commit: { subagents: 'any', protectedBranches: ['main'] }, integrate: { subagents: ['runner'], protectedBranches: [] } } });
+  const integrateBranch = scratchPolicy('integrate-branch', { git: { commit: { subagents: 'any', protectedBranches: [] }, integrate: { protectedBranches: ['main'] } } });
+  const GI = [
+    ['GI01', 'git pull', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI02', 'git pull --rebase origin main', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI03', 'git merge --ff-only origin/main', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI04', 'git merge origin/main', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI05', 'git rebase origin/main', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI06', 'git merge --continue', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI07', 'git rebase --continue', 'general-purpose', repoMain, tb, 'task-branches', 'allow'],
+    ['GI08', 'git commit -m x', 'general-purpose', repoMain, tb, 'task-branches', 4,
+      reasonIs(`${BASE_ON_MAIN} A merge or rebase in progress here is concluded with git merge --continue or git rebase --continue.`)],
+    ['GI09', 'git cherry-pick abc', 'general-purpose', repoMain, tb, 'task-branches', 4],
+    ['GI10', 'git revert HEAD', 'general-purpose', repoMain, tb, 'task-branches', 4],
+    ['GI11', 'git am patch.mbox', 'general-purpose', repoMain, tb, 'task-branches', 4],
+    ['GI12', `git -C ${fwd(repoMain)} pull --ff-only`, 'general-purpose', repoTask, tb, 'task-branches', 'allow'], // another checkout's main
+    ['GI13', 'git rebase -i origin/main', 'general-purpose', repoMain, tb, 'task-branches', 10], // rule 10 untouched
+    ['GI14', 'git pull --no-verify', 'general-purpose', repoMain, tb, 'task-branches', 13], // rule 13 untouched
+    ['GI15', 'git commit -m x', 'general-purpose', repoTask, tb, 'task-branches', 'allow'],
+    ['GI16', 'git cherry-pick abc', null, repoMain, tb, 'task-branches', 'allow'], // the main session
+    ['GI20', 'git pull', 'general-purpose', repoMain, protectMain, 'main protected, no integrate key', 4, reasonIs(BASE_ON_MAIN)],
+    ['GI21', 'git merge --ff-only origin/main', 'general-purpose', repoMain, protectMain, 'main protected, no integrate key', 4, reasonIs(BASE_ON_MAIN)],
+    ['GI22', 'git rebase origin/main', 'general-purpose', repoMain, protectMain, 'main protected, no integrate key', 4, reasonIs(BASE_ON_MAIN)],
+    ['GI23', 'git commit -m x', 'general-purpose', repoMain, protectMain, 'main protected, no integrate key', 4, reasonIs(BASE_ON_MAIN)],
+    ['GI30', 'git pull', 'general-purpose', repoMain, integrateWho, 'integrate.subagents runner', 4,
+      reasonHas('the subagents that pull, merge or rebase (git.integrate) are: runner.')],
+    ['GI31', 'git pull', 'runner', repoMain, integrateWho, 'integrate.subagents runner', 'allow'],
+    ['GI32', 'git commit -m x', 'general-purpose', repoTask, integrateWho, 'integrate.subagents runner', 'allow'],
+    ['GI33', 'git rebase origin/main', 'general-purpose', repoMain, integrateBranch, 'integrate.protectedBranches main', 4,
+      reasonIs('Subagents do not pull, merge or rebase on main (git.integrate); work on your own branch.')],
+    ['GI34', 'git commit -m x', 'general-purpose', repoMain, integrateBranch, 'integrate.protectedBranches main', 'allow'],
+  ];
+  for (const [id, command, agent, cwd, policy, policyName, expect, extra] of GI) guardCase(id, { command, agent, cwd, policy, policyName }, expect, extra);
 }
 
 // ---------- the privacy scan: rule 20, the CLI, the pre-push hook (group PV; ADR 0018) ----------
@@ -861,6 +913,9 @@ const P = [
   ['PA07', 'an indented fenced block', absOf('docs/notes/indented.md'), null],
   ['PA08', '[no-check:] covers its own list item only', absOf('docs/notes/list.md'),
     'post-edit: docs/notes/list.md names paths that do not exist: `docs/reference/also-gone.md`. Fix them, or mark the paragraph [no-check: <reason>] (.claude/rules/docs.md).'],
+  // An elided path (a "..." segment) is not a path; a real missing one in the same board line still warns.
+  ['PA09', 'elided paths in a board line next to a missing one', absOf('docs/TASKS.md'),
+    'post-edit: docs/TASKS.md names paths that do not exist: `src/gone/Real.kt`. Fix them, or mark the paragraph [no-check: <reason>] (.claude/rules/docs.md).'],
 ];
 write('docs/findings/2026-01-03-gone.md', '---\ndate: 2026-01-03\nstatus: resolved\narea: test\n---\n# Gone\n\nIt lived in `docs/reference/gone.md`.\n');
 write('docs/notes/indented.md', '# Indented\n\n- step:\n\n    ```\n    cat `docs/reference/gone.md`\n    ```\n');
@@ -872,6 +927,7 @@ write('docs/notes/fenced.md', '# Fenced\n\n```\nls `docs/reference/gone.md`\n```
 write('docs/notes/placeholders.md', '# Placeholders\n\n`docs/design/decisions/NNNN-title.md`, `docs/findings/<slug>.md`, `docs/*.md`,\n' +
   '`origin/main`, `../decisions/x.md`, `task/T1`, `docs/reference/clean.md#section`, `docs/reference/clean.md:3`.\n');
 write('docs/PLANNING.md', lines(320));
+write('docs/TASKS.md', '# Tasks\n\n### T1. A task\n**Owns:** `src/.../routing/Gone.kt`, `docs/.../gone.md`, `src/gone/Real.kt` and `src/app.txt`.\n');
 
 for (const [id, label, filePath, expect, rawOverride, fmt, policy, root] of P) {
   if (!selected(id)) continue;
@@ -1063,7 +1119,7 @@ const PUSHER_CAP_LINE = 'l=$(mktemp); git -c core.quotePath=false ls-files -- \'
   }
   // CAP10 and CAP11 run PUSHER_CAP_LINE; this case keeps it equal to the backticked command of
   // .claude/agents/pusher.md that holds --cap-check, so the copy above cannot drift.
-  // This project has no .claude/agents/ (ADR 0020, 0037): the case is skipped when the file is absent.
+  // A project that never took the base's agents has no pusher.md: the case does not run there.
   if (selected('CAP15') && fs.existsSync(path.join(__dirname, '..', 'agents', 'pusher.md'))) {
     const spans = fs.readFileSync(path.join(__dirname, '..', 'agents', 'pusher.md'), 'utf8').match(/`[^`\n]+`/g) || [];
     const hits = spans.map((x) => x.slice(1, -1)).filter((x) => x.includes('--cap-check'));
@@ -2830,119 +2886,157 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
     const strip = (p) => JSON.stringify(Object.assign({}, p, { usage: Object.assign({}, p.usage, { holdAdvice: '', denyAdvice: '' }) }));
     report('LIVE04', 'the Hatchery fixture equals the loader defaults', strip(merged) === strip(DEFAULTS), `fixture ${strip(merged)} vs defaults ${strip(DEFAULTS)}`);
   }
+  // The debug CLI prints git.integrate: null keys when absent (they take git.commit's), the example's values when set.
+  for (const [id, file, want] of [['LIVE05', POLICIES.none, { subagents: null, protectedBranches: null }],
+    ['LIVE06', POLICIES.taskBranches, { subagents: 'any', protectedBranches: [] }]]) {
+    if (!selected(id)) continue;
+    const r = spawnSync(NODE, [path.join(HOOKS, 'policy.js'), file], { encoding: 'utf8', timeout: 30000 });
+    let got = null;
+    try { got = JSON.parse(r.stdout.slice(r.stdout.indexOf('\n') + 1)).git.integrate; } catch (_) { /* not printed */ }
+    report(id, `policy.js prints git.integrate for ${id === 'LIVE05' ? 'an absent file' : 'policy.examples/task-branches.json'}`,
+      r.status === 0 && JSON.stringify(got) === JSON.stringify(want), `exit ${r.status}, integrate ${JSON.stringify(got)}, want ${JSON.stringify(want)}`, r.stdout);
+  }
 }
 
-// ---------- this project: settings.json: every hook command finds its script from any directory (T99) ----------
-// Claude Code runs a hook in the shell's current directory, which follows `cd`; a command such as
-// `node .claude/hooks/git-guard.js` then fails with MODULE_NOT_FOUND in a subfolder, and git-guard's
-// onFailure "block" stops every later shell call (2026-10-14). The hooks therefore run in exec form,
-// `"command": "node", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/<name>.js"]`: no shell, and Claude
-// Code substitutes the placeholder with the directory the session started in (the main checkout or a
-// worktree; https://code.claude.com/docs/en/hooks, "Reference scripts by path"). These cases run each
-// command from settings.json the way Claude Code does, from a subfolder that has no .claude/, against
-// this checkout (H01..) and against a copy of the hooks under a project path with a space in it (HS..).
-// H00 is the control: the old relative form, run from the same subfolder, does not find its script.
+// ---------- settings.json: every command finds its script from any directory (groups H, HS, SL) ----------
+// Claude Code runs a command hook and the status line in the session's current directory, which
+// follows `cd`; a command such as `node .claude/hooks/git-guard.js` then fails with MODULE_NOT_FOUND
+// from a subfolder, and git-guard's onFailure "block" stops every later shell call (seen downstream on
+// 2026-10-14). So every command names its script through ${CLAUDE_PROJECT_DIR}, the directory the
+// session started in, in either form Claude Code knows (https://code.claude.com/docs/en/hooks):
+// exec form ("command" and "args": no shell, the placeholder substituted into each as plain text) or
+// shell form (the string run by Git Bash on Windows, by PowerShell when Git Bash is absent or the
+// hook's "shell" is "powershell", by sh -c elsewhere, with CLAUDE_PROJECT_DIR in the environment).
+// These cases read the repository's own .claude/settings.json and .claude/statusline.js and run each
+// command the way Claude Code does, from a subfolder that has no .claude/: against this checkout
+// (H01..) and against a copy of the hooks under a project path with a space in it (HS..). H00 is the
+// control: the relative form from the same subfolder does not find its script. H99: the base's three
+// hooks are all named. A repository without a readable .claude/settings.json skips the group.
 {
   const ROOT = path.resolve(HOOKS, '..', '..');
-  const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8'));
-  const sub = path.join(scratch, 'elsewhere', 'out', 'sub');
-  fs.mkdirSync(sub, { recursive: true });
-  const hHome = path.join(scratch, 'hook-home');
-  fs.mkdirSync(path.join(hHome, '.claude'), { recursive: true });
-  const spaced = path.join(scratch, 'project dir');
-  fs.mkdirSync(path.join(spaced, '.claude'), { recursive: true });
-  fs.cpSync(HOOKS, path.join(spaced, '.claude', 'hooks'), { recursive: true });
-  const hooks = [];
-  for (const [event, groups] of Object.entries(settings.hooks || {})) {
-    for (const g of groups) for (const h of g.hooks || []) if (h.type === 'command') hooks.push({ event, matcher: g.matcher || '', h });
-  }
-  const inputFor = (event, matcher, projectDir) => {
-    const tool = matcher.split('|')[0] || 'Bash';
-    if (event === 'PostToolUse') {
-      return { hook_event_name: event, tool_name: tool, cwd: sub, tool_input: { file_path: path.join(sub, 'note.txt') } };
-    }
-    if (tool === 'Bash' || tool === 'PowerShell') {
-      return { hook_event_name: event, tool_name: tool, cwd: repoTask, tool_input: { command: 'git status' } };
-    }
-    return { hook_event_name: event, tool_name: tool, cwd: projectDir, tool_input: {} };
-  };
-  // Exec form as Claude Code runs it: the placeholder substituted as plain text, no shell, cwd as given.
-  const subst = (s, projectDir) => String(s).split('${CLAUDE_PROJECT_DIR}').join(projectDir);
-  function runHook(h, stdin, projectDir, cwd) {
-    const env = envWith({ HOME: hHome, USERPROFILE: hHome, CLAUDE_PROJECT_DIR: projectDir, GIT_GUARD_MERGED: 'task/T1',
-      HOOK_POLICY_FILE: undefined, POST_EDIT_FORMATTERS_JSON: undefined });
-    const r = Array.isArray(h.args)
-      ? spawnSync(subst(h.command, projectDir), h.args.map((a) => subst(a, projectDir)), { input: stdin, encoding: 'utf8', timeout: 30000, cwd, env })
-      : spawnSync(h.command, { input: stdin, encoding: 'utf8', timeout: 30000, cwd, env, shell: true });
-    return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? String(r.error) : '') };
-  }
-  const missing = (r) => /MODULE_NOT_FOUND|Cannot find module/.test(r.stderr);
-  if (selected('H00')) {
-    const r = runHook({ command: NODE, args: ['.claude/hooks/git-guard.js'] }, JSON.stringify(inputFor('PreToolUse', 'Bash', ROOT)), ROOT, sub);
-    report('H00', 'control: the old form `node .claude/hooks/git-guard.js` from a subfolder -> MODULE_NOT_FOUND', r.code !== 0 && missing(r),
-      `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 200)}`);
-  }
-  let n = 0;
-  for (const { event, matcher, h } of hooks) {
-    n++;
-    const script = (Array.isArray(h.args) ? h.args.join(' ') : h.command).replace(/^.*[\\/]/, '');
-    for (const [prefix, projectDir, where] of [['H', ROOT, 'this checkout'], ['HS', spaced, 'a project path with a space']]) {
-      const id = `${prefix}${String(n).padStart(2, '0')}`;
-      if (!selected(id)) continue;
-      const r = runHook(h, JSON.stringify(inputFor(event, matcher, projectDir)), projectDir, sub);
-      const placeholder = Array.isArray(h.args) && h.args.some((a) => a.includes('${CLAUDE_PROJECT_DIR}'));
-      const ok = r.code === 0 && !missing(r) && r.stdout === '' && placeholder;
-      report(id, `settings.json ${event} ${matcher} ${script} run from a subfolder (${where}) finds its script and allows`, ok,
-        (placeholder ? '' : 'the command does not name its script through ${CLAUDE_PROJECT_DIR} in exec form (args); ') +
-          `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 300)}`, r.stdout);
-    }
-  }
-  if (selected('H99')) report('H99', 'settings.json has the three command hooks', n === 3, `found ${n}`);
-
-  // T105: the status line. Its settings have no exec form (type, command, padding, refreshInterval), so the command runs
-  // through a shell (Git Bash on Windows, else PowerShell) in the session's current directory, with CLAUDE_PROJECT_DIR in
-  // its environment (forward slashes under Git Bash; under PowerShell Claude Code rewrites ${CLAUDE_PROJECT_DIR} to
-  // ${env:CLAUDE_PROJECT_DIR}). SL00 is the control (the old relative command from a subfolder writes nothing); SL01..
-  // run settings.json's command from a subfolder, with a captured stdin, through each such shell present, here and
-  // under a path with a space: the line is printed and the session file under usage-state/ written (ADR 0011 in the base).
-  fs.copyFileSync(path.join(ROOT, '.claude', 'statusline.js'), path.join(spaced, '.claude', 'statusline.js'));
-  const slCommand = (settings.statusLine || {}).command || '';
-  const shells = [];
-  if (process.platform === 'win32') {
-    const bash = [process.env.CLAUDE_CODE_GIT_BASH_PATH, 'C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files (x86)\\Git\\bin\\bash.exe']
-      .find((p) => p && fs.existsSync(p));
-    if (bash) shells.push({ name: 'Git Bash', exe: bash, argv: (c) => ['-c', c], dir: (d) => d.replace(/\\/g, '/'), cmd: (c) => c });
-    shells.push({ name: 'PowerShell', exe: 'powershell.exe', argv: (c) => ['-NoProfile', '-NonInteractive', '-Command', c], dir: (d) => d,
-      cmd: (c) => c.split('${CLAUDE_PROJECT_DIR}').join('${env:CLAUDE_PROJECT_DIR}') });
+  let settings = null;
+  try { settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8')); } catch (_) { /* absent or unreadable */ }
+  if (settings === null) {
+    if (selected('H')) { skipped++; noteGroup('H00'); process.stdout.write('SKIP H .claude/settings.json is absent or not JSON\n'); }
   } else {
-    shells.push({ name: 'sh', exe: '/bin/sh', argv: (c) => ['-c', c], dir: (d) => d, cmd: (c) => c });
-  }
-  let slRuns = 0;
-  function runStatusLine(command, shell, projectDir) {
-    const home = path.join(scratch, `sl-shell-home-${++slRuns}`);
-    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-    const r = spawnSync(shell.exe, shell.argv(shell.cmd(command)), { input: rl(22, 33), encoding: 'utf8', timeout: 60000, cwd: sub,
-      env: envWith({ HOME: home, USERPROFILE: home, HOOK_POLICY_FILE: POLICIES.hatchery, CLAUDE_PROJECT_DIR: shell.dir(projectDir) }) });
-    let file = null;
-    try { file = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'usage-state', `${SL_SID}.json`), 'utf8')); } catch (_) { /* not written */ }
-    return { code: r.status, stdout: (r.stdout || '').trim(), stderr: r.stderr || (r.error ? String(r.error) : ''), file };
-  }
-  if (selected('SL00')) {
-    const r = runStatusLine('node .claude/statusline.js', shells[0], ROOT);
-    report('SL00', `control: the old status line \`node .claude/statusline.js\` from a subfolder (${shells[0].name}) writes nothing`,
-      r.file === null && r.stdout === '', `exit ${r.code}, file ${JSON.stringify(r.file)}, line ${r.stdout}`);
-  }
-  let k = 0;
-  for (const shell of shells) {
-    for (const [projectDir, where] of [[ROOT, 'this checkout'], [spaced, 'a project path with a space']]) {
-      const id = `SL${String(++k).padStart(2, '0')}`;
-      if (!selected(id)) continue;
-      const r = runStatusLine(slCommand, shell, projectDir);
-      const named = slCommand.includes('${CLAUDE_PROJECT_DIR}');
-      const ok = named && r.code === 0 && r.stdout.includes('5h 22%') && !!r.file && r.file.five_hour.used_percentage === 22;
-      report(id, `settings.json status line from a subfolder through ${shell.name} (${where}) prints and writes usage-state/<session_id>.json`, ok,
-        (named ? '' : 'the command does not name its script through ${CLAUDE_PROJECT_DIR}; ') +
-          `exit ${r.code}, file ${JSON.stringify(r.file)}, stderr ${r.stderr.trim().slice(0, 300)}`, r.stdout);
+    const sub = path.join(scratch, 'elsewhere', 'out', 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    const hHome = path.join(scratch, 'hook-home');
+    fs.mkdirSync(path.join(hHome, '.claude'), { recursive: true });
+    const spaced = path.join(scratch, 'project dir');
+    fs.mkdirSync(path.join(spaced, '.claude'), { recursive: true });
+    fs.cpSync(HOOKS, path.join(spaced, '.claude', 'hooks'), { recursive: true });
+    // The shells a command string can run in, the one Claude Code picks by default first. Git Bash gets
+    // the directory with forward slashes; under PowerShell Claude Code rewrites ${CLAUDE_PROJECT_DIR} to
+    // ${env:CLAUDE_PROJECT_DIR}.
+    const shells = [];
+    if (process.platform === 'win32') {
+      const bash = [process.env.CLAUDE_CODE_GIT_BASH_PATH, 'C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files (x86)\\Git\\bin\\bash.exe']
+        .find((p) => p && fs.existsSync(p));
+      if (bash) shells.push({ name: 'Git Bash', exe: bash, argv: (c) => ['-c', c], dir: (d) => d.replace(/\\/g, '/'), cmd: (c) => c });
+      shells.push({ name: 'PowerShell', exe: 'powershell.exe', argv: (c) => ['-NoProfile', '-NonInteractive', '-Command', c], dir: (d) => d,
+        cmd: (c) => c.split('${CLAUDE_PROJECT_DIR}').join('${env:CLAUDE_PROJECT_DIR}') });
+    } else {
+      shells.push({ name: 'sh', exe: '/bin/sh', argv: (c) => ['-c', c], dir: (d) => d, cmd: (c) => c });
+    }
+    const shellFor = (h) => (h.shell === 'powershell' && shells.find((s) => s.name === 'PowerShell')) || shells[0];
+    const hooks = [];
+    for (const [event, groups] of Object.entries(settings.hooks || {})) {
+      for (const g of groups) for (const h of g.hooks || []) if (h.type === 'command') hooks.push({ event, matcher: g.matcher || '', h });
+    }
+    const inputFor = (event, matcher, projectDir) => {
+      const tool = matcher.split('|')[0] || 'Bash';
+      if (event === 'PostToolUse') {
+        return { hook_event_name: event, tool_name: tool, cwd: sub, tool_input: { file_path: path.join(sub, 'note.txt') } };
+      }
+      if (tool === 'Bash' || tool === 'PowerShell') {
+        return { hook_event_name: event, tool_name: tool, cwd: repoTask, tool_input: { command: 'git status' } };
+      }
+      return { hook_event_name: event, tool_name: tool, cwd: projectDir, tool_input: {} };
+    };
+    const subst = (s, projectDir) => String(s).split('${CLAUDE_PROJECT_DIR}').join(projectDir);
+    // One hook command as Claude Code runs it, from cwd: exec form spawned with the placeholder
+    // substituted, shell form through its shell with CLAUDE_PROJECT_DIR in the environment.
+    function runHook(h, stdin, projectDir, cwd) {
+      const exec = Array.isArray(h.args);
+      const shell = exec ? null : shellFor(h);
+      const env = envWith({ HOME: hHome, USERPROFILE: hHome, CLAUDE_PROJECT_DIR: shell ? shell.dir(projectDir) : projectDir,
+        GIT_GUARD_MERGED: 'task/T1', HOOK_POLICY_FILE: undefined, POST_EDIT_FORMATTERS_JSON: undefined });
+      const r = exec
+        ? spawnSync(subst(h.command, projectDir), h.args.map((a) => subst(a, projectDir)), { input: stdin, encoding: 'utf8', timeout: 30000, cwd, env })
+        : spawnSync(shell.exe, shell.argv(shell.cmd(h.command)), { input: stdin, encoding: 'utf8', timeout: 30000, cwd, env });
+      return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || (r.error ? String(r.error) : ''), form: exec ? 'exec form' : shell.name };
+    }
+    const missing = (r) => /MODULE_NOT_FOUND|Cannot find module/.test(r.stderr);
+    const PLACEHOLDER = /\$\{?CLAUDE_PROJECT_DIR\b/;
+    if (selected('H00')) {
+      const r = runHook({ command: NODE, args: ['.claude/hooks/git-guard.js'] }, JSON.stringify(inputFor('PreToolUse', 'Bash', ROOT)), ROOT, sub);
+      report('H00', 'control: the relative form `node .claude/hooks/git-guard.js` from a subfolder -> MODULE_NOT_FOUND', r.code !== 0 && missing(r),
+        `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 200)}`);
+    }
+    let n = 0;
+    for (const { event, matcher, h } of hooks) {
+      n++;
+      const words = [h.command, ...(Array.isArray(h.args) ? h.args : [])];
+      const script = words.join(' ').replace(/["']/g, '').replace(/^.*[\\/]/, '');
+      for (const [prefix, projectDir, where] of [['H', ROOT, 'this checkout'], ['HS', spaced, 'a project path with a space']]) {
+        const id = `${prefix}${String(n).padStart(2, '0')}`;
+        if (!selected(id)) continue;
+        const r = runHook(h, JSON.stringify(inputFor(event, matcher, projectDir)), projectDir, sub);
+        const placeholder = words.some((w) => PLACEHOLDER.test(String(w)));
+        const ok = r.code === 0 && !missing(r) && r.stdout === '' && placeholder;
+        report(id, `settings.json ${event} ${matcher} ${script} (${r.form}) run from a subfolder (${where}) finds its script and allows`, ok,
+          (placeholder ? '' : 'the command does not name its script through ${CLAUDE_PROJECT_DIR}; ') +
+            `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 300)}`, r.stdout);
+      }
+    }
+    if (selected('H99')) {
+      const named = hooks.map(({ h }) => [h.command, ...(Array.isArray(h.args) ? h.args : [])].join(' ').replace(/\\/g, '/'));
+      const absent = ['usage-gate.js', 'git-guard.js', 'post-edit.js'].filter((s) => !named.some((c) => c.includes(`.claude/hooks/${s}`)));
+      report('H99', 'settings.json runs the base\'s three hooks (usage-gate, git-guard, post-edit)', absent.length === 0, `not named: ${absent.join(', ')}`);
+    }
+
+    // The status line. Its settings have no exec form (type, command, padding, refreshInterval), so the
+    // command runs through a shell in the session's current directory, with CLAUDE_PROJECT_DIR in its
+    // environment. SL00 is the control (the relative command from a subfolder writes nothing); SL01..
+    // run settings.json's command from a subfolder, with a captured stdin, through each shell present,
+    // here and under a path with a space: the line is printed and the session file under usage-state/
+    // written (ADR 0011). A settings.json without a command status line skips SL01...
+    const slCommand = settings.statusLine && settings.statusLine.type === 'command' ? settings.statusLine.command || '' : '';
+    if (fs.existsSync(path.join(ROOT, '.claude', 'statusline.js'))) {
+      fs.copyFileSync(path.join(ROOT, '.claude', 'statusline.js'), path.join(spaced, '.claude', 'statusline.js'));
+    }
+    let slRuns = 0;
+    function runStatusLine(command, shell, projectDir) {
+      const home = path.join(scratch, `sl-shell-home-${++slRuns}`);
+      fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+      const r = spawnSync(shell.exe, shell.argv(shell.cmd(command)), { input: rl(22, 33), encoding: 'utf8', timeout: 60000, cwd: sub,
+        env: envWith({ HOME: home, USERPROFILE: home, HOOK_POLICY_FILE: POLICIES.hatchery, CLAUDE_PROJECT_DIR: shell.dir(projectDir) }) });
+      let file = null;
+      try { file = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'usage-state', `${SL_SID}.json`), 'utf8')); } catch (_) { /* not written */ }
+      return { code: r.status, stdout: (r.stdout || '').trim(), stderr: r.stderr || (r.error ? String(r.error) : ''), file };
+    }
+    if (selected('SL00')) {
+      const r = runStatusLine('node .claude/statusline.js', shells[0], ROOT);
+      report('SL00', `control: the relative status line \`node .claude/statusline.js\` from a subfolder (${shells[0].name}) writes nothing`,
+        r.file === null && r.stdout === '', `exit ${r.code}, file ${JSON.stringify(r.file)}, line ${r.stdout}`);
+    }
+    if (slCommand === '') {
+      if (selected('SL01')) { skipped++; noteGroup('SL01'); process.stdout.write('SKIP SL01 settings.json has no command status line\n'); }
+    } else {
+      let k = 0;
+      for (const shell of shells) {
+        for (const [projectDir, where] of [[ROOT, 'this checkout'], [spaced, 'a project path with a space']]) {
+          const id = `SL${String(++k).padStart(2, '0')}`;
+          if (!selected(id)) continue;
+          const r = runStatusLine(slCommand, shell, projectDir);
+          const named = slCommand.includes('${CLAUDE_PROJECT_DIR}');
+          const ok = named && r.code === 0 && r.stdout.includes('5h 22%') && !!r.file && r.file.five_hour.used_percentage === 22;
+          report(id, `settings.json status line from a subfolder through ${shell.name} (${where}) prints and writes usage-state/<session_id>.json`, ok,
+            (named ? '' : 'the command does not name its script as "${CLAUDE_PROJECT_DIR}/...", the form both shells read; ') +
+              `exit ${r.code}, file ${JSON.stringify(r.file)}, stderr ${r.stderr.trim().slice(0, 300)}`, r.stdout);
+        }
+      }
     }
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Loads .claude/hooks/policy.json, the one file that holds a project's choices for the hooks
-// (who commits and pushes, which branches may be deleted, usage thresholds, docs cap exemptions,
+// (who commits, integrates and pushes, which branches may be deleted, usage thresholds, docs cap exemptions,
 // formatters, update excludes, the privacy scan's lifts and identities), and the helpers the usage
 // gate and the status line share (thresholds, grants, the
 // account label). The scripts hold mechanism only, so update-from-hatchery can patch them without
@@ -43,6 +43,10 @@ const path = require('path');
 const DEFAULTS = {
   git: {
     commit: { subagents: ['runner'], protectedBranches: [] },
+    // Rule 4's limits for pull, merge and rebase, which integrate a branch rather than write a new
+    // commit; each key null takes git.commit's value, so a project that sets nothing here judges
+    // them as commits, the base's behaviour. integrateLimits() below resolves them.
+    integrate: { subagents: null, protectedBranches: null },
     push: { subagents: ['pusher'], branches: ['*'], mainSession: true, forceWithLease: [] },
     branchDelete: { branches: [], requireMergedPr: false },
     hooksPath: null,
@@ -87,7 +91,9 @@ const isStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string
 // Type checks for leaf values; each returns true when the value is acceptable.
 const TYPES = {
   who: (v) => v === 'any' || v === 'none' || isStrings(v),
+  whoOrNull: (v) => v === null || TYPES.who(v),
   patterns: isStrings,
+  patternsOrNull: (v) => v === null || isStrings(v),
   bool: (v) => typeof v === 'boolean',
   pathOrNull: (v) => v === null || (typeof v === 'string' && v !== ''),
   envNameOrNull: (v) => v === null || (typeof v === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(v)),
@@ -115,6 +121,7 @@ const TYPES = {
 const SCHEMA = {
   git: {
     commit: { subagents: 'who', protectedBranches: 'patterns' },
+    integrate: { subagents: 'whoOrNull', protectedBranches: 'patternsOrNull' },
     push: { subagents: 'who', branches: 'patterns', mainSession: 'bool', forceWithLease: 'patterns' },
     branchDelete: { branches: 'patterns', requireMergedPr: 'bool' },
     hooksPath: 'pathOrNull',
@@ -184,6 +191,16 @@ function load(file) {
 function meterThresholds(usage) {
   const pick = (m) => ({ hold: m.hold === null ? usage.hold : m.hold, deny: m.deny === null ? usage.deny : m.deny });
   return [['5h', pick(usage.fiveHour)], ['7d', pick(usage.sevenDay)]];
+}
+
+// The effective { subagents, protectedBranches } for pull, merge and rebase (git-guard's rule 4):
+// git.integrate's value where set, else git.commit's.
+function integrateLimits(git) {
+  const i = git.integrate;
+  return {
+    subagents: i.subagents === null ? git.commit.subagents : i.subagents,
+    protectedBranches: i.protectedBranches === null ? git.commit.protectedBranches : i.protectedBranches,
+  };
 }
 
 // Judges readings { '5h': percent|null, '7d': percent|null } against the policy. Returns
@@ -455,7 +472,7 @@ function claudeCheck(root, edit) {
   return { lines, info, files: files.size, code: lines.length ? 1 : 0 };
 }
 
-module.exports = { load, matches, docCap, lineCount, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
+module.exports = { load, matches, docCap, lineCount, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
 
 if (require.main === module && process.argv[2] === '--cap-check') {
   const c = process.argv[3] ? capCheck(process.argv[3])

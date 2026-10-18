@@ -181,8 +181,9 @@ function queueReadmeLines(rel, dir, text) {
 
 // Path anchors: a backtick-quoted token that looks like a repository path (it contains "/" and
 // starts with an existing top-level directory such as docs or .claude) must exist, unless its
-// paragraph, or its list item, carries [no-check: ...]. Fenced blocks (indented ones too) and
-// placeholders (NNNN, <slug>, *) are skipped.
+// paragraph, or its list item, carries [no-check: ...]. Fenced blocks (indented ones too),
+// placeholders (NNNN, <slug>, *) and elided paths (a segment that is "...", as in src/.../X.kt)
+// are skipped.
 function missingPaths(root, text) {
   let tops;
   try {
@@ -197,6 +198,7 @@ function missingPaths(root, text) {
     for (const m of para.matchAll(/`([^`\s]+)`/g)) {
       const p = m[1].replace(/[#:].*$/, '');
       if (!p.includes('/') || /[*<>{}$]|NNNN|YYYY/.test(p) || !tops.has(p.split('/')[0])) continue;
+      if (p.split('/').includes('...')) continue; // elided, not a path
       if (!missing.includes(p) && !fs.existsSync(path.join(root, ...p.split('/').filter(Boolean)))) missing.push(p);
     }
   }

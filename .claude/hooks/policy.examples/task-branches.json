@@ -1,7 +1,8 @@
 {
-  "$comment": "Task-branch model: implementers commit and push their own task/* branch and lease-push it after a rebase; nobody but the main session commits on main or master; a task branch is deleted only after GitHub shows its PR merged; the project keeps its own git hooks under tools/git-hooks. One usage line at 75% that the owner's override may lift, on either meter, up to and past saturation; no stop line.",
+  "$comment": "Task-branch model: implementers commit and push their own task/* branch and lease-push it after a rebase; nobody but the main session commits on main or master, though any subagent may pull, merge or rebase there to integrate it (git.integrate); a task branch is deleted only after GitHub shows its PR merged; the project keeps its own git hooks under tools/git-hooks. One usage line at 75% that the owner's override may lift, on either meter, up to and past saturation; no stop line.",
   "git": {
     "commit": { "subagents": "any", "protectedBranches": ["main", "master"] },
+    "integrate": { "subagents": "any", "protectedBranches": [] },
     "push": { "subagents": "any", "branches": ["task/*"], "mainSession": true, "forceWithLease": ["task/*"] },
     "branchDelete": { "branches": ["task/*"], "requireMergedPr": true },
     "hooksPath": "tools/git-hooks"
