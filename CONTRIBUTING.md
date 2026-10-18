@@ -72,9 +72,11 @@ too: nearby place names, lidar project names, elevation tile names.
   or synthetic data. Recorded GPS tracks are never fixtures.
 - Personal test areas go in `devtool.local.json`, which is gitignored and stays on your machine.
 - Git hooks block commits and commit messages that mention anything listed there (area names, a
-  `privateTerms` list, coordinates inside your areas, elevation tile names). Enable them once per clone with
-  `git config core.hooksPath tools/git-hooks` (they need Java). **Never bypass them with `--no-verify`**; if one
-  fires, change the content.
+  `privateTerms` list, coordinates inside your areas, elevation tile names), and the pre-push hook scans every
+  outgoing commit for personal data (emails, home paths, host names, session links; the scan is the Hatchery
+  base's, `.claude/hooks/privacy-scan.js`). Enable them once per clone with
+  `git config core.hooksPath tools/git-hooks` (they need Java and Node). **Never bypass them with
+  `--no-verify`**; if one fires, change the content.
 - The same checker scans the whole history on demand, printing counts only:
   `git log -p --all | java tools/PrivacyCheck.java scan`.
 - Pull request text is not checked by the hooks: describe personal areas generically ("a Colorado mountain area").

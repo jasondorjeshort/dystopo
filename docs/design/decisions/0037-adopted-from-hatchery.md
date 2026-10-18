@@ -50,14 +50,15 @@ project says as much: most sections become replacement files and the Rules secti
   ten pointer lines. `edit.capExempt` names `CLAUDE.md` exactly, which lifts the base's 40-line and
   190-loaded caps together (the rule here stays under 130 lines, ADR 0020); `edit.anchorExempt` gains
   `docs/hatchery/*` for the base's record subtree, which Hatchery has not shipped yet.
-- **The push scan runs, the pre-push hook does not.** The guard's rule 20 scans every push from a
+- **The push scan runs from the guard and from the terminal.** The guard's rule 20 scans every push from a
   session commit by commit. `privacy.identities` lists a placeholder identity the owner chose on
   2026-10-17 (an obviously fake name and a `.invalid` address, so no real address sits in a tracked
   file; the owner knows the earlier commits carry the real one), and the repository's `user.name` and
   `user.email` are set to it, since the scan exempts only commits made as a listed identity; a commit
   made as anyone else is refused at push. `privacy.allow` is the default. `core.hooksPath` stays
-  `tools/git-hooks` (this project's own privacy hooks); the base's `.claude/hooks/git/pre-push` is in
-  the tree and inert until the owner chains it from `tools/git-hooks/pre-push` or declines it.
+  `tools/git-hooks` (this project's own privacy hooks); its `pre-push` chains the base's
+  `.claude/hooks/git/pre-push` with the arguments and stdin untouched (owner, 2026-10-17), so a
+  terminal push is scanned too; `--no-verify` from a terminal still bypasses it, the owner's act.
 - **Updating.** The `update-from-hatchery` skill as the base writes it, from this line. The helper's
   command is run with `--exclude '.claude/skills/brief/template.md'` (a deleted file the base still
   edits; a skill file is a row, never an exclude). A conflict on a rowed path keeps the project text
@@ -104,9 +105,9 @@ goes. Carry-back is an idea file in Hatchery, the Hatchery commit that took the 
   `docs/ideas/` to the grammar, ADR 0036); the `triage` skill; `ownership.js`, `imports.js` and
   `--claude-check`; the push scan (rule 20) with the paste rule in the `finding` skill and the
   Personal data section of `.claude/rules/docs.md`; the harness groups for all of them.
-- Owner's items: whether to chain the base's pre-push hook into `tools/git-hooks`; the pointer shape
-  above. A clone that commits here sets the placeholder identity (`git config user.name`,
-  `user.email` from the policy's first entry) or its pushes from a session are refused.
+- Owner's item: the pointer shape above. A clone that commits here sets the placeholder identity
+  (`git config user.name`, `user.email` from the policy's first entry) or its pushes are refused,
+  from a session and from a terminal alike.
 - ADR 0020's living line and ADR 0035's Updating section are superseded by this record; everything
   else in both stands. Supersede this record when Hatchery ships `docs/hatchery/` (the record subtree
   and the numbering rule) or takes the integrate entry and the harness group so rows can go.

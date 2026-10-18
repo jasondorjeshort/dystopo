@@ -26,10 +26,9 @@ Resume: this file, `docs/reference/machines.md` › The other account, the `wave
 
 ## Waiting on user
 
-- From the update (ADR 0037): chain the base's pre-push hook into `tools/git-hooks` or decline it; the ten
-  pointer imports in `CLAUDE.md` (veto or keep). Commits here are made as the placeholder identity in
-  `policy.json` (`privacy.identities`; the repository's `user.name` and `user.email` are set to it), or the
-  push scan refuses them from a session.
+- From the update (ADR 0037): the ten pointer imports in `CLAUDE.md` (veto or keep). Commits here are made
+  as the placeholder identity in `policy.json` (`privacy.identities`; the repository's `user.name` and
+  `user.email` are set to it), or the push scan refuses them, from a session and from a terminal alike.
 - The wave 16 section, to read before the critic pass if wanted; real-phone checks of 0.1.8
   (`android-firstrun.py`, `features`); Google developer registration; MapLibre's own compass (T100); T104's
   steepness palette and captions; the wave 14 and 15 strings (in each PR); the 5 s timeout grace (T111).
