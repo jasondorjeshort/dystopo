@@ -14,6 +14,7 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
+import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
@@ -21,8 +22,11 @@ import io.github.jasondorjeshort.dystopo.store.SqlTrackStore
 import io.github.jasondorjeshort.dystopo.store.TrackExport
 import io.github.jasondorjeshort.dystopo.store.TrackImport
 import io.github.jasondorjeshort.dystopo.store.db.TrackDb
+import io.github.jasondorjeshort.dystopo.sync.Bundle
+import io.github.jasondorjeshort.dystopo.sync.EntityKind
 import io.github.jasondorjeshort.dystopo.sync.FileSyncTransport
 import io.github.jasondorjeshort.dystopo.sync.HttpSyncTransport
+import io.github.jasondorjeshort.dystopo.sync.Materializer
 import io.github.jasondorjeshort.dystopo.sync.Sync
 import io.github.jasondorjeshort.dystopo.sync.SyncServer
 import io.github.jasondorjeshort.dystopo.sync.SyncSimulator
@@ -39,6 +43,11 @@ import java.util.Properties
  * `devtool sync-sim` (T44): the sync simulator ([SyncSimulator]) from the command line. One JSON
  * report on stdout; exit code 1 when a run does not converge. `--seeds N` runs seeds
  * `seed..seed+N-1` and prints a summary per seed; any failing seed replays alone with its `replay` line.
+ * T116: `--bundle F` merges a sync bundle (a `.dsync` file: the browser's trips as `demo-check.py --route` writes them,
+ * `<out>-route.dsync`) into the first peer before the run, so its trips travel the faulty network to every other peer
+ * (with `--store sql`, the phone's store: a phone-shaped replica with no graph); the report's `bundle` lists each of
+ * its trips on every peer at the end, with the turn directions saved for the trip's path ([BundleCheck]), and a run
+ * where a peer lost them, or holds others for the bundle's path, fails.
  */
 class SyncSimCommand : CliktCommand(name = "sync-sim") {
     override fun help(context: Context) =
@@ -56,8 +65,10 @@ class SyncSimCommand : CliktCommand(name = "sync-sim") {
     private val skewDays by option("--skew-days", help = "T51: the same in days (2 = two days ahead, -2 behind)").double()
     private val crashes by option("--crashes", help = "T51: crash-restarts of peer 1 during the change phase").int().default(0)
     private val page by option("--page", help = "T51: pull and push in pages of this many operations").int().default(0)
+    private val bundleFile by option("--bundle", help = "T116: a sync bundle (.dsync, e.g. the browser's trips as demo-check.py --route writes them) merged into the first peer before the run; `bundle` in the report checks each trip and its saved directions on every peer").file(mustExist = true, canBeDir = false)
 
     override fun run() {
+        val seeded = bundleFile?.let { f -> BundleCheck.read(f.readBytes()) }
         val sql = SqlPeers()
         val factory: (String, () -> Long) -> SyncStore = when (storeKind) {
             "sql" -> sql::open
@@ -75,14 +86,23 @@ class SyncSimCommand : CliktCommand(name = "sync-sim") {
                 peers = peers, ops = ops, seed = seed + i, partitions = partitions, reorder = reorder,
                 bigSkewMs = skew, crashes = crashes, pageOps = page,
             )
-            val run = SyncSimulator(config, factory, restart).run { System.nanoTime() / 1_000_000 }
+            // T116: the run's peers in order (a restart takes its peer's place); the first gets --bundle.
+            val live = ArrayList<SyncStore>()
+            val seedFactory: (String, () -> Long) -> SyncStore = { device, clock ->
+                factory(device, clock).also { s -> if (live.isEmpty() && seeded != null) s.apply(seeded, clock()); live += s }
+            }
+            val seedRestart: (SyncStore) -> SyncStore = { s -> restart(s).also { n -> live[live.indexOf(s)] = n } }
+            val run = SyncSimulator(config, seedFactory, seedRestart).run { System.nanoTime() / 1_000_000 }
             // SQL peers: the tables must also be exactly the log's view.
             val tablesMatch = sqlStores.all { it.snapshot() == it.snapshotFromLog() }
+            val bundle = seeded?.let { BundleCheck.json(bundleFile!!.path, it, live, changesRan = ops > 0) }
             drivers.forEach { it.close() }
             drivers.clear()
             sqlStores.clear()
-            val json = run.json + mapOf("store" to storeKind, "tablesMatchLog" to (if (storeKind == "sql") tablesMatch else null))
-            SyncSimulator.Report(json, run.converged && tablesMatch) to tablesMatch
+            val bundleOk = bundle == null || bundle["ok"] == true
+            val json = run.json + mapOf("store" to storeKind, "tablesMatchLog" to (if (storeKind == "sql") tablesMatch else null)) +
+                (if (bundle != null) mapOf("bundle" to bundle) else emptyMap())
+            SyncSimulator.Report(json, run.converged && tablesMatch && bundleOk) to tablesMatch
         }
         val allConverged = reports.all { it.first.converged }
         if (seeds == 1) {
@@ -113,6 +133,7 @@ class SyncSimCommand : CliktCommand(name = "sync-sim") {
                                 "ownClockLeadMs" to j["ownClockLeadMs"],
                                 "appendFixes" to (j["changes"] as Map<*, *>)["appendFix"], "appendOpsInLog" to state["appendOpsInLog"],
                                 "firstDivergence" to j["firstDivergence"],
+                                "bundleOk" to (j["bundle"] as? Map<*, *>)?.get("ok"), // T116
                             )
                         },
                     ),
@@ -120,6 +141,43 @@ class SyncSimCommand : CliktCommand(name = "sync-sim") {
             )
         }
         if (!allConverged) throw ProgramResult(1)
+    }
+
+    /**
+     * T116: a `--bundle` file's trips on the simulator's peers. [read] takes a `.dsync` file (gzipped, as
+     * `POST /route/bundle` and the phone write it, or a raw bundle). [json]: per trip of the bundle (a route it puts
+     * or sets a field of), its directions as the bundle alone materialises them ([Materializer.routePlan]: saved and
+     * made for the trip's path) and, on every peer at the end, whether it holds the trip with the bundle's path and
+     * how many saved directions count for it there; `ok` when every peer holding the bundle's path has the bundle's
+     * directions for it, and some peer holds that path unless the run made changes of its own ([changesRan]: a trip
+     * the simulator edited or deleted on every peer is listed as `changedInRun`, not counted).
+     */
+    internal object BundleCheck {
+        fun read(bytes: ByteArray): Bundle =
+            Bundle.decode(if (bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()) Gzip.decompress(bytes) else bytes)
+
+        fun json(file: String, bundle: Bundle, peers: List<SyncStore>, changesRan: Boolean = false): Map<String, Any?> {
+            val ids = bundle.ops.filter { it.body.kind == EntityKind.ROUTE }.map { it.body.id }.distinct()
+            var ok = true
+            val trips = ids.map { id ->
+                val want = Materializer.routePlan(id, bundle.ops.filter { it.body.kind == EntityKind.ROUTE && it.body.id == id })
+                val dirs = want?.savedDirections
+                val on = peers.map { p ->
+                    val got = p.routePlan(id)
+                    val samePath = got != null && want != null && got.path == want.path
+                    val sameDirs = samePath && got!!.savedDirections == dirs
+                    if (samePath && !sameDirs) ok = false
+                    linkedMapOf("held" to (got != null), "samePath" to samePath, "directions" to got?.savedDirections?.size, "sameDirections" to sameDirs)
+                }
+                val changed = want != null && on.none { it["samePath"] == true }
+                if (changed && !changesRan) ok = false // the bundle's version reached no peer, the first included
+                linkedMapOf("id" to id, "name" to want?.name, "mode" to want?.path?.mode, "directions" to dirs?.size, "changedInRun" to changed.takeIf { changesRan }, "peers" to on)
+            }
+            return linkedMapOf(
+                "file" to file, "from" to bundle.from, "ops" to bundle.ops.size, "trips" to trips.size,
+                "withDirections" to trips.count { it["directions"] != null }, "list" to trips, "ok" to ok,
+            )
+        }
     }
 
     /** SQLite peers over in-memory databases; a restart reopens the same database with a new store (T51). */

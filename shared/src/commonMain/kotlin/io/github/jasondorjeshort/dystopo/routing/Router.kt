@@ -276,7 +276,7 @@ data class PlannedRoute(
         "via" to via.map { (n, m) -> linkedMapOf("name" to n, "distanceM" to r1(m)) }, // T49: trail names
         "bearingDeg" to if (mode == TravelMode.CROW && route.points.size >= 2) route.points.let { Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) } else null, // T108
         "memory" to memory.ifEmpty { null }, // T76
-        "instructions" to instructions.map { it.json(mode) }, // T102
+        "instructions" to Directions.cued(instructions).map { it.json(mode) }, // T102; T116: texts with the default level's "then" cues
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
     )
 

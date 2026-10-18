@@ -20,7 +20,8 @@
 //
 // "Save trip" writes the route into this browser's own sync replica: an operation log in localStorage
 // (dystopo.trips: a device id, a hybrid logical clock and route ops, the same put + path + waypoints ops the phone
-// writes), then sends it to the server's sync peer (POST /route/bundle turns the ops into a sync bundle, POST
+// writes; T116: and `directions`, the turn directions keyed to that path, so a phone opens the trip with them and no
+// graph), then sends it to the server's sync peer (POST /route/bundle turns the ops into a sync bundle, POST
 // /sync/push merges it; with the page's Server token when set, so a server with per-user tokens stores it in that
 // user's replica). Where the server refuses (no token on a server that wants one, or offline) the trip stays in this
 // browser only; "Send to server" retries, ".dsync file" saves the same bundle as a file the phone can sync with. A phone syncing
@@ -29,7 +30,11 @@
 // Directions (T111, from T102): the card lists the route's turn directions as the phone's route card does: the server's
 // `instructions` (in /route and every /route/edit reply, `show` included) at the default detail level (priority 1 and 2,
 // `Directions.shown` in shared/.../routing/Directions.kt), each with the distance to the next one shown in the page's
-// units; the first five and a count, the rest unfolded by "Show N more".
+// units; the first five and a count, the rest unfolded by "Show N more". T116: the texts carry the server's "then" cues
+// ("Head south on the service road, then turn right", Directions.cued), as the phone's lists do. Saving writes the
+// reply's `directionsValue` (the `directions` field value the server encodes for the reply's path, RouteDirections in
+// shared/.../model/RoutePlan.kt; this page keeps no copy of the format) on the first save and whenever the path changed;
+// null (no op) when the server had no graph open for a trail leg, so a frame-only list never replaces a phone's.
 //
 // Long drives (T77): the server plans across every pack near the route, searching the tiles away from the ends through
 // its drive overlay; the card then says how many packs the route crossed and how long the server took
@@ -426,13 +431,19 @@ export function install({ map, base, units, panel, token }) {
       const rep = loadReplica();
       const id = st.id || (st.id = uuid4());
       const old = rep.trips[id];
+      // T116: the directions go with the path they were made for (the value carries its key), after it.
+      const dirs = st.reply.directionsValue;
       if (!old || old.deleted) {
         rep.ops.push({ hlc: tick(rep), type: "put", id, name: nm });
         rep.ops.push({ hlc: tick(rep), type: "set", id, field: "path", value: st.reply.path });
         rep.ops.push({ hlc: tick(rep), type: "set", id, field: "waypoints", value: st.reply.waypointsValue });
+        if (dirs) rep.ops.push({ hlc: tick(rep), type: "set", id, field: "directions", value: dirs });
       } else {
         if (old.name !== nm) rep.ops.push({ hlc: tick(rep), type: "set", id, field: "name", value: nm });
-        if (old.path !== st.reply.path) rep.ops.push({ hlc: tick(rep), type: "set", id, field: "path", value: st.reply.path });
+        if (old.path !== st.reply.path) {
+          rep.ops.push({ hlc: tick(rep), type: "set", id, field: "path", value: st.reply.path });
+          if (dirs) rep.ops.push({ hlc: tick(rep), type: "set", id, field: "directions", value: dirs });
+        }
       }
       const s = st.reply.summary;
       rep.trips[id] = { id, name: nm, path: st.reply.path, pack: st.reply.pack, mode: st.reply.mode, distanceM: s.distanceM, ascentM: s.ascentM, timeS: s.timeS, savedAt: Date.now() };
@@ -499,6 +510,12 @@ export function install({ map, base, units, panel, token }) {
       return bytes.length;
     },
     trips: () => Object.values(loadReplica().trips).sort((a, b) => b.savedAt - a.savedAt),
+    // T116: the last value this browser wrote for each field of trip `id` (put's name included), as its ops hold them.
+    fields(id) {
+      const f = {};
+      for (const o of loadReplica().ops) if (o.id === id) { if (o.type === "put") f.name = o.name; else if (o.type === "set") f[o.field] = o.value; else if (o.type === "delete") f.deleted = true; }
+      return f;
+    },
     replica: () => { const r = loadReplica(); return { device: r.device, ops: r.ops.length, trips: Object.keys(r.trips).length, lastPush: r.lastPush }; },
     idle: () => queue.then(() => api.state()),
     state: () => ({
@@ -506,6 +523,7 @@ export function install({ map, base, units, panel, token }) {
       saved: !!st.id && st.savedPath === (st.reply && st.reply.path), lastPush: st.lastPush,
       bearing: $("trip-bearing").hidden ? null : $("trip-bearing").textContent, // T111: crow only
       route: st.reply && { pack: st.reply.pack, via: st.reply.via, legs: st.reply.legs.map(l => l.kind), notes: st.reply.notes, messages: st.reply.messages, notice: st.reply.notice, mode: st.reply.mode, path: st.reply.path,
+                           directionsValue: st.reply.directionsValue || null, // T116: what Save writes as the trip's `directions`
                            summary: Object.fromEntries(Object.entries(st.reply.summary).filter(([k]) => k !== "profile")), profileSamples: st.reply.summary.profile.length,
                            middle: middle(st.reply), longRoute: longRoute(st.reply) },
       // T111: the reply's directions (every priority), those the card counts (the default level), the lines listed now.

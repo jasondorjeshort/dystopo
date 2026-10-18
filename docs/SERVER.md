@@ -204,7 +204,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   corridor (tile lists); `GET /area` for the parameters. Below, Areas of interest. Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`, `/sync/routes[?full=1]`: the sync peer
   (docs/PLANNING.md, Sync). T92: `?full=1` adds each route's `path` value and `waypointList` (the browser
-  page pulls its trips with it); `POST /sync/waypoints/encode` turns waypoints into the `wpt:<id>` field values
+  page pulls its trips with it), T116 and `directions` (how many saved turn directions count for that path, null
+  when none were saved or they were saved for another path); `POST /sync/waypoints/encode` turns waypoints into the `wpt:<id>` field values
   the page writes (below, Route planning). Token-protected.
 - `POST /sync/relay?slot=&side=[&after=][&forget=1]`, `GET /sync/relay/status`: the encrypted relay
   between phones (below). Open, without the token.
@@ -536,7 +537,10 @@ until a restart.
   300 m of the end point (the nearest is 3192 m away)"), `notice` (for `mode=drive`: it follows the packs' roads and
   is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; T111: for `mode=crow` the phone's line
   under its mode picker, `TravelMode.CROW_NOTICE`; null otherwise), `waypointsValue` (the empty `waypoints` value a page saves with a new
-  trip), `graph` (`action` `built`, `loaded` or `cached` and `file`, the reported pack's; every pack used under
+  trip), `directionsValue` (T116: the turn directions below as the route's `directions` field value, keyed to this
+  `path` as the phone's Keep writes them, ADR 0033, for the page to save with the trip; null when no pack's graph
+  was open and the path has a trail or fixed leg, since its directions would be only the frame and a phone with the
+  pack makes better ones when it opens the trip, and when longer than the field's 64 KiB), `graph` (`action` `built`, `loaded` or `cached` and `file`, the reported pack's; every pack used under
   `graphs` with its `pack` and `action`; T77: `searches`, one per leg searched, with `ms`, `found`, `tiles`,
   `graphBytes`, `searchBytes`, `searchNodes`, `expanded`, and `overlayTiles` and T89 `level2Tiles` (the z8 cells it
   went through) when it used the overlay) and `ms`. Bad input is a 400 with `error`. T102: `instructions`, the turn directions
@@ -544,13 +548,16 @@ until a restart.
   `left`, `keep-right`, `continue`, `via`, `off-network`, `arrive`, ...), `priority` (1 major, 2 normal, 3 minor; the
   apps show 1 and 2), `text` (English, no distance), `alongM`, `lat`, `lon`, `name`, `class`, `sameWay`, `turnDeg`,
   `bearingDeg`, `leadM` (how far ahead to announce it) and `stretchM` (to the next one); the phone's remote router
-  reads them. PLANNING › Routing, Turn directions.
+  reads them. T116: `text` carries the default level's "then" cue where the next instruction shown follows within its
+  lead ("Head south on the service road, then turn right"; `then` is that next one's `type`, null otherwise; the cue
+  is worked out from the list, so it is not part of the saved field). PLANNING › Routing, Turn directions.
   (The phone's own router has one
   more code, `remote_unavailable`, for a server it asked that did not answer.)
 - `POST /route/gpx` with `{"path", "name", "id"}`: GPX (one `rte` with via marks and our ids), byte for byte
   what the phone exports for the same trip.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one
-  device, HLC-stamped) as a gzipped sync bundle, for `POST /sync/push` or a `.dsync` file.
+  device, HLC-stamped) as a gzipped sync bundle, for `POST /sync/push` or a `.dsync` file. A `path`, `waypoints`
+  or (T116) `directions` value must decode, else a 400.
 - `GET /route/packs` (packs and graph state), `GET /route/status` (below), and
   `GET /trips.js`, the page's editor script (`tools/demo/trips.js` next to the served page).
 - `GET /route/status` answers, since the server started (a pack's graph opens on its first route, so a fresh
@@ -582,7 +589,9 @@ until a restart.
 
 **Save as trip.** The page keeps its trips in its own sync replica in the browser (localStorage
 `dystopo.trips`: a device id, a hybrid logical clock, and the same put + `path` + `waypoints` operations the
-phone's store writes). Saving appends operations there, then sends the whole log through `/route/bundle` to
+phone's store writes; T116: and `directions`, the reply's `directionsValue`, after each `path` it writes, on the
+first save and whenever the path changed, so the phone opens a browser-saved trip with its directions and no
+graph). Saving appends operations there, then sends the whole log through `/route/bundle` to
 `POST /sync/push`, with the page's Token field as the bearer token when it is set; so on a server with
 per-user tokens the trip lands in that user's replica. Where the push is refused (a server that wants a token
 and has none, or no server) the trip stays in the browser and the page says so; "Send to server" retries and
