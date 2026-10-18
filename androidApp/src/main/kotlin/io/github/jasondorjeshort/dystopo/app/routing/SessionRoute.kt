@@ -24,15 +24,28 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * What is kept: the route's points as a trip path value (the [RoutePath.encode] codec, 1e-7 degrees and centimetres),
  * its id, name, description and mode, the summary numbers, the trails it follows, the turn directions (the server's
  * JSON form, [Instruction.json]) and the start and end the user pressed. Pure: [encode] and [decode] are tested.
+ *
+ * T114: an end that was the phone's fix also keeps that fix (`startFix`, `endFix`: its time, source and age when planned),
+ * so the card still says "From: Your location" after a restart. Optional keys in version 1: a file without them reads as
+ * two placed points, and a build before T114 ignores them.
  */
 object SessionRoute {
     const val VERSION = 1
     const val FILE_NAME = "route-session.json"
 
-    /** What [decode] gives back: the plan and the start and end the card was planned from. */
-    class Restored(val plan: PlannedRoute, val start: Pair<Double, Double>, val end: Pair<Double, Double>, val savedAt: Long)
+    /**
+     * What [decode] gives back: the plan and the start and end the card was planned from; T114: [from] and [to] when the
+     * file names an end as the phone's fix (null for a placed point).
+     */
+    class Restored(
+        val plan: PlannedRoute, val start: Pair<Double, Double>, val end: Pair<Double, Double>, val savedAt: Long,
+        val from: RouteOrigin.End? = null, val to: RouteOrigin.End? = null,
+    )
 
-    fun encode(p: PlannedRoute, start: Pair<Double, Double>, end: Pair<Double, Double>, now: Long): String = JsonWriter.write(
+    fun encode(
+        p: PlannedRoute, start: Pair<Double, Double>, end: Pair<Double, Double>, now: Long,
+        from: RouteOrigin.End? = null, to: RouteOrigin.End? = null,
+    ): String = JsonWriter.write(
         linkedMapOf(
             "version" to VERSION, "savedAt" to now, "id" to p.route.id, "name" to p.route.name, "description" to p.route.description,
             "mode" to p.mode.label,
@@ -41,8 +54,20 @@ object SessionRoute {
             "via" to p.via.map { listOf(it.first, it.second) },
             "instructions" to p.instructions.map { it.json(p.mode) },
             "start" to listOf(start.first, start.second), "end" to listOf(end.first, end.second),
-        ),
+        ) + listOfNotNull(fixJson("startFix", from), fixJson("endFix", to)),
     )
+
+    private fun fixJson(key: String, e: RouteOrigin.End?): Pair<String, Any?>? {
+        val f = e?.fix ?: return null
+        return key to linkedMapOf("time" to f.timeMs, "source" to f.source, "ageS" to e.ageS)
+    }
+
+    private fun fixEnd(m: Map<*, *>?, at: Pair<Double, Double>): RouteOrigin.End? {
+        if (m == null) return null
+        val time = (m["time"] as? Number)?.toLong() ?: return null
+        val fix = RouteOrigin.Fix(at.first, at.second, time, m["source"] as? String ?: "recorder")
+        return RouteOrigin.End(at.first, at.second, fix, (m["ageS"] as? Number)?.toLong())
+    }
 
     /** The route [text] holds; null for anything else (another version, a mode this build does not know, damage). */
     fun decode(text: String): Restored? = runCatching {
@@ -64,6 +89,8 @@ object SessionRoute {
             memory = linkedMapOf("restored" to true),
             instructions = (m["instructions"] as? List<*>).orEmpty().mapNotNull { Instruction.parse(it as? Map<*, *>) },
         )
-        Restored(plan, pair("start"), pair("end"), (num("savedAt") ?: 0.0).toLong())
+        val start = pair("start")
+        val end = pair("end")
+        Restored(plan, start, end, (num("savedAt") ?: 0.0).toLong(), fixEnd(m["startFix"] as? Map<*, *>, start), fixEnd(m["endFix"] as? Map<*, *>, end))
     }.getOrNull()
 }

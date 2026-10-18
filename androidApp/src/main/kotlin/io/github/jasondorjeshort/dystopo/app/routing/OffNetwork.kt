@@ -39,16 +39,40 @@ object OffNetwork {
      * The message for a point [which] ("start" or "end") with no line within [snapM]; [nearestM] is null when
      * nothing is within [Router.FAR_SEARCH_M].
      */
-    fun message(which: String, snapM: Double, maxSnapM: Double, line: String?, nearestM: Double?, direction: String?, units: ContourUnits, drive: Boolean = false): String {
-        val head = (if (drive) "No road open to cars" else "No trail or road") + " within ${UnitFormat.distance(snapM, units)} of the $which"
+    fun message(
+        which: String, snapM: Double, maxSnapM: Double, line: String?, nearestM: Double?, direction: String?, units: ContourUnits,
+        drive: Boolean = false, here: Boolean = false,
+    ): String {
+        // T114: an end that is the phone's position ([here]) is "your location", and pressing closer is no advice for it.
+        val place = if (here) "your location" else "the $which"
+        val head = (if (drive) "No road open to cars" else "No trail or road") + " within ${UnitFormat.distance(snapM, units)} of $place"
         if (line == null || nearestM == null) return "$head (none within ${UnitFormat.distance(Router.FAR_SEARCH_M, units)})."
         val where = "Nearest: $line, ${UnitFormat.distance(nearestM, units)} to the $direction."
+        val raise = "raise Route snap in Settings to ${UnitFormat.distance(snapUp(nearestM, maxSnapM), units)}."
         val hint = when {
             nearestM <= snapM -> ""
-            nearestM <= maxSnapM -> " Long-press closer to it, or raise Route snap in Settings to ${UnitFormat.distance(snapUp(nearestM, maxSnapM), units)}."
+            here && nearestM <= maxSnapM -> " To start on it, $raise"
+            here -> ""
+            nearestM <= maxSnapM -> " Long-press closer to it, or $raise"
             else -> " Long-press closer to it."
         }
         return "$head. $where$hint"
+    }
+
+    /**
+     * T114: [failed] ([explain]'s) again for an end that is the phone's position: an off-network start ([start]) or end
+     * (after Swap) gets [message] with `here`; anything else is returned as it is.
+     */
+    fun atFix(failed: RouteResult.Failed, start: Boolean, units: ContourUnits, drive: Boolean = false): RouteResult.Failed {
+        if (failed.reason != if (start) RouteFailure.START_OFF_NETWORK else RouteFailure.END_OFF_NETWORK) return failed
+        val d = failed.details
+        val snapM = (d["maxSnapM"] as? Number)?.toDouble() ?: return failed
+        val maxSnapM = (d["snapSettingMaxM"] as? Number)?.toDouble() ?: return failed
+        val text = message(
+            if (start) "start" else "end", snapM, maxSnapM, d["nearestLine"] as? String, (d["nearestM"] as? Number)?.toDouble(),
+            d["nearestDirection"] as? String, units, drive, here = true,
+        )
+        return RouteResult.Failed(failed.reason, text, d)
     }
 
     /** The next snap setting step (100 m) that reaches [m], capped at [max]. */

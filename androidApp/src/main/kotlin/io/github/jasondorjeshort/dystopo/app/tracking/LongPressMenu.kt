@@ -37,6 +37,12 @@ import java.util.Locale
  *
  * The map's long-press reaches us through [RouteSession.overlay]'s `onLongPress` hook ([install]), so the
  * routing files stay as they are. Compose state is written on the main thread.
+ *
+ * T114: "Route to here" comes first, the destination-first action of the mainstream navigation apps (finding
+ * `docs/findings/2026-10-17-route-to-flows-in-other-apps.md`): it plans at once from the phone's position to the pressed
+ * point ([RouteSession.routeTo]). "Waypoint here" keeps its place near the front (T109), and "Route from here" keeps the
+ * two long-presses for a trip planned from a trailhead. After the route card's Choose on map (`pickStart`) a long-press
+ * goes to the route like the end press does.
  */
 object LongPressMenu {
     /** The long-pressed point the card is open for, or null. */
@@ -45,19 +51,28 @@ object LongPressMenu {
 
     @Volatile var presses = 0
         private set
-    /** What the last long-press or menu tap did: `menu`, `route` (passed to the route), `waypoint`, `cancel`. */
+    /**
+     * What the last long-press or menu tap did: `menu`, `route` (passed to the route, or Route from here), `routeTo`
+     * (T114: Route to here), `waypoint`, `cancel`.
+     */
     @Volatile var lastAction: String? = null
         private set
+
+    /** T114: the card's actions in their order (`GET /map/longpress` `actions`). */
+    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", "Cancel")
 
     /** Takes the map's long-press from the route session (idempotent). */
     fun install() {
         RouteSession.overlay.onLongPress = { lat, lon -> longPress(lat, lon) }
     }
 
+    /** True while a long-press belongs to the route: its end (`start`), its start after Choose on map, or planning. */
+    private fun toRoute(): Boolean = RouteSession.phase.let { it == "start" || it == "planning" || it == "pickStart" }
+
     /** A long-press at ([lat], [lon]); main thread. */
     fun longPress(lat: Double, lon: Double) {
         presses++
-        if (RouteSession.phase == "start" || RouteSession.phase == "planning") {
+        if (toRoute()) {
             point = null
             lastAction = "route"
             RouteSession.longPress(lat, lon)
@@ -65,6 +80,14 @@ object LongPressMenu {
         }
         point = lat to lon
         lastAction = "menu"
+    }
+
+    /** T114, "Route to here": a route from the phone's position to the pressed point, planned at once. Main thread. */
+    fun routeTo() {
+        val (lat, lon) = point ?: return
+        point = null
+        lastAction = "routeTo"
+        RouteSession.routeTo(lat, lon)
     }
 
     /** "Waypoint here": a waypoint at the pressed point, its sheet opened. Main thread. */
@@ -93,7 +116,7 @@ object LongPressMenu {
      * waits for its end, where a long-press goes to the route.
      */
     fun showAtCentre() {
-        if (point != null || RouteSession.phase == "start" || RouteSession.phase == "planning") return
+        if (point != null || toRoute()) return
         val c = DystopoApp.instance.map.map?.cameraPosition?.target ?: return
         point = c.latitude to c.longitude
         lastAction = "menu"
@@ -102,8 +125,12 @@ object LongPressMenu {
     fun json(): Map<String, Any?> = linkedMapOf(
         "open" to (point != null), "lat" to point?.first, "lon" to point?.second,
         "presses" to presses, "lastAction" to lastAction, "routePhase" to RouteSession.phase,
+        "actions" to ACTIONS, // T114
     )
 }
+
+/** T114: the card's first action. */
+internal const val ROUTE_TO = "Route to here"
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xEEFFFCF5)
@@ -126,6 +153,7 @@ internal fun LongPressCard() {
             HelpIcon("longPress.menu") // T109: dropping a waypoint, which was hard to find
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            MenuAction(ROUTE_TO) { LongPressMenu.routeTo() } // T114: destination first
             MenuAction("Waypoint here") { LongPressMenu.waypoint() }
             MenuAction("Route from here") { LongPressMenu.route() }
             MenuAction("Cancel") { LongPressMenu.cancel() }
@@ -136,12 +164,13 @@ internal fun LongPressCard() {
 /**
  * T109: the help pop-up of the card above, by the key its [HelpIcon] names (the owner found dropping a waypoint hard
  * to find); removing the card's icon removes its text. `POST /help/open` opens the card at the map's centre.
+ * T114: Route to here first, and where the route card changes its start.
  */
 internal val LONG_PRESS_HELP: List<HelpText> = listOf(
     HelpText("longPress.menu", "Long-press menu", "The map: long-press anywhere", show = { LongPressMenu.showAtCentre() }) {
-        "A long-press on the map opens this card. Waypoint here marks the point with a waypoint you can name; while a " +
-            "track records, it joins the track. Route from here starts a route: long-press again where it should end. " +
-            "The Waypoint button at the top marks where you are now."
+        "A long-press on the map opens this card. Route to here plans a route from where you are to the point; Change " +
+            "on the route card starts it elsewhere. Waypoint here marks the point with a waypoint you can name. Route " +
+            "from here starts a route at the point: long-press again where it should end."
     },
 )
 

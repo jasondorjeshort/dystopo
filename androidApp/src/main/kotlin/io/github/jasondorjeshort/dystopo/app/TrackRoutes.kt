@@ -37,9 +37,10 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   the map's last device fix, whichever is newer), on the recording track if one records, else
  *   free-standing; it opens the waypoint sheet. 409 with no position. `GET /tracks` lists the
  *   free-standing ones (`freeWaypoints`, drawn whatever track is shown) and `lastDrop`.
- *   `POST /map/longpress?lat=&lon=` is a long-press on the map: it opens the long-press card ("Waypoint
- *   here", "Route from here", Cancel), or while a route waits for its end passes straight to the route;
- *   `POST /map/longpress/waypoint|route|cancel` taps the card's entries; `GET /map/longpress` its state.
+ *   `POST /map/longpress?lat=&lon=` is a long-press on the map: it opens the long-press card (T114: "Route to
+ *   here", "Waypoint here", "Route from here", Cancel), or while a route waits for its end (or, after Choose on map,
+ *   its start) passes straight to the route; `POST /map/longpress/to|waypoint|route|cancel` taps the card's entries
+ *   (`to` is Route to here, `route` Route from here); `GET /map/longpress` its state (`lastAction`, `actions`).
  * - `POST /tracks/import` with a GPX body (`?name=` names a track the file leaves unnamed), or
  *   `POST /tracks/import?file=<name>` for a file in `files/tracks/`; `GET /tracks/files` lists those.
  *   Tracks keep their ids from `dystopo:id`; ids already stored are skipped.
@@ -84,11 +85,12 @@ object TrackRoutes {
                 val lon = p.d("lon") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
                 return Response.json(app.map.onMain { LongPressMenu.longPress(lat, lon); LongPressMenu.json() })
             }
-            "POST" to "/map/longpress/waypoint", "POST" to "/map/longpress/route", "POST" to "/map/longpress/cancel" -> {
+            "POST" to "/map/longpress/to", "POST" to "/map/longpress/waypoint", "POST" to "/map/longpress/route", "POST" to "/map/longpress/cancel" -> {
                 val action = r.path.substringAfterLast('/')
                 val ok = app.map.onMain {
                     val open = LongPressMenu.point != null
                     when (action) {
+                        "to" -> LongPressMenu.routeTo() // T114
                         "waypoint" -> LongPressMenu.waypoint()
                         "route" -> LongPressMenu.route()
                         else -> LongPressMenu.cancel()

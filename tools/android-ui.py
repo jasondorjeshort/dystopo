@@ -14,7 +14,8 @@ Parts:
                never opens it); the lenient single-value rule is reported, not failed (see `valueRule` in the report).
   features     the release feature pass (R8 has never seen these paths in a test): with the Rainier pack pushed,
                search (type, pick a hit), routing (long-press start and end, the card, Keep as a trip, the Routes
-               list; T91: the long-press card's Route from here), a waypoint with no recording (long-press, Waypoint here,
+               list; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
+               "From: Your location"), a waypoint with no recording (long-press, Waypoint here,
                the sheet), tracks (Record, fixes through `adb emu geo fix`, Stop, the list, GPX export), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
@@ -750,6 +751,31 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None):
     return line, via
 
 
+def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
+    """T114: the GPS fix at a (`adb emu geo fix`), one long-press at b, one tap on Route to here; returns the route
+    card's texts (numbers line, From, To), the route line's samples and the screenshot, then taps Clear."""
+    dev.adb("emu", "geo", "fix", str(a[1]), str(a[0]), check_ok=False)  # a fresh fix: one older than 2 min would show its age on From
+    c = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+    open_map(dev, *c, z)
+    time.sleep(5)
+    w, h, d = screen(dev)
+    long_press(dev, *to_screen(*b, *c, z, w, h, d))
+    to, nodes = dev.wait_for("^Route to here$", 10)
+    if not to:
+        return {"ok": False, "error": "no Route to here on the long-press card", "texts": dev.texts(nodes)[:20]}
+    dev.tap(to)
+    card, nodes = dev.wait_for(CARD, 60)
+    texts = dev.texts(nodes)
+    frm = next((t for t in texts if t.startswith("From: ")), None)
+    dest = next((t for t in texts if t.startswith("To: ")), None)
+    png, px = line_frame(dev, "route-to", ROUTE_LINE)
+    ok = bool(card) and frm == "From: Your location" and px >= 150
+    if dev.find("^Clear$"):
+        dev.tap_text("^Clear$")
+    return {"ok": ok, "card": card and card["text"], "from": frm, "to": dest, "routeLinePx": px, "png": png,
+            **({} if ok else {"error": f"route to here: card {bool(card)}, {frm!r}, line {px} samples"})}
+
+
 def routes_list(dev):
     """Opens the Routes list; returns the rows (name and numbers lines) and closes it."""
     dev.tap_text("^Routes$")
@@ -902,6 +928,13 @@ def part_features(args):
         return {"ok": drawn, "card": line, "via": via, "png": shots.get("routePng"), **shots,
                 **({} if drawn else {"error": f"route line not drawn (route {shots.get('routeLinePx')}, kept {shots.get('tripLinePx')} samples)"})}
 
+    def route_to():
+        # T114: Route to here from the GPS fix, one long-press and one tap; the card names "From: Your location". Before
+        # the route step: Keep's trip fit leaves its padding on the camera (trips/Trips.kt), which moves the map's
+        # centre and so where a long-press lands after it.
+        hide_keyboard(dev)
+        return route_to_here(dev)
+
     def trips():
         rows, png = routes_list(dev)
         ok = any(r.split(" · ")[0] == st.get("route", "").split(" · ")[0] for r in rows)
@@ -982,7 +1015,7 @@ def part_features(args):
         close_sheet(dev)
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
-    for name, fn in (("install-map", setup), ("search", search), ("route", route), ("routes-list", trips),
+    for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings)):
         run.step(name, fn)
