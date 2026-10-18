@@ -27,7 +27,8 @@ their one-line replacements. From the Hatchery base, with this project's exempti
 5. The result of an investigation (a root cause, a measurement, a failed approach): `docs/findings/`
    (`finding` skill). When resolved, promote the durable part to `docs/reference/` or an ADR and set
    `promoted_to`.
-   A raw idea, bug or missing feature not yet triaged: `docs/ideas/` (one file each, see its README).
+   An idea, a bug nobody has looked into, or a missing feature: `docs/ideas/` (one file each, see
+   its README); the `triage` skill writes its block.
 6. What is happening now or next: `docs/HANDOFF.md` (`handoff` skill). Tasks: `docs/TASKS.md`.
    What a merged task did: the dated log in `docs/PLANNING.md` (the coordinator, `tools/merge-log.py`).
 
@@ -56,6 +57,12 @@ their one-line replacements. From the Hatchery base, with this project's exempti
 - `docs/design/decisions/README.md` lists every ADR; `docs/findings/README.md` shows status per file.
 - A new directory under `docs/` or a new kind of document gets a line in the last section of
   `docs/ARCHITECTURE.md`.
+- `docs/ideas/` is a queue: one dated file per item, deleted in the pull request that lands its work,
+  never ticked (ADR 0036). Git has the history; a directory holding only its README is the resting
+  state. An idea ends in at most one block: `Plan:` (settled, pass-sized, ready to build),
+  `Question:` with a blank `Answer:` (the owner's choice; they fill the answer in), or `Waits:` (the
+  owner's deferral to a named trigger). No block means untriaged. The `triage` skill writes blocks;
+  only the owner writes `Waits:` or deletes an idea for not being wanted.
 - An index is the one list a doc may carry. Prose never inventories files, fields, routes or counts
   ("the twelve commands", "a 400-line file"): every ordinary commit moves the figure, and a later
   session then "corrects" it. Write the rule that generates the list instead.
@@ -67,9 +74,8 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   (`resolved (ADR 0030)` reads `resolved`). Sections in order: Question, What was tried, Result,
   Next (Next may be omitted when resolved). Use the `finding` skill.
 - `docs/ideas/YYYY-MM-DD-<slug>.md`: required `date`, `kind: bug | feature | question | chore`;
-  optional `related: [<file>, ...]`; at most one closing block (`Plan:`, `Question:` with a blank
-  `Answer:`, or `Waits:`), no `status` and no `pipeline` (ADR 0036; the files written before it are
-  converted by T118). Search for an existing idea before adding one (its README, "Before adding").
+  optional `related: [<file>, ...]`; no other key (`status` or `pipeline` lists the file as `?`,
+  ADR 0036). Search for an existing idea before adding one (its README, "Before adding").
 - `docs/reference/<topic>.md`: required `verified: YYYY-MM-DD`, `source: <url or "observed">`. When a
   fact changes, fix it in place and bump `verified:`; do not append history.
 - `docs/design/decisions/NNNN-*.md` and `docs/design/proposals/NNNN-*.md`: no frontmatter; the `Date:`
