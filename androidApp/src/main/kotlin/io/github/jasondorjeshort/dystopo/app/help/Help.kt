@@ -8,14 +8,16 @@ import io.github.jasondorjeshort.dystopo.app.areas.AREAS_HELP
 import io.github.jasondorjeshort.dystopo.app.firstrun.DIRECT_SOURCES_HELP
 import io.github.jasondorjeshort.dystopo.app.options.MAP_OPTIONS_HELP
 import io.github.jasondorjeshort.dystopo.app.settings.SETTINGS_HELP
+import io.github.jasondorjeshort.dystopo.app.storage.STORAGE_HELP
 import io.github.jasondorjeshort.dystopo.app.tracking.LONG_PRESS_HELP
 import io.github.jasondorjeshort.dystopo.app.tracking.TRACK_BAR_HELP
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 
 /**
  * T109: one help pop-up's text. [key] is what the control's [HelpIcon] names; [title] heads the pop-up and is the
- * icon's spoken label ("Help: <title>"); [placed] says where the icon is, the way a user gets there ("Settings > Map
- * options > Hillshade"; `GET /help` output only, so `>` and not the `›` that `ScreenNamesTest` checks in messages);
+ * icon's spoken label ("Help: <title>"); [placed] says where the icon is, the way a user gets there ("Settings › Map
+ * options › Hillshade"; `GET /help` output only; T115: in the `Screen › Section` form of messages, which `HelpRegistryTest`
+ * checks against [io.github.jasondorjeshort.dystopo.app.firstrun.Screens] now that the settings groups are sections there);
  * [needs] names the state the icon is drawn in when it is not always there ("hillshade on"); [show] brings its screen up for
  * `POST /help/open` (main thread). The text is one short paragraph in the user's units: a distance in it goes through
  * [io.github.jasondorjeshort.dystopo.render.UnitFormat] with the units [text] is given.
@@ -36,11 +38,11 @@ class HelpText(
 
 /**
  * T109: every help text of the app, gathered from the screens' lists (Map options, Settings, Settings › Sources'
- * direct rows, Offline areas, the track bar, the long-press card). `GET /help` lists them.
+ * direct rows, Offline areas, the track bar, the long-press card; T115: the Storage screen). `GET /help` lists them.
  */
 object HelpRegistry {
     val all: List<HelpText> by lazy {
-        MAP_OPTIONS_HELP + SETTINGS_HELP + DIRECT_SOURCES_HELP + AREAS_HELP + TRACK_BAR_HELP + LONG_PRESS_HELP
+        MAP_OPTIONS_HELP + SETTINGS_HELP + DIRECT_SOURCES_HELP + AREAS_HELP + TRACK_BAR_HELP + LONG_PRESS_HELP + STORAGE_HELP // T115: Storage
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

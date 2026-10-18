@@ -124,9 +124,9 @@ class SettingsRoutes(private val app: DystopoApp) {
 
     companion object {
         /** T103: `GET /settings/layout` ([SettingsLayout.json] with what the sheet shows now). */
-        fun layout(): Map<String, Any?> = SettingsLayout.json(SettingsUi.visible, SettingsUi.group, SettingsUi.twoPane)
+        fun layout(): Map<String, Any?> = SettingsLayout.json(SettingsUi.visible, SettingsUi.group, SettingsUi.twoPane, AppSettings.cacheBudgetMb)
 
-        /** T41: cache caps in MB, within [AppSettings.CACHE_MB_RANGE] (declared before [KEYS], which uses it). */
+        /** T41: cache caps in MB, within [AppSettings.CACHE_MB_RANGE] (T115: `pinnedCacheMb` within [AppSettings.PINNED_CACHE_MB_RANGE]; declared before [KEYS], which uses it). */
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb", "pinnedCacheMb") // T91: pinnedCacheMb
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
@@ -135,7 +135,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
             val v = (raw as? Number)?.toLong() ?: raw.toString().trim().toLongOrNull() ?: return null to "$key must be a whole number of MB"
-            val r = AppSettings.CACHE_MB_RANGE
+            val r = if (key == "pinnedCacheMb") AppSettings.PINNED_CACHE_MB_RANGE else AppSettings.CACHE_MB_RANGE // T115: pinned up to 1 TB
             if (v !in r) return null to "$key must be between ${r.first} and ${r.last} MB (got $v)"
             return v to null
         }

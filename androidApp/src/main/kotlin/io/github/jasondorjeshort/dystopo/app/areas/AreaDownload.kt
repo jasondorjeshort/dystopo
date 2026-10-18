@@ -404,7 +404,7 @@ internal fun budgetError(pinnedBytes: Long, estimateBytes: Long, alreadyBytes: L
     val mb = 1024L * 1024L
     val after = pinnedBytes - minOf(alreadyBytes, pinnedBytes) + estimateBytes
     if (after <= budgetMb * mb) return null
-    return "Offline areas would use about ${aboutMb(after)}, over their ${budgetMb} MB budget: remove an area or raise the budget in Settings › Storage"
+    return "Offline areas would use about ${aboutMb(after)}, over their ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(budgetMb)} budget: remove an area or raise the budget in Settings › Storage" // T115: "128 GB", not "131072 MB"
 }
 
 /**

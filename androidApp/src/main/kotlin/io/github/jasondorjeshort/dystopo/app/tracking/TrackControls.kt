@@ -151,7 +151,9 @@ private fun BoxScope.Controls() {
             }
             if (barOpen && listOpen) {
                 Panel(Modifier.widthIn(max = 300.dp).heightIn(max = 380.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // T115 (T110's follow-up): the actions wrap whole; in a Row at font scale 2.0 "Share" broke mid-word.
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Action("Import") { importOpen = !importOpen }
                         io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
                         io.github.jasondorjeshort.dystopo.app.share.ShareAction() // T54: phone-to-phone sync

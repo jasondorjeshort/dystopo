@@ -6,7 +6,8 @@
 For each view it sets the camera (POST /camera), waits for the map to go idle and takes a screenshot
 (GET /screenshot?wait=...), reads /health and the /stats difference, and checks:
   - style:    the style is loaded and MapLibre reported no load error
-  - idle:     the map went idle before the screenshot (health map.lastScreenshotIdle)
+  - idle:     the map went idle before the screenshot (health map.lastScreenshotIdle); T115: a view that did not
+              reports `notIdleBecause` (health map.notIdleBecause, such as pendingTiles)
   - errors:   no tile source counted a server error during the view
   - contours: every contour tile generated during the view took at most --contour-budget-ms (only with
               --strict; otherwise a miss is a warning, since timings swing with host load)
@@ -717,6 +718,8 @@ def main():
         c = rep["checks"]
         c["style"] = bool(m.get("styleLoaded")) and not m.get("styleError")
         c["idle"] = m.get("lastScreenshotIdle") is True
+        if not c["idle"]:  # T115: what held it (pendingTiles: a request still open at the loopback server, an OpenFreeMap fetch for one)
+            rep["notIdleBecause"] = m.get("notIdleBecause")
         c["errors"] = all(tiles[s]["errors"] == 0 for s in tiles)
         rep["warnings"] = []
         over = [t for t in times if t > args.contour_budget_ms]

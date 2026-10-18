@@ -82,8 +82,11 @@ class HelpRegistryTest {
             "settings.routeSnap", "settings.navStale", "settings.navSnooze", "settings.syncStatus", "settings.share",
             "settings.warmup",
             "tracks.bar", "longPress.menu",
+            // T115 (T109's follow-up): the Storage screen's budget heading and rows.
+            "storage.budget", "storage.packs", "storage.online", "storage.pinned", "storage.derived", "storage.sources",
         )
         assertEquals(want.sorted(), keys.sorted())
+        assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
         assertEquals(setOf("MapOptionsSection.kt"), references["map.slope"])
         assertEquals(setOf("LongPressMenu.kt"), references["longPress.menu"])
         assertEquals(setOf("DirectSourcesRows.kt"), references["direct.mobileData"])
@@ -142,6 +145,40 @@ class HelpRegistryTest {
             assertEquals(false, h["onScreen"], "nothing is composed in a unit test")
         }
         assertEquals("hillshade on", help.first { it["key"] == "map.intensity" }["needs"])
+    }
+
+    @Test
+    fun placementsNameScreensAsMessagesDo() {
+        // T115: the settings groups are sections in Screens, so a placement reads "Settings › Map options › Hillshade" and is
+        // checked like a message (ScreenNamesTest); before, placements used ">" to stay out of that check.
+        var refs = 0
+        for (h in HelpRegistry.all) {
+            assertFalse(" > " in h.placed, "${h.key}: '${h.placed}' (use › as messages do)")
+            for (ref in io.github.jasondorjeshort.dystopo.app.firstrun.ScreenRefs.find(h.placed)) {
+                refs++
+                assertEquals(null, io.github.jasondorjeshort.dystopo.app.firstrun.ScreenRefs.problem(ref), "${h.key}: '${h.placed}'")
+            }
+        }
+        assertTrue(refs >= 25, "expected the settings, storage and areas placements to name screens ($refs)")
+        assertEquals("Settings › Map options › Hillshade", HelpRegistry.byKey("map.hillshade")!!.placed)
+        assertEquals("Settings › Data and storage › Storage › Cache budget", HelpRegistry.byKey("storage.budget")!!.placed)
+    }
+
+    @Test
+    fun closeTakesBackOnlyWhatOpenBroughtUp() {
+        // T115 (T109's follow-up): POST /help/close closes what POST /help/open brought up for the icon and is still open.
+        val none = HelpScreens(settings = false, settingsGroup = null, areas = false, trackBar = false, longPress = false, storage = false)
+        val mapPage = none.copy(settings = true, settingsGroup = "map")
+        assertEquals(listOf(HelpScreens.SETTINGS), none.opened(mapPage))
+        assertEquals(listOf(HelpScreens.SETTINGS_PAGE), none.copy(settings = true, settingsGroup = "data").opened(mapPage))
+        assertEquals(emptyList(), mapPage.opened(mapPage), "a sheet already open on that page stays")
+        assertEquals(listOf(HelpScreens.AREAS, HelpScreens.LONG_PRESS), none.opened(none.copy(areas = true, longPress = true)))
+        // Opened by /help/open, then the user moved on: the sheet is closed already and the Storage screen is theirs.
+        val shown = listOf(HelpScreens.SETTINGS)
+        assertEquals(emptyList(), HelpScreens.toClose(none, shown, none.copy(storage = true)))
+        assertEquals(shown, HelpScreens.toClose(none, shown, mapPage))
+        // Open before the first /help/open: never closed.
+        assertEquals(emptyList(), HelpScreens.toClose(none.copy(trackBar = true), listOf(HelpScreens.TRACK_BAR), none.copy(trackBar = true)))
     }
 
     @Test

@@ -217,45 +217,45 @@ private val Line = Color(0xFFE2D8C6)
  * [OptionRow]); a row removed here takes its text with it. Each opens Settings › Map options for `POST /help/open`.
  */
 internal val MAP_OPTIONS_HELP: List<HelpText> = run {
-    val place = "Settings > Map options"
+    val place = "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${SettingsGroup.MAP.title}" // T115: › as in messages
     val show = { SettingsUi.open(SettingsGroup.MAP) }
     listOf(
-        HelpText("map.hillshade", "Hillshade", "$place > Hillshade", show = show) {
+        HelpText("map.hillshade", "Hillshade", "$place › Hillshade", show = show) {
             "Shades the terrain as if lit from one side, so ridges and valleys stand out. Single lights it from the " +
                 "north-west, as printed maps do; Multi blends lights from several directions, so slopes facing away " +
                 "from the light keep their detail. Off leaves the map flat, with contours only."
         },
-        HelpText("map.intensity", "Hillshade intensity", "$place > Intensity", needs = "hillshade on", show = show) {
+        HelpText("map.intensity", "Hillshade intensity", "$place › Intensity", needs = "hillshade on", show = show) {
             "How dark the hillshade is. Lower it when the shading makes labels, trails or the slope colours hard to read."
         },
-        HelpText("map.slope", "Slope shading", "$place > Slope shading", show = show) {
+        HelpText("map.slope", "Slope shading", "$place › Slope shading", show = show) {
             "Colours the ground by how steep it is, worked out on this phone from the elevation data. Avalanche marks " +
                 "the angles where most avalanches start; Steepness just gets darker as the ground gets steeper. Neither " +
                 "is an avalanche forecast: it knows nothing of snow, weather or what lies above you."
         },
-        HelpText("map.slopeLegend", "Slope colours", "$place > Slope shading, the legend", needs = "slope shading on", show = show) {
+        HelpText("map.slopeLegend", "Slope colours", "$place › Slope shading, the legend", needs = "slope shading on", show = show) {
             "Each colour is a band of slope angle in degrees, as the swatches show. The angle is measured over the " +
                 "elevation grid at the map's zoom: zoomed out, a short steep step blurs into a gentler slope, so zoom " +
                 "in before you judge a slope."
         },
-        HelpText("map.contours", "Contours", "$place > Contours", show = show) {
+        HelpText("map.contours", "Contours", "$place › Contours", show = show) {
             "Lines of equal elevation, in your units. Auto picks the interval from the zoom. A fixed interval applies " +
                 "from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM} in; zoomed out, coarser lines keep the map readable. " +
                 "The thicker index lines carry the elevation labels."
         },
-        HelpText("map.contourLabels", "Contour labels", "$place > Contour labels", show = show) {
+        HelpText("map.contourLabels", "Contour labels", "$place › Contour labels", show = show) {
             "How many elevation labels sit on the thicker contour lines: Sparse, Normal or Dense. A label is only " +
                 "drawn where it fits along its line."
         },
-        HelpText("map.layers", "Layers", "$place > Layers", show = show) {
+        HelpText("map.layers", "Layers", "$place › Layers", show = show) {
             "Shows or hides parts of the map. Trails: paths and tracks. Water: lakes, rivers, streams. Land cover: " +
                 "forest, wetland, rock and glacier. POIs: huts, trailheads, campsites, viewpoints, springs, parking. " +
                 "Boundaries: parks and wilderness. Roads, peaks, places and contours always show."
         },
-        HelpText("map.night", "Night", "$place > Night", show = show) {
+        HelpText("map.night", "Night", "$place › Night", show = show) {
             "A dark map for use in the dark: a dark base with dimmed relief, easier on your eyes than a bright screen."
         },
-        HelpText("map.scaleBar", "Scale bar", "$place > Scale bar", show = show) {
+        HelpText("map.scaleBar", "Scale bar", "$place › Scale bar", show = show) {
             "The bar in the lower left shows a round distance at the map's zoom, in your units. Both units adds the " +
                 "other system below the line, as on printed maps."
         },

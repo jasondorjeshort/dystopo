@@ -67,6 +67,8 @@ object TopChips {
     var topRowLeft by mutableStateOf(0.dp)
     /** T91: right edge of the online indicator in px (0 when it is hidden). */
     var onlineRightPx by mutableStateOf(0f)
+    /** T115: bottom edge of the online indicator column in px from the window top (0 when it is hidden). */
+    var onlineBottomPx by mutableStateOf(0f)
     var searchBottom by mutableStateOf(0.dp)
 
     /** T91: the search box's width: 220 dp, or less so it ends before the Settings chip. */
@@ -78,6 +80,7 @@ object TopChips {
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "topRowLeftDp" to topRowLeft.value, "searchBottomDp" to searchBottom.value, "searchWidthDp" to searchWidth().value,
+        "onlineBottomPx" to onlineBottomPx, // T115
         "navCardBottomDp" to navCardBottom.value, "trackColumnTopDp" to trackColumnTop.value, "trackColumnBottomDp" to trackColumnBottom.value,
         "routesChipTopDp" to if (trackColumnBottom > 0.dp) (trackColumnBottom + GAP).value else null,
         "routesChipBottomDp" to routesChipBottom.value, "topRightBottomDp" to topRightBottom.value, // T110

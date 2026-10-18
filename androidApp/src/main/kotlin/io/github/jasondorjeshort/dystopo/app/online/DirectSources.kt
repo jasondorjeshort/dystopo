@@ -567,7 +567,17 @@ class DirectSources(private val context: android.content.Context, private val ca
         if (t.z > OnlineTiles.OSM_MAX_ZOOM) return HttpReply(404, ByteArray(0))
         val (template, _) = openFreeMap()
         val url = template.replace("{z}", "${t.z}").replace("{x}", "${t.x}").replace("{y}", "${t.y}")
-        val reply = SourceIo.get(url, 30_000, 2)
+        // T115: in the timeline too (`o?`, then `o<status>` or `oERR` with its ms): a stalled OpenFreeMap fetch held a cold
+        // view not idle for over a minute while the DEM's events looked finished (finding 2026-10-16-cold-view-gap).
+        DirectTrace.mark("o? ${t.z}/${t.x}/${t.y}")
+        val started = System.nanoTime()
+        val reply = try {
+            SourceIo.get(url, 30_000, 2)
+        } catch (e: IOException) {
+            DirectTrace.mark("oERR ${t.z}/${t.x}/${t.y} ${(System.nanoTime() - started) / 1_000_000} ms")
+            throw e
+        }
+        DirectTrace.mark("o${reply.status} ${t.z}/${t.x}/${t.y} ${(System.nanoTime() - started) / 1_000_000} ms")
         return when (reply.status) {
             200 -> {
                 osmFetched.incrementAndGet()

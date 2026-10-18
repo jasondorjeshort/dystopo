@@ -23,7 +23,7 @@ import java.io.File
  *   `onlineCacheMb`); T91: the bytes and the cap count only unpinned tiles. T112: the contour and shade tiles made on
  *   the phone from them sit in the same directory but count with `derived` (bytes, holds, Clear).
  * - `pinned` (T91): the tiles of pinned offline areas in that same directory, with their own budget
- *   `pinnedCacheMb` (default 2 GB), checked when an area downloads; Pin, Unpin and Remove are in Offline areas.
+ *   `pinnedCacheMb` (default 2 GB, T115: up to 1 TB), checked when an area downloads; Pin, Unpin and Remove are in Offline areas.
  *   T95: each row's `holds` and `entries` count its own tiles (the online row's held pinned tiles before), and
  *   `olderThanSource` names the pinned areas whose source has moved on to a newer version (Update in Offline areas).
  *   Clear on the online row deletes its own tiles only ([TileCache.clearUnkept]); pinned tiles go with their area.
@@ -46,8 +46,18 @@ object Storage {
     const val PINNED = "pinned"
     val CLEARABLE = listOf(ONLINE, DERIVED, SOURCES)
 
-    /** The pinned budgets the screen offers (any value in [AppSettings.CACHE_MB_RANGE] through `POST /storage`). */
-    val BUDGET_CHOICES_MB = listOf(128L, 256L, 512L, 1024L, 2048L)
+    /** A budget in MB as the screen's chips and the settings list say it: whole GB where it is one, else MB (pure). */
+    fun sizeLabel(mb: Long): String = when {
+        mb >= 1024 && mb % 1024 == 0L -> "${mb / 1024} GB"
+        mb >= 1024 -> String.format(java.util.Locale.US, "%.1f GB", mb / 1024.0)
+        else -> "$mb MB"
+    }
+
+    /**
+     * The pinned budgets the screen offers (any value in [AppSettings.PINNED_CACHE_MB_RANGE] through `POST /storage`);
+     * T115: up to the Large preset's 128 GB, as the range now allows.
+     */
+    val BUDGET_CHOICES_MB = listOf(128L, 256L, 512L, 1024L, 2048L, 8192L, 32768L, 131072L)
 
     /** T112: a budgeted row's floor and share of the total. */
     private fun budgetFields(kind: CacheKind, bytes: Long): Map<String, Any?> {
@@ -202,6 +212,7 @@ object Storage {
             "budget" to CacheBudget.json(), // T112
             "budgetChoicesMb" to BUDGET_CHOICES_MB,
             "budgetRangeMb" to listOf(AppSettings.CACHE_MB_RANGE.first, AppSettings.CACHE_MB_RANGE.last),
+            "pinnedRangeMb" to listOf(AppSettings.PINNED_CACHE_MB_RANGE.first, AppSettings.PINNED_CACHE_MB_RANGE.last), // T115
             "freeBytes" to app.cacheDir.usableSpace,
             "stores" to stores,
             "lastClear" to lastClear,

@@ -65,7 +65,7 @@ internal fun GroupList(selected: SettingsGroup?, onOpen: (SettingsGroup) -> Unit
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     BasicText(g.title, style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-                    BasicText(g.summary, style = TextStyle(color = Muted, fontSize = 12.sp))
+                    BasicText(SettingsLayout.summary(g, AppSettings.cacheBudgetMb), style = TextStyle(color = Muted, fontSize = 12.sp)) // T115: Data and storage names the budget
                 }
                 BasicText("›", Modifier.padding(start = 8.dp), style = TextStyle(color = Muted, fontSize = 20.sp))
             }
@@ -240,7 +240,7 @@ private fun SourcesSection() {
  */
 internal val SETTINGS_HELP: List<HelpText> = run {
     fun page(g: SettingsGroup): () -> Unit = { SettingsUi.open(g) }
-    fun at(g: SettingsGroup, row: String) = "Settings > ${g.title} > $row"
+    fun at(g: SettingsGroup, row: String) = "${Screens.SETTINGS} › ${g.title} › $row" // T115: groups are sections (Screens)
     listOf(
         HelpText("settings.sources", "Server", at(SettingsGroup.DATA, Screens.SOURCES), show = page(SettingsGroup.DATA)) {
             "A Dystopo server (your own computer, or one you trust) sends map tiles where no pack covers the view, " +
