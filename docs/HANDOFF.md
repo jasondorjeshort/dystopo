@@ -1,34 +1,35 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-17, after 3f7bd8e (wave 16 planned, not launched), by main session (second account)
-Resume: this file, `docs/reference/machines.md` › The other account, the `wave` skill, `docs/TASKS.md` ›
-Wave 16 (T114 to T118, written 2026-10-17 with the owner; no critic pass yet); rewrite with the `handoff` skill.
+Updated: 2026-10-17, after the update from Hatchery (ADR 0037; committed on main, not yet pushed), by main session (second account)
+Resume: this file, `docs/reference/machines.md` › The other account, the `wave` skill, `docs/TASKS.md` › Wave 16 (no critic pass yet); rewrite with the `handoff` skill.
 
 ## Now
 
 - Wave 16 is planned, nothing launched. The owner's lead issue on 0.1.8 is T114 (route to here from the
-  phone's position; today a long-press offers only a waypoint or a hand-placed origin); its design input is
-  the finding `docs/findings/2026-10-17-route-to-flows-in-other-apps.md`, an agent's survey of the
-  navigation and outdoor apps. T115 and T116 are the leftover sweeps; T117 and T118 apply ADR 0036.
-- ADR 0036 (2026-10-17) records the owner's answers to ADR 0035: a subagent may pull, merge or rebase
-  `main` and resolve conflicts (commit there stays refused); `docs/ideas/` takes the base's grammar and
-  the `triage` skill. The handoff no longer carries process ids or ports (`handoff` skill).
-- Both histories (this repository's, Hatchery's) were rewritten on 2026-10-17: hashes cited in `docs/`
-  before then are dead until the re-record chore runs (ADR 0020's base line is now `987265c`). No agent runs.
+  phone's position); its design input is the finding `docs/findings/2026-10-17-route-to-flows-in-other-apps.md`.
+  T115 and T116 are the leftover sweeps; T117 and T118 apply ADR 0036 and start from the files the update brought.
+- The update from Hatchery (`987265c` to `749377e`) is in: ADR 0037 is the provenance record (base line,
+  departure table, excludes); `CLAUDE.md` imports ten one-line pointers in `.claude/project/` instead of the
+  base's agreement; the push scan runs in `git-guard`; `queue-list.js`, `ownership.js` and `triage` arrived.
+  Push it with `bash tools/push-verified.sh` when the owner has read the Waiting items, or on their word.
+- Histories rewritten 2026-10-17: hashes cited in `docs/` before then are dead until the re-record chore runs. No agent runs.
 
 ## Next
 
-1. Chores (Haiku): hook tests under the updated hooks; the cited hashes re-recorded through the rewrite
-   kit's two `*.commit-map` files only (rule in the wave 16 paragraph); the live viewer at launch (`wave` skill).
+1. Chores (Haiku): the cited hashes in `docs/`, `CHANGELOG.md` and `README.md` re-recorded through the
+   rewrite kit's two `*.commit-map` files only (rule in the wave 16 paragraph); the live viewer at launch (`wave` skill).
 2. Critic pass on the wave 16 section (`wave` skill, Plan and launch 2); edit; launch T114 first, then
    T115 to T118 (five implementers, Opus-class, own worktrees, ports and AVDs).
 3. Verify, merge, post-wave sweep, v0.1.9-alpha (`release` skill).
-4. The next `update-from-hatchery` is large (Hatchery ADRs 0016 to 0018: `CLAUDE.md` split into imported
-   base files, patch-only updates, the personal-data scan); plan it with the owner after wave 16.
+4. Carry-backs for Hatchery (T117's pull request): the harness group, the integrate entry, the elided paths, the handoff rule.
 
 ## Waiting on user
 
+- From the update (ADR 0037): chain the base's pre-push hook into `tools/git-hooks` or decline it; the ten
+  pointer imports in `CLAUDE.md` (veto or keep). Commits here are made as the placeholder identity in
+  `policy.json` (`privacy.identities`; the repository's `user.name` and `user.email` are set to it), or the
+  push scan refuses them from a session.
 - The wave 16 section, to read before the critic pass if wanted; real-phone checks of 0.1.8
   (`android-firstrun.py`, `features`); Google developer registration; MapLibre's own compass (T100); T104's
   steepness palette and captions; the wave 14 and 15 strings (in each PR); the 5 s timeout grace (T111).

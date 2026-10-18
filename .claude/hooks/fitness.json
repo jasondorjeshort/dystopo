@@ -1,0 +1,5 @@
+{
+  "$comment": "Fitness check config (ADR 0013; contract in ADR 0012). Read only by test-hooks.js, group F. Run: node .claude/hooks/test-hooks.js --only deps --verbose",
+  "deps": { "budget": 0, "paths": [".claude/hooks/*.js", ".claude/statusline.js"] },
+  "skip": []
+}

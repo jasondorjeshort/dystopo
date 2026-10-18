@@ -3,7 +3,8 @@
 // PreToolUse hook for the Bash and PowerShell tools ("onFailure": "block" in .claude/settings.json).
 // Denies destructive git commands and hook bypasses for every caller, and limits who commits,
 // pushes and deletes branches by the project's policy (.claude/hooks/policy.json, read through
-// policy.js). The main session (no agent_type) is limited only where the policy says so.
+// policy.js). The main session (no agent_type) is limited only where the policy says so. Rule 20
+// reads what every push sends through privacy-scan.js (ADR 0018), required inside that rule only.
 // Spec: docs/design/decisions/0002-hook-specs.md section 1; policy: ADR 0006.
 // Test harness: node .claude/hooks/test-hooks.js
 //
@@ -89,6 +90,23 @@ const NOTE = ' git-guard reads the command line, not what runs: it counted this 
 const isGit = (w) => /(^|[\/\\])git(\.exe)?$/i.test(w);
 const isEnvAssign = (w) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(w);
 const base = (w) => w.replace(/^.*[\/\\]/, '').replace(/\.exe$/i, '').toLowerCase();
+// A git word that is a path (/usr/bin/git, <dir>/git) is read as git only when the word after it is
+// an option or a git subcommand; otherwise it is a file name (cat <dir>/git, ls "$R/.claude/hooks/git"
+// "$X"). Where it stands does not matter, so timeout 10 /usr/bin/git push -f is still git. A bare git
+// word keeps counting anywhere, so unquoted text that names it is still read as a command.
+const GIT_SUBCOMMANDS = new Set(('add am annotate apply archive bisect blame branch bugreport bundle cat-file check-attr ' +
+  'check-ignore check-mailmap check-ref-format checkout checkout-index cherry cherry-pick citool clean clone column commit ' +
+  'commit-graph commit-tree config count-objects credential describe diagnose diff diff-files diff-index diff-tree difftool ' +
+  'fast-export fast-import fetch fetch-pack filter-branch filter-repo fmt-merge-msg for-each-ref for-each-repo format-patch ' +
+  'fsck gc get-tar-commit-id grep gui hash-object help hook index-pack init instaweb interpret-trailers lfs log ls-files ' +
+  'ls-remote ls-tree mailinfo mailsplit maintenance merge merge-base merge-file merge-index merge-tree mergetool mktag mktree ' +
+  'multi-pack-index mv name-rev notes p4 pack-objects pack-redundant pack-refs patch-id prune prune-packed pull push ' +
+  'range-diff read-tree rebase receive-pack reflog refs remote repack replace replay request-pull rerere reset restore ' +
+  'rev-list rev-parse revert rm scalar send-email send-pack shortlog show show-branch show-index show-ref sparse-checkout ' +
+  'stash status stripspace submodule svn switch symbolic-ref tag unpack-file unpack-objects update-index update-ref ' +
+  'update-server-info upload-archive upload-pack var verify-commit verify-pack verify-tag version whatchanged worktree ' +
+  'write-tree').split(' '));
+const pathGitRuns = (next) => next !== undefined && (next.startsWith('-') || GIT_SUBCOMMANDS.has(next));
 const isRunner = (w) => RUNNERS.has(base(w)) || /scriptblock\]::create/i.test(w);
 const has = (args, ...flags) => args.some((a) => flags.includes(a));
 const positionals = (args) => args.filter((a) => !a.startsWith('-'));
@@ -176,7 +194,7 @@ function invocations(cmd, dir) {
   const o = cmd.opaque || w.map(() => false);
   const out = [];
   for (let i = 0; i < w.length; i++) {
-    if (!isGit(w[i])) continue;
+    if (!isGit(w[i]) || (/[\/\\]/.test(w[i]) && !pathGitRuns(w[i + 1]))) continue;
     const globals = [];
     let d = dir;
     let hidden = false; // a -c or --config-env value the reader cannot see
@@ -201,9 +219,12 @@ function invocations(cmd, dir) {
       continue;
     }
     const n = normalize(w[j], w.slice(j + 1), o.slice(j + 1));
+    // Variables prefixed to this command (rule 20 passes the repository and config ones to its git).
+    const leadEnv = {};
+    lead.forEach((x, k) => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(x); if (m) leadEnv[m[1].toUpperCase()] = o[k] ? SUBST : m[2]; });
     out.push({
       sub: o[j] ? SUBST : w[j], args: n.args, values: n.values, opaque: n.opaque || hidden || viaXargs,
-      globals, dir: d, text: cmd.text,
+      globals, dir: d, text: cmd.text, leadEnv,
       first: !cmd.fromData && lead.every((x) => isEnvAssign(x) || PREFIX_WORDS.has(x)),
     });
   }
@@ -282,6 +303,55 @@ function deletable(names, dir, { policy }) {
     `${d.requireMergedPr ? ', and only after GitHub shows their pull request merged; a failed or pending merge keeps the branch' : ''}.`;
 }
 
+// Rule 20 (ADR 0018). Environment variables a push's own repository and config come from, passed
+// to the scan's git.
+const REPO_ENV = /^(GIT_DIR|GIT_WORK_TREE|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)$/;
+
+// The repository and config a push invocation acts on, as the scan's context { dir, pre, env, key },
+// or { error } (a reason that reads after "cannot "). pre carries its --git-dir, --work-tree, -c and
+// --config-env; env the REPO_ENV variables (and those a --config-env names) exported earlier in the
+// line (inv.shellEnv) or prefixed to it (inv.leadEnv).
+function gitContext(inv) {
+  if (inv.envUnresolved) return { error: 'follow how the line sets GIT_DIR or GIT_WORK_TREE' };
+  const pre = [];
+  const named = new Set();
+  for (const [o, v] of inv.globals) {
+    if (!['--git-dir', '--work-tree', '-c', '--config-env'].includes(o)) continue;
+    if (!v || v.includes(SUBST)) return { error: `see the value of ${o}` };
+    if (o === '-c') pre.push('-c', v); else pre.push(`${o}=${v}`);
+    if (o === '--config-env' && v.includes('=')) named.add(v.slice(v.indexOf('=') + 1).toUpperCase());
+  }
+  const extra = {};
+  for (const [k, v] of Object.entries(Object.assign({}, inv.shellEnv || {}, inv.leadEnv || {}))) {
+    if (!REPO_ENV.test(k) && !named.has(k)) continue;
+    if (v.includes(SUBST)) return { error: `see the value of ${k}` };
+    extra[k] = v;
+  }
+  const env = Object.keys(extra).length ? Object.assign({}, process.env, extra) : undefined;
+  return { dir: inv.dir, pre, env, key: JSON.stringify([inv.dir, pre, extra]) };
+}
+
+// What the scan finds in what this push sends: { hits } or { error }. scan is the required module.
+function privacyCheck(scan, inv, policy) {
+  const g = gitContext(inv);
+  if (g.error) return g;
+  const p = {
+    words: positionals(inv.args), repo: inv.values['--repo'], del: has(inv.args, '--delete', '-d'),
+    all: has(inv.args, '--all', '--branches'), tags: has(inv.args, '--tags'), followTags: has(inv.args, '--follow-tags'),
+  };
+  let src;
+  try { src = scan.pushSources(g, p); } catch (e) {
+    if (e instanceof scan.ScanError) return { error: e.message };
+    throw e;
+  }
+  return scan.scanPush(g, src.refs, src.remote, policy.privacy);
+}
+const SHARED_LINE = 'The push shares its line with another git command; the scan reads only commits that exist when it runs. ' +
+  'Run the push on a line of its own.';
+const scanFailed = (reason) => `The scan could not read what this push sends (${reason}); no push leaves without it. ` +
+  'Run node .claude/hooks/privacy-scan.js by hand and read its cannot line; fix the repository state (a commit on the ' +
+  'branch, a configured remote, a readable never or allow file) or ask the user. ADR 0018.';
+
 const isLease = (a) => a.startsWith('--force-with-lease') || a.startsWith('--force-if-includes');
 const isPlainForce = (a) => a === '--force' || a.startsWith('--force=') || a === '-f' || (a.startsWith('+') && a.length > 1);
 const listOf = (who) => (who === 'any' ? 'any subagent' : who === 'none' ? 'none' : who.join(', '));
@@ -311,7 +381,8 @@ const ALIAS_KEY = /^alias\./i;
 const CONFIG_ENV = /^GIT_CONFIG(_GLOBAL|_SYSTEM|_PARAMETERS)?$/i;
 
 // Ordered rules. test(inv, ctx) returns false to pass, true to deny with the rule's advice, or a
-// string to deny with that advice instead. ctx: { agent, policy, envConfig }.
+// string to deny with that advice instead. ctx: { agent, policy, envConfig, gitCount } (gitCount: the
+// git invocations in the line, for rule 20).
 const RULES = [
   {
     n: 1, prefix: 'force push',
@@ -345,6 +416,31 @@ const RULES = [
       if (!mayAct(p.subagents, agent)) return `Under .claude/hooks/policy.json the subagents that push are: ${listOf(p.subagents)}. Leave the work committed and report.`;
       if (p.branches.includes('*') || within(pushTargets(inv), p.branches)) return false;
       return `Subagents push only branches matching ${p.branches.join(', ')}; tags and other branches go through the main session.`;
+    },
+  },
+  {
+    // Tried right after rule 3, so a caller who may not push is told that first. The scan is
+    // required here, not at the top, so no other rule or command depends on it; any throw is this
+    // rule's deny.
+    n: 20, prefix: 'personal data in the outgoing commits',
+    test: (inv, ctx) => {
+      // An opaque push is rule 19's: it is denied there, with the reason that fits.
+      if (!isPush(inv.sub) || inv.opaque) return false;
+      if (ctx.gitCount > 1) return SHARED_LINE;
+      let s;
+      try {
+        s = privacyCheck(require('./privacy-scan'), inv, ctx.policy);
+      } catch (e) {
+        return scanFailed(`the scan failed: ${String(e && e.message ? e.message : e).split('\n')[0]}`);
+      }
+      if (s.error) return scanFailed(`cannot ${s.error}`);
+      if (s.hits.length === 0) return false;
+      const n = s.hits.length;
+      const shown = s.hits.slice(0, 3).map((h) => `${h.where} (${h.class}: ${h.match})`).join('; ');
+      return `${n} hit${n === 1 ? '' : 's'}${n > 3 ? ', the first three' : ''}: ${shown}. Fix: write ~, <repo>, a role or a ` +
+        'placeholder and fold the edit into the unpushed commit (amend, or reset --soft and one new commit). A false ' +
+        'positive is the owner\'s: ask the user, then an entry in privacy.allow (a non-personal literal) or ' +
+        '~/.claude/privacy-allow.txt (the owner\'s own value), from the main session. Nothing in a brief lifts this. ADR 0018.';
     },
   },
   {
@@ -546,21 +642,102 @@ function opaqueCommand(cmd, mentionsGit) {
   if (k >= cmd.words.length || !(cmd.opaque && cmd.opaque[k])) return false;
   if (cmd.words[k + 1] === '=' || /^\$[A-Za-z_:]+=/.test(cmd.words[k])) return false;
   const last = cmd.words[k].split(/[\/\\]/).pop();
+  // A path ending in git is git only when what follows reads as git ("$R/.claude/hooks/git" "$X" is not).
+  if (cmd.words[k].match(/[\/\\]/) && isGit(last) && !pathGitRuns(cmd.words[k + 1])) return false;
   return !(cmd.words[k].match(/[\/\\]/) && last && !/[$\0{}]/.test(last) && !isGit(last));
 }
+
+// Variables exported for the rest of the line, into env (names upper-cased; an expansion in a
+// value recorded as SUBST); vars holds Bash shell variables not yet exported. Bash: `export N=v`,
+// `export N` after `N=v`, `declare -x` / `typeset -x`, `unset N`, and `N=v` on its own (which also
+// updates an exported N). PowerShell: `$env:N = v`, `Set-Item [-Path] env:N [-Value] v` (or si),
+// `Remove-Item [-Path] env:N` (or ri, del, rm). Returns the indices of the words it resolved, so
+// decide can tell a GIT_DIR word it followed from one it did not (`set -a`, `read`, .NET calls).
+// Rule 20 reads the result; no other rule does.
+const ALLEXPORT = '\0allexport';
+function noteExports(cmd, env, vars) {
+  const w = cmd.words;
+  const o = cmd.opaque || [];
+  const used = new Set();
+  if (cmd.fromData || w.length === 0) return used;
+  const head = w[0].toLowerCase();
+  const set = (n, v, op) => { env[n.toUpperCase()] = op ? SUBST : v; };
+  if (head === 'set' && w.slice(1).some((x) => /^-[a-z]*a/.test(x) || x === 'allexport')) vars[ALLEXPORT] = true;
+  if (head === 'export' || ((head === 'declare' || head === 'typeset') && w.slice(1).some((x) => /^-[a-z]*x/.test(x)))) {
+    for (let k = 1; k < w.length; k++) {
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)(?:=(.*))?$/s.exec(w[k]);
+      if (!m) continue;
+      if (m[2] !== undefined) { set(m[1], m[2], o[k]); used.add(k); }
+      else if (vars[m[1].toUpperCase()] !== undefined) { env[m[1].toUpperCase()] = vars[m[1].toUpperCase()]; used.add(k); }
+    }
+    return used;
+  }
+  if (head === 'unset') {
+    w.slice(1).forEach((x, k) => { delete env[x.toUpperCase()]; delete vars[x.toUpperCase()]; used.add(k + 1); });
+    return used;
+  }
+  if (w.every(isEnvAssign)) {
+    w.forEach((x, k) => {
+      const n = x.slice(0, x.indexOf('=')).toUpperCase();
+      vars[n] = o[k] ? SUBST : x.slice(x.indexOf('=') + 1);
+      if (n in env) env[n] = vars[n];
+      if (!vars[ALLEXPORT]) used.add(k); // under set -a it is exported too: not followed
+    });
+    return used;
+  }
+  const ps = /^\$env:([A-Za-z_][A-Za-z0-9_]*)(?:=(.*))?$/is.exec(w[0]);
+  if (ps) {
+    if (ps[2] !== undefined) { set(ps[1], ps[2], o[0]); used.add(0); }
+    else if (w[1] === '=' && w[2] !== undefined) { set(ps[1], w[2], o[2]); used.add(0); }
+    return used;
+  }
+  const isSet = head === 'set-item' || head === 'si';
+  if (!isSet && !['remove-item', 'ri', 'del', 'rm'].includes(head)) return used;
+  let target = null;
+  let targetK = -1;
+  let value = null;
+  let vop = false;
+  const pos = [];
+  for (let k = 1; k < w.length; k++) {
+    if (/^-(path|literalpath)$/i.test(w[k])) { target = w[++k]; targetK = k; continue; }
+    if (/^-value$/i.test(w[k])) { value = w[++k]; vop = !!o[k]; continue; }
+    if (!w[k].startsWith('-')) pos.push([w[k], !!o[k], k]);
+  }
+  if (target === null && pos.length) [target, , targetK] = pos.shift();
+  if (isSet && value === null && pos.length) [value, vop] = pos.shift();
+  const m = /^env:\\?([A-Za-z_][A-Za-z0-9_]*)$/i.exec(target || '');
+  if (!m) return used;
+  if (isSet) { if (value !== null) { set(m[1], value, vop); used.add(targetK); } } else { delete env[m[1].toUpperCase()]; used.add(targetK); }
+  return used;
+}
+
+// A word that names GIT_DIR or GIT_WORK_TREE as a token (no whitespace in it, so a commit message
+// that mentions one is not counted).
+const REPO_ENV_WORD = /(^|[^A-Za-z0-9_])(GIT_DIR|GIT_WORK_TREE)([^A-Za-z0-9_]|$)/i;
 
 function decide(command, dialect, agent, cwd, loaded) {
   const cmds = commandsOf(command, dialect, cwd);
   const mentionsGit = /(^|[^A-Za-z0-9_-])git(\.exe)?([^A-Za-z0-9_-]|$)/i.test(command);
   const invs = [];
+  const shellEnv = {};
+  const shellVars = {};
+  let envUnresolved = false;
   for (const { cmd, dir } of cmds) {
-    invs.push(...invocations(cmd, dir));
+    const used = noteExports(cmd, shellEnv, shellVars);
+    const firstGit = cmd.words.findIndex(isGit);
+    cmd.words.forEach((w, k) => {
+      if (/\s/.test(w) || !REPO_ENV_WORD.test(w) || used.has(k)) return;
+      if (firstGit > k && cmd.words.slice(0, firstGit).every((x) => isEnvAssign(x) || PREFIX_WORDS.has(x))) return; // a prefix, in leadEnv
+      envUnresolved = true;
+    });
+    for (const inv of invocations(cmd, dir)) invs.push(Object.assign(inv, { shellEnv: Object.assign({}, shellEnv) }));
     if (opaqueCommand(cmd, mentionsGit)) invs.push({ sub: SUBST, args: [], values: {}, opaque: true, globals: [], dir, text: cmd.text, first: false });
   }
+  if (envUnresolved) for (const inv of invs) inv.envUnresolved = true;
   if (invs.length === 0) return null;
   const clip = (t) => (t.length > 200 ? `${t.slice(0, 200)}...` : t);
   if (loaded.error) {
-    return `git-guard: policy file is malformed (${loaded.error}): \`${clip(invs[0].text)}\`. Every git command is denied until it is fixed; ask the user.`;
+    return `git-guard: policy file is malformed (${loaded.error}): \`${clip(invs[0].text)}\`. Every git command is denied until it is fixed; ask the user. A key from a newer base is one cause: remove it with the Edit tool (git, this checkout included, is denied until the policy loads), run the update, which brings the new policy.js, then put the key back.`;
   }
   // Config by environment (GIT_CONFIG_KEY_n=..., GIT_CONFIG_GLOBAL=..., $env:GIT_CONFIG_... = ...).
   const envConfig = [];
@@ -570,7 +747,10 @@ function decide(command, dialect, agent, cwd, loaded) {
       if (m) envConfig.push({ name: m[1], value: m[2] !== undefined ? m[2] : (cmd.words[k + 1] === '=' ? cmd.words[k + 2] || '' : '') });
     });
   }
-  const ctx = { agent, policy: loaded.policy, envConfig };
+  // Quoted text handed to a shell is parsed in both dialects, so the same command can appear twice:
+  // each (text, subcommand) pair counts once.
+  const gitCount = new Set(invs.map((i) => `${i.text}\0${i.sub}`)).size;
+  const ctx = { agent, policy: loaded.policy, envConfig, gitCount };
   for (const rule of RULES) {
     for (const inv of invs) {
       const r = rule.test(inv, ctx);

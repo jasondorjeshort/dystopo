@@ -44,3 +44,9 @@ chore), and the critic brief is in the `proposal` skill.
 - Paths in a brief use forward slashes (`C:/Users/...`) even on Windows: the Bash tool is Git Bash
   and strips the backslashes from an unquoted path. A command meant for another repository says
   `git -C <path>`, never `cd` (`docs/reference/windows-and-shells.md`, Working directory and git).
+- Briefs are not committed, so they keep absolute paths; a tracked file an agent writes follows
+  `.claude/rules/docs.md`, "Personal data" (`~`, `<repo>`, roles, no emails or names), and the
+  brief says so when the task writes one.
+- No brief asks an agent to edit `privacy.allow` or `privacy.identities` in `policy.json`, the
+  never list or the user allow list (`~/.claude/privacy-never.txt`, `privacy-allow.txt`): they are
+  the owner's, edited from the main session after asking the owner (Hatchery's ADR 0018).
