@@ -33,8 +33,7 @@ Resume: this file, `docs/reference/machines.md` › The other account, the `wave
   until it is public again, and a v0.1.9-alpha would be unreachable the same way.
 - T114's strings and card (PR #4 lists 13 strings with their conventions; ADR 0031) and T115's new
   help texts (PR #5); Hatchery draft PR #1; the leftover `../dystopo-wt/T114` folder.
-- Real-phone checks of 0.1.8 or 0.1.9; Google developer registration; MapLibre's own compass (T100);
-  T104's steepness palette and captions; the wave 14 and 15 strings; the 5 s timeout grace (T111).
+- Real-phone checks; Google developer registration; MapLibre's compass (T100); T104's palette and captions; the wave 14 and 15 strings; the 5 s timeout grace (T111).
 
 ## Open findings
 
