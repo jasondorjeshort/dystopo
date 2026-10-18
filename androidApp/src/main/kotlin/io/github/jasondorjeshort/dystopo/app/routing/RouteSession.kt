@@ -324,7 +324,17 @@ object RouteSession {
         ui { phase = "planning"; mode = travel; plan = null; message = "Planning..."; fromOpen = false }
         overlay.show(null, start, end)
         val result = try {
-            RoutePlanner.plan(fromLat, fromLon, toLat, toLon, travel, name, waitMs)
+            RoutePlanner.plan(fromLat, fromLon, toLat, toLon, travel, name, waitMs).let { r ->
+                // T114: an end that is the phone's position, off the network, is said so ("of your location").
+                if (r !is RouteResult.Failed) r
+                else {
+                    val drive = travel == TravelMode.DRIVE
+                    var f: RouteResult.Failed = r
+                    if (fromAs?.isFix == true) f = OffNetwork.atFix(f, start = true, AppSettings.units, drive)
+                    if (toAs?.isFix == true) f = OffNetwork.atFix(f, start = false, AppSettings.units, drive)
+                    f
+                }
+            }
         } catch (e: RoutePlanner.NotReady) {
             val s = e.state
             val why = when {
@@ -341,7 +351,9 @@ object RouteSession {
                 persist(result.plan) // T108: outlives the process
                 ui { phase = "route"; plan = result.plan; message = null }
                 overlay.show(result.plan.route.points, null, null)
-                ui { fitCamera(result.plan) } // T49: show the whole route
+                // T49: show the whole route. T114: once the finished card has been measured (it grows by the numbers, the
+                // trails and the actions after planning, and the fit used to leave the start, the phone's position, under it).
+                main.postDelayed({ if (plan === result.plan) fitCamera(result.plan) }, FIT_AFTER_MS)
             }
             is RouteResult.Failed -> {
                 failure = result
@@ -484,7 +496,8 @@ object RouteSession {
         val t = toEnd ?: return emptyList()
         if (phase == "planning" || phase == "start" || phase == "idle") return emptyList()
         return buildList {
-            if (f == null || !f.isFix || t.isFix) add("here")
+            // Your location: not while the card already waits for it (waitingFix, noLocation).
+            if (phase == "pickStart" || (f != null && (!f.isFix || t.isFix))) add("here")
             if (phase != "pickStart") add("map")
             if (f != null && (phase == "route" || phase == "failed")) add("swap")
         }
@@ -498,5 +511,8 @@ object RouteSession {
 
     /** T49: camera fit animation, and the card height assumed before it has been measured. */
     const val FIT_MS = 600
+
+    /** T114: how long after a plan the camera fits it, so the route card has recomposed and been measured. */
+    const val FIT_AFTER_MS = 250L
     const val CARD_MIN_DP = 150f
 }

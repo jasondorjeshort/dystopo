@@ -27,6 +27,27 @@ class OffNetworkTest {
     }
 
     @Test
+    fun yourLocationOffTheNetworkIsNotToldToLongPress() {
+        // T114: a route to here whose origin, the phone's position, is off the network.
+        val m = OffNetwork.message("start", 300.0, 1000.0, "Van Trump Trail", 400.7, "west", ContourUnits.FEET, here = true)
+        assertEquals(
+            "No trail or road within 0.2 mi of your location. Nearest: Van Trump Trail, 0.2 mi to the west. " +
+                "To start on it, raise Route snap in Settings to 0.3 mi.",
+            m,
+        )
+        assertEquals(
+            "No trail or road within 0.6 mi of your location. Nearest: an unnamed path, 1.5 mi to the west.",
+            OffNetwork.message("end", 1000.0, 1000.0, "an unnamed path", 2400.0, "west", ContourUnits.FEET, here = true),
+        )
+        val failed = io.github.jasondorjeshort.dystopo.routing.RouteResult.Failed(
+            io.github.jasondorjeshort.dystopo.routing.RouteFailure.START_OFF_NETWORK, "pressed",
+            mapOf("maxSnapM" to 300.0, "snapSettingMaxM" to 1000.0, "nearestM" to 400.7, "nearestLine" to "Van Trump Trail", "nearestDirection" to "west"),
+        )
+        assertEquals(m, OffNetwork.atFix(failed, start = true, ContourUnits.FEET).message)
+        assertEquals("pressed", OffNetwork.atFix(failed, start = false, ContourUnits.FEET).message) // the end is not the off-network one
+    }
+
+    @Test
     fun nothingNearby() {
         assertEquals("No trail or road within 300 m of the start (none within 10.0 km).", OffNetwork.message("start", 300.0, 1000.0, null, null, null, ContourUnits.METERS))
     }

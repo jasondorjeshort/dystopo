@@ -483,8 +483,10 @@ class MapController {
         if (injectedLocation || deviceListener != null || !hasLocationPermission()) return
         val lm = activity?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
         val listener = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { if (!injectedLocation) onFix(it) }
+        // T114: every provider the phone has, enabled or not (Android delivers once it is enabled): with the location
+        // setting off at start, the map never heard a fix after it was turned on until the app restarted.
         val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).filter {
-            runCatching { lm.isProviderEnabled(it) }.getOrDefault(false)
+            runCatching { it in lm.allProviders }.getOrDefault(false)
         }
         try {
             for (p in providers) lm.requestLocationUpdates(p, 1000L, 0f, listener, Looper.getMainLooper())

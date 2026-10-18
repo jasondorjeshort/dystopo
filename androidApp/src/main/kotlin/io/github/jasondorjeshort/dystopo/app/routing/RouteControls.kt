@@ -235,7 +235,7 @@ private fun Ends(phase: String) {
     }
     val choices = if (phase == "planning" || phase == "start") emptyList() else RouteSession.fromChoices()
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        BasicText("From: $fromText", style = TextStyle(color = Ink, fontSize = 13.sp))
+        BasicText("From: $fromText", style = TextStyle(color = Ink, fontSize = 13.sp), modifier = Modifier.padding(vertical = 4.dp)) // level with Change
         if (choices.isNotEmpty()) Action(CHANGE) { RouteSession.fromOpen = !RouteSession.fromOpen }
     }
     if (RouteSession.fromOpen && choices.isNotEmpty()) {
