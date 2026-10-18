@@ -10,7 +10,9 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * - `POST /route?from=lat,lon&to=lat,lon[&mode=hike|bike|drive|crow][&name=][&wait=ms][&profile=1]`: plans on the
  *   active pack's trail graph (building it on first use; waits up to `wait`, default 120000 ms) and
  *   shows it on the map like a long-press pair would. 200 with the route, 422 with `error` and
- *   `message` when there is none (off the network, not connected), 503 while the graph is not ready.
+ *   `message` when there is none (off the network, not connected), 503 while the graph is not ready. T119: it answers
+ *   once the route is the session's (`RouteSession.plan` publishes it on the main thread before returning), so a
+ *   request right after it (`GET /route`, `GET /nav/directions?route=current`, `POST /nav/start?route=current`) has it.
  *   T108: `mode=crow` is the straight line with the DEM pack's heights (no graph, never 503); its `route` has
  *   `bearingDeg` and one arrival in `instructions`.
  * - `GET /route[?profile=1]`: the current route (or failure) and the card's state.
