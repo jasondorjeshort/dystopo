@@ -1,7 +1,8 @@
 ---
 date: 2026-10-17
-status: open
+status: resolved (T114)
 area: android / routing / interface
+promoted_to: docs/PLANNING.md (Routing: Route to here), docs/reference/android-app.md (Route to here)
 ---
 
 # Map apps route from the phone's position to a picked point; most outdoor apps only draw a straight line to it
@@ -123,9 +124,9 @@ says "Unable to calculate route" (routing options or incomplete OSM data); Gaia 
 
 ## Next
 
-- The task decides the four labels and their order, the From and To line with "Choose on map" and Swap, the
-  "Go" rule for a route away from the fix, the no-fix wait and the stale-fix numbers, and whether a search
-  result gets the same "Route to here" (Google, Apple and Organic Maps route from search results alike).
+- Done by T114 (2026-10-18): the recommendation without item 3 and item 4's replan (deferred after its critic); a
+  stale fix is one past 120 s; the choices and why are in the planning record (`promoted_to`). Route to here from a
+  search result (Google, Apple and Organic Maps route from search results alike) is a follow-up.
 - Open, for a later task: stops (convention: "Add stop" once a route exists, a list with drag handles and
   remove, a cap; the passed-stop rule is undocumented except in OsmAnd) and the reroute policy (replan to the
   destination for a route-to, lead back for a kept route, as Locus separates them; T61's 50 m for 10 s stays

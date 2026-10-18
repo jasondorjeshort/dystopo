@@ -32,6 +32,18 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * `descentM` and `timeS` from [io.github.jasondorjeshort.dystopo.model.RouteSummary] of its points (what the card,
  * the kept route, the trip card and navigation show); the router's own graph-based climb and time are under `graph`.
  * The route card is hidden while navigating (`ui.cardHidden`).
+ * T114, route to here:
+ * - `POST /route/to?lat=&lon=[&mode=][&wait=1]`: what the long-press card's "Route to here" does: a route from the
+ *   phone's position (the newer of the recorder's last fix and the map's device fix) to the point, in the card's mode
+ *   (or `mode`). With no fix it waits for one (`ui.phase` `waitingFix`, or `noLocation` while location is off or not
+ *   permitted) and plans on the first. `wait=1` answers once it has planned or started to wait; like `GET /route`.
+ * - `POST /route/from?open=1|0`: opens or closes the From choices under the From line (its Change);
+ *   `POST /route/from?choice=here|map|swap[&wait=1]` taps one: Your location, Choose on map (the next long-press, or
+ *   `POST /route/longpress`, is the start), Swap. 409 when the card does not offer it now (`ui.fromChoices`).
+ * `GET /route` `ui` has `from` and `to` (`kind` `fix` or `point`, `label` as the card shows it; a fix's `source`
+ * `recorder` or `device`, `fixTime`, `ageS` when planned and `stale`, older than [io.github.jasondorjeshort.dystopo.app.routing.RouteOrigin.STALE_S]),
+ * `fromOpen`, `fromChoices`, `location` (`on`, `off`, `noPermission`), `waitingForFix` and `routeTo` (the last route to
+ * here: `at`, `origin`, `waited`, and once a fix came `fixAfterMs` and `polls`).
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -63,6 +75,30 @@ object RouteRoutes {
                 val lon = r.query["lon"]?.toDoubleOrNull() ?: return bad("lat and lon required")
                 app.map.onMain { RouteSession.longPress(lat, lon) }
                 Response.json(RouteSession.json())
+            }
+            "POST" to "/route/to" -> { // T114: Route to here
+                val lat = r.query["lat"]?.toDoubleOrNull()?.takeIf { it in -90.0..90.0 } ?: return bad("lat and lon required")
+                val lon = r.query["lon"]?.toDoubleOrNull()?.takeIf { it in -180.0..180.0 } ?: return bad("lat and lon required")
+                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") }
+                RouteSession.routeTo(lat, lon, wait = r.query["wait"] == "1", travel = mode)
+                app.map.onMain { } // the UI updates posted by the plan have run
+                Response.json(current(app, r.query["profile"] == "1"))
+            }
+            "POST" to "/route/from" -> { // T114: the From line's Change and its choices
+                r.query["open"]?.let { o -> app.map.onMain { RouteSession.fromOpen = o == "1" && RouteSession.fromChoices().isNotEmpty() } }
+                val choice = r.query["choice"]
+                if (choice != null) {
+                    if (choice !in listOf("here", "map", "swap")) return bad("choice must be here, map or swap")
+                    if (choice !in RouteSession.fromChoices()) return Response.json(mapOf("error" to "the card does not offer $choice now", "ui" to RouteSession.json()), 409)
+                    val wait = r.query["wait"] == "1"
+                    when (choice) {
+                        "here" -> RouteSession.fromHere(wait)
+                        "map" -> app.map.onMain { RouteSession.chooseOnMap() }
+                        else -> RouteSession.swap(wait)
+                    }
+                }
+                app.map.onMain { }
+                Response.json(current(app, r.query["profile"] == "1"))
             }
             "POST" to "/route/mode" -> {
                 val mode = TravelMode.of(r.query["mode"]) ?: return bad("mode must be ${TravelMode.labels}")

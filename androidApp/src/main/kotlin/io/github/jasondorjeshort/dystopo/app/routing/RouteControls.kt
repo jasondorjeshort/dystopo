@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -88,7 +87,14 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * directions" opens the turn directions (the default detail level), each with the distance it then runs.
  * T108: Crow joins the mode chips (they wrap at large font scales) with its one line under them, and a crow route
  * shows its bearing instead of the trails it follows.
+ *
+ * T114: the card names both ends under its title ("From: Your location", "To: 46.80240, -121.72890"), as the route
+ * screens of the mainstream navigation apps do; Change on the From line offers Your location, Choose on map and Swap
+ * ([RouteSession.fromChoices]). While a route to here waits for its origin the card says so, and with location off it
+ * offers Turn on location (the permission prompt, or the phone's location settings). When no path is found it offers
+ * Try Crow (the straight line, with its notice under the chips). Go comes first among the actions.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun RouteControls() {
     val app = DystopoApp.instance
@@ -98,6 +104,23 @@ fun RouteControls() {
         onDispose { RouteSession.overlay.unbind() }
     }
     LaunchedEffect(Unit) { RouteSession.restoreOnce() } // T108: the unsaved route after a process restart
+    // T114: Turn on location asks for the permission here (registered before the card's early return, so a result
+    // that comes back after a recomposition still lands); a fix that follows plans the waiting route.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val askLocation = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        app.map.onLocationPermissionChanged()
+        // Refused for good (the system no longer shows the prompt): the app's own settings page, where it can be allowed.
+        val activity = context as? android.app.Activity
+        if (granted.values.none { it } && activity != null && !activity.shouldShowRequestPermissionRationale(android.Manifest.permission.ACCESS_FINE_LOCATION)) {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null)),
+                )
+            }
+        }
+    }
     val phase = RouteSession.phase
     // T65: hidden while navigating (the stats bar has what matters; the card returns when navigation stops).
     if (phase == "idle" || io.github.jasondorjeshort.dystopo.app.nav.NavSession.ui != null) {
@@ -122,9 +145,12 @@ fun RouteControls() {
                 "start" -> "Route: start set"
                 "planning" -> "Route: planning"
                 "failed" -> "No route"
+                "waitingFix", "noLocation" -> "Route: waiting" // T114
+                "pickStart" -> "Route: choose the start"
                 else -> plan?.route?.name ?: "Route"
             }
             BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+            Ends(phase) // T114: From and To
             if (plan != null && phase == "route") {
                 BasicText(RouteSession.summary(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
                 // T108: a crow line's bearing (it follows no trail).
@@ -160,18 +186,71 @@ fun RouteControls() {
                 BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
             }
             if (RouteSession.mode == TravelMode.CROW) BasicText(TravelMode.CROW_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T108
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            // T114: the actions wrap (Turn on location and Try Crow join them), and Go comes first.
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (phase == "route") {
+                    Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
+                    Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
                     Action("Save") { Thread { RouteSession.save() }.start() }
                     Action("GPX") { Thread { RouteSession.exportGpx() }.start() }
-                    Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
-                    Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
+                }
+                if (phase == "noLocation") {
+                    Action(TURN_ON_LOCATION) {
+                        when (RouteSession.locationState()) {
+                            "noPermission" -> askLocation.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                            "off" -> runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+                        }
+                    }
+                }
+                // T114: no path between the two ends: the straight line (its notice shows under the chips once chosen).
+                if (phase == "failed" && RouteSession.failure != null && RouteSession.mode != TravelMode.CROW) {
+                    Action(TRY_CROW) { RouteSession.changeMode(TravelMode.CROW) }
                 }
                 Action("Clear") { RouteSession.clear() }
             }
         }
     }
 }
+
+/** T114: the card's new action labels. */
+internal const val TURN_ON_LOCATION = "Turn on location"
+internal const val TRY_CROW = "Try Crow"
+
+/**
+ * T114: the From and To lines. From is "Your location" (with the fix's age when it was stale), a placed point's
+ * coordinates, or "Choose on map" while the next long-press picks it; Change opens Your location, Choose on map and
+ * Swap under it, as far as [RouteSession.fromChoices] allows. To is the destination's coordinates (a name when a later
+ * entry brings one). Nothing shows before the first end is known.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun Ends(phase: String) {
+    val f = RouteSession.from
+    val t = RouteSession.to
+    if (f == null && t == null) return
+    val fromText = when {
+        phase == "pickStart" -> CHOOSE_ON_MAP
+        f != null -> f.label
+        else -> RouteOrigin.HERE // a route to here waiting for its origin
+    }
+    val choices = if (phase == "planning" || phase == "start") emptyList() else RouteSession.fromChoices()
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        BasicText("From: $fromText", style = TextStyle(color = Ink, fontSize = 13.sp), modifier = Modifier.padding(vertical = 4.dp)) // level with Change
+        if (choices.isNotEmpty()) Action(CHANGE) { RouteSession.fromOpen = !RouteSession.fromOpen }
+    }
+    if (RouteSession.fromOpen && choices.isNotEmpty()) {
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            if ("here" in choices) Action(RouteOrigin.HERE) { RouteSession.fromHere() }
+            if ("map" in choices) Action(CHOOSE_ON_MAP) { RouteSession.chooseOnMap() }
+            if ("swap" in choices) Action(SWAP) { RouteSession.swap() }
+        }
+    }
+    if (t != null) BasicText("To: ${t.label}", style = TextStyle(color = Ink, fontSize = 13.sp))
+}
+
+internal const val CHANGE = "Change"
+internal const val CHOOSE_ON_MAP = "Choose on map"
+internal const val SWAP = "Swap"
 
 /** T102: the count of turn directions, opening their list (scrolls past a few lines). */
 @Composable
