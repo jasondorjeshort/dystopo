@@ -99,13 +99,15 @@ goes. Carry-back is an idea file in Hatchery, the Hatchery commit that took the 
 - An update is one command from the helper plus the hand merges on the rowed paths above; nothing
   the project wrote is touched, and the whole-failure of ADR 0035's procedure on files never taken is
   gone (the excludes). Cost: ten pointer files and ten import lines that say nothing new, and a
-  departure table to keep; the owner may veto the pointer shape, in which case the import lines go
-  and `--claude-check` fails until Hatchery offers a lift for an unimported section.
+  departure table to keep. Dropping the import lines would leave `--claude-check` failing until
+  Hatchery offers a lift for an unimported section; a carry-back idea for that lift is worth filing.
 - What arrived and is in use: `queue-list.js` and the marker switch in `post-edit.js` (T118 converts
   `docs/ideas/` to the grammar, ADR 0036); the `triage` skill; `ownership.js`, `imports.js` and
   `--claude-check`; the push scan (rule 20) with the paste rule in the `finding` skill and the
   Personal data section of `.claude/rules/docs.md`; the harness groups for all of them.
-- Owner's item: the pointer shape above. A clone that commits here sets the placeholder identity
+- The pointer shape is kept (owner, 2026-10-17, on the coordinator's recommendation: fourteen lines
+  and ten one-paragraph files against a one-command update and a passing check; the alternative was
+  ten standing failures until Hatchery offers an opt-out). A clone that commits here sets the placeholder identity
   (`git config user.name`, `user.email` from the policy's first entry) or its pushes are refused,
   from a session and from a terminal alike.
 - ADR 0020's living line and ADR 0035's Updating section are superseded by this record; everything
