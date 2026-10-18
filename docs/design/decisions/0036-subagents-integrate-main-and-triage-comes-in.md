@@ -58,6 +58,9 @@ the next `update-from-hatchery` and is decided then.
 - The coordinator's main checkout can be refreshed and un-conflicted by a Haiku chore; the one case
   that needed the coordinator's own hands is gone. The cost is one more policy entry to carry and
   to send back to the base (T117's pull request), and a harness group for it.
+- The entry is `git.integrate` (T117): `subagents` and `protectedBranches`, each `null` by default
+  and then `git.commit`'s; this project sets `"any"` and `[]`. A merge or rebase in progress on `main`
+  ends with `git merge --continue` or `git rebase --continue`, which the commit refusal there names.
 - Eleven idea files are deleted and the index table goes; a listing is `node
   .claude/hooks/queue-list.js ideas`. The `status: done` trail is lost from the folder and lives in
   the planning log and the ADRs the files named.

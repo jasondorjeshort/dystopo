@@ -23,7 +23,7 @@ process.on('uncaughtException', fail);
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { parse, SUBST } = require('./shell-parse');
-const { load, matches } = require('./policy');
+const { load, matches, integrateLimits } = require('./policy');
 
 // git options that come before the subcommand and take a separate value.
 const GLOBAL_OPTS_WITH_VALUE = new Set([
@@ -71,7 +71,9 @@ const GUARDED_LONG = {
   config: ['--unset', '--unset-all', '--remove-section', '--get', '--get-all', '--list'],
 };
 // Subcommands that create commits (rule 4), and those whose arguments must be visible (rule 19).
+// Of them, the three that integrate another branch are judged by git.integrate (integrateLimits).
 const COMMIT_SUBS = new Set(['commit', 'merge', 'pull', 'cherry-pick', 'revert', 'am', 'rebase']);
+const INTEGRATE_SUBS = new Set(['pull', 'merge', 'rebase']);
 const DESTRUCTIVE = new Set(['push', 'send-pack', 'reset', 'checkout', 'switch', 'restore', 'clean', 'branch',
   'worktree', 'stash', 'config', 'reflog', ...COMMIT_SUBS]);
 // Words that run their arguments (or stdin) as a script. When one appears, quoted text in the same
@@ -447,13 +449,27 @@ const RULES = [
     n: 4, prefix: 'commit not permitted for this caller',
     test: (inv, { agent, policy }) => {
       if (!COMMIT_SUBS.has(inv.sub) || agent === null || has(inv.args, '--abort', '--quit')) return false;
-      const c = policy.git.commit;
+      // pull, merge and rebase are judged by git.integrate, each key it leaves null by git.commit's;
+      // the wording is the base's until the project sets the deciding key apart.
+      const g = policy.git;
+      const integrating = INTEGRATE_SUBS.has(inv.sub);
+      const limits = integrateLimits(g);
+      const c = integrating ? limits : g.commit;
+      const whoApart = g.integrate.subagents !== null;
       if (!mayAct(c.subagents, agent)) {
-        return `Under .claude/hooks/policy.json the subagents that make commits (commit, merge, pull, cherry-pick, revert, am, rebase) are: ${listOf(c.subagents)}. Describe the change in your report so it can be committed.`;
+        if (integrating && whoApart) {
+          return `Under .claude/hooks/policy.json the subagents that pull, merge or rebase (git.integrate) are: ${listOf(c.subagents)}. Leave the integration to the main session and report.`;
+        }
+        return `Under .claude/hooks/policy.json the subagents that make commits (${whoApart ? 'commit, cherry-pick, revert, am' : 'commit, merge, pull, cherry-pick, revert, am, rebase'}) are: ${listOf(c.subagents)}. Describe the change in your report so it can be committed.`;
       }
       if (c.protectedBranches.length === 0) return false;
       const b = currentBranch(inv.dir);
-      return b !== null && matches(c.protectedBranches, b) ? `Subagents do not make commits on ${b}; work on your own branch.` : false;
+      if (b === null || !matches(c.protectedBranches, b)) return false;
+      if (integrating && g.integrate.protectedBranches !== null) return `Subagents do not pull, merge or rebase on ${b} (git.integrate); work on your own branch.`;
+      if (integrating) return `Subagents do not make commits on ${b}; work on your own branch.`;
+      // A commit on a branch the agent may integrate: a merge or rebase in progress there ends with its own --continue.
+      const integrable = mayAct(limits.subagents, agent) && !matches(limits.protectedBranches, b);
+      return `Subagents do not make commits on ${b}; work on your own branch.${integrable ? ' A merge or rebase in progress here is concluded with git merge --continue or git rebase --continue.' : ''}`;
     },
   },
   {

@@ -73,7 +73,8 @@ goes. Carry-back is an idea file in Hatchery, the Hatchery commit that took the 
 
 | Path | Reason | Carry-back |
 |---|---|---|
-| `.claude/hooks/test-hooks.js` | this project's settings-command group (H, HS and SL cases) spliced before the base's CLI group at each update; the pusher-agent case (the cap-check command in `.claude/agents/pusher.md`) skipped when that file is absent, since the base's harness crashes on it here | T117's pull request on Hatchery carries the group and the skip |
+| `.claude/hooks/test-hooks.js` | the settings-command group (H, HS and SL cases), general since T117, before the base's CLI group; the pusher-agent case (the cap-check command in `.claude/agents/pusher.md`) skipped when that file is absent, since the base's harness crashes on it here; T117's GI, GF07, GF08, GP22, GP23, LIVE05, LIVE06 and PA09 cases | Hatchery pull request 1 (T117) carries all of it; the file equals that branch's |
+| `.claude/hooks/git-guard.js`, `policy.js`, `post-edit.js`, `policy.examples/task-branches.json` | `git.integrate` (ADR 0036) in rule 4 and the loader, the example showing it, elided paths skipped by the anchor check (T117) | Hatchery pull request 1 (T117); each file equals that branch's |
 | `.claude/rules/README.md` | this project's rules table (`kotlin.md`, `trackdb.md`) | none |
 | `.claude/rules/docs.md` | this project's exemptions, indexes, places rule and ideas line; the base's new lines folded in by hand | none |
 | `.claude/settings.json` | mixed by the map: exec-form hooks, this project's permissions (ADR 0035) | none |
