@@ -23,7 +23,8 @@ Hatchery's proposal 0003 describes the same workflow for the base.
    `out/coordinator-pids.txt`) so agents and the owner have the viewer (`docs/reference/live-server.md`).
    AVDs go under `E:\dystopo-avd`.
 4. Read the usage before launching (the status line, or this session's file under
-   `~/.claude/usage-state/`); at 75% of either meter launch no new implementers. On the owner's word,
+   `~/.claude/usage-state/`); at 50% of the 5-hour meter or 75% of the 7-day one launch no new
+   implementers. On the owner's word,
    and only then, write a grant file in `~/.claude/usage-gate-overrides/` (`{"until": <epoch seconds>,
    "reason": "<the owner's words>", "meters": ["7d"]}`, both meters when `meters` is absent, optionally
    `"session": "<id>"` or `"project": "<path>"`; ADR 0035) with the meters and the end time the owner
