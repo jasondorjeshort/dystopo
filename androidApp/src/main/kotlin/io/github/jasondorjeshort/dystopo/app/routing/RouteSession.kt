@@ -102,9 +102,10 @@ object RouteSession {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-route-plan").apply { isDaemon = true } }
 
-    private fun ui(block: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
-    }
+    /** T119: the Compose fields are written on the main thread; a plan's result is published before [plan] returns. */
+    private val uiq = UiPublish({ Looper.myLooper() == Looper.getMainLooper() }, { main.post(it) })
+
+    private fun ui(block: () -> Unit) = uiq.post(block)
 
     /** T108: the saved unsaved route (see the class comment). */
     private fun sessionFile(): File = File(DystopoApp.instance.filesDir, SessionRoute.FILE_NAME)
@@ -313,7 +314,9 @@ object RouteSession {
 
     /**
      * Plans from start to end and shows the result (blocking; never on the main thread). T114: [fromAs] and [toAs] say
-     * what each end is (the phone's fix or a placed point); placed points when null, as `POST /route` plans.
+     * what each end is (the phone's fix or a placed point); placed points when null, as `POST /route` plans. T119: returns
+     * once the main thread has made the result the session's ([UiPublish.publish], at most [PUBLISH_MS]), so whatever
+     * the caller does next (`POST /route` answering, then `GET /nav/directions?route=current`) sees it.
      */
     fun plan(
         fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, travel: TravelMode, name: String, waitMs: Long,
@@ -342,14 +345,14 @@ object RouteSession {
                 s.status == "error" -> "the trail network could not be built: ${s.error}"
                 else -> "the trail network is still being built (${s.json()["progress"] ?: s.status}); try again in a moment"
             }
-            ui { phase = "failed"; message = why }
+            uiq.publish(PUBLISH_MS) { phase = "failed"; message = why }
             throw e
         }
         when (result) {
             is RouteResult.Found -> {
                 failure = null
                 persist(result.plan) // T108: outlives the process
-                ui { phase = "route"; plan = result.plan; message = null }
+                uiq.publish(PUBLISH_MS) { phase = "route"; plan = result.plan; message = null } // T119: before the caller answers
                 overlay.show(result.plan.route.points, null, null)
                 // T49: show the whole route. T114: once the finished card has been measured (it grows by the numbers, the
                 // trails and the actions after planning, and the fit used to leave the start, the phone's position, under it).
@@ -358,7 +361,7 @@ object RouteSession {
             is RouteResult.Failed -> {
                 failure = result
                 persist(null)
-                ui { phase = "failed"; plan = null; message = result.message }
+                uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; message = result.message }
                 overlay.show(null, start, end)
             }
         }
@@ -521,6 +524,9 @@ object RouteSession {
 
     /** How long a long-press waits for the graph to be built on first use. */
     const val WAIT_MS = 120_000L
+
+    /** T119: how long [plan] waits for the main thread to take its result (MapController.onMain's bound). */
+    const val PUBLISH_MS = 5_000L
 
     /** T114: how often a route to here that waits for its origin looks for a fix. */
     const val WAIT_POLL_MS = 500L
