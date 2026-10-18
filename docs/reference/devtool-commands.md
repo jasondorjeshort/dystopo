@@ -1,6 +1,6 @@
 ---
 verified: 2026-10-16
-source: moved verbatim from CLAUDE.md in T84 (text as of c875bc9); observed in the tasks named in each paragraph
+source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
 # Devtool commands

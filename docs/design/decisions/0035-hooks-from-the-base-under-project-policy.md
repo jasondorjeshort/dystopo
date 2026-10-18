@@ -4,7 +4,7 @@ Date: 2026-10-16
 Status: superseded by 0036
 0036 (2026-10-17, the owner's answers) allows a subagent's pull, merge and rebase on `main` and takes `triage`; 0037 (2026-10-17) replaces the Updating section with the base's ownership map and a departure table. Every other section here stands.
 
-Record: the first `update-from-hatchery` run here (Hatchery `0ce6670` to `c50b0da`, the base line in
+Record: the first `update-from-hatchery` run here (Hatchery `89f63c8` to `987265c`, the base line in
 ADR 0020); Hatchery's ADRs 0006 (the policy file), 0010 (the base line decides the update mode) and
 0011 (one usage cache per session, pool advice), and its hook specification
 `docs/design/decisions/0002-hook-specs.md` in the Hatchery tree; ADR 0021, which this record
@@ -51,7 +51,7 @@ skills and the critic brief.
 - `test-hooks.js` ends with this project's group: `settings.json`'s commands and the status line run
   from a subfolder and from a path with a space (H, HS and SL cases). The base harness never reads
   `settings.json`, so the group is re-appended after each update.
-- `CLAUDE.md` is this project's text (ADR 0020). The base's rule changes since `0ce6670` were read:
+- `CLAUDE.md` is this project's text (ADR 0020). The base's rule changes since `89f63c8` were read:
   its one-independent-review rule is the verifier here; "what the owner pays needs the owner" is
   already how the gate's numbers are set; its delegation wording is ADR 0026.
 - Not taken, as ADR 0020 records: `.claude/agents/` and the skills that need the base's agents

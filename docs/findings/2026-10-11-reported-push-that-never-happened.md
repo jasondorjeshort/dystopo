@@ -14,7 +14,7 @@ The coordinator reported a Hatchery push that the owner then could not find. Wha
 ## What was tried
 
 A Bash call did `cd` into the Hatchery clone and then committed and pushed. The harness's working
-directory did not change, so the commit landed in this repository (commit `287ea9d`, whose message is
+directory did not change, so the commit landed in this repository (commit `44b2d0f`, whose message is
 about Hatchery, contains this repository's handoff, planning and board edits), and the chained command
 printed success.
 

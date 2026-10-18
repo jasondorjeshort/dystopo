@@ -8,7 +8,7 @@ area: CI / build inputs
 
 ## Question
 
-Commit `cec2ec1` (a handoff edit, 2026-10-12) failed CI; a rerun was green. Why does a docs-only
+Commit `22a1c45` (a handoff edit, 2026-10-12) failed CI; a rerun was green. Why does a docs-only
 commit depend on a remote server?
 
 ## What was tried
