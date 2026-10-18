@@ -22,13 +22,13 @@ Resume: this file, `docs/reference/machines.md` › The other account, the `wave
 2. Critic pass on the wave 16 section (`wave` skill, Plan and launch 2); edit; launch T114 first, then
    T115 to T118 (five implementers, Opus-class, own worktrees, ports and AVDs).
 3. Verify, merge, post-wave sweep, v0.1.9-alpha (`release` skill).
-4. Carry-backs for Hatchery (T117's pull request): the harness group, the integrate entry, the elided paths, the handoff rule.
+4. Carry-backs for Hatchery (T117's pull request): the harness group and its pusher-case skip, the integrate entry, the elided paths, the handoff rule, a lift for an unimported agreement section.
 
 ## Waiting on user
 
-- From the update (ADR 0037): the ten pointer imports in `CLAUDE.md` (veto or keep). Commits here are made
-  as the placeholder identity in `policy.json` (`privacy.identities`; the repository's `user.name` and
-  `user.email` are set to it), or the push scan refuses them, from a session and from a terminal alike.
+- Nothing from the update (ADR 0037): the pointer imports stay, the pre-push scan is chained, commits here are
+  made as the placeholder identity in `policy.json` (`privacy.identities`; the repository's `user.name` and
+  `user.email` are set to it) or the push scan refuses them, from a session and from a terminal alike.
 - The wave 16 section, to read before the critic pass if wanted; real-phone checks of 0.1.8
   (`android-firstrun.py`, `features`); Google developer registration; MapLibre's own compass (T100); T104's
   steepness palette and captions; the wave 14 and 15 strings (in each PR); the 5 s timeout grace (T111).
