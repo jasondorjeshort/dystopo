@@ -929,7 +929,9 @@ def part_features(args):
                 **({} if drawn else {"error": f"route line not drawn (route {shots.get('routeLinePx')}, kept {shots.get('tripLinePx')} samples)"})}
 
     def route_to():
-        # T114: Route to here from the GPS fix, one long-press and one tap; the card names "From: Your location".
+        # T114: Route to here from the GPS fix, one long-press and one tap; the card names "From: Your location". Before
+        # the route step: Keep's trip fit leaves its padding on the camera (trips/Trips.kt), which moves the map's
+        # centre and so where a long-press lands after it.
         hide_keyboard(dev)
         return route_to_here(dev)
 
@@ -1013,7 +1015,7 @@ def part_features(args):
         close_sheet(dev)
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
-    for name, fn in (("install-map", setup), ("search", search), ("route", route), ("routes-list", trips), ("route-to", route_to),
+    for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings)):
         run.step(name, fn)

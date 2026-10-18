@@ -395,11 +395,27 @@ object RouteSession {
         // Degenerate (all points the same): just centre on it.
         val update = if (b.latitudeSpan < 1e-6 && b.longitudeSpan < 1e-6) CameraUpdateFactory.newLatLng(b.center)
         else CameraUpdateFactory.newLatLngBounds(b, pad[0], pad[1], pad[2], pad[3])
-        m.animateCamera(update, FIT_MS)
+        m.animateCamera(update, FIT_MS, object : org.maplibre.android.maps.MapLibreMap.CancelableCallback {
+            override fun onCancel() = dropPadding(m)
+            override fun onFinish() = dropPadding(m)
+        })
         lastFit = linkedMapOf(
             "bounds" to listOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
             "paddingPx" to pad.toList(), "routeId" to p.route.id,
         )
+    }
+
+    /**
+     * T114: MapLibre keeps a bounds fit's padding on the camera, so every later move (a map link, the recentre button)
+     * centred in the padded box, 100 dp or more above the screen's centre; the same view without it. Main thread.
+     */
+    private fun dropPadding(m: org.maplibre.android.maps.MapLibreMap) {
+        val p = m.cameraPosition
+        if (p.padding?.any { it != 0.0 } != true) return
+        val v = DystopoApp.instance.map.mapView ?: return
+        val centre = m.projection.fromScreenLocation(android.graphics.PointF(v.width / 2f, v.height / 2f))
+        m.moveCamera(CameraUpdateFactory.newCameraPosition(org.maplibre.android.camera.CameraPosition.Builder(p).target(centre).padding(0.0, 0.0, 0.0, 0.0).build()))
+        lastFit = lastFit?.plus("paddingDropped" to true)
     }
 
     fun clear() {
