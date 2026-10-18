@@ -18,9 +18,10 @@ base; the resume pointers are this project's.
 ## Steps
 
 1. Gather: `git -C <main checkout> status -sb`, `git log --oneline -8`, `gh pr list`, the open rows of
-   `docs/findings/README.md`, the agents still running (their ids, worktrees, emulators, ports), the
-   PIDs of servers you had started for you (`out/coordinator-pids.txt`), and what this session knows
-   that is not yet in a file.
+   `docs/findings/README.md`, the tasks still in flight (task id, PR number, verdict so far), and what
+   this session knows that is not yet in a file. Not PIDs, ports, emulator serials or agent ids: they
+   die with the session and are one machine's; `out/coordinator-pids.txt` (gitignored) is their
+   only record, and the handoff says at most that a server is wanted (owner, 2026-10-17).
 2. Rewrite the file with the Write tool, keeping exactly these sections:
 
    ```
@@ -32,9 +33,9 @@ base; the resume pointers are this project's.
    wave skill; the open wave in docs/TASKS.md>
 
    ## Now
-   1-4 bullets: what is in flight, which agent has it (id, worktree, emulator, ports), exact state.
-   The account the session ran on (the status line's account segment) and, if the gate named
-   another account with room, which one.
+   1-4 bullets: what is in flight (task, branch, PR, verdict so far), exact state; no process ids,
+   ports or serials. The account the session ran on (the status line's account segment) and, if
+   the gate named another account with room, which one.
 
    ## Next
    Ordered, 3-7 items, each one brief's worth. Name the kind of agent when it is obvious.

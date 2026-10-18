@@ -1,7 +1,8 @@
 # 0035. The hooks are the base's scripts under this project's policy
 
 Date: 2026-10-16
-Status: accepted
+Status: superseded by 0036
+0036 (2026-10-17, the owner's answers) allows a subagent's pull, merge and rebase on `main` and takes `triage`; every other section here stands.
 
 Record: the first `update-from-hatchery` run here (Hatchery `0ce6670` to `c50b0da`, the base line in
 ADR 0020); Hatchery's ADRs 0006 (the policy file), 0010 (the base line decides the update mode) and

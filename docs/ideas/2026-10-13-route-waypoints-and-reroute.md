@@ -1,8 +1,8 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: T60 partial
+status: planned
+pipeline: T114 (wave 16) builds the destination-first flow with the fix as the origin; the stops list, reroute and passed-waypoint rules stay here, open
 related: [2026-10-13-turn-directions.md, 2026-10-13-cannot-create-waypoints-android.md, 2026-10-13-routing-modes-crow-bushwhack.md]
 ---
 
@@ -36,9 +36,19 @@ hint back to the route; waypoint and arrival events are listed in `/nav/status`.
   (geometry recomputed); a flag on the existing route so sync keeps working.
 - Adding a stop mid-trip: cheapest insertion or end, with undo (not decided).
 
+## Split (2026-10-17, owner)
+
+The owner, on v0.1.8-alpha: a long-press offers a waypoint or "Route from here", which makes the
+pressed point the origin and waits for a second press; there is no way to route from the phone's own
+position. That piece needs no decision and was buried here with four that do, so four waves passed
+it over. It is now T114 (wave 16): destination first, the origin defaulting to the fix, the
+two-point planning flow kept as a secondary action, benchmarked against the mainstream and outdoor
+apps (finding `docs/findings/2026-10-17-route-to-flows-in-other-apps.md`). What follows stays open.
+
 ## Open
 
-- Entry: search result or long-press, "Route to", then add stops; the origin is the current fix.
+- Entry: search result or long-press, "Route to", then add stops; the origin is the current fix
+  (the entry and the origin are T114; the stops are not).
 - Reroute policy: how long off route before replanning, when to prefer rejoining the old route,
   and what to do offline (graph tiles on the phone: ADR 0028 covers long distances).
 - Passed-waypoint rule (distance and direction), and skipped ones.

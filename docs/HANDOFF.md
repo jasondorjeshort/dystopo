@@ -1,40 +1,39 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-16, after the Hatchery update (ADR 0035), by main session (second account, Fable 5.1)
-Resume: this file, `docs/reference/machines.md` › The other account (second account: checkout
-`~\Documents\src\Dystopo`, release key in its `tools\`, no `devtool.local.json`), the
-`wave` skill, and `docs/TASKS.md` (wave 15 closed: T108 to T113 merged; no open wave); rewrite with the `handoff` skill.
+Updated: 2026-10-17, after 3f7bd8e (wave 16 planned, not launched), by main session (second account)
+Resume: this file, `docs/reference/machines.md` › The other account, the `wave` skill, `docs/TASKS.md` ›
+Wave 16 (T114 to T118, written 2026-10-17 with the owner; no critic pass yet); rewrite with the `handoff` skill.
 
 ## Now
 
-- Updated from Hatchery (`0ce6670` to `c50b0da`) on `main`, pushed (749392b): hooks, harness and
-  status line are the base's under `policy.json` (ADR 0035 supersedes 0021). New for a session: the usage
-  cache is `~/.claude/usage-state/<session_id>.json`, grants go in `~/.claude/usage-gate-overrides/`, a
-  subagent's `git pull` on `main` is denied. Restart the session so the new hooks load, then run the harness.
-- Wave 15 closed, v0.1.8-alpha published (2026-10-16 08:33 UTC, tag on 9b2f723, versionCode 396), sweep
-  `out\sweep-20261016-0340` green. No agent is implementing; worktrees and task AVDs removed. Servers: live
-  viewer 8765 and standalone 8800 (PIDs in `out/coordinator-pids.txt`). Local branches: `main` only (the owner deleted the five squash-merged and
-  pre-rewrite leftovers on 2026-10-17; git-guard rule 9 refuses `-D` on a non-`task/*` name for anyone).
+- Wave 16 is planned, nothing launched. The owner's lead issue on 0.1.8 is T114 (route to here from the
+  phone's position; today a long-press offers only a waypoint or a hand-placed origin); its design input is
+  the finding `docs/findings/2026-10-17-route-to-flows-in-other-apps.md`, an agent's survey of the
+  navigation and outdoor apps. T115 and T116 are the leftover sweeps; T117 and T118 apply ADR 0036.
+- ADR 0036 (2026-10-17) records the owner's answers to ADR 0035: a subagent may pull, merge or rebase
+  `main` and resolve conflicts (commit there stays refused); `docs/ideas/` takes the base's grammar and
+  the `triage` skill. The handoff no longer carries process ids or ports (`handoff` skill).
+- Both histories (this repository's, Hatchery's) were rewritten on 2026-10-17: hashes cited in `docs/`
+  before then are dead until the re-record chore runs (ADR 0020's base line is now `987265c`). No agent runs.
 
 ## Next
 
-1. Plan wave 16 (`wave` skill, critic pass before launch). Candidates: the wave 15 paragraph's deferred list
-   (T98's coast tile, T100's course tracking, T101's tilt, T103's rows, browser-side directions op, a phone
-   request log); the Status-line follow-ups of T108 to T112 (`/help/close`, `HelpHost()` in `MainActivity`,
-   Storage help icons, `DirectSources`' trim, `pinnedCacheMb` cap, roundabouts and "then" cues, nav bar help
-   icons); the open finding below; bushwhack (proposal first); route-to, auto-download, by region, battery.
-2. Carry to Hatchery with PR #1: the critic-pass step of the `wave` skill, the settings-command harness
-   group (H, HS, SL cases), `--ff-only` pulls under the guard's rule 4, elided `...` paths in the anchor check.
+1. Chores (Haiku): hook tests under the updated hooks; the cited hashes re-recorded through the rewrite
+   kit's two `*.commit-map` files only (rule in the wave 16 paragraph); the live viewer at launch (`wave` skill).
+2. Critic pass on the wave 16 section (`wave` skill, Plan and launch 2); edit; launch T114 first, then
+   T115 to T118 (five implementers, Opus-class, own worktrees, ports and AVDs).
+3. Verify, merge, post-wave sweep, v0.1.9-alpha (`release` skill).
+4. The next `update-from-hatchery` is large (Hatchery ADRs 0016 to 0018: `CLAUDE.md` split into imported
+   base files, patch-only updates, the personal-data scan); plan it with the owner after wave 16.
 
 ## Waiting on user
 
-- ADR 0035's two questions: keep a subagent's pull on `main` denied (the coordinator pulls)? Align
-  `docs/ideas/` with the base's queue grammar so the `triage` skill comes in?
-- Real-phone checks of 0.1.8 (`android-firstrun.py` and `features` on the phone); Hatchery PR #1; Google
-  developer registration; MapLibre's own compass (T100)? T104's steepness palette and
-  legend captions; the wave 14 and 15 strings (listed in each PR); the 5 s timeout grace (T111) if a proxy needs 60.
+- The wave 16 section, to read before the critic pass if wanted; real-phone checks of 0.1.8
+  (`android-firstrun.py`, `features`); Google developer registration; MapLibre's own compass (T100); T104's
+  steepness palette and captions; the wave 14 and 15 strings (in each PR); the 5 s timeout grace (T111).
 
 ## Open findings
 
-- `docs/findings/2026-10-16-cold-view-gap-on-a-quiet-device.md` (wave 16 Android sweep)
+- `docs/findings/2026-10-16-cold-view-gap-on-a-quiet-device.md` (T115)
+- `docs/findings/2026-10-17-route-to-flows-in-other-apps.md` (T114 resolves it)
