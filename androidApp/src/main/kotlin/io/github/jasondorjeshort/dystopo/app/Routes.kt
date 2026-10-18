@@ -108,6 +108,7 @@ class Routes(private val app: DystopoApp) {
             "GET" to "/features", "GET" to "/features/text", "GET" to "/labels" -> FeatureRoutes(app).handle(r)
             "POST" to "/camera" -> {
                 val p = params(r)
+                p.d("zoom")?.let { io.github.jasondorjeshort.dystopo.app.online.DirectTrace.mark("camera z$it") } // T115: the direct timeline shows where a script's view starts
                 Response.json(app.map.setCamera(p.d("lat"), p.d("lon"), p.d("zoom"), p.d("bearing"), p.d("tilt")))
             }
             "GET" to "/screenshot" -> screenshot(r)

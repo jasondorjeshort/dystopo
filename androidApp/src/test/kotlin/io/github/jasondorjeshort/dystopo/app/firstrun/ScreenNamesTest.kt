@@ -27,10 +27,15 @@ class ScreenNamesTest {
         return out
     }
 
+    /** Every `const val` of [Screens] by name (T115: all of them, the settings groups included, not a fixed few). */
+    private val constants: Map<String, String> = Screens::class.java.declaredFields
+        .filter { it.type == String::class.java && java.lang.reflect.Modifier.isStatic(it.modifiers) }
+        .associate { f -> f.isAccessible = true; f.name to f.get(null) as String }
+
     private fun resolve(s: String): String {
         var t = s.replace("\\u203a", "›")
-        for ((name, value) in mapOf("SETTINGS" to Screens.SETTINGS, "PACKS" to Screens.PACKS, "TRACKS" to Screens.TRACKS, "ROUTES" to Screens.ROUTES, "SHARE" to Screens.SHARE, "SOURCES" to Screens.SOURCES)) {
-            t = t.replace("\${Screens.$name}", value)
+        for ((name, value) in constants) {
+            t = t.replace("\${Screens.$name}", value).replace("\${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.$name}", value)
         }
         return t
     }
@@ -67,6 +72,16 @@ class ScreenNamesTest {
     }
 
     @Test
+    fun theSettingsGroupsAreSectionsOfSettings() {
+        // T115 (T109's follow-up): each group of the settings list is a page a message or a help placement may name.
+        val groups = io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.entries.map { it.title }
+        assertEquals(groups.toSet(), Screens.SETTINGS_GROUPS)
+        for (g in groups) assertEquals(null, ScreenRefs.problem(ScreenRefs.find("Set it in Settings › $g › Units.").single()))
+        assertTrue(ScreenRefs.problem(ScreenRefs.find("Set it in Settings › Map choices.").single()) != null)
+        assertEquals("Map options", constants["MAP_OPTIONS"])
+    }
+
+    @Test
     fun theCheckerCatchesUnknownScreens() {
         assertEquals(listOf("Downloads"), ScreenRefs.find("Open the Downloads screen to see it.").map { it.screen })
         assertTrue(ScreenRefs.problem(ScreenRefs.find("Set it in Preferences.").single()) != null)
@@ -74,6 +89,7 @@ class ScreenNamesTest {
         assertEquals(null, ScreenRefs.problem(ScreenRefs.find("Set one in Settings › Sources ›").single()))
         assertEquals(null, ScreenRefs.problem(ScreenRefs.find("No server set (Settings).").single()))
         assertEquals(emptyList(), ScreenRefs.find("a 404 from the server (HTTP 404) in Overpass mode"))
+        assertEquals(listOf(ScreenRefs.Ref("Settings", "Data and storage")), ScreenRefs.find("Settings › Data and storage › Sources › Mobile data")) // T115
     }
 }
 
@@ -82,7 +98,8 @@ object ScreenRefs {
     data class Ref(val screen: String, val section: String?)
 
     private const val WORD = "[A-Z][a-z]+"
-    private val arrow = Regex("($WORD) › ([A-Z][^.,;:)›]*)")
+    // T115: a deeper level of a path ("Settings › Data and storage › Sources › Mobile data") is not a screen of its own.
+    private val arrow = Regex("(?<!› )($WORD) › ([A-Z][^.,;:)›]*)")
     private val paren = Regex("\\(($WORD)\\)")
     private val preposition = Regex("\\b(?:in|from|open|Open|In|From) ($WORD)(?=[.,;:)]|$| ›)")
     private val noun = Regex("\\b(?:the|The) ($WORD) (?:screen|list|sheet)\\b")

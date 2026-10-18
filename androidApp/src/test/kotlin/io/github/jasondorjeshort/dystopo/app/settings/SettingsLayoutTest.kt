@@ -55,6 +55,15 @@ class SettingsLayoutTest {
     }
 
     @Test
+    fun dataAndStorageNamesTheCacheBudget() {
+        // T115 (T112's follow-up): the group's line in the list says the total; the other groups' lines are as they were.
+        assertEquals("Sources (server, mobile data), offline areas, storage with a 1\u00A0GB cache budget", SettingsLayout.summary(SettingsGroup.DATA, 1024))
+        assertEquals("Sources (server, mobile data), offline areas, storage with a 128\u00A0GB cache budget", SettingsLayout.summary(SettingsGroup.DATA, 131072))
+        assertEquals(SettingsGroup.MAP.summary, SettingsLayout.summary(SettingsGroup.MAP, 1024))
+        assertTrue((groups().first()["summary"] as String).endsWith("cache budget"), "GET /settings/layout reports the line as drawn")
+    }
+
+    @Test
     fun groupsAndIds() {
         assertEquals(listOf("data", "map", "display", "navigation", "sync", "about"), groups().map { it["id"] })
         for (g in groups()) assertTrue(rows(g).isNotEmpty(), "group ${g["id"]} has no rows")

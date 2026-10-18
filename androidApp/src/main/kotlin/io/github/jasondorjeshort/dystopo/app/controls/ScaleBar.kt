@@ -3,7 +3,6 @@ package io.github.jasondorjeshort.dystopo.app.controls
 import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -20,11 +19,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -36,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.TopChips
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -111,6 +111,9 @@ object ScaleBarLayout {
     @Volatile var windowHeightPx = 0f
     @Volatile var density = 1f
 
+    /** T115: the bottom edge of the top-left column (search box, online indicator) the bar stays below, dp from the window top. */
+    @Volatile var topLeftBottomDp = 0f
+
     /**
      * T110: a hidden bar keeps no fit, bounds or drawn lengths, so nothing reads the last shown bar against a camera that
      * has moved since (`GET /scalebar`'s `readBack` did, T101); the next show fits and draws them again.
@@ -162,6 +165,8 @@ object ScaleBarLayout {
             "boundsPx" to b?.map { Math.round(it) },
             "bottomFromWindowBottomDp" to bottomDp?.let { round(it.toDouble(), 1) },
             "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "bottomCardsTopDp" to cards, // T106
+            "topLeftBottomDp" to topLeftBottomDp, // T115: the search box and the online indicator, from the window top
+            "topDp" to b?.let { round((it[1] / d).toDouble(), 1) }, // T115: the bar's top edge, from the window top
             // Clear: the bar's bottom edge is above the credit line, the route card, the track panels, the trip card and the update offer.
             "clear" to if (!visible || bottomDp == null) null else bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards,
         )
@@ -182,7 +187,9 @@ private data class ScaleView(val zoom: Double, val lat: Double, val units: Conto
 /**
  * T101: the scale bar, lower left on the map, above the credit line and above whatever bottom panel shows (the
  * route card, the track profile and waypoint panels: [BottomPanels]), so it moves up with them like the
- * recentre button on the right (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`).
+ * recentre button on the right (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`), but
+ * never up to the search box and the online indicator at the top left (T115: it hides when no room is left below them,
+ * `hiddenBecause: noRoomBelowTopLeft`, as the recentre button does below the top-right chips).
  * The length is [UnitFormat.scaleBar] at the camera's zoom and centre latitude in the units preference;
  * with [ScaleBarSettings.bothUnits] it is a two-sided ruler, the user's units above the line and the other
  * system below. Follows the camera during gestures (a camera-move listener) and the units, the night style
@@ -242,9 +249,13 @@ fun ScaleBar() {
         ScaleBarLayout.night = v.night
         ScaleBarLayout.bars = bars
     }
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.align(Alignment.BottomStart)
+    // T115 (T110's follow-up): the recentre button's rule on the left. A tall bottom panel (the route card with its
+    // directions open at font scale 2.0) pushed the bar up to about 70 px under the online indicator; it now never
+    // reaches up to the top-left column (the search box and the online indicator): with no room left it hides.
+    val topLeft = with(density) { maxOf(TopChips.searchBottom, TopChips.onlineBottomPx.toDp()) }
+    Layout(
+        content = { Column(
+            Modifier
                 .let { m -> if (floor > 0.dp) m.padding(start = 8.dp, bottom = floor + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, bottom = 32.dp) }
                 .onGloballyPositioned { c ->
                     val b = c.boundsInRoot()
@@ -277,9 +288,28 @@ fun ScaleBar() {
                 ScaleBarLayout.drawnPx = lens
             }
             if (other != null) BasicText(other.label, style = labelStyle)
+        } },
+        modifier = Modifier.fillMaxSize(),
+    ) { measurables, constraints ->
+        val bar = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
+        val top = constraints.maxHeight - bar.height // the bar's top edge (its padding is below and to its left)
+        val room = topLeft <= 0.dp || top >= (topLeft + TOP_LEFT_GAP).roundToPx()
+        ScaleBarLayout.topLeftBottomDp = topLeft.value
+        if (!room) ScaleBarLayout.hide(NO_ROOM_BELOW_TOP_LEFT)
+        else if (ScaleBarLayout.bars.isEmpty()) { // shown again by a layout pass alone: the fit hide() dropped comes back
+            ScaleBarLayout.zoom = v.zoom
+            ScaleBarLayout.lat = v.lat
+            ScaleBarLayout.bars = bars
         }
+        layout(constraints.maxWidth, constraints.maxHeight) { if (room) bar.place(0, top) }
     }
 }
+
+/** T115: why the bar is hidden when it would reach up to the top-left column (`GET /scalebar` `hiddenBecause`). */
+const val NO_ROOM_BELOW_TOP_LEFT = "noRoomBelowTopLeft"
+
+/** T115: the least room kept between the bar and the top-left column (the recentre button keeps 8 dp below the chips). */
+private val TOP_LEFT_GAP = 8.dp
 
 private fun read(m: MapLibreMap): ScaleView? {
     val c = m.cameraPosition
