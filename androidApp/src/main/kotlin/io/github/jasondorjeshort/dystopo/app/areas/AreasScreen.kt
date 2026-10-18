@@ -78,10 +78,7 @@ private val Teal = Color(0xFF00796B)
  */
 @Composable
 fun AreasOverlay() {
-    AreasSheet()
-    // T109: the open help pop-up, over every screen drawn before this one (all but Share and its scanner, which have
-    // no help icons). It belongs last in MainActivity's MapScreen; this file is the last of the overlays T109 owns.
-    io.github.jasondorjeshort.dystopo.app.help.HelpHost()
+    AreasSheet() // T115: the help pop-up ([io.github.jasondorjeshort.dystopo.app.help.HelpHost]) moved to the end of MainActivity's MapScreen
 }
 
 @Composable
@@ -207,10 +204,10 @@ internal fun corridorLine(lengthM: Double, bufferM: Double, units: ContourUnits)
 internal val AREAS_HELP: List<HelpText> = run {
     val show = { Areas.screenOpen = true }
     listOf(
-        HelpText("areas.offline", "Offline areas", "Offline areas (Settings > Data and storage, or Packs)", show = show) {
+        HelpText("areas.offline", "Offline areas", "Offline areas (${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.DATA_AND_STORAGE}, or Packs)", show = show) {
             "Offline areas keep part of the map on this phone for use with no signal. A pinned area stays until you " +
                 "unpin or remove it; an unpinned one is cleared first when space runs short. A region pack is never " +
-                "cleared and needs no pin. Pinned areas share a budget of ${AppSettings.pinnedCacheMb} MB, set in " +
+                "cleared and needs no pin. Pinned areas share a budget of ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(AppSettings.pinnedCacheMb)}, set in " +
                 "Storage; a download past it is refused."
         },
         HelpText("areas.corridor", "Corridors", "Offline areas, the line under the title", show = show) { units ->

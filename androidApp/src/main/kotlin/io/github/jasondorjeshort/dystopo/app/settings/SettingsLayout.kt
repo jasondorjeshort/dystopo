@@ -9,12 +9,12 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  * the first thing on the page; the first-run card's Settings link opens [DATA] at once.
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
-    DATA("data", "Data and storage", "Sources (server, mobile data), offline areas, storage"),
-    MAP("map", "Map options", "Hillshade, slope, contours, labels, layers, night, scale bar"),
-    DISPLAY("display", "Units and display", "Feet or metres, text size"),
-    NAVIGATION("navigation", "Navigation and tracking", "Route snap, GPS fix, off-route snooze"),
-    SYNC("sync", "Sync and sharing", "Sync status, sharing with a nearby phone"),
-    ABOUT("about", "About and advanced", "Version and updates, contour warm-up, credits"),
+    DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
+    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar"),
+    DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, GPS fix, off-route snooze"),
+    SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
+    ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, contour warm-up, credits"),
     ;
 
     companion object {
@@ -53,11 +53,23 @@ object SettingsLayout {
 
     fun rows(group: SettingsGroup): List<SettingsRow> = SettingsRow.entries.filter { it.group == group }
 
+    /**
+     * T115 (T112's follow-up): a group's line under its title in the list. Data and storage's names the cache budget's
+     * total ([cacheBudgetMb]), the one number on its page a user is most likely to look for.
+     */
+    fun summary(group: SettingsGroup, cacheBudgetMb: Long): String =
+        if (group == SettingsGroup.DATA) "${group.summary} with a ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(cacheBudgetMb)} cache budget" else group.summary
+
     /** `GET /settings/layout`: the groups in list order, each with its rows in page order, and what is open now. */
-    fun json(open: Boolean = false, group: SettingsGroup? = null, twoPane: Boolean? = null): Map<String, Any?> = linkedMapOf(
+    fun json(
+        open: Boolean = false,
+        group: SettingsGroup? = null,
+        twoPane: Boolean? = null,
+        cacheBudgetMb: Long = io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan.DEFAULT_MB,
+    ): Map<String, Any?> = linkedMapOf(
         "groups" to SettingsGroup.entries.map { g ->
             linkedMapOf(
-                "id" to g.id, "title" to g.title, "summary" to g.summary,
+                "id" to g.id, "title" to g.title, "summary" to summary(g, cacheBudgetMb), // T115: as the list draws it
                 "rows" to rows(g).map { r -> linkedMapOf("id" to r.id, "label" to r.label, "drawnBy" to r.drawnBy, "since" to r.since) },
             )
         },

@@ -72,15 +72,15 @@ fun DirectSourcesRows() {
  * text with it. The rows show only while no server is set ([needs]); `POST /help/open` opens Data and storage.
  */
 internal val DIRECT_SOURCES_HELP: List<HelpText> = run {
-    val place = "Settings > ${SettingsGroup.DATA.title} > ${Screens.SOURCES}"
+    val place = "${Screens.SETTINGS} › ${SettingsGroup.DATA.title} › ${Screens.SOURCES}" // T115: › as in messages
     val show = { SettingsUi.open(SettingsGroup.DATA) }
     listOf(
-        HelpText("direct.mobileData", "Mobile data", "$place > Mobile data", needs = "no server set", show = show) {
+        HelpText("direct.mobileData", "Mobile data", "$place › Mobile data", needs = "no server set", show = show) {
             "With no server set, the phone downloads map data from the public sources itself as you move the map. Use " +
                 "lets it do so over mobile data as well as Wi-Fi; Off downloads only on Wi-Fi. The limit per session " +
                 "caps how much it takes either way."
         },
-        HelpText("direct.sessionLimit", "Limit per session", "$place > Limit per session", needs = "no server set", show = show) {
+        HelpText("direct.sessionLimit", "Limit per session", "$place › Limit per session", needs = "no server set", show = show) {
             "The most map data the phone downloads from the public sources from opening the app until you close it. " +
                 "A first look at new ground can take 75 to 100 MB. At the limit the map says so and keeps what it has: " +
                 "download the area for offline use, or raise the limit."

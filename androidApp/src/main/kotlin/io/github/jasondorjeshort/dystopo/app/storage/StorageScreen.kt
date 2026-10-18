@@ -47,6 +47,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan
+import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -128,7 +131,7 @@ fun StorageScreen() {
                 @Suppress("UNCHECKED_CAST")
                 val choices = (i["budgetChoicesMb"] as List<Long>)
                 val totalBytes = ((budget?.get("totalMb") as? Number)?.toLong() ?: 0L) * BudgetPlan.MB
-                for ((key, s) in stores) StoreRow(key, s, choices, totalBytes, ::act)
+                for ((key, s) in stores) StoreRow(key, s, choices, totalBytes, (i["freeBytes"] as? Number)?.toLong() ?: 0L, ::act)
             }
             StorageUi.message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp)) }
         }
@@ -145,7 +148,10 @@ private fun BudgetSection(b: Map<String, Any?>, stores: Map<String, Map<String, 
     val used = kinds.sumOf { it.second }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText("Cache budget", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                BasicText("Cache budget", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                HelpIcon("storage.budget") // T115 (T109's follow-up)
+            }
             BasicText("${mb(used)} of ${size(totalMb)}", style = TextStyle(color = Ink, fontSize = 13.sp))
         }
         // One bar for the total: each kind's part in its colour, then what is left.
@@ -242,7 +248,7 @@ private fun budgetKinds(stores: Map<String, Map<String, Any?>>): List<Pair<Strin
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, totalBytes: Long, act: (String, () -> String) -> Unit) {
+private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, totalBytes: Long, freeBytes: Long, act: (String, () -> String) -> Unit) {
     val bytes = (s["bytes"] as? Number)?.toLong() ?: 0L
     val inBudget = s["inBudget"] == true
     val budget = (s["budgetMb"] as? Number)?.toLong()
@@ -252,7 +258,10 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
                 Box(Modifier.width(10.dp).height(10.dp).background(kindColor(key), RoundedCornerShape(2.dp)))
                 Spacer(Modifier.width(6.dp))
             }
-            BasicText(s["label"] as String, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(s["label"] as String, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium))
+                StoreHelp(key) // T115 (T109's follow-up)
+            }
             BasicText(
                 when {
                     inBudget -> mb(bytes) // T112: the share goes under the bar (it squeezed the label at font scale 2.0)
@@ -284,6 +293,13 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
         }
         holdsLine(key, s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
         olderLine(s)?.let { BasicText(it, style = TextStyle(color = Older, fontSize = 12.sp, fontWeight = FontWeight.Bold)) } // T95
+        // T115: the pinned budget now goes up to 1 TB, so say so when it is past what the phone has free, as the cache budget does.
+        if (key == Storage.PINNED && budget != null && budget * BudgetPlan.MB > freeBytes + bytes) {
+            BasicText(
+                "This is more than the free space (${mb(freeBytes)}): the phone fills up before the budget does.",
+                style = TextStyle(color = Older, fontSize = 12.sp, fontWeight = FontWeight.Bold),
+            )
+        }
         // T91: the chips wrap (a scrolling row clipped the 2 GB chip at the right edge).
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             // Clear first, so it is on screen whatever the budget chips take.
@@ -316,6 +332,57 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
     }
 }
 
+/** T115: the help icon of a store's row, by the key of its text in [STORAGE_HELP] (one literal key per row, as `HelpRegistryTest` reads them). */
+@Composable
+private fun StoreHelp(key: String) {
+    when (key) {
+        Storage.PACKS -> HelpIcon("storage.packs")
+        Storage.ONLINE -> HelpIcon("storage.online")
+        Storage.PINNED -> HelpIcon("storage.pinned")
+        Storage.DERIVED -> HelpIcon("storage.derived")
+        Storage.SOURCES -> HelpIcon("storage.sources")
+    }
+}
+
+/**
+ * T115 (T109's and T112's follow-up): the help pop-ups of the Storage screen, by the key each [HelpIcon] names: the cache
+ * budget's heading and each store's row; a row removed here takes its text with it. `POST /help/open` opens the screen.
+ */
+internal val STORAGE_HELP: List<HelpText> = run {
+    val show = { StorageUi.visible = true }
+    fun at(row: String) = "${Screens.SETTINGS} › ${Screens.DATA_AND_STORAGE} › ${Screens.STORAGE} › $row"
+    listOf(
+        HelpText("storage.budget", "Cache budget", at("Cache budget"), show = show) {
+            "One size limit for online tiles, contours and shading, and source data together. When they pass it, " +
+                "contours and shading go first (the phone can make them again), then what was used longest ago; never " +
+                "what is on the map or on the route ahead. A larger budget keeps more for use with no signal."
+        },
+        HelpText("storage.packs", "Packs", at("Packs"), show = show) {
+            "Region packs are maps you downloaded or imported whole: terrain, map data, trails for routes and places " +
+                "for search. They are never cleared to make room; remove one in the pack list."
+        },
+        HelpText("storage.online", "Online tiles", at("Online tiles"), show = show) {
+            "Map, terrain and label tiles downloaded while you looked at the map, from your server or the public " +
+                "sources. A place you visited shows again with no connection until the cache budget needs the room. " +
+                "Clear empties them; the map downloads them again when needed."
+        },
+        HelpText("storage.pinned", "Offline areas (pinned)", at("Offline areas (pinned)"), show = show) {
+            "The tiles of the areas you pinned in Offline areas, kept until you unpin or remove the area. They have " +
+                "their own budget, outside the cache budget: a download that would pass it is refused. Raise it here " +
+                "before you pin a long trip."
+        },
+        HelpText("storage.derived", "Contours and shading", at("Contours and shading"), show = show) {
+            "Contour lines and slope and relief shading the phone made from elevation data. They go first when the " +
+                "cache budget is full, since the phone can make them again; that takes a moment and some battery."
+        },
+        HelpText("storage.sources", "Source data (no server)", at("Source data (no server)"), show = show) {
+            "Elevation data this phone read from the public sources itself, with no server set, to draw terrain and " +
+                "contours. It is kept so the same places draw faster, and cleared like the other caches when the " +
+                "budget needs the room."
+        },
+    )
+}
+
 /** One line on what a store holds (pack count, the kinds of tiles). */
 private fun holdsLine(key: String, s: Map<String, Any?>): String? {
     if (key == Storage.PACKS) return "${s["count"]} installed; remove one in the pack list"
@@ -346,12 +413,8 @@ private fun mb(v: Any?): String {
     }
 }
 
-/** A budget in MB as the chips say it: whole GB where it is one, else MB. */
-private fun size(mb: Long): String = when {
-    mb >= 1024 && mb % 1024 == 0L -> "${mb / 1024} GB"
-    mb >= 1024 -> String.format(Locale.US, "%.1f GB", mb / 1024.0)
-    else -> "$mb MB"
-}
+/** A budget in MB as the chips say it ([Storage.sizeLabel]). */
+private fun size(mb: Long): String = Storage.sizeLabel(mb)
 
 private fun gbText(mb: Long): String = if (mb % 1024 == 0L) "${mb / 1024}" else String.format(Locale.US, "%.2f", mb / 1024.0).trimEnd('0').trimEnd('.')
 

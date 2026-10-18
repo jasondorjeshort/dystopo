@@ -169,6 +169,12 @@ object AppSettings {
     /** T112: the range a stored cap may have: the cache budget sets both caps to its total, up to 1 TB. */
     val CACHE_CAP_MB_RANGE = CACHE_MB_RANGE.first..io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan.RANGE_MB.last
 
+    /**
+     * T115 (T112's follow-up): the range of [pinnedCacheMb], up to the cache budget's 1 TB. It shared [CACHE_MB_RANGE]
+     * and stopped at 8 GB, below the Large preset (128 GB), so a phone with room for a long trip's areas could not pin them.
+     */
+    val PINNED_CACHE_MB_RANGE = CACHE_MB_RANGE.first..io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan.RANGE_MB.last
+
     /** Cap of the online tile cache (fetched DEM, OSM, glyphs and online contours), MB; T112: a ceiling under [cacheBudgetMb]. */
     @Volatile var onlineCacheMb: Long = DEFAULT_ONLINE_CACHE_MB
         private set
@@ -188,7 +194,7 @@ object AppSettings {
     private fun loadCaches(p: SharedPreferences) {
         onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
         contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
-        pinnedCacheMb = p.getLong(KEY_PINNED_CACHE_MB, DEFAULT_PINNED_CACHE_MB).coerceIn(CACHE_MB_RANGE)
+        pinnedCacheMb = p.getLong(KEY_PINNED_CACHE_MB, DEFAULT_PINNED_CACHE_MB).coerceIn(PINNED_CACHE_MB_RANGE) // T115
         val plan = io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan
         cacheBudgetMb = if (p.contains(KEY_CACHE_BUDGET_MB)) {
             p.getLong(KEY_CACHE_BUDGET_MB, plan.DEFAULT_MB).coerceIn(plan.RANGE_MB)
@@ -214,7 +220,7 @@ object AppSettings {
     private const val KEY_PINNED_CACHE_MB = "pinnedCacheMb"
     const val DEFAULT_PINNED_CACHE_MB = 2048L
 
-    /** T91: budget of the pinned tiles of offline areas (no longer counted in [onlineCacheMb]); a download that would pass it is refused, MB. */
+    /** T91: budget of the pinned tiles of offline areas (no longer counted in [onlineCacheMb]); a download that would pass it is refused, MB ([PINNED_CACHE_MB_RANGE]). */
     @Volatile var pinnedCacheMb: Long = DEFAULT_PINNED_CACHE_MB
         private set
 
