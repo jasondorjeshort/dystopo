@@ -9,7 +9,7 @@ promoted_to: docs/reference/android-online.md
 
 ## Question
 
-The post-wave 13 sweep on `main` at 91bd3cd (T88 merged) failed its device tour 9/10 in both runs:
+The post-wave 13 sweep on `main` at a90f16a (T88 merged) failed its device tour 9/10 in both runs:
 the first view, `region-z8` (`8/46.85/-121.72`, the Rainier DEM pack z8 to z14 and the OSM pack
 installed, debug build, a fresh API 35 emulator) drew 0 contour lines although contour tiles were
 served and generated. T87 fixed the same symptom before v0.1.5-alpha. What makes the z8 contour tiles

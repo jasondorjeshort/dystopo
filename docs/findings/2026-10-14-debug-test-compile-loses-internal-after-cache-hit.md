@@ -9,7 +9,7 @@ promoted_to: docs/reference/windows-and-shells.md
 
 ## Question
 
-The post-wave sweep of 2026-10-14 (`out\sweep-20261014-1730`, commit 957a807) failed its `check` part:
+The post-wave sweep of 2026-10-14 (`out\sweep-20261014-1730`, commit 53aabea) failed its `check` part:
 `:androidApp:compileDebugUnitTestKotlin` reported 40 "Unresolved reference" errors, every one an
 `internal` top-level function of `androidApp` main (`budgetError`, `aboutMb`, `corridorMaxZoom`,
 `peerSeenLine`, `shownJob`, `ago`, `offlineOfferText`, `refreshApplies`), while
@@ -20,7 +20,7 @@ build-cache outputs. Is the code at fault?
 ## What was tried
 
 - `javap` on the built debug and release classes: the declarations are there.
-- In the main checkout at 957a807: `./gradlew :androidApp:compileDebugUnitTestKotlin` failed at once
+- In the main checkout at 53aabea: `./gradlew :androidApp:compileDebugUnitTestKotlin` failed at once
   with the same 40 errors, `compileDebugKotlin`, `compileDebugJavaWithJavac` and
   `bundleDebugClassesToCompileJar` all UP-TO-DATE.
 - `./gradlew :androidApp:clean`, then `./gradlew :androidApp:compileDebugUnitTestKotlin --no-build-cache`:
@@ -29,7 +29,7 @@ build-cache outputs. Is the code at fault?
 - `gradle.properties` has `org.gradle.caching=true`; nothing sets `kotlin.incremental` or
   `-Xfriend-paths`; the Kotlin Gradle plugin and AGP wire main's classes into the test compile as the
   friend module on their own.
-- T105 (2026-10-14, Kotlin 2.2.0, AGP 8.13.2, Gradle 8.14.3): a fresh worktree at 049d39d (main), first
+- T105 (2026-10-14, Kotlin 2.2.0, AGP 8.13.2, Gradle 8.14.3): a fresh worktree at 9dd5e86 (main), first
   build `:androidApp:compileDebugUnitTestKotlin`: `compileDebugKotlin FROM-CACHE`, then the test compile
   FAILED with the same errors. The restored `build/tmp/kotlin-classes/debug/META-INF/androidApp_debug.kotlin_module`
   was 145 bytes and listed two file facades, `TileServiceKt` and `DirectSourcesKt` (the two files T98

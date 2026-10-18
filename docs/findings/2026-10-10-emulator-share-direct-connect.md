@@ -16,7 +16,7 @@ on one host connect directly?
 
 Two emulators on one host share a virtual Wi-Fi network (`wlan0`, 10.0.2.18, 10.0.2.20, ...), so NSD
 discovery works. A direct connect to the peer's `10.0.2.x:8841` worked for the T54 implementer and
-failed for its verifier on the same host (commit `1b0aedf`, 2026-10-10). T78's verifier then saw two of
+failed for its verifier on the same host (commit `32aeda9`, 2026-10-10). T78's verifier then saw two of
 its three emulators never get a Wi-Fi carrier, and its peer downloads through the host (an `adb forward`
 reached at 10.0.2.2) arrived with every 4 MiB reply shorter than its Content-Length.
 

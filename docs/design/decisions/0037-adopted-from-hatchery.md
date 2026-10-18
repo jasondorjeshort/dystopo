@@ -24,7 +24,7 @@ base's working agreement split into ten files under `.claude/agreement/` that a 
 its `CLAUDE.md` or replaces one by one under `.claude/project/`. Its ADR 0017 lists queue directories
 on demand (`queue-list.js`, the README marker, the post-edit switch); its ADR 0018 scans every push for
 personal data (`privacy-scan.js` behind the guard's rule 20, a pre-push hook, the pusher). Both
-histories were rewritten on 2026-10-17, so the base line `c50b0da` was re-recorded as `987265c`
+histories were rewritten on 2026-10-17, so the base line `987265c` was re-recorded as `987265c`
 through the rewrite kit's commit map before the diff could be taken.
 
 This project's `CLAUDE.md` carries none of the base's rule text (ADR 0020): every one of the ten

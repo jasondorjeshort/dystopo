@@ -20,6 +20,6 @@ from the main checkout. The substring matched all of them.
 ## Result
 
 Every other agent's emulator and the coordinator's live server were killed at once. Rule since
-2026-10-10 (commit `b32a028`): record the PIDs of the servers and emulators you start and stop exactly
+2026-10-10 (commit `d1cb5c4`): record the PIDs of the servers and emulators you start and stop exactly
 those, by PID or by emulator serial (`adb -s emulator-NNNN emu kill`); never match by name or
 substring. `tools/sweep.ps1` stops its servers by PID and refuses the ports and console others use.

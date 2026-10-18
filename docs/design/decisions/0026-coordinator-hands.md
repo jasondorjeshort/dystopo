@@ -3,9 +3,9 @@
 Date: 2026-10-12
 Status: accepted (owner's rule)
 
-Record: commit `f16cd33` ("Rule: the coordinator's own hands; everything that runs the project is
+Record: commit `99a84e5` ("Rule: the coordinator's own hands; everything that runs the project is
 delegated"), the first bullet of "Coordinating a wave" in `CLAUDE.md`; carried to Hatchery the same
-day (its `CLAUDE.md` Delegation section, commit `0ce6670`).
+day (its `CLAUDE.md` Delegation section, commit `89f63c8`).
 
 ## Context
 

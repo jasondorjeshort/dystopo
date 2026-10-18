@@ -16,13 +16,13 @@ After a merge attempt in wave 3 or 4, a pull request was closed and unmerged. Wh
 The coordinator's merge sequence merged with `gh pr merge <n> --squash` and then deleted the task
 branch. The branch was deleted although the merge had not succeeded; GitHub closes a pull request
 whose head branch is deleted. The same rule text records that PowerShell 5.1 splits arguments on
-double quotes, which is why merge bodies are quote-free (the commit, `0e54827`, does not say whether
+double quotes, which is why merge bodies are quote-free (the commit, `4a3a399`, does not say whether
 that was the failure that day).
 
 ## Result
 
 Recovered by recreating the branch at the recorded SHA and `gh pr reopen <n>`. Rule since 2026-10-09
-(commit `0e54827`): only on a successful merge delete the remote branch, then fast-forward `main`,
+(commit `4a3a399`): only on a successful merge delete the remote branch, then fast-forward `main`,
 remove the worktree and delete local branches. Since T84 the git guard enforces it: a `task/*` branch,
 remote or local, is deleted only when `gh pr list --head <branch> --state merged` shows its pull
 request merged (ADR 0021). Sent to the Hatchery base as part of proposal 0005 there.
