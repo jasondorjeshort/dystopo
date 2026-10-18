@@ -68,6 +68,7 @@ import kotlin.math.cos
  *   T102: the route's turn directions are in `route.instructions` (type, priority, distance along, way, turn,
  *   lead distance, the stretch after it) and, as text with the stretch each one starts, in `directions`
  *   (in `--units`, ft by default as for the render; every priority, the default level's count in `shown`).
+ *   T116: the texts carry the default level's "then" cues ([Directions.cued]; `thenCues` counts them).
  *   T108: `trip` follows the route as a phone keeps it: saved as a trip with its directions (the phone's Keep) in one
  *   store, synced as a sync bundle (encoded, gzipped, decoded) into a second store with no graph (the stores
  *   `sync-sim --store sql` uses: SqlTrackStore over in-memory SQLite) and loaded there; `same` says the directions
@@ -136,11 +137,14 @@ class RouteCommand : CliktCommand(name = "route") {
                 val plan = result.plan
                 report["route"] = plan.json()
                 // T102: the directions as text, each with the stretch it starts (P1 major, P2 normal, P3 minor).
+                // T116: with the default level's "then" cues, as the phone's lists say them (Directions.cued).
                 val u = if (style.units == "ft") ContourUnits.FEET else ContourUnits.METERS // the render's --units
+                val cued = Directions.cued(plan.instructions)
                 report["directions"] = linkedMapOf(
                     "count" to plan.instructions.size, "shown" to Directions.shown(plan.instructions).size,
                     "byPriority" to plan.instructions.groupingBy { "P${it.priority}" }.eachCount().toSortedMap(),
-                    "text" to plan.instructions.map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, u)})" else "" },
+                    "thenCues" to cued.count { it.then != null },
+                    "text" to cued.map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, u)})" else "" },
                 )
                 report["trip"] = timings.time("trip") { TripCheck.run(plan, u) } // T108
                 // Drawn as a track: a solid line with direction chevrons, start ring, end square and the elevation profile.
@@ -225,8 +229,8 @@ internal object TripCheck {
         val applied = other.apply(Bundle.decode(Gzip.decompress(wire)), now)
         val loaded = other.routePlan(plan.route.id)
         val list = loaded?.savedDirections
-        fun text(l: List<io.github.jasondorjeshort.dystopo.routing.Instruction>) =
-            l.map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, units)})" else "" }
+        fun text(l: List<io.github.jasondorjeshort.dystopo.routing.Instruction>) = // T116: with their "then" cues, as `directions` lists them
+            Directions.cued(l).map { "P${it.priority} ${DirectionsText.of(it, plan.mode)}" + if (it.stretchM > 0) " (${UnitFormat.distance(it.stretchM, units)})" else "" }
         val field = RouteDirections.encode(saved)
         return linkedMapOf(
             "id" to plan.route.id, "savedCount" to saved.list.size, "loadedCount" to list?.size,

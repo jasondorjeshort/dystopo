@@ -62,6 +62,9 @@ fun interface JunctionSource {
  * continues on ([name], else [wayClass]; [sameWay] when the turn keeps to the way already followed), the signed turn
  * ([turnDeg], positive right) and the heading after it ([bearingDeg]), when to announce it ([leadM] before it), and how
  * far the route then runs to the next instruction ([stretchM]). [via]: the via point's index for [Maneuver.VIA].
+ * T116: [then], the "then" cue: the next instruction shown when it comes too soon to be announced on its own
+ * ([Directions.cued]); derived from the list, never stored ([io.github.jasondorjeshort.dystopo.model.RouteDirections]
+ * keeps no cue, and a list read back gets its cues again from [Directions.shown]).
  */
 data class Instruction(
     val type: Maneuver,
@@ -77,6 +80,7 @@ data class Instruction(
     val leadM: Double = 0.0,
     val stretchM: Double = 0.0,
     val via: Int? = null,
+    val then: Instruction? = null,
 ) {
     /** What the way is called in the text: its name (OSM name, else route name, else ref), else its class ([Directions.classWord]). */
     val label: String get() = name ?: Directions.classWord(wayClass)
@@ -86,6 +90,7 @@ data class Instruction(
         "alongM" to r1(alongM), "lat" to r6(lat), "lon" to r6(lon),
         "name" to name, "class" to wayClass?.label, "sameWay" to sameWay.takeIf { it },
         "turnDeg" to turnDeg, "bearingDeg" to bearingDeg, "leadM" to r1(leadM), "stretchM" to r1(stretchM), "via" to via,
+        "then" to then?.type?.code, // T116: the cue's manoeuvre (its words are in `text`)
     )
 
     companion object {
@@ -138,6 +143,10 @@ data class Instruction(
  *   the class ([classWord]).
  * - **Lead distance** by mode and speed ([leadM]): tens of metres on foot, hundreds on a bike, up to two miles in a car
  *   at the approach road's speed; never further back than the previous instruction.
+ * - **"Then" cues** (T116, [cued]): where the next instruction shown follows within its own lead distance (its
+ *   announcement would have to start before this one is passed: about 20 s on foot or a bike, 45 s in a car), this
+ *   one also says what comes next: "Head south on the service road, then turn right". The cue is worked out from the
+ *   list at the detail level shown ([shown] sets it), so saved directions and the server's carry no field for it.
  *
  * Depart and arrive frame every list; a trip's via points are [Maneuver.VIA], a straight leg starts with
  * [Maneuver.OFF_NETWORK] ([ofPath]). Text: [DirectionsText]; a voice formatter would read the same fields.
@@ -236,10 +245,39 @@ object Directions {
     fun compass(deg: Double): String = WORDS[(((deg % 360 + 360) % 360 + 22.5) / 45).toInt() % 8]
     private val WORDS = listOf("north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest")
 
-    /** The instructions shown at detail [level] (priority up to it), each [Instruction.stretchM] running to the next one shown. */
+    /**
+     * The instructions shown at detail [level] (priority up to it), each [Instruction.stretchM] running to the next one
+     * shown, and each with its "then" cue ([cued]).
+     */
     fun shown(list: List<Instruction>, level: Int = DEFAULT_LEVEL): List<Instruction> {
-        val s = list.filter { it.priority <= level }
+        val s = cued(list, level).filter { it.priority <= level }
         return s.mapIndexed { k, i -> i.copy(stretchM = if (k + 1 < s.size) s[k + 1].alongM - i.alongM else 0.0) }
+    }
+
+    /** How much shorter than the gap a lead may be and still count as reaching back to it: the saved field's decimetres. */
+    const val THEN_SLACK_M = 0.5
+
+    /**
+     * T116: [list] with its "then" cues at detail [level]: an instruction shown there gets the next one shown
+     * ([Instruction.then], without a cue of its own) when that one's lead reaches back to it, that is when its lead
+     * distance ([leadM], capped at the gap to the instruction before it) is the whole gap: its announcement would
+     * have to start before this one is passed, so both are said together, as navigation apps say "then". A
+     * continue (a new name, nothing to do) is no cue. Every other instruction loses any cue it had. The list keeps
+     * its order, priorities and distances; only the text changes ([DirectionsText.of]).
+     */
+    fun cued(list: List<Instruction>, level: Int = DEFAULT_LEVEL): List<Instruction> {
+        val out = ArrayList<Instruction>(list.size)
+        var next: Instruction? = null // the next one at the level, after the current index
+        for (k in list.indices.reversed()) {
+            val i = list[k]
+            if (i.priority > level) { out += if (i.then == null) i else i.copy(then = null); continue }
+            val n = next
+            val cue = n?.takeIf { it.type != Maneuver.CONTINUE && it.type != Maneuver.DEPART && it.alongM - i.alongM <= it.leadM + THEN_SLACK_M }
+            out += if (cue == i.then) i else i.copy(then = cue)
+            next = if (i.then == null) i else i.copy(then = null)
+        }
+        out.reverse()
+        return out
     }
 
     /**
@@ -526,10 +564,36 @@ object Directions {
 
 /**
  * T102: the English text of an [Instruction] (text first; a voice formatter can read the same fields later). No
- * distances here: [withDistance] puts one in front, in the user's units through [UnitFormat.distance].
+ * distances here: [withDistance] puts one in front, in the user's units through [UnitFormat.distance]. T116: an
+ * instruction with a "then" cue ([Instruction.then]) ends with the next manoeuvre in a few words ([cue]): "Turn left
+ * onto Stevens Canyon Road, then turn right"; the next line names the way.
  */
 object DirectionsText {
     fun of(i: Instruction, mode: TravelMode): String {
+        val text = plain(i, mode)
+        val next = i.then ?: return text
+        return "$text, then ${cue(next, mode)}"
+    }
+
+    /**
+     * T116: the cue's words for [next]: its manoeuvre without the way ("turn right", "keep left", "turn around",
+     * "pass via point 2", "head north off the trails", "arrive").
+     */
+    fun cue(next: Instruction, mode: TravelMode): String = when (next.type) {
+        Maneuver.SLIGHT_LEFT -> "bear left"
+        Maneuver.SLIGHT_RIGHT -> "bear right"
+        Maneuver.LEFT -> "turn left"
+        Maneuver.RIGHT -> "turn right"
+        Maneuver.SHARP_LEFT -> "turn sharp left"
+        Maneuver.SHARP_RIGHT -> "turn sharp right"
+        Maneuver.KEEP_LEFT -> "keep left"
+        Maneuver.KEEP_RIGHT -> "keep right"
+        Maneuver.U_TURN -> "turn around"
+        Maneuver.ARRIVE -> "arrive"
+        Maneuver.DEPART, Maneuver.CONTINUE, Maneuver.VIA, Maneuver.OFF_NETWORK -> plain(next, mode).replaceFirstChar { it.lowercase() }
+    }
+
+    private fun plain(i: Instruction, mode: TravelMode): String {
         val onto = if (i.sameWay) "to stay on ${i.label}" else "onto ${i.label}"
         return when (i.type) {
             Maneuver.DEPART -> if (i.name == null && i.wayClass == null) "Head ${Directions.compass(i.bearingDeg.toDouble())}"
