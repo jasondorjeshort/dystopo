@@ -1,9 +1,6 @@
 ---
 date: 2026-10-13
 kind: feature
-status: new
-pipeline: none
-related: [2026-10-13-no-other-product-names.md]
 ---
 
 # Import, export and sync with outside services

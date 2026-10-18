@@ -1,9 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-status: planned
-pipeline: T114 (wave 16) builds the destination-first flow with the fix as the origin; the stops list, reroute and passed-waypoint rules stay here, open
-related: [2026-10-13-turn-directions.md, 2026-10-13-cannot-create-waypoints-android.md, 2026-10-13-routing-modes-crow-bushwhack.md]
+related: [2026-10-13-routing-modes-crow-bushwhack.md, 2026-10-13-spoken-directions-and-detail-levels.md]
 ---
 
 # "Route to": a destination, waypoints, reroute, in every mode
@@ -53,3 +51,15 @@ apps (finding `docs/findings/2026-10-17-route-to-flows-in-other-apps.md`). What 
   and what to do offline (graph tiles on the phone: ADR 0028 covers long distances).
 - Passed-waypoint rule (distance and direction), and skipped ones.
 - Shares the router and nav session with turn directions; the two should be planned together.
+
+Question: T114 takes the route-to part in wave 16 (destination first, the origin the phone's fix,
+the two-point flow kept as a secondary action) and defers by name what this file keeps open: the
+list of stops (ordered, reorderable, a mode per leg), the reroute policy (how long off route before
+replanning, when to rejoin the old line instead, offline; with it the "Go" rule for a route that
+does not start at the fix and a replan when a fresh fix lands far from a stale one), the passed- and
+skipped-waypoint rule, and where a stop added mid-trip goes. Do these come next as one proposal
+after T114 has merged, or one at a time? Recommendation: one proposal with a critic once T114 is
+in, because a plan of stops beside a frozen route changes the route format phones sync (a flag on
+the saved route), and reroute and passed stops share the router and the nav session with turn
+directions, which this file says to plan together.
+Answer:
