@@ -14,8 +14,10 @@ distance, so neither piece below needs a format change.
 - Voice: an option to speak the directions, off by default.
 - Detail level (owner, 2026-10-13, "much later wave"): a setting for how many directions are given,
   perhaps three levels (few: only real forks and road changes; normal; many: every junction and name
-  change), filtering on the priority.
-- Cues beyond turns ("steep climb ahead") are later.
+  change), filtering on the priority. The filter is built: `Directions.kt` takes a `level` and
+  `/nav/directions` uses the default (priorities 1 and 2); only the user setting is missing.
+- Cues beyond turns ("steep climb ahead") are later; "then" cues already exist in the written
+  directions (T116).
 
 ## Open
 
@@ -23,5 +25,5 @@ distance, so neither piece below needs a format change.
   cost and the screen-off case (the battery idea).
 - Testable through the existing replay (`POST /location/replay`) and the `/nav/status` events.
 
-Question: build the voice option now, and with what wording? `Directions.kt` already carries type, priority and lead distance, so speaking them through the platform text-to-speech engine (off by default, tested by `POST /location/replay` and `/nav/status`) fits one pass with no format change; the setting's label, where it sits and the screen-off behaviour are yours. Recommendation: one pass for voice, off by default, speaking priority 1 and 2 as the screen shows, with its setting text proposed in the PR for your sign-off; the detail-level setting stays for the much later wave you named, and cues beyond turns after it.
+Question: build the voice option now, and with what wording? `Directions.kt` already carries type, priority and lead distance, so speaking them through the platform text-to-speech engine (off by default, tested by `POST /location/replay` and `/nav/status`) fits one pass with no format change; the setting's label, where it sits and the screen-off behaviour are yours. Recommendation: one pass for voice, off by default, speaking priority 1 and 2 as the screen shows, with its setting text proposed in the PR for your sign-off; the detail-level setting (only its UI is left, the filter exists) stays for the much later wave you named, and cues beyond turns after it.
 Answer:

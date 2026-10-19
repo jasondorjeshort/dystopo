@@ -13,19 +13,21 @@ Broader ways to pick what to keep offline than the box or corridor we have now:
 - a region the user draws;
 - a distance around a point, or around a route (a corridor with a configurable buffer).
 
-Today (T75, ADR 0027): an area of interest is a box or a route corridor with a buffer and a zoom
-range, expanded to a manifest of files; the Offline areas sheet starts box downloads and corridor
-downloads. No boundary-based or drawn areas.
+Today (T75, ADR 0027, pinning amended by ADR 0030): an area of interest is a box or a route
+corridor with a buffer and a zoom range (`AreaShape` in `AreaOfInterest.kt` has only `Box` and
+`Corridor`), expanded to a manifest of files; the Offline areas sheet starts box downloads and
+corridor downloads. No boundary-based or drawn areas.
 
 ## Open
 
 - Boundary data: administrative and park boundaries need a licensed source (OSM boundaries are
-  already in the vector tiles; check what the outdoors profile keeps) and an entry in
+  in the vector tiles, but `tilebuild/PROFILE.md` keeps only country and state lines, admin_level
+  2 and 4, as lines rather than polygons; no county or park areas) and an entry in
   `sources.json` first. Search by name could reuse the search index.
 - Area shape: a polygon in the manifest rather than a box; tile selection by polygon with a
   buffer; size estimate shown before starting (bytes and time).
 - Whole states are large: the zoom range and a size confirmation matter; this ties to the cache
   budgets and the pinned-area budget.
 
-Question: which shapes, in what order? Administrative and park boundaries need a licensed boundary source and a registry entry first; a drawn region, or a distance around a point, needs only a polygon in the area manifest, which changes a format phones read (ADR 0027), so either goes through a proposal. Recommendation: one proposal that adds a polygon area to the manifest and builds the drawn region and the distance around a point first (no new data source), with the boundary search (county, state, park) a later step once the outdoors profile's boundary layers are checked; the size estimate before starting is common to all.
+Question: which shapes, in what order? Administrative and park boundaries need a licensed boundary source and a registry entry first; a drawn region, or a distance around a point, needs only a polygon in the area manifest, which changes a format phones read (ADR 0027), so either goes through a proposal. Recommendation: one proposal that adds a polygon area to the manifest and builds the drawn region and the distance around a point first (no new data source), with the boundary search (county, state, park) a later step, since the outdoors profile keeps no county or park polygons today; the size estimate before starting is common to all.
 Answer:
