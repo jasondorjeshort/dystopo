@@ -28,3 +28,6 @@ integrations.
   HTTP API ourselves needs none.
 - These integrations must name the services they connect to, an exception to the
   no-other-product-names idea.
+
+Question: which service first, if any? Each is its own integration with an account, a client registration whose secret stays out of the repo, terms of use and a per-upload confirmation, and each names an outside service. Recommendation: OpenStreetMap trace upload first (a documented open API, no client library, and it helps the map the app draws), as its own idea and proposal; the cloud drive is mostly covered today by GPX through the system file picker and share sheet, so it waits until you find that lacking; route and fitness services after.
+Answer:
