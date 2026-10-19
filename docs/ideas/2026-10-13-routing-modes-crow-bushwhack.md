@@ -33,3 +33,6 @@ Today the router is graph-only; a point not near a trail gets no route (except a
 - This changes the router and the route format (edges that are not on the graph), so it is a
   proposal and critic before it is built. A trip in a new mode reaches a T108 build as a mode it
   does not know: shown under its name, followed, not edited (ADR 0033 Decision 3).
+
+Question: the crow mode is built (T108); does bushwhacking come next, and when? It changes the router and the route format (edges off the graph), so this file already says proposal and critic first, and the off-trail safety wording is yours. Recommendation: hold it until the route-to stops and reroute proposal (`2026-10-13-route-waypoints-and-reroute.md`) is decided, since both change the route format phones sync and should land in one version step; then a proposal for the grid A* cost model.
+Answer:
