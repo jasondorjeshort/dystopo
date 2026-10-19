@@ -26,3 +26,6 @@ downloads. No boundary-based or drawn areas.
   buffer; size estimate shown before starting (bytes and time).
 - Whole states are large: the zoom range and a size confirmation matter; this ties to the cache
   budgets and the pinned-area budget.
+
+Question: which shapes, in what order? Administrative and park boundaries need a licensed boundary source and a registry entry first; a drawn region, or a distance around a point, needs only a polygon in the area manifest, which changes a format phones read (ADR 0027), so either goes through a proposal. Recommendation: one proposal that adds a polygon area to the manifest and builds the drawn region and the distance around a point first (no new data source), with the boundary search (county, state, park) a later step once the outdoors profile's boundary layers are checked; the size estimate before starting is common to all.
+Answer:
