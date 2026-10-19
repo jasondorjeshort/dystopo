@@ -22,3 +22,6 @@ distance, so neither piece below needs a format change.
 - Voice: the platform text-to-speech engine, an offline-capable voice, ducking audio; the battery
   cost and the screen-off case (the battery idea).
 - Testable through the existing replay (`POST /location/replay`) and the `/nav/status` events.
+
+Question: build the voice option now, and with what wording? `Directions.kt` already carries type, priority and lead distance, so speaking them through the platform text-to-speech engine (off by default, tested by `POST /location/replay` and `/nav/status`) fits one pass with no format change; the setting's label, where it sits and the screen-off behaviour are yours. Recommendation: one pass for voice, off by default, speaking priority 1 and 2 as the screen shows, with its setting text proposed in the PR for your sign-off; the detail-level setting stays for the much later wave you named, and cues beyond turns after it.
+Answer:
