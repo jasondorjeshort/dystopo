@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +32,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
@@ -60,6 +64,20 @@ fun NavOverlay() {
         SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp }
         return
     }
+    // T122: the card's type is large already (28 sp numbers); at the system's font scale 2.0 the card with the off-route
+    // banner covered the whole screen, so it follows the font scale up to NAV_MAX_FONT_SCALE, as the map chips cap theirs.
+    val sys = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides if (sys.fontScale <= NAV_MAX_FONT_SCALE) sys else Density(sys.density, NAV_MAX_FONT_SCALE)) {
+        NavCard(u, chips)
+    }
+}
+
+/** T122: the font scale the navigation card follows at most (the map chips stop at 1.3, `TopChips.MAX_FONT_SCALE`). */
+const val NAV_MAX_FONT_SCALE = 1.5f
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -115,7 +133,7 @@ fun NavOverlay() {
                         BasicText(u.rejoin, style = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold))
                         // T65: silence the alert for a while, or until back on the route.
                         if (u.offRoute && u.snoozed == null) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) { // T122: each action whole, wrapping
                                 Action("Snooze ${io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin} min", Color.White) { NavSession.snooze(io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin.toDouble()) } // T91: a setting
                                 Action("Quiet until back", Color.White) { NavSession.snooze(null) }
                             }
@@ -185,14 +203,19 @@ internal val NAV_HELP: List<HelpText> = listOf(
     },
 )
 
+/**
+ * One line of numbers: "Next 1.2 mi 0:24 Name", "End 51.0 mi 1:49 (11:46)". T122: the parts wrap whole onto the next line
+ * when they do not fit (font scale 2.0), where the time used to break inside itself and sit above the distance.
+ */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun Stat(label: String, name: String?, distance: String, time: String) {
-    Row(verticalAlignment = Alignment.Bottom) {
-        BasicText(label, style = TextStyle(color = Purple, fontSize = 15.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(end = 8.dp, bottom = 3.dp))
-        BasicText(distance, style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold))
-        BasicText("  $time", style = TextStyle(color = Ink, fontSize = 22.sp), modifier = Modifier.padding(bottom = 1.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.Bottom) {
+        BasicText(label, style = TextStyle(color = Purple, fontSize = 15.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(bottom = 3.dp))
+        BasicText(distance, softWrap = false, style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold))
+        if (time.isNotBlank()) BasicText(time.trim(), softWrap = false, style = TextStyle(color = Ink, fontSize = 22.sp), modifier = Modifier.padding(bottom = 1.dp))
         if (name != null) {
-            BasicText("  $name", maxLines = 1, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
+            BasicText(name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
         }
     }
 }
@@ -250,6 +273,7 @@ private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
     BasicText(
         text,
         style = TextStyle(color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold),
+        softWrap = false, // T122: "Quiet until back" broke a letter or two per line at font scale 2.0
         modifier = Modifier.clickable(onClick = onClick).padding(vertical = 6.dp),
     )
 }

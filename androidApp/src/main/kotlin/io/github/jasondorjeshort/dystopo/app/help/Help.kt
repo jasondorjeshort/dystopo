@@ -118,7 +118,8 @@ object HelpUi {
     @Volatile var popup: Map<String, Any?>? = null
         internal set
 
-    @Volatile var opened = 0
+    /** Opens so far; Compose state (T122: an icon scrolls itself into view again on each open of its key). */
+    var opened by mutableStateOf(0)
         private set
 
     fun open(key: String) {
@@ -131,4 +132,16 @@ object HelpUi {
         openKey = null
         popup = null
     }
+
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    /**
+     * T122: closes [key]'s pop-up unless its icon is composed again within [BACK_MS] (main thread): a lazy list disposes
+     * a row and composes it again while it scrolls, and the pop-up opened for that row used to close on the way.
+     */
+    fun closeUnlessBack(key: String) {
+        main.postDelayed({ if (openKey == key && key !in anchors) close() }, BACK_MS)
+    }
+
+    const val BACK_MS = 300L
 }

@@ -82,11 +82,13 @@ fun HelpIcon(key: String, modifier: Modifier = Modifier) {
     val target = maxOf(MIN_TARGET, icon + TARGET_PAD)
     val open = HelpUi.openKey == key
     val requester = remember { BringIntoViewRequester() }
-    LaunchedEffect(open) { if (open) runCatching { requester.bringIntoView() } }
+    LaunchedEffect(open, if (open) HelpUi.opened else -1) { if (open) runCatching { requester.bringIntoView() } } // T122: again on a reopen
     DisposableEffect(key) {
         onDispose {
             HelpUi.anchors.remove(key)
-            if (HelpUi.openKey == key) HelpUi.close() // its screen closed: no pop-up left over another one
+            // Its screen closed: no pop-up left over another one. T122: unless the icon comes straight back, as a lazy
+            // list's row does while it scrolls itself into view (the Storage rows lost their pop-up that way at 1.0).
+            if (HelpUi.openKey == key) HelpUi.closeUnlessBack(key)
         }
     }
     Box(
@@ -130,7 +132,11 @@ fun HelpHost() {
     val anchorWin = HelpUi.anchors[key]
     BackHandler { HelpUi.close() }
     var origin by remember { mutableStateOf(IntOffset.Zero) }
+    var windowH by remember { mutableStateOf(0) }
+    // T122: an icon laid out outside the window (a row still scrolling into view) counts as none: the pop-up waits in the
+    // middle rather than above an icon below the screen, and moves beside it once it is in view.
     val anchor = anchorWin?.let { PxRect(it.left - origin.x, it.top - origin.y, it.right - origin.x, it.bottom - origin.y) }
+        ?.takeIf { a -> windowH == 0 || (a.top >= 0 && a.bottom <= windowH) }
     val density = LocalDensity.current
     Box(
         Modifier.fillMaxSize()
@@ -138,6 +144,7 @@ fun HelpHost() {
                 val p = c.positionInWindow()
                 val o = IntOffset(p.x.roundToInt(), p.y.roundToInt())
                 if (o != origin) origin = o
+                if (c.size.height != windowH) windowH = c.size.height
             }
             .background(Scrim)
             .pointerInput(Unit) { detectTapGestures { HelpUi.close() } },
@@ -189,7 +196,7 @@ fun HelpHost() {
                 "textFits" to (need <= bubble.height),
                 "coversIcon" to (anchor != null && PxRect(x, y, x + bubbleW, y + bubble.height).overlaps(anchor)),
                 "fontScale" to fontScale,
-                "textScale" to place.textScale, // T122: the text scale the pop-up drew at (at most fontScale)
+                "textScale" to (place.textScale * 100).roundToInt() / 100.0, // T122: the text scale the pop-up drew at (at most fontScale)
             )
             layout(w, h) {
                 bubble.place(x, y)

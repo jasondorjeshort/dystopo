@@ -34,11 +34,18 @@ object HelpRoutes {
         "GET" to "/help" -> list(r)
         "POST" to "/help/open" -> open(app, r)
         "POST" to "/help/close" -> {
+            val icons = HelpUi.anchors.keys.toSet()
             val closed = app.map.onMain {
                 HelpUi.close()
                 val shown = opened
                 opened = null
                 shown?.let { (before, names) -> HelpScreens.close(before, names, HelpScreens.now()) } ?: emptyList()
+            }
+            // T122: answer once the closed screens have left (their icons gone), so a `/help/open` right after does not
+            // find an icon of a closing screen, open its pop-up and lose it a frame later (the Storage rows did).
+            if (closed.isNotEmpty()) {
+                val until = System.currentTimeMillis() + 1000
+                while (HelpUi.anchors.keys.containsAll(icons) && System.currentTimeMillis() < until) Thread.sleep(30)
             }
             Response.json(mapOf("open" to null, "closed" to closed))
         }
@@ -71,16 +78,27 @@ object HelpRoutes {
         if (key !in HelpUi.anchors) {
             return Response.json(mapOf("error" to "the icon of '$key' is not on screen", "placed" to help.placed, "needs" to help.needs), 409)
         }
-        app.map.onMain { HelpUi.open(key) }
-        // Wait for the icon to scroll into view and the pop-up to be laid out beside it, then for one more frame.
-        val laid = System.currentTimeMillis() + 3000
-        var last: Any? = null
-        var steady = 0
-        while (System.currentTimeMillis() < laid && steady < 4) {
-            Thread.sleep(80)
-            val now = HelpUi.popup?.get("boundsPx") to HelpUi.anchors[key]
-            steady = if (HelpUi.popup != null && now == last) steady + 1 else 0
-            last = now
+        // T122: a screen that rebuilds its rows (Storage, while it measures) can take the icon away for a moment, and its
+        // pop-up waits in the middle or closes; once the icon is back the pop-up is opened again (twice at most).
+        for (attempt in 0..2) {
+            app.map.onMain { HelpUi.open(key) }
+            // Wait for the icon to scroll into view and the pop-up to be laid out beside it, then for one more frame.
+            val laid = System.currentTimeMillis() + 3000
+            var last: Any? = null
+            var steady = 0
+            while (System.currentTimeMillis() < laid && steady < 4) {
+                Thread.sleep(80)
+                val now = HelpUi.popup?.get("boundsPx") to HelpUi.anchors[key]
+                steady = if (HelpUi.popup != null && HelpUi.anchors[key] != null && now == last) steady + 1 else 0
+                last = now
+            }
+            // Beside its icon: done. Else ("centre": the icon was gone, or below the window, when the layout settled; or the
+            // pop-up closed with it) wait for the icon and open again, which also scrolls it into view again.
+            val p = HelpUi.popup
+            if (HelpUi.openKey == key && p != null && p["side"] != "centre") break
+            val back = System.currentTimeMillis() + 3000
+            while (key !in HelpUi.anchors && System.currentTimeMillis() < back) Thread.sleep(50)
+            if (key !in HelpUi.anchors) break
         }
         return Response.json(
             linkedMapOf(
