@@ -2,7 +2,7 @@
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-10-21, at commit e4df82f2, by main session
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 17 (its paragraph has the ports, AVDs, ownership and sequencing); the identity rule in `.claude/hooks/policy.json` (`$comment`, privacy); the `handoff` skill.
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 17 (ports, AVDs, ownership, sequencing in its paragraph); `.claude/hooks/policy.json`'s `$comment` (the identity rule); the `handoff` skill.
 
 ## Now
 
