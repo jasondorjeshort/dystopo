@@ -58,12 +58,14 @@ locally:
 1. `git worktree add --detach ..\dystopo-rel <tag>`, copy `tools\release.keystore` and
    `tools\release.properties` in.
 2. `./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist -PdystopoVersion=<tag without v> -PdystopoVersionCode=$(git rev-list --count HEAD)`.
-3. Name and zip the assets as the workflow's "Collect artifacts" step does
-   (`dystopo-<tag>-universal.apk` only during alpha, `dystopo-server-<tag>.zip`,
-   `dystopo-devtool-<tag>.zip`, `NOTICES.md` from `notices.py --out`, the world tour sheet (T111: no
-   device tour sheet; the notes link the repository's), `version.json` as
-   the workflow writes it (T83: tag, versionCode, versionName, apk, sha256 of the universal APK),
-   `SHA256SUMS.txt`).
+3. Name and zip the assets as the workflow's "Collect artifacts" and "World tour contact sheet" steps
+   do (`dystopo-<tag>-universal.apk` only during alpha, `dystopo-server-<tag>.zip`,
+   `dystopo-devtool-<tag>.zip`, `NOTICES.md` from `notices.py --out`, `version.json` as the workflow
+   writes it (T83: tag, versionCode, versionName, apk, sha256 of the universal APK), `SHA256SUMS.txt`,
+   then the world tour sheet: `devtool tour --zooms 9`, its `out/tour/contact-sheet.png` copied as
+   `dystopo-<tag>-world-tour.png` and its checksum appended to `SHA256SUMS.txt`). There is no device
+   tour sheet among the assets (T111): the notes link the repository's
+   `docs/images/android-tour-sheet.png`, as the workflow's notes template does.
 4. `gh release create <tag> --draft --prerelease --verify-tag --notes-file <notes> out/release/*`, then
    verify from the draft and publish as usual (steps 3 to 7).
 5. Delete the signing copies and the worktree afterwards.
