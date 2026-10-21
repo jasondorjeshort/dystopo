@@ -4,7 +4,7 @@ import io.github.jasondorjeshort.dystopo.app.MapController.CameraMode
 import kotlin.math.abs
 
 /**
- * T100: the map's orientation, one state for the whole app (docs/ideas/2026-10-13-recenter-button.md).
+ * T100: the map's orientation, one state for the whole app (the owner's rule of 2026-10-13, task T100 in `docs/TASKS.md`).
  * [NORTH_UP] is the default; [FREE] is entered only by rotating the map with a gesture; [FACING] turns the map
  * to the heading and is offered by the recentre button only when the phone has a compass. [label] is the
  * user-visible name (the button's state description; the navigation card's "North up" and "Heading up").

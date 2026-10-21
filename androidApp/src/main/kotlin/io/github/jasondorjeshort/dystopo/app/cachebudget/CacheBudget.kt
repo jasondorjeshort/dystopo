@@ -17,8 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * T112: one cache budget over the phone's caches (the idea `docs/ideas/2026-10-13-cache-budgets.md`; ADR 0025
- * principle 3), a layer over the per-kind caps rather than a new store. The total ([AppSettings.cacheBudgetMb], a
+ * T112: one cache budget over the phone's caches (ADR 0034, amending ADR 0025 principle 3), a layer over the per-kind caps rather than a new store. The total ([AppSettings.cacheBudgetMb], a
  * preset or a custom size on the Storage screen, `POST /storage?budgetMb=`) spans the kinds of [CacheKind]: tiles
  * downloaded into the online cache (its unpinned DEM, map and glyph entries), the contour, shade and cliff tiles the
  * phone made (the contour cache, and the online cache's contour and shade entries, [onlineDerived]) and the phone's own
