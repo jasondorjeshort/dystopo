@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.10-alpha (2026-10-21)
+
+Help pop-ups place themselves beside their icon and shrink their text a step at a time rather than cover it, and the navigation card gains help icons and texts (the card, no GPS fix, off route); at large font scales the card keeps the turn text whole (smaller steps, up to three lines, whole-word wrapping) and follows the font scale up to 1.5; the route fit and the trip editor's fit clear the chips at the top. The base-map fetch gives up on a stalled host within seconds instead of 30 s a try, so a view whose base map is unreachable still shows hillshade and contours; debug routes that need the map answer 503 with a reason while the app is in the background; the phone keeps a request log (`GET /stats/requests`) that feeds `cache-replay`; trip routes answer only after the main thread has applied the change (a race that could name the wrong trip or lose an offline offer); the routes tour records the body of every failed answer. Process: every pushed commit carries the owner's identity and the push scan accepts attribution trailers and GitHub's web committer; the base updated to Hatchery f7f41af (the guard reads `git rebase --exec`, the scan's range is bounded by the remote, the base's records arrive under `docs/hatchery/`); the server manual notes how older browser trips gain directions on the phone; the docs' hike example matches the tour.
+
 ### 2026-10-21
 
 - T122: Android layout: font scale 2.0, the nav bar's help icons, the fit paddings (#12)
