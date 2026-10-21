@@ -45,4 +45,16 @@ class RequestChecksTest {
         assertEquals("&bogus; stays, so does & alone", RequestChecks.htmlToText("&bogus; stays,\n so does & alone"))
         assertEquals("&#0; &#xD800;", RequestChecks.htmlToText("&#0; &#xD800;"))
     }
+
+    @Test
+    fun activityBoundRoutesAreTheOnesTheBackgroundGuardAnswers() {
+        for (p in listOf("/screenshot", "/features", "/features/text", "/labels", "/help", "/help/open", "/help/close")) {
+            kotlin.test.assertTrue(RequestChecks.needsActivity("GET", p) && RequestChecks.needsActivity("POST", p), p)
+        }
+        kotlin.test.assertTrue(RequestChecks.needsActivity("POST", "/attribution/open"))
+        for ((m, p) in listOf("GET" to "/attribution", "POST" to "/attribution/close", "GET" to "/health", "GET" to "/stats",
+            "GET" to "/stats/requests", "POST" to "/camera", "GET" to "/helpers", "GET" to "/screenshots", "GET" to "/dem/8/40/90.png")) {
+            kotlin.test.assertFalse(RequestChecks.needsActivity(m, p), "$m $p")
+        }
+    }
 }

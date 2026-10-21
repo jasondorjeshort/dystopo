@@ -36,6 +36,18 @@ object DirectPrefs {
 
     fun maxZoom(c: Context): Int = prefs(c).getInt("maxZoom", DirectSources.DEFAULT_MAX_ZOOM)
 
+    /**
+     * T123, debug builds only ([io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS]; null in a release
+     * build whatever was stored): the scheme and host OpenFreeMap tiles are fetched from instead
+     * ([DirectSources.osmBase]), for stall tests against a dead host. `POST /firstrun/direct/osm-base?url=|default`.
+     */
+    fun osmBase(c: Context): String? =
+        if (!io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS) null else prefs(c).getString("osmBase", null)?.ifBlank { null }
+
+    fun setOsmBase(c: Context, base: String?) {
+        prefs(c).edit().apply { if (base.isNullOrBlank()) remove("osmBase") else putString("osmBase", base) }.apply()
+    }
+
     fun set(c: Context, enabled: Boolean? = null, sessionMb: Long? = null, maxZoom: Int? = null) {
         prefs(c).edit().apply {
             maxZoom?.let { putInt("maxZoom", it) }

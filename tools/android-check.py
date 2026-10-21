@@ -26,7 +26,13 @@ For each view it sets the camera (POST /camera), waits for the map to go idle an
 and once for the whole tour:
   - glyphs:   at least one glyph range was served over HTTP for every font the style uses, or (glyphs
               loaded from a file:// URL never hit the server) text was drawn on at least one view
+  - background (T123, with adb, unless --no-background): after the views, `input keyevent HOME`; the routes that need
+              the activity on screen (/screenshot, /features, /features/text, /help, POST /attribution/open) must each
+              answer 503 with a `reason` within --background-limit-s (5 s); then `am start -n` brings the app's
+              task back (`returnedTask`; no second activity) and /screenshot, /features and /help must answer 200 (`backgroundStep` in the summary)
 The lines and labels checks need the app's /features routes; an app without them skips them (reported).
+The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
+last lines).
 Views: one `z/lat/lon[:label][|req=a+b]` per line in --views-file (`#` comments), or --views a,b,c.
 Every view must need tiles that no earlier view loaded, or the tile check has nothing to count.
 
@@ -476,6 +482,72 @@ def expected_sources(health, v):
     return [s for s in SOURCES if exp[s]]
 
 
+# T123: the routes the app's background guard answers 503 while its activity is stopped (RequestChecks.needsActivity),
+# and the ones of them checked again in the foreground (POST /attribution/open is left out there: it opens a screen).
+BACKGROUND_ROUTES = [("GET", "/screenshot?wait=15000"), ("GET", "/features"), ("GET", "/features/text?wait=15000"),
+                     ("GET", "/help"), ("POST", "/attribution/open")]
+FOREGROUND_ROUTES = [("GET", "/screenshot?wait=15000"), ("GET", "/features"), ("GET", "/help")]
+
+
+def timed_call(server, method, path, timeout):
+    """Status, seconds and the start of the body of one request (an HTTP error is an answer, not an exception)."""
+    t0 = time.time()
+    try:
+        body = server._open(path, method, timeout)
+        status = 200
+    except urllib.error.HTTPError as e:
+        status, body = e.code, e.read()
+    except (urllib.error.URLError, OSError) as e:
+        return {"method": method, "path": path, "status": None, "seconds": round(time.time() - t0, 2), "error": str(e)[:200]}
+    out = {"method": method, "path": path, "status": status, "seconds": round(time.time() - t0, 2), "bytes": len(body)}
+    if not body.startswith(b"\x89PNG"):
+        try:
+            out["body"] = json.loads(body.decode("utf-8")) if status != 200 else None
+        except (ValueError, UnicodeDecodeError):
+            out["body"] = body[:200].decode("utf-8", "replace")
+    return out
+
+
+def wait_activity(server, want_started, timeout=15.0):
+    """Polls GET /health until map.activity is `started` (or is not, with want_started False); the last value."""
+    deadline = time.time() + timeout
+    state = None
+    while time.time() < deadline:
+        try:
+            state = server.json("/health", timeout=10).get("map", {}).get("activity")
+        except (urllib.error.URLError, OSError, ValueError):
+            state = None
+        if state is not None and (state == "started") == want_started:
+            break
+        time.sleep(0.3)
+    return state
+
+
+def background_step(server, exe, serial, limit_s):
+    """T123: HOME, then each activity-bound route must answer 503 with a reason within limit_s; back to the app
+    (am start of the running task), then the same routes answer 200. Reports every call."""
+    rep = {"limitSeconds": limit_s, "background": [], "foreground": []}
+    adb(exe, serial, "shell", "input", "keyevent", "KEYCODE_HOME", timeout=30)
+    rep["activityAfterHome"] = wait_activity(server, False)
+    for method, path in BACKGROUND_ROUTES:
+        r = timed_call(server, method, path, timeout=limit_s * 6)
+        body = r.get("body") if isinstance(r.get("body"), dict) else {}
+        r["ok"] = r["status"] == 503 and r["seconds"] <= limit_s and bool(body.get("reason"))
+        rep["background"].append(r)
+    # The intent restart_app launched with brings the running task back ("its current task has been brought to the
+    # front"); the launcher's MAIN/LAUNCHER intent did not match that task's root and stacked a second map activity.
+    _, out = adb(exe, serial, "shell", "am", "start", "-n", ACTIVITY, timeout=30)
+    rep["returnedTask"] = "brought to the front" in out
+    rep["activityAfterReturn"] = wait_activity(server, True)
+    for method, path in FOREGROUND_ROUTES:
+        r = timed_call(server, method, path, timeout=90)
+        r["ok"] = r["status"] == 200
+        rep["foreground"].append(r)
+    rep["ok"] = (all(r["ok"] for r in rep["background"] + rep["foreground"]) and rep["activityAfterReturn"] == "started"
+                 and rep["returnedTask"])
+    return rep
+
+
 def set_app_server(server, value, timeout=60.0):
     """T105: the app's server (POST /settings?server=, persisted; '' for none), then the style the setting reloads.
     Returns the server the app reports."""
@@ -562,6 +634,10 @@ def main():
                     help="T105: before the first view, wait until the device's CPU use besides the app is at most this many cores "
                          "in two 3 s windows in a row (a just-booted emulator spends minutes near all its cores on first-boot work)")
     ap.add_argument("--quiet-timeout", type=float, default=240.0, help="T105: the longest wait for a quiet device (s); 0 skips the wait")
+    ap.add_argument("--no-background", action="store_true",
+                    help="T123: skip the background step (HOME, the activity-bound routes must answer 503, back, then 200)")
+    ap.add_argument("--background-limit-s", type=float, default=5.0,
+                    help="T123: how fast a backgrounded activity-bound route must answer its 503")
     args = ap.parse_args()
 
     views = read_views(args)
@@ -785,6 +861,18 @@ def main():
         summary["memory"] = final.get("memory")
     except (urllib.error.URLError, OSError, ValueError) as e:
         summary["glyphs"] = {"ok": False, "error": str(e)}
+    if exe and serial and not args.no_background:
+        # T123: the tour never left the foreground; activity-bound routes hung there until their own timeouts.
+        try:
+            summary["backgroundStep"] = background_step(server, exe, serial, args.background_limit_s)
+        except (urllib.error.URLError, OSError, ValueError, subprocess.SubprocessError) as e:
+            summary["backgroundStep"] = {"ok": False, "error": str(e)[:200]}
+    else:
+        summary["backgroundStep"] = {"skipped": "--no-background" if args.no_background else "no adb device"}
+    try:
+        summary["requests"] = {k: v for k, v in server.json("/stats/requests?limit=12").items()}  # T123: the phone's request log
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        summary["requests"] = {"error": str(e)[:200]}
     if exe and serial and since:
         summary["logcat"] = logcat_since(exe, serial, since)
 
@@ -792,7 +880,7 @@ def main():
     summary["viewsOk"] = sum(1 for r in reports if r["ok"])
     summary["viewsTotal"] = len(reports)
     summary["sheet"] = contact_sheet(reports, rasters, f"{stem}-sheet{ext}")
-    summary["ok"] = summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"]
+    summary["ok"] = summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
     with open(stem + ".json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
@@ -812,6 +900,14 @@ def main():
           f"{lab.get('viewsWithDrawnText')} views with drawn text; fonts in style: {', '.join(lab.get('fontsInStyle', []))})", file=sys.stderr)
     on = summary.get("online") or summary["setup"].get("online") or {}
     print(f"online: server {on.get('server') or '(none)'}, {on.get('state') or on.get('error')}", file=sys.stderr)  # T98
+    bg = summary["backgroundStep"]
+    if "skipped" in bg or "error" in bg:
+        print(f"background: {bg.get('skipped') or 'FAIL ' + bg.get('error', '')}", file=sys.stderr)
+    else:
+        print(f"background: {'ok' if bg['ok'] else 'FAIL'} (after HOME {bg.get('activityAfterHome')}: "
+              + ", ".join(f"{r['path'].split('?')[0]} {r['status']} {r['seconds']} s" for r in bg["background"])
+              + f"; back {bg.get('activityAfterReturn')}: " + ", ".join(f"{r['path'].split('?')[0]} {r['status']}" for r in bg["foreground"]) + ")",
+              file=sys.stderr)
     print(f"{summary['viewsOk']}/{summary['viewsTotal']} views ok; sheet {summary['sheet']}; summary {stem}.json", file=sys.stderr)
     print(json.dumps(summary, indent=2))
     return 0 if summary["ok"] else 1

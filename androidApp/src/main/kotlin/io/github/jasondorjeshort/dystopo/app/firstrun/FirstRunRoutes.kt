@@ -27,6 +27,12 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  *   columns, rows and file names, `DirectTrace.redact`). `POST /firstrun/direct?on=0|1&sessionMb=`:
  *   turn it off (no server: offline only) or on, set the per-session download budget, `maxZoom` the deepest DEM zoom rendered (8..15; deeper is synthesized). `POST /firstrun/direct/trim`: trim
  *   `cache/sources/` to its cap now.
+ *   T123: `GET /firstrun/direct` has `osmStalls` (OpenFreeMap requests that got no connection or no byte within the
+ *   stall guard), `osmGuardMs` (the guard's limit) and `osmBase`; the timeline's `oERR` line names the exception.
+ *   `POST /firstrun/direct/osm-base?url=http://10.0.2.2:8753|default`: fetch OpenFreeMap tiles from that scheme and
+ *   host instead (the TileJSON still from OpenFreeMap), kept across restarts, honoured only in debug builds; for a
+ *   stall test against a host that accepts and never answers (`android-debug-routes.md`). 400 for a URL the cleartext
+ *   rule refuses.
  * - `POST /firstrun/test[?server=]`: Settings › Sources › Test (the saved server unless given; not saved):
  *   `state` ok with `packs`, or failed with `error`. 502 when it failed.
  * - `POST /firstrun/dismiss[?undo=1]`: "Not now" (or bring the card back).
@@ -63,6 +69,18 @@ object FirstRunRoutes {
                     Response.json(directJson(app))
                 }
                 "POST" to "/firstrun/direct/trim" -> Response.json(OnlineService.get(app).direct.trimSourceCache())
+                "POST" to "/firstrun/direct/osm-base" -> {
+                    // T123: where OpenFreeMap tiles come from (a test's dead host); `default` or empty goes back to OpenFreeMap.
+                    val url = r.query["url"] ?: throw IllegalArgumentException("url required (http(s)://host[:port], or default)")
+                    val base = url.takeUnless { it.isBlank() || it == "default" }
+                    if (base != null) {
+                        io.github.jasondorjeshort.dystopo.app.online.DirectSources.withOsmBase("https://x/{z}/{x}/{y}.pbf", base) // throws on a malformed URL
+                        CleartextPolicy.problem(base)?.let { throw IllegalArgumentException(it) }
+                    }
+                    DirectPrefs.setOsmBase(app, base)
+                    OnlineService.get(app).direct.osmBase = base
+                    Response.json(directJson(app))
+                }
                 "POST" to "/firstrun/test" -> {
                     val t = Sources.test(r.query["server"])
                     Response.json(t, if (t["state"] == "ok") 200 else 502)
