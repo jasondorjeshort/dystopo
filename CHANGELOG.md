@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-21
+
+- T120: The push scan: attribution trailers and GitHub's merge committer (#7)
+
 ## v0.1.9-alpha (2026-10-18)
 
 Route to here from where the phone is: the long-press card offers Route to here (one tap, planned from the phone's fix in the last mode), Waypoint here and Route from here (the two-tap flow), and the route card names both ends with Go first, a Change menu for the start (Your location, Choose on map, Swap), the fix's age when it is old, a wait when there is no fix yet, and an offer to turn location on; turn directions gain "then" cues ("Head northeast, then bear left") derived at display time, so saved trips and older phones are unaffected; the browser's Trips box saves directions with a trip and the sync simulator round-trips a browser bundle; help pop-ups close what they opened, the Storage rows and the Data and storage subtitle get icons, placements read "Settings › ... › ..."; the scale bar hides when the chips leave no room; the pinned cache goes to 1 TB with a free-space warning; a route is in place before the planner answers, so the directions request right after planning no longer answers 404 (the sweep's one red line). Process: the ideas folder in the base's grammar and the `triage` skill, the guard lets a subagent integrate `main`, the path-anchor check covers the board and the planning record.
