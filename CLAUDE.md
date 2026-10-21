@@ -6,7 +6,7 @@ Where work stands right now (coordinator state; subagents follow their brief, no
 
 Open-source, offline-first topographic maps. This file holds the rules; facts, procedures and decisions are one pointer away.
 **Process base:** the working method is shared with the Hatchery base repository (https://github.com/jasondorjeshort/hatchery), which distils it for new projects; Dystopo is its first build-phase test. What this project takes from the base and what differs: ADR 0020. When a rule proves wrong in practice, fix it in the same sitting, say why in the commit message, and carry the fix back to Hatchery.
-Adopted from Hatchery by hand; provenance, the base line and departures: `docs/design/decisions/0037-adopted-from-hatchery.md`. The base's agreement sections (`.claude/agreement/`) are each replaced by a one-line pointer at this file's own section:
+Adopted from Hatchery by hand; provenance, the base line and departures: `docs/design/decisions/0038-adopted-from-hatchery-after-t121.md`. The base's agreement sections (`.claude/agreement/`) are each replaced by a one-line pointer at this file's own section:
 
 Branch: main
 

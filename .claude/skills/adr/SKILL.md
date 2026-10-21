@@ -13,7 +13,7 @@ proposal; major choices arrive here through the `proposal` skill. From the Hatch
 
 1. Number: if promoting a proposal, reuse its `NNNN`; otherwise the highest number across
    `docs/design/decisions/` and `docs/design/proposals/` plus one. This project's numbers start at
-   0020 (ADR 0020). This tree adopted the base (the `Hatchery base:` line in ADR 0037), so it keeps
+   0020 (ADR 0020). This tree adopted the base (the `Hatchery base:` line in ADR 0038), so it keeps
    its own numbering whatever `git merge-base HEAD hatchery/main` says (Hatchery's ADRs 0008 to
    0010); a proposal takes the number of the ADR it will become. It never writes in
    `docs/hatchery/`: it supersedes a Hatchery record by citation from its own ADR (`supersedes

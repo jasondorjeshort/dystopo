@@ -1,9 +1,9 @@
 # 0037. Adopted from Hatchery under the base's ownership map: the base line, the departures, the agreement replaced by pointers
 
 Date: 2026-10-17
-Status: accepted
+Status: superseded by 0038 (2026-10-21)
 
-Hatchery base: f7f41af6094559ef868be56c64df3ec41ef7fcf9 (living line, bumped by update-from-hatchery; last 2026-10-21)
+0038 (2026-10-21, T121) holds the base line and the departures; this text is the record of 2026-10-17.
 Mechanism: Hatchery ADR 0016 (update by patch over the base-owned set, read from `.claude/hooks/ownership.json` at the base commit) and, for the adoption itself, ADR 0020 here and Hatchery ADR 0004.
 
 Record: the second `update-from-hatchery` run here (Hatchery `987265c` to `749377e`, fifty-five base

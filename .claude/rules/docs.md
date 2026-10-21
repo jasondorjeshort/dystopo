@@ -10,13 +10,13 @@ paths:
 
 These load when a file under `docs/`, `.claude/agreement/` or `.claude/project/`, or `CLAUDE.md`, is
 read or edited. The map of where each topic is documented is the last section of
-`docs/ARCHITECTURE.md`; the reasoning is ADR 0020, and ADR 0037 for the base's agreement files and
+`docs/ARCHITECTURE.md`; the reasoning is ADR 0020, and ADR 0038 for the base's agreement files and
 their one-line replacements. From the Hatchery base, with this project's exemptions.
 
 ## Where a piece of text goes
 
 1. A rule every turn: `CLAUDE.md` (under 130 lines; rules and pointers, no long facts; this
-   project's own text, ADR 0037: the base's agreement sections are replaced by one-line pointers in
+   project's own text, ADR 0038: the base's agreement sections are replaced by one-line pointers in
    `.claude/project/`). Only when touching certain paths: `.claude/rules/<name>.md` with `paths:`
    frontmatter.
 2. A procedure (steps to do X): a skill under `.claude/skills/`.
@@ -41,7 +41,7 @@ their one-line replacements. From the Hatchery base, with this project's exempti
 - `docs/HANDOFF.md`: at most 40 lines. Detail goes to a finding or the board; the handoff links.
 - `CLAUDE.md`: under 130 lines (ADR 0020). The base's 40-line and 190-loaded caps are lifted here by
   `edit.capExempt` naming `CLAUDE.md`; `node .claude/hooks/policy.js --claude-check` still fails when
-  an agreement section is neither imported nor replaced (ADR 0037). A new paragraph of facts goes to
+  an agreement section is neither imported nor replaced (ADR 0038). A new paragraph of facts goes to
   `docs/reference/` with a pointer.
 - ADRs and findings: under 150 lines; a longer specification goes in a sibling file.
 
@@ -92,7 +92,7 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   with a user segment in any spelling (drive, root, cygdrive, mnt, or a project-folder slug), an
   email or a person's name other than a listed identity (`privacy.identities`; write the role
   instead: the owner, the coordinator, a downstream project's owner), a host name, a session link
-  (allowed only as a commit message's `Claude-Session:` trailer, owner 2026-10-21, ADR 0037; never
+  (allowed only as a commit message's `Claude-Session:` trailer, owner 2026-10-21, ADR 0038; never
   in a tracked file), a recorded conversation, or a grant file's content.
 - Write paths as `~`, `<repo>`, `../<dir>` or `<scratchpad>`. Briefs are not committed and keep
   absolute paths; a tracked file an agent writes from one follows this section.

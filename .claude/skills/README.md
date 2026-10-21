@@ -16,4 +16,4 @@ This project's own: `wave`, `release`, `sweep`.
 | `adr` | Write, promote or supersede an ADR in `docs/design/decisions/` |
 | `finding` | Record, resolve or supersede a finding in `docs/findings/` |
 | `triage` | Read the untriaged files in `docs/ideas/` and write one block each (`Plan:`, `Question:`, `Waits:`); the base's skill verbatim (ADR 0036) |
-| `update-from-hatchery` | Patch the base-owned set in from the `Hatchery base:` line of ADR 0037 by the ownership map and bump it (ADR 0037 holds the departure table) |
+| `update-from-hatchery` | Patch the base-owned set in from the `Hatchery base:` line of ADR 0038 by the ownership map and bump it (ADR 0038 holds the departure table) |

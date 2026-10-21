@@ -2,7 +2,7 @@
 
 Date: 2026-10-12
 Status: accepted
-The base line (`Hatchery base:`) and the departure table live in ADR 0037 since 2026-10-17 (here it was `987265c`, re-recorded as `987265c` after the base's history rewrite)
+The base line (`Hatchery base:`) and the departure table live in ADR 0038 since 2026-10-21 (ADR 0037 from 2026-10-17 to then) (here it was `987265c`, re-recorded as `987265c` after the base's history rewrite)
 
 Record: task T84 (`docs/TASKS.md`); the 2026-10-11 log entry "process base and what differs
 (Hatchery)" in `docs/PLANNING.md`; Hatchery read at commit `89f63c8`
