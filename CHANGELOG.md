@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-21
 
+- T122: Android layout: font scale 2.0, the nav bar's help icons, the fit paddings (#12)
 - T124: Android leftover sweep 10 (#10)
 - T123: Android: the online fetch stall guard, the background debug routes, the phone request log (#11)
 - T125: Desktop, server and tooling leftover sweep 10 (#8)
