@@ -11,9 +11,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   (online stall guard, background debug routes, phone request log), T124 (Android sweep 10), T125
   (server and tooling sweep 10); implementers on `task/T12n`, no PRs yet. The live viewer runs on
   8765 (PID in `out/coordinator-pids.txt`); 8800 is down and nothing in the wave needs it.
-- History is clean: the 19 placeholder commits and `v0.1.9-alpha` rewritten under the owner's identity
-  and force-pushed (tag on `d8bd466a`, the release intact); T120 merged and logged; the ten triage
-  commits on `main`. Two older commits authored as Claude remain; the owner's call.
+- History is clean: the 19 placeholder commits and `v0.1.9-alpha` rewritten under the owner's identity and force-pushed (tag on `d8bd466a`, the release intact); T120 merged and logged; the ten triage commits on `main`. Two older commits authored as Claude remain; the owner's call.
 - In Hatchery (`../hatchery-wt/`): `T120` holds T120's carry-back (ADR 0020), uncommitted, waiting for
   the owner's terminal commit and push (only Hatchery's `runner`/`pusher` may; neither exists in this
   session); `T121` holds proposal 0021 "guardrails bound damage, not who may act" (the owner agreed
