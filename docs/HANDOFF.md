@@ -28,10 +28,10 @@ Resume: this file, `docs/reference/machines.md`, the `wave` and `release` skills
 
 ## Waiting on user
 
-- Re-add the `RELEASE_*` secrets; delete the stray debug-signed draft of `v0.1.9-alpha` (Actions on
-  the rewritten tag, 2026-10-21 13:26); the eight `Answer:` lines in `docs/ideas/`; the T122 folder
-  (`gradlew --stop`), `git branch -D triage-saved` and the `refs/original/*` cleanup; whether the two
-  older Claude-authored commits get rewritten; T122's strings (nav card 1.5 cap, three help texts).
+- Re-add the `RELEASE_*` secrets (the stray debug-signed draft of `v0.1.9-alpha` is deleted); the
+  eight `Answer:` lines in `docs/ideas/`; the T122 folder (`gradlew --stop`), `git branch -D
+  triage-saved` and the `refs/original/*` cleanup; whether the two older Claude-authored commits get
+  rewritten; T122's strings (nav card 1.5 cap, three help texts).
 - Real-phone checks; Google developer registration; MapLibre's compass (T100); T104's palette and captions; the wave 14 to 17 strings and help texts (ADR 0031); the 5 s timeout grace.
 
 ## Open findings
