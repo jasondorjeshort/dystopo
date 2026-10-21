@@ -45,6 +45,33 @@ class SessionRouteTest {
     }
 
     @Test
+    fun theFixEndsKeepTheirSessionKeys() {
+        // T122 (T114's follow-up): an end that was the phone's fix is saved as `startFix` / `endFix` (time, source, age
+        // when planned) and comes back as a fix, so the card still says "From: Your location" after a restart.
+        val p = Crow.plan(46.7864, -121.7366, 46.8024, -121.7289, slope, "Route")
+        val fix = RouteOrigin.Fix(46.7864, -121.7366, 1_000_000L, "device")
+        val from = RouteOrigin.end(fix, 1_000_000L + 300_000L) // five minutes old: stale
+        val text = SessionRoute.encode(p, 46.7864 to -121.7366, 46.8024 to -121.7289, 2_000_000L, from, null)
+        assertTrue("\"startFix\":{\"time\":1000000,\"source\":\"device\",\"ageS\":300}" in text, text)
+        assertTrue("endFix" !in text, "a placed end has no fix key")
+        val r = assertNotNull(SessionRoute.decode(text))
+        assertEquals(from, r.from)
+        assertEquals("Your location, 5 min ago", r.from!!.label)
+        assertNull(r.to)
+        // The other way round: the end is the fix (after a Swap).
+        val swapped = SessionRoute.encode(p, 46.8024 to -121.7289, 46.7864 to -121.7366, 2_000_000L, null, from)
+        val s = assertNotNull(SessionRoute.decode(swapped))
+        assertNull(s.from)
+        assertEquals(RouteOrigin.End(46.7864, -121.7366, fix, 300L), s.to)
+        // A file from before T114 (no fix keys) reads as two placed points; a damaged fix key is a placed point too.
+        val old = SessionRoute.encode(p, 46.7864 to -121.7366, 46.8024 to -121.7289, 2_000_000L)
+        assertNull(assertNotNull(SessionRoute.decode(old)).from)
+        assertNull(assertNotNull(SessionRoute.decode(text.replace("\"time\":1000000,", ""))).from)
+        // A missing source reads as the recorder's.
+        assertEquals("recorder", assertNotNull(SessionRoute.decode(text.replace("\"source\":\"device\",", ""))).from!!.fix!!.source)
+    }
+
+    @Test
     fun tripCardTexts() {
         assertEquals("Show 1 direction", showDirectionsLabel(1))
         assertEquals("Show 7 directions", showDirectionsLabel(7))

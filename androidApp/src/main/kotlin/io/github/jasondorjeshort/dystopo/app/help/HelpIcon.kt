@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,7 +35,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -46,6 +48,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -79,11 +82,13 @@ fun HelpIcon(key: String, modifier: Modifier = Modifier) {
     val target = maxOf(MIN_TARGET, icon + TARGET_PAD)
     val open = HelpUi.openKey == key
     val requester = remember { BringIntoViewRequester() }
-    LaunchedEffect(open) { if (open) runCatching { requester.bringIntoView() } }
+    LaunchedEffect(open, if (open) HelpUi.opened else -1) { if (open) runCatching { requester.bringIntoView() } } // T122: again on a reopen
     DisposableEffect(key) {
         onDispose {
             HelpUi.anchors.remove(key)
-            if (HelpUi.openKey == key) HelpUi.close() // its screen closed: no pop-up left over another one
+            // Its screen closed: no pop-up left over another one. T122: unless the icon comes straight back, as a lazy
+            // list's row does while it scrolls itself into view (the Storage rows lost their pop-up that way at 1.0).
+            if (HelpUi.openKey == key) HelpUi.closeUnlessBack(key)
         }
     }
     Box(
@@ -116,8 +121,8 @@ fun HelpIcon(key: String, modifier: Modifier = Modifier) {
 /**
  * T109: the open help pop-up, drawn over the screens (call it after them): a faint scrim over everything and a small
  * card with the title, the text in the user's units and OK, beside its icon (below it when it fits there, else
- * above, with a caret pointing at the icon); over the icon when the text fits on neither side (large font scales);
- * in the middle when the icon is not on screen. A tap anywhere or Back closes it. Its layout is reported in
+ * above, with a caret pointing at the icon); T122: when the text fits on neither side (large font scales) on the larger
+ * side with the text a step smaller ([PopupPlace]), never over the icon; in the middle when the icon is not on screen. A tap anywhere or Back closes it. Its layout is reported in
  * [HelpUi.popup] for `POST /help/open`.
  */
 @Composable
@@ -127,7 +132,11 @@ fun HelpHost() {
     val anchorWin = HelpUi.anchors[key]
     BackHandler { HelpUi.close() }
     var origin by remember { mutableStateOf(IntOffset.Zero) }
+    var windowH by remember { mutableStateOf(0) }
+    // T122: an icon laid out outside the window (a row still scrolling into view) counts as none: the pop-up waits in the
+    // middle rather than above an icon below the screen, and moves beside it once it is in view.
     val anchor = anchorWin?.let { PxRect(it.left - origin.x, it.top - origin.y, it.right - origin.x, it.bottom - origin.y) }
+        ?.takeIf { a -> windowH == 0 || (a.top >= 0 && a.bottom <= windowH) }
     val density = LocalDensity.current
     Box(
         Modifier.fillMaxSize()
@@ -135,54 +144,51 @@ fun HelpHost() {
                 val p = c.positionInWindow()
                 val o = IntOffset(p.x.roundToInt(), p.y.roundToInt())
                 if (o != origin) origin = o
+                if (c.size.height != windowH) windowH = c.size.height
             }
             .background(Scrim)
             .pointerInput(Unit) { detectTapGestures { HelpUi.close() } },
     ) {
-        Layout(
-            content = {
-                Bubble(help)
-                Caret(up = true)
-                Caret(up = false)
-            },
-            modifier = Modifier.fillMaxSize(),
-        ) { measurables, constraints ->
+        val baseDensity = density.density
+        SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
             val w = constraints.maxWidth
             val h = constraints.maxHeight
             val margin = MARGIN.roundToPx()
             val gap = CARET_H.roundToPx()
             val bubbleW = minOf(w - 2 * margin, MAX_WIDTH.roundToPx()).coerceAtLeast(1)
-            val need = measurables[0].maxIntrinsicHeight(bubbleW)
-            val full = (h - 2 * margin).coerceAtLeast(1)
             val below = anchor?.let { h - margin - (it.bottom + gap) } ?: 0
             val above = anchor?.let { it.top - gap - margin } ?: 0
-            // Beside the icon when the text fits there; else over it, as near as the window allows, rather than cut
-            // the text (at font scale 2.0 a paragraph can be taller than either side); else the whole window, scrolling.
-            val side = when {
-                anchor == null -> "centre"
-                need <= below -> "below"
-                need <= above -> "above"
-                else -> "over"
+            // The bubble at a text scale (the system's, or less to fit beside the icon), measured once per scale.
+            val bubbles = HashMap<Float, Pair<Measurable, Int>>()
+            fun bubbleAt(scale: Float): Pair<Measurable, Int> = bubbles.getOrPut(scale) {
+                val m = subcompose("bubble@$scale") {
+                    CompositionLocalProvider(LocalDensity provides Density(baseDensity, scale)) { Bubble(help) }
+                }.single()
+                m to m.maxIntrinsicHeight(bubbleW)
             }
-            val room = when (side) {
+            // T122: always beside the icon, never over it (two pop-ups covered their icon at font scale 2.0). Below or
+            // above at the system's text size when it fits there; else on the larger side with the text a step
+            // smaller at a time, down to [PopupPlace.MIN_TEXT_SCALE] of it, until it fits; else that size, scrolling.
+            val place = PopupPlace.choose(anchor != null, below, above, fontScale) { s -> bubbleAt(s).second }
+            val (measurable, need) = bubbleAt(place.textScale)
+            val room = when (place.side) {
                 "below" -> below
                 "above" -> above
-                else -> full
+                else -> h - 2 * margin
             }.coerceAtLeast(1)
-            val bubble = measurables[0].measure(Constraints(minWidth = bubbleW, maxWidth = bubbleW, maxHeight = room))
-            val caret = measurables[if (side == "above") 2 else 1].measure(Constraints())
+            val bubble = measurable.measure(Constraints(minWidth = bubbleW, maxWidth = bubbleW, maxHeight = room))
+            val caret = subcompose(if (place.side == "above") "caretDown" else "caretUp") { Caret(up = place.side != "above") }
+                .single().measure(Constraints())
             val cx = anchor?.let { (it.left + it.right) / 2 } ?: (w / 2)
             val x = (cx - bubbleW / 2).coerceIn(margin, (w - margin - bubbleW).coerceAtLeast(margin))
-            val lastY = (h - margin - bubble.height).coerceAtLeast(margin)
-            val y = when (side) {
+            val y = when (place.side) {
                 "below" -> anchor!!.bottom + gap
                 "above" -> anchor!!.top - gap - bubble.height
-                "over" -> (if (below >= above) anchor!!.bottom + gap else anchor!!.top - gap - bubble.height).coerceIn(margin, lastY)
                 else -> (h - bubble.height) / 2
             }
             val caretX = (cx - caret.width / 2).coerceIn(x + margin, (x + bubbleW - margin - caret.width).coerceAtLeast(x + margin))
             HelpUi.popup = linkedMapOf(
-                "key" to key, "side" to side,
+                "key" to key, "side" to place.side,
                 "boundsPx" to listOf(x + origin.x, y + origin.y, x + bubbleW + origin.x, y + bubble.height + origin.y),
                 "windowPx" to listOf(origin.x, origin.y, origin.x + w, origin.y + h),
                 "iconPx" to anchorWin?.json(),
@@ -190,13 +196,11 @@ fun HelpHost() {
                 "textFits" to (need <= bubble.height),
                 "coversIcon" to (anchor != null && PxRect(x, y, x + bubbleW, y + bubble.height).overlaps(anchor)),
                 "fontScale" to fontScale,
+                "textScale" to (place.textScale * 100).roundToInt() / 100.0, // T122: the text scale the pop-up drew at (at most fontScale)
             )
             layout(w, h) {
                 bubble.place(x, y)
-                when (side) {
-                    "below" -> caret.place(caretX, y - caret.height + 1)
-                    "above" -> caret.place(caretX, y + bubble.height - 1)
-                }
+                if (place.side != "centre") caret.place(caretX, if (place.side == "above") y + bubble.height - 1 else y - caret.height + 1)
             }
         }
     }

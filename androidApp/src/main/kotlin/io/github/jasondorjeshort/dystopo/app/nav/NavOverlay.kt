@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,7 +18,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,9 +31,13 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.controls.Orientation
 
 private val Ink = Color(0xFF2B2420)
@@ -56,6 +64,20 @@ fun NavOverlay() {
         SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp }
         return
     }
+    // T122: the card's type is large already (28 sp numbers); at the system's font scale 2.0 the card with the off-route
+    // banner covered the whole screen, so it follows the font scale up to NAV_MAX_FONT_SCALE, as the map chips cap theirs.
+    val sys = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides if (sys.fontScale <= NAV_MAX_FONT_SCALE) sys else Density(sys.density, NAV_MAX_FONT_SCALE)) {
+        NavCard(u, chips)
+    }
+}
+
+/** T122: the font scale the navigation card follows at most (the map chips stop at 1.3, `TopChips.MAX_FONT_SCALE`). */
+const val NAV_MAX_FONT_SCALE = 1.5f
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -78,12 +100,18 @@ fun NavOverlay() {
                     modifier = Modifier.weight(1f),
                 )
                 u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
+                HelpIcon("nav.card") // T122: what the card shows
             }
             if (u.waiting) {
                 BasicText("Waiting for a location fix", style = TextStyle(color = Ink, fontSize = 18.sp))
             }
             // T65: an old position says so (the numbers below are as of the last fix).
-            u.fixAge?.let { BasicText(it, style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold)) }
+            u.fixAge?.let {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BasicText(it, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                    HelpIcon("nav.fixLost") // T122: why the fix is lost and what the card does meanwhile
+                }
+            }
             u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102
             if (u.next != null && u.nextDistance != null) {
                 Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
@@ -97,7 +125,7 @@ fun NavOverlay() {
                 ) {
                     u.rejoinArrowDeg?.let { Arrow(it) }
                     Spacer(Modifier.size(8.dp))
-                    Column {
+                    Column(Modifier.weight(1f)) {
                         BasicText(
                             if (u.offRoute) "OFF ROUTE" else "Leaving the route",
                             style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold),
@@ -105,12 +133,13 @@ fun NavOverlay() {
                         BasicText(u.rejoin, style = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold))
                         // T65: silence the alert for a while, or until back on the route.
                         if (u.offRoute && u.snoozed == null) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) { // T122: each action whole, wrapping
                                 Action("Snooze ${io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin} min", Color.White) { NavSession.snooze(io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin.toDouble()) } // T91: a setting
                                 Action("Quiet until back", Color.White) { NavSession.snooze(null) }
                             }
                         }
                     }
+                    HelpIcon("nav.offRoute") // T122: what the banner means and what Snooze does
                 }
             }
             u.snoozed?.let { text ->
@@ -135,14 +164,58 @@ fun NavOverlay() {
     }
 }
 
+/** T122: the turn text's line cap, and the smallest size (sp) it steps down to before it takes the last line or is cut. */
+private const val TURN_MAX_LINES = 3
+private const val TURN_MIN_SP = 13
+
+/**
+ * T122: how the turn text was last laid out on the card (`GET /nav` `ui.turnLayout`): its lines, whether it was cut and
+ * the size it was drawn at (sp, before the font scale), so a check at font scale 2.0 needs no screenshot to say it is whole.
+ */
+internal object TurnText {
+    @Volatile var last: Map<String, Any?>? = null
+        private set
+
+    fun measured(text: String, lines: Int, cut: Boolean, sp: Float) {
+        val m = linkedMapOf<String, Any?>("text" to text, "lines" to lines, "cut" to cut, "fontSp" to sp)
+        if (m != last) last = m
+    }
+}
+
+/**
+ * T122: the help texts of the navigation card's icons (T109's follow-up, after T114's card): the card itself, the
+ * lost-fix line and the off-route banner. `POST /help/open` cannot bring up a navigation session, so each `needs` one
+ * (409 otherwise).
+ */
+internal val NAV_HELP: List<HelpText> = listOf(
+    HelpText("nav.card", "Navigation card", "The map: while navigating", needs = "navigating") {
+        "While you follow a route this card shows the next turn and how far away it is, then the next waypoint and the " +
+            "end with the distance, time left and arrival time. Heading up turns the map with you, Recenter brings it back " +
+            "to you and Stop ends navigation."
+    },
+    HelpText("nav.fixLost", "No GPS fix", "The map: navigation card, when the position is old", needs = "navigating with an old position") {
+        "The phone has had no new position for longer than GPS fix stale after (Settings › Navigation and tracking). The " +
+            "card's numbers are from the last position until a new one comes; under trees or in a canyon that can take a while."
+    },
+    HelpText("nav.offRoute", "Off route", "The map: navigation card, off the route", needs = "navigating, off the route") {
+        "You have left the route. The arrow points the shortest way back to it, with the direction and distance below. " +
+            "Snooze silences the warning for a while, for a detour on purpose; Quiet until back silences it until you rejoin."
+    },
+)
+
+/**
+ * One line of numbers: "Next 1.2 mi 0:24 Name", "End 51.0 mi 1:49 (11:46)". T122: the parts wrap whole onto the next line
+ * when they do not fit (font scale 2.0), where the time used to break inside itself and sit above the distance.
+ */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun Stat(label: String, name: String?, distance: String, time: String) {
-    Row(verticalAlignment = Alignment.Bottom) {
-        BasicText(label, style = TextStyle(color = Purple, fontSize = 15.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(end = 8.dp, bottom = 3.dp))
-        BasicText(distance, style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold))
-        BasicText("  $time", style = TextStyle(color = Ink, fontSize = 22.sp), modifier = Modifier.padding(bottom = 1.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.Bottom) {
+        BasicText(label, style = TextStyle(color = Purple, fontSize = 15.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(bottom = 3.dp))
+        BasicText(distance, softWrap = false, style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold))
+        if (time.isNotBlank()) BasicText(time.trim(), softWrap = false, style = TextStyle(color = Ink, fontSize = 22.sp), modifier = Modifier.padding(bottom = 1.dp))
         if (name != null) {
-            BasicText("  $name", maxLines = 1, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
+            BasicText(name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
         }
     }
 }
@@ -163,7 +236,14 @@ private fun Turn(text: String, distance: String?, turnDeg: Int?, type: String?, 
         Spacer(Modifier.size(10.dp))
         Column(Modifier.weight(1f)) {
             distance?.let { BasicText(it, style = TextStyle(color = ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)) }
-            BasicText(text, maxLines = 2, style = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold))
+            // T122: a cued text ("Head northeast, then bear left", T116) at font scale 2.0 ran past the two lines the card
+            // allowed and lost its end; the text now steps down to fit, and takes a third line before it is ever cut.
+            BasicText(
+                text, maxLines = TURN_MAX_LINES, overflow = TextOverflow.Ellipsis,
+                style = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                autoSize = TextAutoSize.StepBased(minFontSize = TURN_MIN_SP.sp, maxFontSize = 18.sp, stepSize = 1.sp),
+                onTextLayout = { r -> TurnText.measured(text, r.lineCount, r.hasVisualOverflow, r.layoutInput.style.fontSize.value) },
+            )
         }
     }
 }
@@ -193,6 +273,7 @@ private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
     BasicText(
         text,
         style = TextStyle(color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold),
+        softWrap = false, // T122: "Quiet until back" broke a letter or two per line at font scale 2.0
         modifier = Modifier.clickable(onClick = onClick).padding(vertical = 6.dp),
     )
 }

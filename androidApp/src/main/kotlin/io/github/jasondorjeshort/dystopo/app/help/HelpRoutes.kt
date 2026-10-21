@@ -14,11 +14,13 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * - `POST /help/open?key=<key>`: opens that pop-up as a tap on its icon does. When the icon is not on screen it first
  *   brings its screen up (the settings page, the Offline areas sheet, the track bar, the long-press card at the
  *   map's centre) and waits up to 3 s for the icon; the icon scrolls itself into view. Answers once the pop-up is laid
- *   out: `onScreen`, `iconPx`, and `popup` (`side`: below or above the icon, `over` it when the text fits on
- *   neither side, `centre` with no icon; `boundsPx`, `windowPx`, `inside`: within the window, `textFits`: the text
- *   needed no scrolling, `coversIcon`, `fontScale`). Then `GET /screenshot` shows it. An unknown key is a 404 naming the keys; an icon still missing after 3 s (its `needs` is not met) is a 409
+ *   out: `onScreen`, `iconPx`, and `popup` (`side`: below or above the icon, T122: never over it, the text a
+ *   step smaller instead ([PopupPlace]); `centre` with no icon in the window; `boundsPx`, `windowPx`, `inside`: within
+ *   the window, `textFits`: the text needed no scrolling, `coversIcon`, `fontScale`, `textScale`). T122: when the icon's
+ *   screen rebuilds and the pop-up lands in the middle or closes, it opens again once the icon is back (twice at most). Then `GET /screenshot` shows it. An unknown key is a 404 naming the keys; an icon still missing after 3 s (its `needs` is not met) is a 409
  *   with the pop-up left closed.
- * - `POST /help/close`: closes the open pop-up (as a tap outside it or Back does). T115: and what `POST /help/open`
+ * - `POST /help/close`: closes the open pop-up (as a tap outside it or Back does); T122: answers once the closed screens'
+ *   icons are gone (at most 1 s), so a `/help/open` right after does not open a pop-up on a closing screen. T115: and what `POST /help/open`
  *   brought up for its icon since the last close (the settings sheet or the page it was on, Offline areas, the track bar,
  *   the long-press card, the Storage screen: [HelpScreens]), so the next request starts from the map it found; `closed`
  *   lists them. Screens open before that `/help/open`, or opened by taps since, stay.
@@ -34,11 +36,18 @@ object HelpRoutes {
         "GET" to "/help" -> list(r)
         "POST" to "/help/open" -> open(app, r)
         "POST" to "/help/close" -> {
+            val icons = HelpUi.anchors.keys.toSet()
             val closed = app.map.onMain {
                 HelpUi.close()
                 val shown = opened
                 opened = null
                 shown?.let { (before, names) -> HelpScreens.close(before, names, HelpScreens.now()) } ?: emptyList()
+            }
+            // T122: answer once the closed screens have left (their icons gone), so a `/help/open` right after does not
+            // find an icon of a closing screen, open its pop-up and lose it a frame later (the Storage rows did).
+            if (closed.isNotEmpty()) {
+                val until = System.currentTimeMillis() + 1000
+                while (HelpUi.anchors.keys.containsAll(icons) && System.currentTimeMillis() < until) Thread.sleep(30)
             }
             Response.json(mapOf("open" to null, "closed" to closed))
         }
@@ -71,16 +80,27 @@ object HelpRoutes {
         if (key !in HelpUi.anchors) {
             return Response.json(mapOf("error" to "the icon of '$key' is not on screen", "placed" to help.placed, "needs" to help.needs), 409)
         }
-        app.map.onMain { HelpUi.open(key) }
-        // Wait for the icon to scroll into view and the pop-up to be laid out beside it, then for one more frame.
-        val laid = System.currentTimeMillis() + 3000
-        var last: Any? = null
-        var steady = 0
-        while (System.currentTimeMillis() < laid && steady < 4) {
-            Thread.sleep(80)
-            val now = HelpUi.popup?.get("boundsPx") to HelpUi.anchors[key]
-            steady = if (HelpUi.popup != null && now == last) steady + 1 else 0
-            last = now
+        // T122: a screen that rebuilds its rows (Storage, while it measures) can take the icon away for a moment, and its
+        // pop-up waits in the middle or closes; once the icon is back the pop-up is opened again (twice at most).
+        for (attempt in 0..2) {
+            app.map.onMain { HelpUi.open(key) }
+            // Wait for the icon to scroll into view and the pop-up to be laid out beside it, then for one more frame.
+            val laid = System.currentTimeMillis() + 3000
+            var last: Any? = null
+            var steady = 0
+            while (System.currentTimeMillis() < laid && steady < 4) {
+                Thread.sleep(80)
+                val now = HelpUi.popup?.get("boundsPx") to HelpUi.anchors[key]
+                steady = if (HelpUi.popup != null && HelpUi.anchors[key] != null && now == last) steady + 1 else 0
+                last = now
+            }
+            // Beside its icon: done. Else ("centre": the icon was gone, or below the window, when the layout settled; or the
+            // pop-up closed with it) wait for the icon and open again, which also scrolls it into view again.
+            val p = HelpUi.popup
+            if (HelpUi.openKey == key && p != null && p["side"] != "centre") break
+            val back = System.currentTimeMillis() + 3000
+            while (key !in HelpUi.anchors && System.currentTimeMillis() < back) Thread.sleep(50)
+            if (key !in HelpUi.anchors) break
         }
         return Response.json(
             linkedMapOf(
