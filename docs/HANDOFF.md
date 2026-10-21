@@ -15,9 +15,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` and `release` skills
   v0.1.9 tag rewritten; trailers allowed); Hatchery took it as ADR 0020 and decided ADR 0021
   "guardrails bound damage, not who may act" (PRs #2, #3 merged there; its tasks T-a to T-g not
   started). The classifier refuses merges and publishing from a session: the owner types them.
-- Leftovers: `dystopo-wt/T122` (locked by an unidentified process after its emulator was stopped),
-  `T122-rebase`, stray `T123-verify*` files, AVDs `dystopo35-T122/T123/T124`, the local branch
-  `task/T122`; the live viewer runs on 8765 (PID in `out/coordinator-pids.txt`), 8800 is down.
+- Leftovers: `dystopo-wt/T122` (locked by an unidentified process), `T122-rebase`, stray `T123-verify*`
+  files, AVDs `dystopo35-T122/T123/T124`, branch `task/T122`; the viewer runs on 8765, 8800 is down.
 
 ## Next
 
@@ -25,8 +24,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` and `release` skills
 2. Hatchery: ADR 0021's follow-ups T-a to T-g as a wave from a Hatchery-rooted session (agents may
    commit and push its work branches now); then Dystopo's second base update and a `CLAUDE.md`
    rules pass (light lane, the guard's reversible line, identity source, `usage.mode: block`).
-3. Plan wave 18 from the Later list's candidates and the owner's `Answer:` lines when they come;
-   critic pass before launch.
+3. Plan wave 18 from the Later list and the owner's `Answer:` lines; critic pass before launch.
 4. A chore for the leftovers above once the T122 holder is gone (`gradlew --stop` is the owner's).
 
 ## Waiting on user
