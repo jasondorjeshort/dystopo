@@ -6,6 +6,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-21
 
+- T125: Desktop, server and tooling leftover sweep 10 (#8)
+- T121: Update from Hatchery to its current main, and the ownership map (#9)
 - T120: The push scan: attribution trailers and GitHub's merge committer (#7)
 
 ## v0.1.9-alpha (2026-10-18)
