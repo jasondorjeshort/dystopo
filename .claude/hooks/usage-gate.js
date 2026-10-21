@@ -7,7 +7,7 @@
 // exception (null, the base, means none: HOLD is then the only line). Other tools are never gated.
 // Usage comes from this session's file, ~/.claude/usage-state/<session_id>.json, which
 // .claude/statusline.js writes; session_id is the one in the PreToolUse payload.
-// Spec: docs/design/decisions/0002-hook-specs-usage.md (section 3); policy: ADR 0006; the per-session
+// Spec: docs/hatchery/decisions/0002-hook-specs-usage.md (section 3); policy: ADR 0006; the per-session
 // file and the account label: ADR 0011.
 //
 // Fails open: a crash (exit 1, no onFailure in settings.json) lets the launch through, because a
@@ -30,7 +30,7 @@ const SESSION_ID = /^[A-Za-z0-9_-]+$/;
 // Override grants (read and judged in policy.js, shared with the status line) lift HOLD, never the
 // deny line, until "until" on their meters, for one session, one project or the user. Format and
 // matching: ADR 0006, The HOLD override.
-const POLICY_DOC = 'docs/design/decisions/0006-hook-policy-file.md';
+const POLICY_DOC = 'docs/hatchery/decisions/0006-hook-policy-file.md';
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return null; }

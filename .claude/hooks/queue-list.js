@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Lists a queue directory (docs/ideas/, docs/operator/, docs/findings/) from its files, so the
-// READMEs keep no per-file index (ADR 0017). Contract: docs/design/decisions/0017-queue-list.md,
+// READMEs keep no per-file index (ADR 0017). Contract: docs/hatchery/decisions/0017-queue-list.md,
 // sections 1 to 3; the parts ADR 0013 promises are the path, the mode words, --status,
 // --untriaged, --json, --check, the --json fields and the exit codes.
 //

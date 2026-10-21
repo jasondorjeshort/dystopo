@@ -3,15 +3,17 @@
 Date: 2026-10-17
 Status: accepted
 
-Hatchery base: 749377e6939e5a0d5cf6f58244eb994d691d90f1 (living line, bumped by update-from-hatchery; last 2026-10-17)
+Hatchery base: f7f41af6094559ef868be56c64df3ec41ef7fcf9 (living line, bumped by update-from-hatchery; last 2026-10-21)
 Mechanism: Hatchery ADR 0016 (update by patch over the base-owned set, read from `.claude/hooks/ownership.json` at the base commit) and, for the adoption itself, ADR 0020 here and Hatchery ADR 0004.
 
 Record: the second `update-from-hatchery` run here (Hatchery `987265c` to `749377e`, fifty-five base
 commits: its ADRs 0016 to 0018 and their hooks, skills and agreement files); ADR 0020 (the adoption by
 hand, whose living base line moves here); ADR 0035 (the scripts verbatim under this project's policy;
 its Updating section is replaced by this record, the rest stands); ADR 0036 (`triage` comes in).
-Hatchery's own records are read in its tree (`docs/design/decisions/0016-*.md` there, four files),
-not copied here.
+The third run (`749377e` to `f7f41af`, T121: the guard reads `git rebase --exec`, the scan bounds
+its range by what the remote confirms, `git.integrate` and the settings-command group taken by the
+base, the `carry-back` skill and Hatchery's ADR 0019) brought Hatchery's own records into
+`docs/hatchery/`, base-owned and never edited here.
 
 ## Context
 
@@ -73,10 +75,12 @@ goes. Carry-back is an idea file in Hatchery, the Hatchery commit that took the 
 
 | Path | Reason | Carry-back |
 |---|---|---|
-| `.claude/hooks/test-hooks.js` | the settings-command group (H, HS and SL cases), general since T117, before the base's CLI group; the pusher-agent case (the cap-check command in `.claude/agents/pusher.md`) skipped when that file is absent, since the base's harness crashes on it here; T117's GI, GF07, GF08, GP22, GP23, LIVE05, LIVE06 and PA09 cases | Hatchery pull request 1 (T117) carries all of it; the file equals that branch's |
-| `.claude/hooks/git-guard.js`, `policy.js`, `post-edit.js`, `policy.examples/task-branches.json` | `git.integrate` (ADR 0036) in rule 4 and the loader, the example showing it, elided paths skipped by the anchor check (T117) | Hatchery pull request 1 (T117); each file equals that branch's |
-| `.claude/hooks/privacy-scan.js`, `.claude/hooks/test-hooks.js` (PV38) | the attribution trailer is allowed (owner, 2026-10-21): a `Claude-Session:` line whose value is one `claude.ai` link passes in a commit message's trailer block (the last paragraph, not the subject, every line a trailer); the link in an added line, a file name, a tag or any other message line stays a `session` hit (T120) | Hatchery: ADR 0018 item 10 amended, the commit skill's trailer rule |
-| `.claude/hooks/privacy-scan.js`, `.claude/hooks/test-hooks.js` (PV39) | every pushed commit carries the owner's real identity (owner, 2026-10-21), and a history rewrite re-sends GitHub's web merges: `GitHub <noreply@github.com>` passes as committer, never as author or tagger, and `noreply@github.com` passes in text like `noreply@anthropic.com` (a service address names no person) (T120) | Hatchery: ADR 0018 item 10 amended, the commit skill's trailer rule |
+| `.claude/hooks/privacy-scan.js`, `.claude/hooks/test-hooks.js` (PV46, PV38 before T121) | the attribution trailer is allowed (owner, 2026-10-21): a `Claude-Session:` line whose value is one `claude.ai` link passes in a commit message's trailer block (the last paragraph, not the subject, every line a trailer); the link in an added line, a file name, a tag or any other message line stays a `session` hit (T120) | Hatchery ADR 0020 (in preparation on a Hatchery branch: ADR 0018 item 10 amended, the commit skill's trailer rule; the cases numbered PV46 and PV47 there) |
+| `.claude/hooks/privacy-scan.js`, `.claude/hooks/test-hooks.js` (PV47, PV39 before T121) | every pushed commit carries the owner's real identity (owner, 2026-10-21), and a history rewrite re-sends GitHub's web merges: `GitHub <noreply@github.com>` passes as committer, never as author or tagger, and `noreply@github.com` passes in text like `noreply@anthropic.com` (a service address names no person) (T120) | Hatchery ADR 0020 (in preparation on a Hatchery branch: ADR 0018 item 10 amended, the commit skill's trailer rule; the cases numbered PV46 and PV47 there) |
+| `.claude/hooks/test-hooks.js` (CB1) | the carry-back identity check skips a tree with a `Hatchery base:` line, the `adr` skill's test for a project, as well as one with a `hatchery` remote: its history carries GitHub's web-merge committer and two early commits authored as Claude, which the scan never re-reads (T121) | Hatchery: CB1's skip uses the `adr` skill's two-part test |
+| `.claude/hooks/test-hooks.js` (GE22) | the long `--exec` spelling refused under this project's own `policy.json`, from a subagent and from the main session (T121) | none (the base's GE cases cover the same parse) |
+| `.claude/hooks/ownership.json` | `projectOwned` names this project's modules, tooling, build files and the `docs/` files outside the listed folders, so fitness check O1 passes; the base's `$comment` target is kept (T121) | Hatchery: a project-side list in the map (a project file the update never patches), so the base's list and the project's never conflict |
+| `docs/hatchery/` | taken whole and never edited; this project's own ADRs, proposals and findings stay in `docs/design/decisions/`, `docs/design/proposals/` and `docs/findings/`, as the base's `adr` skill has every tree but Hatchery do: a row, not a move (T121) | none |
 | `.claude/rules/README.md` | this project's rules table (`kotlin.md`, `trackdb.md`) | none |
 | `.claude/rules/docs.md` | this project's exemptions, indexes, places rule and ideas line; the base's new lines folded in by hand | none |
 | `.claude/settings.json` | mixed by the map: exec-form hooks, this project's permissions (ADR 0035) | none |

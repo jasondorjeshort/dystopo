@@ -5,7 +5,7 @@
 // formatters, update excludes, the privacy scan's lifts and identities), and the helpers the usage
 // gate and the status line share (thresholds, grants, the
 // account label). The scripts hold mechanism only, so update-from-hatchery can patch them without
-// touching a project's policy. Schema and fail modes: docs/design/decisions/0006-hook-policy-file.md.
+// touching a project's policy. Schema and fail modes: docs/hatchery/decisions/0006-hook-policy-file.md.
 //
 // load() returns { policy, error, source }:
 //   - file absent: policy = DEFAULTS (Hatchery's own behaviour), error = null.
@@ -17,7 +17,7 @@
 //
 // Debug: node .claude/hooks/policy.js [file]  prints the effective policy, or the error and exit 1.
 // CLAUDE.md check: node .claude/hooks/policy.js --claude-check  checks CLAUDE.md in the current
-// directory and the files it loads (ADR 0016; docs/design/decisions/0016-update-procedure.md,
+// directory and the files it loads (ADR 0016; docs/hatchery/decisions/0016-update-procedure.md,
 // Checks): every .claude/agreement/<s>.md imported or replaced once, every .claude/project/<s>.md
 // replacing a section, CLAUDE.md at most CLAUDE_MD_CAP lines and loading at most CLAUDE_LOADED_CAP
 // (the handoff chain excepted), and every @ import from CLAUDE.md and the handoff files resolving.

@@ -1,4 +1,4 @@
 {
-  "//": "The hooks and the status line are CommonJS. Without this file, a project whose root package.json says \"type\": \"module\" makes Node load them as ES modules, require() throws, and git-guard blocks every shell call. See docs/design/decisions/0006-hook-policy-file.md.",
+  "//": "The hooks and the status line are CommonJS. Without this file, a project whose root package.json says \"type\": \"module\" makes Node load them as ES modules, require() throws, and git-guard blocks every shell call. See docs/hatchery/decisions/0006-hook-policy-file.md.",
   "type": "commonjs"
 }

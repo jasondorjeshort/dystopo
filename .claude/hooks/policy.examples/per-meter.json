@@ -16,7 +16,7 @@
   },
   "edit": {
     "capExempt": ["docs/design/*.md", "docs/game/*", "docs/projects/*", "docs/history/*"],
-    "anchorExempt": ["docs/design/proposals/*", "docs/design/decisions/*", "docs/findings/*", "docs/history/*"],
+    "anchorExempt": ["docs/design/proposals/*", "docs/design/decisions/*", "docs/findings/*", "docs/history/*", "docs/hatchery/*"],
     "formatters": {}
   }
 }

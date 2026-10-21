@@ -5,7 +5,7 @@ network protocol or API surface, build system, a dependency the whole project wi
 an incompatible change to a promised surface (ADR 0012).
 The targets are listed in `docs/design/06-platforms.md`. A major choice is never made in passing:
 the `architect` writes a proposal in `docs/design/proposals/`, the `critic` argues against it, the
-architect answers each objection in writing and records an ADR in the tree's `docs/design/decisions/`, and
+architect answers each objection in writing and records an ADR in the tree's decisions directory (`adr` skill, step 1), and
 only then does implementation start (`proposal` and `adr` skills). Unresolved disagreement goes
 to the user with both positions stated.
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Quote-aware reading of a Bash or PowerShell command line, enough for git-guard to tell the words
 // a command runs with from text that is only data. Not a shell: no expansion, no aliases, no
-// functions. Spec: docs/design/decisions/0002-hook-specs.md section 1, Parsing.
+// functions. Spec: docs/hatchery/decisions/0002-hook-specs.md section 1, Parsing.
 //
 // parse(text, dialect) with dialect 'bash' or 'powershell' returns { commands, data }:
 //   commands  every simple command, in source order, as { words, opaque, text, stdin }: words are

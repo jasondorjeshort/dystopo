@@ -5,7 +5,7 @@
 // pushes and deletes branches by the project's policy (.claude/hooks/policy.json, read through
 // policy.js). The main session (no agent_type) is limited only where the policy says so. Rule 20
 // reads what every push sends through privacy-scan.js (ADR 0018), required inside that rule only.
-// Spec: docs/design/decisions/0002-hook-specs.md section 1; policy: ADR 0006.
+// Spec: docs/hatchery/decisions/0002-hook-specs.md section 1; policy: ADR 0006.
 // Test harness: node .claude/hooks/test-hooks.js
 //
 // Allow: exit 0, no stdout. Deny: exit 0 with permissionDecision "deny" JSON.
@@ -123,12 +123,15 @@ function deny(reason) {
 
 // Normalises a subcommand's arguments: short clusters become single flags (-nm x is -n -m),
 // abbreviated long options become the options they start, and option values are dropped (kept
-// in values, keyed by option). opaque is true when a kept argument holds an expansion.
+// in values, keyed by option, the last one; every lists them all, so -x a -x b keeps both). opaque
+// is true when a kept argument holds an expansion.
 function normalize(sub, rest, opq) {
   const [shortV, longV] = VALUE_OPTS[sub] || ['', []];
   const known = (GUARDED_LONG[sub] || []).concat(longV);
   const args = [];
   const values = {};
+  const every = {};
+  const keep = (o, v) => { values[o] = v; (every[o] = every[o] || []).push(v); };
   let opaque = false;
   for (let k = 0; k < rest.length; k++) {
     const a = rest[k];
@@ -143,7 +146,7 @@ function normalize(sub, rest, opq) {
       for (; c < a.length && /[A-Za-z0-9]/.test(a[c]); c++) {
         args.push(`-${a[c]}`);
         if (shortV.includes(a[c])) {
-          if (c === a.length - 1) { values[`-${a[c]}`] = rest[k + 1]; k++; } else values[`-${a[c]}`] = a.slice(c + 1);
+          if (c === a.length - 1) { keep(`-${a[c]}`, rest[k + 1]); k++; } else keep(`-${a[c]}`, a.slice(c + 1));
           c = a.length + 1;
           break;
         }
@@ -161,7 +164,7 @@ function normalize(sub, rest, opq) {
       const names = full.length > 0 ? full : [name];
       for (const f of names) args.push(f + tail);
       const takesValue = names.some((f) => longV.includes(f));
-      if (takesValue) { values[names[0]] = eq < 0 ? rest[k + 1] : tail.slice(1); if (eq < 0) k++; }
+      if (takesValue) { keep(names[0], eq < 0 ? rest[k + 1] : tail.slice(1)); if (eq < 0) k++; }
       // An expansion in --name=value counts only when the option itself is hidden.
       if (opq[at] && !(eq > 0 && /^--[A-Za-z0-9-]+$/.test(name))) opaque = true;
       continue;
@@ -169,7 +172,7 @@ function normalize(sub, rest, opq) {
     args.push(a);
     opaque = opaque || opq[k];
   }
-  return { args, values, opaque };
+  return { args, values, every, opaque };
 }
 
 // Resolves a cd or -C target against dir; Git Bash /c/... becomes C:/... on Windows.
@@ -190,7 +193,8 @@ function isWholeTree(p) {
   return stack.length === 0 || (stack.length === 1 && stack[0] === '*');
 }
 
-// The git invocations in one simple command: { sub, args, values, opaque, globals, dir, first, text }.
+// The git invocations in one simple command: { sub, args, values, every, opaque, globals, dir, first,
+// text }.
 function invocations(cmd, dir) {
   const w = cmd.words;
   const o = cmd.opaque || w.map(() => false);
@@ -217,7 +221,7 @@ function invocations(cmd, dir) {
     const lead = w.slice(0, i);
     const viaXargs = lead.some((x) => base(x) === 'xargs'); // xargs appends arguments the reader never sees
     if (j >= w.length) {
-      if (viaXargs) out.push({ sub: SUBST, args: [], values: {}, opaque: true, globals, dir: d, text: cmd.text, first: false });
+      if (viaXargs) out.push({ sub: SUBST, args: [], values: {}, every: {}, opaque: true, globals, dir: d, text: cmd.text, first: false });
       continue;
     }
     const n = normalize(w[j], w.slice(j + 1), o.slice(j + 1));
@@ -225,7 +229,7 @@ function invocations(cmd, dir) {
     const leadEnv = {};
     lead.forEach((x, k) => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(x); if (m) leadEnv[m[1].toUpperCase()] = o[k] ? SUBST : m[2]; });
     out.push({
-      sub: o[j] ? SUBST : w[j], args: n.args, values: n.values, opaque: n.opaque || hidden || viaXargs,
+      sub: o[j] ? SUBST : w[j], args: n.args, values: n.values, every: n.every, opaque: n.opaque || hidden || viaXargs,
       globals, dir: d, text: cmd.text, leadEnv,
       first: !cmd.fromData && lead.every((x) => isEnvAssign(x) || PREFIX_WORDS.has(x)),
     });
@@ -376,6 +380,11 @@ function configWrite(inv, re) {
   const unset = has(inv.args, '--unset', '--unset-all', '--remove-section');
   return { unset, value: pos[k].includes('=') ? pos[k].slice(pos[k].indexOf('=') + 1) : pos[k + 1] };
 }
+// git replace -l / --list with at most one pattern only lists replace refs (rule 12 allows it).
+function listsReplaceRefs(args, opaque) {
+  const rest = args.filter((a) => a !== '-l' && a !== '--list');
+  return !opaque && args.length - rest.length === 1 && rest.length <= 1 && positionals(rest).length === rest.length;
+}
 const HOOKS_KEY = /^core\.hookspath(=|$)/i;
 const INCLUDE_KEY = /^include(if\..*)?\.path(=|$)|^include\./i;
 const ALIAS_KEY = /^alias\./i;
@@ -523,7 +532,8 @@ const RULES = [
   {
     n: 12, prefix: 'history rewrite',
     advice: 'History rewrites and ref surgery are for the user; ask first.',
-    test: ({ sub, args }) => ['filter-branch', 'filter-repo', 'replace', 'update-ref'].includes(sub) ||
+    test: ({ sub, args, opaque }) => ['filter-branch', 'filter-repo', 'update-ref'].includes(sub) ||
+      (sub === 'replace' && !listsReplaceRefs(args, opaque)) ||
       (sub === 'reflog' && ['expire', 'delete'].includes(positionals(args)[0])),
   },
   {
@@ -588,12 +598,17 @@ const RULES = [
   {
     n: 19, prefix: 'unexpanded argument',
     test: (inv) => {
+      if (inv.tooDeep) return 'Shells nest deeper here (sh -c, eval, rebase --exec) than the guard reads, three levels, so it cannot see what runs inside. Run the inner command on a line of its own.';
       if (inv.sub === SUBST) return 'The command runs git with a subcommand or arguments the guard cannot see (a variable, a substitution, xargs input, or a command word that is an expansion). Run git by name with its arguments written out.';
       if (!DESTRUCTIVE.has(inv.sub) || !inv.opaque) return false;
       return `The guard cannot see what a variable, substitution or brace expansion becomes, and git ${inv.sub} can discard work or bypass hooks. Run it with the values written out.`;
     },
   },
 ];
+
+// The words of an -ArgumentList string as the started process gets them: whitespace and commas
+// separate, double quotes group and are dropped ('rebase -x "git push -f" main' is four words).
+const argWords = (s) => (s.match(/(?:"[^"]*"?|[^\s,"]+)+/g) || []).map((w) => w.replace(/"/g, ''));
 
 // Start-Process git -ArgumentList "push --force" (or "push","--force") as the git command it runs.
 function startProcessCommand(c) {
@@ -608,13 +623,18 @@ function startProcessCommand(c) {
     if (!w.startsWith('-') && file === null) file = w;
   }
   if (!file || !isGit(file)) return null;
-  const words = ['git', ...(argList || '').split(/[\s,]+/).filter(Boolean)];
+  const words = ['git', ...argWords(argList || '')];
   return { words, opaque: words.map((_, i) => i > 0 && opaque), text: c.text, stdin: [], fromData: true };
 }
 
+// The commands a git rebase in c hands to sh after each commit it replays (--exec, -x, repeats kept).
+const rebaseExecs = (c) => invocations(c, '.').filter((i) => i.sub === 'rebase')
+  .flatMap((i) => [...(i.every['-x'] || []), ...(i.every['--exec'] || [])]).filter((t) => typeof t === 'string');
+
 // Every command the line runs, with the directory each runs in. Quoted text and heredoc bodies
 // are read as commands too when a runner word appears (sh -c, eval, | bash, powershell -Command,
-// [scriptblock]::Create).
+// [scriptblock]::Create), and the command of every git rebase --exec or -x always. Text still
+// unread past the depth limit becomes one command marked tooDeep, which decide denies (rule 19).
 function commandsOf(command, dialect, cwd) {
   const top = parse(command, dialect);
   const cmds = top.commands.slice();
@@ -627,19 +647,36 @@ function commandsOf(command, dialect, cwd) {
     if (isRunner(c.words[k])) return true;
     return WRAPPERS.has(base(c.words[k])) && c.words.slice(k + 1).some(isRunner);
   });
-  let data = runner(cmds) ? top.data : [];
-  for (let depth = 0; depth < 3 && data.length > 0; depth++) {
-    const next = [];
-    for (const text of data) {
-      for (const d of ['bash', 'powershell']) {
-        const p = parse(text, d);
-        for (const c of p.commands) cmds.push(Object.assign(c, { fromData: true }));
-        if (runner(p.commands)) next.push(...p.data);
+  // Text to read as a command line, three levels deep: { text, dialects, hidden }. Data is read in
+  // both dialects; a rebase command in Bash, as git runs it with sh. hidden: the text is a word of a
+  // line already read, so a SUBST in it is an expansion of that line and opaque. A Start-Process
+  // command is reassembled here, so the rebase command of one is read too.
+  let pending = [];
+  const queue = (p, hidden) => {
+    if (runner(p.commands)) for (const text of p.data) pending.push({ text, dialects: ['bash', 'powershell'], hidden });
+    const started = p.commands.map(startProcessCommand).filter(Boolean);
+    cmds.push(...started);
+    for (const c of p.commands.concat(started)) {
+      for (const text of rebaseExecs(c)) pending.push({ text, dialects: ['bash'], hidden: true });
+    }
+  };
+  queue(top, false);
+  for (let depth = 0; depth < 3 && pending.length > 0; depth++) {
+    const now = pending;
+    pending = [];
+    for (const t of now) {
+      for (const d of t.dialects) {
+        const p = parse(t.text, d);
+        for (const c of p.commands) {
+          if (t.hidden) c.opaque = c.words.map((w, k) => c.opaque[k] || w.includes(SUBST));
+          cmds.push(Object.assign(c, { fromData: true }));
+        }
+        queue(p, t.hidden);
       }
     }
-    data = next;
   }
-  for (const c of cmds.slice()) { const s = startProcessCommand(c); if (s) cmds.push(s); }
+  // Fails closed: what the limit leaves unread could run anything.
+  if (pending.length > 0) cmds.push({ words: [SUBST], opaque: [true], text: pending[0].text, stdin: [], fromData: true, tooDeep: true });
   let dir = cwd;
   return cmds.map((c) => {
     const at = dir;
@@ -747,7 +784,8 @@ function decide(command, dialect, agent, cwd, loaded) {
       envUnresolved = true;
     });
     for (const inv of invocations(cmd, dir)) invs.push(Object.assign(inv, { shellEnv: Object.assign({}, shellEnv) }));
-    if (opaqueCommand(cmd, mentionsGit)) invs.push({ sub: SUBST, args: [], values: {}, opaque: true, globals: [], dir, text: cmd.text, first: false });
+    if (cmd.tooDeep) invs.push({ sub: SUBST, args: [], values: {}, every: {}, opaque: true, globals: [], dir, text: cmd.text, first: false, tooDeep: true });
+    else if (opaqueCommand(cmd, mentionsGit)) invs.push({ sub: SUBST, args: [], values: {}, every: {}, opaque: true, globals: [], dir, text: cmd.text, first: false });
   }
   if (envUnresolved) for (const inv of invs) inv.envUnresolved = true;
   if (invs.length === 0) return null;

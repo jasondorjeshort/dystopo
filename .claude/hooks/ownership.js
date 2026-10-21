@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The update helper (ADR 0016; spec: docs/design/decisions/0016-ownership-map.md, The helper, and
+// The update helper (ADR 0016; spec: docs/hatchery/decisions/0016-ownership-map.md, The helper, and
 // 0016-update-procedure.md). Prints the commands an update from Hatchery runs, built from the
 // ownership map (.claude/hooks/ownership.json) as it is at the base commit, never the working
 // tree's copy and never a built-in default. The project's update.exclude is read from the working
