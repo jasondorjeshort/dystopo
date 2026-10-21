@@ -3,7 +3,10 @@ package io.github.jasondorjeshort.dystopo.app.trips
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
+import android.os.Handler
+import android.os.Looper
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
+import io.github.jasondorjeshort.dystopo.app.routing.UiPublish
 import io.github.jasondorjeshort.dystopo.app.sync.ShareLinkClient
 import io.github.jasondorjeshort.dystopo.model.RouteGpx
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
@@ -47,20 +50,33 @@ import java.security.MessageDigest
  * - `POST /routes/import[?replace=1]` with a GPX body. `POST /routes/ui?open=1|0` (the Routes list),
  *   `POST /routes/close` (closes the editor), `POST /routes/tool?tool=none|via|waypoint`,
  *   `POST /routes/tap?lat=&lon=` (a tap on the map with the current tool).
+ * - T124: every route but a GET answers only once the main thread has run what the change posted to it ([answerSettled]):
+ *   the editor's state ([Trips] writes it on the main thread) is then the answer's for the next request, so `GET /routes`
+ *   right after `POST /routes/{id}/open` names the trip in `editing`, and `?go=1` right after `POST /routes/{id}/offline`
+ *   finds the offer. Work a change leaves on the trips worker (an open's background directions, a tap's edit) is not
+ *   waited for; `?wait=1` and the drag route wait for it first.
  */
 object TripRoutes {
     private val item = Regex("^/routes/([0-9a-fA-F-]{8,64})(\\.gpx|/[a-z]+(?:/[0-9a-fA-F-]+)?)?$")
 
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val ui by lazy { UiPublish({ Looper.myLooper() == Looper.getMainLooper() }, { main.post(it) }) }
+
+    /** T124: how long a route waits for the main thread before it answers anyway (a stuck main thread). */
+    private const val SETTLE_MS = 5_000L
+
     fun handle(app: DystopoApp, r: Request): Response? {
         if (r.path != "/routes" && !r.path.startsWith("/routes/")) return null
-        return try {
-            route(app, r)
-        } catch (e: NoSuchElementException) {
-            Response.json(mapOf("error" to e.message), 404)
-        } catch (e: IllegalArgumentException) {
-            Response.json(mapOf("error" to e.message), 400)
-        } catch (e: IllegalStateException) {
-            Response.json(mapOf("error" to e.message), 409)
+        return answerSettled(r.method, ui, SETTLE_MS) {
+            try {
+                route(app, r)
+            } catch (e: NoSuchElementException) {
+                Response.json(mapOf("error" to e.message), 404)
+            } catch (e: IllegalArgumentException) {
+                Response.json(mapOf("error" to e.message), 400)
+            } catch (e: IllegalStateException) {
+                Response.json(mapOf("error" to e.message), 409)
+            }
         }
     }
 
@@ -245,4 +261,18 @@ object TripRoutes {
         if (p.size != 2 || lat !in -90.0..90.0 || lon !in -180.0..180.0) return null
         return lat to lon
     }
+}
+
+/**
+ * T124 (T119's audit of this file): [answer]s a request and, for any method but GET, waits at most [timeoutMs] until the
+ * main thread has run everything posted before the answer ([UiPublish.publish] with nothing to do). [Trips] posts the
+ * editor's state (the open trip, the offline offer, the message) to the main thread and returns, so before T124 a route
+ * could answer while those posts still waited behind a long frame: with the main thread kept busy, `GET /routes` right
+ * after `POST /routes/{id}/open` had the previous trip in `editing` 148 times in 300, and `GET /routes/{id}/offline` right
+ * after `POST /routes/{id}/offline` had no offer 53 times in 60 (so `?go=1` would have answered 409).
+ */
+internal fun <T> answerSettled(method: String, ui: UiPublish, timeoutMs: Long, answer: () -> T): T {
+    val a = answer()
+    if (method != "GET") ui.publish(timeoutMs) { }
+    return a
 }

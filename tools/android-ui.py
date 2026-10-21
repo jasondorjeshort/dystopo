@@ -56,7 +56,9 @@ Parts:
                them, and the ones this run pushed are deleted again at the end; without the outdoors file the line is
                reported `skipped` with the reason and does not fail the part (routesSkipped). T110: a line with `dirs=<n>`
                and/or `turn=<text>` also reads the planned route's turn directions (GET /nav/directions?route=current):
-               at least n of them, and one shown direction's text containing <text>.
+               at least n of them, and one shown direction's text containing <text>. T124: a non-200 answer (the plan's
+               or the directions') is recorded with its body (`body`, also in the log line); --forced-404 adds a route
+               where no pack is loaded after the tour and checks that the directions' 404 body is recorded (`forced`).
   search       (debug build, debug port) the search tour: tools/search-tour.txt, each query's expected top hit.
 
 Privacy: only areas.json places are used (the Rainier pack and the views around it); reports never echo file
@@ -419,21 +421,25 @@ class DebugServer:
 
 def read_tour(path):
     """Lines `fields...:label|key=value|...`; `#` comments."""
-    out = []
     with open(path, encoding="utf-8") as f:
-        for raw in f:
-            line = raw.split("#", 1)[0].strip()
-            if not line:
-                continue
-            head, *opts = line.split("|")
-            spec, sep, label = head.rpartition(":")
-            if not sep:
-                spec, label = head, ""
-            kv = {}
-            for o in opts:
-                k, _, v = o.partition("=")
-                kv[k.strip()] = v.strip()
-            out.append({"spec": spec.strip(), "label": label.strip(), "opts": kv})
+        return read_tour_lines(f)
+
+
+def read_tour_lines(lines):
+    out = []
+    for raw in lines:
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        head, *opts = line.split("|")
+        spec, sep, label = head.rpartition(":")
+        if not sep:
+            spec, label = head, ""
+        kv = {}
+        for o in opts:
+            k, _, v = o.partition("=")
+            kv[k.strip()] = v.strip()
+        out.append({"spec": spec.strip(), "label": label.strip(), "opts": kv})
     return out
 
 
@@ -500,9 +506,16 @@ def part_routes(args):
             if st.get("pushed"):
                 code, _ = srv.call("DELETE", f"/packs/{urllib.parse.quote(name)}")
                 st["removed"] = code == 200
+    forced = None
+    if args.forced_404:
+        try:
+            forced = forced_404(srv)
+        finally:
+            srv.call("POST", "/route/clear")
     ran = [x for x in res if not x.get("skipped")]
-    return {"ok": bool(ran) and all(x["ok"] for x in ran), "routes": res, "routesOk": sum(1 for x in ran if x["ok"]),
-            "routesTotal": len(ran), "routesSkipped": len(res) - len(ran), **({"packs": packs} if packs else {})}
+    return {"ok": bool(ran) and all(x["ok"] for x in ran) and (forced is None or forced["ok"]), "routes": res,
+            "routesOk": sum(1 for x in ran if x["ok"]), "routesTotal": len(ran), "routesSkipped": len(res) - len(ran),
+            **({"packs": packs} if packs else {}), **({"forced": forced} if forced is not None else {})}
 
 
 def route_line(srv, args, v, packs):
@@ -544,7 +557,8 @@ def route_line(srv, args, v, packs):
     if code == 200 and ("dirs" in o or "turn" in o):  # T110: the planned route's turn directions (T102)
         dcode, d = srv.call("GET", "/nav/directions?route=current")
         texts = [x.get("text") or "" for x in (d or {}).get("instructions") or []]
-        directions = {"status": dcode, "count": (d or {}).get("count"), "shown": (d or {}).get("shown"), "first": texts[:3]}
+        directions = {"status": dcode, "count": (d or {}).get("count"), "shown": (d or {}).get("shown"), "first": texts[:3],
+                      **({"body": answer_body(d)} if dcode != 200 else {})}  # T124: why, when it is not there
         checks["directions"] = dcode == 200
         if "dirs" in o:
             checks["directionsCount"] = ((d or {}).get("count") or 0) >= int(o["dirs"])
@@ -554,9 +568,40 @@ def route_line(srv, args, v, packs):
            "distanceM": dist, "ascentM": asc, "descentM": route.get("descentM"), "timeS": route.get("timeS"),
            "via": via, "ms": round((time.time() - t0) * 1000),
            **({"directions": directions} if directions is not None else {}),
-           **({"error": (r or {}).get("message") or (r or {}).get("error")} if code != 200 else {})}
+           **({"error": (r or {}).get("message") or (r or {}).get("error"), "body": answer_body(r)} if code != 200 else {})}
     print(f"[ui] route {v['label']}: {'ok' if out['ok'] else 'FAILED'} {dist} m, +{asc} m, via {via}"
-          + (f", {directions['count']} directions ({directions['shown']} shown)" if directions else ""), file=sys.stderr)
+          + (f", {directions['count']} directions ({directions['shown']} shown)" if directions else "")
+          + (f"; POST /route {code} body {out['body']}" if code != 200 else "")
+          + (f"; GET /nav/directions {directions['status']} body {directions['body']}" if directions and "body" in directions else ""),
+          file=sys.stderr)
+    return out
+
+
+def answer_body(r, limit=600):
+    """T124 (the T119 follow-up): a non-200 answer's body as the log and the report keep it (JSON, cut at [limit])."""
+    text = json.dumps(r, ensure_ascii=False, separators=(",", ":"))
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+# T124: --forced-404 plans this line after the tour: two public Grand Canyon trailheads (T89's South Kaibab line) with no
+# pack= option, so the Grand Canyon pack is never pushed and the phone has nothing loaded there. The plan is refused, and
+# the directions of the current route then answer 404: the line checks that the part records that body, and it is
+# reported under `forced`, outside routesOk and routesTotal, so the committed tour's count does not change.
+FORCED_404 = "36.0530,-112.0836;36.1003,-112.0897:forced-404-no-pack|mode=hike"
+
+
+def forced_404(srv):
+    """T124: the forced failure (--forced-404): a route where no pack is loaded, then GET /nav/directions?route=current."""
+    v = read_tour_lines([FORCED_404])[0]
+    a, b = v["spec"].split(";")[:2]
+    srv.call("POST", "/route/clear")  # no route left from the tour's last line
+    code, r = srv.call("POST", f"/route?from={a}&to={b}&mode=hike&wait=30000", timeout=90)
+    dcode, d = srv.call("GET", "/nav/directions?route=current")
+    out = {"label": v["label"], "route": {"status": code, "body": answer_body(r)},
+           "directions": {"status": dcode, "body": answer_body(d)},
+           "ok": code != 200 and dcode == 404 and bool((d or {}).get("error"))}
+    print(f"[ui] route {v['label']} (forced): POST /route {code} body {out['route']['body']}; "
+          f"GET /nav/directions {dcode} body {out['directions']['body']}", file=sys.stderr)
     return out
 
 
@@ -2219,6 +2264,8 @@ def main():
     ap.add_argument("--target-port", type=int, default=0, help="network: the server's own port when --server-config is not given")
     ap.add_argument("--port", type=int, default=0, help="routes/search: host port forwarded to the debug server")
     ap.add_argument("--routes-file", default=os.path.join(HERE, "routing-tour.txt"))
+    ap.add_argument("--forced-404", action="store_true", help="routes: after the tour, plan a route where no pack is loaded and "
+                    "check that the directions' 404 is recorded with its body (reported under `forced`, not in routesOk)")
     ap.add_argument("--pack-dir", default=os.path.join(REPO, "out"), help="routes: where a `pack=<name>` line finds <name>-outdoors.pmtiles (and -dem)")
     ap.add_argument("--search-file", default=os.path.join(HERE, "search-tour.txt"))
     ap.add_argument("--net-speed", default="umts", help="network: emulator network speed while a transfer is killed (gsm, edge, umts, hsdpa, lte, full, or up:down kbps)")
