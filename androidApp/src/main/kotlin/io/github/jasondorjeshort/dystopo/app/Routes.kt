@@ -17,7 +17,7 @@ import java.io.File
  * Debug builds only ([BuildConfig.DEBUG_ENDPOINTS]), for agents through `adb forward`; T57: on the debug
  * server's random port (logcat line `debug server on port N token T`), or on 8686 with `debugFixedPort=1`:
  * - `GET /health`: JSON (server load and refusals, packs, map state: `map.idle` with
- *   `map.notIdleBecause`, see [MapController.idleBlockers]).
+ *   `map.notIdleBecause`, see [MapController.idleBlockers]; T123: `map.activity`, `started` or why not).
  * - `GET /screenshot`: PNG of the map (MapLibre snapshot). `?mode=window` captures the app's content
  *   area, map plus overlays (see [MapController.windowPng]); `?wait=<ms>` (default 15000) waits for the
  *   map to go idle and then for two snapshots in a row to agree ([MapController.stableSnapshot]);
@@ -37,6 +37,15 @@ import java.io.File
  * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`, T103 `GET /settings/layout` and `POST /settings/open?group=`: user settings and the sheet's groups ([SettingsRoutes]).
  * - `GET /features` (alias `/labels`), `GET /features/text`: what the map drew ([FeatureRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
+ * - T123 `GET /stats/requests[?limit=N][&format=jsonl]`: the request log ([RequestLog]): one line per request the
+ *   loopback servers answered since start (time, method, path without the query, route, the pack that answered a tile
+ *   or `online:<source key>`, status, bytes, ms), the last 4096 kept in memory; `capacity`, `total`, `kept`,
+ *   `dropped`, `perRoute` (requests, bytes, statuses, maxMs) and the newest `limit` lines (default 200); `jsonl`
+ *   gives every kept line (or the newest `limit`) as `devtool cache-replay --log` reads a server log.
+ * - T123, the background guard: the routes that need the activity on screen ([RequestChecks.needsActivity]: the
+ *   screenshot, the feature routes, the help routes, opening the About screen) answer 503 with
+ *   `{"error", "reason", "route"}` at once while the activity is stopped or gone ([MapController.backgroundReason]),
+ *   instead of hanging until their own timeouts.
  */
 class Routes(private val app: DystopoApp) {
     private val tile = Regex("^/(dem|osm|contours)/(-?\\d+)/(-?\\d+)/(-?\\d+)\\.(png|pbf|mvt)$")
@@ -60,9 +69,48 @@ class Routes(private val app: DystopoApp) {
     fun handle(raw: Request, debugRoutes: Boolean = BuildConfig.DEBUG_ENDPOINTS): Response {
         val debug = debugRoutes && BuildConfig.DEBUG_ENDPOINTS
         if (!debug && !isMapRequest(raw)) return Response.notFound()
+        if (!BuildConfig.DEBUG_ENDPOINTS) return admitAndRoute(raw, debug)
+        // T123: the request log (debug builds; `GET /stats/requests`). A handler that throws is logged as LocalServer answers it.
+        val started = System.currentTimeMillis()
+        val res = try {
+            admitAndRoute(raw, debug)
+        } catch (e: Exception) {
+            requestLog.add(raw.method, raw.path, 500, 0, started)
+            throw e
+        }
+        requestLog.add(raw.method, raw.path, res.status, res.body.size, started, if (res.status == 200) packOf(raw.path) else null)
+        return res
+    }
+
+    private fun admitAndRoute(raw: Request, debug: Boolean): Response {
         val (r, answer) = app.token.admit(raw, debug && app.fixedDebugPort)
         return answer ?: route(r!!, debug)
     }
+
+    /** T123: the phone's request log, one line per request (debug builds), `GET /stats/requests`. */
+    val requestLog = RequestLog()
+
+    private val anyTile = Regex("^/(dem|osm|contours|shade)/(\\d+)/(\\d+)/(\\d+)\\.\\w+$")
+
+    /**
+     * T123: which pack a tile at [path] came from, for the request log: the region pack that holds it, or
+     * `online:<source key>` where the online fallback answers (the same coverage checks as [TileService]); null otherwise.
+     */
+    private fun packOf(path: String): String? = runCatching {
+        val m = anyTile.matchEntire(path) ?: return null
+        val kind = m.groupValues[1]
+        val (z, x, y) = m.groupValues.drop(2).map { it.toInt() }
+        val t = app.tiles
+        val o = t.online
+        val online = o?.let { "online:${it.fetcher.serverKey}" }
+        // A Pack's own name is its role (`dem`, `osm`); the log names the region it belongs to.
+        fun region(p: Pack?): String? = p?.let { pack -> t.packs.regions.firstOrNull { it.dem === pack || it.osm === pack }?.name ?: pack.file.name }
+        when (kind) {
+            "osm" -> if (o != null && !o.packCoversOsm(z, x, y)) online else region(t.packs.osmCandidates(z, x, y).firstOrNull())
+            "contours" -> if (o != null && !o.packCoversContour(z, x, y)) online else region(t.packs.demFor(z, x, y, io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.CONTOUR))
+            else -> if (o != null && !o.packCoversDem(z, x, y)) online else region(t.packs.demFor(z, x, y))
+        }
+    }.getOrNull()
 
     private fun route(r: Request, debug: Boolean): Response {
         tile.matchEntire(r.path)?.let { m ->
@@ -84,6 +132,11 @@ class Routes(private val app: DystopoApp) {
         ShadeRoutes.handle(app, r)?.let { return it } // T47: /shade/{z}/{x}/{y}.png, GET /shade
         if (r.path == "/style.json") return Response(200, "application/json", app.tiles.style().toByteArray())
         if (!debug) return Response.notFound()
+        // T123: routes that need the activity on screen (its window, the map's frames, Compose layout) hung until their own
+        // timeouts with the app in the background; one guard here answers them 503 with the reason instead.
+        if (RequestChecks.needsActivity(r.method, r.path)) app.map.backgroundReason()?.let { why ->
+            return Response.json(mapOf("error" to "the app is in the background", "reason" to why, "route" to r.path), 503)
+        }
         AttributionRoutes.handle(app, r)?.let { return it }
         NavRoutes.handle(app, r)?.let { return it } // T61: /nav, /nav/status, /nav/start|stop|camera|heading; observes POST /location?bearing=
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
@@ -105,6 +158,11 @@ class Routes(private val app: DystopoApp) {
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
+            "GET" to "/stats/requests" -> { // T123
+                val limit = r.query["limit"]?.let { it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: return Response.json(mapOf("error" to "limit must be a whole number >= 0"), 400) }
+                if (r.query["format"] == "jsonl") Response(200, "application/x-ndjson", requestLog.jsonLines(limit ?: requestLog.capacity).toByteArray())
+                else Response.json(requestLog.json(limit ?: RequestLog.DEFAULT_LIMIT))
+            }
             "GET" to "/features", "GET" to "/features/text", "GET" to "/labels" -> FeatureRoutes(app).handle(r)
             "POST" to "/camera" -> {
                 val p = params(r)
@@ -190,6 +248,7 @@ class Routes(private val app: DystopoApp) {
                 "attached" to (m.mapView != null), "ready" to (m.map != null), "styleLoaded" to m.styleLoaded,
                 "styleError" to m.styleError, "framesRendered" to m.framesRendered,
                 "lastScreenshotIdle" to lastScreenshotIdle,
+                "activity" to (m.backgroundReason() ?: "started"), // T123: what the background guard reads
             ) + m.idleJson(),
         )
     }

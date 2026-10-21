@@ -225,6 +225,19 @@ class MapController {
         styleLoaded = false
     }
 
+    /**
+     * T123: why the activity cannot serve a route that needs it on screen, or null when it is started (visible):
+     * `noActivity` (none yet, or destroyed), `finishing`, or `stopped (<lifecycle state>)` after the app went to the
+     * background (HOME, another app on top). Read from any thread: the lifecycle state is a plain field.
+     */
+    fun backgroundReason(): String? {
+        val act = activity ?: return "noActivity"
+        if (act.isFinishing || act.isDestroyed) return "finishing"
+        val owner = act as? androidx.lifecycle.LifecycleOwner ?: return null
+        val state = owner.lifecycle.currentState
+        return if (state.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) null else "stopped ($state)"
+    }
+
     /** Runs [block] on the main thread and waits for its result. */
     fun <T> onMain(timeoutMs: Long = 5000, block: () -> T): T {
         if (Looper.myLooper() == Looper.getMainLooper()) return block()

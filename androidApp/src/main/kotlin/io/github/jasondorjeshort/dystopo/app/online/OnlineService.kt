@@ -51,7 +51,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
      * T80: the phone's own readers of the elevation sources and OpenFreeMap, used when no server is set
      * ([DirectSources]); made on first use; declared before the init block that may use it (it points the shared readers' cache and HTTP at the app).
      */
-    val direct: DirectSources by lazy { DirectSources(app, app.cacheDir, cache).also { it.sessionCapBytes = DirectPrefs.sessionMb(app) * 1024 * 1024; it.maxZoom = DirectPrefs.maxZoom(app); it.onMobileData = DirectPrefs.onMobileData(app) } }
+    val direct: DirectSources by lazy { DirectSources(app, app.cacheDir, cache).also { it.sessionCapBytes = DirectPrefs.sessionMb(app) * 1024 * 1024; it.maxZoom = DirectPrefs.maxZoom(app); it.onMobileData = DirectPrefs.onMobileData(app); it.osmBase = DirectPrefs.osmBase(app) } } // T123: osmBase, debug only
 
     /** `/live/info` of the server (zooms, attribution), from the last successful check. */
     @Volatile var info: Map<String, Any?>? = null

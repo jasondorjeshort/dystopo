@@ -44,6 +44,20 @@ object RequestChecks {
         }
     }.replace(Regex("\\s+"), " ").trim()
 
+    /**
+     * T123: debug routes that need the activity on screen (its window, the map's frames, Compose layout), which the
+     * background guard in [Routes] answers 503 while it is stopped: `/screenshot`, `/features`, `/features/text`,
+     * `/labels`, everything under `/help`, and `POST /attribution/open` (Android does not start an activity for an
+     * app in the background, so it said `opened` and nothing opened). `GET /attribution` reads state and answers in
+     * the background; `POST /attribution/close` must answer while the About screen itself has the map stopped.
+     */
+    fun needsActivity(method: String, path: String): Boolean = when {
+        path == "/screenshot" || path == "/features" || path == "/features/text" || path == "/labels" -> true
+        path == "/help" || path.startsWith("/help/") -> true
+        method == "POST" && path == "/attribution/open" -> true
+        else -> false
+    }
+
     private fun codePoint(cp: Int): String? =
         if (cp in 1..0x10FFFF && cp !in 0xD800..0xDFFF) String(Character.toChars(cp)) else null
 }

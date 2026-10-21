@@ -539,7 +539,7 @@ class DirectSources(private val context: android.content.Context, private val ca
         val file = File(cacheRoot, "sources/openfreemap/planet.json")
         val fresh = file.isFile && System.currentTimeMillis() - file.lastModified() < 24 * 3600_000L
         val text = if (fresh) file.readText() else try {
-            val reply = SourceIo.get(OFM_TILEJSON, 30_000, 2)
+            val reply = ofmGet(OFM_TILEJSON) // T123: the stall guard, as the tiles
             if (reply.status != 200) throw IOException("OpenFreeMap TileJSON: HTTP ${reply.status}")
             gunzip(reply.body).decodeToString().also { t ->
                 file.parentFile?.mkdirs()
@@ -562,19 +562,47 @@ class DirectSources(private val context: android.content.Context, private val ca
         return ofmLayers
     }
 
+    /**
+     * T123, debug builds only: the scheme and host OpenFreeMap tiles are fetched from instead of the TileJSON's
+     * (`POST /firstrun/direct/osm-base?url=`, [DirectPrefs.osmBase]); the TileJSON itself is still read from
+     * OpenFreeMap. A test points it at a host that accepts and never answers to see [ofmGet]'s stall guard.
+     */
+    @Volatile var osmBase: String? = null
+
+    /**
+     * T123: an OpenFreeMap request (a tile or the TileJSON) with a stall guard: no connection within
+     * [OSM_CONNECT_MS] or no byte for [OSM_STALL_MS] fails the attempt, and a second attempt is made only while it can
+     * still end within [OSM_GUARD_MS] ([ofmRetries]), below MapLibre's own 10 s timeout. It waited 30 s an attempt
+     * with two attempts before, holding the loopback request and the map's idle state for a minute
+     * (finding 2026-10-16-cold-view-gap). Stalls are counted in `osmStalls` (`GET /firstrun/direct`).
+     */
+    private fun ofmGet(url: String): SourceReply {
+        val started = System.nanoTime()
+        var attempts = 0
+        while (true) {
+            try {
+                return http.ofm(url)
+            } catch (e: IOException) {
+                attempts++
+                if (!ofmRetries(attempts, (System.nanoTime() - started) / 1_000_000)) throw e
+                Thread.sleep(OSM_RETRY_DELAY_MS)
+            }
+        }
+    }
+
     private fun osm(path: String): HttpReply {
         val t = parseTile(path, ".pbf") ?: return HttpReply(404, ByteArray(0))
         if (t.z > OnlineTiles.OSM_MAX_ZOOM) return HttpReply(404, ByteArray(0))
         val (template, _) = openFreeMap()
-        val url = template.replace("{z}", "${t.z}").replace("{x}", "${t.x}").replace("{y}", "${t.y}")
+        val url = withOsmBase(template, osmBase).replace("{z}", "${t.z}").replace("{x}", "${t.x}").replace("{y}", "${t.y}")
         // T115: in the timeline too (`o?`, then `o<status>` or `oERR` with its ms): a stalled OpenFreeMap fetch held a cold
         // view not idle for over a minute while the DEM's events looked finished (finding 2026-10-16-cold-view-gap).
         DirectTrace.mark("o? ${t.z}/${t.x}/${t.y}")
         val started = System.nanoTime()
         val reply = try {
-            SourceIo.get(url, 30_000, 2)
+            ofmGet(url)
         } catch (e: IOException) {
-            DirectTrace.mark("oERR ${t.z}/${t.x}/${t.y} ${(System.nanoTime() - started) / 1_000_000} ms")
+            DirectTrace.mark("oERR ${t.z}/${t.x}/${t.y} ${(System.nanoTime() - started) / 1_000_000} ms ${e.javaClass.simpleName}")
             throw e
         }
         DirectTrace.mark("o${reply.status} ${t.z}/${t.x}/${t.y} ${(System.nanoTime() - started) / 1_000_000} ms")
@@ -670,6 +698,7 @@ class DirectSources(private val context: android.content.Context, private val ca
             "offlineFailures" to http.offline.get(), "requestWaitMs" to http.waitMs.get(), "rangeStalls" to http.stalls.get(), "requestNetMs" to http.netMs.get(),
             "maxZoom" to maxZoom, "demSynthesized" to demSynthesized.get(), "renderedByZoom" to synchronized(renderedByZoom) { renderedByZoom.mapKeys { "z${it.key}" } }, "demRendered" to n, "demMsAvg" to if (n == 0L) null else demMs.get() / n, "demMsMax" to demMaxMs.get(),
             "osmFetched" to osmFetched.get(), "osmBytes" to osmBytes.get(),
+            "osmStalls" to http.osmStalls.get(), "osmGuardMs" to OSM_GUARD_MS, "osmBase" to osmBase, // T123
             "stages" to linkedMapOf( // T88: summed over threads
                 "renderWaitMs" to renderWaitMs.get(), "coarseFirstHeldMs" to coarseHeldMs.get(), "renderFetchMs" to renderFetchMs.get(), "renderEncodeMs" to renderEncodeMs.get(),
                 "contourDemWaitMs" to contourDemWaitMs.get(), "sources" to io.github.jasondorjeshort.dystopo.sources.elevation.SourceTiming.json(),
@@ -743,6 +772,33 @@ class DirectSources(private val context: android.content.Context, private val ca
         /** T88: a range read with no byte for this long (or no connection for [RANGE_CONNECT_MS]) is dropped and retried. */
         const val RANGE_STALL_MS = 4_000L
         const val RANGE_CONNECT_MS = 5_000
+
+        /**
+         * T123: OpenFreeMap's stall guard ([ofmGet]): an attempt fails with no connection in [OSM_CONNECT_MS] or no byte
+         * for [OSM_STALL_MS]; a second attempt, [OSM_RETRY_DELAY_MS] later, only when its stall would still end within
+         * [OSM_GUARD_MS] of the first (MapLibre's client gives up at 10 s). A host that accepts and never answers, or a
+         * dropped connection, gives up after about 8.5 s; a tile answers in well under a second when the link is alive.
+         */
+        const val OSM_STALL_MS = 4_000L
+        const val OSM_CONNECT_MS = 4_000
+        const val OSM_ATTEMPTS = 2
+        const val OSM_RETRY_DELAY_MS = 500L
+        const val OSM_GUARD_MS = 9_000L
+
+        /** T123: whether [ofmGet] makes another attempt after [attempts] failed ones, [elapsedMs] after the first began. Pure, tested. */
+        fun ofmRetries(attempts: Int, elapsedMs: Long): Boolean =
+            attempts < OSM_ATTEMPTS && elapsedMs + OSM_RETRY_DELAY_MS + OSM_STALL_MS <= OSM_GUARD_MS
+
+        /**
+         * T123: [template] (OpenFreeMap's tile URL) with its scheme and host replaced by [base] (`http://10.0.2.2:8753`, a
+         * trailing slash or path ignored); [template] itself when [base] is null or blank. Pure, tested.
+         */
+        fun withOsmBase(template: String, base: String?): String {
+            if (base.isNullOrBlank()) return template
+            val origin = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+").find(base.trim())?.value ?: throw IllegalArgumentException("not an http(s) URL: $base")
+            val rest = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+").replace(template, "")
+            return origin + rest
+        }
 
         /**
          * T88: how long a render at the view's zoom waits for coarse renders in flight, and for them to be asked for.
@@ -911,6 +967,17 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
         send(url, DirectSources.RANGE_STALL_MS, DirectSources.RANGE_CONNECT_MS) { it.setRequestProperty("Range", "bytes=$offset-${offset + length - 1}") }
     } catch (e: java.net.SocketTimeoutException) {
         stalls.incrementAndGet()
+        throw e
+    }
+
+    /** T123: OpenFreeMap requests that got no connection or no byte within the stall guard ([DirectSources.OSM_STALL_MS]). */
+    val osmStalls = AtomicLong()
+
+    /** T123: one attempt of an OpenFreeMap request under the stall guard ([DirectSources.ofmRetries] decides on another). */
+    fun ofm(url: String): SourceReply = try {
+        send(url, DirectSources.OSM_STALL_MS, DirectSources.OSM_CONNECT_MS) {}
+    } catch (e: java.net.SocketTimeoutException) {
+        osmStalls.incrementAndGet()
         throw e
     }
 
