@@ -9,8 +9,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 - Wave 17 launched 2026-10-21 (owner's account, meter 12% / 39% at launch): T121 (base update to
   Hatchery f7f41af, merges first), T122 (font scale 2.0, nav bar help icons, fit paddings), T123
   (online stall guard, background debug routes, phone request log), T124 (Android sweep 10), T125
-  (server and tooling sweep 10); implementers on `task/T12n`, no PRs yet. The live viewer on 8765 is
-  being restarted by a chore; the standalone server on 8800 is down and nothing in the wave needs it.
+  (server and tooling sweep 10); implementers on `task/T12n`, no PRs yet. The live viewer runs on
+  8765 (PID in `out/coordinator-pids.txt`); 8800 is down and nothing in the wave needs it.
 - History is clean: the 19 placeholder commits and `v0.1.9-alpha` rewritten under the owner's identity
   and force-pushed (tag on `d8bd466a`, the release intact); T120 merged and logged; the ten triage
   commits on `main`. Two older commits authored as Claude remain; the owner's call.
@@ -25,9 +25,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
    main checkout's scan refuses a scan-contract change), merge by the `wave` skill's sequence.
 2. Hatchery: after the owner commits and pushes `T120`'s branch, open its PR; when the architect
    reports, read ADR 0021, put any unresolved objection to the owner, then commit the same way.
-3. After ADR 0021 lands in Hatchery: a second base update (board › Later) and a rules pass on
-   `CLAUDE.md` (the light lane, the guard's reversible/irreversible line, the identity source).
-4. Post-wave sweep, then release per ADR 0024 (Actions still off while the repository is private).
+3. After ADR 0021 lands: a second base update (board › Later) and a rules pass on `CLAUDE.md`
+   (light lane, the guard's reversible line, identity source). Then the sweep and a release (ADR 0024).
 
 ## Waiting on user
 
