@@ -591,7 +591,10 @@ until a restart.
 `dystopo.trips`: a device id, a hybrid logical clock, and the same put + `path` + `waypoints` operations the
 phone's store writes; T116: and `directions`, the reply's `directionsValue`, after each `path` it writes, on the
 first save and whenever the path changed, so the phone opens a browser-saved trip with its directions and no
-graph). Saving appends operations there, then sends the whole log through `/route/bundle` to
+graph; a trip saved by a page from before T116 has no `directions` op, and the phone makes them when the trip is
+opened with packs covering it (T108's migration, `POST /routes/{id}/open?wait=1`), then syncs them back: T125 saw
+`directions.saved` go from false to true with the same 8 directions as a T116 save of the same hike, and
+`/sync/routes?full=1` count 8 for it after the phone's next sync). Saving appends operations there, then sends the whole log through `/route/bundle` to
 `POST /sync/push`, with the page's Token field as the bearer token when it is set; so on a server with
 per-user tokens the trip lands in that user's replica. Where the push is refused (a server that wants a token
 and has none, or no server) the trip stays in the browser and the page says so; "Send to server" retries and

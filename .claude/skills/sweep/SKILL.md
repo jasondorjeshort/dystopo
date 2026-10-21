@@ -56,8 +56,10 @@ and says so on its `steps.tsv` line.
 `out\sweep-<date>\summary.json` (per part ok, seconds and the numbers the log entry quotes; paste it
 into the log) and `sheet.png` (every contact sheet and screenshot on one page, the `update` part's
 included since T99: view it; T111: the page is fitted into one browser capture, more thumbnail columns
-first and a lower scale past that, and `summary.json` `sheetSize` says the size, the scale and whether
-anything was cut), plus each part's log; exit 1 on any failure. `steps.tsv` gets one line
+first and a lower scale past that, and `summary.json` `sheetSize` gives the PNG's width and height, the
+columns and scale used and `cut`, true when the page still reached the capture limit and its end may
+be missing: then view each part's own sheets and screenshots and say so in the log entry; a
+`sheetError` instead means no sheet was made), plus each part's log; exit 1 on any failure. `steps.tsv` gets one line
 per part as it ends; since T99 it is written with read sharing and retried, so watching it
 (`tail -F`, `Get-Content -Wait`) no longer stops the sweep. The `update` part also keeps the app's
 update log, `ui\update\updater-log.txt`. `bash tools/sweep.sh` runs the same parts without the device, and
