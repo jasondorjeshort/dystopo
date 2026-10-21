@@ -1,24 +1,28 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The privacy scan (ADR 0018; contract: docs/design/decisions/0018-privacy-scan.md, sections 1 to 3).
+// The privacy scan (ADR 0018; contract: docs/hatchery/decisions/0018-privacy-scan.md, sections 1 to 3).
 // One reader for everything a push sends, with three callers: git-guard's rule 20 requires this
 // module, pusher check 5 runs the CLI, and .claude/hooks/git/pre-push runs it for every push made
-// outside Claude Code. It reads every commit in `git rev-list <refs> --not --remotes=<target>
-// [--remotes=hatchery] [<extra>]`, never the net diff: author and committer, the message, the
-// lines each commit adds against every parent, the names of the files it adds, and each
-// annotated tag among the refs (message and tagger). No other remote counts as published.
+// outside Claude Code. It reads every commit in `git rev-list <refs> --not <held>`, never the net
+// diff: author and committer, the message, the lines each commit adds against every parent, the
+// names of the files it adds, and each annotated tag among the refs (message and tagger). <held>
+// is what the remotes themselves confirm (git ls-remote, or git's pre-push input), never a local
+// remote-tracking ref: the target and, when configured, hatchery. No other remote counts.
 //
 // Usage:
-//   node .claude/hooks/privacy-scan.js [--remote <name> | --no-remote] [--json] [<ref> ...]
+//   node .claude/hooks/privacy-scan.js [--remote <name> | --no-remote] [--json | --list] [<ref> ...]
 //   node .claude/hooks/privacy-scan.js --pre-push <remote-name> <remote-url>   (stdin: git's lines)
 //   node .claude/hooks/privacy-scan.js --text <file> [--json]
 // Refs default to HEAD; the remote to the one git would pick for a plain push (it must be a
 // configured remote; a URL or path is "no remote"). The repository is the current directory.
-// --pre-push scans each local sha git sends and adds each remote sha that is not all zeros to the
-// --not list. stdout: one "HIT <class> <where>: <match>" line per hit, then "privacy-scan: <n> hits
-// in <c> commits" or "privacy-scan: clean, <c> commits" ("<c> lines" with --text). Notices go to
-// stderr, prefixed "privacy-scan:". Exit 0 clean, 1 hits, 2 cannot compute ("privacy-scan: cannot
-// <reason>" on stderr and no last line). --json prints one object instead of the lines:
+// --pre-push scans each local sha git sends and excludes each remote sha that is not all zeros and
+// what ls-remote lists at <remote-url> (when that cannot be asked, git's shas alone, with a
+// notice); the other forms ask the target's push URLs, and a target that cannot be asked is exit
+// 2. --list prints the commits the scan would read, one sha per line, oldest first, and scans
+// nothing (exit 0, or 2 with the cannot line). stdout: one "HIT <class> <where>: <match>" line per
+// hit, then "privacy-scan: <n> hits in <c> commits" or "privacy-scan: clean, <c> commits" ("<c>
+// lines" with --text). Notices go to stderr, prefixed "privacy-scan:". Exit 0 clean, 1 hits, 2
+// cannot compute ("privacy-scan: cannot <reason>" on stderr and no last line). --json prints one object instead of the lines:
 // { "commits", "hits": [{ "class", "where", "match", "commit": <sha40> | null }], "error" }.
 // Policy: privacy.allow and privacy.identities through policy.js (HOOK_POLICY_FILE as the hooks);
 // a policy that does not load is exit 2. The owner's files, <home>/.claude/ with home being HOME,
@@ -29,7 +33,8 @@
 // trailer block passes when its value is one claude.ai link (the link stays a hit everywhere else);
 // GitHub's web-flow committer passes as committer, never as author or tagger, and its noreply
 // address passes in text like the Anthropic one.
-// Module: scanPush, scanText, pushSources, pushRemote, gitRead, context (git-guard uses them).
+// Module: scanPush, scanText, pushSources, pushRemote, gitRead, context (git-guard uses them);
+// listPush and shown.
 // Node built-ins only (ADR 0013). Harness: group PV in test-hooks.js.
 'use strict';
 const fs = require('fs');
@@ -54,10 +59,13 @@ const cannot = (reason) => new ScanError(reason);
 // process's own); key identifies the pair for the cache. git-guard builds its own from a command.
 const context = (dir, pre, env) => ({ dir, pre: pre || [], env, key: JSON.stringify([dir, pre || [], env ? 'env' : null]) });
 
-// One read-only git command: { ok, out, err }. A timeout or spawn failure is not ok.
-function gitRead(g, args) {
+// One read-only git command: { ok, out, err }. A timeout or spawn failure is not ok. o.input:
+// text for its stdin; o.env: variables added to the context's environment.
+function gitRead(g, args, o) {
+  const x = o || {};
+  const env = x.env ? Object.assign({}, g.env || process.env, x.env) : g.env;
   const r = spawnSync('git', ['-C', g.dir, ...g.pre, ...args],
-    { encoding: 'utf8', timeout: TIMEOUT, maxBuffer: MAX_BUFFER, windowsHide: true, env: g.env });
+    { encoding: 'utf8', timeout: TIMEOUT, maxBuffer: MAX_BUFFER, windowsHide: true, env, input: x.input });
   const err = r.error ? r.error.message : ((r.stderr || '').trim().split('\n')[0] || `exit ${r.status}`);
   return { ok: !r.error && r.status === 0, out: r.stdout || '', err };
 }
@@ -98,7 +106,7 @@ function pushRemote(g, words, repo) {
 // (--repo), del, all (--all or --branches), tags, followTags }. refs are each refspec's source
 // (HEAD as itself; a glob as every ref it matches, a bare glob under refs/heads/; a deletion
 // sends nothing); with no refspec, every ref for a mirror remote, else remote.<r>.push, else
-// push.default (matching: each local branch the remote has; nothing: none; current, simple,
+// push.default (matching: each local branch the remote has, by ls-remote; nothing: none; current, simple,
 // upstream or unset: HEAD); every local branch for --all; every tag for --tags or --follow-tags.
 function pushSources(g, p) {
   const words = p.words || [];
@@ -115,9 +123,10 @@ function pushSources(g, p) {
     if (specs.length === 0) {
       const mode = (configAll(g, 'push.default')[0] || 'simple').toLowerCase();
       if (mode === 'matching') {
+        // The branches the remote has, asked of it (ls-remote), never its local tracking refs.
+        const theirs = remote ? remoteHeads(g, remote) : null;
         for (const r of listRefs(g, 'refs/heads')) {
-          const short = r.replace(/^refs\/heads\//, '');
-          if (!remote || gitRead(g, ['rev-parse', '--verify', '-q', `refs/remotes/${remote}/${short}`]).ok) refs.add(r);
+          if (!theirs || theirs.has(r.replace(/^refs\/heads\//, ''))) refs.add(r);
         }
       } else if (mode !== 'nothing') refs.add('HEAD');
     }
@@ -409,22 +418,167 @@ function parseLog(out) {
   return commits;
 }
 
-// Reads and scans what refs send to remote: { commits, hits }. extra: more --not revisions (the
-// remote shas of a pre-push). Throws ScanError.
-function computePush(g, refs, remote, extra, c) {
+// A URL as a message may show it: no userinfo, up to the last @ before the host (a token or a
+// password, which may itself hold an @, can sit there).
+const shown = (u) => u.replace(/(\/\/)[^/\s]*@/g, '$1');
+
+// The refs a remote has, asked of the remote itself, never read from a local remote-tracking ref (a
+// remote replaced by an empty repository leaves its old tracking refs behind): [[sha, refname]]
+// as `git ls-remote <where>` lists them, tag objects and their peeled commits alike. where: a
+// remote name or a URL. Asked once per (repository, where) for the life of the process, so
+// pushSources and the range share one answer. Throws when the remote cannot be asked; nothing
+// may prompt for a credential (the guard has no terminal).
+const asked = new Map();
+const ASK_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+function lsRemote(g, where) {
+  const key = JSON.stringify([g.key, where]);
+  if (!asked.has(key)) {
+    let v;
+    if (where === '' || where.startsWith('-')) v = { error: `ask ${JSON.stringify(shown(where))} for its refs (not a repository)` };
+    else {
+      const r = gitRead(g, ['ls-remote', where], { env: ASK_ENV });
+      if (!r.ok) v = { error: `ask ${shown(where)} for its refs (git ls-remote: ${shown(r.err)})` };
+      else {
+        v = { refs: [] };
+        for (const l of r.out.split('\n')) {
+          const m = /^([0-9a-f]{40}(?:[0-9a-f]{24})?)\t(\S+)/i.exec(l.replace(/\r$/, ''));
+          if (m) v.refs.push([m[1].toLowerCase(), m[2]]);
+        }
+      }
+    }
+    asked.set(key, v);
+  }
+  const v = asked.get(key);
+  if (v.error) throw cannot(v.error);
+  return v.refs;
+}
+
+// A remote's tips: { all, counted }, sets of shas. all bounds the range; counted (HEAD, branches
+// and tags, not peeled lines or a host's extra refs such as refs/pull/*) is what the "not here"
+// notice counts, so a forge's pull-request refs do not make it noisy.
+const COUNTED = /^(?:HEAD|refs\/heads\/.+|refs\/tags\/[^^]+)$/;
+function tipsOf(list) {
+  const all = new Set();
+  const counted = new Set();
+  for (const [sha, name] of list) {
+    all.add(sha);
+    if (COUNTED.test(name)) counted.add(sha);
+  }
+  return { all, counted };
+}
+
+// A named remote's push URLs (pushInsteadOf applied): where a push to it lands. Throws on none.
+function pushUrls(g, remote) {
+  const r = gitRead(g, ['remote', 'get-url', '--push', '--all', remote]);
+  const urls = r.ok ? r.out.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+  if (urls.length === 0) throw cannot(`read the push URL of the remote ${remote} (${r.ok ? 'none set' : shown(r.err)})`);
+  return urls;
+}
+
+// What a named remote holds where a push to it lands. With more than one push URL a push goes to
+// each, so only the shas every one of them holds bound the range.
+function remoteHolds(g, remote) {
+  let all = null;
+  const counted = new Set();
+  for (const u of pushUrls(g, remote)) {
+    const t = tipsOf(lsRemote(g, u));
+    all = all === null ? t.all : new Set([...all].filter((s) => t.all.has(s)));
+    for (const s of t.counted) counted.add(s);
+  }
+  return { all, counted };
+}
+
+// The branch names a named remote has at its push URLs (any of them: a push to each matches there).
+function remoteHeads(g, remote) {
+  const heads = new Set();
+  for (const u of pushUrls(g, remote)) {
+    for (const [, name] of lsRemote(g, u)) if (name.startsWith('refs/heads/')) heads.add(name.slice('refs/heads/'.length));
+  }
+  return heads;
+}
+
+// The shas among these that this repository has, with their types: Map sha -> type. One
+// cat-file --batch-check for the lot.
+function present(g, shas) {
+  const out = new Map();
+  if (shas.size === 0) return out;
+  const r = gitRead(g, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], { input: `${[...shas].join('\n')}\n` });
+  if (!r.ok) throw cannot(`look up the remote's commits here (git cat-file: ${r.err})`);
+  for (const l of r.out.split('\n')) {
+    const [sha, type] = l.trim().split(' ');
+    if (sha && type && type !== 'missing') out.set(sha.toLowerCase(), type);
+  }
+  return out;
+}
+
+// The range a push of refs to remote sends: { held, not }. held: every sha a remote confirmed
+// holding (it also tells which annotated tags are published); not: the --not list for git's
+// stdin, the commits among held that this repository has (a sha it does not have cannot bound
+// the range; git would refuse it). pre: { shas, url, name } for a pre-push (git's remote shas, the
+// URL it pushes to, the remote as git named it), else undefined. The range excludes only what a
+// remote confirms it holds: for a pre-push, git's remote shas and what ls-remote of git's URL
+// lists (a URL that cannot be asked leaves git's shas alone, with a notice); otherwise what
+// ls-remote lists at the target's push URLs (a target that cannot be asked is an error); and what
+// ls-remote lists at the hatchery remote, when one is configured and is not the target (one that
+// cannot be asked adds nothing, with a notice). Every fallback only widens the range. A remote
+// whose tips are missing here gets a notice: fetching it would bound the range. Throws ScanError.
+function pushRange(g, refs, remote, pre, notices) {
+  for (const r of [...refs, ...(pre ? [...pre.shas, pre.url] : [])]) if (r.includes(SUBST)) throw cannot('see a ref (its value is an expansion)');
+  const held = new Set();
+  const sources = [];
+  const hold = (label, t) => { for (const s of t.all) held.add(s); sources.push([label, t]); };
+  const widen = (what, e) => {
+    if (!(e instanceof ScanError)) throw e;
+    notices.push(`${what}: cannot ${e.message}`);
+  };
+  if (pre) {
+    const own = pre.shas.map((s) => s.toLowerCase());
+    const t = { all: new Set(own), counted: new Set(own) };
+    try {
+      const r = tipsOf(lsRemote(g, pre.url));
+      for (const s of r.all) t.all.add(s);
+      for (const s of r.counted) t.counted.add(s);
+    } catch (e) { widen(`${shown(pre.name)} is bounded only by git's remote shas this time`, e); }
+    hold(shown(pre.name), t);
+  } else if (remote) hold(remote, remoteHolds(g, remote));
+  else notices.push('no remote: the range is bounded only by the hatchery remote');
+  if (remote !== BASE_REMOTE && remotes(g).includes(BASE_REMOTE)) {
+    try { hold(BASE_REMOTE, tipsOf(lsRemote(g, BASE_REMOTE))); } catch (e) { widen(`the ${BASE_REMOTE} remote bounds nothing this time`, e); }
+  }
+  const have = present(g, held);
+  for (const [label, t] of sources) {
+    const n = [...t.counted].filter((s) => !have.has(s)).length;
+    if (n > 0) notices.push(`${n} tips of ${label} are not here; fetch it to bound the range`);
+  }
+  // Negatives go on stdin: a remote with many refs would pass the command-line limit.
+  const not = [...have].filter(([, type]) => type === 'commit').map(([sha]) => `^${sha}\n`).join('');
+  return { held, not };
+}
+
+// The commits a push of refs to remote sends, oldest first, as the scan reads them (one range
+// code): { shas, notices, error }. The --list form; pusher check 6 reads it.
+function listPush(g, refs, remote, pre) {
+  const notices = [];
+  try {
+    if (refs.length === 0) return { shas: [], notices, error: null };
+    const { not } = pushRange(g, refs, remote, pre, notices);
+    const r = gitRead(g, ['rev-list', '--reverse', '--stdin', ...refs, '--'], { input: not });
+    if (!r.ok) throw cannot(`list the outgoing commits (git rev-list ${refs.join(' ')}: ${r.err})`);
+    return { shas: r.out.split('\n').map((l) => l.trim()).filter(Boolean), notices, error: null };
+  } catch (e) {
+    if (!(e instanceof ScanError)) throw e;
+    return { shas: [], notices: [], error: e.message };
+  }
+}
+
+// Reads and scans what refs send to remote: { commits, hits }. pre: as pushRange. Throws ScanError.
+function computePush(g, refs, remote, pre, c) {
   const hits = [];
   if (refs.length === 0) return { commits: 0, hits };
-  for (const r of [...refs, ...extra]) if (r.includes(SUBST)) throw cannot('see a ref (its value is an expansion)');
-  const not = [];
-  if (remote) not.push(`--remotes=${remote}`);
-  else c.notices.push('no remote: the range is bounded only by the hatchery remote and the caller\'s list');
-  if (remote !== BASE_REMOTE && remotes(g).includes(BASE_REMOTE)) not.push(`--remotes=${BASE_REMOTE}`);
-  // A remote sha the repository does not have cannot bound the range; git would refuse it.
-  for (const s of extra) if (gitRead(g, ['cat-file', '-e', s]).ok) not.push(s);
-  const range = [...refs, ...(not.length ? ['--not', ...not] : []), '--'];
+  const { held, not } = pushRange(g, refs, remote, pre, c.notices);
   const log = gitRead(g, ['-c', 'core.quotePath=false', 'log', '--reverse', '-p', '--cc', '-U0', '--root', '--no-color',
     '--no-show-signature', '--no-use-mailmap', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-relative',
-    '--src-prefix=a/', '--dst-prefix=b/', '--format=%x00C%n%H%n%an%n%ae%n%cn%n%ce%n%B%n%x00E', ...range]);
+    '--src-prefix=a/', '--dst-prefix=b/', '--format=%x00C%n%H%n%an%n%ae%n%cn%n%ce%n%B%n%x00E', '--stdin', ...refs, '--'], { input: not });
   if (!log.ok) throw cannot(`read the outgoing commits (git log ${refs.join(' ')}: ${log.err})`);
   const commits = parseLog(log.out);
   for (const k of commits) {
@@ -441,15 +595,14 @@ function computePush(g, refs, remote, extra, c) {
     }
   }
   // Annotated tags among the refs, by name or by the tag object's sha (pre-push sends shas); a tag
-  // whose object is in the --not list is already on the remote.
+  // object a remote confirmed holding is already published.
   const tags = gitRead(g, ['for-each-ref',
     '--format=%(refname)%00%(objectname)%00%(objecttype)%00%(taggername)%00%(taggeremail)%00%(contents)%01', 'refs/tags']);
   if (!tags.ok) throw cannot(`read the tags (${tags.err})`);
   const sent = new Set(refs);
-  const known = new Set(extra);
   for (const rec of tags.out.split('\x01')) {
     const [ref, obj, type, tagger, taggerEmail, body] = rec.replace(/^\n+/, '').split('\0');
-    if (!ref || type !== 'tag' || known.has(obj)) continue;
+    if (!ref || type !== 'tag' || held.has((obj || '').toLowerCase())) continue;
     const name = ref.replace(/^refs\/tags\//, '');
     if (![ref, name, `tags/${name}`, obj].some((x) => sent.has(x))) continue;
     personHits(tagger || '', (taggerEmail || '').replace(/^<|>$/g, ''), `tag ${name} tagger`, null, c, hits);
@@ -458,18 +611,18 @@ function computePush(g, refs, remote, extra, c) {
   return { commits: commits.length, hits };
 }
 
-// The scan of what a push of refs to remote sends, cached per (repository, refs, remote, extra)
+// The scan of what a push of refs to remote sends, cached per (repository, refs, remote, pre)
 // for the life of the process: { commits, hits, notices, error }. error is a reason (it reads
-// after "cannot ") or null; on an error commits is 0 and hits is empty.
+// after "cannot ") or null; on an error commits is 0 and hits is empty. pre: { shas, url } from
+// git's pre-push input; without it the remote is asked (computePush).
 const cache = new Map();
-function scanPush(g, refs, remote, privacy, extra) {
-  const more = extra || [];
-  const key = JSON.stringify([g.key, refs, remote, more]);
+function scanPush(g, refs, remote, privacy, pre) {
+  const key = JSON.stringify([g.key, refs, remote, pre || null]);
   if (!cache.has(key)) {
     let r;
     try {
       const c = scanSetup(privacy);
-      r = Object.assign(computePush(g, refs, remote, more, c), { notices: c.notices, error: null });
+      r = Object.assign(computePush(g, refs, remote, pre, c), { notices: c.notices, error: null });
     } catch (e) {
       if (!(e instanceof ScanError)) throw e;
       r = { commits: 0, hits: [], notices: [], error: e.message };
@@ -493,17 +646,18 @@ function scanText(text, file, privacy) {
   return { lines: all.length, hits, notices: c.notices, error: null };
 }
 
-module.exports = { scanPush, scanText, pushSources, pushRemote, gitRead, context, ScanError };
+module.exports = { scanPush, scanText, listPush, pushSources, pushRemote, gitRead, context, shown, ScanError };
 
 // ---------- CLI ----------
-const USAGE = 'usage: node .claude/hooks/privacy-scan.js [--remote <name> | --no-remote] [--json] [<ref> ...] | ' +
+const USAGE = 'usage: node .claude/hooks/privacy-scan.js [--remote <name> | --no-remote] [--json | --list] [<ref> ...] | ' +
   '--pre-push <remote-name> <remote-url> | --text <file> [--json]';
 
 function parseArgs(argv) {
-  const o = { json: false, remote: undefined, noRemote: false, prePush: null, text: null, refs: [] };
+  const o = { json: false, list: false, remote: undefined, noRemote: false, prePush: null, text: null, refs: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') o.json = true;
+    else if (a === '--list') o.list = true;
     else if (a === '--no-remote') o.noRemote = true;
     else if (a === '--remote' && argv[i + 1] !== undefined) o.remote = argv[++i];
     else if (a === '--pre-push' && argv[i + 1] !== undefined && argv[i + 2] !== undefined) o.prePush = [argv[++i], argv[++i]];
@@ -513,6 +667,7 @@ function parseArgs(argv) {
   }
   const modes = [o.prePush !== null, o.text !== null, o.remote !== undefined || o.noRemote || o.refs.length > 0];
   if (modes.filter(Boolean).length > 1 || (o.remote !== undefined && o.noRemote) || (o.prePush && o.json)) return null;
+  if (o.list && (o.prePush || o.text !== null || o.json)) return null;
   return o;
 }
 
@@ -535,6 +690,22 @@ function emit(r, json) {
 function main() {
   const o = parseArgs(process.argv.slice(2));
   if (!o) return emit({ notices: [], hits: [], error: `read the arguments (${USAGE})` }, process.argv.includes('--json'));
+  if (o.list) {
+    // The outgoing commits, one sha per line, oldest first; the range needs no policy.
+    const g = context(process.cwd());
+    let r;
+    try {
+      const remote = o.noRemote ? null : pushRemote(g, o.remote !== undefined ? [o.remote] : []);
+      r = listPush(g, o.refs.length ? o.refs : ['HEAD'], remote);
+    } catch (e) {
+      if (!(e instanceof ScanError)) throw e;
+      r = { shas: [], notices: [], error: e.message };
+    }
+    for (const n of r.notices) process.stderr.write(`privacy-scan: ${n}\n`);
+    if (r.error) { process.stderr.write(`privacy-scan: cannot ${r.error}\n`); return 2; }
+    process.stdout.write(r.shas.map((s) => `${s}\n`).join(''));
+    return 0;
+  }
   const loaded = require('./policy').load();
   if (loaded.error) return emit({ notices: [], hits: [], error: `load the policy (${loaded.error})` }, o.json);
   const privacy = loaded.policy.privacy;
@@ -549,20 +720,21 @@ function main() {
   const g = context(process.cwd());
   let refs;
   let remote;
-  const extra = [];
+  let pre;
   try {
     if (o.prePush) {
       // git's lines: <local ref> <local sha> <remote ref> <remote sha>. The local sha is what goes
-      // out (a deletion's is all zeros and sends nothing); a remote sha the remote already has
-      // bounds the range.
+      // out (a deletion's is all zeros and sends nothing); a remote sha is what the remote holds
+      // at that ref, and so is everything ls-remote lists at the URL git pushes to.
       refs = [];
+      pre = { shas: [], url: o.prePush[1], name: o.prePush[0] };
       for (const l of fs.readFileSync(0, 'utf8').split('\n')) {
         const w = l.trim().split(/\s+/);
         if (w.length < 4) continue;
         if (!/^[0-9a-f]{7,}$/i.test(w[1]) || !/^[0-9a-f]{7,}$/i.test(w[3])) throw cannot(`read the pre-push line ${JSON.stringify(l.trim().slice(0, 100))}`);
         if (ZEROS.test(w[1])) continue;
         if (!refs.includes(w[1])) refs.push(w[1]);
-        if (!ZEROS.test(w[3]) && !extra.includes(w[3])) extra.push(w[3]);
+        if (!ZEROS.test(w[3]) && !pre.shas.includes(w[3])) pre.shas.push(w[3]);
       }
       remote = pushRemote(g, [o.prePush[0]]);
     } else {
@@ -573,7 +745,7 @@ function main() {
     if (!(e instanceof ScanError)) throw e;
     return emit({ notices: [], hits: [], error: e.message }, o.json);
   }
-  const r = scanPush(g, refs, remote, privacy, extra);
+  const r = scanPush(g, refs, remote, privacy, pre);
   return emit({ count: r.commits, unit: 'commits', hits: r.hits, notices: r.notices, error: r.error }, o.json);
 }
 

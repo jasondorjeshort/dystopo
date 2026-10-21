@@ -70,6 +70,7 @@ the release smoke tour through a deep link, and the sync simulator. CI runs the 
 - Where work stands now and next: `docs/HANDOFF.md` (imported into every session).
 - Commands, debug routes, emulators, this machine's paths and ports, Windows quirks: `docs/reference/` (index `docs/reference/README.md`, one topic per file with a `verified:` date).
 - Decisions (ADRs, from 0020): `docs/design/decisions/` (index in its README); proposals for major choices before they become ADRs: `docs/design/proposals/` (created with the first one).
+- Hatchery's own decisions and the reference entries its hooks and skills cite: `docs/hatchery/` (base-owned, arrives with each update from Hatchery, never edited here; ADR 0037).
 - Investigation results and incidents behind rules, dated and status-tagged: `docs/findings/` (index in its README).
 - Ideas, bugs nobody has looked into and missing features, one file each ending in at most one block (`Plan:`, `Question:`, `Waits:`; the `triage` skill writes it), deleted when built: `docs/ideas/` (format in its README; listed on demand, `node .claude/hooks/queue-list.js ideas`).
 - Procedures (task briefs, the wave and merge sequence, sweeps, releases, the handoff, proposals, ADRs, findings): skills in `.claude/skills/` (index in its README).

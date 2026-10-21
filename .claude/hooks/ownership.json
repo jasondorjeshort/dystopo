@@ -1,9 +1,14 @@
 {
-  "$comment": "Which paths an update from Hatchery patches. Schema: docs/design/decisions/0016-ownership-map.md",
+  "$comment": "Which paths an update from Hatchery patches. Schema: docs/hatchery/decisions/0016-ownership-map.md",
   "baseOwned":    [".claude", "LICENSE", "LICENSES", "docs/hatchery"],
   "baseExcluded": [".claude/hooks/policy.json", ".claude/settings.local.json"],
   "mixed":        [".claude/settings.json", ".claude/hooks/fitness.json"],
   "projectOwned": ["CLAUDE.md", "README.md", ".gitignore", ".gitattributes", ".editorconfig",
                    ".claude/project", "docs/README.md", "docs/HANDOFF.md", "docs/handoff",
-                   "docs/ideas", "docs/operator", "docs/findings", "docs/reference", "docs/design"]
+                   "docs/ideas", "docs/operator", "docs/findings", "docs/reference", "docs/design",
+                   ".github", "CHANGELOG.md", "CONTRIBUTING.md", "NOTICES.md", "areas.json",
+                   "build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradlew",
+                   "gradlew.bat", "gradle", "buildSrc", "shared", "devtool", "serverlib", "server",
+                   "tilebuild", "androidApp", "tools", "docs/ARCHITECTURE.md", "docs/PLANNING.md",
+                   "docs/SERVER.md", "docs/TASKS.md", "docs/images"]
 }

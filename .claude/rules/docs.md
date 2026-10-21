@@ -54,7 +54,9 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   name). The marker is the hook's switch: with it, the hook checks that an edited file lists without
   `?` instead of checking an index. Only `docs/ideas/` and `docs/findings/` may carry it (Hatchery's
   ADR 0017; ADR 0036 takes it for the ideas folder).
-- `docs/design/decisions/README.md` lists every ADR; `docs/findings/README.md` shows status per file.
+- `docs/design/decisions/README.md` lists every ADR of this tree's own records;
+  `docs/findings/README.md` shows status per file. `docs/hatchery/` has its own three READMEs
+  (`README.md`, `decisions/README.md`, `reference/README.md`), base-owned; never edited here.
 - A new directory under `docs/` or a new kind of document gets a line in the last section of
   `docs/ARCHITECTURE.md`.
 - `docs/ideas/` is a queue: one dated file per item, deleted in the pull request that lands its work,
@@ -76,10 +78,13 @@ their one-line replacements. From the Hatchery base, with this project's exempti
 - `docs/ideas/YYYY-MM-DD-<slug>.md`: required `date`, `kind: bug | feature | question | chore`;
   optional `related: [<file>, ...]`; no other key (`status` or `pipeline` lists the file as `?`,
   ADR 0036). Search for an existing idea before adding one (its README, "Before adding").
-- `docs/reference/<topic>.md`: required `verified: YYYY-MM-DD`, `source: <url or "observed">`. When a
-  fact changes, fix it in place and bump `verified:`; do not append history.
-- `docs/design/decisions/NNNN-*.md` and `docs/design/proposals/NNNN-*.md`: no frontmatter; the `Date:`
-  and `Status:` lines under the title are the record.
+- `docs/reference/<topic>.md` and `docs/hatchery/reference/<topic>.md`: required
+  `verified: YYYY-MM-DD`, `source: <url or "observed">`. When a fact changes, fix it in place and
+  bump `verified:`; do not append history.
+- `docs/hatchery/decisions/NNNN-*.md`, `docs/design/decisions/NNNN-*.md` and
+  `docs/design/proposals/NNNN-*.md`: no frontmatter; the `Date:` and `Status:` lines under the title
+  are the record. Templates are in the `adr` and `proposal` skills; status values are in the
+  directory READMEs.
 
 ## Personal data (ADR 0018)
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The one parser of Claude Code's @ imports in CLAUDE.md and the files it loads (ADR 0016, item 4;
-// spec: docs/design/decisions/0016-update-procedure.md, Checks). policy.js --claude-check,
+// spec: docs/hatchery/decisions/0016-update-procedure.md, Checks). policy.js --claude-check,
 // post-edit.js and ownership.js --report call it, so the edit, the push and the update agree.
 //
 // The rule, following the loader (https://code.claude.com/docs/en/memory#import-additional-files):

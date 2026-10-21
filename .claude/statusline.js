@@ -7,7 +7,7 @@
 // shown per meter, "(hold 50)" or "(hold 50 stop 90)"; STOP shows only on a meter with a deny line,
 // which the base does not set. "HOLD lifted" replaces HOLD when an override lifts it for this session.
 // The bare email local part names the logged-in account (policy.readAccount) when it is known.
-// Spec: docs/design/decisions/0002-hook-specs-usage.md (section 3); the per-session file: ADR 0011.
+// Spec: docs/hatchery/decisions/0002-hook-specs-usage.md (section 3); the per-session file: ADR 0011.
 //
 // Fields: https://code.claude.com/docs/en/statusline. rate_limits appears only on claude.ai
 // plans and only after the first API response of a session, and each window (five_hour,
