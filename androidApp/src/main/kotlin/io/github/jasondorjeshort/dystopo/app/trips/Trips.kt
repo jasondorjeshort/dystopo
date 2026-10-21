@@ -466,16 +466,57 @@ object Trips {
         ui { message = text }
     }
 
+    /** T122: the editor's last camera fit (bounds, padding, the edges it cleared), `GET /route` `ui.tripFit`. */
+    @Volatile var lastFit: Map<String, Any?>? = null
+        private set
+
+    /**
+     * Shows the whole trip. T122: once the trip card has been laid out ([FIT_AFTER_MS]), clear of it ([MapInsets.tripCardTop])
+     * and of the chrome at the top ([io.github.jasondorjeshort.dystopo.app.FitPadding]); fixed 110 and 380 dp before, which
+     * put the trip under the Routes chip at the top and left a band of map empty above a short card. The fit's padding is
+     * dropped from the camera when it lands, as `RouteSession` does (T114), so later moves centre on the screen. Main thread.
+     */
     private fun fitCamera(p: RoutePlan) {
+        main.postDelayed({ if (editingId == p.id) fitNow(p) }, FIT_AFTER_MS)
+    }
+
+    private fun fitNow(p: RoutePlan) {
         val m = app.map.map ?: return
         val pts = p.path.points
         if (pts.isEmpty()) return
-        val d = app.resources.displayMetrics.density
         if (pts.size == 1) { m.animateCamera(CameraUpdateFactory.newLatLng(LatLng(pts[0].lat, pts[0].lon)), 600); return }
         val b = LatLngBounds.Builder().apply { for (pt in pts) include(LatLng(pt.lat, pt.lon)) }.build()
         if (b.latitudeSpan < 1e-6 && b.longitudeSpan < 1e-6) return
-        m.animateCamera(CameraUpdateFactory.newLatLngBounds(b, (40 * d).toInt(), (110 * d).toInt(), (40 * d).toInt(), (380 * d).toInt()), 600)
+        val d = app.resources.displayMetrics.density
+        val insets = io.github.jasondorjeshort.dystopo.app.MapInsets
+        val chrome = insets.topChromeBottomPx(d)
+        val cardPx = (maxOf(insets.tripCardTop.value, CARD_MIN_DP) * d).toInt()
+        val mapH = app.map.mapView?.height ?: 0
+        val pad = io.github.jasondorjeshort.dystopo.app.FitPadding.of(chrome, cardPx, mapH, d)
+        m.animateCamera(CameraUpdateFactory.newLatLngBounds(b, pad[0], pad[1], pad[2], pad[3]), 600, object : org.maplibre.android.maps.MapLibreMap.CancelableCallback {
+            override fun onCancel() = dropPadding(m)
+            override fun onFinish() = dropPadding(m)
+        })
+        lastFit = linkedMapOf(
+            "bounds" to listOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth), "paddingPx" to pad.toList(),
+            "tripId" to p.id, "chromeBottomPx" to chrome, "cardTopDp" to insets.tripCardTop.value, "mapHeightPx" to mapH,
+            "clearOfChrome" to (pad[1] >= chrome),
+        )
     }
+
+    /** T122: the same view without the fit's padding (MapLibre keeps it on the camera otherwise). Main thread. */
+    private fun dropPadding(m: org.maplibre.android.maps.MapLibreMap) {
+        val c = m.cameraPosition
+        if (c.padding?.any { it != 0.0 } != true) return
+        val v = app.map.mapView ?: return
+        val centre = m.projection.fromScreenLocation(android.graphics.PointF(v.width / 2f, v.height / 2f))
+        m.moveCamera(CameraUpdateFactory.newCameraPosition(org.maplibre.android.camera.CameraPosition.Builder(c).target(centre).padding(0.0, 0.0, 0.0, 0.0).build()))
+        lastFit = lastFit?.plus("paddingDropped" to true)
+    }
+
+    /** T122: how long after opening the editor fits the trip, so the trip card has been measured; its height assumed before. */
+    const val FIT_AFTER_MS = 250L
+    const val CARD_MIN_DP = 150f
 
     const val TAG = "DystopoTrips"
 

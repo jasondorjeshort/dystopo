@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.areas.AREAS_HELP
 import io.github.jasondorjeshort.dystopo.app.firstrun.DIRECT_SOURCES_HELP
+import io.github.jasondorjeshort.dystopo.app.nav.NAV_HELP
 import io.github.jasondorjeshort.dystopo.app.options.MAP_OPTIONS_HELP
 import io.github.jasondorjeshort.dystopo.app.settings.SETTINGS_HELP
 import io.github.jasondorjeshort.dystopo.app.storage.STORAGE_HELP
@@ -38,11 +39,13 @@ class HelpText(
 
 /**
  * T109: every help text of the app, gathered from the screens' lists (Map options, Settings, Settings › Sources'
- * direct rows, Offline areas, the track bar, the long-press card; T115: the Storage screen). `GET /help` lists them.
+ * direct rows, Offline areas, the track bar, the long-press card; T115: the Storage screen; T122: the navigation card).
+ * `GET /help` lists them.
  */
 object HelpRegistry {
     val all: List<HelpText> by lazy {
-        MAP_OPTIONS_HELP + SETTINGS_HELP + DIRECT_SOURCES_HELP + AREAS_HELP + TRACK_BAR_HELP + LONG_PRESS_HELP + STORAGE_HELP // T115: Storage
+        MAP_OPTIONS_HELP + SETTINGS_HELP + DIRECT_SOURCES_HELP + AREAS_HELP + TRACK_BAR_HELP + LONG_PRESS_HELP + STORAGE_HELP + // T115: Storage
+            NAV_HELP // T122: the navigation card
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }
@@ -59,6 +62,37 @@ object HelpRegistry {
             )
         },
     )
+}
+
+/**
+ * T122: where the help pop-up goes and at what text scale (pure, `PopupPlaceTest`). Beside its icon at the system's
+ * font scale when the text fits there (below first, then above); else on the larger side with the text a step
+ * ([STEP]) smaller at a time, down to [MIN_TEXT_SCALE] of the font scale (never below 1.0), until it fits; else at that
+ * floor, scrolling. Never over the icon: at font scale 2.0 two texts used to cover theirs (T115). `centre` with no icon.
+ */
+data class PopupPlace(val side: String, val textScale: Float, val fits: Boolean) {
+    companion object {
+        const val STEP = 0.1f
+        const val MIN_TEXT_SCALE = 0.75f
+
+        /** [need] gives the bubble's height in px at a text scale; [below] and [above] are the room on each side. */
+        fun choose(hasIcon: Boolean, below: Int, above: Int, fontScale: Float, need: (Float) -> Int): PopupPlace {
+            if (!hasIcon) return PopupPlace("centre", fontScale, true)
+            val full = need(fontScale)
+            if (full <= below) return PopupPlace("below", fontScale, true)
+            if (full <= above) return PopupPlace("above", fontScale, true)
+            val side = if (below >= above) "below" else "above"
+            val room = maxOf(below, above)
+            val floor = maxOf(minOf(1f, fontScale), fontScale * MIN_TEXT_SCALE)
+            var s = fontScale
+            while (s - STEP >= floor - 1e-4f) {
+                s = Math.round((s - STEP) * 100f) / 100f
+                if (need(s) <= room) return PopupPlace(side, s, true)
+            }
+            val last = Math.round(floor * 100f) / 100f
+            return PopupPlace(side, last, need(last) <= room)
+        }
+    }
 }
 
 /** A rectangle in window pixels (the app's content view), as the icons and the pop-up report it. */

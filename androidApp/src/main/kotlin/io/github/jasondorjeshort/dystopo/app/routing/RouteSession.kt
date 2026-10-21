@@ -385,7 +385,9 @@ object RouteSession {
 
     /**
      * T49: moves the camera so the whole route shows, clear of the route card at the bottom (its last
-     * measured top, at least [CARD_MIN_DP]) and the search box at the top. Main thread.
+     * measured top, at least [CARD_MIN_DP]) and, T122, of everything at the top of the map ([io.github.jasondorjeshort.dystopo.app.FitPadding]:
+     * the search box, the online indicator and the right-hand chips, where a fixed 96 dp left the route under the Routes
+     * chip). Main thread.
      */
     private fun fitCamera(p: PlannedRoute) {
         val m = DystopoApp.instance.map.map ?: return
@@ -393,8 +395,10 @@ object RouteSession {
         if (pts.size < 2) return
         val b = LatLngBounds.Builder().apply { for (pt in pts) include(LatLng(pt.lat, pt.lon)) }.build()
         val d = DystopoApp.instance.resources.displayMetrics.density
-        val bottomDp = maxOf(BottomPanels.routeCardTop.value, CARD_MIN_DP) + 16
-        val pad = intArrayOf((40 * d).toInt(), (96 * d).toInt(), (40 * d).toInt(), (bottomDp * d).toInt())
+        val chrome = io.github.jasondorjeshort.dystopo.app.MapInsets.topChromeBottomPx(d)
+        val cardPx = (maxOf(BottomPanels.routeCardTop.value, CARD_MIN_DP) * d).toInt()
+        val mapH = DystopoApp.instance.map.mapView?.height ?: 0
+        val pad = io.github.jasondorjeshort.dystopo.app.FitPadding.of(chrome, cardPx, mapH, d)
         // Degenerate (all points the same): just centre on it.
         val update = if (b.latitudeSpan < 1e-6 && b.longitudeSpan < 1e-6) CameraUpdateFactory.newLatLng(b.center)
         else CameraUpdateFactory.newLatLngBounds(b, pad[0], pad[1], pad[2], pad[3])
@@ -405,6 +409,8 @@ object RouteSession {
         lastFit = linkedMapOf(
             "bounds" to listOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
             "paddingPx" to pad.toList(), "routeId" to p.route.id,
+            // T122: the top chrome's bottom the padding clears (px from the window top) and the map's height.
+            "chromeBottomPx" to chrome, "mapHeightPx" to mapH, "clearOfChrome" to (pad[1] >= chrome),
         )
     }
 
@@ -505,8 +511,12 @@ object RouteSession {
         "restored" to restored, // T108: the unsaved route read back after the process restarted
         // T114: the two ends as the card names them, the From choices, the location state, the last route to here.
         "from" to fromEnd?.json(), "to" to toEnd?.json(), "fromOpen" to fromOpen, "fromChoices" to fromChoices(),
-        "location" to locationState(), "waitingForFix" to (waitingFor >= 0 && waitingFor == waitToken.get()),
+        "location" to locationState(),
+        // T122: true only while the card waits for a fix with location on (`waitingFix`); `noLocation` waits for the
+        // setting first, and read true here before.
+        "waitingForFix" to (phase == "waitingFix" && waitingFor >= 0 && waitingFor == waitToken.get()),
         "routeTo" to lastRouteTo,
+        "tripFit" to io.github.jasondorjeshort.dystopo.app.trips.Trips.lastFit, // T122: the trip editor's last fit, as lastFit
     )
 
     /** T114: what the From line's Change offers now (`here`, `map`, `swap`); empty while nothing can change. */

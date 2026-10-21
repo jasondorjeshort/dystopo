@@ -86,6 +86,8 @@ object TopChips {
         "routesChipBottomDp" to routesChipBottom.value, "topRightBottomDp" to topRightBottom.value, // T110
         // The track controls clear the navigation card when they start below its bottom edge.
         "tracksClearOfNavCard" to (navCardBottom == 0.dp || trackColumnTop >= navCardBottom),
+        // T122: the navigation card's turn text as last laid out (lines, cut, fontSp), for checks at font scale 2.0.
+        "navTurnText" to io.github.jasondorjeshort.dystopo.app.nav.TurnText.last,
     )
 
     private val GAP = 6.dp

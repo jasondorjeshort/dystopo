@@ -84,12 +84,16 @@ class HelpRegistryTest {
             "tracks.bar", "longPress.menu",
             // T115 (T109's follow-up): the Storage screen's budget heading and rows.
             "storage.budget", "storage.packs", "storage.online", "storage.pinned", "storage.derived", "storage.sources",
+            // T122: the navigation card, its lost-fix line and its off-route banner.
+            "nav.card", "nav.fixLost", "nav.offRoute",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
         assertEquals(setOf("MapOptionsSection.kt"), references["map.slope"])
         assertEquals(setOf("LongPressMenu.kt"), references["longPress.menu"])
         assertEquals(setOf("DirectSourcesRows.kt"), references["direct.mobileData"])
+        assertEquals(setOf("NavOverlay.kt"), references["nav.offRoute"])
+        assertEquals("navigating, off the route", HelpRegistry.byKey("nav.offRoute")!!.needs)
     }
 
     @Test

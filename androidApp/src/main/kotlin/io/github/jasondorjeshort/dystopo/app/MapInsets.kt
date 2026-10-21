@@ -57,5 +57,42 @@ object MapInsets {
         return with(density) { (r.size.height - c.positionInRoot().y).toDp() }
     }
 
+    /**
+     * T122: the lowest bottom edge, in px from the window top, of what floats across the top of the map: the search
+     * column, the online indicator, and at the right the track controls, the Routes chip and the navigation card
+     * ([TopChips.topRightBottom]); 0 before any of them was measured. Main thread (Compose state).
+     */
+    fun topChromeBottomPx(density: Float): Int =
+        maxOf(TopChips.topRightBottom.value * density, TopChips.searchBottom.value * density, TopChips.onlineBottomPx).toInt()
+
     fun json(): Map<String, Any?> = linkedMapOf("tripCardTopDp" to tripCardTop.value, "updateCardTopDp" to updateCardTop.value)
+}
+
+/**
+ * T122: the padding of a camera fit that frames a route or a trip between the chrome at the top of the map and a card at
+ * the bottom (pure, `FitPaddingTest`). Px, in MapLibre's order: left, top, right, bottom. The top clears [chromeBottomPx]
+ * (the fixed 96 dp of T49 sat under the Routes chip and the open tracks list) and the bottom clears [cardTopPx] (from the
+ * bottom of the map), each by [MARGIN_DP]; with no chrome measured yet the top is [TOP_FALLBACK_DP]. When the two leave
+ * less than [MIN_FRAME_DP] between them (font scale 2.0, a tall list open) the top gives way first, down to the status
+ * bar's [MIN_TOP_DP], then the bottom, so the route is never fitted into a sliver or past the map.
+ */
+object FitPadding {
+    const val SIDE_DP = 40
+    const val MARGIN_DP = 16
+    const val TOP_FALLBACK_DP = 96
+    const val MIN_TOP_DP = 40
+    const val MIN_FRAME_DP = 160
+
+    fun of(chromeBottomPx: Int, cardTopPx: Int, mapHeightPx: Int, density: Float): IntArray {
+        fun px(dp: Int) = (dp * density).toInt()
+        val side = px(SIDE_DP)
+        var top = if (chromeBottomPx > 0) chromeBottomPx + px(MARGIN_DP) else px(TOP_FALLBACK_DP)
+        var bottom = cardTopPx + px(MARGIN_DP)
+        if (mapHeightPx > 0) {
+            val frame = px(MIN_FRAME_DP)
+            if (mapHeightPx - top - bottom < frame) top = maxOf(px(MIN_TOP_DP), mapHeightPx - bottom - frame)
+            if (mapHeightPx - top - bottom < frame) bottom = maxOf(0, mapHeightPx - top - frame)
+        }
+        return intArrayOf(side, top, side, bottom)
+    }
 }

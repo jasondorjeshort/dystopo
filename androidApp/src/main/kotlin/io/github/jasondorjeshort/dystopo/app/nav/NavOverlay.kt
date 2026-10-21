@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
@@ -27,9 +28,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
+import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
+import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.controls.Orientation
 
 private val Ink = Color(0xFF2B2420)
@@ -78,12 +82,18 @@ fun NavOverlay() {
                     modifier = Modifier.weight(1f),
                 )
                 u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
+                HelpIcon("nav.card") // T122: what the card shows
             }
             if (u.waiting) {
                 BasicText("Waiting for a location fix", style = TextStyle(color = Ink, fontSize = 18.sp))
             }
             // T65: an old position says so (the numbers below are as of the last fix).
-            u.fixAge?.let { BasicText(it, style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold)) }
+            u.fixAge?.let {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BasicText(it, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                    HelpIcon("nav.fixLost") // T122: why the fix is lost and what the card does meanwhile
+                }
+            }
             u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102
             if (u.next != null && u.nextDistance != null) {
                 Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
@@ -97,7 +107,7 @@ fun NavOverlay() {
                 ) {
                     u.rejoinArrowDeg?.let { Arrow(it) }
                     Spacer(Modifier.size(8.dp))
-                    Column {
+                    Column(Modifier.weight(1f)) {
                         BasicText(
                             if (u.offRoute) "OFF ROUTE" else "Leaving the route",
                             style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold),
@@ -111,6 +121,7 @@ fun NavOverlay() {
                             }
                         }
                     }
+                    HelpIcon("nav.offRoute") // T122: what the banner means and what Snooze does
                 }
             }
             u.snoozed?.let { text ->
@@ -134,6 +145,45 @@ fun NavOverlay() {
         }
     }
 }
+
+/** T122: the turn text's line cap, and the smallest size (sp) it steps down to before it takes the last line or is cut. */
+private const val TURN_MAX_LINES = 3
+private const val TURN_MIN_SP = 13
+
+/**
+ * T122: how the turn text was last laid out on the card (`GET /nav` `ui.turnLayout`): its lines, whether it was cut and
+ * the size it was drawn at (sp, before the font scale), so a check at font scale 2.0 needs no screenshot to say it is whole.
+ */
+internal object TurnText {
+    @Volatile var last: Map<String, Any?>? = null
+        private set
+
+    fun measured(text: String, lines: Int, cut: Boolean, sp: Float) {
+        val m = linkedMapOf<String, Any?>("text" to text, "lines" to lines, "cut" to cut, "fontSp" to sp)
+        if (m != last) last = m
+    }
+}
+
+/**
+ * T122: the help texts of the navigation card's icons (T109's follow-up, after T114's card): the card itself, the
+ * lost-fix line and the off-route banner. `POST /help/open` cannot bring up a navigation session, so each `needs` one
+ * (409 otherwise).
+ */
+internal val NAV_HELP: List<HelpText> = listOf(
+    HelpText("nav.card", "Navigation card", "The map: while navigating", needs = "navigating") {
+        "While you follow a route this card shows the next turn and how far away it is, then the next waypoint and the " +
+            "end with the distance, time left and arrival time. Heading up turns the map with you, Recenter brings it back " +
+            "to you and Stop ends navigation."
+    },
+    HelpText("nav.fixLost", "No GPS fix", "The map: navigation card, when the position is old", needs = "navigating with an old position") {
+        "The phone has had no new position for longer than GPS fix stale after (Settings › Navigation and tracking). The " +
+            "card's numbers are from the last position until a new one comes; under trees or in a canyon that can take a while."
+    },
+    HelpText("nav.offRoute", "Off route", "The map: navigation card, off the route", needs = "navigating, off the route") {
+        "You have left the route. The arrow points the shortest way back to it, with the direction and distance below. " +
+            "Snooze silences the warning for a while, for a detour on purpose; Quiet until back silences it until you rejoin."
+    },
+)
 
 @Composable
 private fun Stat(label: String, name: String?, distance: String, time: String) {
@@ -163,7 +213,14 @@ private fun Turn(text: String, distance: String?, turnDeg: Int?, type: String?, 
         Spacer(Modifier.size(10.dp))
         Column(Modifier.weight(1f)) {
             distance?.let { BasicText(it, style = TextStyle(color = ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)) }
-            BasicText(text, maxLines = 2, style = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold))
+            // T122: a cued text ("Head northeast, then bear left", T116) at font scale 2.0 ran past the two lines the card
+            // allowed and lost its end; the text now steps down to fit, and takes a third line before it is ever cut.
+            BasicText(
+                text, maxLines = TURN_MAX_LINES, overflow = TextOverflow.Ellipsis,
+                style = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                autoSize = TextAutoSize.StepBased(minFontSize = TURN_MIN_SP.sp, maxFontSize = 18.sp, stepSize = 1.sp),
+                onTextLayout = { r -> TurnText.measured(text, r.lineCount, r.hasVisualOverflow, r.layoutInput.style.fontSize.value) },
+            )
         }
     }
 }
