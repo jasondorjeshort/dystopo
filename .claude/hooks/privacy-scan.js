@@ -25,6 +25,10 @@
 // else USERPROFILE, one literal per line, "#" comments, absent is empty, unreadable is exit 2:
 // privacy-never.txt (more literals for the word class) and privacy-allow.txt (literals that lift
 // word, host and home hits without entering the tracked policy).
+// Project departures (ADR 0037, owner 2026-10-21): a `Claude-Session:` trailer in a commit message's
+// trailer block passes when its value is one claude.ai link (the link stays a hit everywhere else);
+// GitHub's web-flow committer passes as committer, never as author or tagger, and its noreply
+// address passes in text like the Anthropic one.
 // Module: scanPush, scanText, pushSources, pushRemote, gitRead, context (git-guard uses them).
 // Node built-ins only (ADR 0013). Harness: group PV in test-hooks.js.
 'use strict';
@@ -154,6 +158,12 @@ const PROFILE = /^(?:public|default user|default|all users|\.\.\.)(?![A-Za-z0-9.
 const PROFILE_SLUG = /^(?:public|default-user|default|all-users|\.\.\.)-/i;
 const HOST = /(?<=\w)-desktop|desktop-(?=\w)/gi;
 const TRAILER = /^Claude-Session:/i;
+// The attribution trailer the owner allows: the key and one claude.ai link, nothing else on the line.
+const SESSION_TRAILER = /^Claude-Session:[ \t]*https:\/\/claude\.ai\/[^\s"'`<>]+[ \t]*$/i;
+// A line of a trailer block: "<token>: <value>", or a continuation that starts with white space.
+const TRAILER_LINE = /^(?:[A-Za-z0-9][A-Za-z0-9-]*:[ \t]|[ \t]+\S)/;
+// GitHub's committer on a web merge or edit: a service, not a person.
+const GITHUB_WEB = { name: 'GitHub', email: 'noreply@github.com' };
 const URL_RE = /\bhttps?:\/\/(?:[^\s/@"'`<>]*@)?([A-Za-z0-9.-]+)(?::\d+)?(\/[^\s"'`<>()[\]{}|\\^]*)?/gi;
 // Full key shapes only, each bounded by non-key characters on both sides.
 const KEY_EDGE_L = '(?<![A-Za-z0-9_-])';
@@ -221,6 +231,7 @@ function emailOk(addr, before, c, own) {
   const at = e.indexOf('@');
   const listed = c.identities.some((i) => i.email === e);
   return (listed && (own || GITHUB_NOREPLY.test(e))) || e === 'noreply@anthropic.com' || e.endsWith('@noreply.anthropic.com') ||
+    e === GITHUB_WEB.email ||
     PLACEHOLDER_DOMAIN.test(e.slice(at + 1)) || URL_USERS.has(e.slice(0, at)) || URL_SCHEME.test(before);
 }
 function isTranscript(text) {
@@ -265,6 +276,7 @@ function addresses(text) {
 
 // The hits in one line of text, appended to out. opts.transcript: run the transcript class.
 // opts.policyLine: an added line of POLICY_PATH, where a listed identity's address passes.
+// opts.trailer: a line of a commit message's trailer block, where SESSION_TRAILER is no session hit.
 function lineHits(text, where, commit, c, out, opts) {
   const add = (cls, match, key) => push(out, c, cls, where, commit, match, key);
   for (const { addr, before } of addresses(text)) if (!emailOk(addr, before, c, opts.policyLine === true)) add('email', addr);
@@ -294,8 +306,9 @@ function lineHits(text, where, commit, c, out, opts) {
     add('host', token, (token.slice(0, m.index - a) + token.slice(m.index - a + m[0].length)).replace(/^-+|-+$/g, ''));
   }
   for (const re of c.words) for (const m of text.matchAll(re)) add('word', m[0]);
-  if (TRAILER.test(text)) add('session', text.trim());
-  for (const m of text.matchAll(URL_RE)) {
+  const sessionOk = opts.trailer === true && SESSION_TRAILER.test(text);
+  if (TRAILER.test(text) && !sessionOk) add('session', text.trim());
+  for (const m of sessionOk ? [] : text.matchAll(URL_RE)) {
     const host = m[1].toLowerCase().replace(/\.$/, '');
     const segs = (m[2] || '').split(/[?#]/)[0].split('/').filter(Boolean);
     if ((host === 'claude.ai' || host.endsWith('.claude.ai')) && segs.length > 0) add('session', m[0]);
@@ -305,14 +318,15 @@ function lineHits(text, where, commit, c, out, opts) {
 }
 
 // An author, committer or tagger: the email class on the name and the email (an identity's own
-// address passes here), and the identity class.
-function personHits(name, email, where, commit, c, out) {
+// address passes here), and the identity class. committer: GitHub's web-flow identity passes.
+function personHits(name, email, where, commit, c, out, committer) {
   for (const t of [name, email]) {
     for (const { addr, before } of addresses(t)) if (!emailOk(addr, before, c, true)) push(out, c, 'email', where, commit, addr);
   }
   if (c.identities.length === 0) return;
   const n = name.trim();
   const e = email.trim().toLowerCase();
+  if (committer === true && n === GITHUB_WEB.name && e === GITHUB_WEB.email) return;
   if (!c.identities.some((i) => i.name === n && i.email === e)) push(out, c, 'identity', where, commit, `${name} <${email}>`);
 }
 
@@ -330,6 +344,20 @@ function diffPath(l) {
   const q = /^"a\/((?:[^"\\]|\\.)*)" "b\/((?:[^"\\]|\\.)*)"$/.exec(rest);
   if (q) return unquotePath(`"${q[2]}"`);
   return rest.slice(rest.length - (rest.length - 5) / 2);
+}
+
+// The indices of a message's trailer block: its last paragraph when that is not the first (the
+// subject's) and every line of it is a trailer line. [] when there is none.
+function trailerBlock(message) {
+  let start = message.length;
+  while (start > 0 && message[start - 1].trim() !== '') start--;
+  if (start === message.length || start === 0) return [];
+  let first = 0;
+  while (first < message.length && message[first].trim() === '') first++;
+  if (start <= first) return [];
+  const block = message.slice(start);
+  if (!block.every((l) => TRAILER_LINE.test(l)) || !/^\S/.test(block[0])) return [];
+  return block.map((_, i) => start + i);
 }
 
 // The one `git log -p` over the range, as [{ sha, an, ae, cn, ce, message, lines, files }]. Each
@@ -402,8 +430,9 @@ function computePush(g, refs, remote, extra, c) {
   for (const k of commits) {
     const s7 = k.sha.slice(0, 7);
     personHits(k.an, k.ae, `${s7} author`, k.sha, c, hits);
-    personHits(k.cn, k.ce, `${s7} committer`, k.sha, c, hits);
-    for (const l of k.message) lineHits(l, `${s7} message`, k.sha, c, hits, { transcript: true });
+    personHits(k.cn, k.ce, `${s7} committer`, k.sha, c, hits, true);
+    const trailers = new Set(trailerBlock(k.message));
+    k.message.forEach((l, i) => lineHits(l, `${s7} message`, k.sha, c, hits, { transcript: true, trailer: trailers.has(i) }));
     for (const a of k.lines) lineHits(a.text, `${s7} ${a.file}:${a.n}`, k.sha, c, hits, { transcript: true, policyLine: a.file === POLICY_PATH });
     for (const p of k.files) {
       const where = `${s7} file ${p}`;

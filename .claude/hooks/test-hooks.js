@@ -818,6 +818,37 @@ for (const [n, command, agent, cwd, want] of GP) {
     pv('PV37a', PUSH, pvRepo('id-policy', [line('.claude/hooks/policy.json', idLine)]), 'allow', { policy: ids });
     pv('PV37b', PUSH, pvRepo('id-policy-other', [line('.claude/policy.json', idLine)]), 20,
       { policy: ids, extra: says('.claude/policy.json:1 (email: ') });
+
+    // PV38: a Claude-Session trailer whose value is one claude.ai link passes in a commit message's
+    // trailer block (project departure, ADR 0037); the link anywhere else stays a session hit.
+    const KEY = `${'Claude-'}Session:`;
+    const LINK = `${'https://'}${'claude'}.ai/code/session_01AbC`;
+    const COAUTH = `Co-Authored-By: Claude <noreply${AT}anthropic.com>`;
+    pv('PV38a', PUSH, pvRepo('trailer-ok', [{ msg: `change\n\nwhy it changed\n\n${COAUTH}\n${KEY} ${LINK}` }]), 'allow');
+    pv('PV38b', PUSH, pvRepo('trailer-line', [line('a.txt', `${KEY} ${LINK}`)]), 20, { extra: says('a.txt:1 (session: ') });
+    pv('PV38c', PUSH, pvRepo('trailer-body', [{ msg: `change\n\n${KEY} ${LINK}\n\nmore text` }]), 20, { extra: says('message (session: ') });
+    pv('PV38d', PUSH, pvRepo('trailer-prose', [{ msg: `change\n\nsee ${LINK} for it\n${KEY} ${LINK}` }]), 20, { extra: says('message (session: ') });
+    pv('PV38e', PUSH, pvRepo('trailer-subject', [{ msg: `${KEY} ${LINK}` }]), 20, { extra: says('message (session: ') });
+    pv('PV38f', PUSH, pvRepo('trailer-extra', [{ msg: `change\n\n${KEY} ${LINK} and more` }]), 20, { extra: says('message (session: ') });
+    pv('PV38g', PUSH, pvRepo('trailer-link-body', [{ msg: `change\n\nsee ${LINK}\n\n${KEY} ${LINK}` }]), 20, { extra: says('1 hit: ', 'message (session: ') });
+
+    // PV39: GitHub's web-flow committer passes as committer, never as author or tagger; its address
+    // passes in text like the Anthropic noreply one.
+    const GH = { name: 'GitHub', email: `noreply${AT}github.com` };
+    const webMerge = pvRepo('gh-committer');
+    fs.writeFileSync(path.join(webMerge.dir, 'a.txt'), 'merged\n');
+    must(webMerge.dir, ['add', '-A']);
+    const wm = pvGit(webMerge.dir, ['commit', '-q', '-m', 'Merge pull request'], null,
+      envWith({ GIT_COMMITTER_NAME: GH.name, GIT_COMMITTER_EMAIL: GH.email }));
+    if (wm.status !== 0) { process.stderr.write(`test-hooks: PV39 commit failed: ${wm.stderr}\n`); process.exit(2); }
+    pv('PV39a', PUSH, webMerge, 'allow');
+    const ghAuthor = pvRepo('gh-author');
+    pvCommit(ghAuthor.dir, { msg: 'change', who: GH });
+    pv('PV39b', PUSH, ghAuthor, 20, { extra: (d) => (says('1 hit: ', 'author (identity: ')(d) === true ? lacks('committer (')(d) : says('author (identity: ')(d)) });
+    const ghTag = pvRepo('gh-tagger');
+    must(ghTag.dir, ['tag', '-a', 'v2', '-m', 'release'], GH);
+    pv('PV39c', 'git push origin v2', ghTag, 20, { extra: says('tag v2 tagger (identity: ') });
+    pv('PV39d', PUSH, pvRepo('gh-text', [{ msg: `change\n\nmerged by ${GH.email}`, files: { 'a.txt': `committer ${GH.email}\n` } }]), 'allow');
   }
 }
 
