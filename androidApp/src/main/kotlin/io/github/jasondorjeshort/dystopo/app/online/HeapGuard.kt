@@ -97,9 +97,24 @@ object HeapGuard {
     }
 
     /** One trim: why, when, the heap before and after (after a collection when [collect]) and what each cache dropped. */
-    data class Trim(val reason: String, val at: Long, val beforeBytes: Long, val afterBytes: Long, val dropped: Map<String, Long>, val ms: Long) {
-        fun json(): Map<String, Any?> = linkedMapOf("reason" to reason, "at" to at, "heapBeforeBytes" to beforeBytes, "heapAfterBytes" to afterBytes,
-            "droppedBytes" to dropped, "ms" to ms)
+    data class Trim(
+        val reason: String, val at: Long, val beforeBytes: Long, val afterBytes: Long, val dropped: Map<String, Long>, val ms: Long,
+        /** The live heap before anything was dropped: used bytes after a collection and [LIVE_SETTLE_MS] (when [trim] measured it). */
+        val liveBeforeBytes: Long? = null,
+    ) {
+        fun json(): Map<String, Any?> = linkedMapOf("reason" to reason, "at" to at, "heapBeforeBytes" to beforeBytes, "liveBeforeTrimBytes" to liveBeforeBytes,
+            "heapAfterBytes" to afterBytes, "droppedBytes" to dropped, "ms" to ms)
+    }
+
+    /** How long a live-heap reading waits after its collection (the collector finishes reference processing). */
+    const val LIVE_SETTLE_MS = 200L
+
+    /** The live heap now: a collection, a short wait, then the used bytes (garbage collected, so no longer counted). */
+    fun liveBytes(): Long {
+        System.gc()
+        System.runFinalization()
+        Thread.sleep(LIVE_SETTLE_MS)
+        return Heap.now().usedBytes
     }
 
     private val recentTrims = ArrayDeque<Trim>()
@@ -108,18 +123,23 @@ object HeapGuard {
     @Volatile var lastTrimAt = 0L
         private set
 
-    /** Runs every registered trim (a failing one is logged and skipped), then a collection when [collect]. */
+    /**
+     * Runs every registered trim (a failing one is logged and skipped), then a collection when [collect]. With
+     * [measureLive] it first reads the live heap ([liveBytes]) before anything is dropped (the application's trims do:
+     * `tools/android-check.py`'s direct step bounds that figure, sent with `am send-trim-memory`).
+     */
     @Synchronized
-    fun trim(reason: String, collect: Boolean = true): Trim {
+    fun trim(reason: String, collect: Boolean = true, measureLive: Boolean = false): Trim {
         val t0 = System.nanoTime()
         val before = Heap.now().usedBytes
+        val live = if (measureLive) liveBytes() else null
         val dropped = LinkedHashMap<String, Long>()
         for (h in hooks) dropped[h.name] = runCatching(h.trim).onFailure { Log.w(TAG, "trim ${h.name} failed", it) }.getOrDefault(0L)
         if (collect) {
             System.gc()
             System.runFinalization()
         }
-        val t = Trim(reason, System.currentTimeMillis(), before, Heap.now().usedBytes, dropped, (System.nanoTime() - t0) / 1_000_000)
+        val t = Trim(reason, System.currentTimeMillis(), before, Heap.now().usedBytes, dropped, (System.nanoTime() - t0) / 1_000_000, live)
         if (collect && runningNow() == 0) baseBytes = t.afterBytes // what the caches held is gone (read only with no render holding heap)
         lastTrimAt = t.at
         trims.incrementAndGet()
@@ -137,7 +157,7 @@ object HeapGuard {
      * system says memory is low there (`TRIM_MEMORY_RUNNING_LOW` and above).
      */
     fun onTrimMemory(level: Int) {
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) worker.execute { trim("onTrimMemory $level") }
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) worker.execute { trim("onTrimMemory $level", measureLive = true) }
     }
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "heap-trim").apply { isDaemon = true } }
@@ -161,21 +181,30 @@ object HeapGuard {
         val heap = Heap.now()
         if (running == 0) baseBytes = heap.usedBytes
         sample(heap.usedBytes)
-        if (wantsTrim(heap, System.currentTimeMillis(), lastTrimAt) && pressureQueued.compareAndSet(false, true)) {
-            worker.execute {
-                try {
-                    // Another thread's trim may have freed enough meanwhile.
-                    if (wantsTrim(Heap.now(), System.currentTimeMillis(), lastTrimAt)) {
-                        pressureTrims.incrementAndGet()
-                        trim("heap short before a render")
-                    }
-                } finally {
-                    pressureQueued.set(false)
-                }
-            }
-        }
+        pressureTrim(heap, "heap short before a render")
         lastBudget = budgetBytes(heap, baseBytes, cacheBytes)
         return admits(heap, running, committed, weight, baseBytes, cacheBytes)
+    }
+
+    /**
+     * A trim on its own thread when [heap] is short ([wantsTrim]): asked at each admission and, since the verifier's run
+     * of T127 found none in a whole tour (an admission rarely lands on the moment the heap is short: three renders fill
+     * the budget, so the next waits on the budget and is asked again only when one ends, after the collector has run),
+     * by the sampler every [SAMPLE_MS] while renders run.
+     */
+    private fun pressureTrim(heap: Heap, reason: String) {
+        if (!wantsTrim(heap, System.currentTimeMillis(), lastTrimAt) || !pressureQueued.compareAndSet(false, true)) return
+        worker.execute {
+            try {
+                // Another thread's trim may have freed enough meanwhile.
+                if (wantsTrim(Heap.now(), System.currentTimeMillis(), lastTrimAt)) {
+                    pressureTrims.incrementAndGet()
+                    trim(reason)
+                }
+            } finally {
+                pressureQueued.set(false)
+            }
+        }
     }
 
     /** The renders' budget at the last admission ([budgetBytes]). */
@@ -231,7 +260,9 @@ object HeapGuard {
     private fun sampleWhileBusy() {
         try {
             while (true) {
-                sample()
+                val heap = Heap.now()
+                sample(heap.usedBytes)
+                if (busy() > 0) pressureTrim(heap, "heap short while rendering")
                 if (busy() == 0) {
                     current?.let { if (it.endedAt == 0L) it.endedAt = System.currentTimeMillis() }
                     val ended = current?.endedAt ?: 0L

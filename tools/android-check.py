@@ -34,8 +34,9 @@ and once for the whole tour:
               --direct-view 9/45.865/6.865, Mont Blanc z9, which the tour never loads): the online cache (pinned tiles
               kept) and the phone's source range cache cleared, the camera set, the Java heap sampled from GET /stats
               every 0.4 s (and the app's own per-burst peak, GET /online direct.memory). It must render DEM tiles in the
-              same process, with no crash and no OutOfMemoryError in logcat, and peak at most --direct-heap-share (0.95)
-              of the heap's max; idleSeconds, dumpsys meminfo and the screenshot (<stem>-direct-<i>.png) are reported (`directStep`). --direct-only runs only the
+              same process, with no crash and no OutOfMemoryError in logcat, and its live heap (after a collection,
+              through `am send-trim-memory`) at most --direct-heap-share of the heap's max; idle and the sampled peaks
+              are reported, not required (blank tiles can pass); idleSeconds, dumpsys meminfo and the screenshot (<stem>-direct-<i>.png) are reported (`directStep`). --direct-only runs only the
               direct views, each in a new process (the per-zoom peak table of finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
 The lines and labels checks need the app's /features routes; an app without them skips them (reported).
 The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
@@ -620,13 +621,34 @@ def oom_lines(exe, serial, since):
     return [l.strip()[:200] for l in out.splitlines() if OOM_PATTERN in l][:10]
 
 
+def live_heap(server, exe, serial, timeout=20.0):
+    """T127: the app's live Java heap: `am send-trim-memory <package> RUNNING_LOW` makes the app's onTrimMemory
+    (HeapGuard.trim with measureLive) collect, wait 200 ms and read the used heap before it drops any cache; the reading
+    is the newest `recentTrims` entry's `liveBeforeTrimBytes` in GET /online direct.memory. None when it never came."""
+    def mem():
+        return ((server.json("/online").get("direct") or {}).get("memory") or {})
+    n0 = mem().get("trims") or 0
+    code, out = adb(exe, serial, "shell", "am", "send-trim-memory", PACKAGE, "RUNNING_LOW", timeout=30)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        m = mem()
+        if (m.get("trims") or 0) > n0:
+            for t in reversed(m.get("recentTrims") or []):
+                if str(t.get("reason", "")).startswith("onTrimMemory") and t.get("liveBeforeTrimBytes") is not None:
+                    return {"liveBytes": t["liveBeforeTrimBytes"], "trim": t, "sent": code == 0}
+        time.sleep(0.5)
+    return {"liveBytes": None, "sent": code == 0, "error": (out or "").strip()[:200] or "no onTrimMemory trim recorded"}
+
+
 def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True, shot=None):
     """T127: one cold direct view (no pack covers it, no server): the online cache cleared (pinned tiles kept) and,
     with `clear_sources`, the phone's source range cache too, so every DEM tile is rendered from the public sources;
-    then the camera, a screenshot once idle (or after `wait_ms`), and the Java heap sampled from /stats all along. ok:
-    the same process before and after, no crash and no OutOfMemoryError in logcat, DEM tiles rendered, and the heap peak
-    at most `bound_share` of the heap's max; `idle` and `idleSeconds` are reported. With `restart`, a new process first
-    (the per-zoom table's fresh case)."""
+    then the camera, a screenshot once idle (or after `wait_ms`), the Java heap sampled from /stats all along, then the
+    live heap after a collection (`live_heap`). ok: the same process before and after, no crash and no OutOfMemoryError
+    in logcat, DEM tiles rendered, and the live heap at most `bound_share` of the heap's max. Not required: idle (a cold
+    z8 to z11 view from the public sources can take minutes; blank tiles can pass) and the sampled peaks (`peakBytes`, the
+    app's burst peak), which count garbage not yet collected and are reported as numbers only. With `restart`, a new
+    process first (the per-zoom table's fresh case)."""
     rep = {"label": view["label"], "view": view["view"], "boundShare": bound_share}
     if restart:
         restart_app(exe, serial, server, 120)
@@ -670,6 +692,10 @@ def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, 
     except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
         rep["app"] = {"error": str(e)[:200]}
     rep["meminfoKb"] = meminfo(exe, serial)
+    try:
+        rep["live"] = live_heap(server, exe, serial) if exe and serial else {"liveBytes": None, "error": "no adb device"}
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException, subprocess.SubprocessError) as e:
+        rep["live"] = {"liveBytes": None, "error": str(e)[:200]}
     pid_after = android_debug.app_pid(exe, serial) if exe and serial else None
     rep["sameProcess"] = pid is None or pid == pid_after
     rep["oom"] = oom_lines(exe, serial, since)
@@ -680,14 +706,16 @@ def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, 
     if app_peak is not None and (peak is None or app_peak > peak):
         peak = app_peak  # the app samples between the host's polls
     rep["peakBytes"] = peak
-    mx = rep["heap"]["maxBytes"]
+    mx = rep["heap"]["maxBytes"] or ((rep.get("app") or {}).get("memory") or {}).get("heapMaxBytes")
+    live = rep["live"].get("liveBytes")
+    rep["liveBytes"] = live
     rep["boundBytes"] = int(mx * bound_share) if mx else None
     rep["peakShare"] = round(peak / mx, 3) if peak and mx else None
+    rep["liveShare"] = round(live / mx, 3) if live and mx else None
     rendered = (rep.get("app") or {}).get("demRendered")
-    # Idle is reported, not required: a cold z8 to z11 view from the public sources takes about a minute on the emulator
-    # whatever the heap does (T127's table); the step is about the heap, so it needs renders, no crash and the bound.
+    # Idle and the sampled peak are reported, not required (see the docstring); the bound is on the live heap.
     rep["ok"] = bool(rep["sameProcess"] and not rep["oom"] and not rep["crash"] and "error" not in rep and (rendered or 0) > 0
-                     and peak is not None and rep["boundBytes"] is not None and peak <= rep["boundBytes"])
+                     and live is not None and rep["boundBytes"] is not None and live <= rep["boundBytes"])
     return rep
 
 
@@ -787,10 +815,14 @@ def main():
                     help="T127: after the tour and the background step, cold direct views (no pack, no server: z/lat/lon:label, "
                          "comma-separated; 'none' skips): online and source caches cleared, the Java heap sampled, the peak must "
                          "stay under --direct-heap-share of the heap's max with no crash and no OutOfMemoryError")
-    ap.add_argument("--direct-heap-share", type=float, default=0.95,
-                    help="T127: the bound on the direct view's heap peak, a share of the max heap. The peak counts garbage not yet "
-                         "collected, which ART lets grow about a third above the live heap, so a healthy view peaks at 0.7 to 0.93 "
-                         "of 192 MB; one at the max (0.99 to 1.0 before T127) is collecting in vain and throwing OutOfMemoryErrors")
+    ap.add_argument("--direct-heap-share", type=float, default=0.8,
+                    help="T127: the bound on the direct view's live Java heap, a share of the max heap, read after the view by "
+                         "`am send-trim-memory <package> RUNNING_LOW`: the app's onTrimMemory collects, waits 200 ms and reads the "
+                         "used heap before dropping any cache (GET /online direct.memory recentTrims liveBeforeTrimBytes). The "
+                         "sampled peaks count garbage not yet collected and are reported only. 0.8: the reading includes the up to "
+                         "three renders still running (the view keeps rendering for minutes), so it was 0.18 to 0.63 of 192 MB over twelve "
+                         "cold views (T127), while the admission's own ceiling is the max less the reserve, 0.875; above 0.8 the renders "
+                         "take more than budgeted or something new is retained")
     ap.add_argument("--direct-only", action="store_true",
                     help="T127: only the direct views, each in a new process (the per-zoom peak table); no tour views, no background step")
     ap.add_argument("--direct-keep-sources", action="store_true", help="T127: keep the phone's source range cache (cache/sources) before a direct view")
@@ -1083,8 +1115,9 @@ def main():
               file=sys.stderr)
     for r in summary["directStep"].get("views", []):
         mb = lambda b: f"{b / 1048576:.0f}" if b else "-"
-        print(f"direct {r['view']} {r['label']}: {'ok' if r['ok'] else 'FAIL'} heap peak {mb(r.get('peakBytes'))} of "
-              f"{mb((r.get('heap') or {}).get('maxBytes'))} MB (bound {mb(r.get('boundBytes'))}), idle {r.get('idleSeconds')} s, "
+        print(f"direct {r['view']} {r['label']}: {'ok' if r['ok'] else 'FAIL'} live heap {mb(r.get('liveBytes'))} of "
+              f"{mb((r.get('heap') or {}).get('maxBytes'))} MB (bound {mb(r.get('boundBytes'))}), sampled peak {mb(r.get('peakBytes'))} MB, "
+              f"idle {r.get('idle')} at {r.get('idleSeconds')} s, "
               f"same process {r.get('sameProcess')}, OOM lines {len(r.get('oom') or [])}" + (f", error {r['error']}" if r.get("error") else ""),
               file=sys.stderr)
     print(f"{summary['viewsOk']}/{summary['viewsTotal']} views ok; sheet {summary['sheet']}; summary {stem}.json", file=sys.stderr)
