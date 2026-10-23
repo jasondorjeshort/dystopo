@@ -1,7 +1,7 @@
 # 0040. Stops and reroute: a plan of stops beside the frozen route, and what navigation does off the line
 
 Date: 2026-10-23
-Status: under review
+Status: promoted to ADR 0040
 
 ## Question
 
