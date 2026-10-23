@@ -270,6 +270,21 @@ class TileService(
     val demMinZoom get() = packs.demPacks.minOfOrNull { it.header.minZoom } ?: 8
     val demMaxZoom get() = packs.demPacks.maxOfOrNull { it.header.maxZoom } ?: 14
 
+    /**
+     * T127: drops the decoded DEM tiles of every pack's pyramid (made again on first use, from the packs) and the cliff
+     * memo; [HeapGuard] calls it on the application's trim and when the heap is short before a direct render. The bytes dropped.
+     */
+    fun trimMemory(): Long {
+        val dropped = synchronized(pyramids) {
+            pyramids.values.sumOf { p -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 }.also { pyramids.clear() }
+        }
+        return dropped + cliffs.trimMemory()
+    }
+
+    init {
+        io.github.jasondorjeshort.dystopo.app.online.HeapGuard.register("tileService", ::trimMemory) // T127: the newest service's caches
+    }
+
     fun pyramidJson(): Map<String, Any?> {
         val ps = synchronized(pyramids) { pyramids.entries.map { it.key to it.value } }
         if (ps.isEmpty()) return mapOf("loaded" to false, "pyramidsMade" to pyramidsMade.get())

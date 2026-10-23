@@ -121,6 +121,9 @@ class CliffTiles(
         return r.tile.encode()
     }
 
+    /** T127: drops the memo of rewritten tiles (they are on disk too); the bytes dropped. */
+    fun trimMemory(): Long = synchronized(memo) { memo.values.sumOf { it.size.toLong() }.also { memo.clear() } }
+
     fun json(): Map<String, Any?> = mapOf(
         "tilesScanned" to tilesScanned.get(), "tilesWithCliffs" to tilesWithCliffs.get(), "tilesChanged" to tilesChanged.get(),
         "lines" to lines.get(), "piecesReversed" to piecesReversed.get(), "segmentsUndecided" to segmentsUndecided.get(),

@@ -1,6 +1,5 @@
 package io.github.jasondorjeshort.dystopo.app.online
 
-import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -14,15 +13,25 @@ import java.util.concurrent.atomic.AtomicLong
  * gave them back, so a render interrupted while it waited (a request given up, the pool shut down) left them up for
  * good: the map never counted its renders done, and every later render at the view's zoom waited the full coarse
  * hold. Now every step after the increments is inside the `try`, and a permit is given back only when one was taken.
+ *
+ * T127: how many renders run at once is also bounded by [limit] (asked with the renders running now, from 1 to
+ * [permits]; [HeapGuard.limitNow] sizes it from the free heap), asked again every [LIMIT_RECHECK_MS] while a render
+ * waits for it and whenever a render ends; [heapWaits] counts the renders that waited for it rather than for a permit.
+ * [onStart] and [onEnd] run around each render (the heap record, [HeapGuard.renderStarted]).
  * Pure JVM, tested ([RenderSlotsTest]).
  */
 internal class RenderSlots(
-    permits: Int,
+    private val permits: Int,
     private val coarseFirstMs: Long,
     private val coarseGraceMs: Long,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val limit: (running: Int) -> Int = { permits },
+    private val onStart: () -> Unit = {},
+    private val onEnd: () -> Unit = {},
 ) {
-    private val slots = Semaphore(permits)
+    private val gate = Object()
+    private var running = 0 // under [gate]
+    val heapWaits = AtomicLong()
     val rendering = AtomicInteger()
     val coarseActive = AtomicInteger()
     private val coarseGate = Object()
@@ -32,7 +41,35 @@ internal class RenderSlots(
         private set
 
     /** Permits free now (for tests and reports). */
-    val available: Int get() = slots.availablePermits()
+    val available: Int get() = synchronized(gate) { permits - running }
+
+    /** Renders running now (holding a slot). */
+    val runningNow: Int get() = synchronized(gate) { running }
+
+    /** T127: waits for a slot under [permits] and [limit]; an interrupt throws with nothing taken. */
+    private fun acquire() {
+        var counted = false
+        synchronized(gate) {
+            while (true) {
+                if (Thread.interrupted()) throw InterruptedException()
+                val cap = limit(running).coerceIn(1, permits)
+                if (running < cap) {
+                    running++
+                    return
+                }
+                if (running < permits && !counted) {
+                    heapWaits.incrementAndGet()
+                    counted = true
+                }
+                gate.wait(LIMIT_RECHECK_MS)
+            }
+        }
+    }
+
+    private fun release() = synchronized(gate) {
+        running--
+        gate.notifyAll()
+    }
 
     private fun holdForCoarse() {
         val start = clock()
@@ -65,11 +102,15 @@ internal class RenderSlots(
         var permit = false
         try {
             if (!coarse) holdForCoarse()
-            slots.acquire()
+            acquire()
             permit = true
+            onStart()
             return block(System.nanoTime() - queued)
         } finally {
-            if (permit) slots.release()
+            if (permit) {
+                release()
+                runCatching(onEnd)
+            }
             if (coarse) {
                 coarseActive.decrementAndGet()
                 synchronized(coarseGate) { coarseGate.notifyAll() }
@@ -77,5 +118,10 @@ internal class RenderSlots(
             rendering.decrementAndGet()
             lastDoneAt = clock()
         }
+    }
+
+    companion object {
+        /** T127: how often a render waiting for the heap limit asks again (the heap frees without telling anyone). */
+        const val LIMIT_RECHECK_MS = 50L
     }
 }

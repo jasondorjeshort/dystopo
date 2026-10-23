@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.LocalServer
 import io.github.jasondorjeshort.dystopo.app.MapViewport
 import io.github.jasondorjeshort.dystopo.app.nav.NavSession
+import io.github.jasondorjeshort.dystopo.app.online.DirectSources
 import io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.areas.AreaPoint
@@ -29,6 +30,9 @@ import java.util.concurrent.atomic.AtomicLong
  * furthest above its floor, oldest-used first, never below a floor, never the view or the route ahead: [CacheGuard])
  * until they fit with [BudgetPlan.slackBytes] to spare. A check every [TICK_S] seconds catches what grows without
  * reporting (the source downloads).
+ *
+ * T127 (T112's deferred fold-in): the direct sources' own trim of `cache/sources/` takes the total as its ceiling
+ * ([DirectSources.budgetTotalBytes]), as the two caps do, instead of a fixed 512 MB that did not grow with the total.
  */
 object CacheBudget {
     const val TICK_S = 30L
@@ -70,6 +74,7 @@ object CacheBudget {
     fun start(app: DystopoApp) {
         if (started) return
         started = true
+        DirectSources.budgetTotalBytes = AppSettings.cacheBudgetMb * BudgetPlan.MB // T127
         executor.execute {
             try {
                 val online = OnlineService.get(app).cache
@@ -128,6 +133,7 @@ object CacheBudget {
             val r = run(e)
             lastRun = r
             AppSettings.setCapsFromBudget(mb)
+            DirectSources.budgetTotalBytes = mb * BudgetPlan.MB // T127: the sources' own trim follows the total too
             OnlineService.get(app).cache.resize(mb * BudgetPlan.MB)
             ContourCache.resize(mb)
             r
