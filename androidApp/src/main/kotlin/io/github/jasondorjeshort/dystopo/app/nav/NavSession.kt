@@ -354,7 +354,9 @@ object NavSession {
         if (nav.fixes == 1 && !repeat) app.map.follow(fix.lat, fix.lon, headingDeg, zoom)
         val u = uiOf(nav, s)
         main.post { if (navigator === nav) ui = u }
-        speak(s)
+        // T126: not from the last known location at the start (it can be anywhere, the end of the route included, and a
+        // direction said there would never be said again); the first live fix speaks.
+        if (origin != "last") speak(s)
     }
 
     /** T126: says the card's next direction once it is within its lead distance (the card's alert colour), when the setting is on. */

@@ -30,7 +30,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *
  * The engine is the platform text-to-speech ([PlatformEngine]), created on the first spoken direction and shut down
  * when navigation stops; other audio is ducked while it speaks (transient audio focus with ducking, released after the
- * last queued line). With the screen off it goes on speaking as long as fixes reach navigation. Debug builds can swap
+ * last queued line). With the screen off it goes on speaking as long as fixes reach navigation (a recording's foreground service keeps them
+ * coming; without one Android's background location limits thin them out: a navigation service is later work). Debug builds can swap
  * in a [SilentEngine] (`POST /nav/speech?engine=silent`) that only records, so the emulator check needs no sound.
  * `GET /nav/speech` lists what was spoken since navigation started (`NavRoutes.kt`).
  */
