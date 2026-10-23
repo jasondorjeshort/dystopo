@@ -24,19 +24,24 @@ budget check should come before every download, whatever the shape.
 - The format is read in four places: the phone's own records (`files/areas/areas.json`, one
   `area` object per record, read by `AreaOfInterest.parse`), a peer's manifest (`GET /peer/areas/<id>`,
   `AreaManifest.parse`), the server's `POST /area` body (`BuildRoutes`), and the phone's own debug
-  routes. Today an unknown `kind` throws in `AreaOfInterest.parse`; a manifest whose `version` is
-  above 1 is refused by `AreaManifest.parse` with "manifest version N is newer than this app reads";
-  and `Areas.load` drops a record it cannot parse with a log line, after which the next save rewrites
-  `areas.json` without it (the area and its pin are gone; its tiles become ordinary LRU entries).
+  routes. Today an unknown `kind` throws in `AreaOfInterest.parse` ("kind must be box or corridor");
+  `AreaManifest.parse` parses the `area` object **before** it checks `version`, so every shipped
+  build says the kind sentence for a new kind whatever the version, and the version sentence
+  ("manifest version N is newer than this app reads") only for a known kind; `Areas.load` drops a
+  record it cannot parse with a log line, and the next save (a user action, or `adopt` on a source's
+  version change with none) rewrites `areas.json` without it: the area and its pin are gone and its
+  tiles become ordinary LRU entries.
 - ADR 0033: built in alpha without asking, but user data (pinned areas) migrates, a mismatched version
   refuses with a reason the user can read, and nothing is misread or dropped silently; an upgrade test
   with a fixture in the old format.
 - ADR 0030: pinned bytes have their own budget (`pinnedCacheMb`, 2 GB by default), checked before an
   area downloads; the size is shown first, with no Download when the budget would be passed. ADR 0023:
   no Wi-Fi gate; the steer is the visible budget.
-- The server caps a tile manifest at `DYSTOPO_AREA_MAX_TILES` (200,000, HTTP 413 with what to change);
-  the phone's own manifest (`AreaDownload.localManifest`, used with direct sources or an older server)
-  has no cap.
+- The server caps a tile manifest at `DYSTOPO_AREA_MAX_TILES` (200,000, HTTP 413 naming corridor
+  remedies and the variable; the operator lifts it); the phone's own manifest
+  (`AreaDownload.localManifest`, used with direct sources or an older server) has no cap and builds
+  every `TileSet` in full before anything is counted, so a state-sized shape at z15 allocates millions
+  of entries while a size line is computed (the territory of T127's out-of-memory finding).
 - T130 builds the automatic route corridor this wave on the same manifest and owns `shared/.../areas/**`
   and `androidApp/.../areas/**`; this proposal assumes only the shapes that exist and lands its code
   in a later wave.
@@ -65,7 +70,12 @@ pages were unreachable, so forums and guides stand in where marked).
 | Mapy.cz | Named countries and territorial units | Size after selecting; Wi-Fi recommended in the help text | https://napoveda.seznam.cz/en/offline-map-layers-mapy.cz-app |
 | Garmin Explore | A bounding box over the map | Not established | https://forums.garmin.com/apps-software/mobile-apps-web/f/garmin-explore-ios/420958/downloading-regional-maps |
 | CalTopo | Mobile polygon not established; desktop picks tiles by click | Not established | https://blog.caltopo.com/?p=676 |
-| Organic Maps, Maps.me, Avenza, Topo GPS, Backcountry Navigator, Guru Maps, Alpine Quest | Not established from a public source in this pass | | |
+| Organic Maps | Named regions (a country split into regions), sizes in the list | Size per region | https://organicmaps.app/ (critic's pass) |
+| Guru Maps | Vector maps by country or by browsing the map, downloaded areas highlighted | Not established | https://gurumaps.app/ (critic's pass) |
+| AlpineQuest | A "store area" tool: an area and chosen zoom levels | Warns about the provider's server limits | https://alpinequest.net/ (critic's pass) |
+| Backcountry Navigator XE | Blocks picked on a grid (a third model: neither a box nor a drawing) | Not established | the app's public pages (critic's pass) |
+| Avenza Maps | Whole maps bought or imported; no area selection | Not applicable | https://www.avenzamaps.com/ (critic's pass) |
+| Maps.me, Topo GPS | Not established from a public source | | |
 
 Common practice: a rectangle or crop box over the current map, moved by pan and pinch or by dragging
 corners; named regions second. Route corridors are the norm for route-bound downloads; only Locus
@@ -77,7 +87,13 @@ quality level); consumer apps hide it. Hard limits are tile counts (Gaia, Locus)
 (AllTrails) or an undocumented area (Google, Apple); Google's "zoom in and save again" is the only
 documented over-limit wording. Outliers: onX's fixed shape is a known irritation; Locus is the
 outlier in depth and gives no reason for it. Nothing here needs another product's name in the app's
-text; the Wi-Fi recommendations of three apps are not copied (ADR 0023).
+text; the Wi-Fi recommendations of three apps are not copied (ADR 0023). Caveats: the AllTrails,
+Gaia, Komoot and onX help pages answer 403 to automated fetches (bot-blocked, not down), so forums
+and guides stand in for them; Apple's anchors-and-pinching detail is the Tom's Guide article's
+(https://www.tomsguide.com/how-to/how-to-download-offline-apple-maps-on-iphone), not the support
+page's, which says only "adjust the area"; Komoot's official offline page (support.komoot.com,
+article 10356476920986) names routes or regional maps and recommends Wi-Fi, while the 3 km strip is
+DC Rainmaker's measurement.
 
 ## Options
 
@@ -89,20 +105,26 @@ how the distance around a point is represented (G, H). The flows are the owner's
 `{"kind": "polygon", "rings": [[[lon, lat], ...], ...], "bufferM": 0, "minZoom": 8, "maxZoom": 15,
 "name": "..."}`: rings in GeoJSON order, the first the outer ring, later ones holes or further parts,
 inside decided by the even-odd rule (so a county with islands and a park with an enclave need no
-multipolygon type); `bufferM` optional, default 0 (the boundary step wants "the park and 5 km
-around it"); at most 2,000 vertices over all rings after `Polyline.simplify`; no ring crosses the
-antimeridian (as for a box). The id canonical form is `polygon:<buffer>:<rings>:<zooms>`, rounded as
-today. `TileCover.of` gains the case: a tile is in the cover when its square is within `bufferM` of
+multipolygon type; rings must not overlap, which the writer guarantees, since a reader cannot tell
+a hole from an overlap); `bufferM` optional, default 0 (the boundary step wants "the park and 5 km
+around it"). The vertex count is the writer's budget, not a reader's rule: the drawing flow and the
+boundary step simplify to about 2,000 vertices over all rings with `Polyline.simplify` and add the
+tolerance to `bufferM`, as corridors do, so the cover never cuts inside the true boundary; the reader
+accepts any count and the server's 2 MiB body is the only hard limit. No ring crosses the
+antimeridian (as for a box). The id canonical form is `polygon:<buffer>:<rings>:<zooms>`, rounded
+as today. `TileCover.of` gains the case: a tile is in the cover when its square is within `bufferM` of
 some ring edge (the corridor code on the closed ring; distance 0 when the edge crosses the square)
 or its centre is inside by even-odd, filled by a scanline per tile row so the result comes out as the
 manifest's `[y, x0, x1]` rows directly. `AreaPins.cover`, the eviction rule, the version pins and
 the margin need no change. The server's `POST /area` defaults a polygon to tiles (`pack=0`) as for a
-corridor; `pack=1` builds the bounding box's pack as for a box. The manifest's `version` stays 1.
-Older builds: the server answers 400 "kind must be box or corridor"; a peer's phone fails the
-manifest with the same sentence; a phone downgraded to v0.1.10 drops the record at load and loses it
-at the next save, with only a log line. Cheapest; it is the precedent `versions` set (an optional
-field older readers ignore), but a new kind is not an optional field: ADR 0033 §3 is not met on the
-downgrade path.
+corridor; `pack=1` on a polygon is refused with "a pack is a box; download a box for the trail
+graph" (a pack of the bounding box labelled polygon would be C moved to the server). The manifest's
+`version` stays 1. Older builds: the server answers 400 "kind must be box or corridor", which
+today's phone does not fall back from (only 404 and 405 do), so the plan fails; a peer's phone fails
+the manifest with the same sentence (a toast on the Share screen); a phone downgraded to v0.1.10
+drops the record at load and loses it at the next save, with only a log line. Cheapest; it is the
+precedent `versions` set (an optional field older readers ignore), but a new kind is not an
+optional field: ADR 0033 §3 is not met on the downgrade path.
 Exit cost: the rings and the fill are self-contained (one `when` branch in three files); removing the
 kind means migrating polygon records to their bounding boxes.
 Moving parts: a point-in-ring and a scanline fill in `shared/.../areas/`; a `Polygon` outline in the
@@ -110,23 +132,34 @@ Offline areas sheet (a GeoJSON fill, simpler than `CorridorOutline`); the server
 
 ### B. A `polygon` kind, and a manifest that carries one is version 2
 
-As A, with one rule: a writer writes the lowest `version` that holds the content, so a box or
-corridor manifest stays version 1 (an older peer still reads it) and a polygon manifest is version
-2. Older builds then refuse a peer's polygon manifest with "manifest version 2 is newer than this app
-reads (1)", which is the plain refusal ADR 0033 asks for, and the server's 400 stays as in A. The
-phone's own records are not helped: `Areas.load` parses the `area` object before any version, and
-the builds already shipped cannot be changed. So B adds the reader rule for the future: the new
-build keeps a record it cannot parse as an opaque entry (its raw JSON written back unchanged, its
-`bounds` and `zooms`, which every record carries, used as a conservative box pin so its tiles stay
-kept, its card saying it needs a newer version of the app), so the next format change (holes, a
-larger buffer, a new kind) is safe on a downgrade. The one-time loss on a downgrade from the build
-that introduces polygons to v0.1.10 is recorded in the PR and in SERVER.md as a known limit of the
-alpha. `GET /area` on the server reports `manifestVersion` 2 and a `shapes` list, so a phone knows
-before asking whether the server reads polygons and makes the manifest itself otherwise (the path
-it already takes for a server without `/area`).
-Exit cost: as A, plus the version-by-content rule, which costs nothing to keep.
-Moving parts: as A, plus the opaque-record path in `Areas.load` and its upgrade and downgrade tests
-(a fixture from v0.1.10, and a fixture with an unknown kind).
+As A, plus three reader rules that buy nothing for the builds already shipped (they parse `area`
+before `version`, so they say the kind sentence either way) and everything for the next change:
+
+1. **Version first.** A writer writes the lowest `version` that holds the content (box and corridor
+   manifests stay 1, a polygon manifest is 2), and the new build's `AreaManifest.parse` and
+   `Areas.Record.parse` check `version`, then `kind`, then the fields, so from this build on a newer
+   manifest is refused by its version. Both refusals (version and kind) reach the user in ADR 0033's
+   wording where they show, the Share screen's toast and the area card: "this phone runs an older
+   Dystopo; update it to use this area", with the raw sentence under it.
+2. **Nothing readable is lost.** A record the new build cannot parse is kept opaque: its raw JSON is
+   written back unchanged, its `bounds` and `zooms` (which every record carries) give a conservative
+   box pin so its tiles stay kept, and its card says it needs a newer app.
+3. **The downgrade from the first polygon build is covered too**, not recorded as a limit: records
+   that a version-1 reader cannot parse go to a sibling file (`files/areas/areas2.json`) and
+   `areas.json` keeps only what v0.1.10 reads whole, so an old build's save loses nothing and the
+   upgrade reads both files. Ten lines in `Areas.load` and `changed`, retired once every build in
+   the field has rule 2. Chosen over accepting the loss because `adopt` can trigger the losing save
+   with no user action and ADR 0033 §3 forbids a silent drop; the cost is two files for one release.
+
+`GET /area` on the server reports `manifestVersion` 2 and a `shapes` list; the phone treats a
+missing `shapes` (every server today) as box and corridor, and a 400 whose message starts "kind
+must be" falls back to the phone's own manifest as 404 and 405 do, so an older server costs nothing
+but the outdoors pack it could not have built anyway.
+Exit cost: as A, plus the version-by-content rule, which costs nothing to keep; the sibling file is
+retired by folding it back.
+Moving parts: as A, plus the parse order and the opaque-record path in `Areas.load`, the sibling
+file, and their tests (a fixture from v0.1.10 read unchanged; a version-3 manifest getting the
+version sentence; a record with an unknown kind kept, pinned by its bounds, and written back).
 
 ### C. A polygon that degrades to its box
 
@@ -159,8 +192,16 @@ tile area lacks: no trail graph and no search index (ADR 0027's consequence; the
 until graph tiles become a manifest kind, ADR 0030's supersede trigger, which fixes corridors and
 polygons at once.
 Exit cost: none beyond A to C; it is the existing mechanism with one more shape.
-Moving parts: a tile cap on the phone's own manifest (the server's 200,000 as the default, with the
-same sentence: shrink the area or lower the detail), since a polygon over a state is now one tap.
+Moving parts: a memory guard on the phone's own manifest, since a polygon over a state is now one
+tap: before any `TileSet` is filled, the bounding box's tile count over the zoom range (O(1) per
+zoom) is checked against a limit derived from the heap (a fraction of `Runtime.maxMemory` over the
+set's bytes per entry), and a shape over it is refused with "This area is too large at this detail;
+make it smaller or choose less detail" (less detail cuts the count sixteenfold and more). The pinned
+budget stays the steer in bytes (a tile cap at 160 kB a tile is 25 GB, which the budget reaches
+first for anyone below 1 TB); the bounding box is not used for the budget, since it overestimates a
+disc by a quarter and a drawn region by half. The live size line while drawing uses the phone's own
+manifest; the server is asked once at Download (the two differ in the DEM start zoom and the
+server's cap). The server's 413 sentence gains the polygon remedy.
 
 ### F. A polygon area is the region pack of its bounding box
 
@@ -180,10 +221,14 @@ the size after it, which the survey's apps do not do.
 
 The format has it already: `TileCover.corridor` treats a single point as a zero-length segment, so a
 corridor `{"line": [[lon, lat]], "bufferM": 10000}` is the disc of that radius, its id is canonical,
-every build since T75 reads it, the server plans it, and `CorridorOutline` draws its outline (to
-verify for a single point). The radius is bounded by `MAX_BUFFER_M`, 20 km; raising that cap would
-make older builds drop records above it, so the first build stays within it. The card and the sheet
-label it from the geometry (one point: "Around <name>", the radius) rather than from the kind.
+every build since T75 reads it, the server plans it, and `CorridorOutline` draws it as a disc
+(`CorridorOutlineTest.oneOrNoPoint`). The radius shares the corridor's cap, `MAX_BUFFER_M`, 20 km,
+which T130's corridors share too, so it is not raised for the disc: the chooser says "Up to 20 km
+around a point; draw an area for more", and once the polygon kind has shipped a typed radius above
+20 km is written as a polygon circle (a 48-vertex ring, H's first half), which no reader caps and
+which moves no corridor constant. The card and the sheet label it from the geometry (one point:
+"Around <name>", the radius) rather than from the kind, in three places, a coupling the critic
+judged acceptable.
 Exit cost: none; nothing is added to the format.
 Moving parts: the radius chooser and the entry points (the long-press menu, a search result); a
 `POST /areas/plan` and `/areas/download` call with one point, which exist.
@@ -204,23 +249,28 @@ already has, so the owner's first two shapes cost one format change, not two, an
 established apps do better than a disc is lost (no surveyed app offers a distance picker at all).
 
 **Order of building** (one task after T130 has merged, since it owns the same files this wave): the
-shape, the fill and the id in `shared` with tests (a property test that the even-odd centre test plus
-the edge band equals the exact cover for any buffer at or above zero; the rows for a ring with a hole;
-a fixture `areas.json` from v0.1.10 read unchanged; a record with an unknown kind kept opaque and
-pinned by its bounds); the server's `POST /area` and `GET /area` with the version rule and SERVER.md's
-field-by-field section (version 2); the phone's plan and download for a polygon with the tile cap;
+readers first (version before kind in `AreaManifest.parse` and `Areas.Record.parse`, the opaque
+record pinned by its bounds, the sibling file, the ADR 0033 wording on the Share screen and the
+card, with their fixtures); the shape, the fill and the id in `shared` with tests (a property test
+that the even-odd centre test plus the edge band equals the exact cover for any buffer at or above
+zero; the rows for a ring with a hole; the writer's simplification adding its tolerance to the
+buffer); the server's `POST /area` and `GET /area` with the version rule, the `pack=1` refusal, the
+polygon remedy in the 413 sentence and SERVER.md's field-by-field section (version 2); the phone's
+plan and download for a polygon with the bounding-box memory guard and the "kind must be" fallback;
 then the two flows and their debug routes (`POST /areas/draw?ring=lat,lon;...` sets the drawing so a
 screenshot and `POST /areas/plan` can be scripted; `GET /areas/draw` reads it); the Offline areas
 sheet's outline for a polygon. The size line: bytes always (from the manifest's estimate, 160 kB a
-DEM tile, a mountain upper end), the tile count in a details line, and a time only when the fetcher
-has measured a rate in this session ("about 3 min at the current speed"), omitted otherwise; the
-survey found no app that shows a time, so this is a departure the owner asked for, kept honest by
-the measured rate (T75's emulator run fetched 18.1 MB in 19 s against a local server). A rough scale
-at Rainier's latitude with today's estimates, to be confirmed by the critic or a unit test over
-`AreaManifest.tileItems`: a 5 km disc at z8 to z15 is about 300 tiles and 55 MB; 10 km about 900
-tiles and 150 MB; 20 km (the cap) about 2,800 tiles and 450 MB; a drawn region the size of a
-national park (about 1,900 km²) about 4,300 tiles and 700 MB at z8 to z15 but about 260 tiles and
-50 MB at z8 to z13, which is why the detail choice is offered.
+DEM tile, a mountain upper end), the tile count in a details line, and a time from the last
+completed download on this phone (`Areas.Record.bytes` over `downloadMs`: "about 3 min at the last
+download's speed"), omitted before the first; the survey found no app that shows a time, so this is
+a departure the owner asked for, kept honest by a measured rate (T75's emulator run fetched 18.1 MB
+in 19 s against a local server). The scale, measured by the critic over `AreaManifest.tileItems` at
+latitude 46.85 with DEM z6 to z15, vector z8 to z14 and one tile of margin (what the phone and the
+server list): a 2 km disc is 256 tiles and 33 MB; 5 km 554 tiles and 68 MB; 10 km 1,333 tiles and
+166 MB; 20 km (the cap) 3,988 tiles and 505 MB; a national-park box of about 2,750 km² 5,610 tiles
+and 716 MB at z8 to z15 but 903 tiles and 89 MB at z8 to z13, an eightfold cut, which is why the
+detail choice is offered. The fill is cheap: that box fills in 137 ms on the JVM and a 2,000-vertex
+ring's band in 21 ms.
 
 **The owner's positions** (ADR 0031: built from this text, shown in the PR with screenshots and the
 strings, adjusted afterwards):
@@ -233,10 +283,13 @@ strings, adjusted afterwards):
    which no app documents and a finger hides.
 2. Around a point: from the long-press menu and from a search result, "Keep offline around here"
    opens the sheet with a radius chooser, presets in the user's units (2, 5, 10, 20 km, or 1, 3, 5,
-   10 mi), default 5 km or 3 mi, the circle drawn live, a typed value allowed within the 20 km cap.
-   No surveyed app has this picker, so the presets are a proposal, not practice.
-3. The summary: "About 150 MB (900 tiles) at full detail" with a second choice "Less detail (about
-   30 MB)" at z8 to z13 when the area is large or over the budget; time as above. The two-level
+   10 mi), default 5 km or 3 mi, the circle drawn live, a typed value allowed; its sentence "Up to
+   20 km around a point; draw an area for more" names the way past the cap in the first build, and
+   the polygon circle (G) lifts it afterwards. No surveyed app has this picker, so the presets are a
+   proposal, not practice.
+3. The summary: "About 170 MB (1,300 tiles) at full detail" with a second choice "Less detail
+   (about 30 MB)" at z8 to z13 when the area is large or over the budget; the time line from the
+   last download's speed, as above. The two-level
    detail choice departs from the consumer apps, which hide the zoom range, and from Locus, which
    shows every zoom; the wording is the owner's.
 4. Over the budget: the corridor sheet's rule, extended: "This area is about 450 MB; 1.6 GB of your
@@ -260,42 +313,91 @@ with holes and parts, a buffer, an id from the simplified geometry. Not designed
 
 - The owner wants the trail graph and search inside a drawn region now: F for polygons, or graph
   tiles as a manifest kind first (ADR 0030's trigger).
-- A downgrade path for alpha testers matters more than a clean kind: C.
-- A 2,000-vertex ring at z15 over a 100 km box takes more than two seconds to fill on a phone: a
-  coarser simplification or rows precomputed by the server.
-- The owner wants a radius above 20 km: raise `MAX_BUFFER_M` in the same version step, accepting
-  that older builds drop such records, or make the disc a polygon (H).
-- `CorridorOutline` cannot draw a single point: a circle outline for one-point corridors in the
-  sheet (a few lines), not a change of shape.
+- The sibling file proves harder than ten lines (two files to save atomically, peers reading
+  `areas.json` directly): accept the one-time downgrade loss, stated in the PR, as B first proposed.
+- The live size line for a 2,000-vertex ring takes over 300 ms on the emulator while dragging a
+  vertex: coarser simplification while drawing, or the fill on a worker with the last value shown.
+- The owner wants the radius chooser itself to go past 20 km in the first build: the polygon circle
+  (H's first half) ships with it rather than after.
 - T130 reshapes `TileCover` or the plan path this wave: a rebase of the build order, not a reversal.
 
 ## Claims to verify
 
-- `AreaOfInterest.parse` throws on an unknown kind ("kind must be box or corridor"):
-  `shared/.../areas/AreaOfInterest.kt`, `parse`. `AreaManifest.parse` refuses `version` above 1 with
-  the quoted sentence: `AreaManifest.kt`, `parse`.
-- `Areas.load` drops an unparseable record ("unreadable area dropped") and `changed(save = true)`
-  rewrites `areas.json` from the parsed records only: `androidApp/.../areas/Areas.kt`.
-- A one-point corridor is a disc: `TileCover.corridor` builds `listOf(points[0] to points[0])` for one
-  point; whether `CorridorOutline` handles it is unverified (`CorridorOutlineTest`).
-- `AreaDownload.plan` requires a corridor today (a box has no size-first flow): `AreaDownload.kt`.
-- Whether `serverManifest` falls back to the phone's own manifest on a 400 from an older server, as
-  it does for a server without `/area`: `AreaDownload.kt`, `serverManifest`.
-- The server's cap and its sentence: `BuildRoutes.kt`, `maxAreaTiles` (200,000), HTTP 413; the
-  phone's `localManifest` has none.
-- The size figures above: a unit test over `AreaManifest.tileItems` for a one-point corridor at 5, 10
-  and 20 km near latitude 47 with `estimate`'s 160 kB a DEM tile, and `POST /areas/plan` with
-  `line=<lat>,<lon>&bufferM=10000` on an emulator.
-- Whether the online fetcher keeps bytes and times from which a session rate can be read (unknown;
-  if not, the time line waits for a counter).
-- The `park` layer is polygons without names, merged per tile, and `boundary` is lines at admin
-  levels 2 and 4 only: `tilebuild/PROFILE.md`.
-- `pinnedCacheMb` defaults to 2,048 MB: `AppSettings.DEFAULT_PINNED_CACHE_MB`.
-- Even-odd on tile centres plus the edge band equals the exact cover for buffer at or above 0: a
-  property test against a brute-force sampler, in the build, not here.
-- Older peers: `PeerSources` lists areas from `GET /peer/areas` without parsing `area`; where a
-  refused `GET /peer/areas/<id>` is shown to the user is unverified.
+Checked by the critic on 2026-10-23 (`0041-critic-review.md`, Part 1), with the corrections taken
+into the body above; what the build must still show is marked.
+
+- `AreaOfInterest.parse` throws on an unknown kind; `AreaManifest.parse` parses `area` before
+  `version`, so shipped builds say the kind sentence for a polygon manifest at any version
+  (confirmed, run).
+- `Areas.load` drops an unparseable record and the next `changed(save = true)` rewrites the file
+  without it; `adopt` can trigger that save (confirmed). The record-level `bounds` and `zooms` exist
+  for the opaque pin (confirmed).
+- A one-point corridor is a disc and `CorridorOutline` draws it (confirmed,
+  `CorridorOutlineTest.oneOrNoPoint`).
+- `AreaDownload.plan` requires a corridor; a box has no size-first flow (confirmed).
+- `serverManifest` falls back only on 404 and 405; a 400 fails the plan (contradicted; the body now
+  asks for the "kind must be" fallback).
+- The server's cap, 200,000 and HTTP 413 with corridor remedies; the phone's `localManifest` has none
+  and fills every set before counting (confirmed).
+- The sizes in the Recommendation are the critic's run over `AreaManifest.tileItems`; the build
+  repeats them as a unit test and with `POST /areas/plan` on an emulator (to show).
+- A rate exists per completed download (`Areas.Record.bytes`, `downloadMs`); the fetcher's
+  `fetchedBytes` has no clock (confirmed).
+- `park` is unnamed merged polygons; `boundary` is admin 2 and 4 lines (confirmed).
+- `pinnedCacheMb` defaults to 2,048 MB (confirmed).
+- Even-odd centres plus the edge band equal the exact cover for buffer at or above 0 (argued sound;
+  the build's property test shows it).
+- A refused peer manifest shows as a toast on the Share screen with the raw sentence (confirmed; the
+  body now maps it to ADR 0033's wording).
+- To show in the build: the sibling file's save is atomic with `areas.json`; the bounding-box guard
+  refuses before any allocation; the live size line stays under 300 ms on the emulator for a
+  2,000-vertex ring.
 
 ## Critic's objections and responses
 
-(none yet)
+Review of 2026-10-23 (`0041-critic-review.md`): 0 blocking, 5 serious, 6 minor; the recommendation
+upheld after corrections. Every objection is taken into the body above.
+
+1. **Serious: B's reader benefit misstated** (shipped builds parse `area` before `version`, so they
+   say the kind sentence either way). Accepted with change: B now says so; the new build checks
+   `version`, then `kind`, then fields in `AreaManifest.parse` and `Areas.Record.parse`, with a test
+   that a version-3 manifest gets the version sentence; both refusals reach the user in ADR 0033's
+   wording on the Share screen and the card.
+2. **Serious: the downgrade loss accepted when a sibling file avoids it.** Accepted with change: B's
+   rule 3 adopts `files/areas/areas2.json` for records a version-1 reader cannot parse, retired once
+   every build in the field keeps opaque records; chosen because `adopt` can trigger the losing save
+   with no user action and ADR 0033 §3 forbids a silent drop. The fallback to accepting the loss is a
+   What-would-change line.
+3. **Serious: the phone's tile cap has no lift and the wrong reason.** Accepted with change: E
+   replaces it with a memory guard from the bounding box's tile count before any fill, derived from
+   the heap, with a polygon sentence; the pinned budget stays the steer in bytes; the bounding box
+   is not used for the budget (it overestimates); the server's 413 sentence gains the polygon remedy.
+4. **Serious: a reader-enforced vertex cap repeats the `MAX_BUFFER_M` trap.** Accepted: A makes the
+   count the writer's budget (about 2,000, simplified with the tolerance added to `bufferM` as
+   corridors do), the reader lenient, the server's 2 MiB body the only hard limit.
+5. **Serious: the 20 km refusal names no way out.** Accepted with change: the chooser says "Up to
+   20 km around a point; draw an area for more"; past 20 km a typed radius is written as a polygon
+   circle once the kind has shipped (G, position 2), which moves no corridor constant; H stays
+   rejected as a kind.
+6. **Minor: the sizes low by 1.5 to 3.5x in tiles; the 2 s fill condition cannot fail.** Accepted:
+   the Recommendation carries the critic's measured table (vector tiles and DEM z6 and z7 were
+   missing) and the fill timings; the condition is now the live size line within 300 ms.
+7. **Minor: the live size line would call the server on every edit.** Accepted: E says the live
+   number is the phone's own manifest and the server is asked once at Download.
+8. **Minor: an older server does not fall back; `pack=1` on a polygon is C on the server.** Accepted
+   with change: a 400 starting "kind must be" falls back like 404 and 405; a missing `shapes` means
+   box and corridor; `pack=1` on a polygon is refused with a pointer to a box (chosen over a noted
+   bounding-box pack, since the box path is one tap away and the manifest should not say polygon
+   over a box).
+9. **Minor: even-odd cancels overlapping parts.** Accepted: A states that the writer guarantees
+   non-overlapping rings (the drawing flow makes one ring; the boundary step unions first).
+10. **Minor: the time line's source.** Accepted: the rate is the last completed download's
+    (`bytes` over `downloadMs`), "at the last download's speed", omitted before the first; no
+    session counter.
+11. **Minor: prior-art gaps.** Accepted: five apps filled from the critic's pass (the grid-of-blocks
+    model noted), the 403s named as bot-blocked, Apple's anchors attributed to the guide, Komoot's
+    official page cited.
+
+Hidden coupling the critic found and judged acceptable (the disc decided by "one point" in three
+places; areas not synced today, so the polygon rides as an opaque `area` object; a third `AreaShape`
+breaking every exhaustive `when` at compile time) is recorded in G and left as is.
