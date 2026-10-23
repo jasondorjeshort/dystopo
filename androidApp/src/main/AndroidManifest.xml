@@ -17,6 +17,12 @@
     <!-- T83: in-app updates hand a verified APK from GitHub Releases to the system installer (update/UpdateInstaller.kt);
          the user confirms every install and allows installs from Dystopo once. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- T126: spoken turn directions bind the platform text-to-speech engine (package visibility from API 30). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <application
         android:name=".DystopoApp"

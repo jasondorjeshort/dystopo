@@ -87,6 +87,8 @@ class HelpRegistryTest {
             "storage.budget", "storage.packs", "storage.online", "storage.pinned", "storage.derived", "storage.sources",
             // T122: the navigation card, its lost-fix line and its off-route banner.
             "nav.card", "nav.fixLost", "nav.offRoute",
+            // T126: the spoken directions row.
+            "settings.navSpeech",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

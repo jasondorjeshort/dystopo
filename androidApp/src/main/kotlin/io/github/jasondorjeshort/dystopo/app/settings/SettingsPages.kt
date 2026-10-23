@@ -122,6 +122,14 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        SettingsRow.NAV_SPEECH -> {
+            // T126: spoken turn directions (nav/NavSpeech), off by default.
+            val on = AppSettings.navSpeech
+            Setting(row.label, "says each turn aloud as the card shows it", help = "settings.navSpeech") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSpeech = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSpeech = false)) }
+            }
+        }
         SettingsRow.NAV_STALE -> {
             // T91: the navigation thresholds (T65's constants).
             val stale = AppSettings.navStaleS
@@ -259,6 +267,11 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         HelpText("settings.routeSnap", "Route snap", at(SettingsGroup.NAVIGATION, "Route snap"), show = page(SettingsGroup.NAVIGATION)) {
             "A route follows trails and roads, so its start and end move to the nearest one. Route snap is how far they " +
                 "may move: a point farther off is refused, and the card names the nearest trail and how far away it is."
+        },
+        HelpText("settings.navSpeech", "Spoken directions", at(SettingsGroup.NAVIGATION, "Navigation: Spoken directions"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "While you navigate a route, the phone says each turn aloud once, as the card shows it, with the distance " +
+                "in your units: \"In ${if (units == ContourUnits.FEET) "500 ft" else "150 m"}, turn left onto the trail\". Other audio is turned down while it speaks. It " +
+                "uses the phone's own text-to-speech voice, which works with no signal once it is installed."
         },
         HelpText("settings.navStale", "GPS fix stale after", at(SettingsGroup.NAVIGATION, "Navigation: GPS fix stale after"), show = page(SettingsGroup.NAVIGATION)) {
             "While you navigate, a position older than this is not used: the bar says the fix is lost rather than " +

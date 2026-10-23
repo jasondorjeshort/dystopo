@@ -47,6 +47,12 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   T108: a kept trip's are the directions saved with it (`source.directions` `saved`; no graph needed), else read
  *   from the packs (`packs`), and `/nav` `source` says the same; a crow route has one, the arrival;
  *   `POST /nav/directions?open=1|0` opens or closes the list on the route card ("Show N directions").
+ * - T126, spoken directions ([io.github.jasondorjeshort.dystopo.app.nav.NavSpeech]): `GET /nav/speech` lists what was said since
+ *   navigation last started (`spoken`: `atMs`, `index` into `/nav/status` `instructions`, `text` as spoken, `direction` the
+ *   card's words, `voice` as the engine got it with the units spelt out, `engine`), with `enabled`, `count`,
+ *   `skippedWhileOff` and the engine's state (`ready`, `said`, `focus` requests, grants and releases, `lastError`).
+ *   `POST /nav/speech?enabled=1|0` flips the `navSpeech` setting (as Settings does, synced); `engine=silent|platform`
+ *   (debug builds: `silent` records without audio, for the emulator); `clear=1` empties the list. Answers like the GET.
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate) and the device GPS while navigating.
  */
@@ -63,6 +69,8 @@ object NavRoutes {
             "POST" to "/nav/stop" -> Response.json(NavSession.stop() + NavSession.json())
             "POST" to "/nav/start" -> start(r)
             "GET" to "/nav/directions" -> directions(r) // T102
+            "GET" to "/nav/speech" -> Response.json(io.github.jasondorjeshort.dystopo.app.nav.NavSpeech.json()) // T126
+            "POST" to "/nav/speech" -> speech(app, r)
             "POST" to "/nav/directions" -> {
                 val open = r.query["open"] ?: return bad("open=1 or open=0 required")
                 app.map.onMain { io.github.jasondorjeshort.dystopo.app.routing.RouteSession.directionsOpen = open == "1" }
@@ -123,6 +131,22 @@ object NavRoutes {
         } catch (e: IllegalArgumentException) {
             bad(e.message ?: "bad request")
         }
+    }
+
+    /** T126: `POST /nav/speech?enabled=1|0&engine=silent|platform&clear=1`. */
+    private fun speech(app: DystopoApp, r: Request): Response {
+        val speech = io.github.jasondorjeshort.dystopo.app.nav.NavSpeech
+        val q = r.query
+        if (q["enabled"] == null && q["engine"] == null && q["clear"] == null) return bad("enabled=1|0, engine=silent|platform or clear=1 required")
+        q["engine"]?.let { e -> try { speech.setEngine(e) } catch (x: IllegalArgumentException) { return bad(x.message ?: "bad engine") } }
+        q["enabled"]?.let { raw ->
+            when (val p = SettingsRoutes.parse(mapOf("navSpeech" to raw))) {
+                is SettingsRoutes.Parsed.Error -> return bad(p.message)
+                is SettingsRoutes.Parsed.Ok -> { SettingsRoutes(app).apply(p); app.map.onMain { SettingsUi.revision++ } }
+            }
+        }
+        if (q["clear"] == "1") speech.clear()
+        return Response.json(speech.json())
     }
 
     /** T102: `GET /nav/directions`: a route's turn directions at a detail level, without navigating. */

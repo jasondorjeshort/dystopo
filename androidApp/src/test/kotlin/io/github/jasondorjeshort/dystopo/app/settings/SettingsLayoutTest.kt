@@ -17,6 +17,8 @@ import kotlin.test.assertTrue
  * pages draw ([GroupPage] walks [SettingsLayout.rows]).
  */
 class SettingsLayoutTest {
+    /** The tasks that added a row after T103 (T126: spoken directions). */
+    private val AFTER_T103 = setOf("T126")
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -40,8 +42,11 @@ class SettingsLayoutTest {
         assertEquals(labels.size, labels.toSet().size, "a row is listed twice: $labels")
         // Nothing else went missing or appeared unannounced: what is not an old row is a link T103 added.
         val added = all.filter { it["since"] == "T103" }.map { it["label"] as String }
-        assertEquals(beforeT103.sorted(), (labels - added.toSet()).sorted())
+        // Rows added after T103, each by its task.
+        val later = all.filter { it["since"] in AFTER_T103 }.map { it["label"] as String }
+        assertEquals(beforeT103.sorted(), (labels - added.toSet() - later.toSet()).sorted())
         assertEquals(listOf("Offline areas", "Sync status", "Share", "Credits"), added)
+        assertEquals(listOf("Navigation: Spoken directions"), later)
     }
 
     @Test

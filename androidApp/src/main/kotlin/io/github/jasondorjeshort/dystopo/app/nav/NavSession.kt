@@ -45,7 +45,8 @@ import java.util.concurrent.Executors
  * while fixes are injected, the course while moving, the compass while facing and slow or still).
  * Debug routes in [io.github.jasondorjeshort.dystopo.app.NavRoutes]. T102: a route's turn directions
  * ([NavSources.Resolved.directions]) ride along; the card shows the next one at the default detail level with its
- * distance ([Directions.next], passed [Directions.passM] after the junction), and `/nav/status` lists them.
+ * distance ([Directions.next], passed [Directions.passM] after the junction), and `/nav/status` lists them. T126: with
+ * the spoken-directions setting on, [NavSpeech] says each one once as the card turns it to the alert colour.
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -172,6 +173,7 @@ object NavSession {
             headingDeg = null
             headingSource = null
         }
+        NavSpeech.begin() // T126: a fresh spoken list; the engine is made on the first line
         app.map.cameraMode = camera
         layer.show(path.points, null, null)
         // T65: the route editor sheet closes (its card would sit under the stats bar; the trip stays stored).
@@ -238,6 +240,7 @@ object NavSession {
     fun stop(): Map<String, Any?> {
         val was = navigator != null
         navigator = null
+        NavSpeech.end() // T126: the text-to-speech engine is released
         app.map.cameraMode = CameraMode.FREE
         main.removeCallbacks(ticker)
         main.post {
@@ -351,6 +354,15 @@ object NavSession {
         if (nav.fixes == 1 && !repeat) app.map.follow(fix.lat, fix.lon, headingDeg, zoom)
         val u = uiOf(nav, s)
         main.post { if (navigator === nav) ui = u }
+        speak(s)
+    }
+
+    /** T126: says the card's next direction once it is within its lead distance (the card's alert colour), when the setting is on. */
+    private fun speak(s: NavState) {
+        if (s.arrived) return
+        val k = nextTurn(s.progress)
+        val ins = shownDirections.getOrNull(k) ?: return
+        NavSpeech.onNext(k, ins, (ins.alongM - s.progress).coerceAtLeast(0.0), travel, AppSettings.units)
     }
 
     /** T100: the app's one heading (controls/Heading); navigation's own course between its fixes when that has none. */
