@@ -53,7 +53,7 @@ server first (a debug build on the emulator otherwise uses the host's 8765; the 
 first view waits until the device is quiet, by its load: the CPU used besides the app at most --quiet-cores in two
 3 s windows in a row (setup.quiet in the summary: the wait and the windows). A just-booted emulator runs near all four
 cores for one to two minutes, and a cold view started then missed the 30 s idle (T88, T98).
-T110: the first view waits up to --first-wait-ms (90 s since T127) for idle, the others --wait-ms (30 s). The first view is the
+T110: the first view waits up to --first-wait-ms (120 s since T127) for idle, the others --wait-ms (30 s). The first view is the
 cold one (a new process; with no server its terrain around the packs is rendered from the public sources). Measured on
 fresh API 35 AVDs with no server and two other emulators on the host: 10.3 and 14.5 s after the quiet wait, 24.2 s when
 the view started 19 s after the relaunch while the device still used two of its four cores besides the app; T105's
@@ -760,10 +760,10 @@ def main():
     ap.add_argument("--views-file", default="")
     ap.add_argument("--out", default="out/android-tour.png", help="screenshots <stem>-<i>.png, <stem>-sheet.png, <stem>.json")
     ap.add_argument("--wait-ms", type=int, default=30000, help="how long /screenshot waits for the map to go idle")
-    ap.add_argument("--first-wait-ms", type=int, default=90000,
+    ap.add_argument("--first-wait-ms", type=int, default=120000,
                     help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one). "
-                         "T127: 90 s, from 60: with the direct renders admitted by the heap (four at once on 192 MB, ten before) "
-                         "the cold Rainier z8 view went idle in 78 s where it took 50 to 61 s before, on a day the sources were slow")
+                         "T127: 120 s, from 60: with the direct renders admitted by the heap (three at once on 192 MB, ten before) "
+                         "the cold Rainier z8 view went idle in 73 to 93 s where it took 50 to 61 s before, on a day the sources were slow")
     ap.add_argument("--contour-budget-ms", type=float, default=1000.0, help="contour tiles slower than this are a warning (a failure with --strict)")
     ap.add_argument("--max-settle-change", type=float, default=0.02,
                     help="share of pixels that may change between the screenshot and a second one after the map settled")
