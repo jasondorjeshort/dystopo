@@ -240,9 +240,10 @@ coordinator the client ids; the build task then starts with the shared package a
   applies to http(s) URIs; `grant_flows authorization_code`; `access_token_expires_in nil`; refresh
   tokens off:
   https://github.com/openstreetmap/openstreetmap-website/blob/master/config/initializers/doorkeeper.rb
-  Doorkeeper's redirect URI check rejects a missing scheme, a relative URI and, under the SSL rule, an
-  `http` scheme, so a custom scheme passes:
-  https://github.com/doorkeeper-gem/doorkeeper/blob/main/lib/doorkeeper/oauth/helpers/uri_checker.rb
+  Doorkeeper's redirect URI validator rejects a script scheme, a fragment, a missing scheme, a
+  relative URI and, under the SSL rule, only a URI whose scheme is `http` (`non_https = uri.scheme ==
+  "http"`), so a scheme of the app's own passes:
+  https://github.com/doorkeeper-gem/doorkeeper/blob/main/lib/doorkeeper/orm/active_record/redirect_uri_validator.rb
   The request for custom schemes (issue 4008) was closed by its reporter the same day with no
   maintainer answer, so acceptance is confirmed by registering the dev application before building:
   https://github.com/openstreetmap/openstreetmap-website/issues/4008
