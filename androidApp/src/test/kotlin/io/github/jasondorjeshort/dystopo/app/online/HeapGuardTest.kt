@@ -10,6 +10,14 @@ import kotlin.test.assertTrue
 /** T127: the direct renders' heap policy (finding 2026-10-21-direct-view-out-of-memory-after-a-tour). */
 class HeapGuardTest {
     private val max = 192 * MB // the emulator's and many phones' Java heap
+    private val render = HeapGuard.weightOf(true)
+
+    /** How many renders of [weight] a heap admits one after another, before any has allocated (used stays at [used]). */
+    private fun admitted(weight: Long, used: Long, base: Long, cache: Long = 24 * MB, maxHeap: Long = max): Int {
+        var n = 0
+        while (n < 50 && HeapGuard.admits(Heap(used, maxHeap), running = n, committed = n * weight, weight = weight, baseBytes = base, cacheBytes = cache)) n++
+        return n
+    }
 
     @Test
     fun theReserveIsAnEighthOfTheHeapAndAtLeast24Mb() {
@@ -19,22 +27,23 @@ class HeapGuardTest {
     }
 
     @Test
-    fun aFreshProcessRunsWhatItsHeapHoldsBesidesTheBlocks() {
-        // 40 MB without renders, 24 MB of blocks, 24 MB reserve: 104 MB for renders, three of 32 MB, before any has allocated.
-        assertEquals(3, HeapGuard.renderLimit(Heap(40 * MB, max), running = 0, permits = 10, baseBytes = 40 * MB, cacheBytes = 24 * MB))
-        // The same with two running and 110 MB used: still three (the running ones are counted at 32 MB each).
-        assertEquals(3, HeapGuard.renderLimit(Heap(110 * MB, max), running = 2, permits = 10, baseBytes = 40 * MB, cacheBytes = 24 * MB))
-        // A big heap: the permits cap it.
-        assertEquals(10, HeapGuard.renderLimit(Heap(40 * MB, 512 * MB), running = 0, permits = 10, baseBytes = 40 * MB, cacheBytes = 64 * MB))
+    fun aFreshProcessCountsWhatTheRendersWillTakeBeforeTheyTakeIt() {
+        // 40 MB without renders, 24 MB of blocks, 24 MB reserve: 104 MB for renders, before any has allocated.
+        assertEquals(3, admitted(render, used = 40 * MB, base = 40 * MB)) // 32 MB each, at every zoom
+        assertEquals(render, HeapGuard.weightOf(false))
+        // A big heap admits more than the ten permits would let run.
+        assertTrue(admitted(render, used = 40 * MB, base = 40 * MB, cache = 64 * MB, maxHeap = 512 * MB) >= 10)
     }
 
     @Test
-    fun aShortHeapLetsNoMoreStartButNeverStopsAtZero() {
-        // The renders grew past their share: 150 MB used, 18 MB spare: the two running keep going, none more.
-        assertEquals(2, HeapGuard.renderLimit(Heap(150 * MB, max), running = 2, permits = 10, baseBytes = 40 * MB, cacheBytes = 24 * MB))
-        // After a tour the caches hold 30 MB more: two at most until a trim lowers the base.
-        assertEquals(2, HeapGuard.renderLimit(Heap(70 * MB, max), running = 0, permits = 10, baseBytes = 70 * MB, cacheBytes = 24 * MB))
-        assertEquals(1, HeapGuard.renderLimit(Heap(190 * MB, max), running = 0, permits = 10, baseBytes = 190 * MB, cacheBytes = 24 * MB))
+    fun aShortHeapLetsNoMoreStartButOneAlwaysRuns() {
+        // The renders grew past their share: 150 MB used, 18 MB spare: the third does not start although the budget has room.
+        assertFalse(HeapGuard.admits(Heap(150 * MB, max), running = 2, committed = 2 * render, weight = render, baseBytes = 40 * MB, cacheBytes = 24 * MB))
+        assertTrue(HeapGuard.admits(Heap(100 * MB, max), running = 2, committed = 2 * render, weight = render, baseBytes = 40 * MB, cacheBytes = 24 * MB))
+        // After a tour the caches hold 30 MB more: two coarse renders until a trim lowers the base.
+        assertEquals(2, admitted(render, used = 70 * MB, base = 70 * MB))
+        // Nothing left at all: the first render still runs.
+        assertEquals(1, admitted(render, used = 190 * MB, base = 190 * MB))
     }
 
     @Test

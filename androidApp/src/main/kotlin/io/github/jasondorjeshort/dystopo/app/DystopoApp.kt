@@ -55,7 +55,7 @@ class DystopoApp : Application() {
     /**
      * T127: the process-wide memory callbacks. The activity is stopped while the app is in the background, so its own
      * callback is not reached then; here every in-memory cache registered with [io.github.jasondorjeshort.dystopo.app.online.HeapGuard]
-     * (the packs' and the direct sources' decoded DEM, the sources' decoded blocks, the cliff memo) is dropped from
+     * (the decoded DEM tiles of the packs', the online and the direct pyramids, the cliff memo) is dropped from
      * `TRIM_MEMORY_RUNNING_LOW` up, `TRIM_MEMORY_UI_HIDDEN` (the app left the screen) included.
      */
     override fun onTrimMemory(level: Int) {

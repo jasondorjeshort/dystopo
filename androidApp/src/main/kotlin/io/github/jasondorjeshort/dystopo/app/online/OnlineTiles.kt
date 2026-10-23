@@ -194,6 +194,13 @@ class OnlineTiles(
 
     private fun dropPyramid() = synchronized(this) { current = null }
 
+    /** T127: drops the online pyramid's decoded DEM tiles (made again from the online cache); the bytes dropped. */
+    fun trimMemory(): Long = synchronized(this) {
+        val p = current?.pyramid
+        current = null
+        p?.let { it.cachedTiles.toLong() * it.tileSize * it.tileSize * 4 } ?: 0L
+    }
+
     /**
      * Contour tile z/x/y for an area the pack does not (wholly) cover: from the online cache, else made by
      * [generate] over [pyramid] (TileService's own generation path: slots, stats) after the DEM tiles it

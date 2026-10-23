@@ -271,14 +271,14 @@ class TileService(
     val demMaxZoom get() = packs.demPacks.maxOfOrNull { it.header.maxZoom } ?: 14
 
     /**
-     * T127: drops the decoded DEM tiles of every pack's pyramid (made again on first use, from the packs) and the cliff
-     * memo; [HeapGuard] calls it on the application's trim and when the heap is short before a direct render. The bytes dropped.
+     * T127: drops the decoded DEM tiles of every pack's pyramid (made again on first use, from the packs), the online
+     * pyramid's ([OnlineTiles.trimMemory]) and the cliff memo; [HeapGuard] calls it on the application's trim and when the heap is short before a direct render. The bytes dropped.
      */
     fun trimMemory(): Long {
         val dropped = synchronized(pyramids) {
             pyramids.values.sumOf { p -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 }.also { pyramids.clear() }
         }
-        return dropped + cliffs.trimMemory()
+        return dropped + cliffs.trimMemory() + (online?.trimMemory() ?: 0L)
     }
 
     init {

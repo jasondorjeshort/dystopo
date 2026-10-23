@@ -13,13 +13,14 @@ import java.util.concurrent.atomic.AtomicLong
  * holding decoded COG blocks and its window while it reads; on the 192 MB heap a fresh process barely fitted a Mont
  * Blanc z9 view, and one that had run the device tour, its decode caches full, ran out. Three things here bound it:
  *
- * - **The render limit** ([renderLimit], called by [RenderSlots] before each render takes a slot): how many renders may
- *   run, from the heap the process holds without renders ([baseBytes]: read when a burst starts and after each trim),
- *   the decoded blocks' cap and a reserve, at [RENDER_BYTES] a render; and none more while less than one render's worth
- *   is free now. At least one always runs. A first try that counted only the heap used at admission let ten renders in
+ * - **The render admission** ([admits], asked by [RenderSlots] before each render takes a slot): the renders running
+ *   are counted at what each may take ([RENDER_BYTES], [weightOf]), and a render starts while they fit, with it, in what the
+ *   heap's max leaves after a reserve, the heap the process holds without renders ([baseBytes]: read when a render
+ *   starts with none running, and after a trim with none running) and the decoded blocks' cap, and while the heap has
+ *   that much spare now. One always may run. A first try that counted only the heap used at admission let ten renders in
  *   at the start of a cold view, before any had allocated, and they grew past the heap together (T127's PR).
- * - **Trims**: the in-memory caches outside the disk caches (the decoded DEM tiles of the packs' and the direct
- *   pyramids, the decoded COG blocks and open GeoTIFFs of the sources, the cliff tiles' memo) are dropped by [trim]:
+ * - **Trims**: the in-memory caches outside the disk caches (the decoded DEM tiles of the packs', the online and the
+ *   direct pyramids, the cliff tiles' memo) are dropped by [trim]:
  *   on the application's `onTrimMemory` (`DystopoApp`; the activity is stopped while the app is in the background, so
  *   its own callback is not reached) and before a render when the heap is short ([renderLimit] schedules one, at most
  *   every [PRESSURE_TRIM_EVERY_MS], followed by a collection). Every cache refills from its disk cache.
@@ -27,17 +28,25 @@ import java.util.concurrent.atomic.AtomicLong
  *   burst (sampled every [SAMPLE_MS] while renders run, and at each render's start and end), the limit and the trims.
  *
  * The caches register their trim with [register] (the tile service, the direct sources); a hook returns the bytes it
- * dropped, as well as it knows them. The policy is pure and tested ([renderLimit] with [Heap], `HeapGuardTest`).
+ * dropped, as well as it knows them. The policy is pure and tested ([admits] with [Heap], `HeapGuardTest`).
  */
 object HeapGuard {
     const val MB = 1L shl 20
 
     /**
-     * What one direct render takes of the heap while it runs, besides the shared caches. Measured (T127): nine renders of
-     * a cold Mont Blanc z8 view held 100 MB after a collection and churned 4 MB blocks on top; 16 MB a render still let
-     * the heap reach its max.
+     * What one direct render may take of the heap while it runs, besides the shared caches. Measured (T127):
+     * nine renders of a cold Mont Blanc z8 view held 100 MB after a collection and churned 4 MB blocks on top; 16 MB a
+     * render still let the heap reach its max.
      */
     const val RENDER_BYTES = 32L * MB
+
+    /**
+     * What a render may take: [RENDER_BYTES] at every zoom. A z12 render reads full-resolution blocks, as heavy as a
+     * coarse render's overviews: counted at 12 MB, eight of them let a z11 view (whose 256-px DEM tiles are z12) reach
+     * 193 MB of the 192 MB heap (T127's PR).
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun weightOf(coarse: Boolean): Long = RENDER_BYTES
 
     /** Heap kept free besides the renders: for MapLibre's Java side, the request threads and the encoders. */
     const val RESERVE_MIN_BYTES = 24L * MB
@@ -60,16 +69,15 @@ object HeapGuard {
         }
     }
 
+    /** What the renders may take together: the heap's max less the reserve, [baseBytes] and [cacheBytes]. Pure. */
+    fun budgetBytes(heap: Heap, baseBytes: Long, cacheBytes: Long): Long = heap.maxBytes - heap.reserveBytes - baseBytes - cacheBytes
+
     /**
-     * How many direct renders may run with [running] running now: one per [renderBytes] of what the heap's max leaves
-     * after the reserve, [baseBytes] (the process without renders) and [cacheBytes] (the decoded blocks' cap); no more
-     * than run now while [heap] has less than [renderBytes] spare; from 1 to [permits]. Pure, tested.
+     * Whether a render that may take [weight] starts now, with [running] renders that may take [committed] together: always
+     * when none runs; otherwise when [committed] plus [weight] fit the [budgetBytes] and [heap] has [weight] spare now. Pure, tested.
      */
-    fun renderLimit(heap: Heap, running: Int, permits: Int, baseBytes: Long, cacheBytes: Long, renderBytes: Long = RENDER_BYTES): Int {
-        var n = Math.floorDiv(heap.maxBytes - heap.reserveBytes - baseBytes - cacheBytes, renderBytes).toInt()
-        if (heap.spareBytes < renderBytes) n = minOf(n, running)
-        return n.coerceIn(1, permits)
-    }
+    fun admits(heap: Heap, running: Int, committed: Long, weight: Long, baseBytes: Long, cacheBytes: Long): Boolean =
+        running == 0 || (committed + weight <= budgetBytes(heap, baseBytes, cacheBytes) && heap.spareBytes >= weight)
 
     /** Whether a render should first ask for a trim: the spare heap below [PRESSURE_BYTES] and none in the last [PRESSURE_TRIM_EVERY_MS]. Pure, tested. */
     fun wantsTrim(heap: Heap, now: Long, lastTrimAt: Long): Boolean =
@@ -146,8 +154,8 @@ object HeapGuard {
 
     @Volatile private var runningNow: () -> Int = { 0 }
 
-    /** [renderLimit] for the direct renders now; asks for a trim (on its own thread) when the heap is short. */
-    fun limitNow(running: Int, permits: Int, runningGetter: () -> Int): Int {
+    /** [admits] for a direct render now; asks for a trim (on its own thread) when the heap is short. */
+    fun admitNow(running: Int, committed: Long, weight: Long, runningGetter: () -> Int): Boolean {
         runningNow = runningGetter
         val heap = Heap.now()
         if (running == 0) baseBytes = heap.usedBytes
@@ -165,10 +173,12 @@ object HeapGuard {
                 }
             }
         }
-        return renderLimit(heap, running, permits, baseBytes, cacheBytes).also { lastLimit = it }
+        lastBudget = budgetBytes(heap, baseBytes, cacheBytes)
+        return admits(heap, running, committed, weight, baseBytes, cacheBytes)
     }
 
-    @Volatile var lastLimit = 0
+    /** The renders' budget at the last admission ([budgetBytes]). */
+    @Volatile var lastBudget = 0L
         private set
 
     // ---- the record: peaks per render burst ----
@@ -238,7 +248,8 @@ object HeapGuard {
         val h = Heap.now()
         return linkedMapOf(
             "heapUsedBytes" to h.usedBytes, "heapMaxBytes" to h.maxBytes, "reserveBytes" to h.reserveBytes, "spareBytes" to h.spareBytes,
-            "peakHeapBytes" to peakBytes, "renderBytes" to RENDER_BYTES, "renderLimit" to lastLimit, "baseBytes" to baseBytes, "cacheBytes" to cacheBytes,
+            "peakHeapBytes" to peakBytes, "renderBytes" to RENDER_BYTES,
+            "budgetBytes" to lastBudget, "baseBytes" to baseBytes, "cacheBytes" to cacheBytes,
             "burstSeq" to synchronized(bursts) { bursts.lastOrNull()?.seq ?: 0 },
             "bursts" to synchronized(bursts) { bursts.map { it.json() } },
             "trims" to trims.get(), "pressureTrims" to pressureTrims.get(),

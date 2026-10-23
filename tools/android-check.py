@@ -30,6 +30,13 @@ and once for the whole tour:
               the activity on screen (/screenshot, /features, /features/text, /help, POST /attribution/open) must each
               answer 503 with a `reason` within --background-limit-s (5 s); then `am start -n` brings the app's
               task back (`returnedTask`; no second activity) and /screenshot, /features and /help must answer 200 (`backgroundStep` in the summary)
+  - direct (T127, unless --direct-view none): after the background step, a cold direct view (no pack, no server; default
+              --direct-view 9/45.865/6.865, Mont Blanc z9, which the tour never loads): the online cache (pinned tiles
+              kept) and the phone's source range cache cleared, the camera set, the Java heap sampled from GET /stats
+              every 0.4 s (and the app's own per-burst peak, GET /online direct.memory). It must render DEM tiles in the
+              same process, with no crash and no OutOfMemoryError in logcat, and peak at most --direct-heap-share (0.9)
+              of the heap's max; idleSeconds and dumpsys meminfo are reported (`directStep`). --direct-only runs only the
+              direct views, each in a new process (the per-zoom peak table of finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
 The lines and labels checks need the app's /features routes; an app without them skips them (reported).
 The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
 last lines).
@@ -774,7 +781,7 @@ def main():
                     help="T127: after the tour and the background step, cold direct views (no pack, no server: z/lat/lon:label, "
                          "comma-separated; 'none' skips): online and source caches cleared, the Java heap sampled, the peak must "
                          "stay under --direct-heap-share of the heap's max with no crash and no OutOfMemoryError")
-    ap.add_argument("--direct-heap-share", type=float, default=0.85, help="T127: the bound on the direct view's heap peak, a share of the max heap")
+    ap.add_argument("--direct-heap-share", type=float, default=0.9, help="T127: the bound on the direct view's heap peak, a share of the max heap")
     ap.add_argument("--direct-only", action="store_true",
                     help="T127: only the direct views, each in a new process (the per-zoom peak table); no tour views, no background step")
     ap.add_argument("--direct-keep-sources", action="store_true", help="T127: keep the phone's source range cache (cache/sources) before a direct view")

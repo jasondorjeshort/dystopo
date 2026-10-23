@@ -80,7 +80,7 @@ class RenderSlotsTest {
     fun theHeapLimitHoldsRendersBackUntilItRises() {
         // T127: four permits, but the heap allows two; the other two wait, counted, until the limit rises.
         val allowed = java.util.concurrent.atomic.AtomicInteger(2)
-        val slots = RenderSlots(permits = 4, coarseFirstMs = 0, coarseGraceMs = 0, limit = { allowed.get() })
+        val slots = RenderSlots(permits = 4, coarseFirstMs = 0, coarseGraceMs = 0, admit = { running, _, _ -> running < allowed.get() })
         val hold = CountDownLatch(1)
         val inside = java.util.concurrent.atomic.AtomicInteger()
         val most = java.util.concurrent.atomic.AtomicInteger()
@@ -108,7 +108,7 @@ class RenderSlotsTest {
 
     @Test
     fun aLimitOfNothingStillLetsOneRenderRun() {
-        val slots = RenderSlots(permits = 4, coarseFirstMs = 0, coarseGraceMs = 0, limit = { 0 })
+        val slots = RenderSlots(permits = 4, coarseFirstMs = 0, coarseGraceMs = 0, admit = { _, _, _ -> false })
         assertEquals("rendered", slots.run(coarse = false) { "rendered" })
         assertEquals(4, slots.available)
     }
