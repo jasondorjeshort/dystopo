@@ -47,6 +47,10 @@ data class ScaleLength(val value: Double, val unit: DistanceUnit, val meters: Do
  * decimals below 10, one below 100 and none above; imperial reads in feet below a tenth of a mile (528 ft),
  * then in miles with one decimal below 100 and none above. The unit is judged on the value as shown, so
  * 999.6 m reads "1.00 km" and 9.996 km "10.0 km". Elevations stay in feet or metres at any size.
+ *
+ * No yards and no inches (the owner, 2026-10-23, answering the yards-and-inches idea): short imperial distances
+ * stay in feet below 528 ft, as US trail signs and the common map apps read; inches wait for a paper-scale
+ * readout, if one is ever built.
  */
 object UnitFormat {
     const val FEET_PER_METER = 1.0 / 0.3048

@@ -29,6 +29,9 @@ object TopChips {
     /** Bottom edge of the navigation stats card. */
     var navCardBottom by mutableStateOf(0.dp)
 
+    /** T128: the navigation card's header row height (0 when not navigating); not Compose state, only reported. */
+    @Volatile var navHeaderDp = 0f
+
     /** Top and bottom edges of the track controls column. */
     var trackColumnTop by mutableStateOf(0.dp)
     var trackColumnBottom by mutableStateOf(0.dp)
@@ -81,7 +84,7 @@ object TopChips {
     fun json(): Map<String, Any?> = linkedMapOf(
         "topRowLeftDp" to topRowLeft.value, "searchBottomDp" to searchBottom.value, "searchWidthDp" to searchWidth().value,
         "onlineBottomPx" to onlineBottomPx, // T115
-        "navCardBottomDp" to navCardBottom.value, "trackColumnTopDp" to trackColumnTop.value, "trackColumnBottomDp" to trackColumnBottom.value,
+        "navCardBottomDp" to navCardBottom.value, "navHeaderDp" to navHeaderDp /* T128 */, "trackColumnTopDp" to trackColumnTop.value, "trackColumnBottomDp" to trackColumnBottom.value,
         "routesChipTopDp" to if (trackColumnBottom > 0.dp) (trackColumnBottom + GAP).value else null,
         "routesChipBottomDp" to routesChipBottom.value, "topRightBottomDp" to topRightBottom.value, // T110
         // The track controls clear the navigation card when they start below its bottom edge.

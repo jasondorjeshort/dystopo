@@ -50,13 +50,20 @@ object RequestChecks {
      * `/labels`, everything under `/help`, and `POST /attribution/open` (Android does not start an activity for an
      * app in the background, so it said `opened` and nothing opened). `GET /attribution` reads state and answers in
      * the background; `POST /attribution/close` must answer while the About screen itself has the map stopped.
+     * T128: the five UI routes that open or drive a sheet (`POST /settings/ui`, `/settings/open`, `/search/ui`,
+     * `/storage/ui`, `/areas/ui`) post to the activity's Compose state and waited on frames that never come while it
+     * is stopped; their `GET` siblings (`/settings/layout`, `/storage`, `/areas`, ...) read state and stay open.
      */
     fun needsActivity(method: String, path: String): Boolean = when {
         path == "/screenshot" || path == "/features" || path == "/features/text" || path == "/labels" -> true
         path == "/help" || path.startsWith("/help/") -> true
         method == "POST" && path == "/attribution/open" -> true
+        method == "POST" && path in uiRoutes -> true
         else -> false
     }
+
+    /** T128: the sheet-driving UI routes, `POST` only ([needsActivity]). */
+    val uiRoutes = setOf("/settings/ui", "/settings/open", "/search/ui", "/storage/ui", "/areas/ui")
 
     private fun codePoint(cp: Int): String? =
         if (cp in 1..0x10FFFF && cp !in 0xD800..0xDFFF) String(Character.toChars(cp)) else null

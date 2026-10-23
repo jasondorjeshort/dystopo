@@ -15,7 +15,13 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   the credit line, route card and track panel edges it keeps above, and `clear`). `readBack` checks each bar
  *   against MapLibre itself on the live camera: `mapLibreMetersPerDp` (its projection at the centre latitude; per
  *   logical pixel, which is a dp), `meters` at that scale over `drawnPx` and `errorPct` against the label, and `measuredMeters`
- *   (the ground distance between two screen points `drawnPx` apart across the map's centre) with its `errorPct`.
+ *   (the ground distance between two screen points `drawnPx` apart, T128: on the ruler's own row `measuredRowPx`) with its
+ *   `measuredErrorPct`, and the same across the centre row (`centreRowMeters`, `centreRowErrorPct`). T128: under tilt
+ *   (`tilt` at least 0.5 degrees) the bar is fitted to the scale on its own row (`measuredAt: row`, `rowPx`,
+ *   `metersPerDp`), not the centre's Web Mercator rule (`centreMetersPerDp`), so the label is right where the bar is;
+ *   `errorPct` (MapLibre's centre-latitude scale) then differs by the tilt's foreshortening and is meaningful untilted
+ *   only. It also stays below the navigation card (`navCardBottomDp`, `clearOfNavCard`; hidden as
+ *   `noRoomBelowNavCard` when no room is left).
  *   T110: only for a bar that is shown and fitted at the live camera (it refits every 500 ms; the route waits up to
  *   [FIT_WAIT_MS] for that); otherwise `readBack` is null and `readBackSkipped` says why (`hidden`, `fitBehindCamera`).
  *   Before, a hidden bar kept its last lengths and the read-back compared them with a camera that had moved.
@@ -54,8 +60,8 @@ object ScaleBarRoutes {
     private fun awaitFit(app: DystopoApp): String? {
         val until = System.currentTimeMillis() + FIT_WAIT_MS
         while (true) {
-            val live = runCatching { app.map.onMain { app.map.map?.cameraPosition?.let { c -> c.target?.let { c.zoom to it.latitude } } } }.getOrNull()
-            if (live != null && ScaleBarLayout.fittedAt(live.first, live.second)) return null
+            val live = runCatching { app.map.onMain { app.map.map?.cameraPosition?.let { c -> c.target?.let { doubleArrayOf(c.zoom, it.latitude, c.tilt) } } } }.getOrNull()
+            if (live != null && ScaleBarLayout.fittedAt(live[0], live[1], live[2])) return null
             if (System.currentTimeMillis() >= until) return if (!ScaleBarLayout.shown) "hidden" else "fitBehindCamera"
             Thread.sleep(50)
         }
@@ -74,19 +80,24 @@ object ScaleBarRoutes {
             val drawn = ScaleBarLayout.drawnPx
             val cx = view.width / 2f
             val cy = view.height / 2f
+            val row = ScaleBarLayout.rowPx.takeIf { it.isFinite() } ?: cy // T128: the ruler's own row
             ScaleBarLayout.bars.mapIndexed { i, b ->
                 val px = drawn.getOrNull(i) ?: (b.px * ScaleBarLayout.density).toFloat()
-                val a = m.projection.fromScreenLocation(PointF(cx - px / 2, cy))
-                val c = m.projection.fromScreenLocation(PointF(cx + px / 2, cy))
-                val measured = a.distanceTo(c)
+                fun across(y: Float) = m.projection.fromScreenLocation(PointF(cx - px / 2, y)).distanceTo(m.projection.fromScreenLocation(PointF(cx + px / 2, y)))
+                val measured = across(row)
+                val atCentre = across(cy)
                 linkedMapOf(
                     "label" to b.label,
                     "drawnPx" to round(px.toDouble(), 2),
                     "mapLibreMetersPerDp" to round(mpp, 5),
                     "meters" to round(px / density * mpp, 2),
                     "errorPct" to round((px / density * mpp - b.meters) / b.meters * 100, 3),
+                    // T128: measured on the bar's own row (`rowPx`; under tilt the scale differs from the centre's)
+                    "measuredRowPx" to Math.round(row),
                     "measuredMeters" to round(measured, 2),
                     "measuredErrorPct" to round((measured - b.meters) / b.meters * 100, 3),
+                    "centreRowMeters" to round(atCentre, 2), // the same length across the centre row, for comparison
+                    "centreRowErrorPct" to round((atCentre - b.meters) / b.meters * 100, 3),
                 )
             }
         }

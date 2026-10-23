@@ -52,8 +52,14 @@ class RequestChecksTest {
             kotlin.test.assertTrue(RequestChecks.needsActivity("GET", p) && RequestChecks.needsActivity("POST", p), p)
         }
         kotlin.test.assertTrue(RequestChecks.needsActivity("POST", "/attribution/open"))
+        // T128: the five UI routes, POST only; their GET siblings read state and answer in the background.
+        for (p in listOf("/settings/ui", "/settings/open", "/search/ui", "/storage/ui", "/areas/ui")) {
+            kotlin.test.assertTrue(RequestChecks.needsActivity("POST", p), p)
+        }
         for ((m, p) in listOf("GET" to "/attribution", "POST" to "/attribution/close", "GET" to "/health", "GET" to "/stats",
-            "GET" to "/stats/requests", "POST" to "/camera", "GET" to "/helpers", "GET" to "/screenshots", "GET" to "/dem/8/40/90.png")) {
+            "GET" to "/stats/requests", "POST" to "/camera", "GET" to "/helpers", "GET" to "/screenshots", "GET" to "/dem/8/40/90.png",
+            "GET" to "/settings/layout", "GET" to "/settings", "GET" to "/storage", "GET" to "/areas", "GET" to "/search",
+            "POST" to "/settings", "POST" to "/areas/download", "GET" to "/settings/uix")) {
             kotlin.test.assertFalse(RequestChecks.needsActivity(m, p), "$m $p")
         }
     }

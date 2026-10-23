@@ -53,6 +53,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.layout
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import kotlin.math.roundToInt
 
@@ -71,12 +74,16 @@ private val TARGET_PAD: Dp = 20.dp
  * pop-up opens it scrolls itself into view, so `POST /help/open` finds it on a long page; when it leaves the screen
  * (its sheet closed) its pop-up closes too.
  *
+ * T128: [flat] keeps the touch target but lays the icon out at its own height, the target reaching past the row above
+ * and below without making it taller (the navigation card's header was 48 dp at font scale 1.0 for a 13 sp line). Compose
+ * hit-tests a child outside its parent's bounds when nothing clips, so the whole target still takes the tap.
+ *
  * Spoken as "Help: <title>" (a button); the question mark itself is not text in the accessibility tree, so the
  * scripts that find a row by its label never meet it.
  */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-fun HelpIcon(key: String, modifier: Modifier = Modifier) {
+fun HelpIcon(key: String, modifier: Modifier = Modifier, flat: Boolean = false) {
     val help = HelpRegistry.byKey(key) ?: return
     val icon = with(LocalDensity.current) { ICON_SP.sp.toDp() }
     val target = maxOf(MIN_TARGET, icon + TARGET_PAD)
@@ -93,6 +100,7 @@ fun HelpIcon(key: String, modifier: Modifier = Modifier) {
     }
     Box(
         modifier
+            .let { m -> if (flat) m.layout { measurable, constraints -> flatLayout(measurable, constraints, icon.roundToPx()) } else m }
             .size(target)
             .bringIntoViewRequester(requester)
             .onGloballyPositioned { c ->
@@ -116,6 +124,16 @@ fun HelpIcon(key: String, modifier: Modifier = Modifier) {
             )
         }
     }
+}
+
+/**
+ * T128: lays the target out at [heightPx] (the icon's height) and centres it on that height, so the target overflows the
+ * row by the same amount above and below. The row's other content decides its height.
+ */
+private fun MeasureScope.flatLayout(measurable: Measurable, constraints: Constraints, heightPx: Int): MeasureResult {
+    val p = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+    val h = minOf(p.height, heightPx).coerceIn(constraints.minHeight, constraints.maxHeight)
+    return layout(p.width, h) { p.place(0, (h - p.height) / 2) }
 }
 
 /**

@@ -43,7 +43,8 @@ import java.io.File
  *   `dropped`, `perRoute` (requests, bytes, statuses, maxMs) and the newest `limit` lines (default 200); `jsonl`
  *   gives every kept line (or the newest `limit`) as `devtool cache-replay --log` reads a server log.
  * - T123, the background guard: the routes that need the activity on screen ([RequestChecks.needsActivity]: the
- *   screenshot, the feature routes, the help routes, opening the About screen) answer 503 with
+ *   screenshot, the feature routes, the help routes, opening the About screen; T128: the five sheet-driving UI routes,
+ *   `POST /settings/ui`, `/settings/open`, `/search/ui`, `/storage/ui`, `/areas/ui`) answer 503 with
  *   `{"error", "reason", "route"}` at once while the activity is stopped or gone ([MapController.backgroundReason]),
  *   instead of hanging until their own timeouts.
  */

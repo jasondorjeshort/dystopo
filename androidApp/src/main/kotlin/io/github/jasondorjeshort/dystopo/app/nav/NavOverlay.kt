@@ -61,7 +61,7 @@ fun NavOverlay() {
     val chips = io.github.jasondorjeshort.dystopo.app.TopChips
     val u = NavSession.ui
     if (u == null) {
-        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp }
+        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f }
         return
     }
     // T122: the card's type is large already (28 sp numbers); at the system's font scale 2.0 the card with the off-route
@@ -89,7 +89,11 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                 .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                // T128: the header's height as laid out (`GET /nav` `layout.navHeaderDp`), 48 dp at 1.0 before the flat help icon
+                modifier = Modifier.onGloballyPositioned { c -> chips.navHeaderDp = c.size.height / density.density },
+            ) {
                 BasicText(
                     if (u.arrived) "Arrived" else "Navigating",
                     style = TextStyle(color = Purple, fontSize = 13.sp, fontWeight = FontWeight.Bold),
@@ -100,7 +104,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                     modifier = Modifier.weight(1f),
                 )
                 u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
-                HelpIcon("nav.card") // T122: what the card shows
+                HelpIcon("nav.card", flat = true) // T122: what the card shows; T128: flat, so the header is its text's height
             }
             if (u.waiting) {
                 BasicText("Waiting for a location fix", style = TextStyle(color = Ink, fontSize = 18.sp))
@@ -109,7 +113,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             u.fixAge?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     BasicText(it, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-                    HelpIcon("nav.fixLost") // T122: why the fix is lost and what the card does meanwhile
+                    HelpIcon("nav.fixLost", flat = true) // T122: why the fix is lost and what the card does meanwhile (T128: flat)
                 }
             }
             u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102
