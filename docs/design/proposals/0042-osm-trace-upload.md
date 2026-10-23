@@ -1,7 +1,7 @@
 # 0042. Uploading a recorded track to OpenStreetMap as a GPS trace
 
 Date: 2026-10-23
-Status: under review
+Status: promoted to ADR 0042
 
 ## Question
 
