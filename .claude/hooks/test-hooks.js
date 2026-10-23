@@ -507,6 +507,19 @@ for (const [id, agent] of [['GE22a', 'general-purpose'], ['GE22b', null]]) {
   guardCase(id, { command: 'git rebase --exec "git push --force origin main" origin/main', agent,
     policy: path.join(HOOKS, 'policy.json'), policyName: 'policy.json' }, 1, innerText('git push --force origin main'));
 }
+// GE23 (project cases, ADR 0038, T129): the git section of this repository's own policy.json lets
+// a subagent push and lease-push a carry-back/* branch (the carry-back skill's Send) and still
+// refuses a branch outside task/* and carry-back/*. Only the git section is taken, so the push scan
+// runs under the defaults and the scratch commits' identity is not a hit.
+const projectGit = scratchPolicy('project-git', { git: JSON.parse(fs.readFileSync(path.join(HOOKS, 'policy.json'), 'utf8')).git });
+for (const [id, command, expect] of [
+  ['GE23a', 'git push origin HEAD:carry-back/x', 'allow'],
+  ['GE23b', 'git push origin HEAD:feature/x', 3],
+  ['GE23c', 'git push --force-with-lease origin HEAD:carry-back/x', 'allow'],
+  ['GE23d', 'git push --force-with-lease origin HEAD:feature/x', 1],
+]) {
+  guardCase(id, { command, agent: 'general-purpose', cwd: repoTask, policy: projectGit, policyName: 'policy.json git section' }, expect);
+}
 
 // git replace --list (an audit false positive, 2026-10-17), and the shapes rule 19 keeps denying:
 // text echoed, held in a loop, function or group, or written to a file, while a runner in the line
