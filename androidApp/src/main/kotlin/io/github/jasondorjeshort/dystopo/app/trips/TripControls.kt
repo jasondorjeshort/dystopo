@@ -241,6 +241,7 @@ private fun TripCard(modifier: Modifier) {
  * Retry, Offline areas). It replaces T75's Offline button: a trip is kept without being asked (T95's size-first offer
  * stays behind `POST /routes/{id}/offline`). Redrawn every 1.5 s for a running download's progress.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun TripCorridorLine(p: io.github.jasondorjeshort.dystopo.model.RoutePlan) {
     var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
@@ -248,12 +249,12 @@ private fun TripCorridorLine(p: io.github.jasondorjeshort.dystopo.model.RoutePla
     tick.let { } // read, so the line follows the download
     val c = io.github.jasondorjeshort.dystopo.app.areas.TripCorridors
     val st = c.status(p)
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicText(
-            st.text, Modifier.weight(1f),
-            style = TextStyle(color = if (st.state == "kept" || st.state == "downloading") Color(0xFF00796B) else Ink, fontSize = 12.sp, fontWeight = if (st.state == "kept") FontWeight.Bold else FontWeight.Normal),
-            maxLines = 3, overflow = TextOverflow.Ellipsis,
-        )
+    // The text over its own row (the budget message runs to three lines), the actions after it, wrapping.
+    BasicText(
+        st.text,
+        style = TextStyle(color = if (st.state == "kept" || st.state == "downloading") Color(0xFF00796B) else Ink, fontSize = 12.sp, fontWeight = if (st.state == "kept") FontWeight.Bold else FontWeight.Normal),
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         for (a in st.actions) when (a) {
             "stop" -> Action(CORRIDOR_STOP) { Trips.background { c.keep(p.id, false) } }
             "keep" -> Action(CORRIDOR_KEEP) { Trips.background { c.keep(p.id, true) } }

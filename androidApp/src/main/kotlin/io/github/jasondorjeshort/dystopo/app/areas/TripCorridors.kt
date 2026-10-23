@@ -251,7 +251,7 @@ object TripCorridors {
         return null
     }
 
-    /** Waits while an area download runs (one at a time), at most an hour, or until a newer ask comes in. */
+    /** Waits while an area download runs (one at a time), at most an hour. */
     private fun waitIdle() {
         val t0 = System.currentTimeMillis()
         while (AreaDownload.job?.running == true && System.currentTimeMillis() - t0 < 3_600_000) Thread.sleep(250)
