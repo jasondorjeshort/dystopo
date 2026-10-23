@@ -63,3 +63,6 @@ next as one proposal, or one at a time? Recommendation: one proposal with a crit
 the saved route), and reroute and passed stops share the router and the nav session with turn
 directions, which this file says to plan together.
 Answer: one proposal with a critic, as recommended (owner, 2026-10-23).
+2026-10-23 (T132): the proposal is written, `docs/design/proposals/0040-stops-and-reroute.md` (under
+review; its Prior art section holds the survey this file's brainstorm asked for). This file stays until
+the ADR and the two build tasks the proposal names land.
