@@ -8,9 +8,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
-import io.github.jasondorjeshort.dystopo.areas.AreaPoint
-import io.github.jasondorjeshort.dystopo.areas.AreaShape
-import io.github.jasondorjeshort.dystopo.areas.Polyline
+import io.github.jasondorjeshort.dystopo.areas.TripCorridor
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 
 /**
@@ -43,6 +41,12 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   which is how "pinned areas survive a trim" is checked.
  * - `GET /areas/prefetch`, `POST /areas/prefetch?on=0|1`: "ahead on the route" while navigating ([AheadPrefetch]).
  * - `POST /areas/ui?open=1|0`: the Areas screen.
+ * - T130, the corridor every trip keeps ([TripCorridors]): `GET /areas/trips` (the width setting `widthM`, `notKept`
+ *   trips, `notes` (why a trip has none: over the budget, no source), `queued`, `refusals`, `lastRun` and every trip's
+ *   `corridors` with their width); `POST /areas/trips[?wait=ms]` runs a reconcile (answers after it with `wait`). A
+ *   trip's area carries its `tripId`; `POST /areas/{id}/pin?on=0` and `DELETE /areas/{id}` on one also stop keeping that
+ *   trip (not made again until Keep offline, `POST /routes/{id}/corridor?keep=1`, or Pin). The width is
+ *   `POST /settings?tripCorridorM=` (0 off, 100 to 10000 m; 1000 by default), also the default `bufferM` of `?trip=`.
  */
 object AreaRoutes {
     private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss)?$")
@@ -68,6 +72,12 @@ object AreaRoutes {
             "POST" to "/areas/download" -> return Response.json(download(r), 202)
             "POST" to "/areas/plan" -> return Response.json(AreaDownload.plan(area(r).second).json())
             "POST" to "/areas/trim" -> return Response.json(trim(r))
+            "GET" to "/areas/trips" -> return Response.json(TripCorridors.json()) // T130
+            "POST" to "/areas/trips" -> { // T130: a reconcile now (`wait=ms` answers after it)
+                TripCorridors.request("debug route")
+                r.query["wait"]?.toLongOrNull()?.let { TripCorridors.drain(it.coerceIn(0, 600_000)) }
+                return Response.json(TripCorridors.json())
+            }
             "GET" to "/areas/prefetch" -> return Response.json(AheadPrefetch.json())
             "POST" to "/areas/prefetch" -> {
                 r.query["on"]?.let { AheadPrefetch.enabled = it == "1" || it == "true" }
@@ -85,10 +95,10 @@ object AreaRoutes {
         return when (r.method to m.groupValues[2]) {
             "GET" to "" -> Response.json(rec.json() + mapOf("olderThanSource" to Areas.older(rec), "coverage" to Areas.coverage(rec), "manifest" to Areas.manifest(rec.id)?.summary()))
             "GET" to "/manifest" -> Response.json(Areas.manifest(rec.id)?.json() ?: throw NoSuchElementException("area $id has no manifest (a pack-backed area: see its pack)"))
-            "POST" to "/pin" -> Response.json(Areas.pin(rec.id, r.query["on"] != "0").json())
+            "POST" to "/pin" -> Response.json(TripCorridors.userPin(rec.id, r.query["on"] != "0").json()) // T130: on a trip's corridor, also Keep offline or Stop keeping
             "POST" to "/retry" -> Response.json(retry(rec), 202) // T106: the card's Retry (a download again)
             "POST" to "/dismiss" -> Response.json(mapOf("area" to Areas.dismiss(rec.id)?.json(), "removed" to (Areas.get(rec.id) == null))) // T106
-            "DELETE" to "" -> Response.json(Areas.remove(rec.id))
+            "DELETE" to "" -> Response.json(TripCorridors.userRemove(rec.id)) // T130: a trip's corridor removed by hand is not made again
             else -> Response.notFound()
         }
     }
@@ -120,24 +130,16 @@ object AreaRoutes {
     }
 
     /**
-     * The corridor of kept route [key] (id or prefix): its line, `bufferM` (default 500 m), zooms 8 to 15, or (T91)
-     * 8 to 13 for a drive ([corridorMaxZoom]); `minZoom`/`maxZoom` override.
+     * The corridor of kept route [key] (id or prefix): its line, `bufferM` (T130: default the trip corridor setting,
+     * [TripCorridors.widthM], 1 km unless changed; 500 m before), zooms 8 to 15, or (T91) 8 to 13 for a drive
+     * ([corridorMaxZoom]); `minZoom`/`maxZoom` override. The shape is [TripCorridor.area], the same as the automatic corridor's.
      */
     fun tripArea(key: String, q: Map<String, String> = emptyMap()): Pair<String, AreaOfInterest> {
         val plans = Trips.store { it.routePlans() }
         val p = plans.firstOrNull { it.id == key } ?: plans.filter { key.length >= 4 && it.id.startsWith(key) }.singleOrNull()
             ?: throw NoSuchElementException("no kept route '$key' (GET /routes)")
-        val pts = p.path.points.map { AreaPoint(it.lat, it.lon) }
-        require(pts.isNotEmpty()) { "route ${p.id} has no points" }
-        val buffer = q["bufferM"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("bufferM must be a number") } ?: AreaOfInterest.DEFAULT_BUFFER_M
-        // Simplified within a tenth of the buffer, and the buffer grown by as much, so the corridor still holds the line's.
-        val tol = buffer / 10
-        val line = Polyline.simplify(pts, tol)
-        val area = AreaOfInterest(
-            AreaShape.Corridor(line, buffer + tol),
-            q["minZoom"]?.toIntOrNull() ?: 8, q["maxZoom"]?.toIntOrNull() ?: corridorMaxZoom(p.type), q["name"] ?: p.name.ifBlank { "Route" },
-        )
-        return p.id to area
+        val buffer = q["bufferM"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("bufferM must be a number") } ?: TripCorridors.widthM()
+        return p.id to TripCorridors.areaOf(p, buffer, q["minZoom"]?.toIntOrNull(), q["maxZoom"]?.toIntOrNull(), q["name"])
     }
 
     private fun trim(r: Request): Map<String, Any?> {
@@ -159,4 +161,4 @@ object AreaRoutes {
  * T91 (the T77 follow-up): the deepest zoom a trip's corridor fetches by default. A drive is seen from a car at
  * z13 at most (z8 to z15 was 134 MB for an 84 km drive), a walk or ride wants the trail detail of z15.
  */
-internal fun corridorMaxZoom(type: String?): Int = if (type.equals("drive", ignoreCase = true)) 13 else 15
+internal fun corridorMaxZoom(type: String?): Int = TripCorridor.maxZoom(type) // T130: in shared

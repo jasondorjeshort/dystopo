@@ -97,8 +97,16 @@ object Trips {
 
     val editingId: String? get() = editing?.id
 
+    /**
+     * T130 (T124's follow-up): the editor's Compose state is written on the main thread, and a change made on another
+     * thread (the trips worker, a debug route, the corridors' thread) now waits until it has been applied ([UiPublish], as
+     * `RouteSession` does since T119), at most [UI_WAIT_MS]; before, it was posted and the caller went on, so a route
+     * answered by the worker's own later read could see the previous state.
+     */
+    private val uiPublish = io.github.jasondorjeshort.dystopo.app.routing.UiPublish({ Looper.myLooper() == Looper.getMainLooper() }, { main.post(it) })
+
     private fun ui(block: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
+        uiPublish.publish(UI_WAIT_MS, block)
     }
 
     fun <T> store(block: (SyncStore) -> T): T = tracking.call { block(tracking.store as SyncStore) }
@@ -143,6 +151,7 @@ object Trips {
         val readId = editingId
         val open = readId?.let { id -> store { it.routePlan(id) } }
         val profiles = if (listOpen) store { it.routePlans() }.associate { it.id to RouteSummary.of(it, 40).profile } else null
+        if (items != lastItems) { lastItems = items; io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("routes changed") } // T130: synced, imported, renamed
         ui {
             list = items
             profiles?.let { listProfiles = it }
@@ -154,6 +163,8 @@ object Trips {
             }
         }
     }
+
+    @Volatile private var lastItems: List<RouteListItem>? = null
 
     private fun showPlan(p: RoutePlan?) {
         // T91 (the T77 follow-up): a route opened in the editor replaces the T45 planned route and its card, which
@@ -244,6 +255,7 @@ object Trips {
 
     fun delete(id: String): Boolean {
         val ok = store { it.deleteRoute(id, System.currentTimeMillis()) }
+        if (ok) io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.release(id) // T130: a deleted trip releases its corridor
         if (editingId == id) close()
         refresh()
         return ok
@@ -325,12 +337,14 @@ object Trips {
     fun cancelOffline() = ui { offline = null }
 
     /**
-     * T75: "Download for offline": the route's corridor (500 m each side, z8 to z15; T91: z8 to z13 for a drive) as an
+     * T75: "Download for offline": the route's corridor (T130: the corridor setting's width, 1 km by default, 500 m before;
+     * z8 to z15; T91: z8 to z13 for a drive) as an
      * area of interest, fetched into the tile cache and pinned ([io.github.jasondorjeshort.dystopo.app.areas.AreaDownload]);
      * progress in the card's message line and `GET /areas/download`. T95: [manifest] is the planned one, when there is one.
      */
     fun downloadOffline(id: String, manifest: io.github.jasondorjeshort.dystopo.areas.AreaManifest? = null): Map<String, Any?> {
         val (tripId, area) = io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.tripArea(id)
+        io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.optIn(tripId) // T130: a download by hand keeps the trip again
         val r = io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.start(area, area.name, tripId, manifest = manifest)
         ui { message = "Downloading the route for offline use…" }
         Thread({
@@ -420,6 +434,7 @@ object Trips {
 
     private fun opened(id: String): RoutePlan {
         val p = plan(id) ?: throw NoSuchElementException("no route $id")
+        io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("saved ${p.id.take(8)}") // T130: made, kept, imported or edited: its corridor follows
         val first = editingId != id
         ui { showPlan(p); listOpen = false; if (first) fitCamera(p) }
         overlay.show(p)
@@ -513,6 +528,9 @@ object Trips {
         m.moveCamera(CameraUpdateFactory.newCameraPosition(org.maplibre.android.camera.CameraPosition.Builder(c).target(centre).padding(0.0, 0.0, 0.0, 0.0).build()))
         lastFit = lastFit?.plus("paddingDropped" to true)
     }
+
+    /** T130: how long a change off the main thread waits for its Compose state to be applied (a stuck main thread). */
+    const val UI_WAIT_MS = 5_000L
 
     /** T122: how long after opening the editor fits the trip, so the trip card has been measured; its height assumed before. */
     const val FIT_AFTER_MS = 250L

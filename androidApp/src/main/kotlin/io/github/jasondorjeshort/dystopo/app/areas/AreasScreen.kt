@@ -38,6 +38,7 @@ import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
+import io.github.jasondorjeshort.dystopo.areas.TripCorridor
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
@@ -117,12 +118,13 @@ private fun AreasSheet() {
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicText(
-                    "Pinned areas stay on this phone until you unpin or remove them. A trip's Offline button downloads its corridor.",
+                    AREAS_INTRO,
                     Modifier.weight(1f, fill = false),
                     style = TextStyle(color = Muted, fontSize = 12.sp),
                 )
                 HelpIcon("areas.corridor") // T109
             }
+            CorridorWidthRow() // T130
             // T106: a refused job is finished too (it read "Downloading ...: 0 of 0 tiles" for as long as the sheet stayed open).
             progress?.takeIf { it["state"] !in setOf("done", "failed", "cancelled", "partial", "refused") }?.let { p ->
                 BasicText(
@@ -149,7 +151,7 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         }
         val kind = when {
             r.pack != null -> "Region pack ${r.pack}"
-            r.area.shape is AreaShape.Corridor -> corridorLine(r.area.lengthM, (r.area.shape as AreaShape.Corridor).bufferM, AppSettings.units) // T106: the units setting
+            r.area.shape is AreaShape.Corridor -> (r.area.shape as AreaShape.Corridor).bufferM.let { b -> corridorLine(r.area.lengthM, if (r.tripId != null) TripCorridor.widthOf(b).toDouble() else b, AppSettings.units, trip = r.tripId != null) } // T106: the units setting; T130: a trip's
             else -> "Box"
         }
         val share = (cov?.get("share") as? Number)?.toDouble()
@@ -171,10 +173,10 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         val failed = r.pack == null && r.state != "downloading" && (r.error != null || r.state == "failed" || r.state == "partial")
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
-            if (r.pack == null) Action(if (r.pinned) "Unpin" else "Pin") { thread { runCatching { Areas.pin(r.id, !r.pinned) } } }
+            if (r.pack == null) Action(if (r.pinned) "Unpin" else "Pin") { thread { runCatching { TripCorridors.userPin(r.id, !r.pinned) } } } // T130: a trip's, also Stop keeping
             if (r.pack == null && r.state != "downloading") Action(if (failed) "Retry" else if (older) "Update" else "Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
             if (failed) Action("Dismiss", Muted) { thread { runCatching { Areas.dismiss(r.id) } } }
-            Action("Remove", Color(0xFFD73027)) { thread { runCatching { Areas.remove(r.id) } } }
+            Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
         }
     }
 }
@@ -193,8 +195,38 @@ internal const val OTHER_SOURCE_NOTE = "Downloaded from another source. Update d
  * T106 (a T95 follow-up): the area card's corridor line in the units setting, "Corridor 12.4 km, 500 m each side" or
  * "Corridor 7.7 mi, 1640 ft each side" ([UnitFormat.distance]; it was metric whatever the setting). Pure, tested.
  */
-internal fun corridorLine(lengthM: Double, bufferM: Double, units: ContourUnits): String =
-    "Corridor ${UnitFormat.distance(lengthM, units)}, ${UnitFormat.distance(bufferM, units)} each side"
+internal fun corridorLine(lengthM: Double, bufferM: Double, units: ContourUnits, trip: Boolean = false): String =
+    (if (trip) "Trip corridor " else "Corridor ") + "${UnitFormat.distance(lengthM, units)}, ${UnitFormat.distance(bufferM, units)} each side"
+
+/** T130: the sheet's line under the title. */
+internal const val AREAS_INTRO = "Pinned areas stay on this phone until you unpin or remove them. Every trip keeps its corridor here."
+
+/** T130: the width row's label, and a width chip's text ([TripCorridor.WIDTH_CHOICES_M]; 0 is Off) in the units setting. Pure, tested. */
+internal const val CORRIDOR_WIDTH_LABEL = "Keep each trip offline:"
+internal fun corridorWidthChip(m: Int, units: ContourUnits): String = if (m == 0) "Off" else UnitFormat.distance(m.toDouble(), units)
+
+/** T130: the trip corridor's width, each side of the route ([TripCorridors.setWidth]; `POST /settings?tripCorridorM=`). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun CorridorWidthRow() {
+    var width by remember { mutableStateOf(AppSettings.tripCorridorM) }
+    val units = AppSettings.units
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        BasicText(CORRIDOR_WIDTH_LABEL, Modifier.padding(vertical = 4.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+        for (m in (TripCorridor.WIDTH_CHOICES_M + width).distinct().sorted()) {
+            val on = m == width
+            BasicText(
+                corridorWidthChip(m, units),
+                style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                modifier = Modifier.background(if (on) Teal else Color.Transparent, RoundedCornerShape(12.dp)).clickable {
+                    width = m
+                    thread { TripCorridors.setWidth(m) }
+                }.padding(horizontal = 9.dp, vertical = 4.dp),
+            )
+        }
+        BasicText(if (width == 0) "" else "each side", Modifier.padding(vertical = 4.dp), style = TextStyle(color = Muted, fontSize = 12.sp))
+    }
+}
 
 /**
  * T109: the help pop-ups of the sheet's header and its first line, by the key each [HelpIcon] names; a control removed
@@ -211,12 +243,20 @@ internal val AREAS_HELP: List<HelpText> = run {
                 "Storage; a download past it is refused."
         },
         HelpText("areas.corridor", "Corridors", "Offline areas, the line under the title", show = show) { units ->
-            "A trip's Offline button offers its corridor for download, with its size: the map within " +
-                "${UnitFormat.distance(AreaOfInterest.DEFAULT_BUFFER_M, units)} each side of the route, at the zooms " +
-                "you need to follow it. While this sheet is open, a corridor shows on the map as a shaded band. Update " +
-                "downloads an area again when its source has newer data."
+            corridorHelp(AppSettings.tripCorridorM, units)
         },
     )
+}
+
+/**
+ * T130: the corridors' help text: every trip keeps the map within the width each side (or, off, only the trips you keep by
+ * hand), counted in the budget; Stop keeping or Unpin. In the units setting. Pure, tested.
+ */
+internal fun corridorHelp(widthM: Int, units: ContourUnits): String {
+    val w = UnitFormat.distance((if (widthM > 0) widthM else TripCorridor.DEFAULT_WIDTH_M).toDouble(), units)
+    val head = if (widthM > 0) "Every trip keeps the map within $w each side of its route offline; editing the trip updates it, deleting it frees it."
+    else "Trips are not kept offline on their own; Keep offline on a trip keeps the map within $w each side."
+    return "$head It counts in the offline areas' budget, and the trip says when it does not fit. Stop keeping, or Unpin here, lets it go."
 }
 
 /** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). */

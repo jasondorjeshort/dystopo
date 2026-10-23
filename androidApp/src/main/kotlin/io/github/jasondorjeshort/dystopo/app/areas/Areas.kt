@@ -192,6 +192,7 @@ object Areas : VersionPins {
         service.cache.keep = ::isPinned
         onPinsChanged = { service.cache.recountPinned() } // T91: pinned bytes have their own budget
         AheadPrefetch.start()
+        TripCorridors.request("start") // T130: trips saved, synced or deleted while the app was not running
     }
 
     fun all(): List<Record> {
