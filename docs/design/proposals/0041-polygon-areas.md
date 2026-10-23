@@ -1,7 +1,7 @@
 # 0041. Polygon areas in the manifest: a drawn region and a distance around a point first
 
 Date: 2026-10-23
-Status: under review
+Status: promoted to ADR 0041
 
 ## Question
 
