@@ -2,7 +2,7 @@
 
     python -I tools/android-ui.py <part> [options]      # one JSON object on stdout, exit 1 when a check failed
 
-Every device part except `routes` and `search` drives the RELEASE build the way a person would: taps and typing
+Every device part except `routes`, `search` and `bothunits` drives the RELEASE build the way a person would: taps and typing
 through adb (`input tap|swipe|text`), on-screen text from `uiautomator dump` (Compose text is in the accessibility
 tree), the screen from `adb exec-out screencap`. No debug route is used. Screenshots go under --out: look at them.
 The tap helpers are tools/android-firstrun.py's (`Device`), loaded by path.
@@ -60,6 +60,10 @@ Parts:
                or the directions') is recorded with its body (`body`, also in the log line); --forced-404 adds a route
                where no pack is loaded after the tour and checks that the directions' 404 body is recorded (`forced`).
   search       (debug build, debug port) the search tour: tools/search-tour.txt, each query's expected top hit.
+  bothunits    (T129; debug builds on two emulators, --serial/--port and --serial2/--port2) the scale bar's Both units
+               choice through a sync peer (--server, as the emulators reach it): both phones pointed at it, both set to
+               one unit, then A sets both units (POST /scalebar?both=on) and syncs, B syncs and must draw both
+               (GET /scalebar's bothUnits, GET /sync/status' settingsSync `synced`); then B back to one unit, to A.
 
 Privacy: only areas.json places are used (the Rainier pack and the views around it); reports never echo file
 contents beyond the counts PrivacyCheck prints.
@@ -603,6 +607,88 @@ def forced_404(srv):
     print(f"[ui] route {v['label']} (forced): POST /route {code} body {out['route']['body']}; "
           f"GET /nav/directions {dcode} body {out['directions']['body']}", file=sys.stderr)
     return out
+
+
+BOTH_KEY = "app.scaleBar.both"  # sync/SettingsSync.kt: the synced key of the scale bar's Both units choice (T110)
+
+
+def both_state(srv):
+    """What a phone says of the Both units choice: GET /scalebar's bothUnits (what the bar draws) and GET /sync/status'
+    settingsSync (`synced` this phone's values, `held` the log's). GET /sync/settings names the peer, not the value."""
+    c1, bar = srv.call("GET", "/scalebar")
+    c2, st = srv.call("GET", "/sync/status")
+    ss = (st or {}).get("settingsSync") or {}
+    return {"scalebar": c1, "bothUnits": (bar or {}).get("bothUnits"), "status": c2,
+            "synced": (ss.get("synced") or {}).get(BOTH_KEY), "held": (ss.get("held") or {}).get(BOTH_KEY),
+            "operations": (st or {}).get("operations"), "digest": (st or {}).get("digest")}
+
+
+def sync_with_peer(srv):
+    code, r = srv.call("POST", "/sync")
+    r = r or {}
+    keep = {k: r[k] for k in ("pulled", "pushed", "settings", "settingsApplied", "conflicts", "ms", "error") if k in r}
+    return {"code": code, **keep}
+
+
+def part_bothunits(args):
+    """T129 (T110's follow-up): the scale bar's Both units choice set on one phone reaches a second one through a sync
+    peer. Debug builds on two emulators (--serial/--port and --serial2/--port2), both pointed at --server (a standalone
+    server or devtool serve the emulators reach, e.g. http://10.0.2.2:8780): A sets both=on and syncs, B syncs and must
+    draw both units; then B sets both=off and syncs, A syncs and must draw one."""
+    if not (args.serial2 and args.port and args.port2 and args.server):
+        return fail("bothunits needs --serial, --port, --serial2, --port2 and --server (the peer as the emulators reach it)")
+    a = DebugServer(args.port, args.serial)
+    b = DebugServer(args.port2, args.serial2)
+    run = Run()
+    peer = args.server.rstrip("/")
+    tok = f"&token={urllib.parse.quote(args.sync_token)}" if args.sync_token else ""
+
+    def set_peer():
+        out = {}
+        for name, srv in (("a", a), ("b", b)):
+            code, r = srv.call("POST", f"/sync/settings?peer={urllib.parse.quote(peer, safe='')}{tok}")
+            out[name] = {"code": code, "peer": (r or {}).get("peer")}
+        ok = all(v["code"] == 200 and v["peer"] == peer for v in out.values())
+        return {"ok": ok, **out, **({} if ok else {"error": f"peer not set to {peer}"})}
+
+    def flip(src, dst, value, label):
+        def fn():
+            code, bar = src.call("POST", f"/scalebar?both={value}")
+            want = value == "on"
+            src_sync = sync_with_peer(src)
+            dst_before = both_state(dst)
+            dst_sync = sync_with_peer(dst)
+            # SettingsSync applies a pulled value on the main thread after the merge; give it a moment.
+            t0 = time.time()
+            dst_after = both_state(dst)
+            while dst_after["bothUnits"] is not want and time.time() - t0 < 10:
+                time.sleep(0.5)
+                dst_after = both_state(dst)
+            src_after = both_state(src)
+            checks = {"set": code == 200 and (bar or {}).get("bothUnits") is want,
+                      "srcSynced": src_sync["code"] == 200, "dstSynced": dst_sync["code"] == 200,
+                      "dstBothUnits": dst_after["bothUnits"] is want, "dstSyncedValue": dst_after["synced"] == value,
+                      "srcSyncedValue": src_after["synced"] == value}
+            ok = all(checks.values())
+            return {"ok": ok, "value": value, "from": label[0], "to": label[1], "checks": checks, "srcSync": src_sync,
+                    "dstSync": dst_sync, "dstBefore": dst_before, "dstAfter": dst_after, "srcAfter": src_after,
+                    **({} if ok else {"error": "not carried: " + ", ".join(k for k, v in checks.items() if not v)})}
+        return fn
+
+    def baseline():
+        # Both start from one unit, A's choice published last, so the flips below are each the newest write.
+        for srv in (b, a):
+            srv.call("POST", "/scalebar?both=off")
+            sync_with_peer(srv)
+        sa, sb = both_state(a), both_state(b)
+        ok = sa["bothUnits"] is False and sb["bothUnits"] is False
+        return {"ok": ok, "a": sa, "b": sb, **({} if ok else {"error": "a phone still draws both units"})}
+
+    for name, fn in (("peer", set_peer), ("baseline", baseline), ("a-on-to-b", flip(a, b, "on", ("a", "b"))),
+                     ("b-off-to-a", flip(b, a, "off", ("b", "a")))):
+        if not run.step(name, fn, shot=False):
+            break
+    return run.report(serials=[args.serial, args.serial2], peer=peer)
 
 
 def part_search(args):
@@ -1830,6 +1916,20 @@ def apk_badging(apk):
     return (int(m.group(1)), m.group(2)) if m else (None, None)
 
 
+def tag_above(version_name):
+    """T129: a release tag one patch above [version_name] (`0.1.10-dev` -> `v0.1.11-alpha`), read the way the app reads
+    a tag without version.json (its leading dotted numbers), so a fixture that must be newer by tag stays newer after
+    every release instead of naming a fixed one."""
+    m = re.match(r"^[vV]?(\d+(?:\.\d+)+)", (version_name or "").strip())
+    if not m:
+        raise ValueError(f"no version numbers in {version_name!r}")
+    nums = [int(x) for x in m.group(1).split(".")]
+    while len(nums) < 3:
+        nums.append(0)
+    nums[2] += 1
+    return "v" + ".".join(str(n) for n in nums) + "-alpha"
+
+
 def build_tools():
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or os.path.join(os.path.expanduser("~"), "Android", "sdk")
     root = os.path.join(sdk, "build-tools")
@@ -2153,8 +2253,10 @@ def part_update(args):
                                   f"the start-up check never asked the mock API (previous build asked {st.get('prevAsked')}; updater-log.txt)"})}
 
     def wrong_checksum():
-        # No version.json: the tag decides (v0.1.9 > this build's 0.1.x); SHA256SUMS.txt lies about the APK.
-        ann = mock.announce("v0.1.9-alpha", args.new_apk, sums_sha="f" * 64, version_json=False)
+        # No version.json: the tag decides, one patch above this build's versionName (T129: a fixed tag stopped being
+        # newer after each release); SHA256SUMS.txt lies about the APK.
+        ann = mock.announce(tag_above(cur_name), args.new_apk, sums_sha="f" * 64, version_json=False)
+        ann["buildVersionName"] = cur_name
         line, png = check_for_updates(dev)
         close_sheet(dev)
         banner, _ = dev.wait_for(r"refused", 6)
@@ -2243,7 +2345,7 @@ def part_update(args):
 
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,
          "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions,
-         "background": part_background, "recenter": part_recenter}
+         "background": part_background, "recenter": part_recenter, "bothunits": part_bothunits}
 
 
 def main():
@@ -2262,7 +2364,10 @@ def main():
     ap.add_argument("--proxy-port", type=int, default=0, help="network: listen here (all interfaces) and relay to the server, "
                     "so a sync can be cut mid-response; --server then names this port")
     ap.add_argument("--target-port", type=int, default=0, help="network: the server's own port when --server-config is not given")
-    ap.add_argument("--port", type=int, default=0, help="routes/search: host port forwarded to the debug server")
+    ap.add_argument("--port", type=int, default=0, help="routes/search/bothunits: host port forwarded to the debug server")
+    ap.add_argument("--serial2", default="", help="bothunits: the second emulator")
+    ap.add_argument("--port2", type=int, default=0, help="bothunits: host port forwarded to the second emulator's debug server")
+    ap.add_argument("--sync-token", default="", help="bothunits: bearer token of a gated sync peer (--server)")
     ap.add_argument("--routes-file", default=os.path.join(HERE, "routing-tour.txt"))
     ap.add_argument("--forced-404", action="store_true", help="routes: after the tour, plan a route where no pack is loaded and "
                     "check that the directions' 404 is recorded with its body (reported under `forced`, not in routesOk)")
