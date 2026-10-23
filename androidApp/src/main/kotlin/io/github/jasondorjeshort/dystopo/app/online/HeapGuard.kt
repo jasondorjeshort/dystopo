@@ -36,10 +36,10 @@ object HeapGuard {
     /**
      * What one direct render may take of the heap while it runs, besides the shared caches. Measured (T127): nine renders
      * of a cold Mont Blanc z8 view held 100 MB after a collection and churned 4 MB blocks on top, and at 16 MB a render
-     * the heap still reached its max; at 24 MB a fresh 192 MB process runs four, whose cold views peaked at 129 to 179 MB
-     * with no OutOfMemoryError (32 MB, three at once, made the device tour's cold z8 view miss its minute).
+     * the heap still reached its max; at 24 MB (four at once on a fresh 192 MB process) cold z9 to z11 views still reached
+     * 181 to 194 MB; at 32 MB (three) they peaked at 95 to 164 MB. Three make a cold z8 view slower (T127's PR).
      */
-    const val RENDER_BYTES = 24L * MB
+    const val RENDER_BYTES = 32L * MB
 
     /**
      * What a render may take: [RENDER_BYTES] at every zoom. A z12 render reads full-resolution blocks, as heavy as a
@@ -53,7 +53,7 @@ object HeapGuard {
     const val RESERVE_MIN_BYTES = 24L * MB
 
     /** Below this much free heap (after the reserve) a render first asks for a trim. */
-    const val PRESSURE_BYTES = 32L * MB
+    const val PRESSURE_BYTES = RENDER_BYTES
 
     const val PRESSURE_TRIM_EVERY_MS = 5_000L
     const val SAMPLE_MS = 100L
