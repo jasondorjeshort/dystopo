@@ -28,3 +28,4 @@ behaviour. There is no battery measurement harness in the sweep and no low-batte
 
 Question: start with the measurement or with the low-battery mode? Numbers need a real phone over hours (emulators give none), and what the mode changes and when it switches on is wording and behaviour you sign off. Recommendation: measurement first, as one pass that adds a scripted scenario (`tools/` script reading `dumpsys batterystats` per uid for tracking screen off, navigation screen on, idle map) run on your phone, so the mode is designed against numbers; then a short proposal for the mode's triggers and what it turns off, for your sign-off.
 Answer: measurement first on the owner's phone, then a short proposal for the mode, as recommended (owner, 2026-10-23).
+2026-10-23: the measurement landed (T131: `tools/android-battery.py`, `docs/reference/android-battery.md`); it waits on the owner's phone run, and the low-battery mode's proposal waits on those numbers.
