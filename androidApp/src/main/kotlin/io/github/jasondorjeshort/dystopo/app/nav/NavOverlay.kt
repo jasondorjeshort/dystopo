@@ -113,7 +113,8 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             u.fixAge?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     BasicText(it, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-                    HelpIcon("nav.fixLost", flat = true) // T122: why the fix is lost and what the card does meanwhile (T128: flat)
+                    // T128: not flat: its target would overlap the header icon's and take taps on that icon's lower part
+                    HelpIcon("nav.fixLost") // T122: why the fix is lost and what the card does meanwhile
                 }
             }
             u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102

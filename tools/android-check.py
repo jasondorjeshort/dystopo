@@ -485,7 +485,10 @@ def expected_sources(health, v):
 # T123: the routes the app's background guard answers 503 while its activity is stopped (RequestChecks.needsActivity),
 # and the ones of them checked again in the foreground (POST /attribution/open is left out there: it opens a screen).
 BACKGROUND_ROUTES = [("GET", "/screenshot?wait=15000"), ("GET", "/features"), ("GET", "/features/text?wait=15000"),
-                     ("GET", "/help"), ("POST", "/attribution/open")]
+                     ("GET", "/help"), ("POST", "/attribution/open"),
+                     # T128: the sheet-driving UI routes (closing or the list, harmless if one ever got through)
+                     ("POST", "/settings/ui?open=0"), ("POST", "/settings/open?group=list"), ("POST", "/search/ui"),
+                     ("POST", "/storage/ui?open=0"), ("POST", "/areas/ui?open=0")]
 FOREGROUND_ROUTES = [("GET", "/screenshot?wait=15000"), ("GET", "/features"), ("GET", "/help")]
 
 

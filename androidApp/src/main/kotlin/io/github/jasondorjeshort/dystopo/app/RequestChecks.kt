@@ -51,8 +51,9 @@ object RequestChecks {
      * app in the background, so it said `opened` and nothing opened). `GET /attribution` reads state and answers in
      * the background; `POST /attribution/close` must answer while the About screen itself has the map stopped.
      * T128: the five UI routes that open or drive a sheet (`POST /settings/ui`, `/settings/open`, `/search/ui`,
-     * `/storage/ui`, `/areas/ui`) post to the activity's Compose state and waited on frames that never come while it
-     * is stopped; their `GET` siblings (`/settings/layout`, `/storage`, `/areas`, ...) read state and stay open.
+     * `/storage/ui`, `/areas/ui`) set the activity's Compose state, which nothing draws while it is stopped, so they
+     * answered `open` and nothing showed (a script then screenshotted or tapped a sheet that was not there); their
+     * `GET` siblings (`/settings/layout`, `/storage`, `/areas`, ...) read state and stay open.
      */
     fun needsActivity(method: String, path: String): Boolean = when {
         path == "/screenshot" || path == "/features" || path == "/features/text" || path == "/labels" -> true
