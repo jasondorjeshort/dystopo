@@ -15,6 +15,11 @@ One paragraph: what is being decided and why now, and what the chosen option sho
   the design goals (ADR 0025).
 - Project-specific constraints, each one sentence.
 
+## Prior art
+
+What the established topo and navigation apps do here, from the benchmark agent's report (ADR
+0039): the common practice, the outliers, and the sources. "none" for a purely technical choice.
+
 ## Options
 
 ### A. Name

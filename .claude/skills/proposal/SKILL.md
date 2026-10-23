@@ -21,6 +21,9 @@ decides.
    GraphHopper before rejecting it). The recommendation names what would reverse it. Claims about
    tools, licences, platforms or APIs go under "Claims to verify". Every option states its exit cost
    and moving parts; a dependency the project will lean on answers `dependency.md` in the proposal.
+   A question users see or touch fills "Prior art" from a benchmark agent's report (`brief` skill,
+   `benchmark.md`; ADR 0039), launched before the options are written; a purely technical choice
+   writes "none" there.
 3. Add the proposal to `docs/design/proposals/README.md`.
 4. Set Status to `under review`. Launch a critic (the most capable model) with `brief-critic.md`
    filled in. The critic writes `NNNN-critic-review.md` beside the proposal.

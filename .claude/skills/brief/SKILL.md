@@ -14,9 +14,11 @@ chore), and the critic brief is in the `proposal` skill.
 
 1. Pick the kind of agent and set its model explicitly on the launch (`CLAUDE.md`, Coordinating a
    wave): implementer Opus-class; verifier Sonnet-class; chore Haiku-class (escalate to Sonnet on a
-   failure or when an image must be judged); critic the most capable model.
-2. Fill the matching template in this directory: `implementer.md`, `verifier.md`, `chore.md`. Every
-   field is required; write "none" rather than leaving one out.
+   failure or when an image must be judged); benchmark Sonnet-class with web search (the most
+   capable model when it must weigh competing designs rather than report them; ADR 0039); critic
+   the most capable model.
+2. Fill the matching template in this directory: `implementer.md`, `verifier.md`, `chore.md`,
+   `benchmark.md`. Every field is required; write "none" rather than leaving one out.
 3. Point at indexes and files, do not paste them: the task text is "### Tnn" in `docs/TASKS.md`; facts
    are in `docs/reference/` (start at its README); decisions in `docs/design/decisions/`.
 4. Machine facts that override the docs (this account's paths, ports, AVD names, emulator console and
