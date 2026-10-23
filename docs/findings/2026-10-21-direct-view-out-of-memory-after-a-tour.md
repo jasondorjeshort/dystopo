@@ -48,9 +48,12 @@ the max heap less a reserve, the heap without renders and the block cache (now a
 three at once on 192 MB. The pyramids and the cliff memo are dropped by the application's
 `onTrimMemory` (the activity is stopped in the background) and when a render finds the heap short;
 the geoid memo is 4 MB on the phone. After the change, the same per-zoom views peak at 91 to 166 MB
-(table in the reference), the heap holds 49 to 53 MB after a tour, and the tour's direct step passed in four tours on two
-fresh AVDs (peaks 115 to 124 MB, bound 0.95 of the max, no `OutOfMemoryError`). The cost is time:
-the cold Rainier z8 tour view takes 73 to 93 s where it took 50 to 61 s, Bonneville z11 no longer
+(table in the reference), the heap holds 49 to 55 MB after a tour. The tour's direct step bounds the live heap (a collection
+and 200 ms through `am send-trim-memory`, before any cache is dropped) at 0.8 of the max: on two
+fresh AVDs it read 65 and 119 MB (0.34 and 0.62) with up to three renders still running, sampled peaks
+113 and 130 MB, no `OutOfMemoryError` (the verifier showed that a bound on the sampled peak, which
+counts garbage, passed or failed by chance). The cost is time:
+the cold Rainier z8 tour view takes 73 to 117 s where it took 50 to 61 s, Bonneville z11 no longer
 goes idle within 60 s (25 s before), and the Mont Blanc z9 view after the tour still showed blank
 hillshade tiles around the summit at 125 s (240 renders asked for by then, three at a time). A larger
 heap (`android:largeHeap`, not set) would let the admission run more renders.

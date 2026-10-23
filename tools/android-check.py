@@ -791,7 +791,7 @@ def main():
     ap.add_argument("--first-wait-ms", type=int, default=120000,
                     help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one). "
                          "T127: 120 s, from 60: with the direct renders admitted by the heap (three at once on 192 MB, ten before) "
-                         "the cold Rainier z8 view went idle in 73 to 93 s where it took 50 to 61 s before, on a day the sources were slow")
+                         "the cold Rainier z8 view went idle in 73 to 117 s where it took 50 to 61 s before, on a day the sources were slow")
     ap.add_argument("--contour-budget-ms", type=float, default=1000.0, help="contour tiles slower than this are a warning (a failure with --strict)")
     ap.add_argument("--max-settle-change", type=float, default=0.02,
                     help="share of pixels that may change between the screenshot and a second one after the map settled")
