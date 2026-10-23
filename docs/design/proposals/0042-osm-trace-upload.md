@@ -96,8 +96,10 @@ code like the releases API URL. Nothing to keep out of the repository, which is 
 testing is the same, and the debug route can point the client at it or at the mock.
 Cost: the shared package and its tests; the dialog; the manifest host `osm`; the routes and the mock;
 about the size of T83's updater. Risks: the custom-scheme redirect is accepted by the service's
-Doorkeeper (its HTTPS rule covers http(s) URIs only; the request to support custom schemes was closed
-as completed in 2023), verified before building (Claims to verify); the token does not expire and
+Doorkeeper on a reading of its code (the HTTPS rule rejects only an `http` scheme, so a scheme of
+its own passes; the 2023 request to support custom schemes was closed by its reporter with no
+maintainer answer), so it is confirmed by registering the dev application before building (Claims
+to verify), with B as the fallback; the token does not expire and
 there is no refresh token, so a leaked preferences file is a standing credential until the user signs
 out or revokes on the website; the browser's cookie keeps the user signed in to the website.
 Who else: OsmAnd and OSMTracker use OAuth 2 from the app with a browser sign-in.
@@ -238,8 +240,12 @@ coordinator the client ids; the build task then starts with the shared package a
   applies to http(s) URIs; `grant_flows authorization_code`; `access_token_expires_in nil`; refresh
   tokens off:
   https://github.com/openstreetmap/openstreetmap-website/blob/master/config/initializers/doorkeeper.rb
-  Custom schemes accepted (issue 4008, closed completed 2023-04): to confirm by registering the dev
-  application before building: https://github.com/openstreetmap/openstreetmap-website/issues/4008
+  Doorkeeper's redirect URI check rejects a missing scheme, a relative URI and, under the SSL rule, an
+  `http` scheme, so a custom scheme passes:
+  https://github.com/doorkeeper-gem/doorkeeper/blob/main/lib/doorkeeper/oauth/helpers/uri_checker.rb
+  The request for custom schemes (issue 4008) was closed by its reporter the same day with no
+  maintainer answer, so acceptance is confirmed by registering the dev application before building:
+  https://github.com/openstreetmap/openstreetmap-website/issues/4008
 - API usage policy: a valid User-Agent identifying application and version, no personal or
   confidential data submitted, clients may be blocked: https://operations.osmfoundation.org/policies/api/
 - Terms of Use (OSMF, 2018-09-20): 13 years or older; the Usage Policies incorporated; "Contributions
