@@ -29,7 +29,7 @@ class HeapGuardTest {
     @Test
     fun aFreshProcessCountsWhatTheRendersWillTakeBeforeTheyTakeIt() {
         // 40 MB without renders, 24 MB of blocks, 24 MB reserve: 104 MB for renders, before any has allocated.
-        assertEquals(3, admitted(render, used = 40 * MB, base = 40 * MB)) // 32 MB each, at every zoom
+        assertEquals(4, admitted(render, used = 40 * MB, base = 40 * MB)) // 24 MB each, at every zoom
         assertEquals(render, HeapGuard.weightOf(false))
         // A big heap admits more than the ten permits would let run.
         assertTrue(admitted(render, used = 40 * MB, base = 40 * MB, cache = 64 * MB, maxHeap = 512 * MB) >= 10)
@@ -40,15 +40,15 @@ class HeapGuardTest {
         // The renders grew past their share: 150 MB used, 18 MB spare: the third does not start although the budget has room.
         assertFalse(HeapGuard.admits(Heap(150 * MB, max), running = 2, committed = 2 * render, weight = render, baseBytes = 40 * MB, cacheBytes = 24 * MB))
         assertTrue(HeapGuard.admits(Heap(100 * MB, max), running = 2, committed = 2 * render, weight = render, baseBytes = 40 * MB, cacheBytes = 24 * MB))
-        // After a tour the caches hold 30 MB more: two coarse renders until a trim lowers the base.
-        assertEquals(2, admitted(render, used = 70 * MB, base = 70 * MB))
+        // After a tour the caches hold 30 MB more: three renders until a trim lowers the base.
+        assertEquals(3, admitted(render, used = 70 * MB, base = 70 * MB))
         // Nothing left at all: the first render still runs.
         assertEquals(1, admitted(render, used = 190 * MB, base = 190 * MB))
     }
 
     @Test
     fun aShortHeapAsksForATrimAtMostEveryFiveSeconds() {
-        val short = Heap(150 * MB, max) // 18 MB spare, under one render's 32
+        val short = Heap(150 * MB, max) // 18 MB spare, under the 32 MB that asks for a trim
         val roomy = Heap(80 * MB, max)
         assertTrue(HeapGuard.wantsTrim(short, now = 100_000, lastTrimAt = 0))
         assertFalse(HeapGuard.wantsTrim(short, now = 100_000, lastTrimAt = 96_000))

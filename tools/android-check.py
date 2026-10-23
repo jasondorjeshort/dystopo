@@ -34,8 +34,8 @@ and once for the whole tour:
               --direct-view 9/45.865/6.865, Mont Blanc z9, which the tour never loads): the online cache (pinned tiles
               kept) and the phone's source range cache cleared, the camera set, the Java heap sampled from GET /stats
               every 0.4 s (and the app's own per-burst peak, GET /online direct.memory). It must render DEM tiles in the
-              same process, with no crash and no OutOfMemoryError in logcat, and peak at most --direct-heap-share (0.9)
-              of the heap's max; idleSeconds and dumpsys meminfo are reported (`directStep`). --direct-only runs only the
+              same process, with no crash and no OutOfMemoryError in logcat, and peak at most --direct-heap-share (0.95)
+              of the heap's max; idleSeconds, dumpsys meminfo and the screenshot (<stem>-direct-<i>.png) are reported (`directStep`). --direct-only runs only the
               direct views, each in a new process (the per-zoom peak table of finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
 The lines and labels checks need the app's /features routes; an app without them skips them (reported).
 The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
@@ -53,7 +53,7 @@ server first (a debug build on the emulator otherwise uses the host's 8765; the 
 first view waits until the device is quiet, by its load: the CPU used besides the app at most --quiet-cores in two
 3 s windows in a row (setup.quiet in the summary: the wait and the windows). A just-booted emulator runs near all four
 cores for one to two minutes, and a cold view started then missed the 30 s idle (T88, T98).
-T110: the first view waits up to --first-wait-ms (60 s) for idle, the others --wait-ms (30 s). The first view is the
+T110: the first view waits up to --first-wait-ms (90 s since T127) for idle, the others --wait-ms (30 s). The first view is the
 cold one (a new process; with no server its terrain around the packs is rendered from the public sources). Measured on
 fresh API 35 AVDs with no server and two other emulators on the host: 10.3 and 14.5 s after the quiet wait, 24.2 s when
 the view started 19 s after the relaunch while the device still used two of its four cores besides the app; T105's
@@ -620,7 +620,7 @@ def oom_lines(exe, serial, since):
     return [l.strip()[:200] for l in out.splitlines() if OOM_PATTERN in l][:10]
 
 
-def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True):
+def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True, shot=None):
     """T127: one cold direct view (no pack covers it, no server): the online cache cleared (pinned tiles kept) and,
     with `clear_sources`, the phone's source range cache too, so every DEM tile is rendered from the public sources;
     then the camera, a screenshot once idle (or after `wait_ms`), and the Java heap sampled from /stats all along. ok:
@@ -649,8 +649,12 @@ def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, 
     t0 = time.time()
     try:
         server.json(f"/camera?lat={view['lat']}&lon={view['lon']}&zoom={view['z']}&bearing=0&tilt=0", method="POST")
-        server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+        png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
         rep["idleSeconds"] = round(time.time() - t0, 1)
+        if shot:
+            with open(shot, "wb") as f:
+                f.write(png)
+            rep["screenshot"] = shot
         health = server.json("/health")
         rep["idle"] = health.get("map", {}).get("lastScreenshotIdle") is True
         time.sleep(2)  # renders that finish just after idle (out-of-view synthesis edges) count in the peak too
@@ -756,8 +760,10 @@ def main():
     ap.add_argument("--views-file", default="")
     ap.add_argument("--out", default="out/android-tour.png", help="screenshots <stem>-<i>.png, <stem>-sheet.png, <stem>.json")
     ap.add_argument("--wait-ms", type=int, default=30000, help="how long /screenshot waits for the map to go idle")
-    ap.add_argument("--first-wait-ms", type=int, default=60000,
-                    help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one)")
+    ap.add_argument("--first-wait-ms", type=int, default=90000,
+                    help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one). "
+                         "T127: 90 s, from 60: with the direct renders admitted by the heap (four at once on 192 MB, ten before) "
+                         "the cold Rainier z8 view went idle in 78 s where it took 50 to 61 s before, on a day the sources were slow")
     ap.add_argument("--contour-budget-ms", type=float, default=1000.0, help="contour tiles slower than this are a warning (a failure with --strict)")
     ap.add_argument("--max-settle-change", type=float, default=0.02,
                     help="share of pixels that may change between the screenshot and a second one after the map settled")
@@ -781,7 +787,10 @@ def main():
                     help="T127: after the tour and the background step, cold direct views (no pack, no server: z/lat/lon:label, "
                          "comma-separated; 'none' skips): online and source caches cleared, the Java heap sampled, the peak must "
                          "stay under --direct-heap-share of the heap's max with no crash and no OutOfMemoryError")
-    ap.add_argument("--direct-heap-share", type=float, default=0.9, help="T127: the bound on the direct view's heap peak, a share of the max heap")
+    ap.add_argument("--direct-heap-share", type=float, default=0.95,
+                    help="T127: the bound on the direct view's heap peak, a share of the max heap. The peak counts garbage not yet "
+                         "collected, which ART lets grow about a third above the live heap, so a healthy view peaks at 0.7 to 0.93 "
+                         "of 192 MB; one at the max (0.99 to 1.0 before T127) is collecting in vain and throwing OutOfMemoryErrors")
     ap.add_argument("--direct-only", action="store_true",
                     help="T127: only the direct views, each in a new process (the per-zoom peak table); no tour views, no background step")
     ap.add_argument("--direct-keep-sources", action="store_true", help="T127: keep the phone's source range cache (cache/sources) before a direct view")
@@ -1022,10 +1031,11 @@ def main():
     if direct_views:
         # T127 (finding 2026-10-21-direct-view-out-of-memory-after-a-tour): after the full tour, a cold direct view must fit the heap.
         steps = []
-        for dv in direct_views:
+        for k, dv in enumerate(direct_views):
             try:
                 steps.append(direct_step(server, exe, serial, dv, args.direct_heap_share, args.first_wait_ms,
-                                         restart=args.direct_only, clear_sources=not args.direct_keep_sources))
+                                         restart=args.direct_only, clear_sources=not args.direct_keep_sources,
+                                         shot=f"{stem}-direct-{k}{ext}"))
             except (urllib.error.URLError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
                 steps.append({"label": dv["label"], "view": dv["view"], "ok": False, "error": str(e)[:200]})
         summary["directStep"] = {"ok": all(r["ok"] for r in steps), "views": steps}

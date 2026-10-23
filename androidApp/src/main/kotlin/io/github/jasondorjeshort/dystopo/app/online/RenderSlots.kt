@@ -58,7 +58,9 @@ internal class RenderSlots(
         synchronized(gate) {
             while (true) {
                 if (Thread.interrupted()) throw InterruptedException()
-                if (running < permits && (running == 0 || admit(running, committed, weight))) {
+                // [admit] is asked with none running too: it reads the heap without renders there (HeapGuard.baseBytes).
+                val admitted = admit(running, committed, weight)
+                if (running < permits && (admitted || running == 0)) {
                     running++
                     committed += weight
                     return
