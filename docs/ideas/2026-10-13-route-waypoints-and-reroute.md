@@ -62,4 +62,4 @@ skipped-waypoint rule, where a stop added mid-trip goes, and route to from searc
 next as one proposal, or one at a time? Recommendation: one proposal with a critic, because a plan of stops beside a frozen route changes the route format phones sync (a flag on
 the saved route), and reroute and passed stops share the router and the nav session with turn
 directions, which this file says to plan together.
-Answer:
+Answer: one proposal with a critic, as recommended (owner, 2026-10-23).

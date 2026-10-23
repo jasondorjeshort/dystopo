@@ -26,4 +26,4 @@ distance, so neither piece below needs a format change.
 - Testable through the existing replay (`POST /location/replay`) and the `/nav/status` events.
 
 Question: build the voice option now, and with what wording? `Directions.kt` already carries type, priority and lead distance, so speaking them through the platform text-to-speech engine (off by default, tested by `POST /location/replay` and `/nav/status`) fits one pass with no format change; the setting's label, where it sits and the screen-off behaviour are yours. Recommendation: one pass for voice, off by default, speaking priority 1 and 2 as the screen shows, with its setting text proposed in the PR for your sign-off; the detail-level setting (only its UI is left, the filter exists) stays for the much later wave you named, and cues beyond turns after it.
-Answer:
+Answer: build voice now as recommended: one pass, off by default, priority 1 and 2, setting text proposed in the PR; detail levels and further cues later (owner, 2026-10-23).

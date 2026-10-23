@@ -11,4 +11,4 @@ bar, track and route stats, turn directions and search. Short distances could re
 inches may matter one day for a paper-scale readout. The units preference is `ft` or `m` (ADR 0022).
 
 Question: should imperial short distances read in yards, and below what length? It changes what every distance shows (scale bar, stats, directions, search) through the one rule in `UnitFormat`, so it is yours. Recommendation: keep feet below 528 ft as today, which is what US trail signs and the mainstream map apps use; inches only if a paper-scale readout is ever built, so that part waits for it.
-Answer:
+Answer: keep feet below 528 ft as today; inches wait for a paper-scale readout (owner, 2026-10-23).

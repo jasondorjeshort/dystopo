@@ -30,4 +30,4 @@ corridor downloads. No boundary-based or drawn areas.
   budgets and the pinned-area budget.
 
 Question: which shapes, in what order? Administrative and park boundaries need a licensed boundary source and a registry entry first; a drawn region, or a distance around a point, needs only a polygon in the area manifest, which changes a format phones read (ADR 0027), so either goes through a proposal. Recommendation: one proposal that adds a polygon area to the manifest and builds the drawn region and the distance around a point first (no new data source), with the boundary search (county, state, park) a later step, since the outdoors profile keeps no county or park polygons today; the size estimate before starting is common to all.
-Answer:
+Answer: one proposal for a polygon area in the manifest, building the drawn region and the distance around a point first; boundaries later, as recommended (owner, 2026-10-23).
