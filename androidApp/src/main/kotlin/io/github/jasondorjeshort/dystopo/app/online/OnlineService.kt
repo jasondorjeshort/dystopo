@@ -437,8 +437,17 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "sourceRefreshes" to sourceRefreshes.get(), "idleSourceRefreshes" to idleSourceRefreshes.get(), // T110
         "credits" to credits().map { mapOf("role" to it.role, "provenance" to it.metadata["provenance"]) },
         "assets" to lastAssets,
-        "direct" to if (isDirect) direct.json() + mapOf("notReadyAnswered" to app.tiles.online?.notReady?.get(), "refreshesAfterRendering" to renderRefreshes.get()) else null, // T80
+        "direct" to directJson(), // T80
     )
+
+    /**
+     * T80: the no-server path's record (T135: `direct: true` first); T135: with a server configured only `direct: false` and the heap record
+     * ([HeapGuard.json], application-wide: the application's `onTrimMemory` trims whatever the server setting, and
+     * `tools/android-check.py` reads its `recentTrims`; finding 2026-10-23-direct-step-live-heap-unread-with-a-server).
+     */
+    private fun directJson(): Map<String, Any?> =
+        if (isDirect) linkedMapOf<String, Any?>("direct" to true) + direct.json() + mapOf("notReadyAnswered" to app.tiles.online?.notReady?.get(), "refreshesAfterRendering" to renderRefreshes.get())
+        else linkedMapOf("direct" to false, "memory" to HeapGuard.json())
 
     companion object {
         const val TAG = "DystopoOnline"
