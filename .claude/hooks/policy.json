@@ -3,7 +3,7 @@
   "git": {
     "commit": { "subagents": "any", "protectedBranches": ["main", "master"] },
     "integrate": { "subagents": "any", "protectedBranches": [] },
-    "push": { "subagents": "any", "branches": ["task/*"], "mainSession": true, "forceWithLease": ["task/*"] },
+    "push": { "subagents": "any", "branches": ["task/*", "carry-back/*"], "mainSession": true, "forceWithLease": ["task/*", "carry-back/*"] },
     "branchDelete": { "branches": ["task/*"], "requireMergedPr": true },
     "hooksPath": "tools/git-hooks"
   },
