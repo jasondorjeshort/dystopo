@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-24
 
+- T137: Navigation card follow-ups, and a timed track from the route
 - T139: Tooling leftover sweep 12
 - T136: Offline areas and trip corridor follow-ups
 
