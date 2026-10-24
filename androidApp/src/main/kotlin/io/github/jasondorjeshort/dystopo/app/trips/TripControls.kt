@@ -27,6 +27,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -203,6 +205,7 @@ private fun TripCard(modifier: Modifier) {
             )
         }
         TripDirections(p)
+        TripCorridorLine(p) // T130: the corridor kept offline around the trip
         Trips.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
         // T95: the Offline button's offer: the size first, then Download and Cancel, or Close when it does not fit.
         Trips.offline?.takeIf { it.tripId == p.id }?.let { o ->
@@ -225,13 +228,47 @@ private fun TripCard(modifier: Modifier) {
                 for (i in 1 until p.path.via.size - 1) Action("${i + 1}") { Trips.background { Trips.removeVia(p.id, i) } }
             }
             Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrip(p.id) }.start() } // T65: navigate this route
-            Action("Offline") { Trips.background { Trips.planOffline(p.id) } } // T75: download the route's corridor; T95: its size first
             Action("GPX") { Trips.background { Trips.export(p.id) } }
             Action("Share link") { Trips.background { Trips.shareLink(p.id) } } // T67: a read-only link from the sync server
             Action("Delete", Color(0xFFD73027)) { Trips.background { Trips.delete(p.id) } }
         }
     }
 }
+
+/**
+ * T130: the trip's corridor kept offline ([io.github.jasondorjeshort.dystopo.app.areas.TripCorridors]): one line saying
+ * whether it is kept, with its width and size or progress, or why not, and its action (Stop keeping, Keep offline,
+ * Retry, Offline areas). It replaces T75's Offline button: a trip is kept without being asked (T95's size-first offer
+ * stays behind `POST /routes/{id}/offline`). Redrawn every 1.5 s for a running download's progress.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun TripCorridorLine(p: io.github.jasondorjeshort.dystopo.model.RoutePlan) {
+    var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(p.id) { while (true) { delay(1500); tick++ } }
+    tick.let { } // read, so the line follows the download
+    val c = io.github.jasondorjeshort.dystopo.app.areas.TripCorridors
+    val st = c.status(p)
+    // The text over its own row (the budget message runs to three lines), the actions after it, wrapping.
+    BasicText(
+        st.text,
+        style = TextStyle(color = if (st.state == "kept" || st.state == "downloading") Color(0xFF00796B) else Ink, fontSize = 12.sp, fontWeight = if (st.state == "kept") FontWeight.Bold else FontWeight.Normal),
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        for (a in st.actions) when (a) {
+            "stop" -> Action(CORRIDOR_STOP) { Trips.background { c.keep(p.id, false) } }
+            "keep" -> Action(CORRIDOR_KEEP) { Trips.background { c.keep(p.id, true) } }
+            "retry" -> Action(CORRIDOR_RETRY) { Trips.background { c.keep(p.id, true); io.github.jasondorjeshort.dystopo.app.areas.Areas.list.firstOrNull { it.tripId == p.id }?.let { r -> io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.start(r.area, r.name, r.tripId) } } }
+            "areas" -> Action(CORRIDOR_AREAS) { io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true }
+        }
+    }
+}
+
+/** T130: the corridor line's actions. */
+internal const val CORRIDOR_STOP = "Stop keeping"
+internal const val CORRIDOR_KEEP = "Keep offline"
+internal const val CORRIDOR_RETRY = "Retry"
+internal const val CORRIDOR_AREAS = "Offline areas"
 
 /**
  * T108: the directions saved with the trip: "Show N directions" opening their list (the default detail level, each with

@@ -47,6 +47,11 @@ import java.security.MessageDigest
  *   `POST /routes/{id}/directions?save=1` makes and saves them now where the packs allow ([Trips.migrateDirections]).
  *   Opening a trip without them (the card, `POST /routes/{id}/open`) makes them in the background (`directions.working`
  *   meanwhile); `POST /routes/{id}/open?wait=1` answers after that.
+ * - T130: `GET /routes/{id}` has `corridor`, the trip card's corridor line (`state`: kept, downloading, queued, partial,
+ *   refused, notKept, off, none; `text` as shown; `actions`; the trip's `areas`); `POST /routes/{id}/corridor?keep=1|0[&wait=ms]`
+ *   is Keep offline or Stop keeping (`wait` answers after the corridors' thread is done). `GET /routes` has `tripFit`
+ *   (T122's follow-up: the editor's last camera fit, as `GET /route` `ui.tripFit`). Every trip saved, edited or deleted
+ *   here moves its corridor (`GET /areas/trips`).
  * - `POST /routes/import[?replace=1]` with a GPX body. `POST /routes/ui?open=1|0` (the Routes list),
  *   `POST /routes/close` (closes the editor), `POST /routes/tool?tool=none|via|waypoint`,
  *   `POST /routes/tap?lat=&lon=` (a tap on the map with the current tool).
@@ -210,6 +215,12 @@ object TripRoutes {
                 },
             )
             r.method == "GET" && suffix == "/offline" -> return Response.json(mapOf("offer" to Trips.offline?.json()))
+            r.method == "POST" && suffix == "/corridor" -> { // T130: the card's Keep offline (keep=1) or Stop keeping (keep=0)
+                val p = Trips.plan(id) ?: throw NoSuchElementException("no route $id")
+                q["keep"]?.let { k -> io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.keep(p.id, k != "0") }
+                q["wait"]?.toLongOrNull()?.let { io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.drain(it.coerceIn(0, 600_000)) }
+                return Response.json(linkedMapOf("id" to p.id, "corridor" to corridorJson(p)))
+            }
             r.method == "POST" && suffix == "/share" -> return Response.json(Trips.shareLink(id))
             r.method == "GET" && suffix == "/share" -> return Response.json(mapOf("link" to ShareLinkClient.of(app).last(id)))
             r.method == "DELETE" && suffix == "/share" -> return Response.json(Trips.revokeShareLink(id))
@@ -225,7 +236,14 @@ object TripRoutes {
         "routes" to Trips.store { it.routeList() }.map { it.json() },
         "listOpen" to Trips.listOpen, "editing" to Trips.editingId, "tool" to Trips.tool, "message" to Trips.message,
         "lastEdit" to Trips.lastEdit, "overlay" to Trips.overlay.json(), "directionsMigrated" to Trips.directionsMigrated, // T108
+        "tripFit" to Trips.lastFit, // T130 (T122's follow-up): the editor's last fit, as `GET /route` `ui.tripFit`
     )
+
+    /** T130: the trip card's corridor line ([io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.status]) and the trip's areas. */
+    fun corridorJson(p: RoutePlan): Map<String, Any?> =
+        io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.status(p).json() + mapOf(
+            "areas" to io.github.jasondorjeshort.dystopo.app.areas.Areas.all().filter { it.tripId == p.id }.map { mapOf("id" to it.id, "state" to it.state, "pinned" to it.pinned, "bytes" to it.bytes) },
+        )
 
     fun planJson(p: RoutePlan, profile: Boolean): Map<String, Any?> {
         val gpx = RouteGpx.gpx(p).toByteArray()
@@ -238,6 +256,7 @@ object TripRoutes {
             "summary" to RouteSummary.of(p).json(profile),
             "modeLabel" to io.github.jasondorjeshort.dystopo.routing.TravelMode.labelOf(p.path.mode), // T108
             "directions" to directionsJson(p), // T108
+            "corridor" to corridorJson(p), // T130
             "gpxBytes" to gpx.size, "gpxSha256" to MessageDigest.getInstance("SHA-256").digest(gpx).joinToString("") { "%02x".format(it) },
         )
     }

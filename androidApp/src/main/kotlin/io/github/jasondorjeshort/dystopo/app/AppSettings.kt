@@ -195,6 +195,7 @@ object AppSettings {
         onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
         contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
         pinnedCacheMb = p.getLong(KEY_PINNED_CACHE_MB, DEFAULT_PINNED_CACHE_MB).coerceIn(PINNED_CACHE_MB_RANGE) // T115
+        tripCorridorM = p.getInt(KEY_TRIP_CORRIDOR_M, io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M).takeIf { io.github.jasondorjeshort.dystopo.areas.TripCorridor.validWidth(it) } ?: io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M // T130
         val plan = io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan
         cacheBudgetMb = if (p.contains(KEY_CACHE_BUDGET_MB)) {
             p.getLong(KEY_CACHE_BUDGET_MB, plan.DEFAULT_MB).coerceIn(plan.RANGE_MB)
@@ -228,6 +229,12 @@ object AppSettings {
         pinnedCacheMb = mb
         prefs?.edit()?.putLong(KEY_PINNED_CACHE_MB, mb)?.apply()
     }
+
+    // T130: the corridor every trip keeps offline, metres each side (0: off); validated and applied by areas/TripCorridors.
+    private const val KEY_TRIP_CORRIDOR_M = "tripCorridorM"
+    @Volatile var tripCorridorM: Int = io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M
+        private set
+    fun setTripCorridorM(m: Int) { tripCorridorM = m; prefs?.edit()?.putInt(KEY_TRIP_CORRIDOR_M, m)?.apply() }
 
     /** Sets and persists a cap (the caller checked the range and resizes the cache). */
     fun setOnlineCacheMb(mb: Long) {
@@ -335,6 +342,7 @@ object AppSettings {
         "unitsSet" to (unitPreference.units != null),
         "unitsSource" to (unitPreference.source ?: "locale default (not set yet)"),
         "warmup" to warmup,
+        "tripCorridorM" to tripCorridorM, // T130
         "onlineCacheMb" to onlineCacheMb, // T41
         "pinnedCacheMb" to pinnedCacheMb, // T91
         "contourCacheMb" to contourCacheMb,

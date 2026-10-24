@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.app.help
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -121,10 +122,10 @@ class HelpRegistryTest {
 
     @Test
     fun distancesFollowTheUnitsSetting() {
-        // One text in both units: the corridor's buffer, 500 m (AreaOfInterest.DEFAULT_BUFFER_M) through UnitFormat (1640 ft reads in miles).
+        // One text in both units: the trip corridor's width, 1 km by default (T130; T75's 500 m before) through UnitFormat.
         val corridor = HelpRegistry.byKey("areas.corridor")!!
-        assertTrue("0.3 mi each side" in corridor.text(ContourUnits.FEET), corridor.text(ContourUnits.FEET))
-        assertTrue("500 m each side" in corridor.text(ContourUnits.METERS), corridor.text(ContourUnits.METERS))
+        assertTrue("0.6 mi each side" in corridor.text(ContourUnits.FEET), corridor.text(ContourUnits.FEET))
+        assertTrue(UnitFormat.distance(1000.0, ContourUnits.METERS) + " each side" in corridor.text(ContourUnits.METERS), corridor.text(ContourUnits.METERS))
         assertTrue("miles" in HelpRegistry.byKey("settings.units")!!.text(ContourUnits.FEET))
         assertTrue("kilometres" in HelpRegistry.byKey("settings.units")!!.text(ContourUnits.METERS))
         // And no text shows a number in the other system's units.
