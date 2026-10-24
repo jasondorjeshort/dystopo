@@ -12,7 +12,8 @@ and each part's own outputs under fixed names (the table PARTS below). The summa
 views ok, live DEM sources, sync convergence, device views (T105: with the app's server and the wait for a quiet
 device), probe count, release timings, the first-run steps (T105: and the --direct run's timings and screenshots), and
 T81's release realism parts: routing and search tours, APK string scan, features, recenter, upgrade, permissions,
-background, network, update, the device matrix with any known defects); `ok` overall is
+background, network, update, the device matrix with any known defects; T139: the two-emulator both-units check, its
+carries and screenshots, or the skip and its reason when the second emulator did not start); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -309,6 +310,23 @@ def matrix(d, part):
     return {"configs": out} if out else {}
 
 
+def bothunits(d, part):
+    """T139: the both-units check (android-ui.py bothunits under sweep.ps1 -BothUnits): per carry whether the value
+    reached the other phone, the peer, and the screenshots of both phones (ui/bothunits/)."""
+    r = load_last_json(os.path.join(d, "bothunits.json"))
+    if not isinstance(r, dict):
+        return {}
+    out = ui_steps(r)
+    carries = {}
+    for s in r.get("steps") or []:
+        if isinstance(s, dict) and s.get("value"):
+            carries[s.get("step")] = {"ok": s.get("ok"), "value": s.get("value"), "dstBothUnits": (s.get("dstAfter") or {}).get("bothUnits")}
+    out.update({"peer": r.get("peer"), "carries": carries,
+                "screenshots": [os.path.relpath(p, d).replace(os.sep, "/") if os.path.isabs(p) and os.path.splitdrive(p)[0].lower() == os.path.splitdrive(d)[0].lower()
+                                else p for p in r.get("screenshots") or []]})
+    return out
+
+
 PARTS = {
     "routes": tour_part,
     "search": tour_part,
@@ -321,6 +339,7 @@ PARTS = {
     "network": ui_part,
     "update": ui_part,
     "matrix": matrix,
+    "bothunits": bothunits,
     "tour": tour,
     "demo-static": demo,
     "demo-serve": demo,
@@ -376,6 +395,7 @@ def sheet_images(d):
                         ("update", "In-app update (mock releases API)")):
         add(title, os.path.join("ui", part, "*.png"))
     add("Device matrix", os.path.join("ui", "matrix", "*", "*.png"))
+    add("Both units, two phones through a sync peer", os.path.join("ui", "bothunits", "*.png"))  # T139
     for part, title in (("live", "Live views (serve --live)"), ("demo-static", "Demo tour, static page"),
                         ("demo-serve", "Demo tour, devtool serve")):
         add(title, os.path.join(part, "*.png"), shot_labels(d, part))

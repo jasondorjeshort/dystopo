@@ -14,6 +14,13 @@
 #   device-tour  android-check.py --views-file tools/android-tour.txt --server <the same> (twice by default; token from
 #                logcat; T105: the first view waits until the device's load besides the app has settled)
 #   probe        android-probe.py
+#   bothunits    (-BothUnits only; T139, T129's follow-up) android-ui.py bothunits: the scale bar's Both units choice set on
+#                the sweep's emulator (debug build) reaches a second one through a sync peer and back. The second emulator
+#                is booted on the matrix pattern (AVD <Avd>-b, console -MatrixEmuPort, default -EmuPort+2, debug forward
+#                -Port+2, the same debug build) and stopped and deleted afterwards; the peer is the standalone server on
+#                -BasePort+3 (all interfaces; 10.0.2.2 to both emulators). A second emulator that does not start is a
+#                skip with its reason in steps.tsv and summary.json, not a failure. JSON bothunits.json, screenshots of
+#                both phones after each carry in ui\bothunits\.
 #   release      android-release.ps1 -Build -Port: the release smoke tour, tiles 401 / debug 404 without a token
 #   first-run    T79: the release build from a fresh install with no pack and no assets, driven only by taps
 #                (tools/android-firstrun.py): Settings > Sources with the host's LAN address and the sweep's own
@@ -91,6 +98,8 @@ param(
     [switch]$Matrix,
     [string[]]$MatrixDevices = @('26:pixel_6', '35:pixel_tablet:de-DE'),
     [int]$MatrixEmuPort = 0,
+    # T139: the two-emulator both-units check (slow: a second boot); its emulator takes -MatrixEmuPort, its peer -BasePort+3.
+    [switch]$BothUnits,
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
     [string]$Known = '', # T91: overlap:search/Settings fixed (the map chips cap their font scale at 1.3)
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
@@ -119,9 +128,9 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
 $allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour',
-    'routes', 'search', 'probe', 'release', 'apk-strings', 'first-run', 'features', 'recenter', 'upgrade', 'permissions', 'background', 'network',
+    'routes', 'search', 'probe', 'bothunits', 'release', 'apk-strings', 'first-run', 'features', 'recenter', 'upgrade', 'permissions', 'background', 'network',
     'update', 'matrix')
-$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'release', 'first-run', 'features', 'recenter', 'upgrade', 'permissions',
+$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'release', 'first-run', 'features', 'recenter', 'upgrade', 'permissions',
     'background', 'network', 'update', 'matrix')
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -172,7 +181,7 @@ $serial = "emulator-$EmuPort"
 $reserved = @(8765, 8686, 8687)
 $ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2; 'firstrun-server' = $BasePort + 3
     'ui-server' = $BasePort + 4; 'network-server' = $BasePort + 5; 'network-proxy' = $BasePort + 6; 'update-mock' = $BasePort + 7 }
-if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1 }
+if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1; $ports['bothunits-forward'] = $Port + 2 }
 if (-not $NoDevice -and $EmuPort -eq 5554) { throw "-EmuPort 5554 is the coordinator's emulator; pick another" }
 if (-not $MatrixEmuPort) { $MatrixEmuPort = $EmuPort + 2 }
 if ($Matrix -and $MatrixEmuPort -eq 5554) { throw "-MatrixEmuPort 5554 is the coordinator's emulator; pick another" }
@@ -181,6 +190,7 @@ $script:bootImplied = $false
 function Want([string]$part) {
     if ($part -eq 'device-boot' -and $script:bootImplied) { return -not $NoDevice } # T79: implied by device parts
     if ($part -eq 'matrix' -and -not $Matrix -and $Only -notcontains 'matrix') { return $false } # T81: opt-in
+    if ($part -eq 'bothunits' -and -not $BothUnits) { return $false } # T139: opt-in, a second emulator
     if ($Only.Count -and $Only -notcontains $part) { return $false }
     if ($Skip -contains $part) { return $false }
     if ($NoDevice -and $deviceParts -contains $part) { return $false }
@@ -189,10 +199,10 @@ function Want([string]$part) {
 
 # T105: only the ports of the parts that will run are checked, so a -BasePort range may hold a reserved or busy port that
 # no selected part uses (-BasePort 8760 puts the network part's server on 8765, the coordinator's viewer).
-$portParts = @{ 'demo-server' = @('demo-static'); 'serve' = @('demo-serve'); 'firstrun-server' = @('first-run')
+$portParts = @{ 'demo-server' = @('demo-static'); 'serve' = @('demo-serve'); 'firstrun-server' = @('first-run', 'bothunits')
     'serve-live' = @('live') + $(if ($DeviceServer -eq 'live') { $deviceParts } else { @() })
     'ui-server' = @('features', 'permissions'); 'network-server' = @('network'); 'network-proxy' = @('network'); 'update-mock' = @('update')
-    'debug-forward' = $deviceParts; 'release-probe' = $deviceParts }
+    'debug-forward' = $deviceParts; 'release-probe' = $deviceParts; 'bothunits-forward' = @('bothunits') }
 $listening = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | ForEach-Object { $_.Port })
 foreach ($k in $ports.Keys) {
     if (-not @($portParts[$k] | Where-Object { Want $_ }).Count) { continue }
@@ -252,7 +262,7 @@ function Get-PreviousApk([string]$tag, [string]$dir, [string[]]$patterns, [strin
 }
 
 function Part([string]$name, [scriptblock]$body) {
-    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } else { 'not selected' }); return $false }
+    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and -not $BothUnits) { 'needs -BothUnits' } else { 'not selected' }); return $false }
     $t0 = Get-Date
     $note = ''
     $script:partNote = '' # T105: a body may leave a note for its steps.tsv line (a retry and its reason)
@@ -405,7 +415,7 @@ try {
     $null = Part 'server' { Run $gradle @(':server:installDist') (Join-Path $Out 'server.log') (Join-Path $Out 'server.err.log') }
     $null = Part 'notices' { Run $py @('-I', 'tools/notices.py', '--check') (Join-Path $Out 'notices.log') (Join-Path $Out 'notices.err.log') }
 
-    $debugDeviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe')
+    $debugDeviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits')
     $needDevtool = @('tour', 'demo-serve', 'live', 'sync-sim') + $(if ($DeviceServer -eq 'live' -and -not $NoDevice) { $debugDeviceParts } else { @() }) |
         Where-Object { Want $_ }
     if ($needDevtool) {
@@ -518,6 +528,40 @@ try {
         }
         $null = Part 'probe' {
             Run $py @('-I', 'tools/android-probe.py', '--port', "$Port", '--serial', $serial) (Join-Path $dev 'probe.json') (Join-Path $dev 'probe.err.log')
+        }
+        # T139 (T129's follow-up): the both-units check on the debug build the parts above left running, and a second
+        # emulator booted for it on the matrix pattern; without that second emulator the part is a skip with its reason.
+        $null = Part 'bothunits' {
+            $bdir = Join-Path $Out 'ui\bothunits'
+            New-Item -ItemType Directory -Force $bdir | Out-Null
+            $bAvd = "$Avd-b"; $bEmu = $MatrixEmuPort; $bSerial = "emulator-$bEmu"; $bFwd = $Port + 2; $bp = $BasePort + 3
+            $bArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $bAvd, '-EmuPort', "$bEmu", '-Port', "$bFwd")
+            if ($AvdHome) { $bArgs += @('-AvdHome', $AvdHome) }
+            # The same debug build as the first emulator's (built by device-boot); built here only when it is missing.
+            $debugApk = Join-Path $repo 'androidApp\build\outputs\apk\debug\androidApp-debug.apk'
+            $boot = $bArgs + @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) + $(if (Test-Path $debugApk) { @() } else { @('-Build') })
+            try {
+                $c = Run 'powershell.exe' $boot (Join-Path $bdir 'emu-b.log') (Join-Path $bdir 'emu-b.err.log')
+                if ($c -ne 0) {
+                    $why = @(Get-Content (Join-Path $bdir 'emu-b.err.log') -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*(At |\+|CategoryInfo|FullyQualifiedErrorId)' }) | Select-Object -First 1
+                    $script:partNote = "skipped: the second emulator $bSerial ($bAvd) did not start (android-emu.ps1 exit $c$(if ($why) { ": $($why.Trim())" }); ui\bothunits\emu-b.err.log)"
+                    'skip'
+                    return
+                }
+                if (-not (Test-Path (Join-Path $repo 'server\build\install\server\bin\server.bat'))) {
+                    $c = Run $gradle @(':server:installDist') (Join-Path $bdir 'server-install.log') (Join-Path $bdir 'server-install.err.log')
+                    if ($c -ne 0) { throw ':server:installDist failed' }
+                }
+                $cfg = Server-Config (Join-Path $bdir 'server') $bp
+                Start-Server 'bothunits-server' (Join-Path $repo 'server\build\install\server\bin\server.bat') @('--config', $cfg) $bp '/healthz' 180
+                try {
+                    $script:partNote = "peer http://10.0.2.2:$bp, phones $serial and $bSerial"
+                    Run $py (@('-I', 'tools/android-ui.py', 'bothunits', '--serial', $serial, '--port', "$Port", '--serial2', $bSerial, '--port2', "$bFwd",
+                            '--server', "http://10.0.2.2:$bp", '--out', $bdir)) (Join-Path $Out 'bothunits.json') (Join-Path $Out 'bothunits.err.log')
+                } finally { Stop-Server 'bothunits-server' }
+            } finally {
+                $null = Run 'powershell.exe' ($bArgs + @('-Stop', '-Delete')) (Join-Path $bdir 'emu-b-stop.log') (Join-Path $bdir 'emu-b-stop.err.log')
+            }
         }
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
         $null = Part 'release' {

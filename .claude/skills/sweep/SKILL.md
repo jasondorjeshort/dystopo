@@ -42,7 +42,9 @@ default the latest published release, its APK for the emulator's ABI downloaded 
 commit with versionCode +1 made in the part); with `-Matrix` also `matrix` (font scale 2.0 and dark mode
 on the sweep's emulator, then a fresh emulator per `-MatrixDevices` entry, default the minimum API 26
 phone and an API 35 tablet in German, on `-MatrixEmuPort` (EmuPort+2) upwards, each deleted afterwards;
-slow, so not in every sweep).
+slow, so not in every sweep); with `-BothUnits` also `bothunits` (T139: the scale bar's Both units
+carried between the debug build on the sweep's emulator and a second one on `-MatrixEmuPort` through a
+standalone peer on `-BasePort`+3; a skip with its reason when the second emulator does not start).
 
 `-Known` (empty by default since T91 fixed `overlap:search/Settings`) lists filed defects those parts
 report without failing; drop an entry when its fix lands. Its servers use `-BasePort` (8980) to +7 and are
