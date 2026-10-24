@@ -32,6 +32,8 @@ Parts:
                <version>"), Install goes through the system installer (allowing installs from Dystopo the first
                time), and the new build runs with the track, the units and the pack; finally Check for updates against
                the real GitHub API (read only) is quiet. The app's DystopoUpdate log lines go to updater-log.txt.
+               T129/T139: the three newer fixtures announce tags derived from --apk's versionName (one, two and
+               three patch steps above it), listed in the report's `offeredTags` with `derived`.
   permissions  fresh installs with no permission granted in advance: location allowed (the dialog's "While using
                the app") and denied ("Don't allow": the app keeps working, "Download the map around me" says why it
                cannot), then notifications at the first recording (API 33+): allowed (the recording notification is
@@ -64,6 +66,7 @@ Parts:
                choice through a sync peer (--server, as the emulators reach it): both phones pointed at it, both set to
                one unit, then A sets both units (POST /scalebar?both=on) and syncs, B syncs and must draw both
                (GET /scalebar's bothUnits, GET /sync/status' settingsSync `synced`); then B back to one unit, to A.
+               T139: a screenshot of both phones after each carry under --out; the sweep runs it with -BothUnits.
 
 Privacy: only areas.json places are used (the Rainier pack and the views around it); reports never echo file
 contents beyond the counts PrivacyCheck prints.
@@ -634,12 +637,18 @@ def part_bothunits(args):
     """T129 (T110's follow-up): the scale bar's Both units choice set on one phone reaches a second one through a sync
     peer. Debug builds on two emulators (--serial/--port and --serial2/--port2), both pointed at --server (a standalone
     server or devtool serve the emulators reach, e.g. http://10.0.2.2:8780): A sets both=on and syncs, B syncs and must
-    draw both units; then B sets both=off and syncs, A syncs and must draw one."""
+    draw both units; then B sets both=off and syncs, A syncs and must draw one. T139: each carry ends with a screenshot of
+    both phones under --out (`<nn>-<step>-<phone>.png`, the receiving phone's in the step's `png`), so the sweep's sheet
+    shows the bar that was carried."""
     if not (args.serial2 and args.port and args.port2 and args.server):
         return fail("bothunits needs --serial, --port, --serial2, --port2 and --server (the peer as the emulators reach it)")
     a = DebugServer(args.port, args.serial)
     b = DebugServer(args.port2, args.serial2)
     run = Run()
+    out = os.path.abspath(args.out)
+    os.makedirs(out, exist_ok=True)
+    shots = {"a": firstrun.Device(args.serial, out), "b": firstrun.Device(args.serial2, out)}
+    taken = [0]
     peer = args.server.rstrip("/")
     tok = f"&token={urllib.parse.quote(args.sync_token)}" if args.sync_token else ""
 
@@ -651,7 +660,19 @@ def part_bothunits(args):
         ok = all(v["code"] == 200 and v["peer"] == peer for v in out.values())
         return {"ok": ok, **out, **({} if ok else {"error": f"peer not set to {peer}"})}
 
+    def shoot(step, label):
+        # Both phones after the carry; the numbering runs across the two so the files sort in the order taken.
+        paths = {}
+        for name in (label[1], label[0]):
+            dev = shots[name]
+            dev.shots = taken[0]
+            paths[name] = dev.screencap(f"{step}-{name}")[0]
+            taken[0] = dev.shots
+        return paths
+
     def flip(src, dst, value, label):
+        step = f"{label[0]}-{value}-to-{label[1]}"
+
         def fn():
             code, bar = src.call("POST", f"/scalebar?both={value}")
             want = value == "on"
@@ -670,7 +691,8 @@ def part_bothunits(args):
                       "dstBothUnits": dst_after["bothUnits"] is want, "dstSyncedValue": dst_after["synced"] == value,
                       "srcSyncedValue": src_after["synced"] == value}
             ok = all(checks.values())
-            return {"ok": ok, "value": value, "from": label[0], "to": label[1], "checks": checks, "srcSync": src_sync,
+            pngs = shoot(step, label)
+            return {"ok": ok, "png": pngs[label[1]], "pngs": pngs, "value": value, "from": label[0], "to": label[1], "checks": checks, "srcSync": src_sync,
                     "dstSync": dst_sync, "dstBefore": dst_before, "dstAfter": dst_after, "srcAfter": src_after,
                     **({} if ok else {"error": "not carried: " + ", ".join(k for k, v in checks.items() if not v)})}
         return fn
@@ -688,7 +710,7 @@ def part_bothunits(args):
                      ("b-off-to-a", flip(b, a, "off", ("b", "a")))):
         if not run.step(name, fn, shot=False):
             break
-    return run.report(serials=[args.serial, args.serial2], peer=peer)
+    return run.report(serials=[args.serial, args.serial2], peer=peer, out=out)
 
 
 def part_search(args):
@@ -1916,17 +1938,18 @@ def apk_badging(apk):
     return (int(m.group(1)), m.group(2)) if m else (None, None)
 
 
-def tag_above(version_name):
-    """T129: a release tag one patch above [version_name] (`0.1.10-dev` -> `v0.1.11-alpha`), read the way the app reads
-    a tag without version.json (its leading dotted numbers), so a fixture that must be newer by tag stays newer after
-    every release instead of naming a fixed one."""
+def tag_above(version_name, patches=1):
+    """T129: a release tag [patches] patch steps above [version_name] (`0.1.10-dev` -> `v0.1.11-alpha`), read the way
+    the app reads a tag without version.json (its leading dotted numbers), so a fixture that must be newer by tag stays
+    newer after every release instead of naming a fixed one. T139: the update part's three newer fixtures take one,
+    two and three steps, so each announces a tag of its own, all derived from the build under test."""
     m = re.match(r"^[vV]?(\d+(?:\.\d+)+)", (version_name or "").strip())
     if not m:
         raise ValueError(f"no version numbers in {version_name!r}")
     nums = [int(x) for x in m.group(1).split(".")]
     while len(nums) < 3:
         nums.append(0)
-    nums[2] += 1
+    nums[2] += patches
     return "v" + ".".join(str(n) for n in nums) + "-alpha"
 
 
@@ -2084,6 +2107,10 @@ class MockReleases:
         self.server.shutdown()
         self.server.server_close()
 
+
+# T139: how many patch steps above the build under test each newer fixture of the update part announces (tag_above),
+# one tag per fixture as the fixed v0.1.9/10/11-alpha were; the report's offeredTags lists them with `derived`.
+ABOVE = {"wrong-checksum": 1, "wrong-certificate": 2, "offer": 3}
 
 UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|Update check failed.*|No release with an APK.*)$"
 
@@ -2255,7 +2282,7 @@ def part_update(args):
     def wrong_checksum():
         # No version.json: the tag decides, one patch above this build's versionName (T129: a fixed tag stopped being
         # newer after each release); SHA256SUMS.txt lies about the APK.
-        ann = mock.announce(tag_above(cur_name), args.new_apk, sums_sha="f" * 64, version_json=False)
+        ann = mock.announce(tag_above(cur_name, ABOVE["wrong-checksum"]), args.new_apk, sums_sha="f" * 64, version_json=False)
         ann["buildVersionName"] = cur_name
         line, png = check_for_updates(dev)
         close_sheet(dev)
@@ -2268,7 +2295,10 @@ def part_update(args):
                 **({} if ok else {"error": f"not refused for the checksum: {line}"})}
 
     def wrong_certificate():
-        ann = mock.announce("v0.1.10-alpha", bad_apk, code=new_code)
+        # T139: the tag follows the build as wrong-checksum's does (the fixed v0.1.10-alpha before); version.json's
+        # versionCode decides here, the tag is what the refusal line names.
+        ann = mock.announce(tag_above(cur_name, ABOVE["wrong-certificate"]), bad_apk, code=new_code)
+        ann["buildVersionName"] = cur_name
         line, png = check_for_updates(dev)
         close_sheet(dev)
         banner, _ = dev.wait_for(r"refused", 6)
@@ -2280,7 +2310,10 @@ def part_update(args):
                 **({} if ok else {"error": f"not refused for the certificate: {line}"})}
 
     def offer():
-        ann = mock.announce("v0.1.11-alpha", args.new_apk, code=new_code)
+        # T139: derived from the build like the two refusals (the fixed v0.1.11-alpha before), so the offer line names
+        # a tag above this build after every release.
+        ann = mock.announce(tag_above(cur_name, ABOVE["offer"]), args.new_apk, code=new_code)
+        ann["buildVersionName"] = cur_name
         line, png = check_for_updates(dev)
         close_sheet(dev)
         banner, nodes = update_banner(dev)
@@ -2338,7 +2371,10 @@ def part_update(args):
         mock.close()
         dev.shell("rm", "-f", UPDATE_API_FILE, check_ok=False)
         log.close()
+    offered = {s["step"]: (s.get("announced") or {}).get("tag") for s in run.steps if s["step"] in ABOVE}
     return run.report(previous=os.path.basename(args.prev_apk), apk=os.path.basename(apk), newApk=os.path.basename(args.new_apk),
+                      offeredTags={"buildVersionName": cur_name, **offered,
+                                   "derived": bool(offered) and all(t == tag_above(cur_name, ABOVE[k]) for k, t in offered.items())},
                       versions={"previous": [prev_code, prev_name], "current": [cur_code, cur_name], "new": [new_code, new_name]},
                       updaterLog=log.path, updaterLines=log.lines()[-60:])
 
