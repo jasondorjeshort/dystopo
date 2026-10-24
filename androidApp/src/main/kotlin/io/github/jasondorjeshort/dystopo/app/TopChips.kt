@@ -77,9 +77,25 @@ object TopChips {
     /** T91: the search box's width: 220 dp, or less so it ends before the Settings chip. */
     fun searchWidth(): Dp = if (topRowLeft > 0.dp) minOf(SEARCH_WIDTH, topRowLeft - 8.dp - GAP).coerceAtLeast(96.dp) else SEARCH_WIDTH
 
-    /** T91: where the online indicator starts: just below the search column (and its "Indexing places" line). */
-    fun onlineColumn(): Modifier =
-        if (searchBottom > 0.dp) Modifier.padding(start = 8.dp, top = searchBottom + 4.dp) else Modifier.statusBarsPadding().padding(start = 8.dp, top = 60.dp)
+    /**
+     * T91: where the online indicator starts: just below the search column (and its "Indexing places" line). T137 (T128's
+     * observation): while navigating, below the navigation card, which spans the top of the map from the same height and
+     * covered the indicator's chip; the scale bar's T128 rule (below the card and below this column) is unchanged.
+     */
+    fun onlineColumn(): Modifier {
+        val top = onlineTop(searchBottom, navCardBottom) ?: return Modifier.statusBarsPadding().padding(start = 8.dp, top = 60.dp)
+        return Modifier.padding(start = 8.dp, top = top)
+    }
+
+    /** T137 (pure, `TopChipsTest`): the online column's top from the window top, or null before anything was measured. */
+    fun onlineTop(searchBottom: Dp, navCardBottom: Dp): Dp? = when {
+        navCardBottom > 0.dp -> maxOf(searchBottom + 4.dp, navCardBottom + GAP)
+        searchBottom > 0.dp -> searchBottom + 4.dp
+        else -> null
+    }
+
+    /** T137: the navigation card's rectangle in px from the window's top left (`left, top, right, bottom`); null when hidden. */
+    @Volatile var navCardPx: FloatArray? = null
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "topRowLeftDp" to topRowLeft.value, "searchBottomDp" to searchBottom.value, "searchWidthDp" to searchWidth().value,
@@ -89,9 +105,19 @@ object TopChips {
         "routesChipBottomDp" to routesChipBottom.value, "topRightBottomDp" to topRightBottom.value, // T110
         // The track controls clear the navigation card when they start below its bottom edge.
         "tracksClearOfNavCard" to (navCardBottom == 0.dp || trackColumnTop >= navCardBottom),
+        // T137: the navigation card's and the online indicator column's rectangles (px, left, top, right, bottom; null when
+        // hidden) and whether they overlap; the online column starts below the card while navigating (onlineColumn()).
+        "navCardPx" to navCardPx?.map { Math.round(it) },
+        "onlineChipsPx" to MapInsets.onlineChips?.map { Math.round(it) },
+        "onlineClearOfNavCard" to !overlap(navCardPx, MapInsets.onlineChips),
+        "speakerButtonPx" to io.github.jasondorjeshort.dystopo.app.nav.SpeakerLayout.boundsPx?.map { Math.round(it) }, // T137: the mute
         // T122: the navigation card's turn text as last laid out (lines, cut, fontSp), for checks at font scale 2.0.
         "navTurnText" to io.github.jasondorjeshort.dystopo.app.nav.TurnText.last,
     )
+
+    /** T137 (pure): true when two `left, top, right, bottom` rectangles share any area; false when either is null. */
+    fun overlap(a: FloatArray?, b: FloatArray?): Boolean =
+        a != null && b != null && a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 
     private val GAP = 6.dp
     private val SEARCH_WIDTH = 220.dp

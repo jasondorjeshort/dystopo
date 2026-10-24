@@ -53,6 +53,14 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `skippedWhileOff` and the engine's state (`ready`, `said`, `focus` requests, grants and releases, `lastError`).
  *   `POST /nav/speech?enabled=1|0` flips the `navSpeech` setting (as Settings does, synced); `engine=silent|platform`
  *   (debug builds: `silent` records without audio, for the emulator); `clear=1` empties the list. Answers like the GET.
+ * - T137: `POST /nav/speech?mute=on|off` mutes this navigation (the card's speaker button; the `navSpeech` setting is not
+ *   changed, the next navigation starts unmuted): a direction due while muted is listed with `muted: true` and the
+ *   engine gets nothing (`engine.said` stays). `GET /nav/speech` and `GET /nav` `speech` carry `muted`, `mutedCount`,
+ *   `state` (`off`, `notStarted`, `starting`, `ready`, `noEngine`, `noVoice`) and `notice` (null, or `text`, `kind`,
+ *   `detail`, `shownAtMs`, `dismissedAtMs`: the card's line when the engine cannot speak, once per navigation);
+ *   `/nav` adds `muteButtonShown`. `dismiss=1` dismisses the notice as its Dismiss does. Debug builds:
+ *   `engine=failing` (an engine whose init fails as with no text-to-speech engine installed) and `engine=novoice` (no
+ *   voice for English) bring up the notice on the emulator.
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate) and the device GPS while navigating.
  */
@@ -133,11 +141,16 @@ object NavRoutes {
         }
     }
 
-    /** T126: `POST /nav/speech?enabled=1|0&engine=silent|platform&clear=1`. */
+    /** T126: `POST /nav/speech?enabled=1|0&engine=silent|platform&clear=1`; T137: `mute=on|off`, `dismiss=1`, `engine=failing|novoice`. */
     private fun speech(app: DystopoApp, r: Request): Response {
         val speech = io.github.jasondorjeshort.dystopo.app.nav.NavSpeech
         val q = r.query
-        if (q["enabled"] == null && q["engine"] == null && q["clear"] == null) return bad("enabled=1|0, engine=silent|platform or clear=1 required")
+        if (listOf("enabled", "engine", "clear", "mute", "dismiss").none { q[it] != null }) {
+            return bad("enabled=1|0, mute=on|off, engine=${speech.ENGINES.joinToString("|")}, dismiss=1 or clear=1 required")
+        }
+        val mute = q["mute"]?.let { m ->
+            when (m.lowercase()) { "on", "1", "true" -> true; "off", "0", "false" -> false; else -> return bad("mute must be on or off") }
+        }
         q["engine"]?.let { e -> try { speech.setEngine(e) } catch (x: IllegalArgumentException) { return bad(x.message ?: "bad engine") } }
         q["enabled"]?.let { raw ->
             when (val p = SettingsRoutes.parse(mapOf("navSpeech" to raw))) {
@@ -146,6 +159,9 @@ object NavRoutes {
             }
         }
         if (q["clear"] == "1") speech.clear()
+        mute?.let { speech.setMuted(it) } // T137
+        if (q["dismiss"] == "1") speech.dismissNotice()
+        app.map.onMain { } // the card's state posted by those has been applied
         return Response.json(speech.json())
     }
 

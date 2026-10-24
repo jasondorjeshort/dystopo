@@ -9,6 +9,10 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import java.util.Locale
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.BuildConfig
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
@@ -34,13 +38,28 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * coming; without one Android's background location limits thin them out: a navigation service is later work). Debug builds can swap
  * in a [SilentEngine] (`POST /nav/speech?engine=silent`) that only records, so the emulator check needs no sound.
  * `GET /nav/speech` lists what was spoken since navigation started (`NavRoutes.kt`).
+ *
+ * T137: a mute for this navigation only ([setMuted], the speaker button on the card's header): the `navSpeech` setting
+ * stays on, a direction due while muted is listed with `muted` and never reaches the engine (it counts as said, so
+ * unmuting does not say it late), and the next navigation starts unmuted. When the engine cannot speak (no
+ * text-to-speech engine, or none with a voice for the directions' English: [failed]) the card shows a notice once per
+ * navigation and hides the mute button; debug builds fake both with `engine=failing|novoice`.
  */
 object NavSpeech {
     /** What was said: when, the index of the direction in the shown list, the card's words and what the engine got. */
-    data class Line(val atMs: Long, val index: Int, val text: String, val direction: String, val voice: String, val engine: String)
+    data class Line(val atMs: Long, val index: Int, val text: String, val direction: String, val voice: String, val engine: String, val muted: Boolean = false)
+
+    /** T137: what the card shows of speech (Compose state, written on the main thread): the mute and the notice. */
+    data class Ui(val muted: Boolean = false, val notice: String? = null, val failure: String? = null)
+
+    /** T137: the notice's words when the engine cannot speak (ADR 0031: the owner's to adjust). */
+    const val NOTICE_NO_ENGINE = "Spoken directions are not available: this phone has no text-to-speech engine. Install one in Android text-to-speech settings."
+    const val NOTICE_NO_VOICE = "No voice installed for spoken directions. Install one in Android text-to-speech settings."
 
     interface Engine {
         val name: String
+        /** T137: called once, after it became the current engine (so a failure it reports is taken). */
+        fun open() {}
         fun speak(voice: String, id: String)
         fun stop()
         fun shutdown()
@@ -56,6 +75,33 @@ object NavSpeech {
     @Volatile var engineChoice: String = "platform"
         private set
 
+    /** T137: this navigation is silent (the setting is untouched); reset by [begin]. */
+    @Volatile var muted = false
+        private set
+    /** T137: why the engine cannot speak in this navigation: `noEngine` or `noVoice` (null while it can or is not made). */
+    @Volatile var failure: String? = null
+        private set
+    @Volatile private var failureDetail: String? = null
+    /** T137: the notice was shown in this navigation (once per navigation), and when it was dismissed. */
+    @Volatile private var noticeAtMs: Long? = null
+    @Volatile private var noticeDismissedAtMs: Long? = null
+    private var mutedCount = 0
+
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    var ui by mutableStateOf(Ui())
+        private set
+
+    private fun publish() {
+        val u = Ui(muted, if (noticeAtMs != null && noticeDismissedAtMs == null) noticeText(failure) else null, failure)
+        main.post { if (ui != u) ui = u }
+    }
+
+    fun noticeText(f: String?): String? = when (f) {
+        "noEngine" -> NOTICE_NO_ENGINE
+        "noVoice" -> NOTICE_NO_VOICE
+        else -> null
+    }
+
     val enabled: Boolean get() = AppSettings.navSpeech
 
     /** Navigation started: a fresh list, nothing said yet (the engine is made on the first line). */
@@ -63,6 +109,13 @@ object NavSpeech {
     fun begin() {
         lines.clear()
         gate.reset()
+        muted = false // T137: the mute is per navigation
+        mutedCount = 0
+        noticeAtMs = null
+        noticeDismissedAtMs = null
+        failure = null
+        failureDetail = null
+        publish()
     }
 
     /** Navigation stopped: the engine is released; the list stays for `GET /nav/speech` until the next start. */
@@ -70,6 +123,40 @@ object NavSpeech {
     fun end() {
         engine?.let { e -> runCatching { e.shutdown() } }
         engine = null
+        muted = false
+        noticeAtMs = null
+        publish()
+    }
+
+    /** T137: mutes or unmutes this navigation; muting stops a line being said. The `navSpeech` setting is not changed. */
+    fun setMuted(on: Boolean) {
+        synchronized(this) {
+            muted = on
+            publish()
+        }
+        if (on) silence()
+    }
+
+    /** T137: the card's notice was dismissed (it does not come back in this navigation). */
+    @Synchronized
+    fun dismissNotice() {
+        if (noticeAtMs != null && noticeDismissedAtMs == null) noticeDismissedAtMs = System.currentTimeMillis()
+        publish()
+    }
+
+    /**
+     * T137: the engine cannot speak ([kind] `noEngine` or `noVoice`): the card's notice, once per navigation. Called by an
+     * engine from its init (any thread); an engine left over from an earlier navigation is ignored.
+     */
+    fun failed(from: Engine, kind: String, detail: String) {
+        synchronized(this) {
+            if (from !== engine) return
+            Log.w(NavSession.TAG, "spoken directions unavailable: $kind ($detail)")
+            failure = kind
+            failureDetail = detail
+            if (noticeAtMs == null) noticeAtMs = System.currentTimeMillis()
+            publish()
+        }
     }
 
     /** The setting went off: anything being said stops at once. */
@@ -85,7 +172,15 @@ object NavSpeech {
         synchronized(this) {
             if (!gate.take(index, aheadM, ins.leadM, enabled)) return null
             val text = SpokenText.of(ins, aheadM, units, mode)
-            val e = engine ?: makeEngine().also { engine = it }
+            if (muted) { // T137: listed as muted; the engine gets nothing (and is not made for it)
+                val line = Line(System.currentTimeMillis(), index, text, DirectionsText.of(ins, mode), SpokenText.forVoice(text), engine?.name ?: "none", muted = true)
+                if (lines.size >= MAX_LINES) lines.removeAt(0)
+                lines += line
+                mutedCount++
+                Log.i(NavSession.TAG, "muted #$index: $text")
+                return line
+            }
+            val e = engine ?: makeEngine().also { engine = it; it.open() }
             val line = Line(System.currentTimeMillis(), index, text, DirectionsText.of(ins, mode), SpokenText.forVoice(text), e.name)
             if (lines.size >= MAX_LINES) lines.removeAt(0)
             lines += line
@@ -95,13 +190,21 @@ object NavSpeech {
         }
     }
 
-    private fun makeEngine(): Engine =
-        if (BuildConfig.DEBUG_ENDPOINTS && engineChoice == "silent") SilentEngine() else PlatformEngine(DystopoApp.instance)
+    private fun makeEngine(): Engine = when {
+        !BuildConfig.DEBUG_ENDPOINTS -> PlatformEngine(DystopoApp.instance)
+        engineChoice == "silent" -> SilentEngine()
+        engineChoice == "failing" -> FailingEngine("noEngine") // T137
+        engineChoice == "novoice" -> FailingEngine("noVoice")
+        else -> PlatformEngine(DystopoApp.instance)
+    }
+
+    /** Debug: the engines `POST /nav/speech?engine=` takes. */
+    val ENGINES = listOf("platform", "silent", "failing", "novoice")
 
     /** Debug: chooses the engine for the next line (the current one is released). */
     @Synchronized
     fun setEngine(choice: String) {
-        require(choice == "silent" || choice == "platform") { "engine must be silent or platform" }
+        require(choice in ENGINES) { "engine must be ${ENGINES.joinToString(", ")}" }
         require(BuildConfig.DEBUG_ENDPOINTS || choice == "platform") { "the silent engine is for debug builds" }
         if (choice != engineChoice) {
             engineChoice = choice
@@ -114,6 +217,26 @@ object NavSpeech {
     fun clear() {
         lines.clear()
         gate.reset()
+        mutedCount = 0
+    }
+
+    /** T137: the engine's state in one word: `off` (setting off), `notStarted`, `starting`, `ready`, `noEngine`, `noVoice`. */
+    private fun state(): String = failure ?: when {
+        !enabled -> "off"
+        engine == null -> "notStarted"
+        engine is PlatformEngine && engine?.json()?.get("ready") == null -> "starting"
+        else -> "ready"
+    }
+
+    /** T137: the speech part of `GET /nav`. */
+    @Synchronized
+    fun navJson(): Map<String, Any?> = linkedMapOf(
+        "enabled" to enabled, "muted" to muted, "state" to state(), "mutedCount" to mutedCount,
+        "notice" to noticeJson(), "muteButtonShown" to (enabled && failure == null),
+    )
+
+    private fun noticeJson(): Map<String, Any?>? = noticeAtMs?.let {
+        linkedMapOf("text" to noticeText(failure), "kind" to failure, "detail" to failureDetail, "shownAtMs" to it, "dismissedAtMs" to noticeDismissedAtMs)
     }
 
     /** `GET /nav/speech`. */
@@ -122,12 +245,30 @@ object NavSpeech {
         "enabled" to enabled,
         "engineChoice" to engineChoice,
         "engine" to engine?.json(),
+        "muted" to muted, // T137
+        "state" to state(),
+        "notice" to noticeJson(),
+        "mutedCount" to mutedCount,
         "count" to lines.size,
         "skippedWhileOff" to gate.skippedOff,
         "spoken" to lines.map { l ->
-            linkedMapOf("atMs" to l.atMs, "index" to l.index, "text" to l.text, "direction" to l.direction, "voice" to l.voice, "engine" to l.engine)
+            linkedMapOf("atMs" to l.atMs, "index" to l.index, "text" to l.text, "direction" to l.direction, "voice" to l.voice, "engine" to l.engine, "muted" to l.muted)
         },
     )
+
+    /**
+     * T137, debug builds: an engine whose init failed as the platform's does with no engine installed (`noEngine`) or
+     * none with an English voice (`noVoice`); it says nothing, so the card's notice can be checked on the emulator.
+     */
+    class FailingEngine(private val kind: String) : Engine {
+        override val name = if (kind == "noVoice") "novoice" else "failing"
+        @Volatile private var refused = 0
+        override fun open() { NavSpeech.failed(this, kind, "debug engine") }
+        override fun speak(voice: String, id: String) { refused++ }
+        override fun stop() {}
+        override fun shutdown() {}
+        override fun json(): Map<String, Any?> = linkedMapOf("name" to name, "ready" to false, "said" to 0, "refused" to refused, "lastError" to "$kind (debug engine)")
+    }
 
     /** Records only (debug builds): the emulator has no useful audio. */
     class SilentEngine : Engine {
@@ -166,18 +307,36 @@ object NavSpeech {
         init {
             main.post {
                 tts = TextToSpeech(context.applicationContext) { status ->
+                    var failedKind: String? = null
                     synchronized(this) {
                         ready = status == TextToSpeech.SUCCESS
-                        if (ready != true) lastError = "init status $status"
-                        else {
+                        if (ready != true) { lastError = "init status $status"; failedKind = "noEngine" }
+                        else voiceProblem()?.let { problem -> ready = false; lastError = problem; failedKind = "noVoice" } // T137
+                        if (ready == true) {
                             tts?.setAudioAttributes(attrs)
                             tts?.setOnUtteranceProgressListener(listener)
                             pending.forEach { (v, id) -> say(v, id) }
                         }
                         pending.clear()
                     }
+                    failedKind?.let { NavSpeech.failed(this, it, lastError ?: it) } // T137: the card's notice
                 }
             }
+        }
+
+        /**
+         * T137: the directions are English: null when the engine can say them (its voice is English, or it has English
+         * and switches to it), else why not. Caller holds the lock, on the main thread.
+         */
+        private fun voiceProblem(): String? {
+            val t = tts ?: return "no engine"
+            return runCatching {
+                val current = t.voice?.locale ?: t.defaultVoice?.locale
+                if (current?.language == "en") return null
+                val target = if (Locale.getDefault().language == "en") Locale.getDefault() else Locale.US
+                val r = t.setLanguage(target)
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) "no voice for $target (setLanguage $r)" else null
+            }.getOrElse { "voice check failed: ${it.message}" }
         }
 
         private val listener = object : UtteranceProgressListener() {
