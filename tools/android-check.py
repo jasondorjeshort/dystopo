@@ -30,6 +30,14 @@ and once for the whole tour:
               the activity on screen (/screenshot, /features, /features/text, /help, POST /attribution/open) must each
               answer 503 with a `reason` within --background-limit-s (5 s); then `am start -n` brings the app's
               task back (`returnedTask`; no second activity) and /screenshot, /features and /help must answer 200 (`backgroundStep` in the summary)
+  - direct (T127, unless --direct-view none): after the background step, a cold direct view (no pack, no server; default
+              --direct-view 9/45.865/6.865, Mont Blanc z9, which the tour never loads): the online cache (pinned tiles
+              kept) and the phone's source range cache cleared, the camera set, the Java heap sampled from GET /stats
+              every 0.4 s (and the app's own per-burst peak, GET /online direct.memory). It must render DEM tiles in the
+              same process, with no crash and no OutOfMemoryError in logcat, and its live heap (after a collection,
+              through `am send-trim-memory`) at most --direct-heap-share of the heap's max; idle and the sampled peaks
+              are reported, not required (blank tiles can pass); idleSeconds, dumpsys meminfo and the screenshot (<stem>-direct-<i>.png) are reported (`directStep`). --direct-only runs only the
+              direct views, each in a new process (the per-zoom peak table of finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
 The lines and labels checks need the app's /features routes; an app without them skips them (reported).
 The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
 last lines).
@@ -46,7 +54,7 @@ server first (a debug build on the emulator otherwise uses the host's 8765; the 
 first view waits until the device is quiet, by its load: the CPU used besides the app at most --quiet-cores in two
 3 s windows in a row (setup.quiet in the summary: the wait and the windows). A just-booted emulator runs near all four
 cores for one to two minutes, and a cold view started then missed the 30 s idle (T88, T98).
-T110: the first view waits up to --first-wait-ms (60 s) for idle, the others --wait-ms (30 s). The first view is the
+T110: the first view waits up to --first-wait-ms (120 s since T127) for idle, the others --wait-ms (30 s). The first view is the
 cold one (a new process; with no server its terrain around the packs is rendered from the public sources). Measured on
 fresh API 35 AVDs with no server and two other emulators on the host: 10.3 and 14.5 s after the quiet wait, 24.2 s when
 the view started 19 s after the relaunch while the device still used two of its four cores besides the app; T105's
@@ -79,6 +87,7 @@ import os
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -551,6 +560,165 @@ def background_step(server, exe, serial, limit_s):
     return rep
 
 
+# T127: the cold direct view after the tour: no pack, no server, a public area the tour never loaded.
+DIRECT_VIEW = "9/45.865/6.865:mont-blanc-z9"
+OOM_PATTERN = "OutOfMemoryError"
+
+
+class HeapSampler(threading.Thread):
+    """T127: polls GET /stats (memory.javaHeapUsedBytes) every `period` s on its own connection until stopped; the
+    peak, the samples and how many polls the app did not answer (a crash or a stuck server)."""
+
+    def __init__(self, server, period=0.4):
+        super().__init__(daemon=True)
+        self.base, self.token, self.period = server.base, server.token, period
+        self.samples, self.failures, self.max_bytes = [], 0, None
+        self._halt = threading.Event()
+
+    def run(self):
+        t0 = time.time()
+        while not self._halt.is_set():
+            try:
+                req = urllib.request.Request(self.base + "/stats", headers={"X-Dystopo-Token": self.token})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    m = json.loads(r.read().decode("utf-8")).get("memory") or {}
+                self.samples.append((round(time.time() - t0, 1), m.get("javaHeapUsedBytes")))
+                self.max_bytes = m.get("javaHeapMaxBytes") or self.max_bytes
+            except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
+                self.failures += 1
+            self._halt.wait(self.period)
+
+    def stop(self):
+        self._halt.set()
+        self.join(15)
+        used = [b for _, b in self.samples if b is not None]
+        return {"polls": len(self.samples), "failedPolls": self.failures, "periodS": self.period,
+                "peakBytes": max(used) if used else None, "maxBytes": self.max_bytes}
+
+
+def meminfo(exe, serial):
+    """T127: the app's `dumpsys meminfo` summary in kB (Java Heap, Native Heap, Graphics, Code, TOTAL PSS), or None."""
+    if not exe or not serial:
+        return None
+    code, out = adb(exe, serial, "shell", "dumpsys", "meminfo", PACKAGE, timeout=60)
+    if code != 0:
+        return None
+    rows = {}
+    for line in out.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) >= 2 and parts[0].strip() in ("Java Heap", "Native Heap", "Graphics", "Code", "TOTAL PSS"):
+            nums = parts[1].split()
+            if nums and nums[0].isdigit():
+                rows[parts[0].strip().replace(" ", "")] = int(nums[0])
+    return rows or None
+
+
+def oom_lines(exe, serial, since):
+    """T127: logcat lines (every buffer) naming an OutOfMemoryError since device time `since`."""
+    if not exe or not serial or not since:
+        return []
+    _, out = adb(exe, serial, "logcat", "-d", "-b", "all", "-v", "brief", "-t", since, timeout=60)
+    return [l.strip()[:200] for l in out.splitlines() if OOM_PATTERN in l][:10]
+
+
+def live_heap(server, exe, serial, timeout=20.0):
+    """T127: the app's live Java heap: `am send-trim-memory <package> RUNNING_LOW` makes the app's onTrimMemory
+    (HeapGuard.trim with measureLive) collect, wait 200 ms and read the used heap before it drops any cache; the reading
+    is the newest `recentTrims` entry's `liveBeforeTrimBytes` in GET /online direct.memory. None when it never came."""
+    def mem():
+        return ((server.json("/online").get("direct") or {}).get("memory") or {})
+    n0 = mem().get("trims") or 0
+    code, out = adb(exe, serial, "shell", "am", "send-trim-memory", PACKAGE, "RUNNING_LOW", timeout=30)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        m = mem()
+        if (m.get("trims") or 0) > n0:
+            for t in reversed(m.get("recentTrims") or []):
+                if str(t.get("reason", "")).startswith("onTrimMemory") and t.get("liveBeforeTrimBytes") is not None:
+                    return {"liveBytes": t["liveBeforeTrimBytes"], "trim": t, "sent": code == 0}
+        time.sleep(0.5)
+    return {"liveBytes": None, "sent": code == 0, "error": (out or "").strip()[:200] or "no onTrimMemory trim recorded"}
+
+
+def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True, shot=None):
+    """T127: one cold direct view (no pack covers it, no server): the online cache cleared (pinned tiles kept) and,
+    with `clear_sources`, the phone's source range cache too, so every DEM tile is rendered from the public sources;
+    then the camera, a screenshot once idle (or after `wait_ms`), the Java heap sampled from /stats all along, then the
+    live heap after a collection (`live_heap`). ok: the same process before and after, no crash and no OutOfMemoryError
+    in logcat, DEM tiles rendered, and the live heap at most `bound_share` of the heap's max. Not required: idle (a cold
+    z8 to z11 view from the public sources can take minutes; blank tiles can pass) and the sampled peaks (`peakBytes`, the
+    app's burst peak), which count garbage not yet collected and are reported as numbers only. With `restart`, a new
+    process first (the per-zoom table's fresh case)."""
+    rep = {"label": view["label"], "view": view["view"], "boundShare": bound_share}
+    if restart:
+        restart_app(exe, serial, server, 120)
+    since = android_debug.device_now(exe, serial) if exe and serial else None
+    pid = android_debug.app_pid(exe, serial) if exe and serial else None
+    online = server.json("/online")
+    rep["server"] = online.get("server") or (online.get("fetcher") or {}).get("server")
+    rep["onlineCacheCleared"] = server.json("/online/cache/clear", method="POST")
+    if clear_sources and exe and serial:
+        # The app's own files, through run-as (debug builds); OpenFreeMap's TileJSON (sources/openfreemap) stays.
+        code, out = adb(exe, serial, "shell", "run-as", PACKAGE, "sh", "-c",
+                        "'cd cache/sources 2>/dev/null && for d in *; do [ \"$d\" = openfreemap ] || rm -rf \"$d\"; done; echo cleared'",
+                        timeout=120)
+        rep["sourceCacheCleared"] = code == 0 and "cleared" in out
+    seq0 = ((online.get("direct") or {}).get("memory") or {}).get("burstSeq") or 0  # T127: the app's render bursts so far
+    before = server.json("/stats").get("memory") or {}
+    rep["heapBeforeBytes"] = before.get("javaHeapUsedBytes")
+    sampler = HeapSampler(server)  # the token is current: /stats just answered
+    sampler.start()
+    t0 = time.time()
+    try:
+        server.json(f"/camera?lat={view['lat']}&lon={view['lon']}&zoom={view['z']}&bearing=0&tilt=0", method="POST")
+        png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+        rep["idleSeconds"] = round(time.time() - t0, 1)
+        if shot:
+            with open(shot, "wb") as f:
+                f.write(png)
+            rep["screenshot"] = shot
+        health = server.json("/health")
+        rep["idle"] = health.get("map", {}).get("lastScreenshotIdle") is True
+        time.sleep(2)  # renders that finish just after idle (out-of-view synthesis edges) count in the peak too
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+        rep["error"] = str(e)[:200]
+        rep["idle"] = False
+    finally:
+        rep["heap"] = sampler.stop()
+    try:
+        d = server.json("/online").get("direct") or {}
+        rep["app"] = {k: d.get(k) for k in ("demRendered", "renderedByZoom", "demMsMax", "failures", "lastError")}
+        rep["app"]["memory"] = d.get("memory")  # T127: the app's own peak, render limit and trims (none before T127)
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+        rep["app"] = {"error": str(e)[:200]}
+    rep["meminfoKb"] = meminfo(exe, serial)
+    try:
+        rep["live"] = live_heap(server, exe, serial) if exe and serial else {"liveBytes": None, "error": "no adb device"}
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException, subprocess.SubprocessError) as e:
+        rep["live"] = {"liveBytes": None, "error": str(e)[:200]}
+    pid_after = android_debug.app_pid(exe, serial) if exe and serial else None
+    rep["sameProcess"] = pid is None or pid == pid_after
+    rep["oom"] = oom_lines(exe, serial, since)
+    rep["crash"] = android_debug.launch_crash(exe, serial, since) if exe and serial and since else None
+    peak = rep["heap"]["peakBytes"]
+    mem = (rep.get("app") or {}).get("memory") or {}
+    app_peak = max([b.get("peakHeapBytes") or 0 for b in mem.get("bursts") or [] if b.get("seq", 0) > seq0] or [0]) or None
+    if app_peak is not None and (peak is None or app_peak > peak):
+        peak = app_peak  # the app samples between the host's polls
+    rep["peakBytes"] = peak
+    mx = rep["heap"]["maxBytes"] or ((rep.get("app") or {}).get("memory") or {}).get("heapMaxBytes")
+    live = rep["live"].get("liveBytes")
+    rep["liveBytes"] = live
+    rep["boundBytes"] = int(mx * bound_share) if mx else None
+    rep["peakShare"] = round(peak / mx, 3) if peak and mx else None
+    rep["liveShare"] = round(live / mx, 3) if live and mx else None
+    rendered = (rep.get("app") or {}).get("demRendered")
+    # Idle and the sampled peak are reported, not required (see the docstring); the bound is on the live heap.
+    rep["ok"] = bool(rep["sameProcess"] and not rep["oom"] and not rep["crash"] and "error" not in rep and (rendered or 0) > 0
+                     and live is not None and rep["boundBytes"] is not None and live <= rep["boundBytes"])
+    return rep
+
+
 def set_app_server(server, value, timeout=60.0):
     """T105: the app's server (POST /settings?server=, persisted; '' for none), then the style the setting reloads.
     Returns the server the app reports."""
@@ -620,8 +788,10 @@ def main():
     ap.add_argument("--views-file", default="")
     ap.add_argument("--out", default="out/android-tour.png", help="screenshots <stem>-<i>.png, <stem>-sheet.png, <stem>.json")
     ap.add_argument("--wait-ms", type=int, default=30000, help="how long /screenshot waits for the map to go idle")
-    ap.add_argument("--first-wait-ms", type=int, default=60000,
-                    help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one)")
+    ap.add_argument("--first-wait-ms", type=int, default=120000,
+                    help="T110: the same for the first view, the cold one (measured 10 to 24 s on fresh AVDs, 43 s on a busy one). "
+                         "T127: 120 s, from 60: with the direct renders admitted by the heap (three at once on 192 MB, ten before) "
+                         "the cold Rainier z8 view went idle in 73 to 117 s where it took 50 to 61 s before, on a day the sources were slow")
     ap.add_argument("--contour-budget-ms", type=float, default=1000.0, help="contour tiles slower than this are a warning (a failure with --strict)")
     ap.add_argument("--max-settle-change", type=float, default=0.02,
                     help="share of pixels that may change between the screenshot and a second one after the map settled")
@@ -641,10 +811,28 @@ def main():
                     help="T123: skip the background step (HOME, the activity-bound routes must answer 503, back, then 200)")
     ap.add_argument("--background-limit-s", type=float, default=5.0,
                     help="T123: how fast a backgrounded activity-bound route must answer its 503")
+    ap.add_argument("--direct-view", default=DIRECT_VIEW,
+                    help="T127: after the tour and the background step, cold direct views (no pack, no server: z/lat/lon:label, "
+                         "comma-separated; 'none' skips): online and source caches cleared, the Java heap sampled, the peak must "
+                         "stay under --direct-heap-share of the heap's max with no crash and no OutOfMemoryError")
+    ap.add_argument("--direct-heap-share", type=float, default=0.8,
+                    help="T127: the bound on the direct view's live Java heap, a share of the max heap, read after the view by "
+                         "`am send-trim-memory <package> RUNNING_LOW`: the app's onTrimMemory collects, waits 200 ms and reads the "
+                         "used heap before dropping any cache (GET /online direct.memory recentTrims liveBeforeTrimBytes). The "
+                         "sampled peaks count garbage not yet collected and are reported only. 0.8: the reading includes the up to "
+                         "three renders still running (the view keeps rendering for minutes), so it was 0.18 to 0.63 of 192 MB over twelve "
+                         "cold views (T127), while the admission's own ceiling is the max less the reserve, 0.875; above 0.8 the renders "
+                         "take more than budgeted or something new is retained")
+    ap.add_argument("--direct-only", action="store_true",
+                    help="T127: only the direct views, each in a new process (the per-zoom peak table); no tour views, no background step")
+    ap.add_argument("--direct-keep-sources", action="store_true", help="T127: keep the phone's source range cache (cache/sources) before a direct view")
     args = ap.parse_args()
 
-    views = read_views(args)
-    if not views:
+    views = [] if args.direct_only else read_views(args)
+    direct_views = [] if args.direct_view.strip().lower() == "none" else [parse_view(x) for x in args.direct_view.split(",") if x.strip()]
+    if args.direct_only and not direct_views:
+        ap.error("--direct-only needs --direct-view")
+    if not views and not args.direct_only:
         ap.error("no views: pass --views or --views-file")
     stem, ext = os.path.splitext(args.out)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
@@ -855,7 +1043,7 @@ def main():
         http_ok = g["served"] >= len(fonts) and len(fonts) > 0
         summary["glyphs"] = {"fontsInStyle": fonts, "glyphRangesServed": g["served"], "glyphRangesEmpty": g["notFound"],
                              "viewsWithDrawnText": drawn, "glyphDir": (health.get("packs") or {}).get("glyphs"),
-                             "ok": http_ok or drawn > 0,
+                             "ok": http_ok or drawn > 0 or args.direct_only,  # T127: no tour views, nothing to check
                              "evidence": "http" if http_ok else "drawn text" if drawn else "none"}
         cg = final["contourGeneration"]
         summary["contourGeneration"] = {k: cg[k] for k in ("count", "minMs", "avgMs", "maxMs")}
@@ -864,17 +1052,30 @@ def main():
         summary["memory"] = final.get("memory")
     except (urllib.error.URLError, OSError, ValueError) as e:
         summary["glyphs"] = {"ok": False, "error": str(e)}
-    if exe and serial and not args.no_background:
+    if exe and serial and not args.no_background and not args.direct_only:
         # T123: the tour never left the foreground; activity-bound routes hung there until their own timeouts.
         try:
             summary["backgroundStep"] = background_step(server, exe, serial, args.background_limit_s)
         except (urllib.error.URLError, OSError, ValueError, subprocess.SubprocessError) as e:
             summary["backgroundStep"] = {"ok": False, "error": str(e)[:200]}
     else:
-        summary["backgroundStep"] = {"skipped": "--no-background" if args.no_background else "no adb device"}
+        summary["backgroundStep"] = {"skipped": "--no-background" if args.no_background else "--direct-only" if args.direct_only else "no adb device"}
+    if direct_views:
+        # T127 (finding 2026-10-21-direct-view-out-of-memory-after-a-tour): after the full tour, a cold direct view must fit the heap.
+        steps = []
+        for k, dv in enumerate(direct_views):
+            try:
+                steps.append(direct_step(server, exe, serial, dv, args.direct_heap_share, args.first_wait_ms,
+                                         restart=args.direct_only, clear_sources=not args.direct_keep_sources,
+                                         shot=f"{stem}-direct-{k}{ext}"))
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
+                steps.append({"label": dv["label"], "view": dv["view"], "ok": False, "error": str(e)[:200]})
+        summary["directStep"] = {"ok": all(r["ok"] for r in steps), "views": steps}
+    else:
+        summary["directStep"] = {"skipped": "--direct-view none"}
     try:
         summary["requests"] = {k: v for k, v in server.json("/stats/requests?limit=12").items()}  # T123: the phone's request log
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:  # T127: RuntimeError, the app crashed (LaunchCrash)
         summary["requests"] = {"error": str(e)[:200]}
     if exe and serial and since:
         summary["logcat"] = logcat_since(exe, serial, since)
@@ -883,7 +1084,8 @@ def main():
     summary["viewsOk"] = sum(1 for r in reports if r["ok"])
     summary["viewsTotal"] = len(reports)
     summary["sheet"] = contact_sheet(reports, rasters, f"{stem}-sheet{ext}")
-    summary["ok"] = summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
+    summary["ok"] = (summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
+                     and summary["directStep"].get("ok", True) is not False)
     with open(stem + ".json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
@@ -910,6 +1112,13 @@ def main():
         print(f"background: {'ok' if bg['ok'] else 'FAIL'} (after HOME {bg.get('activityAfterHome')}: "
               + ", ".join(f"{r['path'].split('?')[0]} {r['status']} {r['seconds']} s" for r in bg["background"])
               + f"; back {bg.get('activityAfterReturn')}: " + ", ".join(f"{r['path'].split('?')[0]} {r['status']}" for r in bg["foreground"]) + ")",
+              file=sys.stderr)
+    for r in summary["directStep"].get("views", []):
+        mb = lambda b: f"{b / 1048576:.0f}" if b else "-"
+        print(f"direct {r['view']} {r['label']}: {'ok' if r['ok'] else 'FAIL'} live heap {mb(r.get('liveBytes'))} of "
+              f"{mb((r.get('heap') or {}).get('maxBytes'))} MB (bound {mb(r.get('boundBytes'))}), sampled peak {mb(r.get('peakBytes'))} MB, "
+              f"idle {r.get('idle')} at {r.get('idleSeconds')} s, "
+              f"same process {r.get('sameProcess')}, OOM lines {len(r.get('oom') or [])}" + (f", error {r['error']}" if r.get("error") else ""),
               file=sys.stderr)
     print(f"{summary['viewsOk']}/{summary['viewsTotal']} views ok; sheet {summary['sheet']}; summary {stem}.json", file=sys.stderr)
     print(json.dumps(summary, indent=2))

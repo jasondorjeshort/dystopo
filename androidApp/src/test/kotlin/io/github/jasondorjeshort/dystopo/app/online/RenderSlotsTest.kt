@@ -75,4 +75,41 @@ class RenderSlotsTest {
         assertEquals(2, slots.available)
         assertTrue(slots.lastDoneAt > 0)
     }
+
+    @Test
+    fun theHeapLimitHoldsRendersBackUntilItRises() {
+        // T127: four permits, but the heap allows two; the other two wait, counted, until the limit rises.
+        val allowed = java.util.concurrent.atomic.AtomicInteger(2)
+        val slots = RenderSlots(permits = 4, coarseFirstMs = 0, coarseGraceMs = 0, admit = { running, _, _ -> running < allowed.get() })
+        val hold = CountDownLatch(1)
+        val inside = java.util.concurrent.atomic.AtomicInteger()
+        val most = java.util.concurrent.atomic.AtomicInteger()
+        val threads = List(4) {
+            thread {
+                slots.run(coarse = true) {
+                    most.accumulateAndGet(inside.incrementAndGet(), ::maxOf)
+                    hold.await(5, TimeUnit.SECONDS)
+                    inside.decrementAndGet()
+                }
+            }
+        }
+        Thread.sleep(300)
+        assertEquals(2, slots.runningNow, "two run, two wait for the heap")
+        assertEquals(2L, slots.heapWaits.get())
+        allowed.set(4)
+        Thread.sleep(300) // the waiting renders ask again every 50 ms
+        assertEquals(4, slots.runningNow)
+        hold.countDown()
+        threads.forEach { it.join(5_000) }
+        assertEquals(4, most.get())
+        assertEquals(0, slots.rendering.get())
+        assertEquals(4, slots.available)
+    }
+
+    @Test
+    fun aLimitOfNothingStillLetsOneRenderRun() {
+        val slots = RenderSlots(permits = 4, coarseFirstMs = 0, coarseGraceMs = 0, admit = { _, _, _ -> false })
+        assertEquals("rendered", slots.run(coarse = false) { "rendered" })
+        assertEquals(4, slots.available)
+    }
 }

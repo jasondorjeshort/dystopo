@@ -13,3 +13,5 @@
 14/46.9317/-121.8619:mowich-lake-z14
 15/46.835/-121.700:cliffs-z15
 16/46.7686/-121.7295:reflection-lakes-z16
+# T127: after these views and the background step, android-check.py opens a cold direct view (no pack, no server) at
+# Mont Blanc z9 and checks the Java heap's peak (--direct-view, --direct-heap-share; --direct-view none skips it).

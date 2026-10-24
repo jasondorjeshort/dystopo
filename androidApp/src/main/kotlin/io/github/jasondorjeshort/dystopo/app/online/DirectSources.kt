@@ -52,6 +52,13 @@ class SourceCapReached(message: String) : RuntimeException(message)
  * Costs are capped ([PhoneSourceHttp]): at most [MAX_RANGE_REQUESTS] source requests at once, [MAX_TILES_IN_FLIGHT] tiles
  * rendered at once (their own permits, so map tiles never wait behind them), and [sessionCapBytes] downloaded per app session, after which
  * tiles fail with a clear message until the app restarts (a casual pan cannot pull gigabytes).
+ *
+ * T127: the renders at once are also sized from the free Java heap ([HeapGuard.admitNow]), the synthesis pyramid is
+ * dropped on a trim ([trimMemory], registered with [HeapGuard]), the decoded blocks take an eighth of the heap
+ * ([decodedCapBytes]) and the geoid offset memo 4 MB ([GEOID_MEMO_BYTES]); a cold Mont Blanc z9 view after the device
+ * tour ran the 192 MB heap out (finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
+ * T127 (T112's deferred fold-in, ADR 0034): `cache/sources/`'s own trim follows the one cache total ([sourceCacheCapBytes],
+ * [budgetTotalBytes] set by `cachebudget/CacheBudget`), so the total, not a fixed 512 MB, is its ceiling.
  */
 class DirectSources(private val context: android.content.Context, private val cacheRoot: File, internal val cache: TileCache) : HttpGet {
     val http = PhoneSourceHttp(this)
@@ -86,10 +93,25 @@ class DirectSources(private val context: android.content.Context, private val ca
 
     /** Bytes per app session the sources may download (setting `directSessionMb`). */
     @Volatile var sessionCapBytes: Long = DEFAULT_SESSION_MB * 1024 * 1024
-    @Volatile var sourceCacheCapBytes: Long = DEFAULT_SOURCE_CACHE_MB * 1024 * 1024
+    /**
+     * The ceiling of `cache/sources/`'s own trim. T127 (T112's deferred fold-in, ADR 0034): the source data is a kind of the
+     * one cache budget, so the ceiling is the budget's total ([budgetTotalBytes], set by `cachebudget/CacheBudget` as it sets
+     * the online and contour caps, `AppSettings.setCapsFromBudget`) and the budget evicts within it; [DEFAULT_SOURCE_CACHE_MB]
+     * only until the budget has started.
+     */
+    val sourceCacheCapBytes: Long get() = budgetTotalBytes.takeIf { it > 0 } ?: (DEFAULT_SOURCE_CACHE_MB * 1024 * 1024)
 
-    /** T106: the render slots and their counters ([RenderSlots]: given back however a render ends, an interrupt included). */
-    private val slots = RenderSlots(MAX_TILES_IN_FLIGHT, COARSE_FIRST_MS, COARSE_GRACE_MS)
+    /**
+     * T106: the render slots and their counters ([RenderSlots]: given back however a render ends, an interrupt included).
+     * T127: at most as many as the free heap holds ([HeapGuard.admitNow]), each render in the heap record.
+     */
+    private val slots = RenderSlots(
+        MAX_TILES_IN_FLIGHT, COARSE_FIRST_MS, COARSE_GRACE_MS,
+        admit = { running, committed, weight -> HeapGuard.admitNow(running, committed, weight) { runningNowSafe() } },
+        weightOf = HeapGuard::weightOf,
+        onStart = { HeapGuard.renderStarted { rendering.get() } },
+        onEnd = { HeapGuard.renderEnded() },
+    )
 
     /** DEM tiles being rendered or waiting to (OnlineService reloads the map once they are done, see [ANSWER_WITHIN_MS]). */
     val rendering: java.util.concurrent.atomic.AtomicInteger get() = slots.rendering
@@ -187,7 +209,13 @@ class DirectSources(private val context: android.content.Context, private val ca
         SourceIo.http = http
         // Neighbouring tiles share COG blocks: keep files open and their decoded blocks under a heap-sized cap.
         SourceIo.tiffPool = TiffPool(TIFF_POOL)
-        SourceIo.decodedBlocks = DecodedBlocks(minOf(DECODED_CAP_BYTES, Runtime.getRuntime().maxMemory() / 4))
+        val cap = decodedCapBytes(Runtime.getRuntime().maxMemory())
+        HeapGuard.cacheBytes = cap // T127
+        SourceIo.decodedBlocks = DecodedBlocks(cap)
+        // T127: the per-window geoid offsets are kept for windows rendered again, which the online cache makes rare here;
+        // the server's 32 MB memo held 31 MB of the phone's heap after a tour (a heap dump).
+        io.github.jasondorjeshort.dystopo.sources.elevation.Geoids.offsetCacheBytes = GEOID_MEMO_BYTES
+        HeapGuard.register("directSources", ::trimMemory) // T127
         // T88: every cold range read on the timeline (file name, bytes, ms).
         io.github.jasondorjeshort.dystopo.sources.elevation.SourceTiming.onRead = { url, bytes, nanos -> DirectTrace.mark("read ${url.substringAfterLast('/')} ${bytes shr 10} KB ${nanos / 1_000_000} ms") }
         Thread({ trimSourceCache() }, "direct-trim").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
@@ -658,6 +686,28 @@ class DirectSources(private val context: android.content.Context, private val ca
         return HttpReply(200, MiniJson.encode(mapOf("registryIds" to SourceRegistry.builtIn.ordered(ids.toList()))).encodeToByteArray())
     }
 
+    // ---- T127: the heap ----
+
+    /** Decoded-block and open-file caches dropped by [trimMemory] so far. */
+    @Volatile var memoryTrims = 0
+        private set
+
+    /** Renders holding a slot now, for [HeapGuard] (which may ask from its own thread while the slots are being made). */
+    private fun runningNowSafe(): Int = runCatching { slots.runningNow }.getOrDefault(0)
+
+    /**
+     * T127: drops the synthesis pyramid's decoded tiles (made again from the online cache); the bytes dropped. The decoded
+     * COG blocks stay: every GeoTIFF opened, the geoid grids' included (`ProjGeoid`, outside the pool), holds the block
+     * cache it was opened with, so a new cache in its place left the old one alive beside it (a heap dump after such a
+     * trim found 23 MB of geoid blocks in a replaced cache); they are bounded by [decodedCapBytes] instead.
+     */
+    fun trimMemory(): Long {
+        val pyr = pyramid?.let { it.cachedTiles.toLong() * it.tileSize * it.tileSize * 4 } ?: 0L
+        dropPyramid()
+        memoryTrims++
+        return pyr
+    }
+
     // ---- the source cache's cap ----
 
     private fun maybeTrim() {
@@ -708,7 +758,10 @@ class DirectSources(private val context: android.content.Context, private val ca
             "failures" to failures.get(), "lastError" to lastError,
             "tiffPool" to SourceIo.tiffPool?.let { mapOf("opened" to it.opened, "reused" to it.reused) },
             "decodedBlocks" to SourceIo.decodedBlocks?.let { mapOf("bytes" to it.sizeBytes, "hits" to it.hits, "misses" to it.misses) },
-            "sourceCache" to linkedMapOf("dir" to SourceIo.cacheRoot, "capBytes" to sourceCacheCapBytes, "trims" to trims),
+            "sourceCache" to linkedMapOf("dir" to SourceIo.cacheRoot, "capBytes" to sourceCacheCapBytes, "capFromBudget" to (budgetTotalBytes > 0), "trims" to trims),
+            // T127: the heap against the renders (HeapGuard), the renders that waited for it, the memory trims of these caches.
+            "memory" to HeapGuard.json() + linkedMapOf("heapWaits" to slots.heapWaits.get(), "renderingNow" to slots.runningNow, "committedBytes" to slots.committedNow, "memoryTrims" to memoryTrims,
+                "decodedCapBytes" to decodedCapBytes(Runtime.getRuntime().maxMemory())),
             "openFreeMapBuild" to ofm?.second,
         )
     }
@@ -747,9 +800,18 @@ class DirectSources(private val context: android.content.Context, private val ca
         /** Source requests (range reads, index pages) at once over every source. */
         const val MAX_RANGE_REQUESTS = 16
 
-        /** Open GeoTIFFs kept ([TiffPool]) and the decoded blocks' memory cap ([DecodedBlocks]; a quarter of the heap at most). */
+        /** Open GeoTIFFs kept ([TiffPool]) and the decoded blocks' memory cap ([DecodedBlocks]; an eighth of the heap at most, [decodedCapBytes]). */
         const val TIFF_POOL = 96
         const val DECODED_CAP_BYTES = 96L shl 20
+
+        /** T127: the geoid offset memo's cap on the phone ([io.github.jasondorjeshort.dystopo.sources.elevation.Geoids.offsetCacheBytes]; 32 MB on a server). */
+        const val GEOID_MEMO_BYTES = 4L shl 20
+
+        /**
+         * The decoded blocks' cap on a heap of [maxHeap] bytes: an eighth of it, at most [DECODED_CAP_BYTES]. T127: a
+         * quarter (48 MB of a 192 MB heap) beside ten renders ran a cold view out of heap. Pure, tested.
+         */
+        fun decodedCapBytes(maxHeap: Long): Long = minOf(DECODED_CAP_BYTES, maxHeap / 8)
 
         /** How long a map request waits for a tile being rendered before it is told to come back (OnlineTiles.answerWithinMs). */
         const val ANSWER_WITHIN_MS = 9_000L
@@ -817,6 +879,9 @@ class DirectSources(private val context: android.content.Context, private val ca
 
         const val DEFAULT_SESSION_MB = 300L
         const val DEFAULT_SOURCE_CACHE_MB = 512L
+
+        /** T127: the one cache budget's total in bytes (0 until `CacheBudget` sets it); [sourceCacheCapBytes] follows it. */
+        @Volatile var budgetTotalBytes = 0L
         private const val TRIM_EVERY_BYTES = 32L shl 20
 
         /** As the live server: the overview level, halo and blend band of a zoom come from this latitude. */
