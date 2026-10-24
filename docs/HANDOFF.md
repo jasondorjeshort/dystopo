@@ -11,7 +11,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   branches or worktrees remain; `dystopo-wt/T122` is the owner's locked folder.
 - **No pull requests from now on** (owner, 2026-10-24; ADR 0043): the implementer reports, the
   coordinator merges the verified branch with `--no-ff` and pushes through `push-verified.sh` (the
-  `wave` skill's merge sequence). Wave 19's first merge is the ADR's check that the session may do it.
+  `wave` skill's merge sequence). Checked end to end 2026-10-24 with the T0 doc branch (d2a5f6fd).
 - Carry-backs `carry-back/test-hooks-cb1-skip` and `carry-back/handoff-no-process-ids` are on origin
   for Hatchery to land. The live viewer and the standalone server are wanted from the main checkout.
 
@@ -23,8 +23,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 2. A Hatchery-rooted session: land the two carry-back branches (`carry-back` skill, Land), file
    `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` there and delete it here, give
    its proposal 0003 ADR 0043's lessons; then ADR 0021's follow-ups and the second base update.
-3. The build tasks of ADR 0040 and 0041 once the owner has looked at their positions; ADR 0042's
-   after its confirmations.
+3. The build tasks of ADR 0040 and 0041 after the owner's positions; ADR 0042's after its confirmations.
 
 ## Waiting on user
 

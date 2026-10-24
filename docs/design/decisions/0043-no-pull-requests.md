@@ -80,6 +80,8 @@ trigger is the first merge of wave 19.
   `tools/merge-log.py`'s usage text.
 
 - Prediction, check when wave 19's first merge lands: the merge commit and `push-verified.sh` run
-  from this session without the owner typing a line.
+  from this session without the owner typing a line. Outcome 2026-10-24: held, checked early on the
+  owner's word with the T0 doc branch (merge d2a5f6fd): branch push, `--no-ff` merge and the push of
+  `main` all ran from the session; the guard asked only that each push be a call of its own.
 - Prediction, check by 2026-12-01: no task branch is deleted before its merge is on `origin/main`
   (`git branch -d` and the `--merged` listing hold without GitHub's check).
