@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-24
+
+- T136: Offline areas and trip corridor follow-ups
+
 ## v0.1.11-alpha (2026-10-24)
 
 Spoken turn directions, off by default: with the setting on, the phone says each turn once as the navigation card shows it, in your units, through the phone's own voice. Every saved or planned trip keeps a 1 km corridor offline around it by default (a setting from off to 10 km), counted against the pinned budget. The navigation card's header shrinks to its icon's height, the scale bar stays below the card and is measured on its own row under tilt, and the debug UI routes answer 503 in the background. The phone's own rendering with no server is admitted by the free heap and its caches are trimmed on memory pressure, so a cold view after a long session no longer runs out of memory (slower at zooms 8 to 11; a larger heap is a follow-up). A battery script measures tracking, navigation and an idle map per scenario on a real phone. Decided: stops and reroute (ADR 0040), polygon areas in the manifest (ADR 0041), uploading tracks to OpenStreetMap (ADR 0042, proposed). Tooling: the update check's tag follows the build, a two-emulator both-units check, the carry-back push policy, and the device tour's direct step honest with a server.
