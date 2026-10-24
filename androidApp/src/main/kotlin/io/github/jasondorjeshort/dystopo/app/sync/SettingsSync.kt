@@ -19,6 +19,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T110: the scale bar's both-units choice (`app.scaleBar.both`, `on` or `off`; [ScaleBarSettings], not a
  * [SettingsRoutes] key, so it is applied here and not through `POST /settings`) syncs too ([LOCAL_KEYS]).
  * T126: spoken directions (`app.navSpeech`, `on` or `off`) are a [SettingsRoutes] key and sync through it.
+ * T136: so is the trip corridor's width (`app.tripCorridorM`, whole metres, `0` off); the per-trip "not kept" choice
+ * stays on the phone (T130).
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -38,6 +40,9 @@ object SettingsSync {
 
     /** T126: spoken turn directions, a [SettingsRoutes] key whose synced value is `on` or `off`. */
     const val NAV_SPEECH = "navSpeech"
+
+    /** T136: the trip corridor's width each side, a [SettingsRoutes] key whose synced value is whole metres (`0` off). */
+    const val TRIP_CORRIDOR_M = "tripCorridorM"
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -77,6 +82,7 @@ object SettingsSync {
         for (k in MapOptions.KEYS) m[syncedKey(k)] = map[k]?.toString()
         m += localValues(ScaleBarSettings.bothUnits) // T110
         m[syncedKey(NAV_SPEECH)] = onOff(AppSettings.navSpeech) // T126
+        m[syncedKey(TRIP_CORRIDOR_M)] = AppSettings.tripCorridorM.toString() // T136
         return m
     }
 
@@ -127,6 +133,7 @@ object SettingsSync {
         }
         parsed.map.keys.forEach { keys += syncedKey(it) }
         if (parsed.navSpeech != null) keys += syncedKey(NAV_SPEECH) // T126
+        if (parsed.tripCorridorM != null) keys += syncedKey(TRIP_CORRIDOR_M) // T136
         publishKeys(app, keys)
     }
 

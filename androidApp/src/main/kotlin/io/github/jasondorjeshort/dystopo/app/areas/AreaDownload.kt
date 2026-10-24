@@ -101,7 +101,10 @@ object AreaDownload {
     @Volatile var job: Job? = null
         private set
 
-    fun json(): Map<String, Any?>? = job?.json()
+    /** T136: the last few downloads that ended before the current one (id, name, state, tiles), newest first: a cancelled one stays visible after the next starts. */
+    private val recent = java.util.concurrent.ConcurrentLinkedDeque<Map<String, Any?>>()
+
+    fun json(): Map<String, Any?>? = job?.json()?.plus("recent" to recent.toList())
 
     fun cancel(id: String? = null): Boolean {
         val j = job ?: return false
@@ -246,6 +249,8 @@ object AreaDownload {
                     downloadMs = if (j.state == "refused") r.downloadMs else j.finishedAt - j.startedAt,
                 )
             }
+            recent.addFirst(linkedMapOf("id" to j.id, "name" to j.name, "state" to j.state, "done" to j.done.get(), "planned" to j.planned.get(), "bytes" to j.bytes.get(), "finishedAt" to j.finishedAt))
+            while (recent.size > 5) recent.pollLast()
             Log.i(Areas.TAG, "area ${j.name}: ${j.state}, ${j.fetched.get()} fetched, ${j.cached.get()} cached, ${j.inPacks.get()} in packs, ${j.bytes.get()} bytes, ${j.finishedAt - j.startedAt} ms")
         }
     }

@@ -47,6 +47,8 @@ import java.security.MessageDigest
  *   `POST /routes/{id}/directions?save=1` makes and saves them now where the packs allow ([Trips.migrateDirections]).
  *   Opening a trip without them (the card, `POST /routes/{id}/open`) makes them in the background (`directions.working`
  *   meanwhile); `POST /routes/{id}/open?wait=1` answers after that.
+ * - T136: `GET /routes` has `cardShown`: the trip card is drawn (a trip open, and neither the Routes list nor the
+ *   Offline areas sheet stands in for it; either keeps the trip open behind it, and Close brings the card back).
  * - T130: `GET /routes/{id}` has `corridor`, the trip card's corridor line (`state`: kept, downloading, queued, partial,
  *   refused, notKept, off, none; `text` as shown; `actions`; the trip's `areas`); `POST /routes/{id}/corridor?keep=1|0[&wait=ms]`
  *   is Keep offline or Stop keeping (`wait` answers after the corridors' thread is done). `GET /routes` has `tripFit`
@@ -237,6 +239,8 @@ object TripRoutes {
         "listOpen" to Trips.listOpen, "editing" to Trips.editingId, "tool" to Trips.tool, "message" to Trips.message,
         "lastEdit" to Trips.lastEdit, "overlay" to Trips.overlay.json(), "directionsMigrated" to Trips.directionsMigrated, // T108
         "tripFit" to Trips.lastFit, // T130 (T122's follow-up): the editor's last fit, as `GET /route` `ui.tripFit`
+        // T136: the trip card is drawn (a trip open, neither the Routes list nor the Offline areas sheet over it)
+        "cardShown" to (Trips.editingId != null && !Trips.listOpen && !io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen),
     )
 
     /** T130: the trip card's corridor line ([io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.status]) and the trip's areas. */

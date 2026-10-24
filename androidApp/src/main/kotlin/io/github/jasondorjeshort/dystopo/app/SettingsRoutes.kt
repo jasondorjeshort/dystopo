@@ -27,6 +27,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
  *   T126 `navSpeech` (1/0, default 0): spoken turn directions while navigating ([io.github.jasondorjeshort.dystopo.app.nav.NavSpeech]),
  *   synced; also Settings › Navigation and tracking and `POST /nav/speech?enabled=`.
+ *   T130 `tripCorridorM` (0 off, or 100 to 10000 m; default 1000): the corridor every trip keeps offline; T136: synced
+ *   (`app.tripCorridorM`, the metres as a whole number). Raising `pinnedCacheMb` (T136) tries a refused trip corridor again.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -74,7 +76,6 @@ class SettingsRoutes(private val app: DystopoApp) {
         val directMb = params["directSessionMb"]?.let { it.toString().toDoubleOrNull()?.toLong() ?: return Response.json(mapOf("error" to "directSessionMb must be a number of MB (got $it)"), 400) }
         val directMobile = params["directOnMobileData"]?.let { raw -> when (raw.toString()) { "1", "true", "on" -> true; "0", "false", "off" -> false; else -> return Response.json(mapOf("error" to "directOnMobileData must be 1 or 0 (got $raw)"), 400) } }
         io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).setDirect(directMb, directMobile)?.let { return Response.json(mapOf("error" to it), 400) }
-        params["tripCorridorM"]?.let { io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.setWidth(it)?.let { e -> return Response.json(mapOf("error" to e), 400) } } // T130
         apply(parsed)
         return Response.json(AppSettings.json() + io.github.jasondorjeshort.dystopo.app.online.DirectPrefs.json(app))
     }
@@ -90,7 +91,12 @@ class SettingsRoutes(private val app: DystopoApp) {
         parsed.warmup?.let { AppSettings.setWarmup(it) }
         parsed.onlineCacheMb?.let { AppSettings.setOnlineCacheMb(it); io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.resize(it * ContourCache.MB) } // T41
         parsed.contourCacheMb?.let { AppSettings.setContourCacheMb(it); ContourCache.resize(it) }
-        parsed.pinnedCacheMb?.let { AppSettings.setPinnedCacheMb(it) } // T91: checked when an area downloads
+        parsed.pinnedCacheMb?.let { mb -> // T91: checked when an area downloads
+            val raised = mb > AppSettings.pinnedCacheMb
+            AppSettings.setPinnedCacheMb(mb)
+            if (raised) io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("budget $mb MB") // T136: a corridor refused at the old budget is tried again
+        }
+        parsed.tripCorridorM?.let { io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.applyWidth(it) } // T130; T136: through the parser, so it syncs
         parsed.routeSnapM?.let { AppSettings.setRouteSnapM(it) } // T57: the next plan uses it
         parsed.debugFixedPort?.let { AppSettings.setDebugFixedPort(it) } // T57: from the next launch
         if (parsed.navStaleS != null || parsed.navStartM != null || parsed.navSnoozeMin != null) {
@@ -126,6 +132,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             val navStaleS: Int? = null, val navStartM: Int? = null, val navSnoozeMin: Int? = null, // T91
             val pinnedCacheMb: Long? = null,
             val navSpeech: Boolean? = null, // T126
+            val tripCorridorM: Int? = null, // T130, T136
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -214,7 +221,12 @@ class SettingsRoutes(private val app: DystopoApp) {
             contourError?.let { return Parsed.Error(it) }
             val (pinned, pinnedError) = cacheMb(params, "pinnedCacheMb")
             pinnedError?.let { return Parsed.Error(it) }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech)
+            var tripCorridorM: Int? = null // T130; T136: validated here so a synced value goes through the same check
+            params["tripCorridorM"]?.let { raw ->
+                tripCorridorM = io.github.jasondorjeshort.dystopo.app.areas.parseCorridorWidth(raw)
+                    ?: return Parsed.Error(io.github.jasondorjeshort.dystopo.app.areas.corridorWidthError(raw))
+            }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

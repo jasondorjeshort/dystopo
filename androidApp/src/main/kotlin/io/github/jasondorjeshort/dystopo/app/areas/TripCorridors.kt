@@ -89,16 +89,12 @@ object TripCorridors {
 
     // ---- the setting ----
 
-    /** `POST /settings?tripCorridorM=`: validates, saves and applies the width; the error text, or null. */
-    fun setWidth(raw: Any?): String? {
-        val v = (raw as? Number)?.toDouble() ?: raw?.toString()?.trim()?.toDoubleOrNull()
-        val m = v?.takeIf { it.isFinite() }?.let { Math.round(it).toInt() }
-        if (m == null || !TripCorridor.validWidth(m)) return "tripCorridorM must be 0 (off) or ${TripCorridor.WIDTH_RANGE.first} to ${TripCorridor.WIDTH_RANGE.last} m (got $raw)"
+    /** A width `POST /settings` (or a sync) validated ([parseCorridorWidth]): saves it and reconciles when it changed. */
+    fun applyWidth(m: Int) {
         if (m != AppSettings.tripCorridorM) {
             AppSettings.setTripCorridorM(m)
             request("width $m")
         }
-        return null
     }
 
     // ---- the user's choices ----
@@ -183,18 +179,29 @@ object TripCorridors {
         val width = AppSettings.tripCorridorM
         val made = ArrayList<String>()
         val refused = ArrayList<String>()
+        val cancelled = ArrayList<String>()
         var current = 0
         if (width > 0) {
             val wants = plans.filter { it.id !in notKept }.map { it to areaOf(it, width.toDouble()) }
             val todo = wants.filter { (p, want) ->
                 val mine = Areas.all().filter { it.tripId == p.id }
-                mine.none { it.id == want.id }.also { if (!it) current++ }
+                // T136: an old corridor left unpinned by an edit is not current (an edit back to its shape makes it again)
+                mine.none { it.id == want.id && (it.pinned || it.state == "downloading") }.also { if (!it) current++ }
+            }
+            // T136: a trip whose corridor is current but was left downloading by a superseded run ([make]) drops its old ones once that is done.
+            for ((p, want) in wants) {
+                if (todo.any { it.first.id == p.id }) continue
+                val now = Areas.get(want.id) ?: continue
+                val old = Areas.all().filter { it.tripId == p.id && it.id != want.id && it.pack == null && !it.pinned }
+                if (old.isEmpty()) continue
+                if (now.state == "downloading") { afterDownload(); continue }
+                for (s in old) runCatching { Areas.remove(s.id) }.onSuccess { released++ }
             }
             setQueuedAll(todo.map { it.first.id }.toSet())
             for ((p, want) in todo) {
                 if (pending.get()) break // a newer ask: start over with what is true now
-                when (val r = make(p, want)) {
-                    null -> made += p.id
+                when (val r = make(p, want, cancelled)) {
+                    null, "superseded" -> made += p.id
                     else -> if (r.startsWith("refused")) refused += p.id
                 }
                 setQueued(p.id, false)
@@ -203,23 +210,22 @@ object TripCorridors {
         }
         return linkedMapOf(
             "why" to why, "run" to runs.incrementAndGet(), "widthM" to width, "trips" to plans.size, "current" to current,
-            "made" to made, "refused" to refused, "released" to released, "ms" to System.currentTimeMillis() - t0,
+            "made" to made, "refused" to refused, "cancelled" to cancelled, "released" to released, "ms" to System.currentTimeMillis() - t0,
         ).also { lastRun = it; Log.i(TAG, "reconcile: $it") }
     }
 
     /** Makes [want] the corridor of [p]: null when it downloaded (or is downloading), else why not. */
-    private fun make(p: RoutePlan, want: AreaOfInterest): String? {
+    private fun make(p: RoutePlan, want: AreaOfInterest, cancelled: MutableList<String> = ArrayList()): String? {
         val stale = Areas.all().filter { it.tripId == p.id && it.id != want.id && it.pack == null }
         refusals[p.id]?.let { f ->
             val cache = OnlineService.get(app).cache
             if (f.areaId == want.id && f.budgetMb == AppSettings.pinnedCacheMb && cache.pinnedBytes >= f.pinnedBytes) return "refused (unchanged)"
         }
+        // T136: the trip's old corridor still downloading is cancelled now (it used to finish first: the wait came before this).
+        swap.cancelStale(stale.map { it.id }).forEach { cancelled += it; Log.i(TAG, "cancelled the old corridor $it of ${p.id}") }
         waitIdle()
         // The old corridor first loses its pin (its tiles stay in the cache for the new download to find), and goes when the new one is done.
-        for (s in stale) {
-            if (AreaDownload.job?.let { it.id == s.id && it.running } == true) { AreaDownload.cancel(s.id); waitIdle() }
-            runCatching { if (s.pinned) Areas.pin(s.id, false) }
-        }
+        for (s in stale) runCatching { if (s.pinned) Areas.pin(s.id, false) }
         val plan = try {
             AreaDownload.plan(want)
         } catch (e: Exception) {
@@ -241,7 +247,9 @@ object TripCorridors {
             setNote(p.id, e.message ?: "could not start")
             return "not started: ${e.message}"
         }
-        waitIdle()
+        // T136: a newer ask (the trip edited again, another trip saved) ends the wait; the download goes on, and the next run
+        // either finds it current (its old corridors go when it is done) or cancels it as stale.
+        if (waitIdle(orPending = true)) return "superseded"
         val done = Areas.get(want.id)
         if (done == null) {
             setNote(p.id, AreaDownload.job?.error ?: "the download did not finish")
@@ -251,11 +259,23 @@ object TripCorridors {
         return null
     }
 
-    /** Waits while an area download runs (one at a time), at most an hour. */
-    private fun waitIdle() {
-        val t0 = System.currentTimeMillis()
-        while (AreaDownload.job?.running == true && System.currentTimeMillis() - t0 < 3_600_000) Thread.sleep(250)
+    private val watching = AtomicBoolean(false)
+
+    /** T136: a run again once the running download is over (one watcher at a time). */
+    private fun afterDownload() {
+        if (watching.compareAndSet(false, true)) Thread({
+            try { waitIdle() } finally { watching.set(false) }
+            request("download over")
+        }, "dystopo-corridors-watch").apply { isDaemon = true }.start()
     }
+
+    private val swap = CorridorSwap(
+        running = { AreaDownload.job?.takeIf { it.running }?.id }, cancel = { AreaDownload.cancel(it) },
+        pending = { pending.get() }, pause = { Thread.sleep(250) },
+    )
+
+    /** Waits while an area download runs (one at a time), at most an hour; with [orPending], also until a newer ask (then true). */
+    private fun waitIdle(orPending: Boolean = false): Boolean = swap.waitIdle(orPending)
 
     // ---- state ----
 
@@ -319,6 +339,46 @@ object TripCorridors {
     private fun setQueued(tripId: String, on: Boolean) = ui.publish(2_000) { queued = if (on) queued + tripId else queued - tripId }
     private fun setQueuedAll(ids: Set<String>) = ui.publish(2_000) { queued = ids }
 }
+
+/**
+ * T136: the order in which a trip's corridor is replaced, apart from the downloads it drives (tested with a fake): the
+ * trip's old corridors still downloading are cancelled first ([cancelStale]; T130 waited for the running download, so an
+ * edit during it finished the old corridor before the new one started), then the corridors' thread waits until no download
+ * runs ([waitIdle]), and while the new one downloads a newer ask ends the wait ([waitIdle] with `orPending`).
+ * [running] is the running download's area id (null when none), [cancel] cancels one by id (false when it is not running).
+ */
+internal class CorridorSwap(
+    private val running: () -> String?,
+    private val cancel: (String) -> Boolean,
+    private val pending: () -> Boolean,
+    private val pause: () -> Unit,
+    private val timeoutMs: Long = 3_600_000,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    /** Cancels the downloads of [stale] areas that are running; returns the ids cancelled. */
+    fun cancelStale(stale: Collection<String>): List<String> = stale.filter { running() == it && cancel(it) }
+
+    /** Waits while a download runs, at most [timeoutMs]; with [orPending], returns true as soon as a newer ask waits. */
+    fun waitIdle(orPending: Boolean = false): Boolean {
+        val t0 = clock()
+        while (running() != null && clock() - t0 < timeoutMs) {
+            if (orPending && pending()) return true
+            pause()
+        }
+        return false
+    }
+}
+
+/** T130, T136: the width setting from `POST /settings` or a synced value: whole metres, 0 (off) or within [TripCorridor.WIDTH_RANGE]; null when not. Pure, tested. */
+internal fun parseCorridorWidth(raw: Any?): Int? {
+    val v = (raw as? Number)?.toDouble() ?: raw?.toString()?.trim()?.toDoubleOrNull()
+    val m = v?.takeIf { it.isFinite() }?.let { Math.round(it).toInt() } ?: return null
+    return m.takeIf { TripCorridor.validWidth(it) }
+}
+
+/** T130: the 400's text for a width [parseCorridorWidth] refused. */
+internal fun corridorWidthError(raw: Any?): String =
+    "tripCorridorM must be 0 (off) or ${TripCorridor.WIDTH_RANGE.first} to ${TripCorridor.WIDTH_RANGE.last} m (got $raw)"
 
 /** T130: what [corridorStatus] needs of a trip's area record. */
 internal data class RecordView(val state: String, val pinned: Boolean, val bytes: Long, val estimateBytes: Long, val error: String?, val widthM: Int)
