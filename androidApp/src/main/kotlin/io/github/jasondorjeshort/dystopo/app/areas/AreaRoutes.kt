@@ -47,6 +47,9 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   trip's area carries its `tripId`; `POST /areas/{id}/pin?on=0` and `DELETE /areas/{id}` on one also stop keeping that
  *   trip (not made again until Keep offline, `POST /routes/{id}/corridor?keep=1`, or Pin). The width is
  *   `POST /settings?tripCorridorM=` (0 off, 100 to 10000 m; 1000 by default), also the default `bufferM` of `?trip=`.
+ * - T136: the width syncs (`app.tripCorridorM`); raising `pinnedCacheMb` retries a refused corridor; a trip edited during its
+ *   corridor's download cancels it (`lastRun.cancelled`), and `GET /areas/download` keeps the ended downloads in `recent`
+ *   (newest first, five); `GET /areas` `outline.corridors` is every kept corridor, with `drawn` while the sheet shows it.
  */
 object AreaRoutes {
     private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss)?$")
