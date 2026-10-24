@@ -2,6 +2,7 @@
 
 Date: 2026-10-12
 Status: accepted (owner's rule)
+2026-10-24: the merge item reads "merging a verified task branch" since ADR 0043 (no pull requests); the rest stands.
 
 Record: commit `99a84e5` ("Rule: the coordinator's own hands; everything that runs the project is
 delegated"), the first bullet of "Coordinating a wave" in `CLAUDE.md`; carried to Hatchery the same

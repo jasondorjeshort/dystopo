@@ -2,7 +2,7 @@
 
 Date: 2026-10-16
 Status: superseded by 0036
-0036 (2026-10-17, the owner's answers) allows a subagent's pull, merge and rebase on `main` and takes `triage`; 0037 (2026-10-17) replaces the Updating section with the base's ownership map and a departure table. Every other section here stands.
+0036 (2026-10-17, the owner's answers) allows a subagent's pull, merge and rebase on `main` and takes `triage`; 0037 (2026-10-17) replaces the Updating section with the base's ownership map and a departure table; 0043 (2026-10-24) sets `git.branchDelete.requireMergedPr` false, there being no pull requests. Every other section here stands.
 
 Record: the first `update-from-hatchery` run here (Hatchery `89f63c8` to `987265c`, the base line in
 ADR 0020); Hatchery's ADRs 0006 (the policy file), 0010 (the base line decides the update mode) and

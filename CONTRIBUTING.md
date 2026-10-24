@@ -23,11 +23,12 @@ the same for people:
   same files. A change that needs a file another task owns waits for a later task or becomes a small, listed hook.
 - **Debug before you push.** Whoever writes a change also runs it end to end, not just the unit tests: render the
   affected places and look at the PNGs, run the browser check for viewer changes, run the device tour for app
-  changes. The pull request says exactly what was run and what was seen.
-- **A second pass verifies.** Every pull request is checked by someone (or some agent) other than its author:
-  rebase on `main`, run `./gradlew check`, repeat the key runs from the PR description, look at the images,
+  changes. The report that goes with the branch, the merge commit's body, says exactly what was run and what was seen.
+- **A second pass verifies.** Every task branch is checked by someone (or some agent) other than its author:
+  rebase on `main`, run `./gradlew check`, repeat the key runs from the report, look at the images,
   and report merge, merge with notes, or fix.
-- **Merges are squashed**, and the maintainer records each one in the Phase 0 log in
+- **The maintainer merges** each verified branch (a merge commit whose body is the report; the project's own
+  work opens no pull requests, outside contributions arrive as pull requests) and records each one in the Phase 0 log in
   [docs/PLANNING.md](docs/PLANNING.md) with what was measured and what is left. [CHANGELOG.md](CHANGELOG.md) is
   the one-line-per-task summary of that log.
 - **Design decisions** live in [docs/PLANNING.md](docs/PLANNING.md) and, as records, in
@@ -79,7 +80,7 @@ too: nearby place names, lidar project names, elevation tile names.
   `--no-verify`**; if one fires, change the content.
 - The same checker scans the whole history on demand, printing counts only:
   `git log -p --all | java tools/PrivacyCheck.java scan`.
-- Pull request text is not checked by the hooks: describe personal areas generically ("a Colorado mountain area").
+- A merge message is scanned like any commit; the text of an outside pull request is not: describe personal areas generically ("a Colorado mountain area").
 
 ## Licences
 

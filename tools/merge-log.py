@@ -1,11 +1,11 @@
 """Integrator helper: records a merged task in the three places that must stay in step.
 
-Usage (from anywhere inside the repo, after `gh pr merge`):
+Usage (from anywhere inside the repo, after the coordinator's merge; the `wave` skill):
     python -I tools/merge-log.py <task-id> <entry-file> <status-file> [<pr-number>]
 
 - <entry-file>: the dated log paragraph for docs/PLANNING.md. It starts with
-  **YYYY-MM-DD: Tnn merged (PR #n): title.** and is inserted at the end of the development log.
-- <status-file>: the **Status: merged (PR #n).** line with follow-ups, appended to the task in docs/TASKS.md.
+  **YYYY-MM-DD: Tnn merged: title.** (older entries carry `(PR #n)`) and is inserted at the end of the development log.
+- <status-file>: the **Status: merged.** line with follow-ups, appended to the task in docs/TASKS.md.
 - CHANGELOG.md gets one line under the entry's date in the Unreleased section (newest first).
 Then `git add docs CHANGELOG.md && git commit -m "Planning log: Tnn merged"`. See the wave skill, .claude/skills/wave/SKILL.md (merge sequence).
 """

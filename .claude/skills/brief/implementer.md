@@ -12,22 +12,22 @@ may read but never stop or ask to build: <the coordinator's live server, or "non
 Task (from TASKS.md, binding): <Goal, verbatim or "as written">.
 
 Owns: <the Owns line, plus anything resolved for this wave>. Anything else: a few lines at most,
-named in the PR.
+named in your report.
 
 Context only this task knows: <owner's words, decisions since the task was written, or "none">.
 Already ruled out: <what was tried and why it failed, with finding paths, or "nothing">.
-Sequencing: <PRs that touch the same files and the order, or "none">.
+Sequencing: <branches that touch the same files and the order, or "none">.
 
 Done when: <the Done-when line>, plus `./gradlew check` green and the docs your change touches
-updated in the same PR (`CLAUDE.md`, Debug before you push).
+updated on the same branch (`CLAUDE.md`, Debug before you push).
 
 Process: temporary files go in a folder of your own under the session scratchpad (`<scratchpad>\Tnn\`;
 every agent of the session shares the scratchpad root, and files written there have been overwritten
-by another agent); commit as you go; debug end to end with the real tooling and view the PNGs; before the PR:
-`./gradlew check`, `git fetch && git rebase origin/main`, push `task/Tnn`, `gh pr create --fill`
-with a body listing what was run and seen (numbers, screenshots described, public places only), every
-edit outside Owns, and follow-ups. Stop only processes you started, by PID or serial; stop your Gradle
+by another agent); commit as you go; debug end to end with the real tooling and view the PNGs; before you hand over:
+`./gradlew check`, `git fetch && git rebase origin/main`, push `task/Tnn`. There are no pull requests
+(ADR 0043): your report to the coordinator is the record and becomes the merge commit's body. Stop only processes you started, by PID or serial; stop your Gradle
 daemons before you report.
 
-Report to the coordinator: PR number, what was measured, what is not done, anything you could not
-place. Under 30 lines.
+Report to the coordinator: the branch's head SHA, what was run and seen (numbers, screenshots
+described, public places only), every edit outside Owns, follow-ups, what is not done, anything you
+could not place. Under 40 lines; it is pasted into the merge commit.

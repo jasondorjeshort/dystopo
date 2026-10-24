@@ -19,8 +19,8 @@ resume pointers are this project's.
 
 ## Steps
 
-1. Gather: `git -C <main checkout> status -sb`, `git log --oneline -8`, `gh pr list`, the open rows of
-   `docs/findings/README.md`, the tasks still in flight (task id, PR number, verdict so far), and what
+1. Gather: `git -C <main checkout> status -sb`, `git log --oneline -8`, `git branch -r --list 'origin/task/*'`, the open rows of
+   `docs/findings/README.md`, the tasks still in flight (task id, branch head, verdict so far), and what
    this session knows that is not yet in a file. Not PIDs, ports, emulator serials or agent ids: they
    die with the session and are one machine's; `out/coordinator-pids.txt` (gitignored) is their
    only record, and the handoff says at most that a server is wanted (owner, 2026-10-17).

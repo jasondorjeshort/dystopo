@@ -66,7 +66,7 @@ the release smoke tour through a deep link, and the sync simulator. CI runs the 
 
 ## Where each topic is documented
 
-- Rules for agents (workflow, privacy, licences, debugging before a PR), with pointers: `CLAUDE.md`.
+- Rules for agents (workflow, privacy, licences, debugging before the handover), with pointers: `CLAUDE.md`.
 - Where work stands now and next: `docs/HANDOFF.md` (imported into every session).
 - Commands, debug routes, emulators, this machine's paths and ports, Windows quirks: `docs/reference/` (index `docs/reference/README.md`, one topic per file with a `verified:` date).
 - Decisions (ADRs, from 0020): `docs/design/decisions/` (index in its README); proposals for major choices before they become ADRs: `docs/design/proposals/` (created with the first one).

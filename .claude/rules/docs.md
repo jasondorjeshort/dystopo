@@ -59,7 +59,7 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   (`README.md`, `decisions/README.md`, `reference/README.md`), base-owned; never edited here.
 - A new directory under `docs/` or a new kind of document gets a line in the last section of
   `docs/ARCHITECTURE.md`.
-- `docs/ideas/` is a queue: one dated file per item, deleted in the pull request that lands its work,
+- `docs/ideas/` is a queue: one dated file per item, deleted on the task branch that lands its work,
   never ticked (ADR 0036). Git has the history; a directory holding only its README is the resting
   state. An idea ends in at most one block: `Plan:` (settled, pass-sized, ready to build),
   `Question:` with a blank `Answer:` (the owner's choice; they fill the answer in), or `Waits:` (the

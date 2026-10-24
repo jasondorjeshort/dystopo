@@ -7,7 +7,7 @@ gotchas. Cap 300 lines; split by topic when near it. When a fact turns out to be
 and bump `verified:`; do not append history. A fact gets here directly when it is certain, or by
 promotion from a finding (`finding` skill). Most of these files were paragraphs of `CLAUDE.md` until
 T84 (ADR 0020); the endpoint and command lines in them are kept current by the task that changes
-them, in the same PR.
+them, on the same branch.
 
 | File | Topic | Verified |
 |---|---|---|

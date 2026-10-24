@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-14
+verified: 2026-10-24
 source: observed on this machine (Windows 11, Windows PowerShell 5.1.26100, Git Bash); findings linked below
 ---
 
@@ -13,8 +13,8 @@ What holds on the development machine for every agent. The rules these facts sup
 
 - Two tools: Git Bash (POSIX) and Windows PowerShell 5.1. In 5.1 `&&` and `||` do not exist (use
   `A; if ($?) { B }`), and `2>&1` on a native command wraps stderr in error records.
-- PowerShell 5.1 splits a native command's arguments on double quotes: `gh pr merge` bodies are
-  quote-free, and arguments containing dots or dashes passed to `powershell -File` are quoted whole.
+- PowerShell 5.1 splits a native command's arguments on double quotes: a commit or merge message with
+  quotes goes in a file (`-F`), and arguments containing dots or dashes passed to `powershell -File` are quoted whole.
 - `gh ... --jq` with special characters in the expression breaks in PowerShell; run `gh` from Git Bash.
 - Bash heredocs: no apostrophes, no `\n` sequences; write such text with the Write or Edit tool. The
   same for text that mentions a destructive git command (the `git-guard` hook reads the command text).
@@ -26,7 +26,7 @@ What holds on the development machine for every agent. The rules these facts sup
   `git -C <path> ...`, and start any commit or push meant for another repository with
   `git -C <path> rev-parse --show-toplevel` (finding `../findings/2026-10-11-reported-push-that-never-happened.md`).
 - Prove a push from the remote: `bash tools/push-verified.sh` (push, fetch, compare SHAs, print
-  VERIFIED); `gh pr view --json mergedAt` for a merge; `gh release view` for a release.
+  VERIFIED; a task branch's merge is proved the same way, ADR 0043); `gh release view` for a release.
 - The git hooks (`tools/git-hooks`, `git config core.hooksPath tools/git-hooks`, once per clone) run in
   worktrees too.
 

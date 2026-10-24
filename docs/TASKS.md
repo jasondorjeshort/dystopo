@@ -5,9 +5,9 @@ Work is split into tasks that don't depend on each other, so several agents can 
 Every task is done only when:
 1. `./gradlew check` passes (existing tests plus new ones).
 2. An agent can exercise the feature from the command line and see the result as JSON or PNG.
-3. The PR description reports what was measured (timings, counts, image observations), using only public areas from `areas.json`.
+3. The implementer's report (the merge commit's body, ADR 0043) says what was measured (timings, counts, image observations), using only public areas from `areas.json`.
 
-"Owns" lists the files a task may change freely. Touching anything else should be a few lines at most and called out in the PR. Two tasks that both need `MapRenderer.kt` are told below which part is theirs.
+"Owns" lists the files a task may change freely. Touching anything else should be a few lines at most and called out in the report. Two tasks that both need `MapRenderer.kt` are told below which part is theirs.
 
 ## Owner actions pending (as of 2026-10-10)
 - **The repo has been public since 2026-10-11.** The one pre-public leftover, PR #45's 2026-10-10 08:13 description revision that named a private place, was deleted by the owner through the UI the same day (confirmed by the API: `deletedAt` set). Scans before and after going public were clean: tree, history, every PR's current text, the release APK's strings.
