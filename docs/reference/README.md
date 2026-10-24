@@ -21,5 +21,6 @@ them, in the same PR.
 | `android-debug-routes.md` | Every debug route family (health, screenshot, camera, stats, settings, storage, packs, routes, navigation, areas, probe) | 2026-10-12 |
 | `android-tracks-and-sync.md` | Tracks and GPX, phone-to-phone sync and the relay, sync with the server | 2026-10-12 |
 | `android-online.md` | The phone reading the sources with no server, the cold view stage by stage, no Wi-Fi gates, pinned areas and content versions, in-app updates, first run and cleartext | 2026-10-14 |
+| `android-battery.md` | `tools/android-battery.py`: the app's battery use per scenario (tracking screen off, navigation, idle map) from `dumpsys batterystats`, how to run it on a phone, the report's fields, results | 2026-10-23 |
 | `android-release.md` | The release build and signing, deep links, `android-release.ps1` | 2026-10-12 |
 | `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, and the sweep's device parts | 2026-10-14 |
