@@ -1,40 +1,40 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-23, at commit f78d1f0d, by main session
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 18 (its wave
-paragraph holds ownership, ports, the replay recipe and the benchmark questions); the `handoff` skill.
+Updated: 2026-10-23, at commit 6720d21f, by main session
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 18 (T135 open); `handoff` skill.
 
 ## Now
 
-- Wave 18 launched 2026-10-23 on the owner's account after the critic pass (2 blocking, 6 serious,
-  7 minor, all taken into the plan): nine implementers at once, T126 to T131 (code and measurement)
-  and T132 to T134 (proposals 0040 to 0042, each ending at `under review`). No PR yet.
-- The coordinator's live viewer (8765) and standalone server (8800) run from the main checkout over
-  the old Rainier packs; the profile 2 rebuild failed (`areas.json`'s box ends west of Sunrise).
-- Wave 17 leftovers cleared except the locked `dystopo-wt/T122` folder (`gradlew --stop` is the owner's).
+- Wave 18 on the owner's account: eight of nine merged and logged (T126 to T132, T134); PR #15 (T133,
+  ADR 0041) verified, rebased and mergeable, the owner runs the merge (this account's mode refuses
+  the coordinator's `gh pr merge`); its log entry comes from the PR body. `dystopo-wt/T122` stays locked.
+- The sweep of `main` at dd0383f1 (`out/sweep-20261023-2206`): 23 parts green, `device-tour` red on
+  T127's direct step with a server (finding below); T135, the fix, implementing on `task/T135`, no PR.
+- Carry-backs `carry-back/test-hooks-cb1-skip` and `carry-back/handoff-no-process-ids` are on origin
+  for Hatchery to land; the ownership-map one is an idea for Hatchery's queue (Next 3).
+- The live viewer and the standalone server are wanted from the main checkout (`machines.md`).
 
 ## Next
 
-1. As each T126 to T131 PR arrives: a Sonnet verifier (`brief` skill, `verifier.md`; ports 8790 to
-   8799, consoles 5660 to 5670), then the merge sequence of the `wave` skill.
-2. As each proposal PR arrives: a critic (most capable model, `proposal` skill's `brief-critic.md`),
-   its review sent back to the same agent, then the `adr` skill or the open positions below.
-3. After T129 merges: a chore sends the three pending carry-backs of ADR 0038 (`carry-back` skill).
-4. After the wave: a chore rebuilds the Rainier outdoors pack on profile 2 over the old pack's
-   bounds; the post-wave sweep (`sweep` skill); then v0.1.11-alpha (`release` skill, ADR 0024).
-5. Hatchery: ADR 0021's follow-ups T-a to T-g from a Hatchery-rooted session; then the second base
-   update and a `CLAUDE.md` rules pass.
+1. T135's PR: a Sonnet verifier (`brief` skill), the `wave` skill's merge sequence, then a Haiku
+   chore reruns `tools\sweep.ps1 -Only device-boot,device-tour` on `main`.
+2. Green: v0.1.11-alpha (`release` skill, ADR 0024) and the README status paragraph; rewrite this file.
+3. A Hatchery-rooted session: land the two carry-back branches (`carry-back` skill, Land), file
+   `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` there and delete it here; then
+   ADR 0021's follow-ups and the second base update.
+4. The next wave from `docs/TASKS.md` › Later and the answers below; critic pass before launch.
 
 ## Waiting on user
 
-- The S Pen question; a real-phone run of T131's battery script once it merges; the `RELEASE_*`
-  secrets; the T122 folder (`gradlew --stop`), `git branch -D triage-saved` and the `refs/original/*`
-  cleanup; whether the two older Claude-authored commits get rewritten; T122's strings (nav card
-  1.5 cap, three help texts); the wave 18 strings and the proposals' positions as their PRs land.
-- Real-phone checks; Google developer registration; MapLibre's compass (T100); T104's palette and
-  captions; the wave 14 to 17 strings and help texts (ADR 0031); the 5 s timeout grace.
+- The #15 merge line; ADR 0042's confirmations (account, per-upload sheet, 500 m trim, trackable
+  default, exception strings); ADR 0040's and 0041's positions; the wave 18 strings (T126's row and
+  help text, T130's corridor line, actions and sheet row; ADR 0031); a real-phone run of
+  `tools/android-battery.py`; whether session links may stay in PR bodies (not tracked files).
+- Carried: the S Pen question; the `RELEASE_*` secrets; the T122 folder, `triage-saved` and
+  `refs/original/*`; the two older Claude-authored commits; T122's and the wave 14 to 17 strings;
+  real-phone checks; Google developer registration; T100's compass; T104's palette; the 5 s grace.
 
 ## Open findings
 
-- `docs/findings/2026-10-21-direct-view-out-of-memory-after-a-tour.md` (T127, in flight)
+- `docs/findings/2026-10-23-direct-step-live-heap-unread-with-a-server.md` (T135, in flight)
