@@ -16,6 +16,9 @@ shape: `split.md` beside this file replaces steps 2 and 4 and the first rule bel
    `git log -1 --format='%h %cs' -- docs/HANDOFF.md docs/handoff/` (the last handoff change; its
    distance from `HEAD` and from today is the staleness), the open findings
    (`node .claude/hooks/queue-list.js findings --status open --json`), and what this session knows that is not yet in a file.
+   Not process ids, ports, emulator serials or agent ids: they die with the session and are one
+   machine's; a gitignored pid file is their only record, and the handoff says at most that a
+   server or device is wanted.
    With `D=docs/hatchery/decisions` where `! git remote | grep -qx hatchery && ! grep -rqE "^Hatchery base: [0-9a-f]{7,40}" docs/design/decisions/`, else `D=docs/design/decisions` (the `adr` skill's test):
    `grep -rh "^- Prediction, check by" $D/ | grep -v " Outcome " | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}" | sort | head -1`;
    a date on or before today, or a `FAIL` or `SKIP` fitness line in the last test run, puts
@@ -34,7 +37,7 @@ shape: `split.md` beside this file replaces steps 2 and 4 and the first rule bel
    Updated: YYYY-MM-DD by <main session | agent name>
 
    ## Now
-   1-3 bullets: what is in flight, which agent had it, exact state (files, failing test, blocker).
+   1-3 bullets: what is in flight, which agent had it, exact state (files, failing test, blocker); no process ids, ports or serials.
    The account the session ran on (the status line's account segment, the email local part), and the one the gate named, if it did.
    A pusher stop on behind or diverged, or a conflict on this file, as one bullet: it is how a session learns a parallel session exists (ADR 0015).
 
