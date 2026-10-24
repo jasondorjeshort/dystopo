@@ -56,7 +56,8 @@ class SourceCapReached(message: String) : RuntimeException(message)
  * T127: the renders at once are also sized from the free Java heap ([HeapGuard.admitNow]), the synthesis pyramid is
  * dropped on a trim ([trimMemory], registered with [HeapGuard]), the decoded blocks take an eighth of the heap
  * ([decodedCapBytes]) and the geoid offset memo 4 MB ([GEOID_MEMO_BYTES]); a cold Mont Blanc z9 view after the device
- * tour ran the 192 MB heap out (finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
+ * tour ran the 192 MB heap out (finding 2026-10-21-direct-view-out-of-memory-after-a-tour). T138: a trim empties the
+ * decoded blocks and the geoid memo in place too ([trimBlocks], [trimGeoidMemo]).
  * T127 (T112's deferred fold-in, ADR 0034): `cache/sources/`'s own trim follows the one cache total ([sourceCacheCapBytes],
  * [budgetTotalBytes] set by `cachebudget/CacheBudget`), so the total, not a fixed 512 MB, is its ceiling.
  */
@@ -216,6 +217,8 @@ class DirectSources(private val context: android.content.Context, private val ca
         // the server's 32 MB memo held 31 MB of the phone's heap after a tour (a heap dump).
         io.github.jasondorjeshort.dystopo.sources.elevation.Geoids.offsetCacheBytes = GEOID_MEMO_BYTES
         HeapGuard.register("directSources", ::trimMemory) // T127
+        HeapGuard.register("decodedBlocks", ::trimBlocks) // T138
+        HeapGuard.register("geoidMemo", ::trimGeoidMemo) // T138
         // T88: every cold range read on the timeline (file name, bytes, ms).
         io.github.jasondorjeshort.dystopo.sources.elevation.SourceTiming.onRead = { url, bytes, nanos -> DirectTrace.mark("read ${url.substringAfterLast('/')} ${bytes shr 10} KB ${nanos / 1_000_000} ms") }
         Thread({ trimSourceCache() }, "direct-trim").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
@@ -695,18 +698,25 @@ class DirectSources(private val context: android.content.Context, private val ca
     /** Renders holding a slot now, for [HeapGuard] (which may ask from its own thread while the slots are being made). */
     private fun runningNowSafe(): Int = runCatching { slots.runningNow }.getOrDefault(0)
 
-    /**
-     * T127: drops the synthesis pyramid's decoded tiles (made again from the online cache); the bytes dropped. The decoded
-     * COG blocks stay: every GeoTIFF opened, the geoid grids' included (`ProjGeoid`, outside the pool), holds the block
-     * cache it was opened with, so a new cache in its place left the old one alive beside it (a heap dump after such a
-     * trim found 23 MB of geoid blocks in a replaced cache); they are bounded by [decodedCapBytes] instead.
-     */
+    /** T127: drops the synthesis pyramid's decoded tiles (made again from the online cache); the bytes dropped. */
     fun trimMemory(): Long {
         val pyr = pyramid?.let { it.cachedTiles.toLong() * it.tileSize * it.tileSize * 4 } ?: 0L
         dropPyramid()
         memoryTrims++
         return pyr
     }
+
+    /**
+     * T138: empties the decoded COG blocks ([DecodedBlocks.clear], up to [decodedCapBytes], an eighth of the heap) in
+     * place; the bytes dropped. In place, not a new cache: every GeoTIFF opened, the geoid grids' included (`ProjGeoid`,
+     * outside the pool), keeps the cache it was opened with, so a new one beside it left the old blocks alive (T127's heap
+     * dump: 23 MB of geoid blocks in a replaced cache). A render running now keeps the blocks it holds; the rest are read
+     * again from the source range cache on disk.
+     */
+    fun trimBlocks(): Long = SourceIo.decodedBlocks?.clear() ?: 0L
+
+    /** T138: empties the geoid offset memo ([GEOID_MEMO_BYTES] at most); the bytes dropped. */
+    fun trimGeoidMemo(): Long = io.github.jasondorjeshort.dystopo.sources.elevation.Geoids.clearOffsetCache()
 
     // ---- the source cache's cap ----
 

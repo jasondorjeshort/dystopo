@@ -330,4 +330,18 @@ class DecodedBlocks(private val capBytes: Long) {
     }
 
     val sizeBytes: Long @Synchronized get() = bytes
+
+    /**
+     * T138: drops every decoded block and returns the bytes they held. The cache itself stays: every [RemoteTiff] keeps
+     * the [DecodedBlocks] it was opened with (the geoid grids' included), so a trim empties this one in place rather than
+     * putting a new one beside it (T127's heap dump found the replaced cache's blocks still held). Blocks are decoded again
+     * from the source range cache on the next read.
+     */
+    @Synchronized
+    fun clear(): Long {
+        val dropped = bytes
+        blocks.clear()
+        bytes = 0
+        return dropped
+    }
 }

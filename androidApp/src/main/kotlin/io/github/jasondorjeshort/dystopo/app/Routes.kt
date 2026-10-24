@@ -247,7 +247,7 @@ class Routes(private val app: DystopoApp) {
             "packs" to mapOf("dem" to packJson(t.packs.dem), "osm" to packJson(t.packs.osm), "glyphs" to t.packs.glyphDir?.path, "primary" to t.packs.name, "inUse" to t.packs.json()), // T41: every pack on the map
             "map" to mapOf(
                 "attached" to (m.mapView != null), "ready" to (m.map != null), "styleLoaded" to m.styleLoaded,
-                "styleError" to m.styleError, "framesRendered" to m.framesRendered,
+                "styleError" to m.styleError, "styleLoads" to m.styleLoads.get(), "framesRendered" to m.framesRendered, // T138: styleLoads
                 "lastScreenshotIdle" to lastScreenshotIdle,
                 "activity" to (m.backgroundReason() ?: "started"), // T123: what the background guard reads
             ) + m.idleJson(),

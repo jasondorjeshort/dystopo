@@ -128,10 +128,16 @@ object Geoids {
         return o
     }
 
+    /**
+     * Empties the offset memo and returns the bytes it held. T138: public for the phone's memory trim (the direct sources'
+     * hook in `HeapGuard`); a window is computed again when it is rendered again.
+     */
     @Synchronized
-    internal fun clearOffsetCache() {
+    fun clearOffsetCache(): Long {
+        val dropped = offsetBytes
         offsetCache.clear()
         offsetBytes = 0
+        return dropped
     }
 
     private fun computeOffsets(window: MercatorWindow, step: Int): Offsets {

@@ -47,6 +47,8 @@ class MapController {
         private set
     @Volatile var styleError: String? = null
         private set
+    /** T138: styles set on the map since the process started (`GET /health` `map.styleLoads`): a check that a tile came without a reload. */
+    val styleLoads = java.util.concurrent.atomic.AtomicLong()
 
     /** Tile requests the loopback server is handling or has queued; set by [Routes]. */
     @Volatile var pendingTiles: () -> Int = { 0 }
@@ -206,6 +208,7 @@ class MapController {
 
     fun loadStyle(json: String, onStyle: (Style) -> Unit = {}) {
         val m = map ?: return
+        styleLoads.incrementAndGet()
         styleLoaded = false
         styleError = null
         fullyLoaded = false

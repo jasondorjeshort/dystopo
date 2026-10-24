@@ -429,6 +429,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "versionReloads" to versionReloads.get(),
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
+        "osmAnswered503" to app.tiles.online?.osmTile503?.get(), // T138: vector tiles whose fetch failed, answered 503 so MapLibre asks again
         "styleRefreshesAfterReconnect" to refreshes.get(),
         "serverInfo" to info?.let { mapOf("demMinZoom" to it["demMinZoom"], "demMaxZoom" to it["demMaxZoom"], "osmMaxZoom" to it["osmMaxZoom"]) },
         "download" to region.json(),
