@@ -45,5 +45,5 @@ and prints `live.error` on its console line. On one fresh API 35 AVD (192 MB hea
 views ok and the direct step ok: with `--server` set to a `serve --live` the live heap was 67 and 66 MB (0.35 and
 0.34 of the max; sampled peaks 0.76 and 0.82), 130 DEM tiles rendered on the phone, switched and restored both
 times; with `--server none` 75 and 47 MB (0.39 and 0.24; peaks 0.65 and 0.62), 231 and 242 tiles. Bound 0.8 (154 MB)
-unchanged. The sweep's `device-boot,device-tour` part: see T135's PR. Durable part in
+unchanged. The sweep's `device-boot,device-tour` part (`tools/sweep.ps1 -Only device-boot,device-tour`, its own `serve --live`) green: both tours 10 of 10, the direct step ok, switched and restored, live heap 133 and 66 MB (0.69 and 0.34; 121 and 130 tiles). Durable part in
 `../reference/android-online.md` (The Java heap).
