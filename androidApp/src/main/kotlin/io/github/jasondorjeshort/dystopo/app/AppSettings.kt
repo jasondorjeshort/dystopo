@@ -76,6 +76,19 @@ object AppSettings {
         navStartM = p.getInt(KEY_NAV_START_M, DEFAULT_NAV_START_M).coerceIn(NAV_START_RANGE)
         navSnoozeMin = p.getInt(KEY_NAV_SNOOZE_MIN, DEFAULT_NAV_SNOOZE_MIN).coerceIn(NAV_SNOOZE_RANGE)
         mapOrientation = p.getString(KEY_MAP_ORIENTATION, null) ?: "north-up" // T100
+        navSpeech = p.getBoolean(KEY_NAV_SPEECH, false) // T126
+    }
+
+    // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
+
+    private const val KEY_NAV_SPEECH = "navSpeech"
+
+    @Volatile var navSpeech: Boolean = false
+        private set
+
+    fun setNavSpeech(on: Boolean) {
+        navSpeech = on
+        prefs?.edit()?.putBoolean(KEY_NAV_SPEECH, on)?.apply()
     }
 
     // ---- T100: the map orientation kept across restarts (controls/MapOrientation): north-up or facing ----
@@ -351,5 +364,6 @@ object AppSettings {
         "routeSnapRange" to listOf(ROUTE_SNAP_RANGE.first, ROUTE_SNAP_RANGE.last),
         "debugFixedPort" to debugFixedPort,
         "navStaleS" to navStaleS, "navStartM" to navStartM, "navSnoozeMin" to navSnoozeMin, // T91
+        "navSpeech" to navSpeech, // T126
     ) + mapOptions.json(units) // T47
 }

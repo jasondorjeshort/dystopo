@@ -25,6 +25,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   when no server is set) and `directOnMobileData` (1/0, default 1 since T83: no Wi-Fi gates); also in Settings › Sources.
  *   `onlineCacheMb` and `contourCacheMb` (T41) cap the online tile cache and the contour cache (all packs),
  *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
+ *   T126 `navSpeech` (1/0, default 0): spoken turn directions while navigating ([io.github.jasondorjeshort.dystopo.app.nav.NavSpeech]),
+ *   synced; also Settings › Navigation and tracking and `POST /nav/speech?enabled=`.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -94,6 +96,10 @@ class SettingsRoutes(private val app: DystopoApp) {
         if (parsed.navStaleS != null || parsed.navStartM != null || parsed.navSnoozeMin != null) {
             AppSettings.setNav(parsed.navStaleS, parsed.navStartM, parsed.navSnoozeMin) // T91: from the next navigation start
         }
+        parsed.navSpeech?.let { on -> // T126: from the next direction; off stops a line being said
+            AppSettings.setNavSpeech(on)
+            if (!on) io.github.jasondorjeshort.dystopo.app.nav.NavSpeech.silence()
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -119,6 +125,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             val routeSnapM: Int? = null, val debugFixedPort: Boolean? = null, // T57
             val navStaleS: Int? = null, val navStartM: Int? = null, val navSnoozeMin: Int? = null, // T91
             val pinnedCacheMb: Long? = null,
+            val navSpeech: Boolean? = null, // T126
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -131,7 +138,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb", "pinnedCacheMb") // T91: pinnedCacheMb
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin", "tripCorridorM") + MapOptions.KEYS + CACHE_KEYS // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
+        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin", "tripCorridorM", "navSpeech") + MapOptions.KEYS + CACHE_KEYS // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -171,6 +178,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             params["warmup"]?.let { raw -> warmup = flag(raw) ?: return Parsed.Error("warmup must be 1 or 0 (got $raw)") }
             var debugFixedPort: Boolean? = null
             params["debugFixedPort"]?.let { raw -> debugFixedPort = flag(raw) ?: return Parsed.Error("debugFixedPort must be 1 or 0 (got $raw)") }
+            var navSpeech: Boolean? = null // T126
+            params["navSpeech"]?.let { raw -> navSpeech = flag(raw) ?: return Parsed.Error("navSpeech must be 1 or 0 (got $raw)") }
             var routeSnapM: Int? = null
             params["routeSnapM"]?.let { raw ->
                 val v = (raw as? Number)?.toDouble() ?: raw.toString().trim().toDoubleOrNull()
@@ -205,7 +214,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             contourError?.let { return Parsed.Error(it) }
             val (pinned, pinnedError) = cacheMb(params, "pinnedCacheMb")
             pinnedError?.let { return Parsed.Error(it) }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned)
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

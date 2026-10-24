@@ -82,6 +82,15 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun spokenDirectionsAreAFlag() { // T126
+        assertEquals(true, ok("navSpeech" to "1").navSpeech)
+        assertEquals(false, ok("navSpeech" to "off").navSpeech)
+        assertEquals(true, ok("navSpeech" to "on").navSpeech, "the synced value (on or off) parses too")
+        assertNull(ok("units" to "m").navSpeech)
+        assertTrue(bad("navSpeech" to "loud").message.contains("navSpeech"))
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {
