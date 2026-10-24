@@ -101,6 +101,19 @@ object ScaleBarLayout {
     @Volatile var hiddenBecause: String? = "notComposed"
     @Volatile var zoom = Double.NaN
     @Volatile var lat = Double.NaN
+
+    /**
+     * T128 (T101's follow-up): the camera's tilt the bar was fitted at, the ground scale it used (metres per dp) and
+     * where that scale was measured: `centre` (no tilt: the Web Mercator rule at the centre latitude, which is the
+     * scale at every row) or `row` (tilted: MapLibre's projection along the ruler's own row, [rowPx], since under tilt
+     * the scale grows towards the bottom of the screen and the centre row's length was wrong at the bar).
+     */
+    @Volatile var tilt = Double.NaN
+    @Volatile var metersPerDp = Double.NaN
+    @Volatile var measuredAt = "centre"
+
+    /** T128: the ruler line's row in window pixels (where a tilted map's scale is measured); NaN until drawn. */
+    @Volatile var rowPx = Float.NaN
     @Volatile var units: ContourUnits = ContourUnits.METERS
     @Volatile var night = false
     @Volatile var bars: List<ScaleLength> = emptyList()
@@ -114,6 +127,9 @@ object ScaleBarLayout {
     /** T115: the bottom edge of the top-left column (search box, online indicator) the bar stays below, dp from the window top. */
     @Volatile var topLeftBottomDp = 0f
 
+    /** T128: the navigation card's bottom edge the bar also stays below, dp from the window top (0 when not navigating). */
+    @Volatile var navCardBottomDp = 0f
+
     /**
      * T110: a hidden bar keeps no fit, bounds or drawn lengths, so nothing reads the last shown bar against a camera that
      * has moved since (`GET /scalebar`'s `readBack` did, T101); the next show fits and draws them again.
@@ -126,12 +142,19 @@ object ScaleBarLayout {
         boundsPx = null
         zoom = Double.NaN
         lat = Double.NaN
+        tilt = Double.NaN
+        metersPerDp = Double.NaN
     }
 
-    /** T110: whether the bar is shown and fitted at [zoom] and [lat] (the live camera), with every bar drawn. */
-    fun fittedAt(liveZoom: Double, liveLat: Double): Boolean =
+    /**
+     * T110: whether the bar is shown and fitted at [zoom] and [lat] (the live camera), with every bar drawn. T128: and at
+     * the live [tilt], measured along its row when tilted.
+     */
+    fun fittedAt(liveZoom: Double, liveLat: Double, liveTilt: Double = 0.0): Boolean =
         shown && boundsPx != null && bars.isNotEmpty() && drawnPx.size == bars.size &&
-            Math.abs(zoom - liveZoom) < 1e-9 && Math.abs(lat - liveLat) < 1e-9
+            Math.abs(zoom - liveZoom) < 1e-9 && Math.abs(lat - liveLat) < 1e-9 &&
+            Math.abs((tilt.takeIf { it.isFinite() } ?: 0.0) - liveTilt) < 1e-6 &&
+            (liveTilt < TILT_MIN_DEG || measuredAt == "row")
 
     fun json(): Map<String, Any?> {
         val b = boundsPx
@@ -154,7 +177,11 @@ object ScaleBarLayout {
             "zoom" to zoom.takeIf { it.isFinite() }?.let { round(it, 3) },
             "lat" to lat.takeIf { it.isFinite() }?.let { round(it, 5) },
             "maxWidthDp" to SCALE_BAR_MAX_DP,
-            "metersPerDp" to if (zoom.isFinite()) round(UnitFormat.metersPerPixel(zoom, lat), 4) else null,
+            "metersPerDp" to metersPerDp.takeIf { it.isFinite() }?.let { round(it, 4) }, // T128: the scale the bars were fitted with
+            "centreMetersPerDp" to if (zoom.isFinite()) round(UnitFormat.metersPerPixel(zoom, lat), 4) else null, // the Web Mercator rule at the centre
+            "tilt" to tilt.takeIf { it.isFinite() }?.let { round(it, 2) },
+            "measuredAt" to measuredAt, // T128: `centre` (no tilt) or `row` (the ruler's own row, `rowPx`)
+            "rowPx" to rowPx.takeIf { it.isFinite() }?.let { Math.round(it) },
             "density" to d,
             "bars" to bars.mapIndexed { i, s ->
                 linkedMapOf(
@@ -166,6 +193,8 @@ object ScaleBarLayout {
             "bottomFromWindowBottomDp" to bottomDp?.let { round(it.toDouble(), 1) },
             "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "bottomCardsTopDp" to cards, // T106
             "topLeftBottomDp" to topLeftBottomDp, // T115: the search box and the online indicator, from the window top
+            "navCardBottomDp" to navCardBottomDp, // T128: the navigation card, from the window top (0 when not navigating)
+            "clearOfNavCard" to if (!visible || b == null) null else navCardBottomDp <= 0f || b[1] / d >= navCardBottomDp,
             "topDp" to b?.let { round((it[1] / d).toDouble(), 1) }, // T115: the bar's top edge, from the window top
             // Clear: the bar's bottom edge is above the credit line, the route card, the track panels, the trip card and the update offer.
             "clear" to if (!visible || bottomDp == null) null else bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards,
@@ -182,7 +211,14 @@ object ScaleBarLayout {
 /** The longest a bar may be, in dp; the nice-length rule makes it 40 to 100% of this. */
 const val SCALE_BAR_MAX_DP = 100.0
 
-private data class ScaleView(val zoom: Double, val lat: Double, val units: ContourUnits, val night: Boolean)
+private data class ScaleView(
+    val zoom: Double, val lat: Double, val units: ContourUnits, val night: Boolean,
+    /** T128: the camera's tilt, and the ground scale at the ruler's row when tilted (NaN: the centre rule). */
+    val tilt: Double = 0.0, val rowMetersPerDp: Double = Double.NaN,
+)
+
+/** T128: below this tilt (degrees) the bar uses the Web Mercator rule at the centre, which every row then shares. */
+const val TILT_MIN_DEG = 0.5
 
 /**
  * T101: the scale bar, lower left on the map, above the credit line and above whatever bottom panel shows (the
@@ -227,7 +263,8 @@ fun ScaleBar() {
         return
     }
     val both = ScaleBarSettings.bothUnits
-    val mppDp = UnitFormat.metersPerPixel(v.zoom, v.lat)
+    val atRow = v.rowMetersPerDp.isFinite() // T128: tilted, measured along the ruler's own row
+    val mppDp = if (atRow) v.rowMetersPerDp else UnitFormat.metersPerPixel(v.zoom, v.lat)
     val primary = UnitFormat.scaleBar(mppDp, SCALE_BAR_MAX_DP, v.units)
     val other = if (both) UnitFormat.scaleBar(mppDp, SCALE_BAR_MAX_DP, if (v.units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET) else null
     if (primary == null) {
@@ -245,6 +282,9 @@ fun ScaleBar() {
     SideEffect {
         ScaleBarLayout.zoom = v.zoom
         ScaleBarLayout.lat = v.lat
+        ScaleBarLayout.tilt = v.tilt
+        ScaleBarLayout.metersPerDp = mppDp
+        ScaleBarLayout.measuredAt = if (atRow) "row" else "centre"
         ScaleBarLayout.units = v.units
         ScaleBarLayout.night = v.night
         ScaleBarLayout.bars = bars
@@ -252,7 +292,11 @@ fun ScaleBar() {
     // T115 (T110's follow-up): the recentre button's rule on the left. A tall bottom panel (the route card with its
     // directions open at font scale 2.0) pushed the bar up to about 70 px under the online indicator; it now never
     // reaches up to the top-left column (the search box and the online indicator): with no room left it hides.
-    val topLeft = with(density) { maxOf(TopChips.searchBottom, TopChips.onlineBottomPx.toDp()) }
+    val topLeftColumn = with(density) { maxOf(TopChips.searchBottom, TopChips.onlineBottomPx.toDp()) }
+    // T128 (T122's follow-up): and below the navigation card, which spans the top of the map. Above the card's 1.5 font
+    // scale cap a tall bottom panel pushed the bar up over the card, since only the top-left column bounded it.
+    val navCard = TopChips.navCardBottom
+    val topLeft = maxOf(topLeftColumn, navCard)
     Layout(
         content = { Column(
             Modifier
@@ -274,7 +318,12 @@ fun ScaleBar() {
             BasicText(primary.label, style = labelStyle)
             // The ruler: a line from 0 to the longer bar, a tick at 0 across both sides, the user's length ticked
             // upward and, with both units, the other length ticked downward.
-            Canvas(Modifier.width((widest + STROKE_DP).dp).height(if (other != null) 14.dp else 8.dp)) {
+            Canvas(Modifier.width((widest + STROKE_DP).dp).height(if (other != null) 14.dp else 8.dp).onGloballyPositioned { c ->
+                // T128: the ruler line's row in the window, where a tilted map's scale is measured (`read`)
+                val h = c.size.height.toFloat()
+                val strokePx = STROKE_DP.toFloat() * density.density
+                ScaleBarLayout.rowPx = c.boundsInRoot().top + if (other != null) h / 2 else h - strokePx / 2
+            }) {
                 val stroke = STROKE_DP.dp.toPx()
                 val x0 = stroke / 2
                 val lens = bars.map { it.px.dp.toPx() }
@@ -294,11 +343,14 @@ fun ScaleBar() {
         val bar = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
         val top = constraints.maxHeight - bar.height // the bar's top edge (its padding is below and to its left)
         val room = topLeft <= 0.dp || top >= (topLeft + TOP_LEFT_GAP).roundToPx()
-        ScaleBarLayout.topLeftBottomDp = topLeft.value
-        if (!room) ScaleBarLayout.hide(NO_ROOM_BELOW_TOP_LEFT)
+        ScaleBarLayout.topLeftBottomDp = topLeftColumn.value
+        ScaleBarLayout.navCardBottomDp = navCard.value
+        if (!room) ScaleBarLayout.hide(if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT)
         else if (ScaleBarLayout.bars.isEmpty()) { // shown again by a layout pass alone: the fit hide() dropped comes back
             ScaleBarLayout.zoom = v.zoom
             ScaleBarLayout.lat = v.lat
+            ScaleBarLayout.tilt = v.tilt
+            ScaleBarLayout.metersPerDp = mppDp
             ScaleBarLayout.bars = bars
         }
         layout(constraints.maxWidth, constraints.maxHeight) { if (room) bar.place(0, top) }
@@ -308,14 +360,40 @@ fun ScaleBar() {
 /** T115: why the bar is hidden when it would reach up to the top-left column (`GET /scalebar` `hiddenBecause`). */
 const val NO_ROOM_BELOW_TOP_LEFT = "noRoomBelowTopLeft"
 
+/** T128: why the bar is hidden when it would reach up to the navigation card. */
+const val NO_ROOM_BELOW_NAV_CARD = "noRoomBelowNavCard"
+
 /** T115: the least room kept between the bar and the top-left column (the recentre button keeps 8 dp below the chips). */
 private val TOP_LEFT_GAP = 8.dp
 
 private fun read(m: MapLibreMap): ScaleView? {
     val c = m.cameraPosition
     val target = c.target ?: return null
-    return ScaleView(c.zoom, target.latitude, AppSettings.units, AppSettings.mapOptions.night)
+    val tilt = c.tilt
+    val row = if (tilt >= TILT_MIN_DEG) rowMetersPerDp(m, ScaleBarLayout.rowPx) else Double.NaN
+    return ScaleView(c.zoom, target.latitude, AppSettings.units, AppSettings.mapOptions.night, tilt, row)
 }
+
+/**
+ * T128: the ground scale (metres per dp) along the screen row [rowPx] (window pixels; the map view fills the window's
+ * content as the Compose root does), from MapLibre's projection: the ground distance between two points
+ * [ROW_SPAN_DP] apart on that row from the bar's left edge. A tilted camera keeps a screen row at one depth, so the
+ * scale is the same along it. NaN before the ruler was drawn or when the row is off the map. Main thread.
+ */
+internal fun rowMetersPerDp(m: MapLibreMap, rowPx: Float): Double {
+    if (!rowPx.isFinite()) return Double.NaN
+    val density = DystopoApp.instance.resources.displayMetrics.density
+    val x0 = 8f * density
+    val span = ROW_SPAN_DP * density
+    val mpd = runCatching {
+        val a = m.projection.fromScreenLocation(android.graphics.PointF(x0, rowPx))
+        val b = m.projection.fromScreenLocation(android.graphics.PointF(x0 + span, rowPx))
+        a.distanceTo(b) / ROW_SPAN_DP
+    }.getOrDefault(Double.NaN)
+    return if (mpd.isFinite() && mpd > 0) mpd else Double.NaN
+}
+
+private const val ROW_SPAN_DP = 100f
 
 private const val STROKE_DP = 2.0
 
