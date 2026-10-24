@@ -36,7 +36,8 @@
 // file. No file of the repository is read except to check that policy.json loads, in F1 the
 // files .claude/hooks/fitness.json names, in O1 the tracked paths against ownership.json and in A1
 // the files under .claude/agreement/ (both skipped where a hatchery remote exists, ADR 0016), in
-// CB1 the authors and committers of main against policy.json (skipped likewise, ADR 0019),
+// CB1 the authors and committers of main against policy.json (skipped likewise, and in a tree with
+// a Hatchery base line, ADR 0019),
 // policy.js and imports.js, copied into the O cases' scratch repositories, and in groups H, HS and SL
 // .claude/settings.json, whose every command is run from a subfolder, and .claude/statusline.js;
 // ~/.claude is never touched. Group GI covers git.integrate (pull, merge and rebase apart from commit).
@@ -3091,9 +3092,39 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
 // CB1 reads this repository, like F1, O1 and A1, in the ADR 0013 line form: every author and
 // committer of `git log main` is in privacy.identities of this repository's policy.json (name and
 // address compared as the privacy scan's identity class does) or lifted by privacy.allow (the
-// scan's lift key of "name <email>"). Hatchery only: skipped where a hatchery remote exists, since
-// a project's history carries its own identities. A failure names the first such commit, never
-// the identity, so the line can be quoted in a report.
+// scan's lift key of "name <email>"). Hatchery only, by the `adr` skill's two-part test: skipped
+// where a hatchery remote exists or a `Hatchery base:` line sits under docs/design/decisions/ (the
+// base line travels with every clone; a fresh project clone has no hatchery remote), since a
+// project's history carries its own identities. A failure names the first such commit, never the
+// identity, so the line can be quoted in a report. CB2 and CB3 run the test on scratch trees.
+const cbProject = (root) => {
+  const remotes = spawnSync('git', ['-C', root, 'remote'], { encoding: 'utf8' });
+  if ((remotes.stdout || '').split(/\r?\n/).includes('hatchery')) return 'hatchery remote';
+  const dec = path.join(root, 'docs', 'design', 'decisions');
+  const line = fs.existsSync(dec) && fs.readdirSync(dec).filter((f) => f.endsWith('.md'))
+    .some((f) => /^Hatchery base: [0-9a-f]{7,40}/m.test(fs.readFileSync(path.join(dec, f), 'utf8')));
+  return line ? 'a Hatchery base line (a project tree)' : null;
+};
+if (selected('CB2') || selected('CB3')) {
+  const tree = (name, files) => {
+    const dir = path.join(scratch, `cb-${name}`);
+    fs.mkdirSync(dir, { recursive: true });
+    git(dir, 'init', '-q');
+    for (const [rel, text] of Object.entries(files)) {
+      const f = path.join(dir, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, text);
+    }
+    return dir;
+  };
+  const withLine = cbProject(tree('project', {
+    'docs/design/decisions/0001-decanted-from-hatchery.md': `# 0001\n\nHatchery base: ${'a'.repeat(40)}\n` }));
+  report('CB2', 'identities skipped in a tree with a Hatchery base line and no hatchery remote',
+    withLine === 'a Hatchery base line (a project tree)', `got ${JSON.stringify(withLine)}`);
+  const without = cbProject(tree('base', { 'docs/design/decisions/0001-x.md': '# 0001\n\nNo base line here.\n' }));
+  report('CB3', 'identities run in a tree with neither a hatchery remote nor a base line',
+    without === null, `got ${JSON.stringify(without)}`);
+}
 if (selected('CB1')) {
   const ROOT = path.resolve(HOOKS, '..', '..');
   const contract = (id, status, rest) => {
@@ -3101,8 +3132,8 @@ if (selected('CB1')) {
     process.stdout.write(`${status} ${id} ${rest}\n`);
     if (status === 'FAIL') fail++; else if (status === 'SKIP') skipped++; else pass++;
   };
-  const remotes = spawnSync('git', ['-C', ROOT, 'remote'], { encoding: 'utf8' });
-  if ((remotes.stdout || '').split(/\r?\n/).includes('hatchery')) contract('CB1', 'SKIP', 'identities: hatchery remote');
+  const skip = cbProject(ROOT);
+  if (skip) contract('CB1', 'SKIP', `identities: ${skip}`);
   else {
     const loaded = require('./policy').load(path.join(HOOKS, 'policy.json'));
     const log = spawnSync('git', ['-C', ROOT, 'log', 'main', '--format=%H%x00%an%x00%ae%x00%cn%x00%ce'],

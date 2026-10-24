@@ -181,8 +181,11 @@ on scratch trees (a forbidden require, a skip entry present and absent, a vendor
 without its licence line). It counts a `require('<m>')` literal wherever it appears in a scanned
 file, comments and strings included, by design. Group CB is the carry-back fitness check of ADR 0019:
 CB1 checks that every author and committer on `main` is in `privacy.identities` or lifted by a
-`privacy.allow` entry, and SKIPs where a `hatchery` remote exists; its FAIL line gives the count and
-the first bad sha on a separate `first:` line.
+`privacy.allow` entry, and SKIPs in a project tree by the `adr` skill's two-part test (a `hatchery`
+remote exists, or a `Hatchery base:` line sits under `docs/design/decisions/`, which travels with
+every clone where the remote does not); its FAIL line gives the count and the first bad sha on a
+separate `first:` line. CB2 and CB3 run that test on scratch trees (a base line and no remote skips;
+neither runs the check).
 
 Four cases read this repository instead of a scratch tree: F1 (`.claude/hooks/fitness.json` and the
 files it names), O1 (the tracked paths against `ownership.json`), A1 (the line count of
