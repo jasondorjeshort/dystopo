@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   that much spare now. One always may run. A first try that counted only the heap used at admission let ten renders in
  *   at the start of a cold view, before any had allocated, and they grew past the heap together (T127's PR).
  * - **Trims**: the in-memory caches outside the disk caches (the decoded DEM tiles of the packs', the online and the
- *   direct pyramids, the cliff tiles' memo) are dropped by [trim]:
+ *   direct pyramids, the cliff tiles' memo; T138: the decoded COG blocks and the geoid offset memo) are dropped by [trim]:
  *   on the application's `onTrimMemory` (`DystopoApp`; the activity is stopped while the app is in the background, so
  *   its own callback is not reached) and before a render when the heap is short ([renderLimit] schedules one, at most
  *   every [PRESSURE_TRIM_EVERY_MS], followed by a collection). Every cache refills from its disk cache.

@@ -24,10 +24,14 @@
         </intent>
     </queries>
 
+    <!-- T138: largeHeap lets the direct renders' heap admission (online/HeapGuard.kt) run more renders at once where the
+         phone allows (576 MB instead of 192 MB on the API 35 emulator); the measured cold views are in the report and
+         docs/reference/android-online.md (The Java heap). -->
     <application
         android:name=".DystopoApp"
         android:label="@string/app_name"
         android:allowBackup="false"
+        android:largeHeap="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity

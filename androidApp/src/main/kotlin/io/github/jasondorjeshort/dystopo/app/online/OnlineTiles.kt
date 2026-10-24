@@ -122,10 +122,19 @@ class OnlineTiles(
         }
     }
 
+    /**
+     * A vector tile: 200 with the tile, else 404 (MapLibre draws an empty tile). T138 (T123's leftover): a tile whose fetch
+     * failed ([Fetch.Unavailable]: OpenFreeMap's stall guard gave up, the server or the network was down) is recorded with
+     * [OnlineService.osmFailed], which fetches it again later and refreshes the map's vector source once it comes, so it is
+     * drawn without a style reload. Not a 503: MapLibre never asks for an errored tile again and never counts the map as
+     * fully loaded while one is in view (tried on the emulator; [StalledOsmTiles]).
+     */
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
         if (z !in 0..OSM_MAX_ZOOM) return TileResult.notFound()
-        val f = fetcher.get("osm", "$z/$x/$y.pbf", OnlineFetcher::gunzipIfNeeded)
+        val path = "$z/$x/$y.pbf"
+        val f = fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded)
         service.served("osm", f)
+        if (f is Fetch.Unavailable) service.osmFailed(path)
         return if (f is Fetch.Hit) TileResult(200, "application/x-protobuf", f.bytes) else TileResult.notFound()
     }
 
