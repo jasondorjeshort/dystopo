@@ -69,6 +69,18 @@ class TimedTrackTest {
     }
 
     @Test
+    fun aLongDriveFitsTheReplayBody() {
+        // About 82 km (the Paradise to Sunrise drive's length) as 900 points about 94 m apart, northward and eastward.
+        val long = (0 until 900).map { i -> RoutePoint(46.786 + 0.0008 * i, -121.735 + 0.0004 * i, 1600.0 + i) }
+        val gpx = TimedTrack.gpx(Route("r2", "Drive", long, type = "drive"), 40.0, 1_700_000_000_000L)
+        val fixes = TimedTrack.of(long, 40.0, 0L).size
+        assertTrue(fixes > 7_000, "$fixes fixes")
+        assertTrue(gpx.length < 1 shl 20, "${gpx.length} bytes, the loopback server takes at most 1 MiB")
+        assertTrue(gpx.length / fixes < 110, "${gpx.length / fixes} bytes a fix")
+        assertEquals(fixes, Gpx.parse(gpx).tracks.single().points.size)
+    }
+
+    @Test
     fun edgeCases() {
         assertFailsWith<IllegalArgumentException> { TimedTrack.of(pts, 0.0, 0L) }
         assertEquals(1, TimedTrack.of(pts.take(1), 40.0, 0L).size)

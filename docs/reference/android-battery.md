@@ -44,9 +44,9 @@ Screen-on scenarios raise `screen_off_timeout` for their length and restore it a
   own GPS feeds the recorder through the foreground service. Afterwards the screen on, `POST /tracks/stop`, and the
   track deleted unless `--keep-tracks`. On an emulator the script sets one `adb emu geo fix` at Paradise first.
 - **nav**: `POST /route` with the `paradise-sunrise-drive` line of `tools/routing-tour.txt` (drive mode, 82 km),
-  `GET /route/gpx`, `POST /nav/start?route=current`, then `POST /location/replay?rate=1` with the route resampled
-  to one fix a second at `--drive-kmh` (the route's GPX has no times; replayed bare it would move a whole route
-  segment a second). The replay starts again if it ends before the scenario. Navigation keeps the screen on.
+  `GET /route/gpx?track=1&kmh=<--drive-kmh>` (T137: the app's timed track, one fix a second at that speed; the
+  script no longer resamples the route itself), `POST /nav/start?route=current`, then `POST /location/replay?rate=1`
+  with that track (the plain route GPX has no times; replayed bare it would move a whole route segment a second). The replay starts again if it ends before the scenario. Navigation keeps the screen on.
   The phone's real GPS stays on beside the replayed fixes (`gpsMs` counts it).
 - **idle**: the map at Paradise, z13, loaded before the reset; nothing else runs.
 

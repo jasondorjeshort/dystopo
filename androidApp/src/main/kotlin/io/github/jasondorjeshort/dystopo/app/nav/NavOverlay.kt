@@ -274,7 +274,8 @@ internal val NAV_HELP: List<HelpText> = listOf(
     HelpText("nav.card", "Navigation card", "The map: while navigating", needs = "navigating") {
         "While you follow a route this card shows the next turn and how far away it is, then the next waypoint and the " +
             "end with the distance, time left and arrival time. Heading up turns the map with you, Recenter brings it back " +
-            "to you and Stop ends navigation."
+            "to you and Stop ends navigation. With spoken directions on, the speaker button silences them for this navigation " +
+            "only; the setting stays on."
     },
     HelpText("nav.fixLost", "No GPS fix", "The map: navigation card, when the position is old", needs = "navigating with an old position") {
         "The phone has had no new position for longer than GPS fix stale after (Settings › Navigation and tracking). The " +

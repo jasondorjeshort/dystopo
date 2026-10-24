@@ -208,13 +208,33 @@ object TimedTrack {
         return out
     }
 
+    /**
+     * The timed track as GPX 1.1, one line per fix with coordinates to 7 decimals (1 cm) and heights to 0.1 m: about 100
+     * bytes a fix, so a track fits the loopback server's 1 MiB request body (`POST /location/replay`) up to about 10,000
+     * fixes, 2.8 hours (the Paradise to Sunrise drive at 40 km/h is about 7,400). Written through
+     * [io.github.jasondorjeshort.dystopo.gpx.Gpx.write], pretty-printed, it took 158 bytes a fix and the drive was refused
+     * with a 413.
+     */
     fun gpx(route: io.github.jasondorjeshort.dystopo.model.Route, kmh: Double, startMs: Long): String {
         val pts = of(route.points, kmh, startMs)
-        val track = io.github.jasondorjeshort.dystopo.model.Track(
-            id = route.id, name = route.name, segments = listOf(io.github.jasondorjeshort.dystopo.model.TrackSegment(pts)),
-            description = "Timed at ${if (kmh % 1.0 == 0.0) kmh.toInt().toString() else kmh.toString()} km/h, one fix a second",
-            type = route.type,
-        )
-        return io.github.jasondorjeshort.dystopo.gpx.Gpx.write(io.github.jasondorjeshort.dystopo.gpx.GpxDocument(tracks = listOf(track)))
+        val speed = if (kmh % 1.0 == 0.0) kmh.toInt().toString() else kmh.toString()
+        val sb = StringBuilder(256 + pts.size * 104)
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        sb.append("<gpx version=\"1.1\" creator=\"").append(io.github.jasondorjeshort.dystopo.gpx.Gpx.CREATOR).append("\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
+        sb.append("<trk><name>").append(xml(route.name)).append("</name><desc>Timed at ").append(speed).append(" km/h, one fix a second</desc>")
+        route.type?.let { sb.append("<type>").append(xml(it)).append("</type>") }
+        sb.append("<trkseg>\n")
+        for (p in pts) {
+            sb.append("<trkpt lat=\"").append(fixed(p.lat, 7)).append("\" lon=\"").append(fixed(p.lon, 7)).append("\">")
+            p.ele?.let { sb.append("<ele>").append(fixed(it, 1)).append("</ele>") }
+            sb.append("<time>").append(io.github.jasondorjeshort.dystopo.gpx.GpxFormat.formatTime(p.time!!)).append("</time></trkpt>\n")
+        }
+        sb.append("</trkseg></trk></gpx>\n")
+        return sb.toString()
     }
+
+    private fun fixed(v: Double, decimals: Int): String =
+        java.math.BigDecimal(v).setScale(decimals, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+
+    private fun xml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }

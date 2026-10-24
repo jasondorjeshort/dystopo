@@ -53,7 +53,7 @@ object NavSpeech {
     data class Ui(val muted: Boolean = false, val notice: String? = null, val failure: String? = null)
 
     /** T137: the notice's words when the engine cannot speak (ADR 0031: the owner's to adjust). */
-    const val NOTICE_NO_ENGINE = "Spoken directions are not available: this phone has no text-to-speech engine. Install one in Android text-to-speech settings."
+    const val NOTICE_NO_ENGINE = "No text-to-speech engine for spoken directions. Install one in Android text-to-speech settings."
     const val NOTICE_NO_VOICE = "No voice installed for spoken directions. Install one in Android text-to-speech settings."
 
     interface Engine {
