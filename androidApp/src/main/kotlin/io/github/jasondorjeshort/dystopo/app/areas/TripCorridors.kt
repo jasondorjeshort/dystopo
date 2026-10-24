@@ -185,7 +185,8 @@ object TripCorridors {
             val wants = plans.filter { it.id !in notKept }.map { it to areaOf(it, width.toDouble()) }
             val todo = wants.filter { (p, want) ->
                 val mine = Areas.all().filter { it.tripId == p.id }
-                mine.none { it.id == want.id }.also { if (!it) current++ }
+                // T136: an old corridor left unpinned by an edit is not current (an edit back to its shape makes it again)
+                mine.none { it.id == want.id && (it.pinned || it.state == "downloading") }.also { if (!it) current++ }
             }
             // T136: a trip whose corridor is current but was left downloading by a superseded run ([make]) drops its old ones once that is done.
             for ((p, want) in wants) {
