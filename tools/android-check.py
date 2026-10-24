@@ -641,6 +641,43 @@ def live_heap(server, exe, serial, timeout=20.0):
 
 
 def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True, shot=None):
+    """T135 (finding 2026-10-23-direct-step-live-heap-unread-with-a-server): the direct view measures the phone's own
+    renders, so with a server configured (the sweep's `--server`) the app is switched to no server for the step
+    (`POST /settings?server=`, the same process: the tour's caches stay) and switched back afterwards (`serverSwitch`:
+    from, switched, restored). When it cannot be switched the step is recorded as skipped with the reason (`skipped`,
+    ok) rather than measuring a view the server answers; a failed restore fails the step (the rest of the run would
+    use the wrong server)."""
+    configured = server.json("/online").get("server")  # AppSettings.server; None with no server (direct://sources)
+    if not configured:
+        return direct_view(server, exe, serial, view, bound_share, wait_ms, restart, clear_sources, shot)
+    switch = {"from": configured}
+    try:
+        set_app_server(server, "")
+        now = server.json("/online")
+        switch["switched"] = not now.get("server") and (now.get("direct") or {}).get("direct") is True
+        if not switch["switched"]:
+            switch["error"] = f"the app reports server {now.get('server')!r} and direct {(now.get('direct') or {}).get('direct')!r}"
+    except (urllib.error.URLError, OSError, ValueError, RuntimeError, http.client.HTTPException) as e:
+        switch["switched"], switch["error"] = False, str(e)[:200]
+    try:
+        if switch["switched"]:
+            rep = direct_view(server, exe, serial, view, bound_share, wait_ms, restart, clear_sources, shot)
+        else:
+            rep = {"label": view["label"], "view": view["view"], "boundShare": bound_share, "ok": True,
+                   "skipped": f"the app's server could not be switched off for the step: {switch.get('error')}"}
+    finally:
+        try:
+            set_app_server(server, configured)
+            switch["restored"] = server.json("/online").get("server") == configured
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError, http.client.HTTPException) as e:
+            switch["restored"], switch["restoreError"] = False, str(e)[:200]
+    rep["serverSwitch"] = switch
+    if not switch["restored"]:
+        rep["ok"] = False
+    return rep
+
+
+def direct_view(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True, shot=None):
     """T127: one cold direct view (no pack covers it, no server): the online cache cleared (pinned tiles kept) and,
     with `clear_sources`, the phone's source range cache too, so every DEM tile is rendered from the public sources;
     then the camera, a screenshot once idle (or after `wait_ms`), the Java heap sampled from /stats all along, then the
@@ -1115,10 +1152,17 @@ def main():
               file=sys.stderr)
     for r in summary["directStep"].get("views", []):
         mb = lambda b: f"{b / 1048576:.0f}" if b else "-"
+        sw = r.get("serverSwitch")
+        sw = (f"; server {sw.get('from')} switched {sw.get('switched')}, restored {sw.get('restored')}" if sw else "")
+        if r.get("skipped"):
+            print(f"direct {r['view']} {r['label']}: {'skipped' if r['ok'] else 'FAIL'} ({r['skipped']}){sw}", file=sys.stderr)
+            continue
+        live_err = (r.get("live") or {}).get("error")  # T135 (T127's follow-up): why the live heap was not read
         print(f"direct {r['view']} {r['label']}: {'ok' if r['ok'] else 'FAIL'} live heap {mb(r.get('liveBytes'))} of "
               f"{mb((r.get('heap') or {}).get('maxBytes'))} MB (bound {mb(r.get('boundBytes'))}), sampled peak {mb(r.get('peakBytes'))} MB, "
               f"idle {r.get('idle')} at {r.get('idleSeconds')} s, "
-              f"same process {r.get('sameProcess')}, OOM lines {len(r.get('oom') or [])}" + (f", error {r['error']}" if r.get("error") else ""),
+              f"same process {r.get('sameProcess')}, OOM lines {len(r.get('oom') or [])}" + (f", error {r['error']}" if r.get("error") else "")
+              + (f", live error {live_err}" if live_err else "") + sw,
               file=sys.stderr)
     print(f"{summary['viewsOk']}/{summary['viewsTotal']} views ok; sheet {summary['sheet']}; summary {stem}.json", file=sys.stderr)
     print(json.dumps(summary, indent=2))

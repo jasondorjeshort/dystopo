@@ -9,6 +9,8 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  * - `GET /online`: server, state (online / offline / unknown / none), the view and its source (pack,
  *   online, cached, none), fetcher counters (requests, cache hits, fetches, not found, errors, negative
  *   cache, backoff), the disk cache (entries, bytes, cap, evictions), contours made online, the download job.
+ *   `direct`: the no-server path's record with `direct: true`, or `{direct: false, memory}` with a server (T135: the
+ *   heap record, `memory`, either way).
  * - `POST /online/download[?bbox=w,s,e,n][&zooms=8-13][&name=][&profile=outdoors|openmaptiles]`: "Download this region" for the box
  *   (default: the visible map) through the server's `/build` and the pack downloader. `GET /online/download`:
  *   progress. `DELETE /online/download`: cancel.
