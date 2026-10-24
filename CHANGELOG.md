@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.12-alpha (2026-10-24)
+
+The app asks Android for a large heap (192 MB to 576 MB on the API 35 emulator), so the phone's own rendering of an unseen place no longer waits on memory: cold views at zooms 8 to 11 went from 119 to 245 s to 84 to 138 s, and a memory-pressure trim also empties the decoded elevation blocks and the geoid memo. A roads-and-labels tile whose download stalled is fetched again after a short wait and drawn in place with no map reload. The navigation card gains a speaker button that mutes spoken directions for this navigation only and a notice with Dismiss when the phone has no text-to-speech engine or no English voice; the online indicator stays below the card while navigating. The Offline areas sheet opens over the trip editor without the trip card showing through, the trip corridor width is synced between phones, an edit during a corridor download cancels the old download first, and a raised pinned budget builds a corridor that was refused. Tooling: a route exported as a timed track for replays and the battery script, the update check's fixtures follow the build under test, a two-phone both-units part in the sweep.
+
 ### 2026-10-24
 
 - T138: The memory follow-ups of T127, and the stalled online tile
