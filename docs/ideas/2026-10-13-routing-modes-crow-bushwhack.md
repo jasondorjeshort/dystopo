@@ -36,3 +36,8 @@ Today the router is graph-only; a point not near a trail gets no route (except a
 
 Question: the crow mode is built (T108); does bushwhacking come next, and when? It changes the router and the route format (edges off the graph), so this file already says proposal and critic first, and the off-trail safety wording is yours. Recommendation: hold it until the route-to stops and reroute proposal (`2026-10-13-route-waypoints-and-reroute.md`) is decided, since both change the route format phones sync and should land in one version step; then a proposal for the grid A* cost model.
 Answer: hold until the stops and reroute proposal is decided, then a proposal for the grid A* cost model, as recommended (owner, 2026-10-23).
+2026-10-23 (T132): the stops and reroute proposal, `docs/design/proposals/0040-stops-and-reroute.md`
+(promoted to ADR 0040, `docs/design/decisions/0040-stops-and-reroute.md`), finds that bushwhacking needs no path version step: the mode is a string the T108 rule
+already tolerates, off-trail stretches are leg geometry, new directions make the saved directions count
+as absent on older builds, and per-leg data rides as a keyed side field; only a new `LegKind` would
+need a version, and then it rides with 0040's build. The grid A* proposal is still the next step here.
