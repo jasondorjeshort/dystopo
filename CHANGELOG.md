@@ -6,6 +6,9 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-23
 
+- T126: Spoken turn directions (#19)
+- T127: The direct view out of memory after a full tour (#21)
+- T134: Proposal 0042: OpenStreetMap trace upload (#14)
 - T128: Android layout follow-ups of waves 14 to 17, and the background UI routes (#18)
 - T130: An automatic corridor around every saved and planned route (#17)
 - T131: Battery measurement on a real phone (#16)
