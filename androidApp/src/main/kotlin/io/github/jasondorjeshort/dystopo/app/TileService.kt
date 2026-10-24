@@ -431,7 +431,7 @@ class TileService(
                 contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
                 contourMaxZoom = demHi + 1,
                 // `c1`: cliff lines turned downhill-right (T41), so tiles cached before that are not reused.
-                osmTiles = if (osmPacks.isNotEmpty() || o != null) token.url("$base/osm/{z}/{x}/{y}.pbf?v=$v-c1") else null,
+                osmTiles = if (osmPacks.isNotEmpty() || o != null) token.url("$base/osm/{z}/{x}/{y}.pbf?v=$v-c1" + (if (o != null) OnlineService.get().osmSourceRefreshes.get().let { n -> if (n > 0) "-o$n" else "" } else "")) else null, // T138: and the vector source refreshes (OsmSourceRefresh)
                 osmMinZoom = if (o == null) osmLo else 0,
                 osmMaxZoom = if (o == null) osmHi ?: 14 else maxOf(osmHi ?: 0, OnlineTiles.OSM_MAX_ZOOM),
                 glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }.let { if (it.startsWith("http")) token.url(it) else it }, // T38: refetch after offline

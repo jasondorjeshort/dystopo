@@ -96,6 +96,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         configure(AppSettings.server)
         probeThread.schedule(::probeLoop, 1, TimeUnit.SECONDS)
         probeThread.scheduleWithFixedDelay(::refreshWhenRendered, 2, 1, TimeUnit.SECONDS) // T80
+        probeThread.scheduleWithFixedDelay(::retryStalledOsm, 2, 2, TimeUnit.SECONDS) // T138
         app.map.onCameraIdle = ::onViewChanged // T41
         app.map.onMapIdle = ::onMapIdle // T110
     }
@@ -250,6 +251,76 @@ class OnlineService private constructor(private val app: DystopoApp) {
         } catch (e: Throwable) {
             Log.w(TAG, "refresh after rendering failed", e)
         }
+    }
+
+    // ---- T138: vector tiles left empty after a failed fetch ----
+
+    /** Vector tiles answered empty because their fetch failed, fetched again later ([retryStalledOsm]). */
+    val stalledOsm = StalledOsmTiles()
+
+    /** Times the map's vector source was replaced to draw recovered tiles ([OsmSourceRefresh]; in the style's tile URL version). */
+    val osmSourceRefreshes = AtomicLong()
+    @Volatile private var lastOsmRefresh: Map<String, Any?>? = null
+    @Volatile private var osmRefreshWanted = false
+    @Volatile private var osmRefreshAt = 0L
+    @Volatile private var styleLoadsSeen = -1L
+    private val osmRetrying = java.util.concurrent.atomic.AtomicBoolean()
+
+    /** [OnlineTiles.osmTile]: vector tile [path] (`z/x/y.pbf`) was answered empty because its fetch failed. */
+    fun osmFailed(path: String) {
+        stalledOsm.failed(path, System.currentTimeMillis())
+        if (isDirect) DirectTrace.mark("oStall $path")
+    }
+
+    /**
+     * T138, every 2 s on the probe thread: a style load since the last look clears [stalledOsm] (MapLibre asked for every
+     * tile again); the due tiles are fetched again on the prefetch pool, and once one came back the vector source is
+     * replaced ([OsmSourceRefresh]) at most every [OSM_REFRESH_EVERY_MS], so the tile is drawn without a style reload.
+     */
+    private fun retryStalledOsm() {
+        try {
+            val loads = app.map.styleLoads.get()
+            if (loads != styleLoadsSeen) {
+                if (styleLoadsSeen >= 0) stalledOsm.styleLoaded(System.currentTimeMillis())
+                styleLoadsSeen = loads
+            }
+            val now = System.currentTimeMillis()
+            if (osmRefreshWanted && now - osmRefreshAt >= OSM_REFRESH_EVERY_MS) {
+                osmRefreshWanted = false
+                osmRefreshAt = now
+                refreshOsmSource()
+            }
+            val f = fetcher ?: return
+            val due = stalledOsm.due(now)
+            if (due.isEmpty() || !osmRetrying.compareAndSet(false, true)) return
+            prefetchPool.execute {
+                try {
+                    var back = 0
+                    for (path in due) {
+                        val ok = f.get("osm", path, OnlineFetcher::gunzipIfNeeded) is Fetch.Hit
+                        stalledOsm.result(path, ok, System.currentTimeMillis())
+                        if (ok) back++
+                    }
+                    if (back > 0) {
+                        if (isDirect) DirectTrace.mark("oBack $back of ${due.size}")
+                        osmRefreshWanted = true
+                    }
+                } finally {
+                    osmRetrying.set(false)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "retrying stalled vector tiles failed", e)
+        }
+    }
+
+    private fun refreshOsmSource() {
+        osmSourceRefreshes.incrementAndGet() // first: the new style URL carries it, so MapLibre takes it as a new tile set
+        val json = app.tiles.style()
+        val result = app.map.onMain { app.map.map?.style?.let { OsmSourceRefresh.refresh(it, json) } ?: mapOf("skipped" to "no map") }
+        lastOsmRefresh = result + ("at" to System.currentTimeMillis())
+        if (isDirect) DirectTrace.mark("osmRefresh ${result["layers"] ?: result["skipped"]}")
+        Log.i(TAG, "vector source refreshed for recovered tiles: $result")
     }
 
     /** After an offline spell that left tiles blank, reload the style once the server answers again. */
@@ -429,7 +500,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "versionReloads" to versionReloads.get(),
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
-        "osmAnswered503" to app.tiles.online?.osmTile503?.get(), // T138: vector tiles whose fetch failed, answered 503 so MapLibre asks again
+        "stalledOsm" to stalledOsm.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138
         "styleRefreshesAfterReconnect" to refreshes.get(),
         "serverInfo" to info?.let { mapOf("demMinZoom" to it["demMinZoom"], "demMaxZoom" to it["demMaxZoom"], "osmMaxZoom" to it["osmMaxZoom"]) },
         "download" to region.json(),
@@ -456,6 +527,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
         const val CACHED = "cached"
         const val PROBE_ONLINE_MS = 30_000L
         const val PROBE_OFFLINE_MS = 5_000L
+        /** T138: at most one vector source refresh for recovered tiles this often. */
+        const val OSM_REFRESH_EVERY_MS = 5_000L
         /** T74: the content versions of every source, kept across restarts (outside the tile cache directory). */
         const val VERSIONS_FILE = "online/versions.json"
 

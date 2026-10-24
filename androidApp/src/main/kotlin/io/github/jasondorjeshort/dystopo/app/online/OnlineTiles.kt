@@ -123,31 +123,20 @@ class OnlineTiles(
     }
 
     /**
-     * A vector tile: 200 with the tile, 404 where the source has none (MapLibre draws a 404 tile as empty and keeps it).
-     * T138 (T123's leftover): a fetch that failed ([Fetch.Unavailable]: OpenFreeMap's stall guard gave up, the server
-     * or the network is down) answers 503 ([osmTile503]). MapLibre takes a 404 tile as empty for good, so the stalled
-     * tile stayed blank until the style reloaded; a 503 is a server error, which MapLibre asks again by itself (after 1 s
-     * three times, then doubling), each answered at once while the fetcher's per-tile failure memo holds
-     * ([OnlineFetcher]'s 30 s), then fetched again: the tile is drawn once the host answers, with no style reload. Not
-     * counted in [notReady], which reloads the style (OnlineService).
+     * A vector tile: 200 with the tile, else 404 (MapLibre draws an empty tile). T138 (T123's leftover): a tile whose fetch
+     * failed ([Fetch.Unavailable]: OpenFreeMap's stall guard gave up, the server or the network was down) is recorded with
+     * [OnlineService.osmFailed], which fetches it again later and refreshes the map's vector source once it comes, so it is
+     * drawn without a style reload. Not a 503: MapLibre never asks for an errored tile again and never counts the map as
+     * fully loaded while one is in view (tried on the emulator; [StalledOsmTiles]).
      */
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
         if (z !in 0..OSM_MAX_ZOOM) return TileResult.notFound()
-        val f = fetcher.get("osm", "$z/$x/$y.pbf", OnlineFetcher::gunzipIfNeeded)
+        val path = "$z/$x/$y.pbf"
+        val f = fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded)
         service.served("osm", f)
-        return when (vectorTileStatus(f)) {
-            200 -> TileResult(200, "application/x-protobuf", (f as Fetch.Hit).bytes)
-            503 -> {
-                osmTile503.incrementAndGet()
-                if (fetcher.server == DirectSources.SERVER) DirectTrace.mark("o503 $z/$x/$y")
-                TileResult(503, "text/plain", "vector tile $z/$x/$y unavailable: ${(f as? Fetch.Unavailable)?.reason}; try again\n".toByteArray())
-            }
-            else -> TileResult.notFound()
-        }
+        if (f is Fetch.Unavailable) service.osmFailed(path)
+        return if (f is Fetch.Hit) TileResult(200, "application/x-protobuf", f.bytes) else TileResult.notFound()
     }
-
-    /** T138: vector tiles answered 503 because their fetch failed ([osmTile]); MapLibre asks for them again. */
-    val osmTile503 = java.util.concurrent.atomic.AtomicLong()
 
     /**
      * A glyph range the device does not have, from the server; null when the server has none either (the
@@ -430,11 +419,4 @@ class OnlineTiles(
             return out
         }
     }
-}
-
-/** T138: the loopback status for a vector tile lookup ([OnlineTiles.osmTile]): 200 found, 404 none there, 503 failed (MapLibre asks again). Pure, tested. */
-internal fun vectorTileStatus(f: Fetch): Int = when (f) {
-    is Fetch.Hit -> 200
-    Fetch.Missing -> 404
-    is Fetch.Unavailable -> 503
 }
