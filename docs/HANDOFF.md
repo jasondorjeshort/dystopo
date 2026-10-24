@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-24, with ADR 0043's commit on `main`, by main session
+Updated: 2026-10-24, with wave 19 planned on `main` (d2890067), by main session
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Later; `handoff` skill.
 
 ## Now
@@ -17,9 +17,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. Wave 19: plan from `docs/TASKS.md` › Later (the sweep's T130 and T128 observations, T127's
-   `largeHeap` and `clear()` follow-ups, the `?track=1` replay option, the carried follow-ups of the
-   wave 18 Status lines) and the owner's answers below; critic pass before launch (`wave` skill).
+1. Wave 19 is planned and past the critic (`docs/TASKS.md` › Wave 19: T136 to T139, four
+   implementers, three chores at launch, ports in the wave paragraph); launch it by the `wave` skill
+   (`brief` skill per agent; the T137 brief includes its one-question ADR 0039 survey).
 2. A Hatchery-rooted session: land the two carry-back branches (`carry-back` skill, Land), file
    `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` there and delete it here, give
    its proposal 0003 ADR 0043's lessons; then ADR 0021's follow-ups and the second base update.
