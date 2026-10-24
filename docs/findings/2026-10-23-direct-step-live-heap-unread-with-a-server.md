@@ -1,7 +1,8 @@
 ---
 date: 2026-10-23
-status: open
+status: resolved
 area: android / device tour / sweep
+promoted_to: docs/reference/android-online.md
 ---
 
 # The tour's direct step fails to read the live heap when the app has a server
@@ -36,6 +37,13 @@ deterministic and belongs to the harness and the route, not to memory.
 
 ## Next
 
-T135: make the step honest in both modes (a direct view with the app's server off for the step, or a
-skip with a reason when the server cannot be switched), emit the heap record whenever the guard has
-one, and rerun the sweep's `device-tour` part green with `--server` set and with `none`.
+Resolved by T135. `GET /online` `direct` now carries `memory` (the application-wide `HeapGuard` record) with a
+server configured too, as `{direct: false, memory}`; the direct step switches the app to no server with
+`POST /settings?server=` in the same process (the tour's caches stay), runs the view on the phone's own renders and
+restores the server (`serverSwitch` in the JSON), records `skipped` with the reason when the switch does not take,
+and prints `live.error` on its console line. On one fresh API 35 AVD (192 MB heap), four full tours, all 10 of 10
+views ok and the direct step ok: with `--server` set to a `serve --live` the live heap was 67 and 66 MB (0.35 and
+0.34 of the max; sampled peaks 0.76 and 0.82), 130 DEM tiles rendered on the phone, switched and restored both
+times; with `--server none` 75 and 47 MB (0.39 and 0.24; peaks 0.65 and 0.62), 231 and 242 tiles. Bound 0.8 (154 MB)
+unchanged. The sweep's `device-boot,device-tour` part: see T135's PR. Durable part in
+`../reference/android-online.md` (The Java heap).
