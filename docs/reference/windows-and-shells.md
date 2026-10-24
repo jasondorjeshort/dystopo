@@ -7,7 +7,7 @@ source: observed on this machine (Windows 11, Windows PowerShell 5.1.26100, Git 
 
 What holds on the development machine for every agent. The rules these facts support are in
 `CLAUDE.md` (Working in parallel); Hatchery keeps the same facts for the base in its
-`docs/reference/claude-code-on-windows.md`.
+`docs/reference/claude-code-on-windows.md` [no-check: a file of the Hatchery tree].
 
 ## Shells
 
@@ -18,6 +18,9 @@ What holds on the development machine for every agent. The rules these facts sup
 - `gh ... --jq` with special characters in the expression breaks in PowerShell; run `gh` from Git Bash.
 - Bash heredocs: no apostrophes, no `\n` sequences; write such text with the Write or Edit tool. The
   same for text that mentions a destructive git command (the `git-guard` hook reads the command text).
+- A heredoc or quoted text with backticks in the same Bash call as a git command is refused by the
+  guard as an unexpanded argument (it reads the backticks as substitutions). Put the git command in a
+  call of its own, after the call that writes the text.
 - If `java` is not on PATH in a shell, set `JAVA_HOME` (path in `machines.md`); the git hooks need it.
 
 ## Working directory and git
