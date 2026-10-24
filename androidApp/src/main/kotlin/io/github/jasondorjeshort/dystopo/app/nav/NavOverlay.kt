@@ -27,6 +27,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -61,7 +71,7 @@ fun NavOverlay() {
     val chips = io.github.jasondorjeshort.dystopo.app.TopChips
     val u = NavSession.ui
     if (u == null) {
-        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f }
+        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f; chips.navCardPx = null; SpeakerLayout.boundsPx = null }
         return
     }
     // T122: the card's type is large already (28 sp numbers); at the system's font scale 2.0 the card with the off-route
@@ -84,8 +94,11 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             // Below the top chip row (search, Settings, Packs), which stays usable while navigating; T65: the Tracks
             // and Routes chips move below this card (TopChips), so they stay reachable.
             Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 60.dp)
-                .onGloballyPositioned { c -> chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it } }
                 .widthIn(max = 520.dp).fillMaxWidth()
+                .onGloballyPositioned { c ->
+                    chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
+                    c.boundsInRoot().let { b -> chips.navCardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } // T137: `GET /nav` `layout.navCardPx`
+                }
                 .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -104,7 +117,20 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                     modifier = Modifier.weight(1f),
                 )
                 u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
+                // T137: mute this navigation's spoken directions (the setting stays on); hidden while speech is off or the
+                // engine cannot speak (the notice below says why).
+                val speech = NavSpeech.ui
+                if (io.github.jasondorjeshort.dystopo.app.AppSettings.navSpeech && speech.failure == null) SpeakerButton(speech.muted)
+                else SideEffect { SpeakerLayout.boundsPx = null }
                 HelpIcon("nav.card", flat = true) // T122: what the card shows; T128: flat, so the header is its text's height
+            }
+            // T137: once per navigation, when the phone cannot say the directions (no engine, or no voice for them).
+            NavSpeech.ui.notice?.let { text ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics(mergeDescendants = true) {}) {
+                    BasicText(text, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    Spacer(Modifier.size(8.dp))
+                    Action("Dismiss") { NavSpeech.dismissNotice() }
+                }
             }
             if (u.waiting) {
                 BasicText("Waiting for a location fix", style = TextStyle(color = Ink, fontSize = 18.sp))
@@ -169,6 +195,58 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
     }
 }
 
+/**
+ * T137: the speaker button in the card's header (ADR 0039 survey: a one-tap sound control on the guidance screen, two
+ * states, this navigation only). A 48 dp target laid out at the icon's height and centred on it, like the flat help
+ * icon beside it (T128), so the header stays its text's height. Muted: the speaker with a cross, in the alert colour.
+ */
+@Composable
+private fun SpeakerButton(muted: Boolean) {
+    val icon = 20.dp
+    Box(
+        Modifier
+            .layout { m, c ->
+                val p = m.measure(c.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                val h = minOf(p.height, icon.roundToPx()).coerceIn(c.minHeight, c.maxHeight)
+                layout(p.width, h) { p.place(0, (h - p.height) / 2) }
+            }
+            .size(48.dp)
+            .onGloballyPositioned { c -> SpeakerLayout.boundsPx = c.boundsInRoot().let { b -> floatArrayOf(b.left, b.top, b.right, b.bottom) } }
+            .clickable(role = Role.Button) { NavSpeech.setMuted(!muted) }
+            .semantics { contentDescription = if (muted) "Unmute spoken directions" else "Mute spoken directions" },
+        contentAlignment = Alignment.Center,
+    ) {
+        val ink = if (muted) Alert else Purple
+        Canvas(Modifier.size(icon)) {
+            val w = size.width
+            val h = size.height
+            val body = Path().apply {
+                moveTo(w * 0.08f, h * 0.36f)
+                lineTo(w * 0.28f, h * 0.36f)
+                lineTo(w * 0.52f, h * 0.14f)
+                lineTo(w * 0.52f, h * 0.86f)
+                lineTo(w * 0.28f, h * 0.64f)
+                lineTo(w * 0.08f, h * 0.64f)
+                close()
+            }
+            drawPath(body, ink)
+            val stroke = Stroke(width = w * 0.09f, cap = StrokeCap.Round)
+            if (muted) {
+                drawLine(ink, Offset(w * 0.64f, h * 0.36f), Offset(w * 0.92f, h * 0.64f), stroke.width, StrokeCap.Round)
+                drawLine(ink, Offset(w * 0.92f, h * 0.36f), Offset(w * 0.64f, h * 0.64f), stroke.width, StrokeCap.Round)
+            } else {
+                drawArc(ink, -45f, 90f, false, Offset(w * 0.36f, h * 0.30f), Size(w * 0.40f, h * 0.40f), style = stroke)
+                drawArc(ink, -45f, 90f, false, Offset(w * 0.24f, h * 0.12f), Size(w * 0.70f, h * 0.76f), style = stroke)
+            }
+        }
+    }
+}
+
+/** T137: where the speaker button was last laid out (px; `GET /nav` `layout.speakerButtonPx`), null while hidden. */
+internal object SpeakerLayout {
+    @Volatile var boundsPx: FloatArray? = null
+}
+
 /** T122: the turn text's line cap, and the smallest size (sp) it steps down to before it takes the last line or is cut. */
 private const val TURN_MAX_LINES = 3
 private const val TURN_MIN_SP = 13
@@ -196,7 +274,7 @@ internal val NAV_HELP: List<HelpText> = listOf(
     HelpText("nav.card", "Navigation card", "The map: while navigating", needs = "navigating") {
         "While you follow a route this card shows the next turn and how far away it is, then the next waypoint and the " +
             "end with the distance, time left and arrival time. Heading up turns the map with you, Recenter brings it back " +
-            "to you and Stop ends navigation."
+            "to you and Stop ends navigation. The speaker mutes spoken directions until this navigation ends."
     },
     HelpText("nav.fixLost", "No GPS fix", "The map: navigation card, when the position is old", needs = "navigating with an old position") {
         "The phone has had no new position for longer than GPS fix stale after (Settings › Navigation and tracking). The " +

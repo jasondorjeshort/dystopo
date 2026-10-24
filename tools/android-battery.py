@@ -9,8 +9,9 @@ are reset at the start of every scenario, so each reading covers that scenario o
               (`input keyevent KEYCODE_SLEEP`); the track is deleted afterwards unless --keep-tracks.
   - nav:      navigation with the screen on along the Paradise to Sunrise drive in the Rainier pack (the
               `paradise-sunrise-drive` line of tools/routing-tour.txt): `POST /route` in drive mode, `GET /route/gpx`,
-              `POST /nav/start?route=current`, then `POST /location/replay` with that route retimed to one fix a
-              second at --drive-kmh (the route's GPX has no times; replayed bare it would jump a whole segment a second).
+              `POST /nav/start?route=current`, then `POST /location/replay` with the route as a timed track at one
+              fix a second at --drive-kmh (T137: `GET /route/gpx?track=1&kmh=<n>`, the app's own resampling; the
+              plain route GPX has no times, and replayed bare it would jump a whole segment a second).
               Replayed again from the start if it ends before the scenario does.
   - idle:     the map on screen at Paradise (z13, the Rainier pack), nothing else running.
 Screen-on scenarios raise the screen-off timeout for their duration and restore it afterwards.
@@ -37,7 +38,6 @@ import argparse
 import datetime
 import importlib.util
 import json
-import math
 import os
 import re
 import sys
@@ -286,45 +286,21 @@ def drive_line(path):
     raise RuntimeError(f"no {DRIVE_LABEL} line in {path}")
 
 
-def haversine(a, b):
-    r = 6371008.8
-    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(h))
-
-
-def retime(gpx_bytes, kmh):
-    """The route's points resampled to one fix a second at `kmh`, as a timed GPX track; (gpx text, points, seconds)."""
+def track_summary(gpx_bytes):
+    """Fix count and seconds from first to last fix of a timed track (`GET /route/gpx?track=1`)."""
     root = ET.fromstring(gpx_bytes)
-    pts = []
+    times = []
+    n = 0
     for el in root.iter():
-        tag = el.tag.rsplit("}", 1)[-1]
-        if tag in ("trkpt", "rtept"):
-            ele = next((c.text for c in el if c.tag.rsplit("}", 1)[-1] == "ele"), None)
-            pts.append((float(el.get("lat")), float(el.get("lon")), float(ele) if ele else None))
-    if len(pts) < 2:
-        raise RuntimeError("the route's GPX has fewer than two points")
-    step = kmh / 3.6
-    out = [pts[0]]
-    carry = 0.0  # metres along the current segment where the next fix falls
-    for a, b in zip(pts, pts[1:]):
-        d = haversine(a, b)
-        pos = step - carry if out else 0.0
-        while pos <= d and d > 0:
-            t = pos / d
-            ele = a[2] + (b[2] - a[2]) * t if a[2] is not None and b[2] is not None else None
-            out.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, ele))
-            pos += step
-        carry = d - (pos - step)
-    t0 = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
-    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
-             '<gpx version="1.1" creator="android-battery" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>battery drive</name><trkseg>']
-    for i, (lat, lon, ele) in enumerate(out):
-        ts = (t0 + datetime.timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        e = f"<ele>{ele:.1f}</ele>" if ele is not None else ""
-        lines.append(f'<trkpt lat="{lat:.7f}" lon="{lon:.7f}">{e}<time>{ts}</time></trkpt>')
-    lines.append("</trkseg></trk></gpx>")
-    return "\n".join(lines), len(out), len(out) - 1
+        if el.tag.rsplit("}", 1)[-1] == "trkpt":
+            n += 1
+            t = next((c.text for c in el if c.tag.rsplit("}", 1)[-1] == "time"), None)
+            if t:
+                times.append(datetime.datetime.fromisoformat(t.strip().replace("Z", "+00:00")))
+    if n < 2:
+        raise RuntimeError("the timed track has fewer than two points")
+    secs = (times[-1] - times[0]).total_seconds() if len(times) >= 2 else 0.0
+    return n, secs
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -380,8 +356,9 @@ class Nav:
         if r.get("error") or not route:
             raise RuntimeError(f"POST /route failed: {json.dumps(r)[:300]}")
         self.extra["route"] = {k: route.get(k) for k in ("distanceM", "distance", "timeS") if k in route}
-        gpx = c.app.call("/route/gpx", raw=True)
-        self.gpx, n, secs = retime(gpx, c.args.drive_kmh)
+        gpx = c.app.call(f"/route/gpx?track=1&kmh={c.args.drive_kmh:g}", raw=True)  # T137: timed by the app
+        n, secs = track_summary(gpx)
+        self.gpx = gpx.decode("utf-8") if isinstance(gpx, bytes) else gpx
         self.extra["replay"] = {"fixes": n, "driveMinutes": round(secs / 60, 1), "kmh": c.args.drive_kmh, "starts": 0}
 
     def start(self):

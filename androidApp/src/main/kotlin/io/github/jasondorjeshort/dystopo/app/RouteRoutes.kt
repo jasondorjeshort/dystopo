@@ -24,7 +24,11 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * Route results list the named trails they follow (`via`, T49); `GET /route` has the last camera fit
  * (`ui.lastFit`) and where the bottom panels sit (`ui.layout`: route card, track panels, `overlap`).
  * - `POST /route/save[?name=]`: save the current route as GPX in `files/routes/`.
- * - `GET /route/saved`: saved routes. `GET /route/gpx`: the current route as GPX.
+ * - `GET /route/saved`: saved routes. `GET /route/gpx`: the current route as GPX (a `<rte>` without times).
+ *   T137: `GET /route/gpx?track=1&kmh=<n>` is the same route as a `<trk>` resampled to one fix a second at `n` km/h
+ *   ([TimedTrack]; the first fix at the request's whole second, heights interpolated), so the drive replay is
+ *   `POST /route`, `GET /route/gpx?track=1&kmh=40`, `POST /location/replay` with that body; 400 without `kmh` (or
+ *   with one outside 0 to 300), 404 with no route.
  * - `POST /route/export`: write the current route's GPX to `files/exports/`.
  * - T65: `POST /route/import/pick`: opens the Routes list and the system file picker, as its Import does (pick a GPX
  *   in the picker; it is imported as routes and the last one opens); `GET /route/import`: the last pick's result.
@@ -118,8 +122,13 @@ object RouteRoutes {
             }
             "GET" to "/route/saved" -> Response.json(mapOf("dir" to RoutePlanner.routesDir(app).path, "routes" to RoutePlanner.saved(app)))
             "GET" to "/route/gpx" -> {
+                // T137: `track=1&kmh=<n>` is the route as a timed track for `POST /location/replay`; the plain path is unchanged.
+                val track = r.query["track"]?.let { it == "1" || it == "true" } ?: false
+                val kmh = if (!track) null else r.query["kmh"]?.toDoubleOrNull()?.takeIf { it > 0 && it <= TimedTrack.MAX_KMH }
+                    ?: return bad("track=1 needs kmh=<speed in km/h>, above 0 and at most ${TimedTrack.MAX_KMH.toInt()}")
                 val p = RouteSession.plan ?: return Response.json(mapOf("error" to "no route"), 404)
-                Response(200, "application/gpx+xml; charset=utf-8", RoutePlanner.gpx(p.route).toByteArray())
+                val body = if (kmh != null) TimedTrack.gpx(p.route, kmh, System.currentTimeMillis() / 1000 * 1000) else RoutePlanner.gpx(p.route)
+                Response(200, "application/gpx+xml; charset=utf-8", body.toByteArray())
             }
             "POST" to "/route/import/pick" -> { // T65: the Routes list's Import (system file picker)
                 app.map.onMain {
@@ -155,4 +164,77 @@ object RouteRoutes {
     }
 
     private fun bad(message: String) = Response.json(mapOf("error" to message), 400)
+}
+
+/**
+ * T137: a route as a timed track (pure; `TimedTrackTest`): its line resampled at one fix a second at a constant speed,
+ * the first fix on the route's first point at [TimedTrack.of]'s `startMs`, each next one `kmh / 3.6` metres further
+ * along the line (great-circle distance, linear between the route's points, heights interpolated where both ends have
+ * one), and the last fix on the route's last point (less than a second after the one before it). Replayed through
+ * `POST /location/replay` it drives navigation at that speed; the route's own GPX has no times, and replayed bare it
+ * moved a whole route segment a second. Replaces `tools/android-battery.py`'s own resampling.
+ */
+object TimedTrack {
+    const val MAX_KMH = 300.0
+
+    fun of(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, kmh: Double, startMs: Long): List<io.github.jasondorjeshort.dystopo.model.TrackPoint> {
+        require(kmh > 0) { "kmh must be above 0" }
+        if (points.isEmpty()) return emptyList()
+        val step = kmh / 3.6
+        val out = ArrayList<io.github.jasondorjeshort.dystopo.model.TrackPoint>()
+        fun add(lat: Double, lon: Double, ele: Double?, ms: Long) { out += io.github.jasondorjeshort.dystopo.model.TrackPoint(lat, lon, ele, ms) }
+        val first = points.first()
+        add(first.lat, first.lon, first.ele, startMs)
+        var along = 0.0 // metres from the start to segment a's start
+        var next = step // metres from the start of the next fix
+        for (i in 1 until points.size) {
+            val a = points[i - 1]
+            val b = points[i]
+            val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon)
+            while (d > 0 && next <= along + d) {
+                val t = (next - along) / d
+                val ele = if (a.ele != null && b.ele != null) a.ele!! + (b.ele!! - a.ele!!) * t else null
+                add(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t, ele, startMs + out.size * 1000L)
+                next += step
+            }
+            along += d
+        }
+        val last = points.last()
+        val lastFix = out.last()
+        if (points.size > 1 && (lastFix.lat != last.lat || lastFix.lon != last.lon)) {
+            val restS = (along - (next - step)) / step // the part of a second the last stretch takes
+            add(last.lat, last.lon, last.ele, lastFix.time!! + kotlin.math.max(1L, Math.round(restS * 1000)))
+        }
+        return out
+    }
+
+    /**
+     * The timed track as GPX 1.1, one line per fix with coordinates to 7 decimals (1 cm) and heights to 0.1 m: about 100
+     * bytes a fix, so a track fits the loopback server's 1 MiB request body (`POST /location/replay`) up to about 10,000
+     * fixes, 2.8 hours (the Paradise to Sunrise drive at 40 km/h is about 7,400). Written through
+     * [io.github.jasondorjeshort.dystopo.gpx.Gpx.write], pretty-printed, it took 158 bytes a fix and the drive was refused
+     * with a 413.
+     */
+    fun gpx(route: io.github.jasondorjeshort.dystopo.model.Route, kmh: Double, startMs: Long): String {
+        val pts = of(route.points, kmh, startMs)
+        val speed = if (kmh % 1.0 == 0.0) kmh.toInt().toString() else kmh.toString()
+        val sb = StringBuilder(256 + pts.size * 104)
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+        sb.append("<gpx version=\"1.1\" creator=\"").append(io.github.jasondorjeshort.dystopo.gpx.Gpx.CREATOR).append("\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
+        sb.append("<trk><name>").append(xml(route.name)).append("</name><desc>Timed at ").append(speed).append(" km/h, one fix a second</desc>")
+        route.type?.let { sb.append("<type>").append(xml(it)).append("</type>") }
+        sb.append("<trkseg>\n")
+        for (p in pts) {
+            sb.append("<trkpt lat=\"").append(fixed(p.lat, 7)).append("\" lon=\"").append(fixed(p.lon, 7)).append("\">")
+            p.ele?.let { sb.append("<ele>").append(fixed(it, 1)).append("</ele>") }
+            sb.append("<time>").append(io.github.jasondorjeshort.dystopo.gpx.GpxFormat.formatTime(p.time!!)).append("</time></trkpt>\n")
+        }
+        sb.append("</trkseg></trk></gpx>\n")
+        return sb.toString()
+    }
+
+    private fun fixed(v: Double, decimals: Int): String =
+        java.math.BigDecimal(v).setScale(decimals, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+
+    private fun xml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }
