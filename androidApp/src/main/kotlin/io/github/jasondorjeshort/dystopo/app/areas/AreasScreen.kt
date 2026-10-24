@@ -62,7 +62,8 @@ import kotlin.concurrent.thread
 
 private val Ink = Color(0xFF2B2420)
 private val Muted = Color(0xFF6B5A4A)
-private val Paper = Color(0xF2FFFCF5)
+/** T136: opaque (it was 95%): the trip card under the sheet showed through it. */
+private val Paper = Color(0xFFFFFCF5)
 private val Link = Color(0xFF2C7BB6)
 private val Teal = Color(0xFF00796B)
 
@@ -205,11 +206,17 @@ internal const val AREAS_INTRO = "Pinned areas stay on this phone until you unpi
 internal const val CORRIDOR_WIDTH_LABEL = "Keep each trip offline:"
 internal fun corridorWidthChip(m: Int, units: ContourUnits): String = if (m == 0) "Off" else UnitFormat.distance(m.toDouble(), units)
 
-/** T130: the trip corridor's width, each side of the route ([TripCorridors.setWidth]; `POST /settings?tripCorridorM=`). */
+/** T136: applies settings the sheet changed as `POST /settings` does (validated, saved, synced). */
+private fun settingsApply(params: Map<String, Any?>) {
+    val parsed = io.github.jasondorjeshort.dystopo.app.SettingsRoutes.parse(params, AppSettings.units) as? io.github.jasondorjeshort.dystopo.app.SettingsRoutes.Parsed.Ok ?: return
+    io.github.jasondorjeshort.dystopo.app.SettingsRoutes(DystopoApp.instance).apply(parsed)
+}
+
+/** T130: the trip corridor's width, each side of the route ([TripCorridors.applyWidth]; `POST /settings?tripCorridorM=`). */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CorridorWidthRow() {
-    var width by remember { mutableStateOf(AppSettings.tripCorridorM) }
+    var width by remember(io.github.jasondorjeshort.dystopo.app.SettingsUi.revision) { mutableStateOf(AppSettings.tripCorridorM) } // T136: a synced width shows
     val units = AppSettings.units
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BasicText(CORRIDOR_WIDTH_LABEL, Modifier.padding(vertical = 4.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
@@ -220,7 +227,7 @@ private fun CorridorWidthRow() {
                 style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
                 modifier = Modifier.background(if (on) Teal else Color.Transparent, RoundedCornerShape(12.dp)).clickable {
                     width = m
-                    thread { TripCorridors.setWidth(m) }
+                    thread { settingsApply(mapOf("tripCorridorM" to m)) } // T136: through the settings, so it syncs
                 }.padding(horizontal = 9.dp, vertical = 4.dp),
             )
         }
@@ -293,7 +300,11 @@ object AreaOutlines {
         install()
     }
 
+    /** T136: the ids drawn now (empty while the sheet is closed). */
+    @Volatile private var drawn: Set<String> = emptySet()
+
     fun show(records: List<Areas.Record>) {
+        drawn = records.map { it.id }.toSet()
         val fs = ArrayList<Feature>()
         for (r in records) {
             when (val s = r.area.shape) {
@@ -330,9 +341,24 @@ object AreaOutlines {
         return CorridorOutline.polygons(s.points, s.bufferM).also { outlines[id] = s to it }
     }
 
-    /** T106: polygons in the band layer, for `GET /areas` checks of the outline (`outline` there). */
-    fun json(): Map<String, Any?> = synchronized(this) {
-        linkedMapOf("features" to features, "corridors" to outlines.map { (id, v) -> mapOf("id" to id, "polygons" to v.second.size, "holes" to v.second.sumOf { it.holes.size }, "points" to v.second.sumOf { p -> p.outer.size + p.holes.sumOf { it.size } }) })
+    /**
+     * T106: the corridors' outline polygons, for `GET /areas` checks of the outline (`outline` there). T136: every corridor
+     * the app keeps ([records], made here when the sheet has not drawn it yet), with `drawn` (on the map now, while the
+     * sheet is open) and its `tripId`; it listed only the ones the sheet had drawn, so nothing while it stayed closed.
+     */
+    fun json(records: List<Areas.Record>): Map<String, Any?> {
+        val shown = drawn
+        val corridors = records.mapNotNull { r ->
+            val s = r.area.shape as? AreaShape.Corridor ?: return@mapNotNull null
+            if (r.pack != null) return@mapNotNull null
+            val polys = outline(r.id, s)
+            linkedMapOf(
+                "id" to r.id, "tripId" to r.tripId, "drawn" to (r.id in shown), "polygons" to polys.size,
+                "holes" to polys.sumOf { it.holes.size }, "points" to polys.sumOf { p -> p.outer.size + p.holes.sumOf { it.size } },
+            )
+        }
+        synchronized(this) { outlines.keys.retainAll(records.map { it.id }.toSet()) }
+        return linkedMapOf("features" to features, "corridors" to corridors)
     }
 
     private fun install() {

@@ -398,7 +398,7 @@ object Areas : VersionPins {
             "pinned" to all.count { it.pinned }, "transientPins" to transientCount,
             "pinnedBySource" to pinnedBySource(cache.byPrefix(1, pinned = true), current), // T106 (ADR 0030's deferred item)
             "cache" to cache.json(), "download" to AreaDownload.json(), "prefetch" to AheadPrefetch.json(),
-            "outline" to AreaOutlines.json(), // T106: the sheet's corridor polygons
+            "outline" to AreaOutlines.json(all), // T106: the corridor polygons; T136: of every kept corridor, drawn or not
         )
     }
 }

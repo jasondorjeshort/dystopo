@@ -100,7 +100,8 @@ fun TripControls() {
                     }
                 }
             }
-        } else {
+        } else if (!io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen) {
+            // T136: the Offline areas sheet stands in for the card while open, as the Routes list does (the editor stays open behind it).
             BackHandler { Trips.close() }
             TripCard(Modifier.align(Alignment.BottomCenter))
         }
