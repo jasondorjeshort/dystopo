@@ -53,11 +53,6 @@ only defaults, never behaviour a user cannot see. Not to be confused with `Track
 - Prior art (ADR 0039): a survey of how established track-recording apps handle accuracy, gaps and
   activity types, before the defaults are fixed.
 
-Plan: a benchmark survey first, then two tasks: (a) recorder core in `shared` (accuracy kept and
-weighted, gap records, profiles as data, schema migration, tests, replay checks) and (b) the app side
-(watchdog, fallback provider, restart and exemption, notification state, profile picker, diagnostics
-rows). They share `Tracking.kt`, so different waves or one owner.
-
 ## Research (2026-10-25, web searches and general knowledge; the survey task should verify)
 
 - **Other apps.** OsmAnd records everything but offers filters on speed, bad precision (hdop) and minimum
@@ -89,3 +84,8 @@ Tentative answers to the Open list: weight by accuracy in a constant-velocity Ka
 recording (raw points kept, smoothed ones derived), so the live recorder stays simple; profile
 intervals stay at 1 s (battery cost is the GPS being on, not the rate); a per-profile gap rule of
 time only for flying.
+
+Plan: a benchmark survey first, then two tasks: (a) recorder core in `shared` (accuracy kept and
+weighted, gap records, profiles as data, schema migration, tests, replay checks) and (b) the app side
+(watchdog, fallback provider, restart and exemption, notification state, profile picker, diagnostics
+rows). They share `Tracking.kt`, so different waves or one owner.
