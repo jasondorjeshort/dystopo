@@ -18,7 +18,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. Plan wave 20 by the `wave` skill from `docs/TASKS.md` › Later (the wave 19 follow-ups bullet, the
+1. Plan wave 20 by the `wave` skill (now with ADR 0044's research step: one agent per open choice, settings where users split) from `docs/TASKS.md` › Later (the wave 19 follow-ups bullet, the
    heap diagnostics idea's Plan block, plus whatever the owner's answers unlock); critic pass first.
 2. A Hatchery-rooted session: land the two carry-back branches (`carry-back` skill, Land), file
    `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` there and delete it here, give

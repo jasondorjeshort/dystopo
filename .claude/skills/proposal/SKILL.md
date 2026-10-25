@@ -22,8 +22,10 @@ decides.
    tools, licences, platforms or APIs go under "Claims to verify". Every option states its exit cost
    and moving parts; a dependency the project will lean on answers `dependency.md` in the proposal.
    A question users see or touch fills "Prior art" from a benchmark agent's report (`brief` skill,
-   `benchmark.md`; ADR 0039), launched before the options are written; a purely technical choice
-   writes "none" there.
+   `benchmark.md`; ADR 0039), launched before the options are written; a technical choice in doubt
+   fills it from the same agent's technical variant (ADR 0044); "none" only when an ADR or the
+   owner has already settled what the options rest on. Each option says which of its behaviours
+   would be a user setting and why (ADR 0044).
 3. Add the proposal to `docs/design/proposals/README.md`.
 4. Set Status to `under review`. Launch a critic (the most capable model) with `brief-critic.md`
    filled in. The critic writes `NNNN-critic-review.md` beside the proposal.

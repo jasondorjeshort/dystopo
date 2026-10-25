@@ -1,7 +1,8 @@
 # 0039. Benchmark other topo and navigation apps before deciding what users see
 
 Date: 2026-10-23
-Status: accepted
+Status: accepted (extended by 0044)
+ADR 0044 widens this rule to technical choices in doubt (this ADR's "a technical choice ... needs no survey" no longer holds) and adds settings; everything else here stands.
 
 Record: the owner's words in the wave 18 planning session (2026-10-23): "If in doubt have an agent
 review best-practice among other topo or navigation apps to make decisions. While we're at it, make

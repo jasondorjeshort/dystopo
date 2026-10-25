@@ -38,12 +38,17 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    Make the Owns lines disjoint; two tasks that must touch one file go in different waves, or one task
    owns the file and the other records a follow-up. A wave paragraph at the top states ownership
    resolved for the wave and the machine's paths when they differ from `docs/reference/machines.md`.
+   Before the critic, list the wave's open choices (user-facing or technical) that nothing settles
+   and launch one read-only research agent per choice (`brief` skill, `benchmark.md`; ADR 0039 and
+   ADR 0044, owner's standing order of 2026-10-25); write each answer into its task, with the
+   behaviours that become user settings and their defaults.
 2. Run the written plan past a critic before launching anything (the most capable model, read-only;
    owner, 2026-10-16: standard for every wave). Its brief names the wave section, the previous wave's
    Status lines, the ideas and ADRs the plan draws on, and asks for numbered objections with severity
    and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
    observable, premises checked against the code, major choices that need a proposal, follow-ups
-   dropped silently, cross-task sequencing. Answer every objection by editing the plan or by writing
+   dropped silently, cross-task sequencing, choices left to an implementer's taste without research,
+and settings added or missing against ADR 0044. Answer every objection by editing the plan or by writing
    why not in the wave paragraph; launch after the edits, re-plan on a blocking one.
 3. 5 to 8 implementers at once; when a wave would not fit the budget, launch it in halves with
    disjoint ownership.

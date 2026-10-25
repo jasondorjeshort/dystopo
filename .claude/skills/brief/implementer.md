@@ -18,6 +18,12 @@ Context only this task knows: <owner's words, decisions since the task was writt
 Already ruled out: <what was tried and why it failed, with finding paths, or "nothing">.
 Sequencing: <branches that touch the same files and the order, or "none">.
 
+Choices in doubt (ADR 0039, ADR 0044): <the research already done for this task and its answers, or
+"none">. A choice the task, an ADR or the owner leaves open is not yours to make from taste: launch a
+read-only research agent from the `brief` skill's `benchmark.md` (Sonnet-class, one question) and cite
+it; where it shows users or apps split, build a setting with the researched default (synced key, row,
+help text, debug route) and say why it is one.
+
 Done when: <the Done-when line>, plus `./gradlew check` green and the docs your change touches
 updated on the same branch (`CLAUDE.md`, Debug before you push).
 

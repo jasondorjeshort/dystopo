@@ -18,7 +18,8 @@ One paragraph: what is being decided and why now, and what the chosen option sho
 ## Prior art
 
 What the established topo and navigation apps do here, from the benchmark agent's report (ADR
-0039): the common practice, the outliers, and the sources. "none" for a purely technical choice.
+0039), or for a technical choice from its technical variant (published practice, standards, well-regarded
+projects; ADR 0044): the common practice, the outliers, and the sources. "none" only for a choice an ADR or the owner settled.
 
 ## Options
 
