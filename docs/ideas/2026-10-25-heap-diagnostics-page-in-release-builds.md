@@ -1,7 +1,7 @@
 ---
 date: 2026-10-25
 kind: feature
-related: [2026-10-13-battery-efficiency.md]
+related: [2026-10-13-battery-efficiency.md, 2026-10-25-crash-capture-and-github-issue-reports.md]
 ---
 
 # A read-only diagnostics row under About and advanced that shows the heap on any build
