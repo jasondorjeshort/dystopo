@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-24, with v0.1.12-alpha published (main past f639d760), by main session
+Updated: 2026-10-25, at commit e294a394, by main session
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Later; `handoff` skill.
 
 ## Now
@@ -18,8 +18,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. Plan wave 20 by the `wave` skill from `docs/TASKS.md` › Later (the wave 19 follow-ups bullet, plus
-   whatever the owner's answers unlock); critic pass before launch.
+1. Plan wave 20 by the `wave` skill from `docs/TASKS.md` › Later (the wave 19 follow-ups bullet, the
+   heap diagnostics idea's Plan block, plus whatever the owner's answers unlock); critic pass first.
 2. A Hatchery-rooted session: land the two carry-back branches (`carry-back` skill, Land), file
    `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` there and delete it here, give
    its proposal 0003 ADR 0043's lessons; then ADR 0021's follow-ups and the second base update.
