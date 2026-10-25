@@ -172,4 +172,7 @@ change by speed but never switches on its own. (b) The same list, but the app sw
 dwell time and hysteresis unless the user has pinned a mode. (c) Something else: a different list,
 or foot/bike/vehicle only for a first cut. Also: is knots wanted for boat and air, and which online
 pressure source (public-domain station data, or a CC BY model service, or both)?
-Answer:
+Answer: (owner, chat, 2026-10-25) (a) for now: a fixed list the user picks, remembered and shared
+with the track profile, with suggestions only. Knots is an option alongside mph and km/h for boat and
+air, not a default. Fully free sources only: public-domain weather-station data (the altimeter
+setting); no CC BY or non-commercial-tier service.
