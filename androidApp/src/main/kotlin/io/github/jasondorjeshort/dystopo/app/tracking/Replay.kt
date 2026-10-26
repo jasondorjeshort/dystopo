@@ -66,6 +66,7 @@ class Replay(private val tracking: Tracking) {
         val timed = TrackExport.continueAfter(original, last)
         val shiftedMs = timed.first().fix.time - original.first().fix.time
         cancel()
+        val gen = generation.incrementAndGet()
         total = timed.size
         sent = 0
         this.rate = rate
@@ -78,22 +79,29 @@ class Replay(private val tracking: Tracking) {
         startedAt = SystemClock.elapsedRealtime()
         val start = startedAt
         val t = Thread({
+            // T146: only the current run (generation) writes the counters. A cancel that landed while the puck's
+            // injectLocation waited on the main thread was swallowed by its runCatching, and the old run went on
+            // feeding fixes at its own rate beside the new one, counting into its `sent` (seen: a rate-30 drive left
+            // running under the battery script's rate-1 replay).
+            fun current() = generation.get() == gen
             try {
                 for (f in timed) {
                     val wait = start + f.atMs - SystemClock.elapsedRealtime()
                     if (wait > 0) Thread.sleep(wait)
+                    if (!current()) throw InterruptedException()
                     tracking.injected.publish(f.fix)
                     // Move the puck too (best effort; the map may not be attached).
-                    runCatching { DystopoApp.instance.map.injectLocation(f.fix.lat, f.fix.lon, accuracyM.toFloat(), null) }
+                    val moved = runCatching { DystopoApp.instance.map.injectLocation(f.fix.lat, f.fix.lon, accuracyM.toFloat(), null) }
+                    if (moved.exceptionOrNull() is InterruptedException || !current()) throw InterruptedException()
                     sent++
                 }
-                finished = true
+                if (current()) finished = true
             } catch (_: InterruptedException) {
-                cancelled = true
+                if (current()) cancelled = true
             } catch (e: Exception) {
                 Log.w(Tracking.TAG, "replay failed", e)
             } finally {
-                idle = true
+                if (current()) idle = true
             }
         }, "dystopo-replay").apply { isDaemon = true }
         thread = t
@@ -101,9 +109,18 @@ class Replay(private val tracking: Tracking) {
         return json() + mapOf("shiftedMs" to shiftedMs)
     }
 
+    /** T146: bumped by every start and cancel; a replay thread stops at its next fix once it is no longer current. */
+    private val generation = java.util.concurrent.atomic.AtomicInteger()
+
     fun cancel() {
-        thread?.interrupt()
-        thread?.join(2000)
+        val t = thread
+        generation.incrementAndGet()
+        if (t != null && !idle) {
+            cancelled = true
+            idle = true
+        }
+        t?.interrupt()
+        t?.join(2000)
         thread = null
     }
 
