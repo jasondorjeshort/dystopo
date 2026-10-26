@@ -38,11 +38,13 @@ class OnlinePlanTest {
 
     @Test
     fun regionNamesAreValidPackNames() {
-        val box = PackBounds(6.80, 45.80, 6.93, 45.88)
-        val name = RegionDownload.nameFor(box, 8..14)
-        assertEquals("view-45.84n-6.87e-z8-14", name)
+        // T145: `view-<local date>-<n>`, no coordinates; the lowest n not taken.
+        val noon = java.util.Calendar.getInstance().apply { clear(); set(2026, java.util.Calendar.OCTOBER, 25, 12, 0) }.timeInMillis
+        val name = RegionDownload.nameFor(noon, emptySet())
+        assertEquals("view-2026-10-25-1", name)
         assertTrue(PackNames.isValidName(name))
-        assertTrue(PackNames.isValidName(RegionDownload.nameFor(PackBounds(-121.9, 46.7, -121.6, 46.9), 8..13)))
+        assertEquals("view-2026-10-25-3", RegionDownload.nameFor(noon, setOf("view-2026-10-25-1", "view-2026-10-25-2", "view-2026-10-24-3")))
+        assertTrue(PackNames.isValidName("view-45.84n-6.87e-z8-14"), "names made before T145 still read")
     }
 
     @Test
