@@ -50,6 +50,22 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  * - T136: the width syncs (`app.tripCorridorM`); raising `pinnedCacheMb` retries a refused corridor; a trip edited during its
  *   corridor's download cancels it (`lastRun.cancelled`), and `GET /areas/download` keeps the ended downloads in `recent`
  *   (newest first, five); `GET /areas` `outline.corridors` is every kept corridor, with `drawn` while the sheet shows it.
+ * - T140 (ADR 0041): polygon areas. `POST /areas/plan` and `POST /areas/download` take a polygon body
+ *   (`{"kind": "polygon", "rings": [[[lon, lat], ...], ...], "bufferM": 0, "minZoom": 8, "maxZoom": 15, "name": ...}`, rings
+ *   even-odd, holes and parts as more rings) or `ring=lat,lon;lat,lon;...` (more rings after `|`), and the area around a
+ *   point as `around=lat,lon&radiusM=` (the one-point corridor up to 20 km, a 48-vertex polygon circle beyond). The plan of
+ *   a drawn area or a disc is made on the phone and adds `shape` (box, corridor, disc, polygon), `manifestVersion`,
+ *   `sizeLine` ("About 170 MB (1,300 tiles) at full detail"), `timeLine` and `seconds` (at the last completed download's
+ *   speed; null before the first), `lessDetail` (z8 to z13: `zooms`, `bytes`, `tiles`, `line` "Less detail (about 30 MB)",
+ *   `fits`, `refusal`) with `offerLessDetail` (when the full plan is refused), and `tooLarge` with the refusal "This area is
+ *   too large at this detail; make it smaller or choose less detail" when the heap's tile limit refuses it (nothing filled).
+ *   Over the budget its `refusal` is "This area is about 450 MB; 1.6 GB of your 2 GB offline budget is in use. Make the
+ *   area smaller, choose less detail, or raise the budget in Settings › Storage." `GET /areas` gives each area
+ *   `needsNewerApp` (a record of a version or kind this build cannot read, kept as it was, pinned by its `bounds` and
+ *   `zooms`; `needsNewerAppReason` the raw sentence; Pin, Retry and Dismiss answer 409), a polygon's `rings`, `vertices`
+ *   and `areaKm2`, a disc's `radiusM`, and `files` (records in `areas.json` and in the sibling `areas2.json`).
+ *   `GET /areas/download` `recent` no longer repeats the job shown above it; `GET /areas/trips` `lastRun` is the last run
+ *   that made, refused, cancelled or released a corridor (a run that did nothing leaves it).
  */
 object AreaRoutes {
     private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss)?$")
@@ -109,6 +125,7 @@ object AreaRoutes {
     /** T106: Retry on an area card: the same corridor downloaded again (a pack-backed area is a region pack: 409). */
     private fun retry(rec: Areas.Record): Map<String, Any?> {
         check(rec.pack == null) { "area ${rec.name} is the pack ${rec.pack}: download a region again from the pack list" }
+        check(rec.opaque == null) { "area ${rec.name}: ${io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp.USER_SENTENCE}" } // T140
         return AreaDownload.start(rec.area, rec.name, rec.tripId)
     }
 
