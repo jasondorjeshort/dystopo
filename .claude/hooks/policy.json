@@ -11,7 +11,7 @@
     "hold": 75,
     "deny": 100,
     "fiveHour": { "hold": 50, "deny": null },
-    "sevenDay": { "hold": 75, "deny": null },
+    "sevenDay": { "hold": 100, "deny": null },
     "staleSeconds": 7200,
     "whenStale": "allow",
     "overrideEnv": "DYSTOPO_GATE_OVERRIDE",
