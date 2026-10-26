@@ -202,6 +202,38 @@ object TopChips {
         "navTurnText" to io.github.jasondorjeshort.dystopo.app.nav.TurnText.last,
         // T146: the edges the chip columns followed in the last layout pass and the tops they were measured at (px).
         "follow" to followJson,
+        "drawCheck" to drawCheck(),
+    )
+
+    /**
+     * T146: counted as the navigation card is drawn, after the frame's layout and its position callbacks, so a frame drawn
+     * with the card over a chip column is counted even when the next frame fixes it (a `GET /nav` sample catches such a
+     * frame only by chance): `frames` drawn, `onlineOverlapFrames` with the online indicator under the card,
+     * `tracksOverlapFrames` with the track controls starting above its bottom edge (1 px tolerance). Since navigation started.
+     */
+    private var drawFrames = 0
+    private var onlineOverlapFrames = 0
+    private var tracksOverlapFrames = 0
+    @Volatile private var lastOverlap: Map<String, Any?>? = null
+
+    internal fun navCardDrawn(density: Float) {
+        val card = navCardPx ?: return
+        drawFrames++
+        if (overlap(card, MapInsets.onlineChips)) {
+            onlineOverlapFrames++
+            lastOverlap = mapOf("frame" to drawFrames, "navCardPx" to card.map { Math.round(it) }, "onlineChipsPx" to MapInsets.onlineChips?.map { Math.round(it) })
+        }
+        val tracksTop = trackColumnTop.value * density
+        if (tracksTop > 0f && tracksTop < card[3] - 1f) tracksOverlapFrames++
+    }
+
+    /** T146: the card came up (a navigation started): the counts start again. */
+    internal fun navCardShown() {
+        drawFrames = 0; onlineOverlapFrames = 0; tracksOverlapFrames = 0; lastOverlap = null
+    }
+
+    private fun drawCheck(): Map<String, Any?> = linkedMapOf(
+        "frames" to drawFrames, "onlineOverlapFrames" to onlineOverlapFrames, "tracksOverlapFrames" to tracksOverlapFrames, "lastOverlap" to lastOverlap,
     )
 
     /** T137 (pure): true when two `left, top, right, bottom` rectangles share any area; false when either is null. */

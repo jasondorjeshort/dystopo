@@ -24,6 +24,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -90,6 +91,7 @@ const val NAV_MAX_FONT_SCALE = 1.5f
 @OptIn(ExperimentalLayoutApi::class)
 private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
+    androidx.compose.runtime.remember { chips.navCardShown() } // T146: the draw check counts from here
     Box(Modifier.fillMaxSize()) {
         Column(
             // Below the top chip row (search, Settings, Packs), which stays usable while navigating; T65: the Tracks
@@ -101,6 +103,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> chips.navCardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } // T137: `GET /nav` `layout.navCardPx`
                 }
+                .drawWithContent { drawContent(); chips.navCardDrawn(density.density) } // T146: `GET /nav` `layout.drawCheck`
                 .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
