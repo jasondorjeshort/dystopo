@@ -28,7 +28,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   T137: `GET /route/gpx?track=1&kmh=<n>` is the same route as a `<trk>` resampled to one fix a second at `n` km/h
  *   ([TimedTrack]; the first fix at the request's whole second, heights interpolated), so the drive replay is
  *   `POST /route`, `GET /route/gpx?track=1&kmh=40`, `POST /location/replay` with that body; 400 without `kmh` (or
- *   with one outside 0 to 300), 404 with no route.
+ *   with one outside 0 to 300), 404 with no route. T146: `POST /location/replay?route=current&kmh=40` replays the same
+ *   fixes with no body (no 1 MiB limit); the briefs' drive replay and `tools/android-battery.py` use it.
  * - `POST /route/export`: write the current route's GPX to `files/exports/`.
  * - T65: `POST /route/import/pick`: opens the Routes list and the system file picker, as its Import does (pick a GPX
  *   in the picker; it is imported as routes and the last one opens); `GET /route/import`: the last pick's result.
@@ -232,6 +233,17 @@ object TimedTrack {
         sb.append("</trkseg></trk></gpx>\n")
         return sb.toString()
     }
+
+    /**
+     * T146: the timed track as a [io.github.jasondorjeshort.dystopo.model.Track] for `POST /location/replay?route=current`,
+     * the same fixes as [gpx] without the text (coordinates unrounded), so a replay of any length needs no request body.
+     */
+    fun track(route: io.github.jasondorjeshort.dystopo.model.Route, kmh: Double, startMs: Long): io.github.jasondorjeshort.dystopo.model.Track =
+        io.github.jasondorjeshort.dystopo.model.Track(
+            id = "timed-route", name = route.name,
+            segments = listOf(io.github.jasondorjeshort.dystopo.model.TrackSegment(of(route.points, kmh, startMs))),
+            type = route.type,
+        )
 
     private fun fixed(v: Double, decimals: Int): String =
         java.math.BigDecimal(v).setScale(decimals, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()

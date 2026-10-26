@@ -24,6 +24,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -49,6 +50,7 @@ import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.controls.Orientation
+import io.github.jasondorjeshort.dystopo.app.navCardEdge
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xF2FFFCF5)
@@ -89,16 +91,19 @@ const val NAV_MAX_FONT_SCALE = 1.5f
 @OptIn(ExperimentalLayoutApi::class)
 private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
+    androidx.compose.runtime.DisposableEffect(Unit) { chips.navCardShown(); onDispose { } } // T146: the draw check counts from here (before the first draw)
     Box(Modifier.fillMaxSize()) {
         Column(
             // Below the top chip row (search, Settings, Packs), which stays usable while navigating; T65: the Tracks
             // and Routes chips move below this card (TopChips), so they stay reachable.
             Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 60.dp)
                 .widthIn(max = 520.dp).fillMaxWidth()
+                .navCardEdge() // T146: the chips below it move in the same layout pass (TopChips.followNavCard)
                 .onGloballyPositioned { c ->
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> chips.navCardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } // T137: `GET /nav` `layout.navCardPx`
                 }
+                .drawWithContent { drawContent(); chips.navCardDrawn(density.density) } // T146: `GET /nav` `layout.drawCheck`
                 .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

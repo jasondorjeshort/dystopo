@@ -31,7 +31,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   arrives is dropped, `droppedTooOld`; the last known location more than 2 km from the line does not start navigation,
  *   `droppedTooFar`; with no usable fix for 30 s the bar says "No GPS fix for N s", `lost`; T91: the 30 s and 2 km are the
  *   settings `navStaleS` and `navStartM`, read at each start, and the banner's Snooze length is `navSnoozeMin`). `layout`: where the Tracks and
- *   Routes chips sit relative to the stats bar ([TopChips]). `path.totalAscentM` is the route's one ascent figure (T24 rule).
+ *   Routes chips sit relative to the stats bar ([TopChips]; T146: `follow`, the edges they followed in the card's own layout
+ *   pass, and `drawCheck`, frames drawn with a chip under the card since the start). `path.totalAscentM` is the route's one ascent figure (T24 rule).
  * - Starting navigation closes the route editor sheet and hides the T45 route card; the navigation line draws above
  *   the planned and kept route lines (T65).
  * - `POST /nav/stop`; `POST /nav/camera?mode=follow|heading|free`; `POST /nav/heading?deg=` (simulated
@@ -62,7 +63,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `engine=failing` (an engine whose init fails as with no text-to-speech engine installed) and `engine=novoice` (no
  *   voice for English) bring up the notice on the emulator.
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
- * timing is the same at any replay rate) and the device GPS while navigating.
+ * timing is the same at any replay rate; T146: `?route=current&kmh=<n>` replays the current route timed in the app, no
+ * body) and the device GPS while navigating.
  */
 object NavRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {

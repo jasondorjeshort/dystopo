@@ -1,6 +1,6 @@
 ---
-verified: 2026-10-23
-source: observed (T131, `tools/android-battery.py` on an API 35 emulator); Android's `dumpsys batterystats` checkin format
+verified: 2026-10-25
+source: observed (T131, T146, `tools/android-battery.py` on an API 35 emulator); Android's `dumpsys batterystats` checkin format
 ---
 
 # Battery measurement (`tools/android-battery.py`)
@@ -44,9 +44,10 @@ Screen-on scenarios raise `screen_off_timeout` for their length and restore it a
   own GPS feeds the recorder through the foreground service. Afterwards the screen on, `POST /tracks/stop`, and the
   track deleted unless `--keep-tracks`. On an emulator the script sets one `adb emu geo fix` at Paradise first.
 - **nav**: `POST /route` with the `paradise-sunrise-drive` line of `tools/routing-tour.txt` (drive mode, 82 km),
-  `GET /route/gpx?track=1&kmh=<--drive-kmh>` (T137: the app's timed track, one fix a second at that speed; the
-  script no longer resamples the route itself), `POST /nav/start?route=current`, then `POST /location/replay?rate=1`
-  with that track (the plain route GPX has no times; replayed bare it would move a whole route segment a second). The replay starts again if it ends before the scenario. Navigation keeps the screen on.
+  `POST /nav/start?route=current`, then `POST /location/replay?route=current&kmh=<--drive-kmh>&rate=1` (T146: the
+  app replays the current route as its timed track, one fix a second at that speed, with no request body, so no
+  1 MiB limit; the plain route GPX has no times, and replayed bare it would move a whole route segment a second).
+  The replay starts again when `GET /location/replay` says `finished` before the scenario ends. Navigation keeps the screen on.
   The phone's real GPS stays on beside the replayed fixes (`gpsMs` counts it).
 - **idle**: the map at Paradise, z13, loaded before the reset; nothing else runs.
 
@@ -75,7 +76,7 @@ Top level: `device` (serial, model, Android version, `emulator`), `uid`, `minute
 - `device`: `capacityMah` (the power profile's battery), `computedDrainMah`, `screenOnMs`, `realtimeMs` (time on
   battery since the reset), `version` (the checkin format).
 - `extra`: what the scenario saw: tracking's track (`stats.points`, `durationS`, `deleted`); nav's route, replay
-  (`fixes`, `driveMinutes`, `starts`, `replayAtEnd`) and navigation state at the end (`navAtEnd`, with
+  (`fixes`, `driveMinutes` from the replay's answer, `starts`, `replayAtEnd` with `sent`, `fixes`, `running`, `finished`, `source`) and navigation state at the end (`navAtEnd`, with
   `keepScreenOn`); idle's `settled` and `activityAtEnd`.
 - `statsFile` (with `--save-stats`), `error` when the scenario failed, `ok`.
 
@@ -89,3 +90,6 @@ and level drop. Emulator lines prove the mechanics; their power numbers are mean
   Asleep, foreground service 119.8 s; nav 0.007 mAh, CPU 117.7 s (mostly system: the emulator's GL pipe), screen
   wakelock 120.1 s, GPS 120 s beside the replay; idle 0.0 mAh, CPU 3.1 s, GPS 0. Mechanics proven; the phone's line
   goes here when the owner runs it.
+- 2026-10-25, API 35 emulator, 1 min, the T146 path (`POST /location/replay?route=current&kmh=50&rate=1`, no body):
+  `ok` true, all three scenarios; nav replayed 60 of 5,910 fixes in the minute (98.5 min drive), GPS 60.7 s beside
+  it, CPU 49.8 s; power numbers meaningless as above.

@@ -8,11 +8,12 @@ are reset at the start of every scenario, so each reading covers that scenario o
   - tracking: a track recorded from the phone's GPS (`POST /tracks/record?source=gps`) with the screen off
               (`input keyevent KEYCODE_SLEEP`); the track is deleted afterwards unless --keep-tracks.
   - nav:      navigation with the screen on along the Paradise to Sunrise drive in the Rainier pack (the
-              `paradise-sunrise-drive` line of tools/routing-tour.txt): `POST /route` in drive mode, `GET /route/gpx`,
-              `POST /nav/start?route=current`, then `POST /location/replay` with the route as a timed track at one
-              fix a second at --drive-kmh (T137: `GET /route/gpx?track=1&kmh=<n>`, the app's own resampling; the
-              plain route GPX has no times, and replayed bare it would jump a whole segment a second).
-              Replayed again from the start if it ends before the scenario does.
+              `paradise-sunrise-drive` line of tools/routing-tour.txt): `POST /route` in drive mode,
+              `POST /nav/start?route=current`, then `POST /location/replay?route=current&kmh=<--drive-kmh>&rate=1`
+              (T146: the app replays the current route as a timed track at one fix a second, the fixes of
+              `GET /route/gpx?track=1&kmh=<n>`, with no request body, so no 1 MiB limit; the plain route GPX has no
+              times, and replayed bare it would jump a whole segment a second). Replayed again from the start when
+              `GET /location/replay` says `finished` before the scenario ends.
   - idle:     the map on screen at Paradise (z13, the Rainier pack), nothing else running.
 Screen-on scenarios raise the screen-off timeout for their duration and restore it afterwards.
 
@@ -45,7 +46,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 
 _spec = importlib.util.spec_from_file_location("android_debug", os.path.join(os.path.dirname(os.path.abspath(__file__)), "android_debug.py"))
 android_debug = importlib.util.module_from_spec(_spec)
@@ -286,23 +286,6 @@ def drive_line(path):
     raise RuntimeError(f"no {DRIVE_LABEL} line in {path}")
 
 
-def track_summary(gpx_bytes):
-    """Fix count and seconds from first to last fix of a timed track (`GET /route/gpx?track=1`)."""
-    root = ET.fromstring(gpx_bytes)
-    times = []
-    n = 0
-    for el in root.iter():
-        if el.tag.rsplit("}", 1)[-1] == "trkpt":
-            n += 1
-            t = next((c.text for c in el if c.tag.rsplit("}", 1)[-1] == "time"), None)
-            if t:
-                times.append(datetime.datetime.fromisoformat(t.strip().replace("Z", "+00:00")))
-    if n < 2:
-        raise RuntimeError("the timed track has fewer than two points")
-    secs = (times[-1] - times[0]).total_seconds() if len(times) >= 2 else 0.0
-    return n, secs
-
-
 # ---------------------------------------------------------------------------------------------------
 # Scenarios: prepare() before the stats reset, run(deadline) during it, finish() after the reading
 
@@ -345,7 +328,7 @@ class Nav:
     name, screen_on = "nav", True
 
     def __init__(self, ctx):
-        self.ctx, self.extra, self.gpx = ctx, {}, None
+        self.ctx, self.extra = ctx, {}
 
     def prepare(self):
         c = self.ctx
@@ -356,10 +339,7 @@ class Nav:
         if r.get("error") or not route:
             raise RuntimeError(f"POST /route failed: {json.dumps(r)[:300]}")
         self.extra["route"] = {k: route.get(k) for k in ("distanceM", "distance", "timeS") if k in route}
-        gpx = c.app.call(f"/route/gpx?track=1&kmh={c.args.drive_kmh:g}", raw=True)  # T137: timed by the app
-        n, secs = track_summary(gpx)
-        self.gpx = gpx.decode("utf-8") if isinstance(gpx, bytes) else gpx
-        self.extra["replay"] = {"fixes": n, "driveMinutes": round(secs / 60, 1), "kmh": c.args.drive_kmh, "starts": 0}
+        self.extra["replay"] = {"fixes": None, "driveMinutes": None, "kmh": c.args.drive_kmh, "starts": 0}
 
     def start(self):
         c = self.ctx
@@ -369,18 +349,24 @@ class Nav:
 
     def _replay(self):
         c = self.ctx
-        c.app.call("/location/replay?rate=1", "POST", body=self.gpx.encode("utf-8"))
-        self.extra["replay"]["starts"] += 1
+        # T146: the app times the current route itself; no body, so a drive of any length replays.
+        r = c.app.call(f"/location/replay?route=current&kmh={c.args.drive_kmh:g}&rate=1", "POST")
+        if r.get("error") or r.get("source") != "route":
+            raise RuntimeError(f"POST /location/replay?route=current failed: {json.dumps(r)[:300]}")
+        rp = self.extra["replay"]
+        rp["fixes"] = r.get("fixes")
+        rp["driveMinutes"] = round((r.get("durationMs") or 0) / 60000, 1)
+        rp["starts"] += 1
 
     def tick(self):
         r = self.ctx.app.try_call("/location/replay", timeout=15)
-        if isinstance(r, dict) and r.get("finished") is True:
+        if isinstance(r, dict) and r.get("finished") is True:  # T146: every fix sent; drive it again
             self._replay()
 
     def stop(self):
         c = self.ctx
         rp = c.app.try_call("/location/replay")
-        self.extra["replayAtEnd"] = {k: rp.get(k) for k in ("sent", "total", "finished") if k in rp}
+        self.extra["replayAtEnd"] = {k: rp.get(k) for k in ("sent", "fixes", "running", "finished", "source") if k in rp}
         nav = c.app.try_call("/nav")
         self.extra["navAtEnd"] = {k: nav.get(k) for k in ("active", "state", "keepScreenOn", "offRoute") if k in nav}
         c.app.try_call("/location/replay", "DELETE")
