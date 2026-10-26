@@ -13,7 +13,8 @@ import java.io.File
 
 /**
  * T145, the problem reports' debug routes (debug builds only, on the debug port; [Reports], [ReportRow]):
- * - `GET /reports`: reads the exit records not seen yet first (`import`: `records`, `written`, `skipped`), then the kept
+ * - `GET /reports`: reads the exit records not seen yet first (`import`: `records`, `written`, `skipped`; `launchImport`:
+ *   what the read at launch found), then the kept
  *   reports newest first (`reports`: `id`, `kind`, `label` as the row lists it, `at`, `atMs`, `headline`, `bytes`, `file`,
  *   `header` as written, unscrubbed), `keep`, `exitSupported`.
  * - `GET /reports/{id}`: one report as the row shows it: `text` (scrubbed, what Open GitHub issue copies), `title`,
@@ -56,7 +57,7 @@ object ReportRoutes {
         val files = Reports.list()
         return linkedMapOf(
             "exitSupported" to (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R),
-            "import" to import, "keep" to Reports.KEEP, "dir" to Reports.dir().path,
+            "launchImport" to Reports.launchImport, "import" to import, "keep" to Reports.KEEP, "dir" to Reports.dir().path,
             "reports" to files.mapNotNull { f ->
                 Reports.read(f)?.let { rep ->
                     linkedMapOf("id" to rep.id, "kind" to rep.kind, "label" to ReportUi.label(rep), "at" to rep.dump.header["at"], "atMs" to rep.atMs,

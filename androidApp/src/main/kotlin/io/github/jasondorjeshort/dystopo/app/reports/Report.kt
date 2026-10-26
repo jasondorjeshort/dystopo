@@ -49,7 +49,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         val out = ArrayList<String>()
         out += "Time: " + (h["at"] ?: utc(atMs))
         out += "App: " + listOfNotNull(h["version"], h["versionCode"]?.let { "($it)" }).joinToString(" ") + (h["build"]?.let { ", $it" } ?: "")
-        out += "Android: " + listOfNotNull(h["android"], h["sdk"]?.let { "(API $it)" }).joinToString(" ") + (h["device"]?.let { ", $it" } ?: "")
+        val api = h["sdk"]?.let { "API $it" }
+        out += "Android: " + (h["android"]?.let { a -> a + (api?.let { " ($it)" } ?: "") } ?: api ?: "?") + (h["device"]?.let { ", $it" } ?: "")
         h["reasonName"]?.let { out += "Reason: $it" + (h["reason"]?.let { r -> " ($r)" } ?: "") }
         h["description"]?.takeIf { it.isNotBlank() }?.let { out += "System's note: $it" }
         h["exception"]?.let { out += "Exception: $it" }
@@ -102,6 +103,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
     companion object {
         const val FRAMES_SHOWN = 40
         const val APP_PACKAGE = MainWatchdog.APP_PACKAGE
+        private const val WATCHDOG = "$APP_PACKAGE.app.MainWatchdog"
+        private const val DETECTOR = "$APP_PACKAGE.app.FreezeDetector"
 
         val KIND_LABELS = linkedMapOf(
             "crash" to "Crash", "native-crash" to "Native crash", "anr" to "Not responding (ANR)",
@@ -121,7 +124,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
             if (t.startsWith("main") || t.startsWith("thread main ") || t.startsWith("\"main\"")) return true
             if ("blocked" in t || "waiting to lock" in t) return true
             val running = "runnable" in t || "native" in t || "(running" in t
-            return running && frames.any { it.startsWith(APP_PACKAGE) }
+            // The watchdog's own thread runs app code while it dumps; it is not a worker the UI waited on.
+            return running && frames.any { it.startsWith(APP_PACKAGE) && !it.startsWith(WATCHDOG) && !it.startsWith(DETECTOR) }
         }
 
         fun utc(ms: Long): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(ms))

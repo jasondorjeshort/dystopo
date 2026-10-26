@@ -35,12 +35,16 @@ object Reports {
     @Volatile var lastImport: Map<String, Any?>? = null
         private set
 
+    /** What the read at launch found (`GET /reports` `launchImport`). */
+    @Volatile var launchImport: Map<String, Any?>? = null
+        private set
+
     /** At process start (`DystopoApp.onCreate`): the crash handler at once, the exit records on a worker. */
     fun start(app: DystopoApp) {
         val d = File(app.filesDir, MainWatchdog.REPORTS_DIR)
         dir = d
         CrashCapture.install(d)
-        Thread({ runCatching { importExits(app) }.onFailure { Log.w(TAG, "exit import failed", it) } }, "reports-import").apply { isDaemon = true }.start()
+        Thread({ runCatching { launchImport = importExits(app) }.onFailure { Log.w(TAG, "exit import failed", it) } }, "reports-import").apply { isDaemon = true }.start()
     }
 
     fun dir(context: Context = DystopoApp.instance): File = dir ?: File(context.filesDir, MainWatchdog.REPORTS_DIR).also { dir = it }
@@ -141,6 +145,8 @@ object Reports {
 object CrashCapture {
     const val PREFIX = "crash-"
     const val MAX_FRAMES = 64
+    /** Blocked threads kept in a crash file besides the crashing and main threads (a stalled render can block dozens). */
+    const val MAX_BLOCKED = 10
 
     @Volatile private var installed = false
 
@@ -154,7 +160,7 @@ object CrashCapture {
                 val now = System.currentTimeMillis()
                 val main = android.os.Looper.getMainLooper().thread
                 val others = if (t === main) emptyMap() else mapOf(main to main.stackTrace)
-                val blocked = Thread.getAllStackTraces().filter { (th, _) -> th !== t && th !== main && th.state == Thread.State.BLOCKED }
+                val blocked = Thread.getAllStackTraces().filter { (th, _) -> th !== t && th !== main && th.state == Thread.State.BLOCKED }.entries.take(MAX_BLOCKED).associate { it.key to it.value }
                 Reports.write(File(dir, "$PREFIX${Report.stamp(now)}.txt"), format(now, t.name, e, Reports.system(), others + blocked))
                 Reports.prune(dir)
             } catch (_: Throwable) {

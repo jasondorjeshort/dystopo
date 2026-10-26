@@ -159,12 +159,17 @@ class ReportTest {
             "thread main (TIMED_WAITING)" to listOf("java.lang.Thread.sleep(Native Method)"),
             "thread tile-1 (BLOCKED)" to listOf("io.github.jasondorjeshort.dystopo.app.TileService.demTile(TileService.kt:300)"),
             "thread pool-2 (WAITING)" to listOf("jdk.internal.misc.Unsafe.park(Native Method)"),
+            "thread ui-watchdog (RUNNABLE)" to listOf("java.lang.Thread.getAllStackTraces(Thread.java:1)", "io.github.jasondorjeshort.dystopo.app.MainWatchdog.dump(MainWatchdog.kt:1)"),
+            "thread gen-1 (RUNNABLE)" to listOf("io.github.jasondorjeshort.dystopo.app.TileService.render(TileService.kt:9)"),
         )
         val r = Report("freeze-1", MainWatchdog.Dump.parse(MainWatchdog.Dump.format(header, sections)))
         val shown = r.shown()
         assertTrue("UI thread silent for: 3012 ms (threshold 3000 ms)" in shown, shown)
         assertTrue("thread tile-1 (BLOCKED)" in shown)
         assertFalse("pool-2" in shown)
+        assertFalse("ui-watchdog" in shown, "the watchdog's own thread is not a worker the UI waited on")
+        assertTrue("thread gen-1 (RUNNABLE)" in shown, "a running worker in app code is shown")
+        assertTrue("Android: 15 (API 35), Pixel 8" in shown, shown)
         assertEquals("Freeze: at Routes.freezeUi (0.1.13-alpha)", r.title())
     }
 }
