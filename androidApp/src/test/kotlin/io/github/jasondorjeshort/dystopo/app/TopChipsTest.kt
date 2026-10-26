@@ -26,6 +26,24 @@ class TopChipsTest {
     }
 
     @Test
+    fun chipTopsFollowTheCardInPx() {
+        // T146: the tops the chip columns are measured at in the card's own layout pass (density 2.625, 6 dp = 16 px).
+        val d = 2.625f
+        val c = TopChips.Chip.ONLINE
+        assertEquals(240, TopChips.chipTopPx(c, navCardBottomPx = 0, searchBottomPx = 0, trackBottomPx = 0, fallbackPx = 240, density = d))
+        assertEquals(Math.round((300 / d + 4) * d), TopChips.chipTopPx(c, 0, 300, 0, 240, d), "below the search column")
+        assertEquals(Math.round((900 / d + 6) * d), TopChips.chipTopPx(c, 900, 300, 0, 240, d), "below the card while navigating")
+        assertEquals(916, TopChips.chipTopPx(TopChips.Chip.TRACKS, 900, 300, 0, 240, d))
+        assertEquals(240, TopChips.chipTopPx(TopChips.Chip.TRACKS, 0, 300, 0, 240, d), "under the status bar without a card")
+        assertEquals(1216, TopChips.chipTopPx(TopChips.Chip.ROUTES, 900, 300, 1200, 400, d), "below the track controls")
+        assertEquals(400, TopChips.chipTopPx(TopChips.Chip.ROUTES, 900, 300, 0, 400, d))
+        // A card that grows by a wrapped turn line moves both columns by the same amount.
+        val grow = 70
+        assertEquals(grow, TopChips.chipTopPx(TopChips.Chip.TRACKS, 900 + grow, 300, 0, 240, d) - TopChips.chipTopPx(TopChips.Chip.TRACKS, 900, 300, 0, 240, d))
+        assertTrue(TopChips.chipTopPx(c, 900 + grow, 300, 0, 240, d) >= 900 + grow)
+    }
+
+    @Test
     fun overlap() {
         val card = floatArrayOf(21f, 210f, 1059f, 900f)
         assertTrue(TopChips.overlap(card, floatArrayOf(21f, 330f, 500f, 420f)))

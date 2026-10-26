@@ -49,6 +49,7 @@ import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.controls.Orientation
+import io.github.jasondorjeshort.dystopo.app.navCardEdge
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xF2FFFCF5)
@@ -95,6 +96,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             // and Routes chips move below this card (TopChips), so they stay reachable.
             Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 60.dp)
                 .widthIn(max = 520.dp).fillMaxWidth()
+                .navCardEdge() // T146: the chips below it move in the same layout pass (TopChips.followNavCard)
                 .onGloballyPositioned { c ->
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> chips.navCardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } // T137: `GET /nav` `layout.navCardPx`

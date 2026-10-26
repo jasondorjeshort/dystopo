@@ -81,6 +81,23 @@ class TimedTrackTest {
     }
 
     @Test
+    fun theReplayTrackHasTheSameFixesAsTheGpx() {
+        // T146: `POST /location/replay?route=current&kmh=` replays TimedTrack.track, the GPX's fixes without the text.
+        val long = (0 until 900).map { i -> RoutePoint(46.786 + 0.0008 * i, -121.735 + 0.0004 * i, 1600.0 + i) }
+        val route = Route("r3", "Drive", long, type = "drive")
+        val track = TimedTrack.track(route, 40.0, 1_700_000_000_000L)
+        val fromGpx = Gpx.parse(TimedTrack.gpx(route, 40.0, 1_700_000_000_000L)).tracks.single().points
+        assertEquals("Drive", track.name)
+        assertEquals("drive", track.type)
+        assertEquals(fromGpx.size, track.points.size)
+        for (i in fromGpx.indices) {
+            assertEquals(fromGpx[i].time, track.points[i].time)
+            assertEquals(fromGpx[i].lat, track.points[i].lat, 1e-7)
+            assertEquals(fromGpx[i].lon, track.points[i].lon, 1e-7)
+        }
+    }
+
+    @Test
     fun edgeCases() {
         assertFailsWith<IllegalArgumentException> { TimedTrack.of(pts, 0.0, 0L) }
         assertEquals(1, TimedTrack.of(pts.take(1), 40.0, 0L).size)
