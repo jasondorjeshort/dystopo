@@ -91,7 +91,7 @@ const val NAV_MAX_FONT_SCALE = 1.5f
 @OptIn(ExperimentalLayoutApi::class)
 private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
-    androidx.compose.runtime.remember { chips.navCardShown() } // T146: the draw check counts from here
+    androidx.compose.runtime.DisposableEffect(Unit) { chips.navCardShown(); onDispose { } } // T146: the draw check counts from here (before the first draw)
     Box(Modifier.fillMaxSize()) {
         Column(
             // Below the top chip row (search, Settings, Packs), which stays usable while navigating; T65: the Tracks
