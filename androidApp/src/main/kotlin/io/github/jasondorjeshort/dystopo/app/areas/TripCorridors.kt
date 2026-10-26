@@ -211,7 +211,10 @@ object TripCorridors {
         return linkedMapOf(
             "why" to why, "run" to runs.incrementAndGet(), "widthM" to width, "trips" to plans.size, "current" to current,
             "made" to made, "refused" to refused, "cancelled" to cancelled, "released" to released, "ms" to System.currentTimeMillis() - t0,
-        ).also { lastRun = it; Log.i(TAG, "reconcile: $it") }
+        ).also { // T140 (T136's follow-up): a run that did nothing leaves the last one that did, until the next job starts
+            if (made.isNotEmpty() || refused.isNotEmpty() || cancelled.isNotEmpty() || released > 0 || lastRun == null) lastRun = it
+            Log.i(TAG, "reconcile: $it")
+        }
     }
 
     /** Makes [want] the corridor of [p]: null when it downloaded (or is downloading), else why not. */

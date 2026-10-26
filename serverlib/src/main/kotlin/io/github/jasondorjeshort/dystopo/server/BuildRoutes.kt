@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.server
 
 import com.sun.net.httpserver.HttpExchange
+import io.github.jasondorjeshort.dystopo.areas.AreaLimit
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -82,7 +83,10 @@ import kotlin.math.floor
  *   SHA-256. A corridor (or `pack=0`) is the DEM and vector tiles within its buffer, as rows per zoom, with
  *   estimated sizes ([maxAreaTiles] at most, `DYSTOPO_AREA_MAX_TILES`). Both list the glyphs and sprites
  *   (bundled in the app) and what the phone builds itself (trail graph and search index, from a vector pack).
- *   `GET /area` describes the parameters and limits.
+ *   `GET /area` describes the parameters and limits. T140 (ADR 0041): a polygon (`{"kind": "polygon", "rings": ...}`,
+ *   or `ring=lat,lon;...`) is tiles like a corridor, as a version 2 manifest; `pack=1` on one is refused (400, a pack
+ *   is a box), and one whose outer rings' boxes pass the heap's tile limit is refused (413) before it is filled.
+ *   `GET /area` names the `shapes` read and `manifestVersion` 2.
  *
  * A box across the antimeridian (west > east, e.g. `bbox=179.2,-17.2,-179.8,-16.4`) is split at 180°
  * into two jobs, `<name>-e` (west..180) and `<name>-w` (-180..east), each a normal rectangular pack
@@ -674,10 +678,14 @@ class BuildRoutes(
 
     /** `GET /area`: what `POST /area` takes. */
     fun areaHelp(): Map<String, Any?> = linkedMapOf(
-        "post" to "POST /area with a JSON body {\"kind\": \"box\", \"bbox\": [w, s, e, n], \"minZoom\": 8, \"maxZoom\": 14} or " +
-            "{\"kind\": \"corridor\", \"line\": [[lon, lat], ...], \"bufferM\": 500, \"minZoom\": 8, \"maxZoom\": 15}, or query parameters " +
-            "bbox= or line=lat,lon;lat,lon, bufferM, minZoom, maxZoom, name; options pack=1|0, profile, fallback, source, retry=1",
-        "manifestVersion" to AreaManifest.VERSION, "maxAreaTiles" to maxAreaTiles, "maxZoom" to AreaOfInterest.MAX_ZOOM,
+        "post" to "POST /area with a JSON body {\"kind\": \"box\", \"bbox\": [w, s, e, n], \"minZoom\": 8, \"maxZoom\": 14}, " +
+            "{\"kind\": \"corridor\", \"line\": [[lon, lat], ...], \"bufferM\": 500, \"minZoom\": 8, \"maxZoom\": 15} or " +
+            "{\"kind\": \"polygon\", \"rings\": [[[lon, lat], ...], ...], \"bufferM\": 0, \"minZoom\": 8, \"maxZoom\": 15}, or query parameters " +
+            "bbox=, line=lat,lon;lat,lon, ring=lat,lon;lat,lon;lat,lon[|...] or around=lat,lon with radiusM, bufferM, minZoom, maxZoom, name; " +
+            "options pack=1|0 (a polygon is tiles only), profile, fallback, source, retry=1",
+        // T140 (ADR 0041 §3): the newest manifest version and the shapes this server reads; a phone treats a missing `shapes` as box and corridor.
+        "manifestVersion" to AreaManifest.VERSION, "shapes" to AreaShape.KINDS, "maxAreaTiles" to maxAreaTiles,
+        "heapAreaTiles" to AreaLimit.maxTiles(Runtime.getRuntime().maxMemory()), "maxZoom" to AreaOfInterest.MAX_ZOOM,
         "bufferM" to listOf(AreaOfInterest.MIN_BUFFER_M, AreaOfInterest.MAX_BUFFER_M), "build" to limits(),
     )
 
@@ -702,6 +710,7 @@ class BuildRoutes(
             throw Refused(400, e.message ?: "bad area")
         }
         val wantPack = opts["pack"]?.let { it == "1" || it == "true" } ?: (area.shape is AreaShape.Box)
+        if (wantPack && area.shape is AreaShape.Polygon) throw Refused(400, POLYGON_NO_PACK) // T140 (ADR 0041 §3)
         val name = opts["name"]?.trim()?.ifEmpty { null } ?: area.name?.takeIf { PackNames.isValidName(it) } ?: ("area-" + area.id.drop(1).take(12))
         val items = ArrayList<ManifestItem>()
         val notes = ArrayList<String>()
@@ -745,15 +754,20 @@ class BuildRoutes(
         } else {
             val demZooms = LiveTiles.LIVE_MIN_ZOOM..minOf(maxOf(area.maxZoom, LiveTiles.LIVE_MIN_ZOOM), LiveTiles.LIVE_MAX_ZOOM)
             val osmZooms = (area.minZoom..minOf(area.maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
+            val polygon = area.shape is AreaShape.Polygon
+            // T140 (ADR 0041 §3): a polygon's tile sets are filled in memory; its outer rings' boxes are checked against the heap first.
+            AreaLimit.refusal(area, demZooms, osmZooms, AreaLimit.maxTiles(Runtime.getRuntime().maxMemory()))?.let { throw Refused(413, it) }
             val tiles = AreaManifest.tileItems(area, demZooms, osmZooms)
             val count = tiles.sumOf { it.count }
             if (count > maxAreaTiles) {
-                throw Refused(413, "the area needs $count tiles at z${area.minZoom}-${area.maxZoom}; the limit is $maxAreaTiles (DYSTOPO_AREA_MAX_TILES): lower maxZoom, narrow the buffer or split the route")
+                val remedy = if (polygon) "lower maxZoom or draw a smaller area" else "lower maxZoom, narrow the buffer or split the route"
+                throw Refused(413, "the area needs $count tiles at z${area.minZoom}-${area.maxZoom}; the limit is $maxAreaTiles (DYSTOPO_AREA_MAX_TILES): $remedy")
             }
+            val what = if (polygon) "an area" else "a corridor"
             items += tiles
             items += LocalItem(ManifestItem.KIND_CONTOURS, "dem", true, "contour, hillshade and cliff tiles are made on the phone from the DEM tiles")
-            items += LocalItem(ManifestItem.KIND_GRAPH, null, false, "a corridor is tiles in the phone's cache; the trail graph is built from vector packs (download a box for it)")
-            notes += "DEM tiles from z${demZooms.first} (contours sample coarser zooms than they show) and one tile of margin around the corridor at every zoom"
+            items += LocalItem(ManifestItem.KIND_GRAPH, null, false, "$what is tiles in the phone's cache; the trail graph is built from vector packs (download a box for it)")
+            notes += "DEM tiles from z${demZooms.first} (contours sample coarser zooms than they show) and one tile of margin around ${if (polygon) "the area" else "the corridor"} at every zoom"
         }
         items += glyphItem()
         items += spriteItem()
@@ -871,6 +885,8 @@ class BuildRoutes(
         /** T75: `POST /area` options read from a JSON body as well as the query. */
         private val AREA_OPTIONS = setOf("pack", "name", "profile", "fallback", "source", "retry")
         const val MAX_AREA_BODY = 2 shl 20
+        /** T140 (ADR 0041 §3): `pack=1` on a polygon. */
+        const val POLYGON_NO_PACK = "a pack is a box; download a box for the trail graph"
         private val SPRITE_FILES = listOf("sprite.json", "sprite.png", "sprite@2x.json", "sprite@2x.png")
 
         /** Registry id credited for an extract fetched from the Overpass API. */

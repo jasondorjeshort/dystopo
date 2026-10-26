@@ -37,7 +37,10 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
+import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
+import io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp
+import io.github.jasondorjeshort.dystopo.areas.PolygonRings
 import io.github.jasondorjeshort.dystopo.areas.TripCorridor
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -77,6 +80,10 @@ private val Teal = Color(0xFF00796B)
  * T95: an area whose source has moved on to a newer version says [OLDER_NOTE] and offers Update (a download again
  * at the current version) instead of "Download again"; until then its tiles are served at the version they were
  * fetched at.
+ *
+ * T140 (ADR 0041): a polygon area's card says its size on the ground ([polygonLine]), a disc's its radius ([discLine]),
+ * and its outline is the rings, filled; a record this build cannot read ([Areas.Record.opaque]) gets the needs-newer card
+ * ([NeedsNewerCard]): the sentence, the raw reason under it, Show and Remove only.
  */
 @Composable
 fun AreasOverlay() {
@@ -144,6 +151,7 @@ private fun AreasSheet() {
 
 @Composable
 private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
+    r.opaque?.let { NeedsNewerCard(r, it); return } // T140
     Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -152,7 +160,10 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         }
         val kind = when {
             r.pack != null -> "Region pack ${r.pack}"
+            // T140: a disc (the one-point corridor) by its radius, a polygon by its area on the ground.
+            r.area.shape is AreaShape.Corridor && (r.area.shape as AreaShape.Corridor).points.size == 1 && r.tripId == null -> discLine((r.area.shape as AreaShape.Corridor).bufferM, AppSettings.units)
             r.area.shape is AreaShape.Corridor -> (r.area.shape as AreaShape.Corridor).bufferM.let { b -> corridorLine(r.area.lengthM, if (r.tripId != null) TripCorridor.widthOf(b).toDouble() else b, AppSettings.units, trip = r.tripId != null) } // T106: the units setting; T130: a trip's
+            r.area.shape is AreaShape.Polygon -> polygonLine(PolygonRings.areaM2((r.area.shape as AreaShape.Polygon).rings), AppSettings.units)
             else -> "Box"
         }
         val share = (cov?.get("share") as? Number)?.toDouble()
@@ -180,6 +191,44 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
             Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
         }
     }
+}
+
+/**
+ * T140 (ADR 0041 §2): the card of an area this build cannot read: [NeedsNewerApp.USER_SENTENCE] with the raw reason under
+ * it; it stays pinned by its box (its tiles are kept), and only Show and Remove act on it.
+ */
+@Composable
+private fun NeedsNewerCard(r: Areas.Record, o: Areas.Record.Opaque) {
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+        }
+        BasicText(NeedsNewerApp.USER_SENTENCE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 13.sp, fontWeight = FontWeight.Bold))
+        BasicText(o.reason, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
+            Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
+        }
+    }
+}
+
+/**
+ * T140 (ADR 0041 §4): a disc's card line, "Within 5 km of a point" or "Within 3 mi of a point" in the units setting: a
+ * whole number of kilometres or miles (the presets) without decimals, else [UnitFormat.distance]. Pure, tested.
+ */
+internal fun discLine(radiusM: Double, units: ContourUnits): String {
+    val (per, unit) = if (units == ContourUnits.FEET) 1609.344 to "mi" else 1000.0 to "km"
+    val v = radiusM / per
+    val text = if (v >= 1 && kotlin.math.abs(v - Math.round(v)) < 0.01) "${Math.round(v)} $unit" else UnitFormat.distance(radiusM, units)
+    return "Within $text of a point"
+}
+
+/** T140: a polygon area's card line, "Area of 12.7 km²" or "Area of 4.9 sq mi" in the units setting. Pure, tested. */
+internal fun polygonLine(areaM2: Double, units: ContourUnits): String {
+    val (v, unit) = if (units == ContourUnits.FEET) areaM2 / 2_589_988.110336 to "sq mi" else areaM2 / 1e6 to "km²"
+    val n = if (v >= 100) String.format(Locale.US, "%,.0f", v) else String.format(Locale.US, "%.1f", v)
+    return "Area of $n $unit"
 }
 
 private fun mb(bytes: Long): String = if (bytes >= 1_048_576) String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0) else String.format(Locale.US, "%d kB", bytes / 1024)
@@ -325,6 +374,13 @@ object AreaOutlines {
                     }
                     fs += Feature.fromGeometry(LineString.fromLngLats(pts)).apply { addStringProperty("kind", "line"); addStringProperty("id", r.id) }
                 }
+                is AreaShape.Polygon -> { // T140: each part with its holes, filled once, and every ring outlined
+                    for ((outer, holes) in polygonParts(s.rings)) {
+                        val rings = (listOf(outer) + holes).map { ring -> (ring + ring.first()).map { Point.fromLngLat(it.lon, it.lat) } }
+                        fs += Feature.fromGeometry(Polygon.fromLngLats(rings)).apply { addStringProperty("kind", "box"); addStringProperty("id", r.id) }
+                        for (ring in rings) fs += Feature.fromGeometry(LineString.fromLngLats(ring)).apply { addStringProperty("kind", "line"); addStringProperty("id", r.id) }
+                    }
+                }
             }
         }
         data = FeatureCollection.fromFeatures(fs)
@@ -358,7 +414,13 @@ object AreaOutlines {
             )
         }
         synchronized(this) { outlines.keys.retainAll(records.map { it.id }.toSet()) }
-        return linkedMapOf("features" to features, "corridors" to corridors)
+        // T140: the polygon areas' outlines (each part with its holes, as drawn).
+        val polygons = records.mapNotNull { r ->
+            val s = r.area.shape as? AreaShape.Polygon ?: return@mapNotNull null
+            val parts = polygonParts(s.rings)
+            linkedMapOf("id" to r.id, "drawn" to (r.id in shown), "parts" to parts.size, "holes" to parts.sumOf { it.second.size }, "points" to s.rings.sumOf { it.size })
+        }
+        return linkedMapOf("features" to features, "corridors" to corridors, "polygons" to polygons)
     }
 
     private fun install() {
@@ -396,4 +458,20 @@ object AreaOutlines {
             (style.getSource(SOURCE) as? GeoJsonSource)?.setGeoJson(data)
         }
     }
+}
+
+/**
+ * T140: [rings] (even-odd, never overlapping) as the polygons a map draws: each outer ring with the holes directly in it
+ * (a ring held by an odd number of others is a hole of the outer ring one level up that holds it). Pure, tested.
+ */
+internal fun polygonParts(rings: List<List<AreaPoint>>): List<Pair<List<AreaPoint>, List<List<AreaPoint>>>> {
+    val depth = PolygonRings.depths(rings)
+    val outers = rings.indices.filter { depth[it] % 2 == 0 }
+    val holes = outers.associateWith { ArrayList<List<AreaPoint>>() }
+    for (i in rings.indices) {
+        if (depth[i] % 2 == 0) continue
+        val p = rings[i].first()
+        outers.firstOrNull { depth[it] == depth[i] - 1 && PolygonRings.contains(rings[it], p.lat, p.lon) }?.let { holes.getValue(it) += rings[i] }
+    }
+    return outers.map { rings[it] to holes.getValue(it).toList() }
 }

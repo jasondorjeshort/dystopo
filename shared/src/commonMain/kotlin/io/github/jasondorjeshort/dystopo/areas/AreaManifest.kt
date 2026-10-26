@@ -156,7 +156,8 @@ data class AreaManifest(
     val generatedAt: String? = null,
     val build: Map<String, Any?>? = null,
     val notes: List<String> = emptyList(),
-    val version: Int = VERSION,
+    /** T140 (ADR 0041 §2): the lowest version that holds the content, 2 for a polygon, else 1 ([AreaOfInterest.manifestVersion]). */
+    val version: Int = area.manifestVersion,
     val versions: Map<String, String> = emptyMap(),
 ) {
     val bytes: Long get() = items.sumOf { it.bytes }
@@ -166,7 +167,7 @@ data class AreaManifest(
     fun tiles(route: String): TilesItem? = items.filterIsInstance<TilesItem>().firstOrNull { it.route == route }
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "version" to version, "id" to id, "name" to name, "status" to status, "source" to source, "generatedAt" to generatedAt,
+        "version" to maxOf(version, area.manifestVersion), "id" to id, "name" to name, "status" to status, "source" to source, "generatedAt" to generatedAt,
         "area" to area.json(), "bounds" to area.bounds.toList(), "lengthM" to area.lengthM.takeIf { it > 0 },
         "bytes" to bytes, "bytesExact" to bytesExact, "tiles" to tileCount,
         "items" to items.map { it.json() }, "build" to build, "notes" to notes,
@@ -176,7 +177,8 @@ data class AreaManifest(
     fun summary(): Map<String, Any?> = json() + ("items" to items.map { i -> i.json().filterKeys { it != "tiles" } })
 
     companion object {
-        const val VERSION = 1
+        /** T140: the newest manifest version this build reads (2: the polygon kind, ADR 0041). */
+        const val VERSION = 2
         const val STATUS_READY = "ready"
         const val STATUS_BUILDING = "building"
         const val STATUS_FAILED = "failed"
@@ -184,11 +186,15 @@ data class AreaManifest(
         /** Vector tiles stop here (OpenFreeMap and our packs); the map overzooms. */
         const val OSM_MAX_ZOOM = 14
 
+        /**
+         * T140 (ADR 0041 §2): checks `version`, then the area's `kind`, then the fields; the first two refuse with a
+         * [NeedsNewerApp] (every build before this one parsed the area first, so a new kind hid a newer version).
+         */
         @Suppress("UNCHECKED_CAST")
         fun parse(m: Map<String, Any?>): AreaManifest {
+            val version = (m["version"] as? Number)?.toInt() ?: 1
+            checkVersion(version)
             val area = AreaOfInterest.parse(m["area"] as? Map<String, Any?> ?: throw IllegalArgumentException("manifest without area"))
-            val version = (m["version"] as? Number)?.toInt() ?: VERSION
-            require(version <= VERSION) { "manifest version $version is newer than this app reads ($VERSION)" }
             return AreaManifest(
                 id = m["id"] as? String ?: area.id,
                 name = m["name"] as? String ?: area.name ?: area.id,
@@ -205,6 +211,11 @@ data class AreaManifest(
         }
 
         fun parse(json: String): AreaManifest = parse(MiniJson.parseObject(json))
+
+        /** T140: a [NeedsNewerApp] for a manifest or record [version] newer than [VERSION]. */
+        fun checkVersion(version: Int) {
+            if (version > VERSION) throw NeedsNewerApp("manifest version $version is newer than this app reads ($VERSION)")
+        }
 
         /**
          * The tile items of [area] for a tile server: DEM tiles at [demZooms] and vector tiles at [osmZooms] (null:
