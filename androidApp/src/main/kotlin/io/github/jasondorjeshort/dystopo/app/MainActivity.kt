@@ -19,7 +19,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -70,19 +72,28 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Follow pack switches, downloads and /reload: DystopoApp swaps its TileService, so the attribution
             // line and the no-pack message are recomposed from the current one.
-            var current by remember { mutableStateOf(app.tiles) }
+            // T144: the credit line is made off the UI thread (a pack's attribution is its metadata, read once from the
+            // file under the pack's read lock, which the tile threads hold); the composable only reads the result.
+            var shown by remember { mutableStateOf(Shown("Dystopo", app.tiles.let { t -> if (t.packs.dem == null && t.online == null) NO_PACK else null })) }
             LaunchedEffect(Unit) {
+                var current: TileService? = null
                 while (true) {
+                    val t = app.tiles
+                    if (t !== current) {
+                        current = t
+                        shown = withContext(Dispatchers.Default) { Shown(attribution(t), if (t.packs.dem == null && t.online == null) NO_PACK else null) } // T38: no message in online mode
+                    }
                     delay(500)
-                    if (app.tiles !== current) current = app.tiles
                 }
             }
-            MapScreen(mapView, attribution(current), if (current.packs.dem == null && current.online == null) NO_PACK else null) // T38: no message in online mode
+            MapScreen(mapView, shown.attribution, shown.message)
         }
 
         val wanted = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (wanted.none { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) permissionRequest.launch(wanted)
     }
+
+    private class Shown(val attribution: String, val message: String?)
 
     private fun attribution(tiles: TileService): String {
         val packs = tiles.packs
@@ -104,9 +115,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         mapView.onResume()
+        MainWatchdog.resumed() // T144: the UI-thread watchdog ticks while the activity is in the foreground
     }
 
     override fun onPause() {
+        MainWatchdog.paused()
         mapView.onPause()
         super.onPause()
     }

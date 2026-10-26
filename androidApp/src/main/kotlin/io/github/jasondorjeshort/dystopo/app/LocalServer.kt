@@ -91,6 +91,10 @@ class HttpError(val status: Int, message: String) : Exception(message)
  * - lines are capped at [MAX_LINE] bytes (414 for the request line, 431 for a header), at most
  *   [MAX_HEADERS] headers (431), bodies at [MAX_BODY] bytes (413); anything that is not HTTP gets 400.
  * Refusals are counted per reason in [stats] (`/health` shows them).
+ *
+ * T144: [respond] is the one place a request's handler runs, and it runs inside [leased]: the [lease] (the tile service
+ * the request reads) is taken before the handler and released when it returns or throws, so a reload never closes
+ * packs under a read (`TileServiceRefCountTest`).
  */
 class LocalServer(
     private val port: Int,
@@ -109,6 +113,8 @@ class LocalServer(
     private val isGenerationRequest: (Request) -> Boolean = { false },
     waitThreads: Int = 0, // T88: the wait pool (0: none)
     private val isWaitingRequest: (Request) -> Boolean = { false },
+    /** T144: a hold on what the handler reads (the tile service, [DystopoApp.leaseTiles]), taken around each request's handler and released on every exit. */
+    private val lease: () -> AutoCloseable = { NO_LEASE },
 ) {
     private val readQueue = ArrayBlockingQueue<Runnable>(maxQueued)
     private val readPool = ThreadPoolExecutor(readers, readers, 30, TimeUnit.SECONDS, readQueue) { r ->
@@ -329,7 +335,7 @@ class LocalServer(
         val counter = inFlight.getOrPut(kind) { AtomicInteger() }
         counter.incrementAndGet()
         val response = try {
-            handler(request)
+            leased(lease) { handler(request) }
         } catch (e: Exception) {
             Log.w(TAG, "${request.method} ${request.path} failed", e)
             Response.json(mapOf("error" to (e.message ?: e.javaClass.simpleName), "type" to e.javaClass.name), 500)
@@ -467,6 +473,10 @@ class LocalServer(
 
     companion object {
         const val TAG = "DystopoServer"
+        private val NO_LEASE = AutoCloseable {}
+
+        /** T144: runs [block] holding what [lease] gives, released on every exit: a return, an exception or an error. Nothing is released when taking the lease failed. */
+        internal inline fun <T> leased(lease: () -> AutoCloseable, block: () -> T): T = lease().use { block() }
         const val MAX_LINE = 8192
         const val MAX_HEADERS = 64
         const val MAX_BODY = 1 shl 20

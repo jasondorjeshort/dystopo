@@ -220,8 +220,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
                 if (fetcher === f) {
                     versionReloads.incrementAndGet()
                     installAssetsOnce(f)
-                    val style = app.tiles.style()
-                    app.map.onMain { app.map.loadStyle(style) }
+                    app.showStyle(app.tiles) // T144: posted, not awaited
                 }
             } catch (e: Throwable) {
                 Log.w(TAG, "reload after a version change failed", e)
@@ -246,8 +245,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
             if (!direct.readyForRefresh()) return // T88: once the renders that were waited on are done, not every render
             notReadySeen = n
             renderRefreshes.incrementAndGet()
-            val style = app.tiles.style()
-            app.map.onMain { app.map.loadStyle(style) }
+            app.showStyle(app.tiles) // T144: posted, not awaited
         } catch (e: Throwable) {
             Log.w(TAG, "refresh after rendering failed", e)
         }
@@ -261,8 +259,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
     /** Times the map's vector source was replaced to draw recovered tiles ([OsmSourceRefresh]; in the style's tile URL version). */
     val osmSourceRefreshes = AtomicLong()
     @Volatile private var lastOsmRefresh: Map<String, Any?>? = null
-    @Volatile private var osmRefreshWanted = false
-    @Volatile private var osmRefreshAt = 0L
+    /** T144: recoveries coalesced into one source refresh per settle window; a refresh skipped mid-style-load stays wanted. */
+    val osmRefresh = OsmRefreshCoalescer()
     @Volatile private var styleLoadsSeen = -1L
     private val osmRetrying = java.util.concurrent.atomic.AtomicBoolean()
 
@@ -275,7 +273,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
     /**
      * T138, every 2 s on the probe thread: a style load since the last look clears [stalledOsm] (MapLibre asked for every
      * tile again); the due tiles are fetched again on the prefetch pool, and once one came back the vector source is
-     * replaced ([OsmSourceRefresh]) at most every [OSM_REFRESH_EVERY_MS], so the tile is drawn without a style reload.
+     * replaced ([OsmSourceRefresh]) so the tile is drawn without a style reload. T144: the recoveries are coalesced
+     * ([osmRefresh]: one refresh per settle window while they trickle in), and a refresh the map skipped because its style
+     * was loading is asked for again.
      */
     private fun retryStalledOsm() {
         try {
@@ -285,9 +285,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
                 styleLoadsSeen = loads
             }
             val now = System.currentTimeMillis()
-            if (osmRefreshWanted && now - osmRefreshAt >= OSM_REFRESH_EVERY_MS) {
-                osmRefreshWanted = false
-                osmRefreshAt = now
+            if (osmRefresh.due(now)) {
+                osmRefresh.refreshed(now)
                 refreshOsmSource()
             }
             val f = fetcher ?: return
@@ -303,7 +302,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
                     }
                     if (back > 0) {
                         if (isDirect) DirectTrace.mark("oBack $back of ${due.size}")
-                        osmRefreshWanted = true
+                        osmRefresh.recovered(System.currentTimeMillis(), back)
                     }
                 } finally {
                     osmRetrying.set(false)
@@ -314,14 +313,21 @@ class OnlineService private constructor(private val app: DystopoApp) {
         }
     }
 
+    /** T144: the style JSON is made here; the swap is posted to the UI thread, not awaited. A swap skipped mid-style-load is wanted again. */
     private fun refreshOsmSource() {
         osmSourceRefreshes.incrementAndGet() // first: the new style URL carries it, so MapLibre takes it as a new tile set
         val json = app.tiles.style()
-        val result = app.map.onMain { app.map.map?.style?.let { OsmSourceRefresh.refresh(it, json) } ?: mapOf("skipped" to "no map") }
-        lastOsmRefresh = result + ("at" to System.currentTimeMillis())
-        if (isDirect) DirectTrace.mark("osmRefresh ${result["layers"] ?: result["skipped"]}")
-        Log.i(TAG, "vector source refreshed for recovered tiles: $result")
+        main.post {
+            val result = runCatching { app.map.map?.style?.let { OsmSourceRefresh.refresh(it, json) } ?: mapOf("skipped" to "no map") }
+                .getOrElse { mapOf("skipped" to "error: ${it.message}") }
+            if (result["skipped"] == OsmSourceRefresh.STYLE_LOADING) osmRefresh.skipped()
+            lastOsmRefresh = result + ("at" to System.currentTimeMillis())
+            if (isDirect) DirectTrace.mark("osmRefresh ${result["layers"] ?: result["skipped"]}")
+            Log.i(TAG, "vector source refreshed for recovered tiles: $result")
+        }
     }
+
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
     /** After an offline spell that left tiles blank, reload the style once the server answers again. */
     private fun refreshAfterReconnect(f: OnlineFetcher) {
@@ -332,8 +338,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         refreshedAtUnavailable = failed
         refreshes.incrementAndGet()
         Log.i(TAG, "server back (generation ${f.generation}); reloading the style for tiles left blank")
-        val style = app.tiles.style()
-        app.map.onMain { app.map.loadStyle(style) }
+        app.showStyle(app.tiles) // T144: posted, not awaited
     }
 
     // ---- T41: view changes, online credits, glyphs and sprites ----
@@ -358,10 +363,11 @@ class OnlineService private constructor(private val app: DystopoApp) {
      */
     fun onViewChanged() {
         val f = fetcher ?: return
-        val view = OnlineView.currentOnMain(app) ?: return
+        val cam = OnlineView.currentOnMain(app) ?: return
         viewChanges.incrementAndGet()
-        lastViewSource = view.source
-        prefetchPool.execute {
+        prefetchPool.execute { // T144: the view's source is worked out here, not on the UI thread (the online tiles' records take locks)
+            val view = cam.withSource(OnlineView.sourceFor(app, cam))
+            lastViewSource = view.source
             f.retryNegative()
             if (view.source != OnlineTiles.PACK) runCatching { refreshSources(f, view) }
         }
@@ -381,11 +387,14 @@ class OnlineService private constructor(private val app: DystopoApp) {
         val f = fetcher ?: return
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - idleRefreshAt < 1000) return
-        val view = OnlineView.currentOnMain(app) ?: return
-        if (view.source == OnlineTiles.PACK) return
+        val cam = OnlineView.currentOnMain(app) ?: return
         idleRefreshAt = now
-        idleSourceRefreshes.incrementAndGet()
-        prefetchPool.execute { runCatching { refreshSources(f, view) } }
+        prefetchPool.execute { // T144: the source off the UI thread
+            val view = cam.withSource(OnlineView.sourceFor(app, cam))
+            if (view.source == OnlineTiles.PACK) return@execute
+            idleSourceRefreshes.incrementAndGet()
+            runCatching { refreshSources(f, view) }
+        }
     }
 
     private fun refreshSources(f: OnlineFetcher, view: OnlineView) {
@@ -404,7 +413,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         viewSourceIds = next
         sourceRefreshes.incrementAndGet()
         // T110: the credit line reads these; it recomposed at the camera's rest, before this answer came.
-        if (changed) runCatching { app.map.onMain { io.github.jasondorjeshort.dystopo.app.about.CreditLine.revision++ } }
+        if (changed) main.post { io.github.jasondorjeshort.dystopo.app.about.CreditLine.revision++ } // T144: posted, not awaited
     }
 
     /**
@@ -500,7 +509,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "versionReloads" to versionReloads.get(),
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
-        "stalledOsm" to stalledOsm.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138
+        "stalledOsm" to stalledOsm.json() + osmRefresh.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138; T144: settleMs, refreshes
         "styleRefreshesAfterReconnect" to refreshes.get(),
         "serverInfo" to info?.let { mapOf("demMinZoom" to it["demMinZoom"], "demMaxZoom" to it["demMaxZoom"], "osmMaxZoom" to it["osmMaxZoom"]) },
         "download" to region.json(),
@@ -527,8 +536,6 @@ class OnlineService private constructor(private val app: DystopoApp) {
         const val CACHED = "cached"
         const val PROBE_ONLINE_MS = 30_000L
         const val PROBE_OFFLINE_MS = 5_000L
-        /** T138: at most one vector source refresh for recovered tiles this often. */
-        const val OSM_REFRESH_EVERY_MS = 5_000L
         /** T74: the content versions of every source, kept across restarts (outside the tile cache directory). */
         const val VERSIONS_FILE = "online/versions.json"
 

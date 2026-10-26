@@ -97,3 +97,74 @@ class StalledOsmTiles(
         "givenUp" to givenUp, "droppedByStyleLoad" to droppedByStyleLoad, "firstRetryMs" to firstRetryMs,
     )
 }
+
+/**
+ * T144 (T138's follow-ups): when the map's vector source is replaced for recovered tiles ([OsmSourceRefresh]), which
+ * redraws every layer that uses it. Recoveries that trickle in (each stalled tile's retry comes on its own schedule) are
+ * coalesced: the first opens a window of [settleMs]; the refresh comes when no recovery came for [quietMs], or when the
+ * window ends, whichever is first; and never twice within [settleMs]. So a lone recovery is drawn about [quietMs] after it
+ * came, and a trickle gets one refresh per window (T138 refreshed every 5 to 6 s while retries came in). A refresh the
+ * map skipped because its style was loading ([skipped]) stays wanted and is tried at the next look, so a recovery that
+ * landed during a style load is not lost. Pure, tested.
+ */
+class OsmRefreshCoalescer(val settleMs: Long = 10_000L, val quietMs: Long = 2_000L) {
+    private var wanted = false
+    private var windowStart = 0L
+    private var lastRecovery = 0L
+    private var lastRefresh = Long.MIN_VALUE / 2
+
+    /** Refreshes done, recoveries that joined a refresh already wanted, refreshes the map skipped and tried again. */
+    var refreshes = 0L
+        private set
+    var coalesced = 0L
+        private set
+    var skippedRetried = 0L
+        private set
+
+    /** [count] tiles came back at [now]. */
+    @Synchronized
+    fun recovered(now: Long, count: Int = 1) {
+        if (count <= 0) return
+        if (wanted) coalesced += count else {
+            wanted = true
+            windowStart = now
+            coalesced += count - 1
+        }
+        lastRecovery = now
+    }
+
+    /** True when the source should be replaced now; the caller then calls [refreshed] or [skipped]. */
+    @Synchronized
+    fun due(now: Long): Boolean {
+        if (!wanted || now - lastRefresh < settleMs) return false
+        return now - lastRecovery >= quietMs || now - windowStart >= settleMs
+    }
+
+    /** The source was replaced at [now]. */
+    @Synchronized
+    fun refreshed(now: Long) {
+        wanted = false
+        lastRefresh = now
+        refreshes++
+    }
+
+    /** The refresh counted by [refreshed] was skipped by the map (its style was loading): not counted, still wanted, tried at the next look. */
+    @Synchronized
+    fun skipped() {
+        if (!wanted) {
+            wanted = true
+            windowStart = lastRecovery
+        }
+        refreshes--
+        lastRefresh = Long.MIN_VALUE / 2
+        skippedRetried++
+    }
+
+    val pending: Boolean @Synchronized get() = wanted
+
+    @Synchronized
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "settleMs" to settleMs, "quietMs" to quietMs, "refreshes" to refreshes, "coalesced" to coalesced,
+        "refreshPending" to wanted, "skippedRetried" to skippedRetried,
+    )
+}

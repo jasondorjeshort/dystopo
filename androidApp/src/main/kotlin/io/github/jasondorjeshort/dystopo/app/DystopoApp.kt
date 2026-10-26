@@ -10,8 +10,17 @@ import org.maplibre.android.MapLibre
  * starts with the process so MapLibre can load the style the moment the map view exists.
  */
 class DystopoApp : Application() {
-    lateinit var tiles: TileService
-        private set
+    /**
+     * T144: the published tile service, swapped by [reload]; read without a lock from any thread (the UI thread included).
+     * Inside a loopback request it is the service that request holds ([leaseTiles]), so one request reads one service.
+     */
+    val tiles: TileService get() = leases.held() ?: published
+
+    @Volatile private lateinit var published: TileService
+    private val leases = Leases({ published }, TileService::acquire, TileService::release)
+    private val reloadLock = Any()
+    private val main by lazy { android.os.Handler(mainLooper) }
+
     lateinit var server: LocalServer
         private set
     val map = MapController()
@@ -34,7 +43,9 @@ class DystopoApp : Application() {
         AppSettings.load(this)
         map.onUnitsSeeded = { Thread({ reload() }, "units-reload").start() } // T33: a first fix seeded the units
         io.github.jasondorjeshort.dystopo.app.firstrun.BundledAssets.install(this) // T80: glyphs and sprites from the APK
-        tiles = openTiles()
+        published = openTiles()
+        Thread({ runCatching { published.style() } }, "style-prime").apply { isDaemon = true }.start() // T144: reads each pack's metadata once, off the UI thread, so the map's first style() there takes no pack lock
+        MainWatchdog.start(this) // T144: the UI-thread watchdog (every build)
         io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) // T112: one budget over the caches (its own thread)
         io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)
@@ -42,7 +53,7 @@ class DystopoApp : Application() {
         // only in logcat with the token; 8686 then answers like a release build (map routes only, no /health).
         // debugFixedPort=1 keeps everything on 8686 with the /health token bootstrap (pre-T57 behaviour).
         fixedDebugPort = BuildConfig.DEBUG_ENDPOINTS && AppSettings.debugFixedPort
-        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = fixedDebugPort) }, genThreads = TileService.GEN_THREADS, genNice = TileService.GEN_NICE, tileNice = TileService.TILE_NICE, isGenerationRequest = { TileService.isGenerationRequest(it.path) }, waitThreads = TileService.WAIT_THREADS, isWaitingRequest = { TileService.isWaitingRequest(it.path) }) // T33: debug routes get their own pool; T63: generation too; T88: waits on the sources too
+        server = LocalServer(BuildConfig.SERVER_PORT, threads = 8, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = fixedDebugPort) }, lease = ::leaseTiles, genThreads = TileService.GEN_THREADS, genNice = TileService.GEN_NICE, tileNice = TileService.TILE_NICE, isGenerationRequest = { TileService.isGenerationRequest(it.path) }, waitThreads = TileService.WAIT_THREADS, isWaitingRequest = { TileService.isWaitingRequest(it.path) }) // T33: debug routes get their own pool; T63: generation too; T88: waits on the sources too
         try {
             server.start()
         } catch (e: Exception) {
@@ -81,7 +92,7 @@ class DystopoApp : Application() {
 
     private fun startDebugServer(routes: Routes) {
         if (!fixedDebugPort) {
-            val s = LocalServer(0, threads = 2, debugThreads = 3, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = true) })
+            val s = LocalServer(0, threads = 2, debugThreads = 3, isMapRequest = { Routes.isMapRequest(it) }, handler = { routes.handle(it, debugRoutes = true) }, lease = ::leaseTiles)
             try {
                 s.start()
                 debugServer = s
@@ -112,14 +123,49 @@ class DystopoApp : Application() {
         ContourCache.collectGarbage(this, identities)
     }
 
-    /** Reopens the packs (after pushing new ones) and reloads the map style. [skip]: packs to leave closed (being deleted). */
-    @Synchronized
+    /**
+     * Reopens the packs (after pushing new ones) and reloads the map style. [skip]: packs to leave closed (being deleted).
+     *
+     * T144: never on the UI thread and never waiting for it. The new service is opened off it (called on the UI thread,
+     * the work moves to a thread of its own), published through a volatile field, and the old one disposed: its packs close
+     * when the last request reading them releases them ([TileService.dispose]). The style swap is posted to the UI thread,
+     * not awaited. The lock only orders reloads; nothing that runs on the UI thread takes it.
+     */
     fun reload(skip: Set<String> = emptySet()) {
-        val old = tiles
-        tiles = openTiles(skip)
-        old.close() // T35: stop the old service's contour warm-up before its packs close
-        old.packs.close()
-        map.onMain { map.loadStyle(tiles.style()) }
+        if (android.os.Looper.myLooper() == mainLooper) {
+            Thread({ reload(skip) }, "tiles-reload").start()
+            return
+        }
+        val next = synchronized(reloadLock) {
+            val next = openTiles(skip)
+            val old = published
+            published = next
+            // A request that reloads (POST /reload, /packs/activate) reads the new service from here on.
+            leases.swap(next)
+            old.dispose()
+            next
+        }
+        showStyle(next)
+    }
+
+    /** T144: the style of [service] is made here (off the UI thread) and set on the map in a post, if it is still the published one. */
+    fun showStyle(service: TileService = published) {
+        val json = service.style()
+        main.post { if (published === service) map.loadStyle(json) }
+    }
+
+    /**
+     * T144: holds the published tile service for one loopback request ([LocalServer] calls it around the handler); the
+     * returned handle releases it. Retries when a reload closed the one it read (only possible after a newer one was
+     * published). Nested calls on one thread share the outer hold.
+     */
+    fun leaseTiles(): AutoCloseable = leases.lease()
+
+    /** T144: `GET /health` `tileServices`: `open` (services not yet closed: 1 at rest), opened, closed, deferred closes, the published one's references. */
+    fun tileServicesJson(): Map<String, Any?> {
+        val opened = tileCounters.serviceOpens.get()
+        val closed = tileCounters.serviceCloses.get()
+        return linkedMapOf("open" to opened - closed, "opened" to opened, "closed" to closed, "deferredCloses" to tileCounters.deferredCloses.get(), "references" to published.references)
     }
 
     companion object {

@@ -97,6 +97,10 @@ class PackManager private constructor(private val app: DystopoApp) {
     /**
      * Makes [name] the primary pack: stores the choice, reopens the packs and the style (the other packs stay
      * on the map), and (when the map is up and [moveCamera]) fits the camera to the pack's bounds.
+     *
+     * T144: never waits for the UI thread: [DystopoApp.reload] opens and closes off it and posts the style, and [jumpTo]
+     * posts the camera move; the returned `camera` is the one asked for. The lock here orders pack changes among
+     * workers; the UI thread never takes it.
      */
     @Synchronized
     fun activate(name: String, moveCamera: Boolean = true): Map<String, Any?> {
@@ -112,18 +116,26 @@ class PackManager private constructor(private val app: DystopoApp) {
         return linkedMapOf("active" to activeName(), "previous" to previous, "camera" to camera, "pack" to pack.json(true))
     }
 
-    /** Moves the camera to show [b], if the map is up. Returns the camera, or null. */
+    /**
+     * Moves the camera to show [b], if the map is up. Returns the camera asked for, or null. T144: the move is posted to
+     * the UI thread (after a style swap posted before it), not awaited; the view's size is read from its fields.
+     */
     fun jumpTo(b: PackBounds): Map<String, Any?>? {
         val view = app.map.mapView ?: return null
         return try {
-            val (w, h, density) = app.map.onMain { Triple(view.width, view.height, view.resources.displayMetrics.density) }
-            val zoom = if (w > 0 && h > 0) b.fitZoom(w / density.toDouble(), h / density.toDouble(), 512.0, 24.0) else 10.0
-            app.map.setCamera(b.centerLat, b.centerLon, zoom.coerceIn(3.0, 16.0), 0.0, 0.0)
+            val w = view.width
+            val h = view.height
+            val density = view.resources.displayMetrics.density
+            val zoom = (if (w > 0 && h > 0) b.fitZoom(w / density.toDouble(), h / density.toDouble(), 512.0, 24.0) else 10.0).coerceIn(3.0, 16.0)
+            main.post { runCatching { app.map.setCamera(b.centerLat, b.centerLon, zoom, 0.0, 0.0) }.onFailure { Log.w(TAG, "camera jump failed", it) } }
+            linkedMapOf("lat" to b.centerLat, "lon" to b.centerLon, "zoom" to zoom, "bearing" to 0.0, "tilt" to 0.0, "posted" to true)
         } catch (e: Exception) {
             Log.w(TAG, "camera jump failed", e)
             null
         }
     }
+
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
     /**
      * Deletes a pack's files (and cancels its download), its search index and its contour tiles. When it was

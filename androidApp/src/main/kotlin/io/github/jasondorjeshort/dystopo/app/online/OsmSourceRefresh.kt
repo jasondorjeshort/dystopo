@@ -25,6 +25,8 @@ import org.maplibre.android.style.sources.VectorSource
  */
 object OsmSourceRefresh {
     const val SOURCE_ID = "osm"
+    /** T144: the `skipped` reason while the style loads; `OnlineService` asks again for such a refresh. */
+    const val STYLE_LOADING = "style loading"
 
     /** The vector source's definition in [styleJson] (`tiles`, `minzoom`, `maxzoom`, `attribution`), or null. Pure, tested. */
     fun osmSource(styleJson: String): Map<String, Any?>? {
@@ -49,7 +51,7 @@ object OsmSourceRefresh {
      * record (`layers` moved, the new `url` without its token), or a `skipped` reason.
      */
     fun refresh(style: Style, styleJson: String): Map<String, Any?> {
-        if (!style.isFullyLoaded) return mapOf("skipped" to "style loading")
+        if (!style.isFullyLoaded) return mapOf("skipped" to STYLE_LOADING)
         if (style.getSource(SOURCE_ID) == null) return mapOf("skipped" to "no vector source")
         val def = osmSource(styleJson) ?: return mapOf("skipped" to "no vector source in the style")
         val url = (def["tiles"] as? List<*>)?.firstOrNull() as? String ?: return mapOf("skipped" to "no tile URL")
