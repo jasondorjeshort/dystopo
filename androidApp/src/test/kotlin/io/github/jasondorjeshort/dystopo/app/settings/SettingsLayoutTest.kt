@@ -17,8 +17,8 @@ import kotlin.test.assertTrue
  * pages draw ([GroupPage] walks [SettingsLayout.rows]).
  */
 class SettingsLayoutTest {
-    /** The tasks that added a row after T103 (T126: spoken directions). */
-    private val AFTER_T103 = setOf("T126")
+    /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics). */
+    private val AFTER_T103 = setOf("T126", "T143")
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -46,7 +46,7 @@ class SettingsLayoutTest {
         val later = all.filter { it["since"] in AFTER_T103 }.map { it["label"] as String }
         assertEquals(beforeT103.sorted(), (labels - added.toSet() - later.toSet()).sorted())
         assertEquals(listOf("Offline areas", "Sync status", "Share", "Credits"), added)
-        assertEquals(listOf("Navigation: Spoken directions"), later)
+        assertEquals(listOf("Navigation: Spoken directions", "Diagnostics"), later)
     }
 
     @Test

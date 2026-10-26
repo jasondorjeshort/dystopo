@@ -14,7 +14,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze"),
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
-    ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, contour warm-up, credits"),
+    ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, diagnostics, contour warm-up, credits"),
     ;
 
     companion object {
@@ -43,6 +43,7 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     SYNC_STATUS("syncStatus", SettingsGroup.SYNC, "Sync status", "SettingsPages", "T103"),
     SHARE("share", SettingsGroup.SYNC, Screens.SHARE, "SettingsPages", "T103"),
     UPDATES("updates", SettingsGroup.ABOUT, "Updates", "UpdateRow", "T83"),
+    DIAGNOSTICS("diagnostics", SettingsGroup.ABOUT, "Diagnostics", "DiagnosticsRow", "T143"),
     WARMUP("warmup", SettingsGroup.ABOUT, "Contour warm-up", "SettingsPages", "T33"),
     CREDITS("credits", SettingsGroup.ABOUT, "Credits", "SettingsPages", "T103"),
 }

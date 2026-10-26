@@ -29,6 +29,13 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * The caches register their trim with [register] (the tile service, the direct sources); a hook returns the bytes it
  * dropped, as well as it knows them. The policy is pure and tested ([admits] with [Heap], `HeapGuardTest`).
+ *
+ * T143, the record for Settings › About and advanced › Diagnostics (`settings/Diagnostics.kt`, `GET /diagnostics`):
+ * [rendersAdmitted] and [rendersWaited], [droppedBytes] over every trim, and every `onTrimMemory` level as it arrives
+ * ([lastSignalLevel], [lastSignalAt], [signals]): from API 34 the system delivers only `TRIM_MEMORY_UI_HIDDEN` and
+ * `TRIM_MEMORY_BACKGROUND`, so the level is recorded before (and whatever) the trim policy decides, and the policy is
+ * unchanged. A rise of the process's peak and each level go to the persisted high-water mark
+ * ([io.github.jasondorjeshort.dystopo.app.settings.HeapMark], raise-only, its own writes rate-limited); no timer.
  */
 object HeapGuard {
     const val MB = 1L shl 20
@@ -119,6 +126,9 @@ object HeapGuard {
 
     private val recentTrims = ArrayDeque<Trim>()
     val trims = AtomicLong()
+
+    /** T143: the bytes every trim's hooks reported dropped, summed since launch. */
+    val droppedBytes = AtomicLong()
     val pressureTrims = AtomicLong()
     @Volatile var lastTrimAt = 0L
         private set
@@ -143,6 +153,7 @@ object HeapGuard {
         if (collect && runningNow() == 0) baseBytes = t.afterBytes // what the caches held is gone (read only with no render holding heap)
         lastTrimAt = t.at
         trims.incrementAndGet()
+        droppedBytes.addAndGet(dropped.values.sum())
         synchronized(recentTrims) {
             recentTrims.addLast(t)
             while (recentTrims.size > 8) recentTrims.removeFirst()
@@ -155,10 +166,25 @@ object HeapGuard {
      * The application's `onTrimMemory` ([level] as `ComponentCallbacks2` gives it): from `TRIM_MEMORY_UI_HIDDEN` (the
      * app left the screen) up every in-memory cache goes; a level below (running, still in front) trims only while the
      * system says memory is low there (`TRIM_MEMORY_RUNNING_LOW` and above).
+     * T143: every level is recorded first ([lastSignalLevel]; the heap sampled, the persisted mark told on the trim
+     * thread, which reads the PSS and writes at `TRIM_MEMORY_UI_HIDDEN`); the policy above is unchanged.
      */
     fun onTrimMemory(level: Int) {
+        val now = System.currentTimeMillis()
+        lastSignalLevel = level
+        lastSignalAt = now
+        signals.incrementAndGet()
+        sample()
+        worker.execute { runCatching { io.github.jasondorjeshort.dystopo.app.settings.HeapMark.onSignal(level, now, peakBytes) }.onFailure { Log.w(TAG, "heap mark", it) } }
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) worker.execute { trim("onTrimMemory $level", measureLive = true) }
     }
+
+    /** T143: the last `onTrimMemory` level (-1 before the first), when it came, and how many came since launch. */
+    @Volatile var lastSignalLevel = -1
+        private set
+    @Volatile var lastSignalAt = 0L
+        private set
+    val signals = AtomicLong()
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "heap-trim").apply { isDaemon = true } }
     private val pressureQueued = AtomicBoolean()
@@ -183,8 +209,21 @@ object HeapGuard {
         sample(heap.usedBytes)
         pressureTrim(heap, "heap short before a render")
         lastBudget = budgetBytes(heap, baseBytes, cacheBytes)
-        return admits(heap, running, committed, weight, baseBytes, cacheBytes)
+        val ok = admits(heap, running, committed, weight, baseBytes, cacheBytes)
+        // T143: a render refused here waits and asks again (RenderSlots, every 50 ms); counted once per render.
+        if (!ok && !waiting.get()) {
+            waiting.set(true)
+            rendersWaited.incrementAndGet()
+        }
+        return ok
     }
+
+    /** T143: renders that started ([renderStarted]) and those the heap made wait first ([admitNow] refused them at least once). */
+    val rendersAdmitted = AtomicLong()
+    val rendersWaited = AtomicLong()
+
+    /** Whether this thread's render was refused since it last started one (a render waits and starts on one thread). */
+    private val waiting = ThreadLocal.withInitial { false }
 
     /**
      * A trim on its own thread when [heap] is short ([wantsTrim]): asked at each admission and, since the verifier's run
@@ -229,15 +268,20 @@ object HeapGuard {
     @Volatile private var busy: () -> Int = { 0 }
     private val sampling = AtomicBoolean()
 
-    /** A heap reading into the process's peak and the current burst's. */
+    /** A heap reading into the process's peak and the current burst's; T143: a new peak is offered to the persisted mark. */
     fun sample(used: Long = Heap.now().usedBytes) {
-        if (used > peakBytes) peakBytes = used
+        if (used > peakBytes) {
+            peakBytes = used
+            runCatching { io.github.jasondorjeshort.dystopo.app.settings.HeapMark.offer(used) }
+        }
         current?.let { if (used > it.peakBytes) it.peakBytes = used }
     }
 
     /** A render starts ([rendering] counts the renders queued or running): opens a burst when none is, and samples while any runs. */
     fun renderStarted(rendering: () -> Int) {
         busy = rendering
+        rendersAdmitted.incrementAndGet()
+        waiting.set(false)
         synchronized(bursts) {
             val b = current
             if (b == null || (b.endedAt > 0 && System.currentTimeMillis() - b.endedAt > BURST_GAP_MS)) {
@@ -285,6 +329,8 @@ object HeapGuard {
             "burstSeq" to synchronized(bursts) { bursts.lastOrNull()?.seq ?: 0 },
             "bursts" to synchronized(bursts) { bursts.map { it.json() } },
             "trims" to trims.get(), "pressureTrims" to pressureTrims.get(),
+            "rendersAdmitted" to rendersAdmitted.get(), "rendersWaited" to rendersWaited.get(), "droppedBytes" to droppedBytes.get(), // T143
+            "lastSignalLevel" to lastSignalLevel.takeIf { it >= 0 }, "lastSignalAt" to lastSignalAt.takeIf { it > 0 }, "signals" to signals.get(),
             "recentTrims" to synchronized(recentTrims) { recentTrims.map { it.json() } },
             "hooks" to hooks.map { it.name },
         )
