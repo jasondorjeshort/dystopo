@@ -17,13 +17,14 @@ import java.io.File
  *   what the read at launch found), then the kept
  *   reports newest first (`reports`: `id`, `kind`, `label` as the row lists it, `at`, `atMs`, `headline`, `bytes`, `file`,
  *   `header` as written, unscrubbed), `keep`, `exitSupported`.
- * - `GET /reports/{id}`: one report as the row shows it: `text` (scrubbed, what Open GitHub issue copies), `title`,
- *   `link` (`url`, `urlLength`, `encodedBodyLength`, `frames`, `titleOnly`, `body`), and `header`.
+ * - `GET /reports/{id}`: one report as the row shows it: `text` (scrubbed, what the row shows), `title`,
+ *   `link` (`url`, `urlLength`, `encodedBodyLength`, `frames`, `titleOnly`, `clipboard` (what Open GitHub issue copies, null when the body is complete), `body`), and `header`.
  * - `DELETE /reports/{id}`: deletes it (`deleted`).
  * - `POST /reports/ui?id=`: opens Settings › About and advanced with that report shown (no `id`: none), for screenshots;
  *   503 while the app is in the background.
- * - `POST /reports/open?id=`: what Open GitHub issue does for that report (copies, then opens the link in the browser),
- *   then reads the clipboard back: `message`, `url`, `urlLength`, `copied`, `clipboard`, `equal`.
+ * - `POST /reports/open?id=`: what Open GitHub issue does for that report (copies what the issue body lacks, then opens the link in the browser),
+ *   then reads the clipboard back: `message`, `url`, `urlLength`, `titleOnly`, `complete` (the body holds everything: nothing is copied,
+ *   `copied` is null and the clipboard is left as it was), `copied`, `clipboard`, `equal`.
  * - `POST /debug/crash`: throws on the UI thread (`?thread=worker`: on a new thread) with a message carrying what a real
  *   crash could: the camera's position, a tile path, the packs in use and a file path under the app's storage, so the
  *   report's scrub can be checked; the process dies and the report is listed on the next launch. Answers at once.
@@ -73,7 +74,7 @@ object ReportRoutes {
     }
 
     private fun linkJson(l: IssueLink.Link) = linkedMapOf(
-        "url" to l.url, "urlLength" to l.url.length, "encodedBodyLength" to l.encodedBodyLength, "frames" to l.frames, "titleOnly" to l.titleOnly, "body" to l.body,
+        "url" to l.url, "urlLength" to l.url.length, "encodedBodyLength" to l.encodedBodyLength, "frames" to l.frames, "titleOnly" to l.titleOnly, "clipboard" to l.clipboard, "body" to l.body,
     )
 
     private fun ui(app: DystopoApp, id: String?): Response {
@@ -99,7 +100,7 @@ object ReportRoutes {
             msg to cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
         }
         return Response.json(linkedMapOf("message" to message, "url" to prepared.link.url, "urlLength" to prepared.link.url.length,
-            "titleOnly" to prepared.link.titleOnly, "copied" to prepared.text, "clipboard" to clip, "equal" to (prepared.text == clip)))
+            "titleOnly" to prepared.link.titleOnly, "complete" to (prepared.link.clipboard == null), "copied" to prepared.link.clipboard, "clipboard" to clip, "equal" to (prepared.link.clipboard == clip)))
     }
 
     private fun crash(app: DystopoApp, worker: Boolean): Response {

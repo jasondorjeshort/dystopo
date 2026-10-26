@@ -84,7 +84,32 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         return Scrub.text(text, known)
     }
 
-    /** The issue body before encoding: the header and the top [frames] frames of the first stack, then the clipboard line. */
+    /**
+     * What [shown] has that a body carrying the top [frames] frames of the first stack lacks, scrubbed; null when the body
+     * holds it all (no stack, or the one kept stack fits and no thread was left out). The header is not repeated: the first
+     * stack's frames past the body's, headed by its title, then the other kept stacks and the left-out line.
+     */
+    fun remainder(known: Scrub.Known, frames: Int): String? {
+        val (sections, left) = keptSections()
+        val first = sections.firstOrNull() ?: return if (left > 0) Scrub.text("$left other threads left out (waiting or idle, no app frame)\n", known) else null
+        val carried = frames.coerceIn(0, first.second.size)
+        if (carried == first.second.size && sections.size == 1 && left == 0) return null
+        val text = buildString {
+            if (carried < first.second.size) {
+                append(first.first).append(if (carried > 0) " (from frame ${carried + 1})" else "").append('\n')
+                for (f in first.second.drop(carried)) append("    at ").append(f).append('\n')
+            }
+            for ((title, fs) in sections.drop(1)) {
+                if (isNotEmpty()) append('\n')
+                append(title).append('\n')
+                for (f in fs) append("    at ").append(f).append('\n')
+            }
+            if (left > 0) append('\n').append("$left other threads left out (waiting or idle, no app frame)").append('\n')
+        }
+        return Scrub.text(text, known)
+    }
+
+    /** The issue body before encoding: the header and the top [frames] frames of the first stack, then [IssueLink.CLIPBOARD_LINE] unless the body is complete. */
     fun body(known: Scrub.Known, frames: Int): String {
         val text = buildString {
             append("Dystopo problem report: ").append(kindLabel).append('\n')
@@ -95,7 +120,7 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
                 for (f in first.second.take(frames)) append("    at ").append(f).append('\n')
                 append("```").append('\n')
             }
-            append('\n').append(IssueLink.CLIPBOARD_LINE).append('\n')
+            if (remainder(known, frames) != null) append('\n').append(IssueLink.CLIPBOARD_LINE).append('\n')
         }
         return Scrub.text(text, known)
     }
@@ -136,8 +161,9 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
 /**
  * T145: the prefilled `issues/new` link. GitHub states no limit for a prefilled URL and fails the whole link past it
  * (the crash-report survey of wave 20), so the encoded body stays under [MAX_BODY] (4 kB): the header and as many of the
- * first stack's top frames as fit, ending with [CLIPBOARD_LINE]; the full text goes on the clipboard first. Past the cap
- * even with no frame, the link carries the title alone. `labels=crash` is applied only for users with triage rights (a
+ * first stack's top frames as fit, ending with [CLIPBOARD_LINE] when more of the stack exists; that remainder
+ * ([Report.remainder]) goes on the clipboard first, and nothing is copied when the body is complete. Past the cap even
+ * with no frame, the link carries the title alone and the clipboard holds the whole text. `labels=crash` is applied only for users with triage rights (a
  * convenience for the owner); no `template=` (a prefilled body replaces the template's; the plain template in
  * `.github/ISSUE_TEMPLATE/` serves manual filers).
  */
@@ -146,9 +172,10 @@ object IssueLink {
     const val LABEL = "crash"
     const val MAX_BODY = 4000
     const val TOP_FRAMES = 12
-    const val CLIPBOARD_LINE = "The full report is on your clipboard; paste it below."
+    const val CLIPBOARD_LINE = "The rest of the stack trace is on your clipboard; paste it below."
 
-    data class Link(val url: String, val title: String, val body: String?, val encodedBodyLength: Int, val frames: Int, val titleOnly: Boolean)
+    /** [clipboard] is what Open GitHub issue copies: the whole text for a title-only link, the part the body lacks, or null (the body is complete). */
+    data class Link(val url: String, val title: String, val body: String?, val encodedBodyLength: Int, val frames: Int, val titleOnly: Boolean, val clipboard: String?)
 
     fun enc(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
@@ -158,8 +185,8 @@ object IssueLink {
         for (frames in TOP_FRAMES downTo 0) {
             val body = report.body(known, frames)
             val e = enc(body)
-            if (e.length <= MAX_BODY) return Link("$base&body=$e", title, body, e.length, frames, false)
+            if (e.length <= MAX_BODY) return Link("$base&body=$e", title, body, e.length, frames, false, report.remainder(known, frames))
         }
-        return Link(base, title, null, 0, 0, true)
+        return Link(base, title, null, 0, 0, true, report.shown(known))
     }
 }
