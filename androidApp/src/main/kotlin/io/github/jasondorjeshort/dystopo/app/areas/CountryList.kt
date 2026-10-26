@@ -139,8 +139,8 @@ object CountrySizes {
         val less = measureArea(lessArea, dem, osm, heap)
         val pinned = runCatching { OnlineService.get(DystopoApp.instance).cache.pinnedBytes }.getOrDefault(0L)
         val fullArea = countryArea(c, AreaPicker.FULL_MAX_ZOOM)!!
-        // Full detail only when the less-detail size fits the budget (it is always larger, and costs eight times the tiles).
-        val full = if (!less.tooLarge && areaBudgetError(pinned, less.bytes, 0, AppSettings.pinnedCacheMb) == null) {
+        // Full detail only when it might fit the budget (it costs eight times the tiles): [fullAtLeast] first.
+        val full = if (!less.tooLarge && areaBudgetError(pinned, fullAtLeast(less), 0, AppSettings.pinnedCacheMb) == null) {
             AreaDownload.zooms(fullArea, server).let { (d, o) -> measureArea(fullArea, d, o, heap) }
         } else null
         return Entry(less, full, lessArea.id, fullArea.id)
@@ -159,8 +159,19 @@ object CountrySizes {
     }
 }
 
-/** T142: a country's tiles and estimated bytes at one detail, or [tooLarge] when the heap's tile limit refuses it. */
-class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean)
+/**
+ * T142: a country's tiles and estimated bytes at one detail, or [tooLarge] when the heap's tile limit refuses it;
+ * [topTiles] is the cover's count at the deepest zoom.
+ */
+class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean, val topTiles: Int = 0)
+
+/**
+ * T142: a floor of the full-detail bytes from the less-detail measure [less]: every z13 tile has at least one tile under
+ * it at z14 and z15 (DEM) and at z14 (vector), so full detail is at least that much more. A country whose floor is past
+ * the budget is not measured at full detail (Switzerland's took 37 s on the emulator for 13.8 GB). Pure, tested.
+ */
+internal fun fullAtLeast(less: CountryMeasure): Long =
+    less.bytes + less.topTiles.toLong() * (AreaManifest.estimate(AreaManifest.ROUTE_DEM, 14) + AreaManifest.estimate(AreaManifest.ROUTE_DEM, 15) + AreaManifest.estimate(AreaManifest.ROUTE_OSM, 14))
 
 /**
  * T142: [c] as a polygon area from z8 to [maxZoom], named by its `NAME`, its rings open and its simplification tolerance
@@ -182,12 +193,14 @@ internal fun measureArea(area: AreaOfInterest, dem: IntRange?, osm: IntRange?, m
     if (AreaLimit.refusal(area, dem, osm, maxTiles, margin) != null) return CountryMeasure(0, 0, true)
     var bytes = 0L
     var tiles = 0
+    var top = 0
     for (z in (listOfNotNull(dem, osm).flatMap { it.toList() }).toSortedSet()) {
         val n = TileCover.of(area, z, margin).size
         if (dem != null && z in dem) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_DEM, z) }
         if (osm != null && z in osm) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_OSM, z) }
+        top = n
     }
-    return CountryMeasure(bytes, tiles, false)
+    return CountryMeasure(bytes, tiles, false, top)
 }
 
 /** T142: a country row's state: being measured, downloadable, over the pinned budget, or too large for the heap. */

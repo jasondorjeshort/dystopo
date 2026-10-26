@@ -49,6 +49,17 @@ class AreaPickerTest {
     }
 
     @Test
+    fun theFullDetailFloorIsBelowTheFullDetailMeasure() {
+        for (code in listOf("LIE", "AND", "SMR")) {
+            val c = Countries.byCode(code)!!
+            val less = countryArea(c, AreaPicker.LESS_MAX_ZOOM)!!.let { measureArea(it, 8..13, 8..13, heapTiles) }
+            val full = countryArea(c, AreaPicker.FULL_MAX_ZOOM)!!.let { measureArea(it, 8..15, 8..14, heapTiles) }
+            assertTrue(less.topTiles > 0)
+            assertTrue(fullAtLeast(less) in less.bytes..full.bytes, "$code: ${fullAtLeast(less)} within ${less.bytes}..${full.bytes}")
+        }
+    }
+
+    @Test
     fun everyCountryButAntarcticaIsAnArea() {
         val none = Countries.all.filter { countryArea(it, AreaPicker.LESS_MAX_ZOOM) == null }.map { it.code }
         assertEquals(listOf("ATA"), none, "Antarctica lies past 85.05 degrees and around the world; it is a greyed row")

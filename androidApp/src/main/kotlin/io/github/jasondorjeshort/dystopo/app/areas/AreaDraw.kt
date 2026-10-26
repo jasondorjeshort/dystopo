@@ -127,7 +127,8 @@ object AreaDraw {
 
     /**
      * The starting polygon: the corners of the band of the view above the picker card, inset (a fifth of the width each
-     * side, from 15% to 50% of the height); null when the map is not laid out. Main thread.
+     * side, from 24% to 60% of the height: below the top chips, which would take a vertex's touch, and above the card);
+     * null when the map is not laid out. Main thread.
      */
     fun fromView(): List<AreaPoint>? {
         val v = DystopoApp.instance.map.mapView ?: return null
@@ -135,7 +136,7 @@ object AreaDraw {
         if (v.width <= 0 || v.height <= 0) return null
         val w = v.width.toFloat()
         val h = v.height.toFloat()
-        return listOf(0.2f to 0.15f, 0.2f to 0.5f, 0.8f to 0.5f, 0.8f to 0.15f).map { (fx, fy) ->
+        return listOf(0.2f to 0.24f, 0.2f to 0.6f, 0.8f to 0.6f, 0.8f to 0.24f).map { (fx, fy) ->
             m.projection.fromScreenLocation(PointF(w * fx, h * fy)).let { AreaPoint(it.latitude, it.longitude) }
         }
     }
