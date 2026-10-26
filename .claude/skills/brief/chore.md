@@ -11,6 +11,10 @@ before any commit or push>.
 Do not touch: <paths, servers, emulators, ports that belong to others>. Stop only processes you
 started, by PID (record them in <file>) or emulator serial.
 
+Waiting: wait in the foreground (`until <check>; do sleep 5; done`); start no background sleep or
+monitor loop, and leave nothing of yours running when you send the report: a leftover wakes you
+again after the report and the coordinator reads each wake as a new result.
+
 Verify by: <an independent read: `git branch -r --merged origin/main`, `git ls-remote origin task/Tnn`,
 `curl http://localhost:<port>/stats`, the JSON summary of a sweep>.
 
