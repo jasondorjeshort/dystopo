@@ -1,6 +1,6 @@
 ---
-verified: 2026-10-23
-source: observed (T131, `tools/android-battery.py` on an API 35 emulator); Android's `dumpsys batterystats` checkin format
+verified: 2026-10-25
+source: observed (T131, T146, `tools/android-battery.py` on an API 35 emulator); Android's `dumpsys batterystats` checkin format
 ---
 
 # Battery measurement (`tools/android-battery.py`)
@@ -90,3 +90,6 @@ and level drop. Emulator lines prove the mechanics; their power numbers are mean
   Asleep, foreground service 119.8 s; nav 0.007 mAh, CPU 117.7 s (mostly system: the emulator's GL pipe), screen
   wakelock 120.1 s, GPS 120 s beside the replay; idle 0.0 mAh, CPU 3.1 s, GPS 0. Mechanics proven; the phone's line
   goes here when the owner runs it.
+- 2026-10-25, API 35 emulator, 1 min, the T146 path (`POST /location/replay?route=current&kmh=50&rate=1`, no body):
+  `ok` true, all three scenarios; nav replayed 60 of 5,910 fixes in the minute (98.5 min drive), GPS 60.7 s beside
+  it, CPU 49.8 s; power numbers meaningless as above.
