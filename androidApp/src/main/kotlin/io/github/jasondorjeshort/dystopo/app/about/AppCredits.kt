@@ -8,15 +8,27 @@ import io.github.jasondorjeshort.dystopo.app.PackSet
 import io.github.jasondorjeshort.dystopo.attribution.Credits
 import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
 import io.github.jasondorjeshort.dystopo.attribution.PackMetadata
+import io.github.jasondorjeshort.dystopo.boundaries.Countries
 
 /** The app's credits for the packs it has open: what the map line, the About screen and `GET /attribution` show. */
 object AppCredits {
     /**
+     * T141: registry ids of the data the app itself ships, credited whenever it runs (as used by `app`):
+     * `natural-earth` for the bundled country set ([Countries]) and the Norway border mask.
+     */
+    val BUNDLED_SOURCE_IDS: List<String> = listOf(Countries.REGISTRY_ID)
+
+    /**
      * [view] (T49): only the packs whose box overlaps it are credited (the map line); null credits every
      * pack (the About screen). When no pack overlaps the view and nothing comes from the server, every
-     * pack is credited, as before.
+     * pack is credited, as before. [bundled]: registry ids of the bundled resources ([BUNDLED_SOURCE_IDS]).
      */
-    fun compose(packs: PackSet, online: List<PackMetadata> = emptyList(), view: PackBounds? = null): Credits {
+    fun compose(
+        packs: PackSet,
+        online: List<PackMetadata> = emptyList(),
+        view: PackBounds? = null,
+        bundled: List<String> = BUNDLED_SOURCE_IDS,
+    ): Credits {
         fun inView(p: Pack): Boolean {
             val h = p.header
             return view == null || MapViewport.overlaps(PackBounds(h.minLon, h.minLat, h.maxLon, h.maxLat), view)
@@ -32,7 +44,7 @@ object AppCredits {
             osm.map { PackMetadata("osm", it.file.name, it.metadata) } +
                 dem.map { PackMetadata("dem", it.file.name, it.metadata) } + online,
             // Labels are drawn with the Noto Sans glyphs only when they are installed next to the packs.
-            appSourceIds = if (packs.glyphDir != null) listOf(PackAttribution.GLYPH_FONT_ID) else emptyList(),
+            appSourceIds = (if (packs.glyphDir != null) listOf(PackAttribution.GLYPH_FONT_ID) else emptyList()) + bundled,
         )
     }
 

@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-21
+verified: 2026-10-25
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -22,6 +22,8 @@ python -I tools/android-check.py --port 8686 --serial emulator-5554 --views-file
 ## Settings
 
 The Settings chip opens the settings sheet (`SettingsSheet.kt`, rows in `settings/`) on a list of groups (T103): Data and storage (Sources with the server field first, Storage ›, Offline areas ›), Map options (`options/MapOptionsSection.kt` placed whole, Night and the scale bar included), Units and display (Units, Text size), Navigation and tracking (Route snap, Spoken directions on or off (T126), and the two navigation thresholds), Sync and sharing (Sync status ›, Share ›), About and advanced (Updates, Contour warm-up, Credits: the Map data and sources screen). A tap opens a group's page, "‹ Settings" or Back returns to the list, and closing forgets the page; on a window 720 dp wide or more (a tablet) the list and the open page sit side by side. A list rather than tabs, because six tab labels do not fit across a phone at font scale 2.0 while list rows wrap at any text size; every row's choices wrap too. The server field stays two taps from the map (Settings, Data and storage), and the first-run card's Settings link, the pack list's "No server set" line and Download without a server open Data and storage directly. `settings/SettingsLayout.kt` is the order of groups and rows that the pages draw and `GET /settings/layout` returns (`SettingsLayoutTest` compares it with the rows of the old single sheet); `POST /settings/open?group=` opens a page in debug builds (`android-debug-routes.md`). Release builds are driven by text: `open_settings(dev, group, anchor)` in `tools/android-ui.py` taps Settings, then the group, until its page shows the anchor text.
+
+Credits (the Map data and sources screen, `about/AboutActivity.kt`, and `GET /attribution`) are composed by `about/AppCredits.kt` from the open packs, what the server or the phone's own readers reported, and the registry ids of the data the app ships (`AppCredits.BUNDLED_SOURCE_IDS`; T141: `natural-earth` for the bundled country set and the Norway border mask), so Natural Earth is credited whenever the app runs, with no pack open; the on-map credit line is unchanged by it.
 
 ## Map options (the Map section of the settings sheet)
 

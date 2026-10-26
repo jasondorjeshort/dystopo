@@ -515,7 +515,7 @@
       "allowedUses": "Unrestricted; credit is optional (Natural Earth suggests 'Made with Natural Earth').",
       "url": "https://dev.maptiler.download/geodata/omt/natural_earth_vector.sqlite.zip",
       "updateCadence": "Occasional releases (every year or two).",
-      "notes": "Used by the OSM tile build (OpenMapTiles profile) for low-zoom boundaries, landcover and labels."
+      "notes": "Used by the OSM tile build (OpenMapTiles profile) for low-zoom boundaries, landcover and labels. Bundled in the app: the country set (1:50m admin-0 countries, boundaries/countries.txt, written by devtool countries --build) and the Norway border mask (1:10m, borders/norway-neighbours.json, devtool borders); the About screen credits it whenever the app runs."
     },
     {
       "id": "openmaptiles",

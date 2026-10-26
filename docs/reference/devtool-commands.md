@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-21
+verified: 2026-10-25
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -33,6 +33,10 @@ DYSTOPO_3DEP_DESTRIPE=1 ./gradlew :devtool:run --args="render --area rainier --s
 ./gradlew :devtool:run --args="sync-sim --peers 3 --ops 2000 --seed 42 --partitions 5 --reorder"   # sync simulator: in-process peers over a faulty network; --seeds N, --store sql. T116: --bundle <file.dsync> merges a bundle into the first peer first (the browser's trips: demo-check.py --route writes <out>-route.dsync); `bundle` in the report lists each of its trips on every peer with the directions saved for its path (`ok`; a peer holding the path without them fails the run). Browser to phone-shaped replicas: sync-sim --bundle out/demo-check-route.dsync --store sql --peers 2 --ops 0 (demo-check's default --out out/demo-check.png)
 ./gradlew :devtool:run --args="sync with --db out/sync/a.db --peer http://localhost:8687"          # a sync replica: status, with (peer URL or .dsync file), export, import, import-gpx, gpx
 ./gradlew :devtool:run --args="cache-replay --log out/server-local/server-json.log --totals 64,256"   # T112: a standalone server's request log (log.file) against the phone's cache budget: /dem, /osm, /glyphs as downloaded tiles, /contours, /shade as derived; hit rate and bytes evicted per kind per total and --rules lru,gdsf,lru-global (--floors, --protect-seconds, --repeat); a Markdown table in "table"
+./gradlew :devtool:run --args="countries"                 # T141: the bundled country set (code, name, continent, areaKm2, vertices, rings, toleranceM; count, vertex total, resource bytes)
+./gradlew :devtool:run --args="countries --find swit"     # a name or code, prefix or substring, any case or accents (Countries.find); parts, holes, box, the longest longitude step of any ring
+./gradlew :devtool:run --args="countries --tiles LIE --zooms 8-13,8-15"   # a whole country's tile count and bytes per zoom range (DEM over the range, vector to z14, one tile of margin, bufferM = the country's tolerance)
+./gradlew :devtool:run --args="countries --build"         # rewrite shared/src/commonMain/resources/boundaries/countries.txt from Natural Earth 1:50m admin-0 in cache/planetiler/natural_earth_vector.sqlite.zip; reports the rows dropped and why, the countries simplified to --budget (2000) with their tolerance, and the checks
 ./gradlew :devtool:run --args="render --help"             # all render options
 ```
 

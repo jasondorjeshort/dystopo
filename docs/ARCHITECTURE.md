@@ -54,6 +54,7 @@ decisions in [design/decisions/](design/decisions/README.md); one line per merge
 | Encrypted frame `DSEAL`, relay reply `DRLY` | `shared/.../sync/EncryptedBundle.kt`, `sync/crypto/` | ChaCha20-Poly1305 under HKDF(share code, per-frame salt); LAN link and server relay (T72) |
 | Track database | `shared/src/commonMain/sqldelight/` | schema versions frozen under `databases/`, migrations verified by a JVM test |
 | Pack catalog JSON | `serverlib/.../PackCatalog.kt` | stable id, per-file SHA-256, pack hash |
+| Bundled country set `countries.txt` | `shared/src/commonMain/resources/boundaries/`, read by `shared/.../boundaries/Countries.kt` | T141: Natural Earth 1:50m admin-0 (public domain, registry `natural-earth`), one country a line, tab-separated, rings in polyline-style text (1e-5 degrees, deltas, 5-bit groups); written by `devtool countries --build`, embedded in `commonMain` as a string constant by `:shared:generateSourcesJson` like `sources.json` and the Norway border mask |
 
 ## How things are tested
 
