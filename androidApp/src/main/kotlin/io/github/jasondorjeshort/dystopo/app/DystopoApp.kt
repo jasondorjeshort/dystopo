@@ -46,6 +46,7 @@ class DystopoApp : Application() {
         published = openTiles()
         Thread({ runCatching { published.style() } }, "style-prime").apply { isDaemon = true }.start() // T144: reads each pack's metadata once, off the UI thread, so the map's first style() there takes no pack lock
         MainWatchdog.start(this) // T144: the UI-thread watchdog (every build)
+        io.github.jasondorjeshort.dystopo.app.reports.Reports.start(this) // T145: the crash handler, and the exit records read on a worker
         io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) // T112: one budget over the caches (its own thread)
         io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
         val routes = Routes(this)

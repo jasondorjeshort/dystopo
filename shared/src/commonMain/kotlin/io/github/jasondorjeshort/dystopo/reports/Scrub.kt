@@ -123,7 +123,7 @@ object Scrub {
     private const val DEC = "-?\\d{1,3}\\.\\d+"
     private const val NOT_BEFORE = "(^|[^\\w.\\-<])"
 
-    private val VIEW_PACK = Regex("(^|[^\\w])view-\\d{1,3}(?:\\.\\d+)?[NS]-\\d{1,3}(?:\\.\\d+)?[EW](?:-z\\d+(?:-\\d+)?)?")
+    private val VIEW_PACK = Regex("(^|[^\\w])view-\\d{1,3}(?:\\.\\d+)?[NS]-\\d{1,3}(?:\\.\\d+)?[EW](?:-z\\d+(?:-\\d+)?)?", RegexOption.IGNORE_CASE) // T145: the app wrote them in lower case
     private val PACK_FILE = Regex("(^|[^\\w.\\-])[\\w.\\-]*[\\w-]\\.(pmtiles|mbtiles)\\b")
 
     private val BBOX_RE = Regex("$NOT_BEFORE($NUM)\\s*,\\s*($NUM)\\s*,\\s*($NUM)\\s*,\\s*($NUM)(?![\\w.])")

@@ -81,6 +81,7 @@ class ScrubTest {
     @Test
     fun packAreaAndSearchNames() {
         assertEquals("saved <pack> (12 MB)", s("saved view-46.85N-121.76W-z8-14 (12 MB)"))
+        assertEquals("saved <pack> (12 MB)", s("saved view-46.85n-121.76w-z8-14 (12 MB)"), "T145: the app made these names in lower case")
         assertEquals("opened <pack>.pmtiles", s("opened rainier-outdoors.pmtiles"))
         val known = Scrub.Known(packs = listOf("Hidden Valley"), areas = listOf("Cabin weekend"), searches = listOf("blue lake"))
         assertEquals("pack <pack>, area <area>, search \"<search>\"", s("pack hidden valley, area Cabin Weekend, search \"Blue Lake\"", known))

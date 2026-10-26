@@ -19,7 +19,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.floor
 
 /**
@@ -92,7 +91,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         var hi = (maxZoom ?: DEFAULT_MAX_ZOOM).coerceIn(maxOf(lo, OnlineTiles.DEM_MIN_ZOOM), OnlineTiles.DEM_MAX_ZOOM)
         while (hi > maxOf(lo, OnlineTiles.DEM_MIN_ZOOM) && tileCount(box, lo..hi) > TILE_LIMIT) hi--
         require(tileCount(box, lo..hi) <= TILE_LIMIT) { "the view needs too many tiles even at z$lo-$hi; zoom in" }
-        val packName = name ?: nameFor(box, lo..hi)
+        val packName = name ?: nameFor(System.currentTimeMillis(), takenNames())
         require(PackNames.isValidName(packName)) { "invalid pack name '$packName'" }
         this.name = packName
         bounds = box
@@ -112,6 +111,13 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         state = "building"
         Thread({ run(server, packName, box, lo..hi) }, "online-region-download").apply { isDaemon = true }.start()
         return json()
+    }
+
+    /** T145: the pack and offline-area names in use on this phone, which a generated name must not repeat. */
+    private fun takenNames(): Set<String> {
+        val packs = runCatching { PackManager.get(app).catalog().map { it.name } }.getOrDefault(emptyList())
+        val areas = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.all().flatMap { listOfNotNull(it.name, it.pack) } }.getOrDefault(emptyList())
+        return (packs + areas).toSet()
     }
 
     /** Stops the job: cancels the server build or the device download. */
@@ -421,13 +427,15 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             return dem + osm
         }
 
-        /** A pack name from the view: its centre and zooms, e.g. `view-45.83n-6.86e-z8-14`. */
-        fun nameFor(box: PackBounds, zooms: IntRange): String {
-            val lat = (box.minLat + box.maxLat) / 2
-            val lon = (box.minLon + box.maxLon) / 2
-            val ns = if (lat >= 0) "n" else "s"
-            val ew = if (lon >= 0) "e" else "w"
-            return String.format(Locale.ROOT, "view-%.2f%s-%.2f%s-z%d-%d", abs(lat), ns, abs(lon), ew, zooms.first, zooms.last)
+        /**
+         * T145: a generated pack name, `view-<local date>-<n>` (`view-2026-10-25-1`), the lowest n not in [taken]. It no
+         * longer carries the view's centre and zooms (`view-45.83n-6.86e-z8-14` before T145; such packs keep their names
+         * and still read, since nothing parses a pack's name), so a name that reaches a problem report or a shared folder
+         * names no place (ADR 0033: a data format change in alpha, listed in T145's report).
+         */
+        fun nameFor(nowMs: Long, taken: Set<String>): String {
+            val day = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(java.util.Date(nowMs))
+            return generateSequence(1) { it + 1 }.map { "view-$day-$it" }.first { it !in taken }
         }
     }
 }

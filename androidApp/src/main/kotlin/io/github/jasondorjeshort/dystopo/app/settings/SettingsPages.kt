@@ -153,6 +153,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         }
         SettingsRow.UPDATES -> io.github.jasondorjeshort.dystopo.app.update.UpdateRow() // T83: version, Check for updates, Install
         SettingsRow.DIAGNOSTICS -> DiagnosticsRow() // T143: memory now and the last session's, Copy report
+        SettingsRow.REPORTS -> io.github.jasondorjeshort.dystopo.app.reports.ReportRow() // T145: crashes, freezes and kills, Open GitHub issue
         SettingsRow.WARMUP -> {
             val warmup = AppSettings.warmup
             Setting(row.label, "prepares contours in the background after a pack opens", help = "settings.warmup") {
