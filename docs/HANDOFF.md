@@ -1,16 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-25, at commit 2676bdb plus this edit, by main session (wave 20 in flight)
+Updated: 2026-10-25, at commit c376488 plus this edit, by main session (wave 20, T142 left)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 20.
 
 ## Now
 
-- Wave 20 first half launched 2026-10-25 on the second PC (`machines.md`): Opus implementers in
-  `~/Documents/src/dystopo-wt/<task>`, forked at 2373338, ports as the wave paragraph assigns, AVDs
-  under `~/Android/avd` (not E:). Merged: T141 (87ed16c), T147 (786cc26), T144 (da09785), T140
-  (d268446), T143 (fa783a8), T146 (2676bdb): the first half is in. Second half running: T142 (host 8762,
-  console 5656), T145 (host 8764, console 5658). The orphan folder `dystopo-wt/T146-verify` is held; retry later.
+- Wave 20 ran 2026-10-25 on the second PC (`machines.md`): worktrees `~/Documents/src/dystopo-wt/<task>`,
+  AVDs under `~/Android/avd` (not E:). Merged: T141 (87ed16c), T147 (786cc26), T144 (da09785), T140
+  (d268446), T143 (fa783a8), T146 (2676bdb), T145 (51a1375). Open: T142 (reported at e47eca5, with
+  its verifier on host 8796, console 5666). The orphan folder `dystopo-wt/T145-verify` is held; retry later.
 - RAM ran short (owner, 2026-10-25): emulators at `-Memory 3072`, at most three at once, Gradle
   `--no-daemon` (`machines.md`, the second PC's RAM row); every brief carries it. Meters: 5-hour 7%, 7-day 70%.
 - Launch chore done: distributions installed, Rainier packs and sprite in `out/`, the extract in
@@ -18,9 +17,10 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Next
 
-1. T142's and T145's verifiers (Sonnet, `verifier.md`, ports 8790 to 8799,
-   consoles 5660 to 5670) and merges by the `wave` skill's sequence, a cleanup chore after each.
-2. Post-wave sweep, release, handoff. Then a Hatchery-rooted session (carry-backs, the ownership
+1. T142's verifier report, its merge by the `wave` skill's sequence and a cleanup chore; then close
+   the wave (README status paragraph, `docs/ARCHITECTURE.md` if the module map changed).
+2. Post-wave sweep (`sweep` skill; the release-key `diagnostics` and `update` parts run there from the
+   main checkout), release, handoff. Then a Hatchery-rooted session (carry-backs, the ownership
    idea, ADR 0021's follow-ups, the second base update); ADR 0040's and 0042's build tasks after the owner.
 
 ## Waiting on user
