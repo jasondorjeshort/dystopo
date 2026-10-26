@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-25, at commit 9859d26 plus this edit, by main session (wave 20 first half in flight)
+Updated: 2026-10-25, at commit e7ca974 plus this edit, by main session (wave 20 first half in flight)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 20.
 
 ## Now
 
 - Wave 20 first half launched 2026-10-25 on the second PC (`machines.md`): Opus implementers in
   `~/Documents/src/dystopo-wt/<task>`, forked at 2373338, ports as the wave paragraph assigns, AVDs
-  under `~/Android/avd` (not E:). T141 merged (87ed16c, logged 9859d26, cleanup chore ran); T147 is
-  with its verifier; T140, T143, T144, T146 still building. Second half (T142, T145) after their merges.
+  under `~/Android/avd` (not E:). Merged: T141 (87ed16c), T147 (786cc26; its worktree folder was
+  held and awaits the next cleanup chore). With verifiers: T140, T144, T143. Building: T146.
+- RAM ran short (owner, 2026-10-25): emulators at `-Memory 3072`, at most three at once, Gradle
+  `--no-daemon` (`machines.md`, the second PC's RAM row); every brief from now on carries it.
 - The launch chore is done: distributions installed, the Rainier packs and sprite in `out/`, the
   extract in `cache/extracts/`, the live viewer on 8765 (`out/coordinator-pids.txt`), the marker
   `out/packs-ready.txt`. The dry run's outdoors pack was bad; `tilebuild.bat` cannot run here (`machines.md`).
-- Decided in flight: T141 keeps Natural Earth's Disputed and Indeterminate rows (Kosovo, Israel,
-  Palestine, Western Sahara) and drops only uninhabited slivers and the Siachen Glacier (hiding them
-  would itself be a position); the rule goes in its report. Meters at launch: 5-hour 24%, 7-day 61%.
+- Meters at launch: 5-hour 24%, 7-day 61% (holds 50 and 100).
 
 ## Next
 
