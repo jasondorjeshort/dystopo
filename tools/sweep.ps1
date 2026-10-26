@@ -14,7 +14,7 @@
 #   device-tour  android-check.py --views-file tools/android-tour.txt --server <the same> (twice by default; token from
 #                logcat; T105: the first view waits until the device's load besides the app has settled)
 #   probe        android-probe.py
-#   bothunits    (-BothUnits only; T139, T129's follow-up) android-ui.py bothunits: the scale bar's Both units choice set on
+#   bothunits    (T139, T129's follow-up; T147: in every device sweep, -NoBothUnits leaves it out) android-ui.py bothunits: the scale bar's Both units choice set on
 #                the sweep's emulator (debug build) reaches a second one through a sync peer and back. The second emulator
 #                is booted on the matrix pattern (AVD <Avd>-b, console -MatrixEmuPort, default -EmuPort+2, debug forward
 #                -Port+2, the same debug build) and stopped and deleted afterwards; the peer is the standalone server on
@@ -66,6 +66,7 @@
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDevice           # no emulator on this machine
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Skip check,tour    # parts by name
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only live          # just these parts
+#   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoBothUnits        # no second emulator (T147: bothunits is on by default)
 #
 # Ports and processes. The script starts its own servers (demo-server.py on -BasePort, serve on +1, serve
 # --live on +2, for the live part and then for the debug device parts) and its own emulator (-Avd, console -EmuPort, debug forward -Port, release probe -Port+1),
@@ -98,8 +99,10 @@ param(
     [switch]$Matrix,
     [string[]]$MatrixDevices = @('26:pixel_6', '35:pixel_tablet:de-DE'),
     [int]$MatrixEmuPort = 0,
-    # T139: the two-emulator both-units check (slow: a second boot); its emulator takes -MatrixEmuPort, its peer -BasePort+3.
+    # T139: the two-emulator both-units check (a second boot, about two minutes); its emulator takes -MatrixEmuPort, its
+    # peer -BasePort+3. T147: part of every device sweep; -NoBothUnits leaves it out, -BothUnits is kept for old command lines.
     [switch]$BothUnits,
+    [switch]$NoBothUnits,
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
     [string]$Known = '', # T91: overlap:search/Settings fixed (the map chips cap their font scale at 1.3)
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
@@ -184,13 +187,14 @@ $ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-
 if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1; $ports['bothunits-forward'] = $Port + 2 }
 if (-not $NoDevice -and $EmuPort -eq 5554) { throw "-EmuPort 5554 is the coordinator's emulator; pick another" }
 if (-not $MatrixEmuPort) { $MatrixEmuPort = $EmuPort + 2 }
-if ($Matrix -and $MatrixEmuPort -eq 5554) { throw "-MatrixEmuPort 5554 is the coordinator's emulator; pick another" }
+if (($Matrix -or -not $NoBothUnits) -and -not $NoDevice -and $MatrixEmuPort -eq 5554) { throw "-MatrixEmuPort 5554 is the coordinator's emulator; pick another" }
+if ($BothUnits -and $NoBothUnits) { throw '-BothUnits and -NoBothUnits together' }
 
 $script:bootImplied = $false
 function Want([string]$part) {
     if ($part -eq 'device-boot' -and $script:bootImplied) { return -not $NoDevice } # T79: implied by device parts
     if ($part -eq 'matrix' -and -not $Matrix -and $Only -notcontains 'matrix') { return $false } # T81: opt-in
-    if ($part -eq 'bothunits' -and -not $BothUnits) { return $false } # T139: opt-in, a second emulator
+    if ($part -eq 'bothunits' -and $NoBothUnits) { return $false } # T139, T147: on unless -NoBothUnits (a second emulator)
     if ($Only.Count -and $Only -notcontains $part) { return $false }
     if ($Skip -contains $part) { return $false }
     if ($NoDevice -and $deviceParts -contains $part) { return $false }
@@ -262,7 +266,7 @@ function Get-PreviousApk([string]$tag, [string]$dir, [string[]]$patterns, [strin
 }
 
 function Part([string]$name, [scriptblock]$body) {
-    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and -not $BothUnits) { 'needs -BothUnits' } else { 'not selected' }); return $false }
+    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and $NoBothUnits) { '-NoBothUnits' } else { 'not selected' }); return $false }
     $t0 = Get-Date
     $note = ''
     $script:partNote = '' # T105: a body may leave a note for its steps.tsv line (a retry and its reason)

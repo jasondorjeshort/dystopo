@@ -24,7 +24,11 @@ then on a fresh emulator (`-Avd`, default `dystopo35-sweep-<date>`, deleted afte
 `-KeepEmulator`; `-EmuPort` 5640, `-Port` 8990, `-AvdHome`) `android-emu.ps1 -Build`, the device tour
 twice (T105: the debug build's server is the sweep's own `serve --live` on `-BasePort`+2, or none with
 `-DeviceServer direct`, never the build's default 8765; the first view waits for a quiet device by its
-load), the routing and search tours (T81, debug build), `android-probe.py`, the release build (once per
+load), the routing and search tours (T81, debug build), `android-probe.py`, `bothunits` (T139: the
+scale bar's Both units carried between the debug build on the sweep's emulator and a second one on
+`-MatrixEmuPort` through a standalone peer on `-BasePort`+3, about two minutes; a skip with its reason
+when the second emulator does not start; T147: in every sweep with a device, `-NoBothUnits` leaves it
+out: the default lives in the script, so every caller of it gets the same sweep), the release build (once per
 sweep, with `-PdystopoVersion=<describe>-sweep -PdystopoVersionCode=<commit count>` so it installs over
 the published release), `android-release.ps1 -Port`, `apk-strings` (the release APK's strings through
 `PrivacyCheck`; also with `-NoDevice`), and `first-run` (T79: the release build from a fresh install
@@ -42,9 +46,7 @@ default the latest published release, its APK for the emulator's ABI downloaded 
 commit with versionCode +1 made in the part); with `-Matrix` also `matrix` (font scale 2.0 and dark mode
 on the sweep's emulator, then a fresh emulator per `-MatrixDevices` entry, default the minimum API 26
 phone and an API 35 tablet in German, on `-MatrixEmuPort` (EmuPort+2) upwards, each deleted afterwards;
-slow, so not in every sweep); with `-BothUnits` also `bothunits` (T139: the scale bar's Both units
-carried between the debug build on the sweep's emulator and a second one on `-MatrixEmuPort` through a
-standalone peer on `-BasePort`+3; a skip with its reason when the second emulator does not start).
+slow, so not in every sweep).
 
 `-Known` (empty by default since T91 fixed `overlap:search/Settings`) lists filed defects those parts
 report without failing; drop an entry when its fix lands. Its servers use `-BasePort` (8980) to +7 and are

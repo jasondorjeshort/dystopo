@@ -2,8 +2,8 @@
 # PMTiles go to the app's files dir as files/packs/dem.pmtiles and files/packs/osm.pmtiles (with -Name rainier:
 # files/packs/rainier-dem.pmtiles and rainier-outdoors.pmtiles, a named pack), and the label
 # glyphs (Noto Sans PBF ranges for MapLibre, SIL OFL 1.1 fonts, fetched once into the cache) to
-# files/glyphs/, and the marker sprite sheet (`devtool sprite` into out/, remade on every push)
-# to files/sprites/. Uses `run-as`, so it needs the debug build installed. Restart the app (or POST /reload
+# files/glyphs/, and the marker sprite sheet (`devtool sprite`, remade on every push in a folder of the
+# run's own, then copied into out/; T147: two runs at once no longer collide) to files/sprites/. Uses `run-as`, so it needs the debug build installed. Restart the app (or POST /reload
 # on the debug server) afterwards.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\android-push-pack.ps1 -Dem out\rainier-dem.pmtiles -Osm out\rainier-outdoors.pmtiles
@@ -100,7 +100,11 @@ if (-not $NoGlyphs) {
             $file = Join-Path $dir "$range.pbf"
             if (-not (Test-Path $file)) {
                 $url = 'https://protomaps.github.io/basemaps-assets/fonts/' + [uri]::EscapeDataString($font) + "/$range.pbf"
-                Invoke-WebRequest -UseBasicParsing $url -OutFile $file
+                # T147: into a name of this run's own, then renamed, so two runs fetching at once (the cache is shared by
+                # every worktree) never push or keep half a file; a run that loses the rename uses the other's.
+                $part = "$file.$PID.part"
+                Invoke-WebRequest -UseBasicParsing $url -OutFile $part
+                try { Move-Item -LiteralPath $part $file -ErrorAction Stop } catch { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
             }
         }
     }
@@ -117,16 +121,38 @@ if (-not $NoSprites) {
     $outDir = Join-Path $repoRoot 'out'
     # Always remade (a few seconds with a warm Gradle daemon): a sheet left in out/ from an older marker table would
     # lack icons the style names.
-    Write-Host 'making the sprite sheet (devtool sprite)'
-    $spriteLog = Join-Path $outDir 'push-pack-sprite.log'
-    New-Item -ItemType Directory -Force $outDir | Out-Null
-    $p = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':devtool:run', '--args=sprite', '--console=plain', '-q') $spriteLog
+    # T147 (T137's follow-up): every run makes its sheet in a folder of its own and pushes from there. Two runs at once
+    # (two android-emu.ps1 starts in one checkout) shared out\push-pack-sprite.log, so the second run's cmd could not
+    # open its log and the step failed (exit 1), and both wrote and pushed out\sprite*. The run's sheet is then copied
+    # into out\ (android-release.ps1 and android-ui.py push it from there) by a rename over each file, so a reader there
+    # sees an old or a new file, never half of one; that copy is best effort, the push above it is what counts.
+    # The folder is out\push-pack\<pid>-<random>, named relative to the repo (devtool runs there), so no space in a
+    # user's temp path can split Gradle's --args.
+    $runName = 'out/push-pack/{0}-{1}' -f $PID, [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $runDir = Join-Path $repoRoot ($runName -replace '/', '\')
+    New-Item -ItemType Directory -Force $runDir | Out-Null
+    $spriteLog = Join-Path $runDir 'sprite.log'
+    Write-Host "making the sprite sheet (devtool sprite into $runName)"
+    $p = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':devtool:run', "--args=sprite --out $runName", '--console=plain', '-q') $spriteLog
     $p.WaitForExit()
     if ($p.ExitCode -ne 0) { throw "devtool sprite failed (exit $($p.ExitCode)); see $spriteLog" }
+    foreach ($f in $spriteFiles) { if (-not (Test-Path (Join-Path $runDir $f))) { throw "devtool sprite wrote no $f; see $spriteLog" } }
     Adb shell "mkdir -p $staging/sprites" | Out-Null
-    foreach ($f in $spriteFiles) { Adb push (Join-Path $outDir $f) "$staging/sprites/$f" | Out-Null }
+    foreach ($f in $spriteFiles) { Adb push (Join-Path $runDir $f) "$staging/sprites/$f" | Out-Null }
     Write-Host "pushing sprites ($($spriteFiles.Count) files)"
     Adb shell "run-as $Package rm -rf files/sprites && run-as $Package cp -r $staging/sprites files/sprites" | Out-Null
+    New-Item -ItemType Directory -Force $outDir | Out-Null
+    foreach ($f in $spriteFiles) {
+        $tmp = Join-Path $outDir ".$f.$PID.tmp"
+        try {
+            Copy-Item -LiteralPath (Join-Path $runDir $f) $tmp -Force
+            Move-Item -LiteralPath $tmp (Join-Path $outDir $f) -Force
+        } catch {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            Write-Host "note: out\$f not updated ($($_.Exception.Message)); the phone has the new sheet"
+        }
+    }
+    Remove-Item -LiteralPath $runDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Adb shell "rm -rf $staging" | Out-Null

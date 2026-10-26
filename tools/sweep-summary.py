@@ -50,7 +50,12 @@ def load(path):
 
 
 def load_last_json(path):
-    """A file whose last JSON value is the report (stdout with log lines before it)."""
+    """A file whose last JSON value is the report (stdout with log lines before it, and possibly after it).
+
+    T147 (T139's follow-up): the text is read from the front, one top-level value at a time: a `{` or `[` that starts
+    a value is decoded whole and the scan resumes after it, so the braces inside the report are never taken for a
+    value of their own. The last top-level value wins. Before, the scan tried every `{` from the end, so with log text
+    before the report it returned the report's last inner object (its last step, say) instead of the report."""
     try:
         with open(path, encoding="utf-8-sig", errors="replace") as f:
             text = f.read()
@@ -61,13 +66,18 @@ def load_last_json(path):
     except ValueError:
         pass
     dec = json.JSONDecoder()
-    for start in [i for i, c in enumerate(text) if c in "{["][::-1]:
+    last, i = None, 0
+    while True:
+        m = _VALUE_START.search(text, i)
+        if not m:
+            return last
         try:
-            val, _ = dec.raw_decode(text[start:])
-            return val
+            last, i = dec.raw_decode(text, m.start())
         except ValueError:
-            continue
-    return None
+            i = m.start() + 1
+
+
+_VALUE_START = re.compile(r"[{\[]")
 
 
 def public_areas():
@@ -321,9 +331,18 @@ def bothunits(d, part):
     for s in r.get("steps") or []:
         if isinstance(s, dict) and s.get("value"):
             carries[s.get("step")] = {"ok": s.get("ok"), "value": s.get("value"), "dstBothUnits": (s.get("dstAfter") or {}).get("bothUnits")}
+    # T147 (T139's follow-up): both phones' screenshots. The report's `screenshots` holds only each step's `png` (the
+    # receiving phone's), so the summary listed two of the four; each carry's `pngs` has both phones, in the order taken.
+    shots = []
+    for s in r.get("steps") or []:
+        if isinstance(s, dict):
+            pngs = s.get("pngs")
+            shots += [p for p in (pngs.values() if isinstance(pngs, dict) else []) if isinstance(p, str)]
+    shots += [p for p in r.get("screenshots") or [] if isinstance(p, str)]
     out.update({"peer": r.get("peer"), "carries": carries,
-                "screenshots": [os.path.relpath(p, d).replace(os.sep, "/") if os.path.isabs(p) and os.path.splitdrive(p)[0].lower() == os.path.splitdrive(d)[0].lower()
-                                else p for p in r.get("screenshots") or []]})
+                "screenshots": list(dict.fromkeys(
+                    os.path.relpath(p, d).replace(os.sep, "/") if os.path.isabs(p) and os.path.splitdrive(p)[0].lower() == os.path.splitdrive(d)[0].lower()
+                    else p for p in shots))})
     return out
 
 
