@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -92,5 +93,54 @@ class StalledVectorTileTest {
         val osm = OsmSourceRefresh.osmSource(json)!!
         assertTrue((osm["tiles"] as List<*>).single().toString().contains("-o2"))
         assertEquals(14L, (osm["maxzoom"] as Number).toLong())
+    }
+
+    /** T144: a trickle of 20 recoveries, one at each 2 s look of the probe, gets one source refresh per settle window, not one every 5 s. */
+    @Test
+    fun aTrickleOfRecoveriesIsCoalescedToOneRefreshPerSettleWindow() {
+        val c = OsmRefreshCoalescer(settleMs = 10_000, quietMs = 2_000)
+        var t = 0L
+        val refreshedAt = ArrayList<Long>()
+        var next = 0L
+        var recovered = 0
+        while (t <= 60_000) {
+            if (recovered < 20 && t >= next) { c.recovered(t); recovered++; next = t + 1_500 }
+            if (c.due(t)) { c.refreshed(t); refreshedAt += t }
+            t += 2_000 // the probe looks every 2 s
+        }
+        // 20 recoveries over 38 s: refreshes at 10, 22 and 34 s (each window's end) and 44 s (the tail, once a window had passed).
+        assertEquals(4L, c.refreshes, "refreshes at $refreshedAt")
+        assertTrue(refreshedAt.zipWithNext().all { (a, b) -> b - a >= 10_000 }, "never twice within a window: $refreshedAt")
+        assertEquals(16L, c.coalesced)
+        assertFalse(c.pending)
+    }
+
+    @Test
+    fun aLoneRecoveryIsDrawnOnceItIsQuiet() {
+        val c = OsmRefreshCoalescer(settleMs = 10_000, quietMs = 2_000)
+        c.recovered(1_000)
+        assertFalse(c.due(2_000))
+        assertTrue(c.due(3_000))
+        c.refreshed(3_000)
+        assertFalse(c.due(5_000))
+        assertEquals(1L, c.refreshes)
+    }
+
+    /** T144: a refresh the map skipped because its style was loading is asked for again (T138 dropped it). */
+    @Test
+    fun aRefreshSkippedMidStyleLoadIsTriedAgain() {
+        val c = OsmRefreshCoalescer(settleMs = 10_000, quietMs = 2_000)
+        c.recovered(0)
+        assertTrue(c.due(2_000))
+        c.refreshed(2_000)
+        assertFalse(c.pending)
+        c.skipped() // OsmSourceRefresh.refresh answered "style loading"
+        assertTrue(c.pending)
+        assertEquals(0L, c.refreshes, "a skipped refresh is not counted")
+        assertTrue(c.due(4_000), "tried at the next look, not after a whole window")
+        c.refreshed(4_000)
+        assertEquals(1L, c.refreshes)
+        assertEquals(1L, c.skippedRetried)
+        assertEquals(OsmSourceRefresh.STYLE_LOADING, "style loading")
     }
 }

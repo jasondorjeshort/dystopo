@@ -58,6 +58,12 @@ class TileCounters {
     /** Tile services opened with these counters (1 + reloads). */
     val serviceOpens = AtomicLong()
 
+    /** T144: tile services whose packs are closed (the last reader released them after a reload); `open` is the difference. */
+    val serviceCloses = AtomicLong()
+
+    /** T144: old services whose close waited for a reader still in them (the deferred close). */
+    val deferredCloses = AtomicLong()
+
     /** T65: hillshade and slope tiles (`shadeGeneration`) and cliff rewrites (`cliffs`), cumulative like the rest. */
     val shade = io.github.jasondorjeshort.dystopo.app.options.ShadeCounters()
     val cliffs = CliffCounters()
@@ -164,6 +170,81 @@ fun packIdentity(file: File): String {
 }
 
 /**
+ * T144: a reference count with a deferred close, the pattern of Android's `SQLiteClosable`: the count starts at 1 (the
+ * owner's reference); [acquire] adds a reader and fails once the count has reached 0; [release] drops one, and the
+ * release that brings it to 0 runs [onClosed] once, on that thread. [releaseOwner] drops the owner's reference (at most
+ * once), so whoever leaves last closes; nobody waits. Pure, tested (`TileServiceRefCountTest`).
+ */
+class RefCounted(private val onClosed: () -> Unit) {
+    private val count = AtomicInteger(1)
+    private val ownerReleased = java.util.concurrent.atomic.AtomicBoolean()
+
+    /** References held now: the owner's (until [releaseOwner]) plus the readers'. 0 once closed. */
+    val refs: Int get() = count.get()
+    val isOpen: Boolean get() = count.get() > 0
+
+    /** Adds a reader; false when already closed (the caller takes the newer one). */
+    fun acquire(): Boolean {
+        while (true) {
+            val c = count.get()
+            if (c <= 0) return false
+            if (count.compareAndSet(c, c + 1)) return true
+        }
+    }
+
+    /** Drops a reference; the last one closes. */
+    fun release() {
+        val c = count.decrementAndGet()
+        check(c >= 0) { "released more often than acquired" }
+        if (c == 0) onClosed()
+    }
+
+    /** Drops the owner's reference (a second call does nothing). True when readers were still in it (the close waits for them). */
+    fun releaseOwner(): Boolean {
+        if (!ownerReleased.compareAndSet(false, true)) return false
+        val readers = count.get() > 1
+        release()
+        return readers
+    }
+}
+
+/**
+ * T144: per-thread holds on the current one of a replaceable resource ([DystopoApp]'s tile service): [lease] acquires the
+ * one [current] returns (taking it again when that one closed in between, which happens only after a newer one was
+ * published), remembers it for the thread ([held]) and returns the handle that releases it. A nested lease shares the
+ * outer hold. [swap] moves the thread's hold to a newly published one (a request that reloads reads the new service
+ * after). Pure, tested.
+ */
+class Leases<T : Any>(private val current: () -> T, private val acquire: (T) -> Boolean, private val release: (T) -> Unit) {
+    private val holds = ThreadLocal<T?>()
+
+    /** What this thread holds, or null outside a lease. */
+    fun held(): T? = holds.get()
+
+    fun lease(): AutoCloseable {
+        if (holds.get() != null) return AutoCloseable {}
+        while (true) {
+            val t = current()
+            if (acquire(t)) {
+                holds.set(t)
+                return AutoCloseable {
+                    holds.get()?.let(release)
+                    holds.remove()
+                }
+            }
+        }
+    }
+
+    /** Moves this thread's hold (if any) to [next]. */
+    fun swap(next: T) {
+        val held = holds.get() ?: return
+        if (held === next || !acquire(next)) return
+        holds.set(next)
+        release(held)
+    }
+}
+
+/**
  * Serves the region pack to MapLibre: DEM tiles (stored PNGs, or synthesized from an ancestor where
  * the pack has none, like the browser demo's fallback), OSM vector tiles (decompressed), contour
  * tiles generated on the device from the DEM ([ContourTiles], cached on disk), glyphs and the style.
@@ -179,6 +260,11 @@ fun packIdentity(file: File): String {
  * generated from the chosen pack's own [DemPyramid] (the last few used are kept) into that pack's
  * directory of the shared [ContourCache] (kept across switches, one LRU cap). Cliff lines in vector tiles
  * are turned so the ground falls to their right ([CliffSides]), the side the style draws ticks on.
+ *
+ * T144: reference counted ([RefCounted]). [DystopoApp] owns one reference while the service is the published one; each
+ * loopback request holds another while it runs ([DystopoApp.leaseTiles], acquired in [LocalServer]), and the contour
+ * warm-up one while it runs. [dispose] (a reload replaced it) stops the warm-up and drops the owner's reference; the
+ * packs close when the last reader leaves, never under a read.
  */
 class TileService(
     val packs: PackSet, private val cacheDir: File, private val port: Int, private val token: LoopbackToken,
@@ -260,6 +346,12 @@ class TileService(
     @Volatile
     private var closed = false
 
+    /** T144: the owner's and the readers' references; the last release closes the packs. */
+    private val refs = RefCounted {
+        runCatching { packs.close() }
+        counters.serviceCloses.incrementAndGet()
+    }
+
     /** Generation timings of the background warm-up, kept apart from the map's own [contourGen]. */
     val warmupGen = ContourTileStats(keepRecent = 8)
 
@@ -284,6 +376,15 @@ class TileService(
     init {
         io.github.jasondorjeshort.dystopo.app.online.HeapGuard.register("tileService", ::trimMemory) // T127: the newest service's caches
     }
+
+    /** T144: holds the service open for a read; false when it is closed already (take the published one again). */
+    fun acquire(): Boolean = refs.acquire()
+
+    /** T144: ends a read begun with [acquire]. */
+    fun release() = refs.release()
+
+    /** T144: references held now (the owner's plus the readers'); 0 once closed. */
+    val references: Int get() = refs.refs
 
     fun pyramidJson(): Map<String, Any?> {
         val ps = synchronized(pyramids) { pyramids.entries.map { it.key to it.value } }
@@ -653,40 +754,58 @@ class TileService(
         // The style's highest contour zoom is the pack's max + 1 (see style()).
         val plan = ContourTiles.warmupPlan(bounds, header.minZoom, zoomCount = WARMUP_ZOOMS, maxTiles = WARMUP_MAX_TILES, centreUpTo = header.maxZoom + 1)
         val progress = ContourWarmupProgress(plan.map { it.z }.distinct(), plan.size)
+        if (!acquire()) return null // T144: the warm-up holds the packs open while it runs
         Thread({
-            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
-            val yieldToMap = { foregroundContours.get() > 0 || closed }
-            var i = 0
-            while (i < plan.size) {
-                val t = plan[i]
-                // Yield to the map: wait while any of its contour tiles is generating.
-                val pauseStart = System.nanoTime()
-                while ((foregroundContours.get() > 0 || System.nanoTime() - lastForegroundDone < WARMUP_QUIET_MS * 1_000_000L) && !closed) Thread.sleep(WARMUP_POLL_MS)
-                if (closed) break
-                val paused = System.nanoTime() - pauseStart
-                if (paused > WARMUP_POLL_MS * 500_000L) progress.paused(paused / 1e6)
-                try {
-                    var hit = false
-                    contourBytes(packs.demFor(t.z, t.x, t.y, PackRoleZooms.CONTOUR) ?: warmPack, t.z, t.x, t.y, warmupGen, yieldToMap) { hit = true }
-                    if (hit) progress.cached() else progress.generated()
-                } catch (e: ContourBuildCancelled) {
-                    if (closed) break
-                    progress.preempted()
-                    continue // the same tile again, after the map's requests
-                } catch (e: Throwable) {
-                    if (closed) break
-                    progress.failed(e)
-                }
-                i++
+            try {
+                warmUp(plan, warmPack, progress)
+            } finally {
+                release()
             }
-            progress.finish(stopped = closed)
         }, "contour-warmup").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
         return progress
+    }
+
+    private fun warmUp(plan: List<io.github.jasondorjeshort.dystopo.geo.TileId>, warmPack: Pack, progress: ContourWarmupProgress) {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+        val yieldToMap = { foregroundContours.get() > 0 || closed }
+        var i = 0
+        while (i < plan.size) {
+            val t = plan[i]
+            // Yield to the map: wait while any of its contour tiles is generating.
+            val pauseStart = System.nanoTime()
+            while ((foregroundContours.get() > 0 || System.nanoTime() - lastForegroundDone < WARMUP_QUIET_MS * 1_000_000L) && !closed) Thread.sleep(WARMUP_POLL_MS)
+            if (closed) break
+            val paused = System.nanoTime() - pauseStart
+            if (paused > WARMUP_POLL_MS * 500_000L) progress.paused(paused / 1e6)
+            try {
+                var hit = false
+                contourBytes(packs.demFor(t.z, t.x, t.y, PackRoleZooms.CONTOUR) ?: warmPack, t.z, t.x, t.y, warmupGen, yieldToMap) { hit = true }
+                if (hit) progress.cached() else progress.generated()
+            } catch (e: ContourBuildCancelled) {
+                if (closed) break
+                progress.preempted()
+                continue // the same tile again, after the map's requests
+            } catch (e: Throwable) {
+                if (closed) break
+                progress.failed(e)
+            }
+            i++
+        }
+        progress.finish(stopped = closed)
     }
 
     /** Stops the warm-up; call when this service is replaced (its packs are about to close). */
     fun close() {
         closed = true
+    }
+
+    /**
+     * T144: this service was replaced: stops the warm-up and drops the owner's reference. The packs close now when no
+     * request is reading them, else when the last one releases (counted in [TileCounters.deferredCloses]).
+     */
+    fun dispose() {
+        close()
+        if (refs.releaseOwner()) counters.deferredCloses.incrementAndGet()
     }
 
     fun glyph(fontstack: String, range: String): TileResult {
