@@ -4,7 +4,7 @@ import io.github.jasondorjeshort.dystopo.app.settings.HeapMark.Rule
 import io.github.jasondorjeshort.dystopo.reports.Scrub
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** T143: the persisted mark's write rule and the Diagnostics row's text, on synthetic numbers. */
@@ -12,12 +12,13 @@ class DiagnosticsTest {
     private val MB = 1L shl 20
 
     @Test
-    fun theMarkIsWrittenOnlyWhenThePeakRisesFiveMbAndTenSecondsHavePassed() {
-        assertTrue(Rule.due(peak = 40 * MB, writtenPeak = 0, now = 1_000_000, lastWriteAt = 0), "the first peak of a session is written")
-        assertFalse(Rule.due(44 * MB, 40 * MB, 2_000_000, 1_000_000), "a rise under 5 MB is not")
-        assertTrue(Rule.due(45 * MB, 40 * MB, 1_010_000, 1_000_000), "5 MB up after 10 s is")
-        assertFalse(Rule.due(90 * MB, 40 * MB, 1_009_999, 1_000_000), "any rise within 10 s of the last write waits")
-        assertFalse(Rule.due(30 * MB, 40 * MB, 9_000_000, 1_000_000), "a lower heap is never written")
+    fun theMarkIsWrittenOnlyWhenThePeakRisesFiveMbAndAtMostEveryTenSeconds() {
+        assertEquals(0L, Rule.waitMs(peak = 40 * MB, writtenPeak = 0, now = 1_000_000, lastWriteAt = 0), "the first peak of a session is written at once")
+        assertNull(Rule.waitMs(44 * MB, 40 * MB, 2_000_000, 1_000_000), "a rise under 5 MB is never written")
+        assertEquals(0L, Rule.waitMs(45 * MB, 40 * MB, 1_010_000, 1_000_000), "5 MB up after 10 s is written at once")
+        assertEquals(1L, Rule.waitMs(90 * MB, 40 * MB, 1_009_999, 1_000_000), "a rise within 10 s of the last write waits for the gap")
+        assertEquals(10_000L, Rule.waitMs(90 * MB, 40 * MB, 1_000_000, 1_000_000))
+        assertNull(Rule.waitMs(30 * MB, 40 * MB, 9_000_000, 1_000_000), "a lower heap is never written")
     }
 
     private fun mark(peak: Long, native: Long? = null, pss: Long? = null, level: Int? = null, at: Long? = null, session: Long = 1) =

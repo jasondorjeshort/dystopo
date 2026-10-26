@@ -18,10 +18,11 @@ import java.util.concurrent.Executors
  *
  * Event-driven, no timer (the heap research of wave 20): [offer] is called by `HeapGuard.sample` when the process's
  * peak rises (the render burst sampler, admissions, render ends, a trim signal, the row opening), [onSignal] by
- * `HeapGuard.onTrimMemory` at every level. The file is written only when [Rule.due] says so (the peak [Rule.RISE_BYTES]
- * above what was written, at most every [Rule.GAP_MS]), plus once at each `TRIM_MEMORY_UI_HIDDEN` (with the PSS, read
- * then). Raise-only: a write never lowers a peak this session wrote. Disk work runs on its own thread, never the caller's
- * (`onTrimMemory` arrives on the main thread).
+ * `HeapGuard.onTrimMemory` at every level. The file is written only when [Rule.waitMs] says so (the peak [Rule.RISE_BYTES]
+ * above what was written, at most every [Rule.GAP_MS]: a rise inside the gap is written once the gap has passed, with
+ * the peak of that moment, since a peak reached then is not offered again), plus once at each `TRIM_MEMORY_UI_HIDDEN`
+ * (with the PSS, read then). Raise-only: a write never lowers a peak this session wrote. Disk work runs on its own
+ * thread, never the caller's (`onTrimMemory` arrives on the main thread).
  *
  * The file is read once per process, before this session's first write: that reading is [previous], the mark of the
  * session before (its `sessionStartedAt` says which), `GET /diagnostics` `persisted`. `POST /diagnostics/reset` ([reset])
@@ -35,9 +36,12 @@ object HeapMark {
         const val RISE_BYTES = 5L shl 20
         const val GAP_MS = 10_000L
 
-        /** Whether a peak of [peak] is written now: [RISE_BYTES] above [writtenPeak] and [GAP_MS] since [lastWriteAt]. */
-        fun due(peak: Long, writtenPeak: Long, now: Long, lastWriteAt: Long): Boolean =
-            peak >= writtenPeak + RISE_BYTES && now - lastWriteAt >= GAP_MS
+        /**
+         * When a peak of [peak] is written: null when it is under [RISE_BYTES] above [writtenPeak] (never for this peak),
+         * else in how many ms, 0 when [GAP_MS] have passed since [lastWriteAt].
+         */
+        fun waitMs(peak: Long, writtenPeak: Long, now: Long, lastWriteAt: Long): Long? =
+            if (peak < writtenPeak + RISE_BYTES) null else maxOf(0L, lastWriteAt + GAP_MS - now)
 
         /** What a write keeps: never below what this session wrote (raise-only), unknown values kept from before. */
         fun raise(old: Mark?, new: Mark): Mark = if (old == null || old.sessionStartedAt != new.sessionStartedAt) new else new.copy(
@@ -71,7 +75,7 @@ object HeapMark {
     }
 
     private val lock = Object()
-    private val diskThread = Executors.newSingleThreadExecutor { r -> Thread(r, "heap-mark").apply { isDaemon = true } }
+    private val diskThread = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "heap-mark").apply { isDaemon = true } }
 
     // Under [lock]: what this session wrote last, and the file's mark from before this session (read once).
     private var loaded = false
@@ -89,13 +93,16 @@ object HeapMark {
 
     private fun prefs(): SharedPreferences? = runCatching { DystopoApp.instance.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }.getOrNull()
 
-    /** A new peak of the process's heap ([HeapGuard.sample]): cheap unless a write is due ([Rule.due]), which runs on its own thread. */
+    /**
+     * A new peak of the process's heap ([HeapGuard.sample]): cheap unless a write is due ([Rule.waitMs]), which runs on its
+     * own thread, at once or when the gap since the last write has passed (one write queued at a time; it writes the peak
+     * of its moment).
+     */
     fun offer(peak: Long) {
-        val now = System.currentTimeMillis()
-        if (pending || !Rule.due(peak, writtenPeak, now, lastWriteAt)) return
+        if (pending) return
+        val wait = Rule.waitMs(peak, writtenPeak, System.currentTimeMillis(), lastWriteAt) ?: return
         pending = true
-        lastWriteAt = now // the gap counts from the decision, so a burst queues one write
-        diskThread.execute { try { write(now, null) } finally { pending = false } }
+        diskThread.schedule({ try { write(System.currentTimeMillis(), null) } finally { pending = false } }, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     /** An `onTrimMemory` [level] at [at] (on the trim thread): kept for the next write; at `TRIM_MEMORY_UI_HIDDEN` written now, with the PSS. */
