@@ -1,39 +1,44 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-26, at commit 43cf7f6 plus this edit, by main session (v0.1.13-alpha published)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 20 (closed; wave 21 unplanned).
+Updated: 2026-10-26, at commit 77198b2 plus this edit, by main session (T148 merged, no release)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 20 and "One-off fixes after wave 20" (wave 21 unplanned).
 
 ## Now
 
-- Wave 20 is closed and v0.1.13-alpha published (2026-10-26, the second PC; log entries of 2026-10-26):
-  the sweep (`out/sweep-w20`) green on the app, its two reds explained (a throttle that did not take; the
-  z8 `tiles` check against this PC's narrow pack, the open finding below); the release built locally at
-  the tag (secrets still absent) and verified from the draft. No task branch is in flight.
+- v0.1.13-alpha is the published release. Since then: T148 merged (01d05eb, the issue link copies only what the
+  body lacks; no release, owner's word); the owner's phone filed five problem reports (issues 23 to 27, four
+  events, all memory pressure; finding below). No task branch is in flight; worktrees cleaned.
 - Machine: 3 GB emulators, at most three, Gradle `--no-daemon`; the Rainier DEM pack is the wide one
-  (`machines.md`); a live viewer on 8765 is wanted (`out/coordinator-pids.txt` has the PID when up).
+  (`machines.md`); the live viewer on 8765 (`out/coordinator-pids.txt`). No `devtool.local.json` on this PC, so
+  the privacy scans check coordinates only.
 
 ## Next
 
-1. Plan wave 21 (`wave` skill, critic first): the sweep task from the open finding (the tour's `tiles`
-   check, the first PC's pack recipe recorded) plus the Status lines' follow-ups: leases for readers
-   outside the loopback server, the `onMain` waits and `Pack.metadata` priming (T144); StrictMode;
-   T138's DEM recovery; precomputed country sizes, `POST /map/longpress/around`, the "0.0 MB of your
-   2 GB" wording and the picker's other follow-ups (T142); `--tiles` to `tileItems` (T141); the template
-   chooser and `Scrub.Known` against short pack names (T145); `drawCheck` between drives (T146).
-2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base
-   update); ADR 0040's and 0042's build tasks after the owner.
+1. Plan wave 21 (`wave` skill, critic first). Inputs, owner's priority first: the routing-graph OOM (finding
+   below); the ideas `2026-10-26-interrupted-area-downloads-resume-themselves.md` and
+   `2026-10-26-downloads-without-a-size-cap.md` (the owner asked for both; they share a progress cursor and
+   `AreaDownload.kt`, so one owner or two waves); the z8 `tiles` sweep task; the wave 20 Status follow-ups
+   (T141, T142, T144, T145, T146; StrictMode; T138's DEM recovery); T148's: the title-only link and a real
+   no-stack ANR on a device.
+2. `tools/merge-log.py` fails when the task is the last paragraph of `docs/TASKS.md` (needs a blank line after
+   it); a small tooling fix.
+3. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update);
+   ADR 0040's and 0042's build tasks after the owner.
 
 ## Waiting on user
 
-- Whether the repository goes public before testers hear of Report a problem (a private one takes no
-  outside issues, T145); `git push origin --delete task/T138`, `git branch -D carry-back/ownership-project-list`,
-  `git branch -D task/T143` and `task/T146` (pre-rebase copies; the rebased branches merged); the
-  `RELEASE_*` secrets; the wave 18 to 20 strings (ADR 0031); ADR 0042's confirmations, ADR 0040's
-  positions; real-phone runs (`android-battery.py`, heap numbers, v0.1.13-alpha, the first watchdog dump).
+- The airplane-mode crash of 2026-10-26: filed from the phone's Report a problem row, so it can be retraced
+  (the release mapping is in `androidApp/build/outputs/mapping/release/` on this PC).
+- T148's strings (ADR 0031): "The issue is complete; press Submit.", "The rest of the stack trace is on your
+  clipboard; paste it below.", "(from frame N)"; the wave 18 to 20 strings.
+- `git push origin --delete task/T138`, `git branch -D carry-back/ownership-project-list`, `git branch -D task/T143`
+  and `task/T146` (pre-rebase copies); the `RELEASE_*` secrets; ADR 0042's confirmations, ADR 0040's positions;
+  real-phone runs (`android-battery.py`, heap numbers, the first watchdog dump).
 - Carried: the S Pen question; the T122 folder, `triage-saved` and `refs/original/*`; the two older
   Claude-authored commits; T122's and the wave 14 to 17 strings; Play registration; T100, T104.
 
 ## Open findings
 
+- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: wave 21, first.
 - `docs/findings/2026-10-26-z8-tiles-check-misses-the-start-up-tile.md`: wave 21's sweep task.
