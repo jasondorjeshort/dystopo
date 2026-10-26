@@ -14,6 +14,7 @@ JDK 21 is required. If `java` isn't on PATH in your shell, set `JAVA_HOME=C:\Pro
 ```
 ./gradlew check                                           # all tests (no device needed)
 ./gradlew :devtool:run --args="areas"                     # list named areas
+./gradlew :devtool:run --args="area-plan --around 46.786,-121.735 --radius 5km"   # T140: a disc (or --ring lat,lon;... repeatable for holes and parts): tiles and bytes per --ranges (default 8-13,8-15) as POST /area makes them, the memory guard's bound
 ./gradlew :devtool:run --args="render --area rainier"     # hillshade + contours -> out/rainier-best-z13.png + JSON report
 ./gradlew :devtool:run --args="render --area rainier --source 3dep"   # sources: best (default; global, EGM2008), copernicus (global 30 m),
                                                                       #   3dep (US 10 m), 3dep-1m (US lidar, NaN = magenta), 3dep-best, swissalti3d (CH 2 m), kartverket (NO 1 m), bev (AT 1 m), hrdem (CA 1/2 m), linz (NZ 1 m), terrarium (legacy)

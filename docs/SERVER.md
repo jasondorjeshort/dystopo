@@ -200,8 +200,9 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 - `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
 - `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
-- `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`) or a route
-  corridor (tile lists); `GET /area` for the parameters. Below, Areas of interest. Token-protected.
+- `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`), a route
+  corridor or (T140) a polygon (tile lists); `GET /area` for the parameters, the shapes read and the manifest
+  version. Below, Areas of interest. Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`, `/sync/routes[?full=1]`: the sync peer
   (docs/PLANNING.md, Sync). T92: `?full=1` adds each route's `path` value and `waypointList` (the browser
   page pulls its trips with it), T116 and `directions` (how many saved turn directions count for that path, null
@@ -320,12 +321,12 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
 
 ## Areas of interest (T75)
 
-"Tell us where you are going": a box or a route corridor with a zoom range, expanded to a **manifest** of
+"Tell us where you are going": a box, a route corridor or (T140, ADR 0041) a polygon with a zoom range, expanded to a **manifest** of
 everything the map needs there offline, with sizes. The phone downloads it item by item, verifies what it
 gets, and pins the result so its caches do not evict it (docs/PLANNING.md, Design goals, principle 4). The
 format is the one a phone will publish to other phones on a trip (T78), so it is versioned and documented
-field by field here. Code: `shared/.../areas/` (`AreaOfInterest`, `AreaManifest`, `TileCover`, `AreaPins`),
-the server side in `BuildRoutes.kt`.
+field by field here. Code: `shared/.../areas/` (`AreaOfInterest`, `AreaManifest`, `TileCover`, `AreaPins`,
+`PolygonRings`, `AreaLimit`), the server side in `BuildRoutes.kt`; `devtool area-plan` plans one offline.
 
 ```
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -335,10 +336,14 @@ curl -X POST -H "Authorization: Bearer $TOKEN" "https://maps.example.org/area?bb
 ```
 
 `POST /area` takes the area as a JSON body (the area object below, or `{"area": {...}, "pack": 0}`) or as
-query parameters (`bbox=w,s,e,n` or `line=lat,lon;lat,lon;...` with latitude first, `bufferM`, `minZoom`,
-`maxZoom`, `name`). Options (query or body): `pack=1|0` (default: 1 for a box, 0 for a corridor), `profile`,
+query parameters (`bbox=w,s,e,n`, `line=lat,lon;lat,lon;...` or `ring=lat,lon;lat,lon;lat,lon` with latitude
+first, further rings after `|`, or `around=lat,lon` with `radiusM`; `bufferM`, `minZoom`, `maxZoom`, `name`).
+Options (query or body): `pack=1|0` (default: 1 for a box, 0 for a corridor or a polygon), `profile`,
 `fallback`, `source` (as for `/build`), `retry=1` (build again after a failed build). It is token-protected
-like `/build`, because a box starts a build. `GET /area` lists the parameters and limits.
+like `/build`, because a box starts a build. `GET /area` lists the parameters and limits, `manifestVersion`
+(the newest it reads, 2) and `shapes` (`box`, `corridor`, `polygon`; a phone treats a server whose answer has
+no `shapes` as reading box and corridor only), `maxAreaTiles` and `heapAreaTiles` (the memory guard's limit
+from this server's heap).
 
 - **A box** (or `pack=1`) is a region pack built through the same jobs as `POST /build` (name: `name`, else
   the area's name when it is a valid pack name, else `area-<12 hex digits of the id>`; the outdoors profile
@@ -355,8 +360,18 @@ like `/build`, because a box starts a build. `GET /area` lists the parameters an
   same `/dem` and `/osm` routes as the map's (packs on the server first, else live), so a corridor needs no
   build time and costs only the tiles it touches; it has no trail graph or search index (those are built from
   vector packs; download a box for them).
+- **A polygon** (T140, ADR 0041) is tiles like a corridor: the tiles whose square lies within `bufferM` of a ring
+  edge (with no buffer, the tiles an edge crosses) or whose centre is inside the rings by the even-odd rule, with
+  the same zooms and margin, as a **version 2** manifest. `pack=1` on one is a 400, "a pack is a box; download a
+  box for the trail graph". Before any tile set is filled, the tiles of each outer ring's own bounding box (holes
+  not counted, so parts either side of the antimeridian are not charged for the ocean between them) over the zoom
+  range are checked against a limit from the server's heap (`AreaLimit`: a quarter of the heap at 256 bytes a
+  tile); over it the answer is 413, "This area is too large at this detail; make it smaller or choose less
+  detail". Over `DYSTOPO_AREA_MAX_TILES` its 413 ends "lower maxZoom or draw a smaller area". The area within a
+  distance of a point is the one-point corridor up to 20 km (every build since T75 reads it), a 48-vertex
+  polygon circle beyond.
 
-### The manifest, field by field (version 1)
+### The manifest, field by field (versions 1 and 2)
 
 ```
 {"version": 1, "id": "affd2044dcca0ad24", "name": "Planned: Paradise to Panorama Point", "status": "ready",
@@ -379,7 +394,13 @@ like `/build`, because a box starts a build. `GET /area` lists the parameters an
  "build": null, "notes": ["..."], "pack": "paradise"}
 ```
 
-- `version`: the format version (1). A reader refuses a newer major version rather than misreading it.
+- `version`: the format version, the lowest that holds the content (T140, ADR 0041 §2): 1 for a box or a
+  corridor, 2 for a polygon. A reader checks `version`, then the area's `kind`, then the fields; a version newer
+  than it reads ("manifest version 3 is newer than this app reads (2)") or a kind it does not know ("kind must be
+  box, corridor or polygon (got '...')") is refused rather than misread, and a phone shows "This phone runs an
+  older Dystopo; update it to use this area." with that sentence under it. Builds before T140 parse the area
+  first, so they answer a polygon with "kind must be box or corridor"; a phone falls back to its own manifest on
+  a 400 that starts "kind must be", as on 404 and 405.
 - `id`: the area's content id, `a` + 16 hex digits of the SHA-256 of the geometry (coordinates rounded to
   1e-6 degrees, the buffer) and the zoom range. The name is not part of it, so the same area asked twice (or by
   two phones) has the same id; the phone keys its area records by it.
@@ -395,7 +416,11 @@ like `/build`, because a box starts a build. `GET /area` lists the parameters an
 - `area`: the request, normalised. Box: `{"kind": "box", "bbox": [west, south, east, north], "minZoom", "maxZoom",
   "name"}` (west < east: no antimeridian crossing; split such boxes). Corridor: `{"kind": "corridor", "line":
   [[lon, lat], ...]` (GeoJSON order, 1e-7 degrees), `"bufferM"` (10 to 20000, metres on each side), zooms, name}.
-  Zooms 0 to 16.
+  Polygon (T140): `{"kind": "polygon", "rings": [[[lon, lat], ...], ...]` (GeoJSON order, each ring closed by
+  repeating its first point and read closed or open; holes and further parts are more rings, inside by even-odd;
+  rings never overlap and none crosses the antimeridian), `"bufferM"` (0 to 20000, default 0), zooms, name}; its
+  id hashes `polygon:<buffer>:<rings>:<zooms>`. Writers simplify to about 2,000 vertices over all rings and add
+  the tolerance to `bufferM`; readers take any count (the 2 MiB body is the only hard limit). Zooms 0 to 16.
 - `bounds`: the rectangle holding the area (a corridor's line grown by its buffer), `[w, s, e, n]`.
   `lengthM`: a corridor's line length in metres (great circle).
 - `bytes`: the sum of the items' `bytes`; `bytesExact`: false while any item's size is an estimate.
