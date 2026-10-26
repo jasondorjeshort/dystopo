@@ -46,6 +46,24 @@ wins and this file gets fixed.
 | Private terms | none: there is no `devtool.local.json` on this account, so the privacy hooks have no private terms to check; use only `areas.json` names and public places in anything written down |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`), standalone server on 8800 (no token, binds the LAN address); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`, `server-8800 <pid>`) |
 
+## The second PC (2026-10-25)
+
+A different Windows PC, set up from nothing on 2026-10-25; the signing key was copied in by the owner. A dry
+run of the local release path (fake tag, nothing published) passed here except the device upgrade check.
+
+| What | Where |
+|---|---|
+| Main checkout | `~\Documents\src\dystopo` |
+| Shared download cache | `DYSTOPO_CACHE=~\Documents\src\dystopo\cache` (starts empty; the world tour pulls about 73 MB) |
+| JDK 21 | `JAVA_HOME=C:\Program Files\Java\jdk-21` (user variable); the default `java` on PATH is jdk-25, so a shell that lost the variable builds with the wrong JDK |
+| Android SDK | `~\Android\sdk` (`local.properties`; build-tools 35.0.0, API 35 `google_apis` x86_64 image, emulator with WHPX working); `ANDROID_HOME` and `platform-tools` are on the user PATH |
+| AVDs | `~\Android\avd` (`-AvdHome`); C: has about 190 GB free, E: only about 10 GB |
+| GitHub CLI | `gh` 2.103 (`C:\Program Files\GitHub CLI\gh.exe`), logged in as the owner's account; a shell started before the install needs the full path |
+| Git Bash gaps | no `zip` or 7z (build release zips with Python `zipfile`; `Compress-Archive` writes backslash paths); `python3` is the Microsoft Store stub, use `python` (3.12) |
+| Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout (gitignored); signs identically to the published releases |
+| Private terms | check for `devtool.local.json` before relying on the privacy hooks |
+| Known network trouble | Geofabrik `.osm.pbf` HEAD and ranged GET hung for over a minute on 2026-10-25 while its root answered at once, so `rainier-outdoors.pmtiles` could not be built; retry or place the extract in `cache\osm` |
+
 Neither account can read the other's folders. Shared data is read by absolute path within one account,
 or copied, or generated into the worktree's own `out/` (never a junction; `CLAUDE.md`).
 

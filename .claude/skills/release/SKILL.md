@@ -68,4 +68,15 @@ locally:
    `docs/images/android-tour-sheet.png`, as the workflow's notes template does.
 4. `gh release create <tag> --draft --prerelease --verify-tag --notes-file <notes> out/release/*`, then
    verify from the draft and publish as usual (steps 3 to 7).
-5. Delete the signing copies and the worktree afterwards.
+5. Delete the signing copies and the worktree afterwards (`git-guard` refuses `git worktree remove --force`:
+   delete the signing copies, then the directory, then `git worktree prune`).
+
+Traps found by the dry run on a fresh Windows PC (2026-10-25, `docs/reference/machines.md`):
+- PowerShell splits an unquoted `-PdystopoVersion=0.1.13-alpha` at the first dot (`Task '.1.13-alpha' not found`):
+  quote the argument, or run the line from bash or `cmd /c`.
+- Git Bash has no `zip`: build the zips with Python `zipfile` and forward-slash entry names (`Compress-Archive`
+  writes backslashes). `python3` may be the Store stub: use `python` for `notices.py`.
+- The `upgrade` part of `android-ui.py` also needs `out\sprite.json` (`devtool sprite`) and both Rainier packs
+  (`rainier-dem.pmtiles`, `rainier-outdoors.pmtiles`) in the `out\` of the tree it runs from; without the
+  outdoors pack `create-data` fails ("no route card").
+- A fresh machine has an empty `cache\`: the world tour downloads about 73 MB first.
