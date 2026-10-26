@@ -80,3 +80,7 @@ Traps found by the dry run on a fresh Windows PC (2026-10-25, `docs/reference/ma
   (`rainier-dem.pmtiles`, `rainier-outdoors.pmtiles`) in the `out\` of the tree it runs from; without the
   outdoors pack `create-data` fails ("no route card").
 - A fresh machine has an empty `cache\`: the world tour downloads about 73 MB first.
+- Planetiler fetches the 931 MB water-polygons zip from osmdata.openstreetmap.de before it starts, even for
+  an area that touches none (Rainier), and that host can run at 70 to 130 KB/s. Pre-fetch it with parallel
+  `curl -r` range requests, check it with `zipfile.testzip`, and save it as
+  `cache\planetiler\water-polygons-split-3857.zip` (not `_inprogress`).
