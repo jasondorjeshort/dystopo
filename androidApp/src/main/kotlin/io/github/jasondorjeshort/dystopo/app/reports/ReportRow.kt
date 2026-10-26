@@ -103,16 +103,23 @@ fun ReportRow() {
     }
 }
 
-/** Open GitHub issue (main thread): the full text on the clipboard first, then the link in the browser. Returns the line shown under the buttons. */
+/** Open GitHub issue (main thread): what the issue body lacks on the clipboard first (nothing when it is complete), then the link in the browser. Returns the line shown under the buttons. */
 fun openIssue(context: Context, open: ReportUi.Open): String {
-    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText(CLIP_LABEL, open.text))
-    ReportUi.copied = open.text
-    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) Toast.makeText(context, COPIED_TOAST, Toast.LENGTH_SHORT).show()
+    val clip = open.link.clipboard
+    ReportUi.copied = clip
+    if (clip != null) {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText(CLIP_LABEL, clip))
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) Toast.makeText(context, COPIED_TOAST, Toast.LENGTH_SHORT).show()
+    }
     ReportUi.lastLink = open.link
     return try {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(open.link.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        if (open.link.titleOnly) AFTER_OPEN_TITLE_ONLY else AFTER_OPEN
+        when {
+            open.link.titleOnly -> AFTER_OPEN_TITLE_ONLY
+            clip == null -> AFTER_OPEN_COMPLETE
+            else -> AFTER_OPEN
+        }
     } catch (_: ActivityNotFoundException) {
         NO_BROWSER
     }
@@ -166,6 +173,7 @@ const val OPEN_ISSUE = "Open GitHub issue"
 const val DELETE = "Delete"
 const val CLIP_LABEL = "Dystopo problem report"
 const val COPIED_TOAST = "Report copied"
-const val AFTER_OPEN = "The full report is on your clipboard; paste it into the issue."
+const val AFTER_OPEN = "The rest of the stack trace is on your clipboard; paste it below."
+const val AFTER_OPEN_COMPLETE = "The issue is complete; press Submit."
 const val AFTER_OPEN_TITLE_ONLY = "The report is too long for the link; it is on your clipboard: paste it into the issue."
 const val NO_BROWSER = "No browser to open the issue in; the report is on your clipboard."

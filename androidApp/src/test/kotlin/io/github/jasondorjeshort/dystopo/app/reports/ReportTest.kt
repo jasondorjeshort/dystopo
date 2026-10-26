@@ -75,6 +75,54 @@ class ReportTest {
     }
 
     @Test
+    fun aBodyThatHoldsEverythingAsksForNoPasteAndCopiesNothing() {
+        // A report with no stack (an ANR from the system's record without a trace): the body is the whole report.
+        val noStack = Report("exit-3", MainWatchdog.Dump.parse(ExitImport.format("anr", 6, 1L, 1, "Input dispatching timed out", 0, 0, null, system)))
+        val a = IssueLink.build(noStack)
+        assertNull(a.clipboard)
+        assertFalse(a.titleOnly)
+        assertFalse(IssueLink.CLIPBOARD_LINE in a.body!!, a.body)
+        assertTrue("System's note: Input dispatching timed out" in a.body!!, a.body)
+        // One short stack that fits under the cap, nothing left out: complete too.
+        val e = IllegalStateException("boom")
+        e.stackTrace = Array(8) { StackTraceElement("io.github.jasondorjeshort.dystopo.app.Short", "m$it", "Short.kt", it + 1) }
+        val short = Report("crash-4", MainWatchdog.Dump.parse(CrashCapture.format(1L, "main", e, system)))
+        val b = IssueLink.build(short)
+        assertNull(b.clipboard, b.body)
+        assertFalse(IssueLink.CLIPBOARD_LINE in b.body!!, b.body)
+        assertTrue("    at io.github.jasondorjeshort.dystopo.app.Short.m7(Short.kt:8)" in b.body!!, b.body)
+        assertEquals("The issue is complete; press Submit.", AFTER_OPEN_COMPLETE)
+    }
+
+    @Test
+    fun aBodyThatLacksStackKeepsOnlyTheRestOnTheClipboard() {
+        val e = IllegalStateException("boom")
+        e.stackTrace = Array(30) { StackTraceElement("io.github.jasondorjeshort.dystopo.app.Deep", "m$it", "Deep.kt", it + 1) }
+        val r = Report("crash-5", MainWatchdog.Dump.parse(CrashCapture.format(1L, "main", e, system)))
+        val l = IssueLink.build(r)
+        assertEquals(IssueLink.TOP_FRAMES, l.frames)
+        assertTrue(l.body!!.trimEnd().endsWith("The rest of the stack trace is on your clipboard; paste it below."), l.body)
+        val clip = l.clipboard!!
+        assertFalse("Dystopo problem report" in clip || "App:" in clip, "no header on the clipboard: $clip")
+        assertTrue("(from frame 13)" in clip && "    at io.github.jasondorjeshort.dystopo.app.Deep.m12(Deep.kt:13)" in clip && "Deep.m29(" in clip, clip)
+        assertFalse("Deep.m11(" in clip, "the clipboard starts where the body stops")
+        assertTrue("Deep.m11(" in l.body!! && "Deep.m12(" !in l.body!!)
+        assertEquals("The rest of the stack trace is on your clipboard; paste it below.", AFTER_OPEN)
+        // A crash with a cause: the first stack fits, the cause's stack is the rest.
+        val c = IssueLink.build(crash(), known)
+        assertTrue(c.clipboard!!.startsWith("caused by"), c.clipboard)
+        assertFalse("App:" in c.clipboard!!)
+    }
+
+    @Test
+    fun aTitleOnlyLinkStillCopiesTheWholeText() {
+        val big = Report("exit-2", MainWatchdog.Dump.parse(ExitImport.format("crash", 4, 1L, 1, "y ".repeat(2500), 0, 0, null, system)))
+        val t = IssueLink.build(big)
+        assertTrue(t.titleOnly)
+        assertEquals(big.shown(), t.clipboard)
+    }
+
+    @Test
     fun aLongReportKeepsFewerFramesThenOnlyTheTitle() {
         // Frames long enough that twelve of them pass the cap: fewer are kept.
         val e = IllegalStateException("boom")
