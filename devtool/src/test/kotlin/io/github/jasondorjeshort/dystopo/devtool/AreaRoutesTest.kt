@@ -99,5 +99,54 @@ class AreaRoutesTest {
         assertEquals(400, assertFailsWith<BuildRoutes.Refused> { builds.area(mapOf("bbox" to "1,2,3"), "") }.status)
         assertEquals(400, assertFailsWith<BuildRoutes.Refused> { builds.area(emptyMap(), "{not json") }.status)
         assertEquals(413, assertFailsWith<BuildRoutes.Refused> { builds.area(emptyMap(), corridorBody) }.status)
+        // T140: a polygon over the cap gets the polygon's remedy.
+        val big = assertFailsWith<BuildRoutes.Refused> { builds.area(emptyMap(), polygonBody) }
+        assertEquals(413, big.status)
+        assertTrue(big.message!!.endsWith("lower maxZoom or draw a smaller area"), big.message)
+    }
+
+    // T140: a drawn ring around Paradise (public), as GeoJSON closes it.
+    private val polygonBody = """{"kind":"polygon","rings":[[[-121.76,46.77],[-121.71,46.77],[-121.71,46.80],[-121.76,46.80],[-121.76,46.77]]],"minZoom":8,"maxZoom":15,"name":"Paradise drawn"}"""
+
+    @Test
+    fun aPolygonIsTilesAsAVersion2ManifestAndNeverAPack() {
+        val builds = BuildRoutes(live(), out)
+        val (status, json) = builds.area(emptyMap(), polygonBody)
+        assertEquals(200, status)
+        assertEquals(2, json["version"])
+        val m = AreaManifest.parse(MiniJson.encode(json))
+        assertEquals("polygon", m.area.kind)
+        assertEquals(LiveTiles.LIVE_MIN_ZOOM..15, m.tiles("dem")!!.zooms)
+        assertEquals(8..14, m.tiles("osm")!!.zooms)
+        assertTrue(m.packs.isEmpty() && m.tileCount > 0)
+        // The same ring as query parameters (latitude first, open) is the same area.
+        val (_, q) = builds.area(mapOf("ring" to "46.77,-121.76;46.77,-121.71;46.80,-121.71;46.80,-121.76", "maxZoom" to "15"), "")
+        assertEquals(m.id, q["id"])
+        // pack=1 on a polygon is refused with the sentence, in the query or the body.
+        for ((params, body) in listOf(mapOf("pack" to "1") to polygonBody, emptyMap<String, String>() to """{"area":$polygonBody,"pack":1}""")) {
+            val e = assertFailsWith<BuildRoutes.Refused> { builds.area(params, body) }
+            assertEquals(400, e.status)
+            assertEquals("a pack is a box; download a box for the trail graph", e.message)
+        }
+        // An unknown kind draws the sentence a phone falls back on.
+        val k = assertFailsWith<BuildRoutes.Refused> { builds.area(emptyMap(), """{"kind":"region","code":"X"}""") }
+        assertEquals(400, k.status)
+        assertTrue(k.message!!.startsWith("kind must be"), k.message)
+        // GET /area: the manifest version and the shapes this server reads.
+        val help = builds.areaHelp()
+        assertEquals(2, help["manifestVersion"])
+        assertEquals(listOf("box", "corridor", "polygon"), help["shapes"])
+    }
+
+    @Test
+    fun aPolygonOverTheHeapLimitIsRefusedBeforeItIsFilled() {
+        val builds = BuildRoutes(live(), out)
+        // Most of North America at z8 to z16: millions of tiles in its box, refused without filling a set.
+        val body = """{"kind":"polygon","rings":[[[-125,25],[-70,25],[-70,50],[-125,50]]],"minZoom":8,"maxZoom":16}"""
+        val t0 = System.currentTimeMillis()
+        val e = assertFailsWith<BuildRoutes.Refused> { builds.area(emptyMap(), body) }
+        assertEquals(413, e.status)
+        assertEquals("This area is too large at this detail; make it smaller or choose less detail", e.message)
+        assertTrue(System.currentTimeMillis() - t0 < 2000, "refused before any fill")
     }
 }
