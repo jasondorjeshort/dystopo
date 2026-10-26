@@ -33,7 +33,8 @@ Parts:
                time), and the new build runs with the track, the units and the pack; finally Check for updates against
                the real GitHub API (read only) is quiet. The app's DystopoUpdate log lines go to updater-log.txt.
                T129/T139: the three newer fixtures announce tags derived from --apk's versionName (one, two and
-               three patch steps above it), listed in the report's `offeredTags` with `derived`.
+               three patch steps above it), listed in the report's `offeredTags` with `derived`; T143: so do the two
+               quiet ones (one patch step below --prev-apk's and below --apk's versionName).
   permissions  fresh installs with no permission granted in advance: location allowed (the dialog's "While using
                the app") and denied ("Don't allow": the app keeps working, "Download the map around me" says why it
                cannot), then notifications at the first recording (API 33+): allowed (the recording notification is
@@ -67,6 +68,10 @@ Parts:
                one unit, then A sets both units (POST /scalebar?both=on) and syncs, B syncs and must draw both
                (GET /scalebar's bothUnits, GET /sync/status' settingsSync `synced`); then B back to one unit, to A.
                T139: a screenshot of both phones after each carry under --out; the sweep runs it with -BothUnits.
+               T143: the trip corridor's width too (--width-m set on A, read on B, then both put back).
+  diagnostics  (T143) Settings > About and advanced > Diagnostics: every line of the row (the max heap equal to the
+               system's large heap), Copy report and Refresh; after a force-stop and a cold start, "Last session"
+               says how the app ended (API 30 and up) and the peak it reached.
 
 Privacy: only areas.json places are used (the Rainier pack and the views around it); reports never echo file
 contents beyond the counts PrivacyCheck prints.
@@ -626,6 +631,20 @@ def both_state(srv):
             "operations": (st or {}).get("operations"), "digest": (st or {}).get("digest")}
 
 
+WIDTH_KEY = "app.tripCorridorM"  # sync/SettingsSync.kt: the trip corridor's width, whole metres (T136)
+
+
+def width_state(srv):
+    """What a phone says of the corridor width: GET /settings' tripCorridorM, GET /areas/trips' widthM (what the next
+    corridor is made at) and GET /sync/status' settingsSync `synced` value."""
+    c1, st = srv.call("GET", "/settings")
+    c2, trips = srv.call("GET", "/areas/trips")
+    c3, sy = srv.call("GET", "/sync/status")
+    ss = (sy or {}).get("settingsSync") or {}
+    return {"settings": c1, "tripCorridorM": (st or {}).get("tripCorridorM"), "trips": c2, "widthM": (trips or {}).get("widthM"),
+            "status": c3, "synced": (ss.get("synced") or {}).get(WIDTH_KEY)}
+
+
 def sync_with_peer(srv):
     code, r = srv.call("POST", "/sync")
     r = r or {}
@@ -639,7 +658,9 @@ def part_bothunits(args):
     server or devtool serve the emulators reach, e.g. http://10.0.2.2:8780): A sets both=on and syncs, B syncs and must
     draw both units; then B sets both=off and syncs, A syncs and must draw one. T139: each carry ends with a screenshot of
     both phones under --out (`<nn>-<step>-<phone>.png`, the receiving phone's in the step's `png`), so the sweep's sheet
-    shows the bar that was carried."""
+    shows the bar that was carried. T143 (T136's follow-up): the trip corridor's width the same way (`a-width-to-b`: A sets
+    --width-m, B must report it in GET /settings, GET /areas/trips and its synced value; the receiving phone's screenshot
+    shows its Offline areas sheet with the width row), then both phones back to the width A had (`width-restore`)."""
     if not (args.serial2 and args.port and args.port2 and args.server):
         return fail("bothunits needs --serial, --port, --serial2, --port2 and --server (the peer as the emulators reach it)")
     a = DebugServer(args.port, args.serial)
@@ -706,10 +727,51 @@ def part_bothunits(args):
         ok = sa["bothUnits"] is False and sb["bothUnits"] is False
         return {"ok": ok, "a": sa, "b": sb, **({} if ok else {"error": "a phone still draws both units"})}
 
+    width0 = {}
+
+    def width_carry():
+        # T143: the corridor width set on A reaches B (T136 made it a synced setting; this part had no width case).
+        before = width_state(a)
+        width0["a"] = before["tripCorridorM"]
+        want = args.width_m if args.width_m != before["tripCorridorM"] else args.width_m + 500
+        code, _ = a.call("POST", f"/settings?tripCorridorM={want}")
+        src_sync = sync_with_peer(a)
+        dst_sync = sync_with_peer(b)
+        t0 = time.time()
+        dst = width_state(b)
+        while dst["tripCorridorM"] != want and time.time() - t0 < 10:
+            time.sleep(0.5)
+            dst = width_state(b)
+        checks = {"set": code == 200 and width_state(a)["tripCorridorM"] == want, "srcSynced": src_sync["code"] == 200,
+                  "dstSynced": dst_sync["code"] == 200, "dstSetting": dst["tripCorridorM"] == want, "dstWidthM": dst["widthM"] == want,
+                  "dstSyncedValue": dst["synced"] == str(want)}
+        ok = all(checks.values())
+        b.call("POST", "/areas/ui?open=1")
+        time.sleep(2)
+        pngs = shoot("a-width-to-b", ("a", "b"))
+        b.call("POST", "/areas/ui?open=0")
+        return {"ok": ok, "png": pngs["b"], "pngs": pngs, "value": want, "from": "a", "to": "b", "checks": checks, "before": before,
+                "srcSync": src_sync, "dstSync": dst_sync, "dstAfter": dst,
+                **({} if ok else {"error": "width not carried: " + ", ".join(k for k, v in checks.items() if not v)})}
+
+    def width_restore():
+        w = width0.get("a")
+        if w is None:
+            return {"ok": True, "skipped": "no width read before"}
+        out = {}
+        for name, srv in (("b", b), ("a", a)):
+            code, _ = srv.call("POST", f"/settings?tripCorridorM={w}")
+            out[name] = {"code": code, "sync": sync_with_peer(srv)["code"]}
+        sa, sb = width_state(a), width_state(b)
+        ok = sa["tripCorridorM"] == w and sb["tripCorridorM"] == w
+        return {"ok": ok, "value": w, **out, "a": sa, "b": sb, **({} if ok else {"error": f"a phone is not back at {w} m"})}
+
     for name, fn in (("peer", set_peer), ("baseline", baseline), ("a-on-to-b", flip(a, b, "on", ("a", "b"))),
-                     ("b-off-to-a", flip(b, a, "off", ("b", "a")))):
+                     ("b-off-to-a", flip(b, a, "off", ("b", "a"))), ("a-width-to-b", width_carry), ("width-restore", width_restore)):
         if not run.step(name, fn, shot=False):
             break
+    if "a" in width0 and not any(st["step"] == "width-restore" for st in run.steps):
+        run.step("width-restore", width_restore, shot=False)  # a failed carry still leaves both phones at their width
     return run.report(serials=[args.serial, args.serial2], peer=peer, out=out)
 
 
@@ -1953,6 +2015,28 @@ def tag_above(version_name, patches=1):
     return "v" + ".".join(str(n) for n in nums) + "-alpha"
 
 
+def tag_below(version_name, patches=1):
+    """T143 (T139's follow-up): a release tag below [version_name], read as [tag_above] reads one: [patches] patch steps
+    down, or when the patch number is too small, the lowest non-zero number one down and the ones after it 0
+    (`0.1.12-dev` -> `v0.1.11-alpha`, `0.2.0` -> `v0.1.0-alpha`). The update part's quiet fixtures announce it, so a
+    lower release stays lower than the build under test after every release instead of naming a fixed one."""
+    m = re.match(r"^[vV]?(\d+(?:\.\d+)+)", (version_name or "").strip())
+    if not m:
+        raise ValueError(f"no version numbers in {version_name!r}")
+    nums = [int(x) for x in m.group(1).split(".")]
+    while len(nums) < 3:
+        nums.append(0)
+    if nums[2] >= patches:
+        nums[2] -= patches
+    else:
+        i = max((k for k in range(len(nums)) if nums[k] > 0), default=None)
+        if i is None:
+            raise ValueError(f"nothing is below {version_name!r}")
+        nums[i] -= 1
+        nums[i + 1:] = [0] * (len(nums) - i - 1)
+    return "v" + ".".join(str(n) for n in nums) + "-alpha"
+
+
 def build_tools():
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or os.path.join(os.path.expanduser("~"), "Android", "sdk")
     root = os.path.join(sdk, "build-tools")
@@ -2111,8 +2195,22 @@ class MockReleases:
 # T139: how many patch steps above the build under test each newer fixture of the update part announces (tag_above),
 # one tag per fixture as the fixed v0.1.9/10/11-alpha were; the report's offeredTags lists them with `derived`.
 ABOVE = {"wrong-checksum": 1, "wrong-certificate": 2, "offer": 3}
+# T143: the quiet fixtures, below a build: the previous release's own start-up check (below --prev-apk's versionName)
+# and lower-quiet (below --apk's), each one patch step down ([tag_below]).
+BELOW = {"install-previous": ("previous", 1), "lower-quiet": ("current", 1)}
 
 UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|Update check failed.*|No release with an APK.*)$"
+
+
+def derived_tags(offered, names):
+    """T139/T143: whether every tag the update part announced is the one derived from its build ([ABOVE] above the
+    current build, [BELOW] below the build it names); a step that did not run is left out, none at all is False."""
+    def want(step):
+        if step in ABOVE:
+            return tag_above(names["current"], ABOVE[step])
+        build, n = BELOW[step]
+        return tag_below(names[build], n)
+    return bool(offered) and all(t == want(k) for k, t in offered.items())
 
 
 def check_for_updates(dev, timeout=240):
@@ -2229,11 +2327,13 @@ def part_update(args):
         # T99: the previous release is pointed at the mock too (before its first start), with an older release
         # announced, so its own start-up check is quiet and never depends on what GitHub publishes; it still records
         # that check in its preferences, which the current build must not inherit (lower-quiet).
-        st["lowerPrev"] = mock.announce("v0.1.2-alpha", args.prev_apk, code=prev_code)
+        # T143: the tag derived from the previous build (one patch below it), not a fixed v0.1.2-alpha.
+        st["lowerPrev"] = mock.announce(tag_below(prev_name, BELOW["install-previous"][1]), args.prev_apk, code=prev_code)
+        st["lowerPrev"]["buildVersionName"] = prev_name
         release_with_pack(dev, args, apk=args.prev_apk, before_open=point_at_mock)
         st["prev"] = version_of(dev)
         r = map_settled(dev, "prev-map")
-        return {"ok": r["ok"], "version": st["prev"], "png": r.get("png"), **({"error": r.get("error")} if not r["ok"] else {})}
+        return {"ok": r["ok"], "version": st["prev"], "announced": st["lowerPrev"], "png": r.get("png"), **({"error": r.get("error")} if not r["ok"] else {})}
 
     def data():
         set_units(dev, "Metres")
@@ -2252,7 +2352,9 @@ def part_update(args):
 
     def current():
         # The mock is quiet first (an older release), so the build's own first check (15 s after start) finds nothing.
-        st["lower"] = mock.announce("v0.1.2-alpha", args.prev_apk, code=prev_code)
+        # T143: the tag one patch below this build's versionName (the fixed v0.1.2-alpha before), as the newer fixtures derive theirs.
+        st["lower"] = mock.announce(tag_below(cur_name, BELOW["lower-quiet"][1]), args.prev_apk, code=prev_code)
+        st["lower"]["buildVersionName"] = cur_name
         point_at_mock()
         st["checksBefore"] = log.checks()
         out = dev.adb("install", "-r", "-g", apk, timeout=300, check_ok=False)
@@ -2371,17 +2473,141 @@ def part_update(args):
         mock.close()
         dev.shell("rm", "-f", UPDATE_API_FILE, check_ok=False)
         log.close()
-    offered = {s["step"]: (s.get("announced") or {}).get("tag") for s in run.steps if s["step"] in ABOVE}
+    offered = {s["step"]: (s.get("announced") or {}).get("tag") for s in run.steps if s["step"] in ABOVE or s["step"] in BELOW}
+    names = {"previous": prev_name, "current": cur_name}
     return run.report(previous=os.path.basename(args.prev_apk), apk=os.path.basename(apk), newApk=os.path.basename(args.new_apk),
-                      offeredTags={"buildVersionName": cur_name, **offered,
-                                   "derived": bool(offered) and all(t == tag_above(cur_name, ABOVE[k]) for k, t in offered.items())},
+                      offeredTags={"buildVersionName": cur_name, "previousVersionName": prev_name, **offered,
+                                   "derived": derived_tags(offered, names)},
                       versions={"previous": [prev_code, prev_name], "current": [cur_code, cur_name], "new": [new_code, new_name]},
                       updaterLog=log.path, updaterLines=log.lines()[-60:])
 
 
+# --- diagnostics (T143) ---------------------------------------------------------------------------------------
+
+DIAG_NOW = ["Max heap", "Heap used now", "Peak since launch", "Native heap", "PSS", "Phone memory free", "Map renders", "Trims",
+            "Last memory signal"]
+DIAG_LAST = ["Ended", "Peak heap"]
+
+
+def merge_screens(lines, screen_texts):
+    """The texts of a list read screen by screen while it scrolls: [screen_texts] appended to [lines] after the longest
+    run at the end of [lines] that the new screen starts with (what both screens show), so nothing is listed twice and
+    two equal lines of different sections both stay."""
+    best = 0
+    for k in range(min(len(lines), len(screen_texts)), 0, -1):
+        if lines[-k:] == screen_texts[:k]:
+            best = k
+            break
+    return lines + screen_texts[best:]
+
+
+def diagnostics_sections(lines):
+    """The Diagnostics row's text as {label: value} for the live part (`now`) and under "Last session" (`last`)."""
+    out = {"now": {}, "last": {}}
+    if "Diagnostics" not in lines:
+        return out
+    part = "now"
+    for t in lines[lines.index("Diagnostics") + 1:]:
+        if t == "Last session":
+            part = "last"
+            continue
+        if t in ("Refresh", "Copy report"):
+            break
+        m = re.match(r"^([A-Z][^:]{1,40}): (.+)$", t)
+        if m and m.group(1) not in out[part]:
+            out[part][m.group(1)] = m.group(2)
+    return out
+
+
+def mb_of(value):
+    m = re.match(r"^(\d+(?:\.\d+)?) MB", value or "")
+    return float(m.group(1)) if m else None
+
+
+def read_diagnostics(dev, timeout=40):
+    """Settings > About and advanced, scrolled down to the Diagnostics row until its Copy report: the row's lines in
+    order (read across the scrolls) and the screenshots on the way."""
+    open_settings(dev, "About and advanced", "^Updates$")
+    dev.wait_for("^Diagnostics$|^Max heap: ", 5)
+    lines, shots = [], []
+    w, h, _d = screen(dev)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        nodes = dev.nodes()
+        lines = merge_screens(lines, dev.texts(nodes))
+        if dev.find("^Max heap: ", nodes):
+            shots.append(dev.screencap("diagnostics")[0])
+        if dev.find("^Copy report$", nodes) and "Max heap" in diagnostics_sections(lines)["now"]:
+            return lines, shots, nodes
+        dev.shell("input", "swipe", str(w // 2), str(h * 3 // 4), str(w // 2), str(h * 2 // 5), "600")
+        time.sleep(1)
+    raise RuntimeError(f"no Diagnostics row with Copy report under About and advanced (texts: {lines[-25:]})")
+
+
+def part_diagnostics(args):
+    """T143: Settings > About and advanced > Diagnostics on the RELEASE build, by taps: the row's lines (every label,
+    the max heap against the system's `dalvik.vm.heapsize`, since the manifest asks for the large heap), Copy report and
+    Refresh, then a force-stop and a cold start, after which "Last session" names how it ended (API 30 and up:
+    "force-stopped") and the peak it reached (the persisted mark the row's own reading wrote)."""
+    dev = device(args, "")
+    run = Run(dev)
+    sdk = sdk_int(dev)
+
+    def install_step():
+        release_with_pack(dev, args)
+        r = map_settled(dev, "map")
+        return {"ok": r["ok"], "png": r.get("png"), **({"error": r.get("error")} if not r["ok"] else {})}
+
+    def row():
+        lines, shots, _ = read_diagnostics(dev)
+        sec = diagnostics_sections(lines)
+        heapsize = dev.shell("getprop", "dalvik.vm.heapsize", check_ok=False).strip()
+        m = re.match(r"^(\d+)m$", heapsize)
+        max_mb = mb_of(sec["now"].get("Max heap"))
+        checks = {"nowLabels": all(k in sec["now"] for k in DIAG_NOW), "lastLabels": all(k in sec["last"] for k in DIAG_LAST),
+                  "maxHeapIsTheLargeHeap": bool(m and max_mb is not None and abs(max_mb - int(m.group(1))) <= 1.0),
+                  "usedBelowMax": (mb_of(sec["now"].get("Heap used now")) or 1e9) < (max_mb or 0)}
+        ok = all(checks.values())
+        return {"ok": ok, "checks": checks, "heapsize": heapsize, "now": sec["now"], "last": sec["last"], "png": shots[0] if shots else None,
+                "pngs": shots, **({} if ok else {"error": "Diagnostics row: " + ", ".join(k for k, v in checks.items() if not v)})}
+
+    def copy():
+        dev.tap_text("^Copy report$")
+        time.sleep(1.5)
+        png = dev.screencap("copied")[0]  # Android 13 and up show their own copy confirmation; below, the app's toast
+        return {**alive_and_clean(dev), "png": png}
+
+    def refresh():
+        dev.tap_text("^Refresh$")
+        n, _nodes = dev.wait_for("^Max heap: ", 10)
+        return {"ok": n is not None, **({} if n else {"error": "no Max heap line after Refresh"})}
+
+    def after_force_stop():
+        close_sheet(dev)
+        dev.shell("am", "force-stop", PACKAGE)
+        time.sleep(2)
+        open_map(dev, *PARADISE, 13, cold=True)
+        map_settled(dev, "relaunched")
+        lines, shots, _ = read_diagnostics(dev)
+        sec = diagnostics_sections(lines)
+        ended = sec["last"].get("Ended", "")
+        checks = {"ended": ended.startswith("force-stopped") if sdk >= 30 else ended.startswith("not reported"),
+                  "peakKept": mb_of(sec["last"].get("Peak heap")) is not None}
+        ok = all(checks.values())
+        close_sheet(dev)
+        return {"ok": ok, "checks": checks, "sdk": sdk, "last": sec["last"], "png": shots[-1] if shots else None,
+                **({} if ok else {"error": "after the force-stop: " + ", ".join(k for k, v in checks.items() if not v)})}
+
+    for name, fn in (("install", install_step), ("row", row), ("copy", copy), ("refresh", refresh), ("after-force-stop", after_force_stop)):
+        if not run.step(name, fn):
+            break
+    run.step("alive", lambda: alive_and_clean(dev))
+    return run.report(apk=os.path.basename(args.apk or default_apk(dev)), sdk=sdk)
+
+
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,
          "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions,
-         "background": part_background, "recenter": part_recenter, "bothunits": part_bothunits}
+         "background": part_background, "recenter": part_recenter, "bothunits": part_bothunits, "diagnostics": part_diagnostics}
 
 
 def main():
@@ -2404,6 +2630,7 @@ def main():
     ap.add_argument("--serial2", default="", help="bothunits: the second emulator")
     ap.add_argument("--port2", type=int, default=0, help="bothunits: host port forwarded to the second emulator's debug server")
     ap.add_argument("--sync-token", default="", help="bothunits: bearer token of a gated sync peer (--server)")
+    ap.add_argument("--width-m", type=int, default=2000, help="bothunits: the trip corridor width A sets and B must receive (T143)")
     ap.add_argument("--routes-file", default=os.path.join(HERE, "routing-tour.txt"))
     ap.add_argument("--forced-404", action="store_true", help="routes: after the tour, plan a route where no pack is loaded and "
                     "check that the directions' 404 is recorded with its body (reported under `forced`, not in routesOk)")

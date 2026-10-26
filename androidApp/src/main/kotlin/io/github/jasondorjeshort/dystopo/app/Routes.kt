@@ -160,6 +160,7 @@ class Routes(private val app: DystopoApp) {
         io.github.jasondorjeshort.dystopo.app.controls.ControlRoutes.handle(app, r)?.let { return it } // T93: GET /camera, POST /camera/recenter
         io.github.jasondorjeshort.dystopo.app.controls.ScaleBarRoutes.handle(app, r)?.let { return it } // T101: GET /scalebar, POST /scalebar?both=
         io.github.jasondorjeshort.dystopo.app.help.HelpRoutes.handle(app, r)?.let { return it } // T109: GET /help, POST /help/open?key=, POST /help/close
+        io.github.jasondorjeshort.dystopo.app.settings.DiagnosticsRoutes.handle(app, r)?.let { return it } // T143: GET /diagnostics, POST /diagnostics/copy, POST /diagnostics/reset
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

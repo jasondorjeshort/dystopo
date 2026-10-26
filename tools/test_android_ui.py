@@ -1,4 +1,5 @@
-"""T139: the update part's derived fixture tags (android-ui.py) and the both-units part in sweep-summary.py, offline.
+"""T139: the update part's derived fixture tags (android-ui.py) and the both-units part in sweep-summary.py, offline; T143: the
+quiet fixtures' tags, the Diagnostics row's reading and the corridor width case.
 
     python -I tools/test_android_ui.py
 """
@@ -37,6 +38,55 @@ except ValueError:
 assert sorted(ui.ABOVE) == ["offer", "wrong-certificate", "wrong-checksum"], ui.ABOVE
 tags = {k: ui.tag_above("0.1.11-sweep", n) for k, n in ui.ABOVE.items()}
 assert len(set(tags.values())) == 3 and all(int(t.split(".")[2].split("-")[0]) > 11 for t in tags.values()), tags
+
+# T143: the quiet fixtures' tags, below a build (the fixed v0.1.2-alpha before), and the report's `derived`.
+assert ui.tag_below("0.1.12-dev") == "v0.1.11-alpha"
+assert ui.tag_below("0.1.12-3-gabc1234-sweep", 2) == "v0.1.10-alpha"
+assert ui.tag_below("0.2.0") == "v0.1.0-alpha"  # no patch to step down: the minor goes down
+assert ui.tag_below("1.0") == "v0.0.0-alpha"
+for bad in ("dev", "0.0.0"):
+    try:
+        ui.tag_below(bad)
+        raise AssertionError(f"{bad!r} must be refused")
+    except ValueError:
+        pass
+names = {"previous": "0.1.12-alpha", "current": "0.1.13-5-gabc-dev"}
+offered = {"install-previous": "v0.1.11-alpha", "lower-quiet": "v0.1.12-alpha", "wrong-checksum": "v0.1.14-alpha",
+           "wrong-certificate": "v0.1.15-alpha", "offer": "v0.1.16-alpha"}
+assert ui.derived_tags(offered, names), offered
+assert not ui.derived_tags({**offered, "lower-quiet": "v0.1.2-alpha"}, names), "a fixed tag is not derived"
+assert not ui.derived_tags({}, names)
+assert sorted(ui.BELOW) == ["install-previous", "lower-quiet"], ui.BELOW
+
+# T143: the Diagnostics row read across scrolls, and its sections.
+first = ["About and advanced", "Updates", "Diagnostics", "How much memory...", "Max heap: 576.0 MB", "Heap used now: 42.3 MB"]
+second = ["Heap used now: 42.3 MB", "Peak since launch: 120.0 MB", "Last memory signal: none", "Last session",
+          "Ended: force-stopped at 2026-10-25 14:00:01", "Last memory signal: none", "Peak heap: 150.0 MB of 576.0 MB",
+          "Refresh", "Copy report"]
+lines = ui.merge_screens(ui.merge_screens([], first), second)
+assert lines.count("Heap used now: 42.3 MB") == 1 and lines.count("Last memory signal: none") == 2, lines
+sec = ui.diagnostics_sections(lines)
+assert sec["now"]["Max heap"] == "576.0 MB" and sec["now"]["Last memory signal"] == "none", sec
+assert sec["last"]["Ended"].startswith("force-stopped") and ui.mb_of(sec["last"]["Peak heap"]) == 150.0, sec
+assert ui.diagnostics_sections(["Updates"]) == {"now": {}, "last": {}}
+assert ui.mb_of("not read") is None
+
+
+# T143: the corridor width as a phone reports it (bothunits' width case), on a fake debug server.
+class FakeSrv:
+    def __init__(self, width):
+        self.width = width
+
+    def call(self, method, path):
+        if path == "/settings":
+            return 200, {"tripCorridorM": self.width}
+        if path == "/areas/trips":
+            return 200, {"widthM": self.width}
+        return 200, {"settingsSync": {"synced": {ui.WIDTH_KEY: str(self.width)}}}
+
+
+w = ui.width_state(FakeSrv(2000))
+assert (w["tripCorridorM"], w["widthM"], w["synced"]) == (2000, 2000, "2000"), w
 
 # sweep-summary: a both-units report becomes the part's carries and screenshots; a skip line is listed, not failed.
 d = tempfile.mkdtemp(prefix="t139-summary-")
