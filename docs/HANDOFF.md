@@ -1,37 +1,37 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-25, at commit e294a394, by main session
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Later; `handoff` skill.
+Updated: 2026-10-25, at commit eeb6204 plus the wave 20 plan commit, by main session
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 20; `brief` skill.
 
 ## Now
 
-- Wave 19 is closed: T136 to T139 merged and logged, the sweep green (24 parts, `-BothUnits`),
-  v0.1.12-alpha published 2026-10-24 (tag on 63a7d7dc, versionCode 514; a local signed build in the
-  main checkout, the log entry says why). No task worktree remains; the two carry-back worktrees and
-  the owner's locked `dystopo-wt/T122` folder stay. `origin/task/T138` is merged and still on origin
-  (the cleanup chore's delete was refused by the auto-mode classifier; the owner deletes it).
-- No pull requests (ADR 0043). An agent cannot copy the signing files out of the main checkout (a
-  deny rule), so the release and the sweep's signing parts run in the main checkout itself.
-- Carry-backs `carry-back/test-hooks-cb1-skip` and `carry-back/handoff-no-process-ids` are on origin
-  for Hatchery to land. The live viewer and the standalone server are wanted from the main checkout.
+- Wave 20 is planned and past the critic (2026-10-25): `docs/TASKS.md` › Wave 20, eight tasks in two
+  halves (first half T140, T141, T143, T144, T146, T147; second half T142, T145). Nothing launched;
+  no task worktree exists. Six ADR 0044 research reports and the critic review sit in this account's
+  `out/wave20-research/` and `out/wave20-critic.md` (untracked; the wave paragraph summarises them).
+- This session runs on the second account (`machines.md`, "the other account"): its main checkout has
+  no `cache/`, no installed distributions and an empty `out/`, so the wave paragraph's two launch chores
+  (install, fetch inputs; build the Rainier packs, start the live viewer) come before any implementer.
+- Meters at planning: 5-hour 1%, 7-day 55%. `origin/task/T138` is merged, still on origin (the owner deletes it).
 
 ## Next
 
-1. Plan wave 20 by the `wave` skill (now with ADR 0044's research step: one agent per open choice, settings where users split) from `docs/TASKS.md` › Later (the wave 19 follow-ups bullet, the
-   heap diagnostics idea's Plan block, plus whatever the owner's answers unlock); critic pass first.
-2. A Hatchery-rooted session: land the two carry-back branches (`carry-back` skill, Land), file
-   `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` there and delete it here, give
-   its proposal 0003 ADR 0043's lessons; then ADR 0021's follow-ups and the second base update.
-3. The build tasks of ADR 0040 and 0041 after the owner's positions; ADR 0042's after its confirmations.
+1. The two launch chores of the wave 20 paragraph (`brief` skill, `chore.md`; Haiku then Sonnet).
+2. Launch the first half in the paragraph's order (T141, T140, T144, T143, T146, T147), one brief each
+   from `implementer.md` with its research report attached; Opus-class; ports as the paragraph assigns.
+3. Verifiers as reports arrive; merges by the `wave` skill's sequence; then T142 and T145.
+4. A Hatchery-rooted session: land the two carry-back branches, file the ownership idea there, ADR
+   0021's follow-ups and the second base update.
+5. The build tasks of ADR 0040 after the owner's positions; ADR 0042's after its confirmations.
 
 ## Waiting on user
 
+- Whether wave 20 launches now (the plan is ready; the owner asked only for the plan and the critic).
 - `git push origin --delete task/T138` and `git branch -D carry-back/ownership-project-list`; the
-  `RELEASE_*` secrets (four, `docs/reference/android-release.md`); the wave 19 strings (ADR 0031,
-  T137's Status line) and the wave 18 strings; ADR 0042's confirmations, ADR 0040's and 0041's
-  positions; a real-phone run of `tools/android-battery.py`, real-phone heap numbers on the large
-  heap and the real-phone checks of v0.1.12-alpha; whether session links may stay in commit trailers.
+  `RELEASE_*` secrets; the wave 18 and 19 strings (ADR 0031); ADR 0042's confirmations, ADR 0040's
+  positions; a real-phone run of `tools/android-battery.py`, real-phone heap numbers and the
+  real-phone checks of v0.1.12-alpha; whether session links may stay in commit trailers.
 - Carried: the S Pen question; the T122 folder, `triage-saved` and `refs/original/*`; the two older
   Claude-authored commits; T122's and the wave 14 to 17 strings; Play registration; T100, T104.
 
