@@ -1,7 +1,7 @@
 ---
 date: 2026-10-25
 kind: feature
-related: [2026-10-25-heap-diagnostics-page-in-release-builds.md, 2026-10-13-battery-efficiency.md, 2026-10-25-live-velocity-readout-by-travel-mode.md]
+related: [2026-10-13-battery-efficiency.md, 2026-10-25-live-velocity-readout-by-travel-mode.md]
 ---
 
 # Track activity profiles, and a recorder that survives bad GPS

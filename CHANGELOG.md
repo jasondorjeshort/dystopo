@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-25
 
+- T145: Crashes, freezes and kills kept on the phone and filed as a GitHub issue (second half; after T143 and T144 merge)
 - T146: Phone follow-ups of wave 19: the chips and the replay
 - T143: The Diagnostics row: heap and memory on every build, and the report scrubber
 - T140: Polygon areas: the kind, the cover, the readers, the server and the phone's plan
