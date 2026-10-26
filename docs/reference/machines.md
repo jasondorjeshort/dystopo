@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-16
+verified: 2026-10-25
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -62,7 +62,10 @@ run of the local release path (fake tag, nothing published) passed here except t
 | Git Bash gaps | no `zip` or 7z (build release zips with Python `zipfile`; `Compress-Archive` writes backslash paths); `python3` is the Microsoft Store stub, use `python` (3.12) |
 | Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout (gitignored); signs identically to the published releases |
 | Private terms | check for `devtool.local.json` before relying on the privacy hooks |
-| Known network trouble | Geofabrik `.osm.pbf` HEAD and ranged GET hung for over a minute on 2026-10-25 while its root answered at once, so `rainier-outdoors.pmtiles` could not be built; retry or place the extract in `cache\osm` |
+| Task worktrees | `~\Documents\src\dystopo-wt\<task-id>` (wave 20, 2026-10-25); AVDs `dystopo35-<task>` under `~\Android\avd` |
+| Coordinator's servers | live viewer on 8765 from the installed `devtool` distribution; PID in `out\coordinator-pids.txt` (`live-8765 <pid>`) |
+| `tilebuild.bat` | the installed distribution's start script fails at once with "The input line is too long" (the classpath exceeds `cmd`'s line limit; from Git Bash and PowerShell alike); build packs with `./gradlew :tilebuild:run --no-daemon --args="..."` from the main checkout, or `java -cp "tilebuild/build/install/tilebuild/lib/*"` on the main class. The Rainier outdoors pack: `--extract <cache>/osm/north-america-us-washington-latest.osm.pbf --bbox -121.95,46.68,-121.45,46.98 --min-zoom 6 --max-zoom 14 --profile outdoors`, 33 s, 2.63 MB, the Paradise to Sunrise drive 82,069 m |
+| Known network trouble | Geofabrik `.osm.pbf` HEAD and ranged GET hung for over a minute on 2026-10-25 while its root answered at once, so `rainier-outdoors.pmtiles` could not be built; retry or place the extract in `cache\osm` (done 2026-10-25; a copy is in `cache\extracts` for the live viewer) |
 
 Neither account can read the other's folders. Shared data is read by absolute path within one account,
 or copied, or generated into the worktree's own `out/` (never a junction; `CLAUDE.md`).
