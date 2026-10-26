@@ -36,7 +36,11 @@ and once for the whole tour:
               every 0.4 s (and the app's own per-burst peak, GET /online direct.memory). It must render DEM tiles in the
               same process, with no crash and no OutOfMemoryError in logcat, and its live heap (after a collection,
               through `am send-trim-memory`) at most --direct-heap-share of the heap's max; idle and the sampled peaks
-              are reported, not required (blank tiles can pass); idleSeconds, dumpsys meminfo and the screenshot (<stem>-direct-<i>.png) are reported (`directStep`). --direct-only runs only the
+              are reported, not required (blank tiles can pass); idleSeconds, dumpsys meminfo and the screenshot (<stem>-direct-<i>.png) are reported (`directStep`).
+              T147: a RUNNING_LOW Android refuses ("higher trim level": the process already had it) is followed by
+              RUNNING_CRITICAL, the one foreground level above it (COMPLETE is refused to a foreground app); both refused
+              is said in words (`live.level`, `live.refused` with Android's reasons); the step's stderr line names the level and
+              the decoded DEM blocks the trim dropped (`live.droppedBytes.decodedBlocks`). --direct-only runs only the
               direct views, each in a new process (the per-zoom peak table of finding 2026-10-21-direct-view-out-of-memory-after-a-tour).
 The lines and labels checks need the app's /features routes; an app without them skips them (reported).
 The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
@@ -624,20 +628,78 @@ def oom_lines(exe, serial, since):
 def live_heap(server, exe, serial, timeout=20.0):
     """T127: the app's live Java heap: `am send-trim-memory <package> RUNNING_LOW` makes the app's onTrimMemory
     (HeapGuard.trim with measureLive) collect, wait 200 ms and read the used heap before it drops any cache; the reading
-    is the newest `recentTrims` entry's `liveBeforeTrimBytes` in GET /online direct.memory. None when it never came."""
+    is the newest `recentTrims` entry's `liveBeforeTrimBytes` in GET /online direct.memory. None when it never came.
+
+    T147 (T138's follow-up): Android refuses a level at or below the one the process already has ("Unable to set a
+    higher trim level than current level"; seen on API 35 for RUNNING_LOW after the direct step's own trim in the same
+    process, while the tour's background step leaves it at 0 again), and refuses COMPLETE and every level from
+    UI_HIDDEN up to a foreground process ("Unable to set a background trim level on a foreground process"). So a
+    refused RUNNING_LOW is followed by RUNNING_CRITICAL, the one foreground level above it (the app measures at any level
+    from RUNNING_LOW); when both are refused the error says why in words, never the shell's stack trace. `level` is the
+    one delivered, `refused` each level turned down with Android's reason, `droppedBytes` the trim's own (decodedBlocks,
+    geoidMemo, ...)."""
     def mem():
         return ((server.json("/online").get("direct") or {}).get("memory") or {})
     n0 = mem().get("trims") or 0
-    code, out = adb(exe, serial, "shell", "am", "send-trim-memory", PACKAGE, "RUNNING_LOW", timeout=30)
+    refused, code, out = [], 0, ""
+    for level in TRIM_LEVELS:
+        code, out = adb(exe, serial, "shell", "am", "send-trim-memory", PACKAGE, level, timeout=30)
+        why = trim_refusal(code, out)
+        if not why:
+            break
+        refused.append({"level": level, "reason": why})
+    else:
+        return {"liveBytes": None, "sent": False, "refused": refused, "error": refusal_words(refused)}
+    rep = {"sent": True, "level": level, **({"refused": refused} if refused else {})}
     deadline = time.time() + timeout
     while time.time() < deadline:
         m = mem()
         if (m.get("trims") or 0) > n0:
             for t in reversed(m.get("recentTrims") or []):
                 if str(t.get("reason", "")).startswith("onTrimMemory") and t.get("liveBeforeTrimBytes") is not None:
-                    return {"liveBytes": t["liveBeforeTrimBytes"], "trim": t, "sent": code == 0}
+                    return {"liveBytes": t["liveBeforeTrimBytes"], **rep, "droppedBytes": t.get("droppedBytes"), "trim": t}
         time.sleep(0.5)
-    return {"liveBytes": None, "sent": code == 0, "error": (out or "").strip()[:200] or "no onTrimMemory trim recorded"}
+    return {"liveBytes": None, **rep, "error": f"{level} was accepted but the app recorded no onTrimMemory trim within {timeout:g} s"}
+
+
+# T147: the `am send-trim-memory` levels a foreground app accepts and the app measures at (HeapGuard.onTrimMemory takes
+# RUNNING_LOW and up; Android gives a foreground process nothing from UI_HIDDEN up, COMPLETE included), lowest first.
+TRIM_LEVELS = ("RUNNING_LOW", "RUNNING_CRITICAL")
+
+
+def trim_refusal(code, out):
+    """Android's reason when `am send-trim-memory` was refused (the exception's message, one line), else None. The shell
+    prints a stack trace and exits non-zero; older images print "Error: ..." with exit 0."""
+    text = (out or "").strip()
+    if code == 0 and "exception" not in text.lower() and not text.lower().startswith("error"):
+        return None
+    for line in text.splitlines():
+        if "Exception:" in line:
+            return line.split("Exception:", 1)[1].strip()
+        if line.lower().startswith("error:"):
+            return line.split(":", 1)[1].strip()
+    return (text.splitlines() or [f"exit {code}"])[0][:200]
+
+
+def refusal_words(refused):
+    """T147: every level refused, said plainly."""
+    levels = " and ".join(r["level"] for r in refused)
+    if all("higher trim level" in r["reason"] for r in refused):
+        return (f"not measured: Android refused {levels} because this process already has {refused[-1]['level']} from an earlier "
+                "trim (Android delivers only a level above the current one, and refuses COMPLETE to a foreground app)")
+    return "not measured: Android refused " + "; ".join(f"{r['level']} ({r['reason']})" for r in refused)
+
+
+def trim_words(live):
+    """T147 (T138's follow-up): the direct step's trim on its stderr line: the level delivered, the decoded DEM blocks it
+    dropped (`droppedBytes.decodedBlocks`, the largest cache) and the levels Android refused first."""
+    if not live.get("level"):
+        return "trim not delivered"
+    dropped = (live.get("droppedBytes") or {}).get("decodedBlocks")
+    words = f"trim {live['level']} dropped decodedBlocks " + ("-" if dropped is None else f"{dropped / 1048576:.1f} MB")
+    if live.get("refused"):
+        words += f" (after Android refused {', '.join(r['level'] for r in live['refused'])}: the process already had it)"
+    return words
 
 
 def direct_step(server, exe, serial, view, bound_share, wait_ms, restart=False, clear_sources=True, shot=None):
@@ -1157,10 +1219,11 @@ def main():
         if r.get("skipped"):
             print(f"direct {r['view']} {r['label']}: {'skipped' if r['ok'] else 'FAIL'} ({r['skipped']}){sw}", file=sys.stderr)
             continue
-        live_err = (r.get("live") or {}).get("error")  # T135 (T127's follow-up): why the live heap was not read
+        live = r.get("live") or {}
+        live_err = live.get("error")  # T135 (T127's follow-up): why the live heap was not read
         print(f"direct {r['view']} {r['label']}: {'ok' if r['ok'] else 'FAIL'} live heap {mb(r.get('liveBytes'))} of "
               f"{mb((r.get('heap') or {}).get('maxBytes'))} MB (bound {mb(r.get('boundBytes'))}), sampled peak {mb(r.get('peakBytes'))} MB, "
-              f"idle {r.get('idle')} at {r.get('idleSeconds')} s, "
+              f"{trim_words(live)}, idle {r.get('idle')} at {r.get('idleSeconds')} s, "
               f"same process {r.get('sameProcess')}, OOM lines {len(r.get('oom') or [])}" + (f", error {r['error']}" if r.get("error") else "")
               + (f", live error {live_err}" if live_err else "") + sw,
               file=sys.stderr)

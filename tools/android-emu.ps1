@@ -19,6 +19,9 @@
 #   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-T28a -EmuPort 5570 -Port 8694
 #   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-T28a -EmuPort 5570 -Port 8694 -Stop
 #
+# T147: two starts at once in one checkout work: -Build builds one at a time (a lock per checkout, a log per AVD) and
+# android-push-pack.ps1 makes each run's sprite sheet in a folder of its own (out\push-pack\<pid>-<random>).
+#
 # The script only ever acts on the emulator running -Avd: an emulator on -EmuPort that runs another AVD,
 # or a host port already forwarded to another device, stops the run instead of being reused. Without
 # -EmuPort it reuses the running instance of -Avd, or boots on the first free even port from 5554.
@@ -287,16 +290,28 @@ if ($Build) {
     Push-Location $repoRoot
     $buildStarted = Get-Date
     Write-Host 'building the debug APK (gradlew :androidApp:assembleDebug)'
+    # T147: two starts at once in one checkout (two AVDs) build one at a time, each with its own log: a shared log made
+    # the second start's cmd fail to open it, and two Gradle builds writing the same APK could leave a torn one. The
+    # lock is a named mutex per checkout; the second build then finds the APK up to date.
+    $repoHash = [BitConverter]::ToString([Security.Cryptography.SHA1]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($repoRoot.ToLowerInvariant())))
+    $buildLock = [System.Threading.Mutex]::new($false, 'Local\dystopo-android-emu-build-' + ($repoHash -replace '-', '').Substring(0, 16))
+    $held = $false
     try {
+        try { $held = $buildLock.WaitOne([TimeSpan]::FromMinutes(30)) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+        if (-not $held) { throw 'another android-emu.ps1 in this checkout has been building for 30 minutes' }
         # Gradle's warnings arrive on stderr: Continue, so they are passed on as lines instead of stopping the script.
         $ErrorActionPreference = 'Continue'
-        $buildLog = Join-Path $repoRoot 'out\android-emu-build.log'
+        $buildLog = Join-Path $repoRoot "out\android-emu-build-$Avd.log"
         New-Item -ItemType Directory -Force (Split-Path $buildLog) | Out-Null
         $b = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':androidApp:assembleDebug', '--console=plain', '-q') $buildLog
         $b.WaitForExit()
         if (Test-Path $buildLog) { Get-Content $buildLog | ForEach-Object { "  $_" } }
         if ($b.ExitCode -ne 0) { throw "assembleDebug failed (exit $($b.ExitCode)); see $buildLog" }
-    } finally { Pop-Location; $ErrorActionPreference = 'Stop' }
+    } finally {
+        if ($held) { $buildLock.ReleaseMutex() }
+        $buildLock.Dispose()
+        Pop-Location; $ErrorActionPreference = 'Stop'
+    }
     Write-Host ("built in {0:n0} s" -f ((Get-Date) - $buildStarted).TotalSeconds)
 }
 $apkPath = if ([IO.Path]::IsPathRooted($Apk)) { $Apk } else { Join-Path $repoRoot $Apk }
