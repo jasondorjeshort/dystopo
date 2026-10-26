@@ -32,15 +32,23 @@ share, and what is the one with a stack?
   (`RoutePlanner.kt:235`) and `ensureRegion` on the `dystopo-routing` thread. So the phone was building a
   routing graph for a whole vector pack in one pass, with the snapped vertices and every line held in arrays,
   while the rest of the app already held several hundred MB.
-- Not known: which pack, and what asked for the build (a route, the drive overlay, or a pack that changed). The
-  report removes pack names, and the no-stack crash and the ANR carry no trace to compare. That the build follows
-  a large region download is a guess.
+- What starts a build: the first long-press, `POST /route` or the trip editor (`RouteSession.kt`), and every
+  finished "Download this region": `RegionDownload.recordArea` (`androidApp/src/main/kotlin/io/github/jasondorjeshort/dystopo/app/online/RegionDownload.kt`)
+  starts the place-search index and `RoutePlanner.ensure` together on one thread, and `ensure` builds the graph of
+  every pack on the phone whose graph file is missing or stale, the new pack included. So a region download is
+  followed at once by two whole-pack builds on top of the app's working set. Which pack it was is still not known
+  (the report removes pack names).
+- The owner (2026-10-26): all five reports are filed, none came directly from toggling airplane mode, but airplane
+  mode was in heavy use in the period they fall in (2026-10-25 17:27 to 18:45 UTC, and 2026-10-26 11:55 UTC). No
+  code path from a connectivity change to a graph build was found; region downloads made in that period are the
+  likelier trigger.
 
 ## Next
 
 - Bound the build by the heap: build in tiles or strips and write as it goes, or refuse with a sentence past a
   size, as the area guard does (`shared/.../areas/AreaLimit.kt`).
-- The new report (a crash on leaving airplane mode) is not yet filed; its stack says whether the connectivity
-  change starts a build or a download.
+- Reproduce on an emulator with a 512 MB heap: "Download this region" over a wide view, then watch
+  `GET /route/status` and the heap (`GET /diagnostics`) through the graph and search builds that follow; then
+  defer or serialise those builds behind the heap, or build the graph lazily per tile as routes reach it.
 - The unwritten trace of the crash in issues 23 and 26 may itself be an OOM that left the handler no memory to
   write with (a guess).

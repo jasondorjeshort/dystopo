@@ -23,8 +23,6 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Waiting on user
 
-- The airplane-mode crash of 2026-10-26: filed from the phone's Report a problem row, so it can be retraced
-  (the release mapping is in `androidApp/build/outputs/mapping/release/` on this PC).
 - T148's strings (ADR 0031): "The issue is complete; press Submit.", "The rest of the stack trace is on your
   clipboard; paste it below.", "(from frame N)"; the wave 18 to 20 strings.
 - `git push origin --delete task/T138`, `git branch -D carry-back/ownership-project-list`, `git branch -D task/T143`
