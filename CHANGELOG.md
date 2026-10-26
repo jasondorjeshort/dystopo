@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-26
+
+- T148: The issue link stops asking for a paste that repeats the body
+
 ## v0.1.13-alpha (2026-10-26)
 
 Offline areas can now be picked three ways: a country from a bundled list (Natural Earth boundaries, grouped by continent with a filter box, each country's size measured on the phone and opened at less detail unless full detail fits the budget), a disc around a point ("Keep offline around here" from the long-press menu or a search result, with presets and a radius), or a shape drawn on the map (corners added by tap, dragged, removed by a long press, with Undo), each ending in a summary that gives the size first with "Less detail" one tap away. Under the hood areas are polygons with a tile cover, a per-ring limit and a manifest version that older builds decline politely. Every build gains a Diagnostics row (heap, memory, trims, the previous process's exit reason, Copy report through a scrubber that removes locations) and Report a problem (crashes, freezes and kills kept on the phone, the last five, opened as a GitHub issue with locations removed). The UI thread no longer waits on a lock: two freezes after saving a view as a pack are gone, a watchdog in every build writes one dump per freeze, and a stalled map tile is refreshed without a reload. Navigation card chips lay out in the card's own pass, and a route can be replayed at a set speed for tests. Tooling: the sweep's both-units part by default, a build lock for parallel emulator starts, the memory probe's fallback levels.
