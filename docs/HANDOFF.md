@@ -15,15 +15,10 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Next
 
-1. Plan wave 21 (`wave` skill, critic first). Inputs, owner's priority first: the routing-graph OOM (finding
-   below); the ideas `2026-10-26-interrupted-area-downloads-resume-themselves.md` and
-   `2026-10-26-downloads-without-a-size-cap.md` (the owner asked for both; they share a progress cursor and
-   `AreaDownload.kt`, so one owner or two waves); the z8 `tiles` sweep task; the wave 20 Status follow-ups
-   (T141, T142, T144, T145, T146; StrictMode; T138's DEM recovery); T148's: the title-only link and a real
-   no-stack ANR on a device.
-2. `tools/merge-log.py` fails when the task is the last paragraph of `docs/TASKS.md` (needs a blank line after
-   it); a small tooling fix.
-3. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update);
+1. Plan wave 21 (`wave` skill, critic first): the routing-graph OOM (finding below); the two 2026-10-26 download
+   ideas the owner asked for (they share a cursor and `AreaDownload.kt`: one owner or two waves); the z8 sweep
+   task; the Status follow-ups of wave 20 and T148; `tools/merge-log.py` failing on the last task of the board.
+2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update);
    ADR 0040's and 0042's build tasks after the owner.
 
 ## Waiting on user
