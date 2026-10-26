@@ -976,3 +976,10 @@ Planned 2026-10-25 from the owner's answers of that day (`docs/ideas/2026-10-13-
 - A real lidar coverage edge in a public area, to verify the lidar → 10 m seam.
 - Gaia GPS: what to keep and what's missing (open question 1).
 - Routing (BRouter/GraphHopper behind a `Router` interface) and search index for region packs.
+
+## One-off fixes after wave 20 (no release; owner, 2026-10-26)
+
+### T148. The issue link stops asking for a paste that repeats the body
+**Goal:** the idea `docs/ideas/2026-10-26-issue-link-asks-for-a-paste-that-repeats-the-body.md` as written. When the issue body already carries everything `Report.shown` would add (no stack, or every kept frame of every kept section fits), the body ends without `IssueLink.CLIPBOARD_LINE`, nothing is copied, and the line under the button says the issue is complete and only needs Submit. Otherwise the clipboard holds only what the body lacks (the stacks past what it carries, without the header) and both the body's line and the line under the button say the rest of the stack trace is on the clipboard. The title-only link keeps copying the whole text. The privacy notice keeps describing what is sent. Strings listed for the owner (ADR 0031). The idea file is deleted on this branch.
+**Owns:** `androidApp/src/main/kotlin/io/github/jasondorjeshort/dystopo/app/reports/**`, `androidApp/src/test/kotlin/io/github/jasondorjeshort/dystopo/app/reports/**`, the reports lines of `docs/reference/android-app.md` and `android-debug-routes.md`, the idea file.
+**Done when:** unit tests for the three cases (complete body, remainder on the clipboard, title only) with the exact strings; on an emulator with a debug build, `POST /debug/crash` then the next launch's `POST /reports/open` for that report and for a `POST /debug/freeze?ms=4000` dump, each showing the body, the line under the button and what the clipboard holds (`copied`, `clipboard`); `./gradlew check` green.
