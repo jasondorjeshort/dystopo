@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-25
+verified: 2026-10-26
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -66,6 +66,7 @@ run of the local release path (fake tag, nothing published) passed here except t
 | Task worktrees | `~\Documents\src\dystopo-wt\<task-id>` (wave 20, 2026-10-25); AVDs `dystopo35-<task>` under `~\Android\avd` |
 | Coordinator's servers | live viewer on 8765 from the installed `devtool` distribution; PID in `out\coordinator-pids.txt` (`live-8765 <pid>`) |
 | `tilebuild.bat` | the installed distribution's start script fails at once with "The input line is too long" (the classpath exceeds `cmd`'s line limit; from Git Bash and PowerShell alike); build packs with `./gradlew :tilebuild:run --no-daemon --args="..."` from the main checkout, or `java -cp "tilebuild/build/install/tilebuild/lib/*"` on the main class. The Rainier outdoors pack: `--extract <cache>/osm/north-america-us-washington-latest.osm.pbf --bbox -121.95,46.68,-121.45,46.98 --min-zoom 6 --max-zoom 14 --profile outdoors`, 33 s, 2.63 MB, the Paradise to Sunrise drive 82,069 m |
+| The Rainier DEM pack | `./gradlew :devtool:run --no-daemon --args="tiles --bbox=-121.95,46.68,-121.45,46.98 --min-zoom 8 --max-zoom 14 --pmtiles out/rainier-dem.pmtiles --verify"` (the outdoors pack's box; 664 tiles, 106 MB, 48 s from the cache). The pack pair the sweep serves is then about 109 MB, as the first PC's was (143 MB): with the `rainier` area's own box at z8 to 13 (8.7 MB, kept as `rainier-dem-small.pmtiles`) the sweep's `network` part saw the whole pair download before its progress line and the device tour's z8 view served no DEM tile from the pack (2026-10-26, the wave 20 sweep) |
 | Known network trouble | Geofabrik `.osm.pbf` HEAD and ranged GET hung for over a minute on 2026-10-25 while its root answered at once, so `rainier-outdoors.pmtiles` could not be built; retry or place the extract in `cache\osm` (done 2026-10-25; a copy is in `cache\extracts` for the live viewer) |
 
 Neither account can read the other's folders. Shared data is read by absolute path within one account,

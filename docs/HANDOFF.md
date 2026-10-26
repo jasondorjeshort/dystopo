@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-25, at commit 37096ba plus this edit, by main session (wave 20 complete, sweep running)
+Updated: 2026-10-26, at commit 8fde29e plus this edit, by main session (wave 20 sweep read; v0.1.13-alpha in progress)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` and `sweep` skills, `docs/TASKS.md` › Wave 20.
 
 ## Now
@@ -9,16 +9,16 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` and 
 - Wave 20 is complete (2026-10-25, the second PC): all eight tasks merged with Status lines, log and
   changelog entries (T141 87ed16c, T147 786cc26, T144 da09785, T140 d268446, T143 fa783a8, T146 2676bdb,
   T145 51a1375, T142 24db6d2); README carries it; worktrees and task branches gone; strings per merge commit.
-- The post-wave sweep runs through a Sonnet agent (`sweep` skill; `-BasePort 8980`, console 5640,
-  `-AvdHome ~/Android/avd`, output under the sweep's dated folder in `out/`; Playwright installed for
-  the demo parts; release-key parts from the main checkout). Green means publish (ADR 0024).
-- Machine: 3 GB emulators, at most three, Gradle `--no-daemon` (`machines.md`); the live viewer on
-  8765 is up (`out/coordinator-pids.txt`); the task AVDs are deleted (about 152 GB free on C:).
+- The sweep (`out/sweep-w20`, log entry of 2026-10-26) is green on the app: `network`'s red was a throttle
+  that did not take (rerun green); the z8 `tiles` red is the check and this PC's narrow pack (the open
+  finding). v0.1.13-alpha is being published by the `release` skill's local path (secrets still absent).
+- Machine: 3 GB emulators, at most three, Gradle `--no-daemon`; the Rainier DEM pack is now the wide
+  one (`machines.md`); the live viewer on 8765 is up (`out/coordinator-pids.txt`).
 
 ## Next
 
-1. Read the sweep's `summary.json` and sheet; findings become wave 21's sweep task (`finding` skill);
-   green: the `release` skill (v0.1.13-alpha, notes from the eight Status lines).
+1. Finish v0.1.13-alpha (verify from the draft, publish, the log entry and the README line), then
+   rewrite this file.
 2. Plan wave 21 from the Status lines' follow-ups: leases for readers outside the loopback server, the
    `onMain` waits and `Pack.metadata` priming (T144); StrictMode; T138's DEM recovery; precomputed country
    sizes and the picker's follow-ups (T142); `--tiles` to `tileItems` (T141); the template chooser (T145).
@@ -37,4 +37,4 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` and 
 
 ## Open findings
 
-none
+- `docs/findings/2026-10-26-z8-tiles-check-misses-the-start-up-tile.md`: wave 21's sweep task.
