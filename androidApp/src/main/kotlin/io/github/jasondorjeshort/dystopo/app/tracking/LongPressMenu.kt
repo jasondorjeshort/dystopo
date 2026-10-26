@@ -59,7 +59,7 @@ object LongPressMenu {
         private set
 
     /** T114: the card's actions in their order (`GET /map/longpress` `actions`). */
-    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", "Cancel")
+    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE, "Cancel")
 
     /** Takes the map's long-press from the route session (idempotent). */
     fun install() {
@@ -72,6 +72,7 @@ object LongPressMenu {
     /** A long-press at ([lat], [lon]); main thread. */
     fun longPress(lat: Double, lon: Double) {
         presses++
+        if (io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.onMap()) return // T142: the area picker's card is up
         if (toRoute()) {
             point = null
             lastAction = "route"
@@ -104,6 +105,14 @@ object LongPressMenu {
         point = null
         lastAction = "route"
         RouteSession.longPress(lat, lon)
+    }
+
+    /** T142 (ADR 0041 §5): "Keep offline around here": the area picker's circle around the pressed point. Main thread. */
+    fun aroundHere() {
+        val (lat, lon) = point ?: return
+        point = null
+        lastAction = "around"
+        io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.startAround(lat, lon, null)
     }
 
     fun cancel() {
@@ -156,6 +165,7 @@ internal fun LongPressCard() {
             MenuAction(ROUTE_TO) { LongPressMenu.routeTo() } // T114: destination first
             MenuAction("Waypoint here") { LongPressMenu.waypoint() }
             MenuAction("Route from here") { LongPressMenu.route() }
+            MenuAction(io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE) { LongPressMenu.aroundHere() } // T142
             MenuAction("Cancel") { LongPressMenu.cancel() }
         }
     }

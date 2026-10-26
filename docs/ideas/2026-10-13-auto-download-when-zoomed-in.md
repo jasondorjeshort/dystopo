@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-related: [2026-10-13-download-by-region.md]
+related: []
 ---
 
 # Online use should download automatically when zoomed in on an area

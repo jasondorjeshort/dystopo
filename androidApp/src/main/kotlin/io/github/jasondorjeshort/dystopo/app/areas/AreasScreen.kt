@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -95,34 +97,48 @@ private fun AreasSheet() {
     val app = DystopoApp.instance
     val open = Areas.screenOpen
     LaunchedEffect(open) {
-        app.map.mapView?.let { AreaOutlines.bind(it) }
+        app.map.mapView?.let { AreaOutlines.bind(it); PickerLayer.bind(it) }
         AreaOutlines.show(if (open) Areas.list else emptyList())
+        if (!open && AreaPicker.mode != null) AreaPicker.close() // T142: closed from elsewhere (help, settings): the picker goes too
     }
     if (!open) return
     var coverage by remember { mutableStateOf<Map<String, Map<String, Any?>>>(emptyMap()) }
     var progress by remember { mutableStateOf<Map<String, Any?>?>(null) }
+    var pinned by remember { mutableStateOf(0L) } // T142: the country rows' budget test (read here: the UI thread takes no lock)
     LaunchedEffect(Unit) {
         while (true) {
             val (c, p) = withContext(Dispatchers.IO) { Areas.all().associate { it.id to Areas.coverage(it) } to AreaDownload.json() }
+            pinned = withContext(Dispatchers.IO) { runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.pinnedBytes }.getOrDefault(0L) }
             coverage = c
             progress = p
             AreaOutlines.show(Areas.list)
             delay(1500)
         }
     }
-    BackHandler { Areas.screenOpen = false }
+    // T142: drawing, around a point and a country's summary are a card over the map; the country list is this sheet.
+    val picker = AreaPicker.mode
+    if (picker != null && picker != AreaPicker.Mode.Countries) {
+        PickerCard()
+        return
+    }
+    val countries = picker == AreaPicker.Mode.Countries
+    BackHandler { if (countries) AreaPicker.close() else Areas.screenOpen = false }
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(SHEET)
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(if (countries) COUNTRY_SHEET else SHEET)
                 .background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).navigationBarsPadding().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText("Offline areas", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
-                    HelpIcon("areas.offline") // T109
+                    BasicText(if (countries) CHOOSE_COUNTRY else "Offline areas", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                    if (!countries) HelpIcon("areas.offline") // T109
                 }
-                Action("Close") { Areas.screenOpen = false }
+                if (countries) Action("Back") { AreaPicker.close() } else Action("Close") { Areas.screenOpen = false }
+            }
+            if (countries) { // T142
+                CountryListPane(pinned)
+                return@Column
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicText(
@@ -131,6 +147,11 @@ private fun AreasSheet() {
                     style = TextStyle(color = Muted, fontSize = 12.sp),
                 )
                 HelpIcon("areas.corridor") // T109
+            }
+            // T142 (ADR 0041 §5): the picker's ways in from the sheet; "Keep offline around here" is on the long-press card and a search result.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PickerButton(CHOOSE_COUNTRY) { AreaPicker.openCountries() }
+                PickerButton(DRAW_AREA) { AreaPicker.startDraw(null) }
             }
             CorridorWidthRow() // T130
             // T106: a refused job is finished too (it read "Downloading ...: 0 of 0 tiles" for as long as the sheet stayed open).
@@ -149,11 +170,30 @@ private fun AreasSheet() {
     }
 }
 
+/** T142: a picker button of the sheet (outlined, so it reads as a way in rather than an area's action). */
+@Composable
+private fun PickerButton(text: String, onClick: () -> Unit) {
+    BasicText(
+        text,
+        style = TextStyle(color = Teal, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+        modifier = Modifier.border(1.5.dp, Teal, RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 6.dp),
+    )
+}
+
 @Composable
 private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
     r.opaque?.let { NeedsNewerCard(r, it); return } // T140
+    var renaming by remember(r.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
     Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        renaming?.let { t ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f).border(1.dp, Color(0xFFE2D8C6), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 5.dp)) {
+                    BasicTextField(t, { renaming = it }, singleLine = true, textStyle = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.fillMaxWidth())
+                }
+                Action("Save") { val n = t.trim(); renaming = null; if (n.isNotEmpty()) thread { runCatching { rename(r.id, n) } } }
+            }
+        }
+        if (renaming == null) Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
             // T91 (the T75 follow-up): a pack-backed area has no Pin or Unpin; the card says why.
             BasicText(if (r.pack != null) "KEPT AS A PACK" else if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned || r.pack != null) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
@@ -188,6 +228,7 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
             if (r.pack == null) Action(if (r.pinned) "Unpin" else "Pin") { thread { runCatching { TripCorridors.userPin(r.id, !r.pinned) } } } // T130: a trip's, also Stop keeping
             if (r.pack == null && r.state != "downloading") Action(if (failed) "Retry" else if (older) "Update" else "Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
             if (failed) Action("Dismiss", Muted) { thread { runCatching { Areas.dismiss(r.id) } } }
+            if (r.pack == null && renaming == null) Action("Rename") { renaming = r.name } // T142
             Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
         }
     }
@@ -234,6 +275,16 @@ internal fun polygonLine(areaM2: Double, units: ContourUnits): String {
 private fun mb(bytes: Long): String = if (bytes >= 1_048_576) String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0) else String.format(Locale.US, "%d kB", bytes / 1024)
 
 private const val SHEET = 0.55f
+
+/** T142: the country list's sheet (taller: the map above it shows nothing the list needs). */
+private const val COUNTRY_SHEET = 0.8f
+
+/** T142 (ADR 0041 §5, "renamable"): an area's new name, in its record and its area (the id stays: it is the geometry's). */
+fun rename(id: String, name: String): Areas.Record {
+    val n = name.trim()
+    require(n.isNotEmpty()) { "a name is needed" }
+    return Areas.update(Areas.get(id)?.id ?: throw NoSuchElementException("no area '$id'")) { it.copy(name = n, area = it.area.withName(n)) }!!
+}
 
 /** T95: an area whose source serves a newer version than its tiles were fetched at. */
 internal const val OLDER_NOTE = "Older than the source. Update downloads the newer data."
