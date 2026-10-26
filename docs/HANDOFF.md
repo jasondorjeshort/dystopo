@@ -1,15 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-25, at commit 2373338 plus this edit, by main session (wave 20 first half in flight)
+Updated: 2026-10-25, at commit 9859d26 plus this edit, by main session (wave 20 first half in flight)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 20.
 
 ## Now
 
-- Wave 20 first half launched 2026-10-25 on the second PC (`machines.md`): six Opus implementers in
-  `~/Documents/src/dystopo-wt/<task>` on `task/T140`, `T141`, `T143`, `T144`, `T146`, `T147`, forked at
-  2373338, ports and consoles as the wave paragraph assigns, AVDs under `~/Android/avd` (not E:).
-  No report yet; no verifier launched. Second half (T142, T145) after the first half's merges.
+- Wave 20 first half launched 2026-10-25 on the second PC (`machines.md`): Opus implementers in
+  `~/Documents/src/dystopo-wt/<task>`, forked at 2373338, ports as the wave paragraph assigns, AVDs
+  under `~/Android/avd` (not E:). T141 merged (87ed16c, logged 9859d26, cleanup chore ran); T147 is
+  with its verifier; T140, T143, T144, T146 still building. Second half (T142, T145) after their merges.
 - The launch chore is done: distributions installed, the Rainier packs and sprite in `out/`, the
   extract in `cache/extracts/`, the live viewer on 8765 (`out/coordinator-pids.txt`), the marker
   `out/packs-ready.txt`. The dry run's outdoors pack was bad; `tilebuild.bat` cannot run here (`machines.md`).
