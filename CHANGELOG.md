@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-25
 
+- T144: The UI thread never waits: the freeze after saving a pack, a watchdog, and the OSM refresh
 - T147: Tooling leftover sweep 13
 - T141: The bundled country set from Natural Earth
 
