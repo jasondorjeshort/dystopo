@@ -13,7 +13,7 @@ import io.github.jasondorjeshort.dystopo.boundaries.Countries
 /** The app's credits for the packs it has open: what the map line, the About screen and `GET /attribution` show. */
 object AppCredits {
     /**
-     * T141: registry ids of the data the app itself ships, credited whenever it runs (as used by `app`):
+     * T141: registry ids of the data the app itself ships, credited whenever it runs (as used by [BUNDLED_USE]):
      * `natural-earth` for the bundled country set ([Countries]) and the Norway border mask.
      */
     val BUNDLED_SOURCE_IDS: List<String> = listOf(Countries.REGISTRY_ID)
@@ -39,14 +39,23 @@ object AppCredits {
             osm = packs.osmPacks
             dem = packs.demPacks
         }
-        return PackAttribution.compose(
+        val credits = PackAttribution.compose(
             // T41: every pack on the map, then what the map shows from the server (online mode, T38).
             osm.map { PackMetadata("osm", it.file.name, it.metadata) } +
                 dem.map { PackMetadata("dem", it.file.name, it.metadata) } + online,
             // Labels are drawn with the Noto Sans glyphs only when they are installed next to the packs.
             appSourceIds = (if (packs.glyphDir != null) listOf(PackAttribution.GLYPH_FONT_ID) else emptyList()) + bundled,
         )
+        // The composer credits every app source as used by `app` (the label font); a bundled resource is [BUNDLED_USE].
+        return credits.copy(
+            sources = credits.sources.map { c ->
+                if (c.source.id in bundled && c.source.id != PackAttribution.GLYPH_FONT_ID) c.copy(usedBy = c.usedBy.map { if (it == "app") BUNDLED_USE else it }) else c
+            },
+        )
     }
+
+    /** `usedBy` of a source credited for a resource the app ships ([BUNDLED_SOURCE_IDS]). */
+    const val BUNDLED_USE = "bundled"
 
     fun compose(app: DystopoApp = DystopoApp.instance, view: PackBounds? = null): Credits =
         compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view) // T80: the About screen lists every source the phone reads

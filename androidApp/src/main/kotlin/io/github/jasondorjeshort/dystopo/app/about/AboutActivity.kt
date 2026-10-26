@@ -106,7 +106,7 @@ private fun AboutScreen(credits: Credits, onBack: () -> Unit, open: (String) -> 
                 Body(s.attribution)
                 Link("License: ${s.licenseName}", s.licenseUrl, open)
                 AppCredits.homePage(s.attributionHtml)?.let { Link(it, it, open) }
-                Small("Used by: " + c.usedBy.joinToString(", ") { if (it == "app") "map labels" else "$it pack" })
+                Small("Used by: " + c.usedBy.joinToString(", ") { when (it) { "app" -> "map labels"; AppCredits.BUNDLED_USE -> "built-in boundaries"; else -> "$it pack" } })
             }
         }
 
