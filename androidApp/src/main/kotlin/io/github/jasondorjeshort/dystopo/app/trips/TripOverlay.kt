@@ -73,7 +73,7 @@ class TripOverlay {
             map.addOnMapClickListener(click)
             clickMap = map
         }
-        mapView.setOnTouchListener { _, ev -> touch(ev) }
+        mapView.setOnTouchListener { _, ev -> io.github.jasondorjeshort.dystopo.app.areas.AreaDraw.touch(ev) || touch(ev) } // T142: the area drawing first (only while drawing)
         install()
     }
 

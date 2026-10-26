@@ -66,9 +66,29 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   and `areaKm2`, a disc's `radiusM`, and `files` (records in `areas.json` and in the sibling `areas2.json`).
  *   `GET /areas/download` `recent` no longer repeats the job shown above it; `GET /areas/trips` `lastRun` is the last run
  *   that made, refused, cancelled or released a corridor (a run that did nothing leaves it).
+ * - T142 (ADR 0041 §5), the area picker ([AreaPicker]), so the sheet is scripted and screenshotted:
+ *   - `GET /areas/countries[?find=text][&wait=ms]`: the bundled countries ([CountrySizes]; all, or `Countries.find`'s matches
+ *     in its order), each with `code`, `name`, `nameLong`, `continent`, the row's `detail` (`full` or `less`), `zooms`,
+ *     `state` (`measuring`, `fits`, `over_budget`, `too_large`), `greyed`, `sizeText` ("About 28 MB at less detail"),
+ *     `sentence` (a greyed row's), `bytes`, `tiles`, `less` and `full` (measured sizes), `downloaded` (the row's mark); with
+ *     `wait` it measures the rows first. At the top `measured`, `greyed`, `tooLargeNames`, `pinnedBytes`, `budgetMb`, `heapTiles`.
+ *     `POST /areas/countries[?filter=text]` opens the list in the sheet with that filter.
+ *   - `POST /areas/country?code=<ADM0_A3 or ISO>[&detail=full|less]`: the country's summary (the default detail without `detail`).
+ *   - `POST /areas/draw[?ring=lat,lon;lat,lon;...]`: Draw an area (the ring, else four vertices from the current view);
+ *     `GET /areas/draw[?wait=ms]` (also `GET /areas/picker`): the picker's state: `mode`, `name`, `detail`, `planned` (the
+ *     size line is of the shape in view), `sizeLine`, `alternative` (the other detail's line), `timeLine`, `refusal`,
+ *     `canDownload`, `bytes`, `tiles`, `full` and `less` (the plans), `drawing` (`ring`, `vertices`, `areaKm2`, `canUndo`,
+ *     gesture counters), `around`, `country`. `POST /areas/draw/touch?op=drag&index=i[&mid=1]&to=lat,lon`, `op=tap&at=lat,lon`
+ *     and `op=hold&index=i` act through the map view's own touch dispatch, as a finger would (drag a vertex or the midpoint
+ *     after it, tap the map, long-press a vertex); `POST /areas/draw/undo` is Undo. Each answers the state (`wait` as above).
+ *   - `POST /areas/around?at=lat,lon[&radiusM=][&name=][&sheet=1]`: "Keep offline around here" (as the long-press card's
+ *     entry, or a search result's with `name`).
+ *   - `POST /areas/picker?detail=full|less&name=&radiusM=`: the summary's choices; `POST /areas/picker/download` its
+ *     Download (202, the download's start; 409 with the refusal past the budget); `POST /areas/picker/close` Cancel.
+ *   - `POST /areas/{id}/rename?name=`: the card's Rename.
  */
 object AreaRoutes {
-    private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss)?$")
+    private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss|/rename)?$")
 
     fun handle(app: DystopoApp, r: Request): Response? {
         if (r.path != "/areas" && !r.path.startsWith("/areas/")) return null
@@ -84,6 +104,7 @@ object AreaRoutes {
     }
 
     private fun route(app: DystopoApp, r: Request): Response {
+        picker(app, r)?.let { return it } // T142
         when (r.method to r.path) {
             "GET" to "/areas" -> return Response.json(Areas.json())
             "GET" to "/areas/download" -> return Response.json(AreaDownload.json() ?: mapOf("state" to "idle"))
@@ -118,8 +139,119 @@ object AreaRoutes {
             "POST" to "/retry" -> Response.json(retry(rec), 202) // T106: the card's Retry (a download again)
             "POST" to "/dismiss" -> Response.json(mapOf("area" to Areas.dismiss(rec.id)?.json(), "removed" to (Areas.get(rec.id) == null))) // T106
             "DELETE" to "" -> Response.json(TripCorridors.userRemove(rec.id)) // T130: a trip's corridor removed by hand is not made again
+            "POST" to "/rename" -> Response.json(rename(rec.id, r.query["name"] ?: throw IllegalArgumentException("name=<new name>")).json()) // T142
             else -> Response.notFound()
         }
+    }
+
+    /** T142: the picker's routes (see the object comment); null for any other path. */
+    private fun picker(app: DystopoApp, r: Request): Response? {
+        val q = r.query
+        return when (r.method to r.path) {
+            "GET" to "/areas/countries" -> Response.json(countries(q))
+            "POST" to "/areas/countries" -> {
+                app.map.onMain { AreaPicker.openCountries(); q["filter"]?.let { AreaPicker.filter = it } }
+                Response.json(pickerState(app, q))
+            }
+            "POST" to "/areas/country" -> {
+                val code = q["code"] ?: throw IllegalArgumentException("code=<country code> (GET /areas/countries)")
+                val detail = q["detail"]?.also { require(it == DETAIL_FULL || it == DETAIL_LESS) { "detail must be full or less" } }
+                app.map.onMain { AreaPicker.openCountry(code, detail) }
+                Response.json(pickerState(app, q))
+            }
+            "POST" to "/areas/draw" -> {
+                val ring = q["ring"]?.let { s -> (AreaOfInterest.fromQuery(mapOf("ring" to s)).shape as io.github.jasondorjeshort.dystopo.areas.AreaShape.Polygon).rings.single() }
+                check(app.map.onMain { AreaPicker.startDraw(ring) }) { "the map is not laid out" }
+                Response.json(pickerState(app, q))
+            }
+            "GET" to "/areas/draw", "GET" to "/areas/picker" -> Response.json(pickerState(app, q))
+            "POST" to "/areas/draw/undo" -> {
+                app.map.onMain { AreaDraw.undo() }
+                Response.json(pickerState(app, q))
+            }
+            "POST" to "/areas/draw/touch" -> {
+                check(app.map.onMain { AreaDraw.active }) { "not drawing (POST /areas/draw first)" }
+                fun point(k: String) = q[k]?.split(',')?.mapNotNull { it.trim().toDoubleOrNull() }?.takeIf { it.size == 2 } ?: throw IllegalArgumentException("$k=lat,lon")
+                fun index() = q["index"]?.toIntOrNull() ?: throw IllegalArgumentException("index=<vertex>")
+                val ok = when (q["op"]) {
+                    "drag" -> point("to").let { (lat, lon) -> app.map.onMain { AreaDraw.simulateDrag(index(), q["mid"] == "1", lat, lon) } }
+                    "tap" -> point("at").let { (lat, lon) -> app.map.onMain { AreaDraw.simulateTap(lat, lon) } }.also {
+                        Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 200L) // the vertex lands once no second tap came
+                    }
+                    "hold" -> app.map.onMain { AreaDraw.simulatePress(index()) }?.let { t0 ->
+                        Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 250L)
+                        app.map.onMain { AreaDraw.simulateRelease(t0) }
+                        true
+                    } ?: false
+                    else -> throw IllegalArgumentException("op must be drag, tap or hold")
+                }
+                check(ok) { "the handle or the point is off screen" }
+                Response.json(pickerState(app, q))
+            }
+            "POST" to "/areas/around" -> {
+                val at = q["at"]?.split(',')?.mapNotNull { it.trim().toDoubleOrNull() }?.takeIf { it.size == 2 } ?: throw IllegalArgumentException("at=lat,lon")
+                val radius = q["radiusM"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("radiusM must be metres") }
+                app.map.onMain { AreaPicker.startAround(at[0], at[1], q["name"]?.trim()?.ifEmpty { null }, fromSheet = q["sheet"] == "1", radiusM = radius) }
+                Response.json(pickerState(app, q))
+            }
+            "POST" to "/areas/picker" -> {
+                val detail = q["detail"]?.also { require(it == DETAIL_FULL || it == DETAIL_LESS) { "detail must be full or less" } }
+                val radius = q["radiusM"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("radiusM must be metres") }
+                app.map.onMain {
+                    detail?.let { AreaPicker.detailChoice = it }
+                    q["name"]?.let { AreaPicker.name = it }
+                    radius?.let { AreaPicker.typed = ""; AreaPicker.setRadius(it) }
+                }
+                Response.json(pickerState(app, q))
+            }
+            "POST" to "/areas/picker/download" -> Response.json(AreaPicker.download(), 202)
+            "POST" to "/areas/picker/close", "DELETE" to "/areas/picker" -> {
+                app.map.onMain { AreaPicker.close() }
+                Response.json(pickerState(app, q))
+            }
+            else -> null
+        }
+    }
+
+    /** The picker's state; with `wait=ms`, once the size line is of the shape in view (or the time is up). */
+    private fun pickerState(app: DystopoApp, q: Map<String, String>): Map<String, Any?> {
+        val until = System.currentTimeMillis() + (q["wait"]?.toLongOrNull() ?: 0L).coerceIn(0, 300_000)
+        while (true) {
+            val j = app.map.onMain { AreaPicker.json() }
+            if (j["planned"] == true || j["mode"] == null || j["mode"] == "countries" || System.currentTimeMillis() >= until) return j
+            Thread.sleep(100)
+        }
+    }
+
+    /** T142: `GET /areas/countries`: the rows as the list shows them (see the object comment). */
+    private fun countries(q: Map<String, String>): Map<String, Any?> {
+        val all = io.github.jasondorjeshort.dystopo.boundaries.Countries.all
+        val list = q["find"]?.let { io.github.jasondorjeshort.dystopo.boundaries.Countries.find(it, all) } ?: all
+        val codes = list.map { it.code }
+        val wait = (q["wait"]?.toLongOrNull() ?: 0L).coerceIn(0, 600_000)
+        if (wait > 0) { CountrySizes.requestExtra(codes); CountrySizes.await(codes, wait) }
+        val pinned = OnlineService.get(DystopoApp.instance).cache.pinnedBytes
+        val budget = AppSettings.pinnedCacheMb
+        val sizes = CountrySizes.entries
+        val records = Areas.all()
+        val rows = list.map { c ->
+            val e = sizes[c.code]
+            val rec = records.firstOrNull { r -> e != null && (r.id == e.lessId || r.id == e.fullId) }
+            val row = countryRow(e, pinned, rec?.takeIf { it.pinned }?.bytes ?: 0L, budget)
+            fun m(x: CountryMeasure?) = x?.let { linkedMapOf("bytes" to it.bytes, "tiles" to it.tiles, "tooLarge" to it.tooLarge) }
+            c to linkedMapOf(
+                "code" to c.code, "iso3" to c.iso3, "name" to c.name, "nameLong" to c.nameLong, "continent" to c.continent, "toleranceM" to c.toleranceM,
+                "detail" to row.detail, "zooms" to listOf(AreaPicker.MIN_ZOOM, if (row.detail == DETAIL_FULL) AreaPicker.FULL_MAX_ZOOM else AreaPicker.LESS_MAX_ZOOM),
+                "state" to row.state.name.lowercase(), "greyed" to row.greyed, "sizeText" to row.sizeText, "sentence" to row.sentence,
+                "bytes" to row.bytes, "tiles" to row.tiles, "less" to m(e?.less), "full" to m(e?.full), "downloaded" to downloadMark(rec?.state),
+            )
+        }
+        return linkedMapOf(
+            "total" to all.size, "shown" to rows.size, "measured" to rows.count { it.second["state"] != "measuring" },
+            "greyed" to rows.count { it.second["greyed"] == true }, "tooLargeNames" to rows.filter { it.second["state"] == "too_large" }.map { it.first.name },
+            "pinnedBytes" to pinned, "budgetMb" to budget, "heapTiles" to AreaDownload.heapTiles(),
+            "countries" to rows.map { it.second },
+        )
     }
 
     /** T106: Retry on an area card: the same corridor downloaded again (a pack-backed area is a region pack: 409). */

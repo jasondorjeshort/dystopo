@@ -161,6 +161,14 @@ fun SearchOverlay() {
                     )
                 }
             }
+            // T142 (ADR 0041 §5): a chosen result offers its surroundings offline, named after it.
+            ui.selected?.takeIf { !ui.open }?.hit?.entry?.let { e ->
+                BasicText(
+                    io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE,
+                    Modifier.background(Paper, RoundedCornerShape(8.dp)).clickable { io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.startAround(e.lat, e.lon, e.name) }.padding(8.dp, 5.dp),
+                    style = TextStyle(color = Color(0xFF2C7BB6), fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                )
+            }
             ui.status?.let { BasicText(it, Modifier.background(Paper, RoundedCornerShape(8.dp)).padding(8.dp, 4.dp), style = TextStyle(color = Accent, fontSize = 12.sp)) }
             if (ui.open && ui.query.isNotBlank()) {
                 Column(Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp))) {
