@@ -15,7 +15,8 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Next
 
-1. Plan wave 21 (`wave` skill, critic first): the routing-graph OOM (finding below); the two 2026-10-26 download
+1. Plan wave 21 (`wave` skill, critic first): the map opens on the last known position, owner's high priority
+   (`docs/ideas/2026-10-26-open-the-map-on-the-last-known-position.md`, needs triage); the routing-graph OOM (finding below); the two 2026-10-26 download
    ideas the owner asked for (they share a cursor and `AreaDownload.kt`: one owner or two waves); the z8 sweep
    task; the Status follow-ups of wave 20 and T148; `tools/merge-log.py` failing on the last task of the board.
 2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update);
