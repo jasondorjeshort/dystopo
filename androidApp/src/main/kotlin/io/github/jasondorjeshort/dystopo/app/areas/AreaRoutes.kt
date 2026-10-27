@@ -92,6 +92,17 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   `GET /areas/download` `rows`: `planned`, `started`, `done` (whole), `wholePrefix` (the rows before this index of the walk
  *   are whole), `current` and `lastWhole` (`z`, `route`, `y`, `x0`, `x1`), `order` (zoom, route, y, x0). In direct mode a
  *   download is exempt from the session cap (`GET /online` `direct.sessionCapExempt`).
+ * - T151, interrupted downloads ([ResumeCheck]): a record carries `cursor` (`z`, `route`, `y`, `x0`, `x1` of the last row of
+ *   the whole prefix, `wholeRows`, `failed` rows per route and zoom with `failedTiles`, `savedAt`) while unfinished,
+ *   `cancelled` once the user cancelled it, and `autoResume` (`failures`, `attempts`, `nextAt`, `stopped`: `failures` or
+ *   `refused` with `budgetMb`, `runFrom`, `trigger`). `GET /areas/resume`: the last check (`triggers`, `checkMs`, `records`,
+ *   `unfinished` with each one's `why`: running, ending, cancelled, stopped, refused, backoff, ready; `started`, `waitingFor`,
+ *   `note`, `nextAt`), `runs`, `triggersSeen`, `queued`, `timerAt`, `repairedAtStart` (records found left downloading),
+ *   `unfinishedNow` (the same read now, nothing started) with `nowMs`, `backoffMs`, `maxFailures`. `POST /areas/resume[?trigger=]`
+ *   runs a check now (trigger `debug` by default, which skips a backoff's wait like app start; `backoff` does not).
+ *   `GET /areas/download` `resume`: `trigger`, `from` (the cursor it resumed from), `skippedTiles`, `failedAgain`, `stalled`,
+ *   `stalledByNetwork`, `cursorSaves`, `cursor`. `DELETE /areas/{id}` answers `ms`; each area's `coverage` adds `rows` and `ms`
+ *   (counted row by row).
  */
 object AreaRoutes {
     private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss|/rename)?$")
@@ -124,6 +135,8 @@ object AreaRoutes {
                 r.query["wait"]?.toLongOrNull()?.let { TripCorridors.drain(it.coerceIn(0, 600_000)) }
                 return Response.json(TripCorridors.json())
             }
+            "GET" to "/areas/resume" -> return Response.json(ResumeCheck.json()) // T151
+            "POST" to "/areas/resume" -> return Response.json(ResumeCheck.runNow(r.query["trigger"]?.takeIf { it.isNotBlank() } ?: ResumeCheck.TRIGGER_DEBUG))
             "GET" to "/areas/prefetch" -> return Response.json(AheadPrefetch.json())
             "POST" to "/areas/prefetch" -> {
                 r.query["on"]?.let { AheadPrefetch.enabled = it == "1" || it == "true" }

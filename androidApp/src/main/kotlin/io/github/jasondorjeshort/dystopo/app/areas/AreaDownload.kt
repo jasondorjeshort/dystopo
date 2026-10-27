@@ -67,11 +67,24 @@ import java.util.concurrent.atomic.AtomicLong
  * walk: rows planned, started and whole, the row being fetched and the last row of the whole prefix. Failed tiles are
  * kept as row sets per route and zoom and walked again at the end. In direct mode the download is exempt from the
  * sources' session cap ([DirectSources.exempt]).
+ *
+ * T151 ([ResumeCheck]): the record keeps a cursor ([DownloadCursor]: the last row of the whole prefix and the failed tiles
+ * in the rows through it), saved every [CURSOR_SAVE_MS] and when the run ends; a start of an unfinished (or cancelled) area
+ * over its saved manifest walks the failed tiles and then the rows after the cursor, counting the rest as done, unless the
+ * source's versions moved on since. The walk stops as stalled after [STALL_TILES] tiles in a row could not be fetched (the
+ * network stopped answering; the record says so and the resume check picks it up later) or [MAX_FAILED_TILES] in a run.
+ * [cancel] keeps the user's cancel in the record at once. A budget refusal at the start is a [BudgetRefused].
  */
 object AreaDownload {
     private val app: DystopoApp get() = DystopoApp.instance
 
-    class Job(val id: String, val name: String, val area: AreaOfInterest, val source: String, val contours: Boolean, val planned0: AreaManifest? = null, val isNew: Boolean = true) {
+    class Job(
+        val id: String, val name: String, val area: AreaOfInterest, val source: String, val contours: Boolean, val planned0: AreaManifest? = null, val isNew: Boolean = true,
+        /** T151: what started it: [TRIGGER_USER], or the resume check's triggers ([ResumeCheck]). */
+        val trigger: String = TRIGGER_USER,
+        /** T151: the record's cursor it may resume from (over [planned0], the saved manifest); dropped when the source's versions moved. */
+        val cursor0: DownloadCursor? = null,
+    ) {
         @Volatile var state = "starting" // starting, manifest, tiles, retry, contours, done, partial, failed, refused, cancelled
         /** T95: what the area held before and after (versions per source), and the tiles deleted after a refresh. */
         @Volatile var versionsBefore: Map<String, Map<String, String>>? = null
@@ -111,6 +124,26 @@ object AreaDownload {
         @Volatile var wholePrefix = 0
         @Volatile var lastWhole: TileRow? = null
 
+        /** T151: the cursor this run resumed from (null: the whole walk), and the tiles before it counted as done. */
+        @Volatile var resumedFrom: DownloadCursor? = null
+        val skipped = AtomicInteger()
+        /** T151: the earlier failed tiles walked again before the rows after the cursor; [againDone] once they all were. */
+        @Volatile var again = 0
+        @Volatile var againDone = true
+        /** T151: tiles in a row that could not be fetched (reset by any tile that could), and the last reason. */
+        val unavailableRun = AtomicInteger()
+        @Volatile var lastUnavailable: String? = null
+        /** T151: why the walk stopped early (the network stopped answering, or too many failures), and whether the network was the cause. */
+        @Volatile var stalled: String? = null
+        @Volatile var stalledByNetwork = false
+        /** T151: tiles that failed in this run's walk so far (the cap on what the cursor keeps). */
+        val failedNow = AtomicInteger()
+        /** T151: the failed tiles of the walk as rows, per route and zoom (guarded by itself). */
+        val failedRows = HashMap<String, HashMap<Int, TileSet>>()
+        @Volatile var lastCursorSave = 0L
+        @Volatile var cursorSaves = 0
+        @Volatile var savedCursor: String? = null
+
         fun json(): Map<String, Any?> {
             val now = if (finishedAt != 0L) finishedAt else System.currentTimeMillis()
             val p = planned.get()
@@ -126,9 +159,17 @@ object AreaDownload {
                 "estimateBytes" to manifest?.bytes, "manifestMs" to manifestMs, "elapsedMs" to now - startedAt,
                 "versionsBefore" to versionsBefore, "versionsAfter" to versionsAfter, "refreshDropped" to refreshDropped, // T95
                 "manifest" to manifest?.summary(),
+                // T151: what started it, the cursor it resumed from, the tiles skipped, the stall, the cursor saved.
+                "resume" to linkedMapOf(
+                    "trigger" to trigger, "from" to resumedFrom?.json()?.minus("failed"), "skippedTiles" to skipped.get(), "failedAgain" to again,
+                    "stalled" to stalled, "stalledByNetwork" to stalledByNetwork, "cursorSaves" to cursorSaves, "cursor" to savedCursor,
+                ),
             )
         }
     }
+
+    /** T151: a start the pinned budget refuses (its sentence); an [IllegalStateException], so routes answer 409 as before. */
+    class BudgetRefused(message: String) : IllegalStateException(message)
 
     @Volatile var job: Job? = null
         private set
@@ -147,8 +188,14 @@ object AreaDownload {
         if (id != null && j.id != id) return false
         if (!j.running) return false
         j.cancelled = true
+        // T151: the cancel is the user's and is kept in the record at once, so no trigger resumes it (even if the process ends
+        // before the job does); Retry or Download again clears it.
+        Areas.update(j.id) { it.copy(cancelled = true) }
         return true
     }
+
+    /** T151: the resume check's start of [r]'s download, from its cursor when it has one ([start] does the rest). */
+    fun resume(r: Areas.Record, trigger: String): Map<String, Any?> = start(r.area, r.name, r.tripId, trigger = trigger)
 
     /**
      * T95: what downloading corridor [area] would take, before anything starts: the manifest (from the server, else
@@ -225,7 +272,7 @@ object AreaDownload {
      * checked here, before anything is recorded, and an IllegalStateException says why it does not fit).
      */
     @Synchronized
-    fun start(area: AreaOfInterest, name: String? = null, tripId: String? = null, contours: Boolean = false, manifest: AreaManifest? = null): Map<String, Any?> {
+    fun start(area: AreaOfInterest, name: String? = null, tripId: String? = null, contours: Boolean = false, manifest: AreaManifest? = null, trigger: String = TRIGGER_USER): Map<String, Any?> {
         val service = OnlineService.get(app)
         if (area.shape is AreaShape.Box) {
             val b = area.bounds
@@ -236,19 +283,27 @@ object AreaDownload {
         val old = Areas.get(area.id)
         check(old?.opaque == null) { "area ${old?.name}: ${io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp.USER_SENTENCE}" }
         // T152 (ADR 0041 §3's T152 note): no heap check; the pinned budget is the one limit.
-        val planned = manifest?.takeIf { it.id == area.id }
-        planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw IllegalStateException(it) } }
+        // T151: an unfinished (or cancelled) download goes on from its cursor over the manifest it was made with.
+        val cursor = old?.takeIf { manifest == null && (unfinished(it) || it.state == "cancelled") }?.cursor
+        val saved = cursor?.let { Areas.manifest(area.id) }?.takeIf { it.id == area.id }
+        val planned = manifest?.takeIf { it.id == area.id } ?: saved
+        val from = cursor?.takeIf { saved != null && planned === saved }
+        planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
-        val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null).also { it.stateBefore = old?.state }
+        val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state }
         job = j
         // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
         // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
         val pinNow = old?.pinned ?: true
+        // T151: the user's start clears the resume's failures and stop; an automatic one keeps them. [AutoResume.runFrom]
+        // lets the repair at start tell a run that got somewhere from one that did not.
+        val resumeState = (if (trigger == TRIGGER_USER) AutoResume() else old?.autoResume ?: AutoResume()).copy(runFrom = from?.key ?: "", trigger = trigger, nextAt = 0L)
         Areas.put(
             Areas.Record(
                 id = area.id, name = label, area = area.withName(label), createdAt = old?.createdAt ?: System.currentTimeMillis(), pinned = pinNow,
                 state = "downloading", source = fetcher.server, tripId = tripId ?: old?.tripId, bytes = old?.bytes ?: 0L,
                 estimateBytes = old?.estimateBytes ?: 0L, tiles = old?.tiles ?: 0, versions = old?.versions.orEmpty(), // T95: held until it completes
+                downloadMs = old?.downloadMs, cursor = from, cancelled = false, autoResume = resumeState, // T151
             ),
         )
         Thread({ run(j, fetcher) }, "area-download").apply { isDaemon = true }.start()
@@ -273,6 +328,9 @@ object AreaDownload {
             changesAtStart = fetcher.sourceList.sumOf { it.versionChanges.get() }
             Areas.update(j.id) { r -> if (r.versions.isEmpty()) r.copy(versions = fetcher.currentVersions()) else r }
             j.versionsBefore = Areas.get(j.id)?.versions
+            // T151: the tiles before the cursor were fetched at the versions the record holds; when the source moved on, the
+            // whole walk runs again (the tiles cached at the current version are found in the cache, the rest refreshed).
+            j.resumedFrom = j.cursor0?.takeIf { !versionsMoved(j.versionsBefore.orEmpty(), fetcher.currentVersions()) }
             val fromServer = if (j.planned0 != null || fetcher.server == DirectSources.SERVER) null else serverManifest(fetcher.server, j.area, j)
             val m = j.planned0 ?: fromServer ?: localManifest(j.area, fetcher.server)
             j.manifestFrom = if (j.planned0 != null) "plan" else if (fromServer != null) "server" else "phone"
@@ -288,12 +346,36 @@ object AreaDownload {
             j.planned.set(m.tileCount)
             j.rowsPlanned.set(m.rowCount)
             j.state = "tiles"
-            val retry = fetchRows(j, fetcher, pool, items, AreaManifest.walk(items))
-            if (retry.isNotEmpty() && !j.cancelled) {
+            val c = j.resumedFrom
+            if (c == null) {
+                fetchRows(j, fetcher, pool, items, AreaManifest.walk(items), j.failedRows, countDone = true, moveCursor = true)
+            } else {
+                // T151: from the cursor. The rows through it count as done (less the tiles that failed in them, walked again
+                // first), then the walk goes on after it; the whole prefix and its row carry on from the cursor's.
+                j.skipped.set((c.tilesThrough(AreaManifest.walk(items)) - c.failedTiles).toInt().coerceAtLeast(0))
+                j.done.set(j.skipped.get())
+                j.wholePrefix = c.wholeRows
+                j.lastWhole = c.row
+                j.rowsDone.set(c.wholeRows)
+                j.savedCursor = c.key
+                val again = failedItems(items, c.failed)
+                j.again = c.failedTiles
+                if (again.isNotEmpty()) {
+                    j.againDone = false
+                    fetchRows(j, fetcher, pool, again, AreaManifest.walk(again), j.failedRows, countDone = true, moveCursor = false)
+                    j.againDone = !j.cancelled && j.stalled == null
+                }
+                if (!j.cancelled && j.stalled == null) fetchRows(j, fetcher, pool, items, c.after(AreaManifest.walk(items)), j.failedRows, countDone = true, moveCursor = true, firstIndex = c.wholeRows)
+            }
+            val retry = synchronized(j.failedRows) { failedItems(items, j.failedRows) }
+            if (retry.isNotEmpty() && !j.cancelled && j.stalled == null) {
                 j.state = "retry"
                 fetcher.retryNow()
                 j.failed.set(0)
-                fetchRows(j, fetcher, pool, retry, AreaManifest.walk(retry), counted = true)
+                val still = HashMap<String, HashMap<Int, TileSet>>()
+                fetchRows(j, fetcher, pool, retry, AreaManifest.walk(retry), still, countDone = false, moveCursor = false)
+                // A second walk cut short keeps every tile of the first (the ones it did not reach are still owed).
+                if (!j.cancelled && j.stalled == null) synchronized(j.failedRows) { j.failedRows.clear(); j.failedRows.putAll(still) }
             }
             if (j.contours && !j.cancelled) {
                 j.state = "contours"
@@ -301,7 +383,7 @@ object AreaDownload {
             }
             j.state = when {
                 j.cancelled -> "cancelled"
-                j.failed.get() > 0 -> "partial"
+                j.failed.get() > 0 || j.stalled != null -> "partial" // T151: a walk stopped by a stall did not reach the end
                 else -> "done"
             }
             if (j.state == "done") refreshed(j, fetcher, m, changesAtStart)
@@ -315,20 +397,35 @@ object AreaDownload {
         } finally {
             pool.shutdownNow()
             j.finishedAt = System.currentTimeMillis()
+            val resumed = j.resumedFrom != null
             if (j.state == "refused" && j.isNew) {
                 // T95: a new area the budget refused leaves nothing behind (an area already on the phone keeps its tiles).
                 runCatching { Areas.remove(j.id) }
             } else Areas.update(j.id) { r ->
+                val ms = j.finishedAt - j.startedAt
                 r.copy(
                     state = when (j.state) { "done" -> "done"; "refused" -> j.stateBefore ?: "partial"; else -> j.state },
-                    error = j.error ?: if (j.failed.get() > 0) "${j.failed.get()} tiles could not be fetched; download again to finish" else null,
+                    error = j.error ?: when {
+                        j.stalled != null && j.state == "partial" -> RESUME_STALLED // T151
+                        j.failed.get() > 0 -> "${j.failed.get()} tiles could not be fetched." // T151: it continues by itself (the card says when)
+                        else -> null
+                    },
                     // T95: a whole run counts what the area holds now (fetched plus already cached; an Update's old tiles are gone).
-                    bytes = when (j.state) { "refused" -> r.bytes; "done" -> j.bytes.get() + j.cachedBytes.get(); else -> r.bytes + j.bytes.get() },
+                    // T151: a run resumed from a cursor adds what it fetched to what the earlier runs did (the tiles before the cursor were not looked at).
+                    bytes = when (j.state) { "refused" -> r.bytes; "done" -> if (resumed) r.bytes + j.bytes.get() else j.bytes.get() + j.cachedBytes.get(); else -> r.bytes + j.bytes.get() },
                     estimateBytes = j.manifest?.bytes ?: r.estimateBytes,
                     tiles = if (j.state == "refused") r.tiles else j.planned.get(),
-                    downloadMs = if (j.state == "refused") r.downloadMs else j.finishedAt - j.startedAt,
+                    downloadMs = if (j.state == "refused") r.downloadMs else if (resumed) (r.downloadMs ?: 0L) + ms else ms,
+                    // T151: where it got to (none once whole), and the resume's backoff or stop.
+                    cursor = when {
+                        j.state == "done" -> null
+                        j.state == "refused" || j.manifest == null -> r.cursor
+                        else -> cursorNow(j, keepEarlier = !j.againDone)
+                    },
+                    autoResume = afterRun(r.autoResume, j.state, progressed = j.fetched.get() > 0, stalled = j.stalled != null && j.stalledByNetwork, now = j.finishedAt, budgetMb = AppSettings.pinnedCacheMb),
                 )
             }
+            ResumeCheck.request(ResumeCheck.TRIGGER_DOWNLOAD_OVER) // T151: the next unfinished area, or this one after its backoff
             recent.addFirst(linkedMapOf("id" to j.id, "name" to j.name, "state" to j.state, "done" to j.done.get(), "planned" to j.planned.get(), "bytes" to j.bytes.get(), "finishedAt" to j.finishedAt, "ms" to j.finishedAt - j.startedAt))
             while (recent.size > 5) recent.pollLast()
             Log.i(Areas.TAG, "area ${j.name}: ${j.state}, ${j.fetched.get()} fetched, ${j.cached.get()} cached, ${j.inPacks.get()} in packs, ${j.bytes.get()} bytes, ${j.finishedAt - j.startedAt} ms")
@@ -378,46 +475,62 @@ object AreaDownload {
 
     /**
      * T152: fetches the tiles of [rows] (the walk of [items]) on [pool], row by row, with at most [IN_FLIGHT] tiles queued,
-     * so nothing here grows with the area. Returns the tiles that failed (network or server) as tile items of row sets, one
-     * per route, for a second walk. [counted] (that second walk) leaves `done` and the row counts alone.
+     * so nothing here grows with the area. The tiles that failed (network or server) go into [failed] as row sets per route
+     * and zoom, for a second walk. T151: [countDone] counts the tiles in `done`; [moveCursor] (the walk itself, not the
+     * failed tiles walked again) keeps the row counts and the whole prefix, starting at index [firstIndex] of the walk (the
+     * cursor's), and saves the cursor every [CURSOR_SAVE_MS]. The walk stops early ([Job.stalled]) when [STALL_TILES] tiles in
+     * a row could not be fetched (the network stopped answering) or, in the walk itself, [MAX_FAILED_TILES] failed.
      */
     private fun fetchRows(
-        j: Job, fetcher: OnlineFetcher, pool: java.util.concurrent.ExecutorService, items: List<TilesItem>, rows: Sequence<TileRow>, counted: Boolean = false,
-    ): List<TilesItem> {
+        j: Job, fetcher: OnlineFetcher, pool: java.util.concurrent.ExecutorService, items: List<TilesItem>, rows: Sequence<TileRow>,
+        failed: HashMap<String, HashMap<Int, TileSet>>, countDone: Boolean, moveCursor: Boolean, firstIndex: Int = 0,
+    ) {
         val byRoute = items.associateBy { it.route }
-        val failed = HashMap<String, HashMap<Int, TileSet>>() // route, zoom: rows of the tiles that failed (guarded by itself)
         val open = ArrayDeque<RowInFlight>() // rows started and not whole yet, in the walk's order (guarded by itself)
         val permits = Semaphore(IN_FLIGHT)
         fun tileDone(r: RowInFlight) {
-            if (counted || r.left.decrementAndGet() != 0) return
+            if (!moveCursor || r.left.decrementAndGet() != 0) return
             j.rowsDone.incrementAndGet()
             synchronized(open) {
                 while (open.isNotEmpty() && open.first().left.get() == 0) open.removeFirst().let { w -> j.wholePrefix = w.index + 1; j.lastWhole = w.row }
             }
         }
-        var index = 0
+        fun stalled(): Boolean {
+            if (j.unavailableRun.get() >= STALL_TILES) {
+                j.stalledByNetwork = j.lastUnavailable?.startsWith("server unreachable") == true
+                j.stalled = "$STALL_TILES tiles in a row could not be fetched: ${j.lastUnavailable}"
+            } else if (moveCursor && j.failedNow.get() >= MAX_FAILED_TILES) {
+                j.stalled = "$MAX_FAILED_TILES tiles could not be fetched in this run"
+            }
+            return j.stalled != null
+        }
+        var index = firstIndex
         walk@ for (row in rows) {
-            if (j.cancelled) break
+            if (j.cancelled || stalled()) break
+            if (moveCursor && System.currentTimeMillis() - j.lastCursorSave >= CURSOR_SAVE_MS) saveCursor(j)
             val item = byRoute.getValue(row.route)
             val r = RowInFlight(index++, row)
-            if (!counted) {
+            if (moveCursor) {
                 synchronized(open) { open.addLast(r) }
                 j.rowsStarted.incrementAndGet()
                 j.rowNow = row
             }
             for (x in row.x0..row.x1) {
-                if (j.cancelled) break@walk
+                if (j.cancelled || stalled()) break@walk
                 permits.acquire()
                 try {
                     pool.execute {
                         try {
                             val ok = try {
-                                fetchTile(j, fetcher, item, row.z, x, row.y, counted)
+                                fetchTile(j, fetcher, item, row.z, x, row.y, counted = !countDone)
                             } catch (e: Exception) {
                                 Log.w(Areas.TAG, "an area tile of ${row.route} failed", e)
                                 false
                             }
-                            if (!ok) synchronized(failed) { failed.getOrPut(row.route) { HashMap() }.getOrPut(row.z) { TileSet(row.z) }.add(x, row.y) }
+                            if (!ok) {
+                                if (moveCursor) j.failedNow.incrementAndGet()
+                                synchronized(failed) { failed.getOrPut(row.route) { HashMap() }.getOrPut(row.z) { TileSet(row.z) }.add(x, row.y) }
+                            }
                         } finally {
                             tileDone(r)
                             permits.release()
@@ -431,8 +544,35 @@ object AreaDownload {
         }
         permits.acquire(IN_FLIGHT) // every tile queued has finished
         permits.release(IN_FLIGHT)
-        return synchronized(failed) { failed.map { (route, sets) -> byRoute.getValue(route).let { TilesItem(it.route, it.ext, it.url, sets, 0L) } } }
     }
+
+    /**
+     * T151: the cursor now: the last row of the whole prefix, with the failed tiles of the rows through it (a failure in a
+     * later row is walked again after the cursor anyway). [keepEarlier]: the earlier failed tiles were not all walked again
+     * (the run was cut short first), so the cursor it resumed from keeps them too.
+     */
+    private fun cursorNow(j: Job, keepEarlier: Boolean = false): DownloadCursor {
+        val row = j.lastWhole
+        val failed = synchronized(j.failedRows) { failedThrough(j.failedRows, row) }
+        val kept = if (keepEarlier) mergeFailed(failed, j.resumedFrom?.failed.orEmpty()) else failed
+        return DownloadCursor(row, j.wholePrefix, kept, System.currentTimeMillis())
+    }
+
+    /** T151: saves [cursorNow] in the record when it moved (every [CURSOR_SAVE_MS] while rows complete). */
+    private fun saveCursor(j: Job) {
+        j.lastCursorSave = System.currentTimeMillis()
+        val c = cursorNow(j, keepEarlier = !j.againDone)
+        val stamp = "${c.key} ${c.failedTiles}"
+        if (stamp == j.savedCursor) return
+        Areas.update(j.id) { it.copy(cursor = c) }
+        j.savedCursor = stamp
+        j.cursorSaves++
+    }
+
+    /** T151: [failed] (route, zoom: rows) as tile items of [items]' routes, for a walk. */
+    private fun failedItems(items: List<TilesItem>, failed: Map<String, Map<Int, TileSet>>): List<TilesItem> =
+        failed.mapNotNull { (route, sets) -> items.firstOrNull { it.route == route }?.let { TilesItem(it.route, it.ext, it.url, sets.filterValues { s -> s.size > 0 }, 0L) } }
+            .filter { it.count > 0 }
 
     /** One tile of [item] at [z]/[x]/[y]: false when it could not be fetched now (network or server). */
     private fun fetchTile(j: Job, fetcher: OnlineFetcher, item: TilesItem, z: Int, x: Int, y: Int, counted: Boolean): Boolean {
@@ -462,10 +602,11 @@ object AreaDownload {
                     j.fetched.incrementAndGet()
                     j.bytes.addAndGet(f.bytes.size.toLong())
                 }
+                j.unavailableRun.set(0)
                 true
             }
-            Fetch.Missing -> { j.missing.incrementAndGet(); true }
-            is Fetch.Unavailable -> { j.failed.incrementAndGet(); false }
+            Fetch.Missing -> { j.missing.incrementAndGet(); j.unavailableRun.set(0); true }
+            is Fetch.Unavailable -> { j.failed.incrementAndGet(); j.lastUnavailable = f.reason; j.unavailableRun.incrementAndGet(); false }
         }
         if (!counted) j.done.incrementAndGet()
         return ok
@@ -591,6 +732,21 @@ object AreaDownload {
     private const val POOL = 6
     /** T152: tiles queued at most (the walk waits for a slot), so the work in hand never grows with the area. */
     private const val IN_FLIGHT = POOL * 4
+
+    /** T151: the trigger of a download the user started (a tap, a route, a trip's corridor). */
+    const val TRIGGER_USER = "user"
+
+    /** T151: the cursor is saved at most this often while rows complete (and when the run ends): a kill loses a few seconds. */
+    const val CURSOR_SAVE_MS = 2_000L
+
+    /**
+     * T151: tiles in a row that could not be fetched before the walk stops as stalled (two full queues: every worker failed
+     * twice over, which a lost network or a down server does within seconds, while a few bad tiles never do).
+     */
+    const val STALL_TILES = IN_FLIGHT * 2
+
+    /** T151: failed tiles in one walk before it stops, which bounds the failed rows the record keeps (a few KB at most). */
+    const val MAX_FAILED_TILES = 512
     private const val NO_SOURCE = "no online source: set a server (Settings › Sources) or let the phone read the sources"
 }
 
@@ -714,6 +870,39 @@ internal fun defaultName(area: AreaOfInterest, date: java.time.LocalDate, locale
 /** T140 (T136's follow-up): [recent] without the entry of the job shown above it ([id] finished at [finishedAt]). Pure, tested. */
 internal fun recentWithout(recent: List<Map<String, Any?>>, id: String, finishedAt: Long): List<Map<String, Any?>> =
     if (finishedAt == 0L) recent else recent.filterNot { it["id"] == id && (it["finishedAt"] as? Number)?.toLong() == finishedAt }
+
+/** T151: the rows of [failed] (route, zoom: rows) up to and including [row] in the walk's order; none when [row] is null. Pure, tested. */
+internal fun failedThrough(failed: Map<String, Map<Int, TileSet>>, row: TileRow?): Map<String, Map<Int, TileSet>> {
+    if (row == null) return emptyMap()
+    val out = HashMap<String, Map<Int, TileSet>>()
+    for ((route, sets) in failed) {
+        val zs = HashMap<Int, TileSet>()
+        for ((z, set) in sets) {
+            val kept = TileSet(z)
+            set.forEachRow { y, x0, x1 -> if (TileRow.ORDER.compare(TileRow(z, route, y, x0, x1), row) <= 0) kept.addRow(y, x0, x1) }
+            if (kept.size > 0) zs[z] = kept
+        }
+        if (zs.isNotEmpty()) out[route] = zs
+    }
+    return out
+}
+
+/** T151: the union of two failed-tile maps (route, zoom: rows). Pure, tested. */
+internal fun mergeFailed(a: Map<String, Map<Int, TileSet>>, b: Map<String, Map<Int, TileSet>>): Map<String, Map<Int, TileSet>> {
+    val out = HashMap<String, HashMap<Int, TileSet>>()
+    for (m in listOf(a, b)) for ((route, sets) in m) for ((z, set) in sets) {
+        val t = out.getOrPut(route) { HashMap() }.getOrPut(z) { TileSet(z) }
+        set.forEachRow { y, x0, x1 -> t.addRow(y, x0, x1) }
+    }
+    return out
+}
+
+/**
+ * T151: whether a source the phone reads now ([current]) serves another version than [recorded] holds for it; a version not
+ * known now ("": offline at start, the check failed) is no change. Pure, tested.
+ */
+internal fun versionsMoved(recorded: Map<String, Map<String, String>>, current: Map<String, Map<String, String>>): Boolean =
+    current.any { (source, names) -> recorded[source]?.let { old -> names.any { (n, v) -> v.isNotEmpty() && old[n] != null && old[n] != v } } == true }
 
 /** T140: the shapes a server's `GET /area` answer names; box and corridor when it names none (from before T140). Pure, tested. */
 internal fun serverShapesOf(doc: Map<String, Any?>): List<String> =

@@ -85,6 +85,10 @@ private val Teal = Color(0xFF00796B)
  * T140 (ADR 0041): a polygon area's card says its size on the ground ([polygonLine]), a disc's its radius ([discLine]),
  * and its outline is the rings, filled; a record this build cannot read ([Areas.Record.opaque]) gets the needs-newer card
  * ([NeedsNewerCard]): the sentence, the raw reason under it, Show and Remove only.
+ *
+ * T151: an interrupted download (the app closed, the network stopped answering) is partial, so Retry shows at once, and
+ * its card adds [resumeLine] ("Continues by itself", with the minutes during a backoff) while [ResumeCheck] will carry it on.
+ * The coverage the sheet polls every 1.5 s is counted row by row ([Areas.coverage]).
  */
 @Composable
 fun AreasOverlay() {
@@ -220,6 +224,8 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         // T106: from a source the phone no longer reads (its server changed) is older too, said as such.
         if (older) BasicText(if (Areas.fromOtherSource(r)) OTHER_SOURCE_NOTE else OLDER_NOTE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 12.sp, fontWeight = FontWeight.Bold))
         r.error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 2) }
+        // T151: an interrupted download continues by itself (the resume check); Retry stays for the impatient.
+        resumeLine(r, System.currentTimeMillis())?.let { BasicText(it, style = TextStyle(color = Teal, fontSize = 12.sp)) }
         // T106 (a T91 follow-up): a failed, cut short or refused download offers Retry and Dismiss instead of staying listed as failed.
         val failed = r.pack == null && r.state != "downloading" && (r.error != null || r.state == "failed" || r.state == "partial")
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
