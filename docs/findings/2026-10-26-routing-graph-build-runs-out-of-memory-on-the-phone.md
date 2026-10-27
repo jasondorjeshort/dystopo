@@ -43,6 +43,12 @@ share, and what is the one with a stack?
   code path from a connectivity change to a graph build was found; region downloads made in that period are the
   likelier trigger.
 
+- Issue 29 (2026-10-26 20:45 UTC, same build and phone): an `OutOfMemoryError` on the **main** thread, a 48-byte
+  `StringBuilder` allocation with 4.8 MB left of the 512 MB limit ("<1% of heap free after GC"). The main thread is
+  only the victim: the heap was already full, so any allocation anywhere can be the one that fails. It says the
+  pressure is app-wide and not only inside the graph build (not retraced; the stack is in `StringBuilder` from
+  an obfuscated string-building frame called off a main-looper message).
+
 ## Next
 
 - Bound the build by the heap: build in tiles or strips and write as it goes, or refuse with a sentence past a
@@ -50,5 +56,45 @@ share, and what is the one with a stack?
 - Reproduce on an emulator with a 512 MB heap: "Download this region" over a wide view, then watch
   `GET /route/status` and the heap (`GET /diagnostics`) through the graph and search builds that follow; then
   defer or serialise those builds behind the heap, or build the graph lazily per tile as routes reach it.
+- A possibility the owner raised (2026-10-27), an idea and not a decision; the agent doing the work decides: stop
+  starting the search index and the graph when a download finishes (`RegionDownload.recordArea`), and build each on
+  first use instead. `RouteSession` already calls `RoutePlanner.ensure()` when a route is started, so routing
+  would not lose anything; search would need the same. The pack's tiles are not affected (the server builds
+  them; the phone only downloads them), except in the no-server `runLocal` path.
+- Background/foreground cycle test (2026-10-27, debug build on a 3 GB emulator, heap max 576 MB, small Rainier
+  pack; raw rows were in the gitignored `out/memleak/`): 25 HOME-and-launcher relaunches leave Java heap, native
+  heap and PSS flat, no pid change, no OOM. So a plain leak across leave-and-return is **not** shown. The run does
+  not cover a whole-pack graph build, or a cold start after a background kill.
+- Found on the way: when the task's root intent is not the launcher intent (for example the task was started by
+  a notification `PendingIntent`, a `dystopo://` link or `am start -n`), each launcher tap creates **another**
+  `MainActivity` and `MapView` (26 stacked after 25 cycles, about 40 MB native each, 1 GB PSS in total).
+  `MainActivity` in the manifest has no `launchMode` (standard). Whether the owner's phone gets into that state
+  is a guess; check with `adb shell dumpsys meminfo <pkg>` (Activities should read 1). A cheap fix to evaluate:
+  `launchMode="singleTask"` on `MainActivity`.
+- The phone itself (2026-10-27, wireless adb, `dumpsys meminfo` and `dumpsys activity exit-info`): `Activities: 1`,
+  `ViewRootImpl: 1` in a process 19 hours old, so the stacking above is not happening on this phone now. Exit
+  history of the previous processes: three `APP CRASH` records (PSS 524, 567 and 698 MB at the first three;
+  220 MB, importance 100 = foreground, for the one at the time of issue 29) and **two kills by the system for
+  `EXCESSIVE CPU USAGE`** while the app was cached (importance 400): "excessive cpu 8410 during 300089", limit
+  2%, so the app burns about 2.8% CPU in the background and Android kills it. The user's next return is then a
+  cold start. Open: what is running in the background (a build, a poll, tile or track work); the 220 MB PSS beside
+  a "heap full" OOM does not add up and may be a stale sample.
+- Background CPU (2026-10-27, agent on the phone plus code read; the first point re-checked by hand): the app was
+  in the background at 26% user CPU (`dumpsys cpuinfo`); `top -H` showed the main thread at 50% and
+  `HeapTaskDaemon` (GC) at 20%, every named worker thread at 0%. So it is main-thread work that allocates, not a
+  graph, search or download build. The system then killed it again mid-sampling (70 s of CPU in 5 minutes, about
+  23%). Suspects, in order:
+  1. The device-location listener (`MapController.startDeviceLocation`, 1 s, 0 m, main looper) is stopped only by
+     `detach()`, which `MainActivity.onDestroy` calls; `onStop` and `onPause` never stop it (checked). Each fix
+     runs `onFix`, the puck and `MapOrientation.onFix` on the main thread, and follow mode moves the stopped
+     MapView once a second.
+  2. About ten Compose `LaunchedEffect` polling loops (400 ms to 1 s; `OnlineOverlay` rebuilds the region and
+     service JSON every second) are not tied to the lifecycle, so they run while stopped.
+  3. Lesser: `AheadPrefetch` polls every 2 s; the heading sensor listener's release and the NSD multicast
+     wakelock (15 min in batterystats) were not confirmed.
+  Fix to evaluate: stop the location listener in `onStop` and restart it in `onStart`; run the polling loops with
+  `repeatOnLifecycle(STARTED)` or one shared foreground flag. Verify by two `/proc/<pid>/task/*/stat` snapshots
+  60 s apart after leaving the app (main thread and `HeapTaskDaemon` should fall to about 0). Not measured: the
+  per-thread delta over 60 s (the process was killed first).
 - The unwritten trace of the crash in issues 23 and 26 may itself be an OOM that left the handler no memory to
   write with (a guess).
