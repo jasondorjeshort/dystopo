@@ -83,6 +83,8 @@ object AreaDownload {
         @Volatile var cancelled = false
         @Volatile var manifest: AreaManifest? = null
         @Volatile var manifestFrom: String? = null
+        /** T152: why the server's manifest was not used (its 413), when the phone made it instead. */
+        @Volatile var serverNote: String? = null
         val planned = AtomicInteger()
         val done = AtomicInteger()
         val fetched = AtomicInteger()
@@ -113,7 +115,7 @@ object AreaDownload {
             val now = if (finishedAt != 0L) finishedAt else System.currentTimeMillis()
             val p = planned.get()
             return linkedMapOf(
-                "id" to id, "name" to name, "state" to state, "error" to error, "source" to source, "manifestFrom" to manifestFrom,
+                "id" to id, "name" to name, "state" to state, "error" to error, "source" to source, "manifestFrom" to manifestFrom, "serverNote" to serverNote,
                 "planned" to p, "done" to done.get(), "percent" to if (p == 0) null else Math.round(done.get() * 1000.0 / p) / 10.0,
                 "fetched" to fetched.get(), "alreadyCached" to cached.get(), "inPacks" to inPacks.get(), "missing" to missing.get(),
                 "failed" to failed.get(), "invalid" to invalid.get(), "bytes" to bytes.get(), "contourTiles" to contourTiles.get(),
@@ -539,6 +541,9 @@ object AreaDownload {
                 404, 405 -> null // a server from before T75: make the lists here
                 // T140 (ADR 0041 §3): a server from before the polygon kind ("kind must be box or corridor"): the lists are made here.
                 400 -> if (serverError(text).startsWith("kind must be")) null else throw IOException("server refused the area (HTTP 400): ${serverError(text)}")
+                // T152: over a server's limit (DYSTOPO_AREA_MAX_TILES, or an older server's heap check): the phone's own manifest
+                // is the path past it; the tiles still come from the server's tile routes.
+                413 -> null.also { j?.serverNote = "the server's manifest was refused (HTTP 413: ${serverError(text)}); the phone made it" }
                 else -> throw IOException("server refused the area (HTTP $status): ${runCatching { MiniJson.parseObject(text)["error"] }.getOrNull() ?: text.take(200)}")
             }
         } catch (e: IOException) {
@@ -644,9 +649,12 @@ internal fun areaBudgetError(pinnedBytes: Long, estimateBytes: Long, alreadyByte
         "Make the area smaller, choose less detail, or raise the budget in Settings › Storage."
 }
 
-/** T140: [aboutMb] below 1 GB, else "1.6 GB". Pure, tested. */
-internal fun aboutSize(bytes: Long): String =
-    if (bytes >= 1L shl 30) String.format(java.util.Locale.US, "%.1f GB", bytes / 1_073_741_824.0) else aboutMb(bytes)
+/** T140: [aboutMb] below 1 GB, else "1.6 GB"; T152: from 1 TB "11.5 TB" (areas past the old heap limit reach it). Pure, tested. */
+internal fun aboutSize(bytes: Long): String = when {
+    bytes >= 1L shl 40 -> String.format(java.util.Locale.US, "%.1f TB", bytes / 1_099_511_627_776.0)
+    bytes >= 1L shl 30 -> String.format(java.util.Locale.US, "%.1f GB", bytes / 1_073_741_824.0)
+    else -> aboutMb(bytes)
+}
 
 /**
  * T140 (ADR 0041 §5): the summary, "About 170 MB (1,300 tiles) at full detail"; "at less detail" for z8 to z13, the zooms
