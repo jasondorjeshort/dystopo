@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
-import io.github.jasondorjeshort.dystopo.areas.AreaLimit
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -53,8 +52,8 @@ import kotlinx.coroutines.withContext
  * less detail (z8 to z13) unless its full-detail size (z8 to z15) fits the pinned budget: a departure from the catalogue
  * apps of the picker survey, which ship one fixed detail, because these tiles are pyramids eight times larger at z15.
  *
- * A row over the budget stays, greyed, with ADR 0041 §5's budget sentence; a row the heap's tile limit refuses even at
- * less detail ([AreaLimit], and Antarctica, which no area can hold) stays, greyed, with [TOO_LARGE_ROW]. Sizes are
+ * A row over the budget stays, greyed, with ADR 0041 §5's budget sentence; a country no area can hold (Antarctica; T152:
+ * the heap no longer refuses one) stays, greyed, with [TOO_LARGE_ROW]. Sizes are
  * measured on the phone, off the UI thread ([CountrySizes]), over the same cover and estimate as the download's manifest.
  * No sovereignty text anywhere: the list shows `NAME` and Natural Earth's continent, nothing else.
  */
@@ -135,15 +134,14 @@ object CountrySizes {
     }
 
     private fun measure(c: Country, server: String?): Entry {
-        val heap = AreaDownload.heapTiles()
         val lessArea = countryArea(c, AreaPicker.LESS_MAX_ZOOM) ?: return Entry(CountryMeasure(0, 0, true), null, null, null)
         val (dem, osm) = AreaDownload.zooms(lessArea, server)
-        val less = measureArea(lessArea, dem, osm, heap)
+        val less = measureArea(lessArea, dem, osm)
         val pinned = runCatching { OnlineService.get(DystopoApp.instance).cache.pinnedBytes }.getOrDefault(0L)
         val fullArea = countryArea(c, AreaPicker.FULL_MAX_ZOOM)!!
         // Full detail only when it might fit the budget (it costs eight times the tiles): [fullAtLeast] first.
         val full = if (!less.tooLarge && areaBudgetError(pinned, fullAtLeast(less), 0, AppSettings.pinnedCacheMb) == null) {
-            AreaDownload.zooms(fullArea, server).let { (d, o) -> measureArea(fullArea, d, o, heap) }
+            AreaDownload.zooms(fullArea, server).let { (d, o) -> measureArea(fullArea, d, o) }
         } else null
         return Entry(less, full, lessArea.id, fullArea.id)
     }
@@ -162,7 +160,7 @@ object CountrySizes {
 }
 
 /**
- * T142: a country's tiles and estimated bytes at one detail, or [tooLarge] when the heap's tile limit refuses it;
+ * T142: a country's tiles and estimated bytes at one detail, or [tooLarge] when no area can hold it (T152: never the heap);
  * [topTiles] is the cover's count at the deepest zoom.
  */
 class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean, val topTiles: Int = 0)
@@ -188,11 +186,10 @@ internal fun countryArea(c: Country, maxZoom: Int): AreaOfInterest? = try {
 
 /**
  * T142: the tiles and bytes of [area]'s manifest at DEM zooms [dem] and vector zooms [osm] with [margin] (the totals of
- * [AreaManifest.tileItems], each zoom's cover made once for both routes), or too large when [AreaLimit] refuses it before
- * anything is filled. Pure, tested against [AreaManifest.tileItems].
+ * [AreaManifest.tileItems], each zoom's cover made once for both routes; T152: rows, so at any size). Pure, tested against
+ * [AreaManifest.tileItems].
  */
-internal fun measureArea(area: AreaOfInterest, dem: IntRange?, osm: IntRange?, maxTiles: Long, margin: Int = 1): CountryMeasure {
-    if (AreaLimit.refusal(area, dem, osm, maxTiles, margin) != null) return CountryMeasure(0, 0, true)
+internal fun measureArea(area: AreaOfInterest, dem: IntRange?, osm: IntRange?, margin: Int = 1): CountryMeasure {
     var bytes = 0L
     var tiles = 0
     var top = 0
@@ -216,7 +213,7 @@ class CountryRow(val detail: String, val bytes: Long?, val tiles: Int?, val stat
 /**
  * T142: the row of a country measured as [e] (null: not yet) with [pinnedBytes] pinned, [alreadyBytes] of them its own
  * (downloaded before), and a budget of [budgetMb]: full detail when it fits the budget, else less detail; over the budget
- * at less detail greyed with ADR 0041 §5's sentence; refused by the heap greyed with [TOO_LARGE_ROW]. Pure, tested.
+ * at less detail greyed with ADR 0041 §5's sentence; no area can hold it greyed with [TOO_LARGE_ROW]. Pure, tested.
  */
 internal fun countryRow(e: CountrySizes.Entry?, pinnedBytes: Long, alreadyBytes: Long, budgetMb: Long): CountryRow {
     if (e == null) return CountryRow(DETAIL_LESS, null, null, RowState.MEASURING, MEASURING, null)
@@ -246,7 +243,7 @@ const val DETAIL_LESS = "less"
 internal const val CHOOSE_COUNTRY = "Choose a country"
 /** T142: the filter box's hint. */
 internal const val FILTER_HINT = "Filter by name or code"
-/** T142: a row the heap's tile limit refuses even at less detail (the owner's words in T142). */
+/** T142: a row no area can hold (the owner's words in T142; T152: no longer the heap's limit). */
 internal const val TOO_LARGE_ROW = "Too large to download whole at this detail; draw an area instead"
 /** T142: a row or a summary still being measured. */
 internal const val MEASURING = "Measuring…"

@@ -13,6 +13,9 @@ package io.github.jasondorjeshort.dystopo.areas
  * key to content name (`dem`, `osm`) to version, "" for a source that has none). A source whose content version
  * changes keeps the tiles a cover [holds] at the old version, and lookups that miss the current version try the
  * [versions] pins hold, so a pinned area is served at the version it was fetched at until it is refreshed.
+ *
+ * T152: a cover is [TileSet]s, so rows: every pinned area is held for the app's life at a cost of its tile rows (a few
+ * thousand for a country at z15), not its tiles; [contains] is a hash lookup of the row and a binary search of its spans.
  */
 class AreaPins(covers: List<Map<Int, TileSet>>, versions: List<Map<String, Map<String, String>>> = emptyList()) {
     private class Cover(val sets: Map<Int, TileSet>, val versions: Map<String, Map<String, String>>) {
@@ -25,7 +28,7 @@ class AreaPins(covers: List<Map<Int, TileSet>>, versions: List<Map<String, Map<S
                 val s = z - maxZoom
                 return sets.getValue(maxZoom).contains(x shr s, y shr s)
             }
-            if (z < minZoom) return sets.getValue(minZoom).tiles().any { (tx, ty) -> (tx shr (minZoom - z)) == x && (ty shr (minZoom - z)) == y }
+            if (z < minZoom) return sets.getValue(minZoom).ancestors(minZoom - z).contains(x, y)
             return sets[z]?.contains(x, y) ?: false
         }
     }

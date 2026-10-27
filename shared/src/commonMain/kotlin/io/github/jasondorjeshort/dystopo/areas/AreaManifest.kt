@@ -101,12 +101,32 @@ data class TilesItem(
     val zooms: IntRange? get() = tiles.keys.takeIf { it.isNotEmpty() }?.let { it.min()..it.max() }
     override val bytes get() = fetchedBytes ?: bytesEstimate
     override val exact get() = fetchedBytes != null
-    override fun json(): Map<String, Any?> = linkedMapOf(
+    override fun json(): Map<String, Any?> = json(withTiles = true)
+
+    /** T152: [withTiles] false leaves the rows out (a listing; the rows are only built when asked for). */
+    fun json(withTiles: Boolean): Map<String, Any?> = linkedMapOf(
         "kind" to kind, "route" to route, "ext" to ext, "url" to url, "zooms" to zooms?.let { listOf(it.first, it.last) },
         "count" to count, "perZoom" to tiles.toSortedMap().mapKeys { it.key.toString() }.mapValues { it.value.size },
         "bytes" to bytes, "estimated" to !exact, "fetchedBytes" to fetchedBytes,
-        "tiles" to tiles.toSortedMap().mapKeys { it.key.toString() }.mapValues { it.value.rows() },
-    )
+        "rows" to tiles.values.sumOf { it.rowCount },
+    ).also { if (withTiles) it["tiles"] = tiles.toSortedMap().mapKeys { e -> e.key.toString() }.mapValues { e -> e.value.rows() } }
+}
+
+/**
+ * T152: one unit of an area download's walk, the tiles [x0] to [x1] (inclusive) of tile row [y] at zoom [z] of [route]
+ * (a `[y, x0, x1]` row of a [TilesItem]). The walk ([AreaManifest.walk]) visits a manifest's rows in one fixed order:
+ * zoom ascending, then route by name (`dem` before `osm`), then [y] ascending, then [x0] ascending. A manifest's rows never
+ * change once it is made, so neither does that order: (z, route, y, x0) names a row and everything before it.
+ */
+data class TileRow(val z: Int, val route: String, val y: Int, val x0: Int, val x1: Int) {
+    val count: Int get() = x1 - x0 + 1
+
+    fun json(): Map<String, Any?> = linkedMapOf("z" to z, "route" to route, "y" to y, "x0" to x0, "x1" to x1)
+
+    companion object {
+        /** The walk's order (see the class comment). */
+        val ORDER: Comparator<TileRow> = compareBy<TileRow>({ it.z }, { it.route }, { it.y }, { it.x0 })
+    }
 }
 
 /**
@@ -166,15 +186,26 @@ data class AreaManifest(
     val packs: List<FileItem> get() = items.filterIsInstance<FileItem>()
     fun tiles(route: String): TilesItem? = items.filterIsInstance<TilesItem>().firstOrNull { it.route == route }
 
-    fun json(): Map<String, Any?> = linkedMapOf(
+    /**
+     * T152: the tile rows of every [TilesItem] in the download's order ([TileRow]): zoom ascending, then route by name
+     * (`dem` before `osm`), then y, then x0. Made as it is walked, nothing per tile held.
+     */
+    fun walk(): Sequence<TileRow> = walk(items.filterIsInstance<TilesItem>())
+
+    /** T152: the number of rows [walk] visits. */
+    val rowCount: Int get() = items.filterIsInstance<TilesItem>().sumOf { i -> i.tiles.values.sumOf { it.rowCount } }
+
+    fun json(): Map<String, Any?> = json(withTiles = true)
+
+    /** The manifest without the tile lists (for listings; [json] has them). */
+    fun summary(): Map<String, Any?> = json(withTiles = false)
+
+    private fun json(withTiles: Boolean): Map<String, Any?> = linkedMapOf(
         "version" to maxOf(version, area.manifestVersion), "id" to id, "name" to name, "status" to status, "source" to source, "generatedAt" to generatedAt,
         "area" to area.json(), "bounds" to area.bounds.toList(), "lengthM" to area.lengthM.takeIf { it > 0 },
         "bytes" to bytes, "bytesExact" to bytesExact, "tiles" to tileCount,
-        "items" to items.map { it.json() }, "build" to build, "notes" to notes,
+        "items" to items.map { if (it is TilesItem) it.json(withTiles) else it.json() }, "build" to build, "notes" to notes,
     ).also { if (versions.isNotEmpty()) it["versions"] = versions.toSortedMap() } // T95
-
-    /** The manifest without the tile lists (for listings; [json] has them). */
-    fun summary(): Map<String, Any?> = json() + ("items" to items.map { i -> i.json().filterKeys { it != "tiles" } })
 
     companion object {
         /** T140: the newest manifest version this build reads (2: the polygon kind, ADR 0041). */
@@ -212,6 +243,15 @@ data class AreaManifest(
 
         fun parse(json: String): AreaManifest = parse(MiniJson.parseObject(json))
 
+        /** T152: the rows of [items] in [TileRow]'s order (see [AreaManifest.walk]). */
+        fun walk(items: List<TilesItem>): Sequence<TileRow> = sequence {
+            val byRoute = items.sortedBy { it.route }
+            for (z in byRoute.flatMap { it.tiles.keys }.toSortedSet()) for (item in byRoute) {
+                val set = item.tiles[z] ?: continue
+                for (r in set.rows()) yield(TileRow(z, item.route, r[0], r[1], r[2]))
+            }
+        }
+
         /** T140: a [NeedsNewerApp] for a manifest or record [version] newer than [VERSION]. */
         fun checkVersion(version: Int) {
             if (version > VERSION) throw NeedsNewerApp("manifest version $version is newer than this app reads ($VERSION)")
@@ -223,12 +263,14 @@ data class AreaManifest(
          */
         fun tileItems(area: AreaOfInterest, demZooms: IntRange?, osmZooms: IntRange?, margin: Int = 1): List<TilesItem> {
             val out = ArrayList<TilesItem>()
+            val covers = HashMap<Int, TileSet>() // T152: a zoom both routes need is filled once (read only after)
+            fun byZoom(zs: IntRange) = zs.associateWith { z -> covers.getOrPut(z) { TileCover.of(area, z, margin) } }
             if (demZooms != null && !demZooms.isEmpty()) {
-                val t = TileCover.byZoom(area, demZooms, margin)
+                val t = byZoom(demZooms)
                 out += TilesItem(ROUTE_DEM, "png", "/dem/{z}/{x}/{y}.png", t, t.entries.sumOf { (z, s) -> s.size * estimate(ROUTE_DEM, z) })
             }
             if (osmZooms != null && !osmZooms.isEmpty()) {
-                val t = TileCover.byZoom(area, osmZooms, margin)
+                val t = byZoom(osmZooms)
                 out += TilesItem(ROUTE_OSM, "pbf", "/osm/{z}/{x}/{y}.pbf", t, t.entries.sumOf { (z, s) -> s.size * estimate(ROUTE_OSM, z) })
             }
             return out

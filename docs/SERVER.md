@@ -342,8 +342,7 @@ Options (query or body): `pack=1|0` (default: 1 for a box, 0 for a corridor or a
 `fallback`, `source` (as for `/build`), `retry=1` (build again after a failed build). It is token-protected
 like `/build`, because a box starts a build. `GET /area` lists the parameters and limits, `manifestVersion`
 (the newest it reads, 2) and `shapes` (`box`, `corridor`, `polygon`; a phone treats a server whose answer has
-no `shapes` as reading box and corridor only), `maxAreaTiles` and `heapAreaTiles` (the memory guard's limit
-from this server's heap).
+no `shapes` as reading box and corridor only) and `maxAreaTiles`.
 
 - **A box** (or `pack=1`) is a region pack built through the same jobs as `POST /build` (name: `name`, else
   the area's name when it is a valid pack name, else `area-<12 hex digits of the id>`; the outdoors profile
@@ -363,11 +362,8 @@ from this server's heap).
 - **A polygon** (T140, ADR 0041) is tiles like a corridor: the tiles whose square lies within `bufferM` of a ring
   edge (with no buffer, the tiles an edge crosses) or whose centre is inside the rings by the even-odd rule, with
   the same zooms and margin, as a **version 2** manifest. `pack=1` on one is a 400, "a pack is a box; download a
-  box for the trail graph". Before any tile set is filled, the tiles of each outer ring's own bounding box (holes
-  not counted, so parts either side of the antimeridian are not charged for the ocean between them) over the zoom
-  range are checked against a limit from the server's heap (`AreaLimit`: a quarter of the heap at 256 bytes a
-  tile); over it the answer is 413, "This area is too large at this detail; make it smaller or choose less
-  detail". Over `DYSTOPO_AREA_MAX_TILES` its 413 ends "lower maxZoom or draw a smaller area". The area within a
+  box for the trail graph". Its tile sets are held as rows (T152, ADR 0041 §3's T152 note), so no heap check
+  comes first; over `DYSTOPO_AREA_MAX_TILES` its 413 ends "lower maxZoom or draw a smaller area". The area within a
   distance of a point is the one-point corridor up to 20 km (every build since T75 reads it), a 48-vertex
   polygon circle beyond.
 

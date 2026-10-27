@@ -9,61 +9,138 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The XYZ tiles of one zoom [z] that an area touches. Stored as a hash set; written to JSON as rows
- * `[y, x0, x1]` (every x from x0 to x1 inclusive on row y), sorted, which keeps a corridor's list short.
+ * The XYZ tiles of one zoom [z] that an area touches, held as rows: per tile row y, the sorted spans of x it covers
+ * (T152: before, a hash set of every tile, about 60 heap bytes a tile, which made the heap an area's size limit; now a
+ * country costs its rows, a few thousand, whatever its tiles). Spans on a row never overlap or touch: adding one merges
+ * it with its neighbours. Written to JSON as rows `[y, x0, x1]` (every x from x0 to x1 inclusive on row y), sorted.
+ *
+ * Built by one thread, then only read (the pins are read from many); not safe for writes from several threads.
  */
 class TileSet(val z: Int) {
-    private val set = HashSet<Long>()
+    /** One tile row's spans as pairs in [a]: `a[2i]` the first x, `a[2i + 1]` the last, sorted, disjoint and not adjacent. */
+    private class Spans {
+        var a = IntArray(4)
+        var n = 0 // spans held
 
-    val size: Int get() = set.size
+        fun lo(i: Int) = a[2 * i]
+        fun hi(i: Int) = a[2 * i + 1]
 
-    private fun key(x: Int, y: Int): Long = (x.toLong() shl 32) or (y.toLong() and 0xffffffffL)
+        /** The first span whose end is at least [x]; [n] when none. Ends are sorted because spans are disjoint. */
+        fun firstEndingAtOrAfter(x: Int): Int {
+            var l = 0
+            var h = n
+            while (l < h) {
+                val m = (l + h) ushr 1
+                if (hi(m) < x) l = m + 1 else h = m
+            }
+            return l
+        }
 
-    fun add(x: Int, y: Int) {
-        set += key(x, y)
+        fun contains(x: Int): Boolean {
+            val i = firstEndingAtOrAfter(x)
+            return i < n && lo(i) <= x
+        }
+
+        /** Adds [x0]..[x1], merging the spans it overlaps or touches; returns the tiles it added. */
+        fun add(x0: Int, x1: Int): Long {
+            val i = firstEndingAtOrAfter(x0 - 1)
+            var j = i
+            var from = x0
+            var to = x1
+            var had = 0L
+            while (j < n && lo(j) <= x1 + 1) {
+                from = min(from, lo(j))
+                to = max(to, hi(j))
+                had += hi(j) - lo(j) + 1L
+                j++
+            }
+            val shift = 1 - (j - i) // spans [i, j) become one
+            if (shift > 0 && 2 * (n + shift) > a.size) a = a.copyOf(maxOf(a.size * 2, 2 * (n + shift)))
+            if (shift != 0) a.copyInto(a, 2 * (j + shift), 2 * j, 2 * n)
+            a[2 * i] = from
+            a[2 * i + 1] = to
+            n += shift
+            return to - from + 1L - had
+        }
     }
 
-    fun contains(x: Int, y: Int): Boolean = key(x, y) in set
+    private val byRow = HashMap<Int, Spans>()
+    private var tileCount = 0L
+
+    /** The tiles held (at most 4^[z]; an area's zoom never passes [AreaOfInterest.MAX_ZOOM], so it fits an Int). */
+    val size: Int get() = tileCount.toInt()
+
+    /** T152: the spans held, one per `[y, x0, x1]` row of [rows]. */
+    val rowCount: Int get() = byRow.values.sumOf { it.n }
+
+    fun add(x: Int, y: Int) {
+        addRow(y, x, x)
+    }
+
+    fun contains(x: Int, y: Int): Boolean = byRow[y]?.contains(x) ?: false
 
     /** T140: every tile from [x0] to [x1] (inclusive) on row [y]; nothing when [x1] < [x0]. */
     fun addRow(y: Int, x0: Int, x1: Int) {
-        for (x in x0..x1) set += key(x, y)
+        if (x1 < x0) return
+        tileCount += byRow.getOrPut(y) { Spans() }.add(x0, x1)
     }
 
-    /** Every tile as (x, y), row by row. */
-    fun tiles(): List<Pair<Int, Int>> = set.map { (it ushr 32).toInt() to (it and 0xffffffffL).toInt() }.sortedWith(compareBy({ it.second }, { it.first }))
+    /** T152: calls [f] with every span as (y, x0, x1), sorted by y then x0. */
+    fun forEachRow(f: (y: Int, x0: Int, x1: Int) -> Unit) {
+        for (y in byRow.keys.sorted()) {
+            val s = byRow.getValue(y)
+            for (i in 0 until s.n) f(y, s.lo(i), s.hi(i))
+        }
+    }
+
+    /**
+     * Every tile as (x, y), row by row (y, then x). T152: a view over the rows, made as it is walked (nothing per tile is
+     * held; indexing walks the rows, so iterate rather than index a large set).
+     */
+    fun tiles(): List<Pair<Int, Int>> = TileList(rows(), size)
+
+    private class TileList(private val rows: List<List<Int>>, override val size: Int) : AbstractList<Pair<Int, Int>>() {
+        override fun get(index: Int): Pair<Int, Int> {
+            if (index < 0 || index >= size) throw IndexOutOfBoundsException("tile $index of $size")
+            var k = index
+            for (r in rows) {
+                val n = r[2] - r[1] + 1
+                if (k < n) return (r[1] + k) to r[0]
+                k -= n
+            }
+            throw IndexOutOfBoundsException("tile $index of $size")
+        }
+
+        override fun iterator(): Iterator<Pair<Int, Int>> = object : Iterator<Pair<Int, Int>> {
+            var row = 0
+            var x = rows.firstOrNull()?.get(1) ?: 0
+            override fun hasNext() = row < rows.size
+            override fun next(): Pair<Int, Int> {
+                if (row >= rows.size) throw NoSuchElementException()
+                val r = rows[row]
+                val out = x to r[0]
+                if (x < r[2]) x++ else { row++; if (row < rows.size) x = rows[row][1] }
+                return out
+            }
+        }
+    }
 
     /** Rows `[y, x0, x1]`, sorted by y then x0. */
     fun rows(): List<List<Int>> {
-        val out = ArrayList<List<Int>>()
-        var row = -1
-        var x0 = 0
-        var x1 = -2
-        for ((x, y) in tiles()) {
-            if (y == row && x == x1 + 1) {
-                x1 = x
-                continue
-            }
-            if (x1 >= x0 && row >= 0) out += listOf(row, x0, x1)
-            row = y
-            x0 = x
-            x1 = x
-        }
-        if (row >= 0) out += listOf(row, x0, x1)
+        val out = ArrayList<List<Int>>(rowCount)
+        forEachRow { y, x0, x1 -> out += listOf(y, x0, x1) }
         return out
     }
 
-    /** This set grown by [n] tiles on every side (clamped to the world). */
+    /** This set grown by [n] tiles on every side (clamped to the world). T152: row by row, never tile by tile. */
     fun dilate(n: Int): TileSet {
         if (n <= 0) return this
         val max = (1 shl z) - 1
         val out = TileSet(z)
-        for ((x, y) in tiles()) {
-            for (dy in -n..n) for (dx in -n..n) {
-                val tx = x + dx
-                val ty = y + dy
-                if (tx in 0..max && ty in 0..max) out.add(tx, ty)
-            }
+        forEachRow { y, x0, x1 ->
+            val lo = maxOf(0, x0 - n)
+            val hi = minOf(max, x1 + n)
+            for (ty in maxOf(0, y - n)..minOf(max, y + n)) out.addRow(ty, lo, hi)
         }
         return out
     }
@@ -72,7 +149,7 @@ class TileSet(val z: Int) {
     fun ancestors(levels: Int): TileSet {
         val out = TileSet(maxOf(0, z - levels))
         val s = z - out.z
-        for ((x, y) in tiles()) out.add(x shr s, y shr s)
+        forEachRow { y, x0, x1 -> out.addRow(y shr s, x0 shr s, x1 shr s) }
         return out
     }
 
@@ -82,7 +159,7 @@ class TileSet(val z: Int) {
             for (r in rows) {
                 require(r.size == 3 && r[1] <= r[2]) { "a tile row is [y, x0, x1]" }
                 require(r[2] - r[1] < (1 shl z) + 1) { "row too long" }
-                for (x in r[1]..r[2]) t.add(x, r[0])
+                t.addRow(r[0], r[1], r[2])
             }
             return t
         }
@@ -193,7 +270,7 @@ object TileCover {
         val y0 = floor(WebMercator.latToY(north, z)).toInt().coerceIn(0, n)
         val y1 = floor(WebMercator.latToY(south, z)).toInt().coerceIn(0, n)
         val t = TileSet(z)
-        for (y in y0..y1) for (x in x0..x1) t.add(x, y)
+        for (y in y0..y1) t.addRow(y, x0, x1)
         return t
     }
 

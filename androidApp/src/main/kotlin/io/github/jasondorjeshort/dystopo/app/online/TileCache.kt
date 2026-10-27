@@ -33,7 +33,10 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         recountPinned()
     }
 
-    private class Entry(val file: File, val bytes: Long, @Volatile var touchedAt: Long, var pinned: Boolean = false)
+    /** T152: no `File` held (its absolute path was about half an entry's heap); [fileOf] makes it from the key when needed. */
+    private class Entry(val bytes: Long, @Volatile var touchedAt: Long, var pinned: Boolean = false)
+
+    private fun fileOf(key: String) = File(dir, key)
 
     // Access order: iteration starts at the least recently used entry.
     private val index = LinkedHashMap<String, Entry>(256, 0.75f, true)
@@ -75,7 +78,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         synchronized(this) {
             for ((f, mtime) in found) {
                 val len = f.length()
-                index[f.relativeTo(dir).invariantSeparatorsPath] = Entry(f, len, mtime)
+                index[f.relativeTo(dir).invariantSeparatorsPath] = Entry(len, mtime)
                 total += len
             }
         }
@@ -100,7 +103,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
             return null
         }
         val bytes = try {
-            e.file.readBytes()
+            fileOf(key).readBytes()
         } catch (_: Exception) {
             // Deleted behind our back (the system trims app caches under storage pressure).
             synchronized(this) { if (index[key] === e) { index.remove(key); forget(e) } }
@@ -111,7 +114,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         val now = clock()
         if (now - e.touchedAt > TOUCH_INTERVAL_MS) {
             e.touchedAt = now
-            e.file.setLastModified(now)
+            fileOf(key).setLastModified(now)
         }
         return bytes
     }
@@ -153,7 +156,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         val pinned = keep(key)
         synchronized(this) {
             index.remove(key)?.let { forget(it) }
-            index[key] = Entry(file, bytes.size.toLong(), now, pinned)
+            index[key] = Entry(bytes.size.toLong(), now, pinned)
             total += bytes.size
             if (pinned) pinnedTotal += bytes.size
         }
@@ -193,7 +196,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
                 it.remove()
                 forget(e)
                 freed += e.bytes
-                victims += e.file
+                victims += fileOf(n.key)
             }
         }
         victims.forEach { it.delete() }
@@ -223,9 +226,9 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     fun clear(prefix: String = ""): Int {
         val gone = synchronized(this) {
             val keys = index.keys.filter { it.startsWith(prefix) }
-            keys.mapNotNull { k -> index.remove(k)?.also { forget(it) } }
+            keys.mapNotNull { k -> index.remove(k)?.let { forget(it); k } }
         }
-        gone.forEach { it.file.delete() }
+        gone.forEach { fileOf(it).delete() }
         return gone.size
     }
 
@@ -244,8 +247,8 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
         val names = File(dir, parent).list()?.filter { it.startsWith(prefix) && !it.endsWith(".tmp") }.orEmpty()
         val keys = names.map { if (parent.isEmpty()) it else "$parent/$it" }.filter { it != kept }
         if (keys.isEmpty()) return 0
-        val gone = synchronized(this) { keys.mapNotNull { k -> index.remove(k)?.also { forget(it) } } }
-        gone.forEach { it.file.delete() }
+        val gone = synchronized(this) { keys.mapNotNull { k -> index.remove(k)?.let { forget(it); k } } }
+        gone.forEach { fileOf(it).delete() }
         return gone.size
     }
 
@@ -259,9 +262,9 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
     fun clearWhere(matches: (String) -> Boolean): Int {
         val gone = synchronized(this) {
             val keys = index.keys.filter(matches)
-            keys.mapNotNull { k -> index.remove(k)?.also { forget(it) } }
+            keys.mapNotNull { k -> index.remove(k)?.let { forget(it); k } }
         }
-        gone.forEach { it.file.delete() }
+        gone.forEach { fileOf(it).delete() }
         return gone.size
     }
 
@@ -281,7 +284,7 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
                 if (kept) continue
                 it.remove()
                 forget(e)
-                victims += e.file
+                victims += fileOf(n.key)
             }
         }
         victims.forEach { it.delete() }

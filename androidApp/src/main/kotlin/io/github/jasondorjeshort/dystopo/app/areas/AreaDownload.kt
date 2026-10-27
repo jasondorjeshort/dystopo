@@ -18,13 +18,14 @@ import io.github.jasondorjeshort.dystopo.areas.AssetItem
 import io.github.jasondorjeshort.dystopo.areas.LocalItem
 import io.github.jasondorjeshort.dystopo.areas.ManifestItem
 import io.github.jasondorjeshort.dystopo.areas.TileCover
+import io.github.jasondorjeshort.dystopo.areas.TileRow
+import io.github.jasondorjeshort.dystopo.areas.TileSet
 import io.github.jasondorjeshort.dystopo.areas.TilesItem
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import java.io.IOException
-import java.util.concurrent.Callable
 import java.util.concurrent.Executors
-import java.util.concurrent.Future
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -55,10 +56,17 @@ import java.util.concurrent.atomic.AtomicLong
  * T140 (ADR 0041 §3): a polygon is fetched the same way. Its [plan] (and a disc's, the one-point corridor) is the phone's
  * own manifest, with the size line, the time from the last completed download and the less-detail alternative; the
  * server is asked once, at Download, and a server that does not read polygons (no `polygon` in `GET /area`'s `shapes`,
- * or a 400 starting "kind must be") leaves the manifest to the phone. Before any tile set is filled, the outer rings'
- * boxes are checked against the heap's tile limit ([AreaLimit], [heapTiles]); over it, the plan refuses with
- * [AreaLimit.TOO_LARGE] and a download does not start. Over the pinned budget, a drawn area or a disc says its size,
- * what is in use and the remedies ([areaBudgetError]).
+ * or a 400 starting "kind must be") leaves the manifest to the phone. Over the pinned budget, a drawn area or a disc says
+ * its size, what is in use and the remedies ([areaBudgetError]).
+ *
+ * T152 (ADR 0041 §3, its T152 note): the heap is no size limit. The manifest's tile sets are rows ([TileSet]), and the
+ * download walks them row by row ([AreaManifest.walk], [TileRow]: zoom, then route, then row) with at most [IN_FLIGHT]
+ * tiles queued, so nothing it holds grows with the area: the plan always carries its estimate (tiles times
+ * [AreaManifest.estimate]), says when the area passes the tile cache index's comfortable size ([AreaLimit.pastHeap],
+ * `pastHeapLimit`) and Download proceeds; the pinned budget is the one limit. `GET /areas/download` `rows` shows the
+ * walk: rows planned, started and whole, the row being fetched and the last row of the whole prefix. Failed tiles are
+ * kept as row sets per route and zoom and walked again at the end. In direct mode the download is exempt from the
+ * sources' session cap ([DirectSources.exempt]).
  */
 object AreaDownload {
     private val app: DystopoApp get() = DystopoApp.instance
@@ -75,6 +83,8 @@ object AreaDownload {
         @Volatile var cancelled = false
         @Volatile var manifest: AreaManifest? = null
         @Volatile var manifestFrom: String? = null
+        /** T152: why the server's manifest was not used (its 413), when the phone made it instead. */
+        @Volatile var serverNote: String? = null
         val planned = AtomicInteger()
         val done = AtomicInteger()
         val fetched = AtomicInteger()
@@ -92,14 +102,27 @@ object AreaDownload {
         @Volatile var finishedAt = 0L
         val running get() = state !in setOf("done", "partial", "failed", "refused", "cancelled")
 
+        /** T152: the walk's rows ([TileRow]): planned, started, whole, the row being fetched and the last of the whole prefix. */
+        val rowsPlanned = AtomicInteger()
+        val rowsStarted = AtomicInteger()
+        val rowsDone = AtomicInteger()
+        @Volatile var rowNow: TileRow? = null
+        /** T152: the rows of the walk before this index are all whole; [lastWhole] is the last of them (where a resume may start after). */
+        @Volatile var wholePrefix = 0
+        @Volatile var lastWhole: TileRow? = null
+
         fun json(): Map<String, Any?> {
             val now = if (finishedAt != 0L) finishedAt else System.currentTimeMillis()
             val p = planned.get()
             return linkedMapOf(
-                "id" to id, "name" to name, "state" to state, "error" to error, "source" to source, "manifestFrom" to manifestFrom,
+                "id" to id, "name" to name, "state" to state, "error" to error, "source" to source, "manifestFrom" to manifestFrom, "serverNote" to serverNote,
                 "planned" to p, "done" to done.get(), "percent" to if (p == 0) null else Math.round(done.get() * 1000.0 / p) / 10.0,
                 "fetched" to fetched.get(), "alreadyCached" to cached.get(), "inPacks" to inPacks.get(), "missing" to missing.get(),
                 "failed" to failed.get(), "invalid" to invalid.get(), "bytes" to bytes.get(), "contourTiles" to contourTiles.get(),
+                "rows" to linkedMapOf(
+                    "planned" to rowsPlanned.get(), "started" to rowsStarted.get(), "done" to rowsDone.get(), "wholePrefix" to wholePrefix,
+                    "current" to rowNow?.json(), "lastWhole" to lastWhole?.json(), "order" to "zoom, route, y, x0",
+                ),
                 "estimateBytes" to manifest?.bytes, "manifestMs" to manifestMs, "elapsedMs" to now - startedAt,
                 "versionsBefore" to versionsBefore, "versionsAfter" to versionsAfter, "refreshDropped" to refreshDropped, // T95
                 "manifest" to manifest?.summary(),
@@ -116,7 +139,7 @@ object AreaDownload {
     /** T140 (T136's follow-up): `recent` without the job shown above it, which ends up first in it once it finishes. */
     fun json(): Map<String, Any?>? = job?.let { j -> j.json() + ("recent" to recentWithout(recent.toList(), j.id, j.finishedAt)) }
 
-    /** T140: the heap's tile limit for one polygon area ([AreaLimit.maxTiles] of this process's heap). */
+    /** T140, T152: the tiles the tile cache's index holds comfortably in this process's heap ([AreaLimit.maxTiles]); never a refusal. */
     fun heapTiles(): Long = AreaLimit.maxTiles(Runtime.getRuntime().maxMemory())
 
     fun cancel(id: String? = null): Boolean {
@@ -133,27 +156,33 @@ object AreaDownload {
      */
     class Plan(
         val area: AreaOfInterest, val manifest: AreaManifest, val manifestFrom: String, val pinnedBytes: Long, val alreadyBytes: Long, val budgetMb: Long,
-        /** T140: [AreaLimit.TOO_LARGE] when the memory guard refused the shape (then [manifest] has no tiles). */
-        val tooLarge: String? = null,
         /** T140: the last completed download's bytes per millisecond, for the time line; null before the first. */
         val bytesPerMs: Double? = null,
         /** T140: the same area at less detail (z8 to z13), for a drawn area or a disc deeper than z13. */
         val lessDetail: Plan? = null,
+        /** T152: the tiles the tile cache's index holds comfortably ([heapTiles]); past it the plan says so and still proceeds. */
+        val heapTiles: Long = Long.MAX_VALUE,
+        /** T152: milliseconds the manifest took to make (the covers filled row by row); null for a server's. */
+        val manifestMs: Long? = null,
     ) {
         val bytes: Long get() = manifest.bytes
         val tiles: Int get() = manifest.tileCount
-        val refusal: String? get() = tooLarge ?: if (userShape(area)) areaBudgetError(pinnedBytes, bytes, alreadyBytes, budgetMb) else budgetError(pinnedBytes, bytes, alreadyBytes, budgetMb)
+        /** T152: the budget's refusal only: the heap no longer refuses an area ([AreaLimit]). */
+        val refusal: String? get() = if (userShape(area)) areaBudgetError(pinnedBytes, bytes, alreadyBytes, budgetMb) else budgetError(pinnedBytes, bytes, alreadyBytes, budgetMb)
+        val pastHeapLimit: Boolean get() = AreaLimit.pastHeap(tiles.toLong(), heapTiles)
 
         fun json(): Map<String, Any?> = linkedMapOf(
             "id" to area.id, "name" to area.name, "kind" to area.kind, "shape" to shapeName(area), "manifestVersion" to area.manifestVersion,
-            "bytes" to bytes, "mb" to Math.round(bytes / 104_857.6) / 10.0, "tiles" to tiles,
+            "bytes" to bytes, "mb" to Math.round(bytes / 104_857.6) / 10.0, "tiles" to tiles, "estimated" to !manifest.bytesExact, "rows" to manifest.rowCount,
             "perRoute" to manifest.items.filterIsInstance<TilesItem>().associate { it.route to mapOf("tiles" to it.count, "bytes" to it.bytes, "zooms" to it.zooms?.let { z -> listOf(z.first, z.last) }) },
             "zooms" to listOf(area.minZoom, area.maxZoom), "bufferM" to bufferOf(area), "lengthM" to area.lengthM,
-            "manifestFrom" to manifestFrom, "pinnedBytes" to pinnedBytes, "alreadyBytes" to alreadyBytes, "budgetMb" to budgetMb,
-            "fits" to (refusal == null), "refusal" to refusal, "tooLarge" to (tooLarge != null),
+            "manifestFrom" to manifestFrom, "manifestMs" to manifestMs, "pinnedBytes" to pinnedBytes, "alreadyBytes" to alreadyBytes, "budgetMb" to budgetMb,
+            "fits" to (refusal == null), "refusal" to refusal, "refused" to (refusal != null),
+            // T152: past the tile cache index's comfortable size the download still proceeds (ADR 0041 §3's T152 note).
+            "pastHeapLimit" to pastHeapLimit, "heapTiles" to heapTiles.takeIf { it != Long.MAX_VALUE },
             // T140 (ADR 0041 §3, §5): what the sheet shows before anything starts.
-            "sizeLine" to if (tooLarge != null) null else sizeLine(bytes, tiles, area.minZoom, area.maxZoom),
-            "timeLine" to if (tooLarge != null) null else timeLine(bytes, bytesPerMs), "seconds" to bytesPerMs?.takeIf { tooLarge == null }?.let { Math.round(bytes / it / 1000) },
+            "sizeLine" to sizeLine(bytes, tiles, area.minZoom, area.maxZoom),
+            "timeLine" to timeLine(bytes, bytesPerMs), "seconds" to bytesPerMs?.let { Math.round(bytes / it / 1000) },
             "lessDetail" to lessDetail?.let { l ->
                 linkedMapOf(
                     "zooms" to listOf(l.area.minZoom, l.area.maxZoom), "bytes" to l.bytes, "tiles" to l.tiles, "line" to lessDetailLine(l.bytes),
@@ -166,8 +195,8 @@ object AreaDownload {
 
     /**
      * What downloading [area] (a corridor, a disc or a polygon) would take, before anything starts. T140: a drawn area
-     * or a disc is planned on the phone (the server is asked once, at Download), a polygon's outer rings first checked
-     * against the heap's tile limit.
+     * or a disc is planned on the phone (the server is asked once, at Download). T152: at any size (the covers are rows),
+     * with [Plan.pastHeapLimit] for an area past the tile cache index's comfortable size.
      */
     fun plan(area: AreaOfInterest, withLessDetail: Boolean = true): Plan {
         require(area.shape !is AreaShape.Box) { "a plan is for a corridor or a polygon; a box is a region pack (Download this region)" }
@@ -178,14 +207,13 @@ object AreaDownload {
         val less = if (withLessDetail && userShape(area) && area.maxZoom > LESS_DETAIL_MAX_ZOOM && area.minZoom <= LESS_DETAIL_MAX_ZOOM) {
             plan(area.copy(maxZoom = LESS_DETAIL_MAX_ZOOM), withLessDetail = false)
         } else null
-        val (dem, osm) = zooms(area, fetcher.server)
-        AreaLimit.refusal(area, dem, osm, heapTiles())?.let { why ->
-            val empty = AreaManifest(area.id, area.name ?: area.id, area, AreaManifest.STATUS_FAILED, emptyList(), notes = listOf(why))
-            return Plan(area, empty, "none", pinned, own, AppSettings.pinnedCacheMb, tooLarge = why, bytesPerMs = speed, lessDetail = less)
-        }
+        val t0 = System.currentTimeMillis()
         val fromServer = if (fetcher.server == DirectSources.SERVER || userShape(area)) null else serverManifest(fetcher.server, area, null)
         val m = fromServer ?: localManifest(area, fetcher.server)
-        return Plan(area, m, if (fromServer != null) "server" else "phone", pinned, own, AppSettings.pinnedCacheMb, bytesPerMs = speed, lessDetail = less)
+        return Plan(
+            area, m, if (fromServer != null) "server" else "phone", pinned, own, AppSettings.pinnedCacheMb, bytesPerMs = speed, lessDetail = less,
+            heapTiles = heapTiles(), manifestMs = if (fromServer == null) System.currentTimeMillis() - t0 else null,
+        )
     }
 
     /** T106: the bytes of [r] already counted as pinned (none while it is unpinned: they are not in the pinned total). */
@@ -207,8 +235,7 @@ object AreaDownload {
         val fetcher = service.fetcher ?: throw IllegalStateException(NO_SOURCE)
         val old = Areas.get(area.id)
         check(old?.opaque == null) { "area ${old?.name}: ${io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp.USER_SENTENCE}" }
-        // T140 (ADR 0041 §3): a polygon over the heap's tile limit does not start (nothing is recorded).
-        zooms(area, fetcher.server).let { (dem, osm) -> AreaLimit.refusal(area, dem, osm, heapTiles())?.let { throw IllegalStateException(it) } }
+        // T152 (ADR 0041 §3's T152 note): no heap check; the pinned budget is the one limit.
         val planned = manifest?.takeIf { it.id == area.id }
         planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw IllegalStateException(it) } }
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
@@ -228,13 +255,14 @@ object AreaDownload {
         return linkedMapOf("kind" to area.kind, "download" to j.json())
     }
 
-    private class Want(val item: TilesItem, val z: Int, val x: Int, val y: Int) {
-        val path get() = "$z/$x/$y.${item.ext}"
-    }
-
     private class Refused(message: String) : Exception(message)
 
     private fun run(j: Job, fetcher: OnlineFetcher) {
+        // T152: in direct mode the sources' session cap neither stops nor counts the download (the pinned budget is its limit).
+        if (fetcher.server == DirectSources.SERVER) OnlineService.get(app).direct.exempt { runJob(j, fetcher) } else runJob(j, fetcher)
+    }
+
+    private fun runJob(j: Job, fetcher: OnlineFetcher) {
         val pool = Executors.newFixedThreadPool(POOL) { r -> Thread(r, "area-tiles").apply { isDaemon = true } }
         var changesAtStart = 0L
         try {
@@ -255,16 +283,17 @@ object AreaDownload {
             budgetRefusal(j.area, OnlineService.get(app).cache.pinnedBytes, m.bytes, pinnedOwn(Areas.get(j.id)), AppSettings.pinnedCacheMb)?.let { throw Refused(it) }
             // T106: it fits, so it is pinned now, before any tile is fetched (nothing fetched for it is evicted on the way).
             Areas.update(j.id) { if (it.pinned) it else it.copy(pinned = true) }
-            val wants = m.items.filterIsInstance<TilesItem>().flatMap { item -> item.tiles.flatMap { (z, set) -> set.tiles().map { (x, y) -> Want(item, z, x, y) } } }
-                .sortedWith(compareBy({ it.z }, { it.item.route }))
-            j.planned.set(wants.size)
+            // T152: the manifest's rows in the walk's order (zoom, route, row), never a list of every tile.
+            val items = m.items.filterIsInstance<TilesItem>()
+            j.planned.set(m.tileCount)
+            j.rowsPlanned.set(m.rowCount)
             j.state = "tiles"
-            val retry = fetchAll(j, fetcher, pool, wants)
+            val retry = fetchRows(j, fetcher, pool, items, AreaManifest.walk(items))
             if (retry.isNotEmpty() && !j.cancelled) {
                 j.state = "retry"
                 fetcher.retryNow()
                 j.failed.set(0)
-                fetchAll(j, fetcher, pool, retry, counted = true)
+                fetchRows(j, fetcher, pool, retry, AreaManifest.walk(retry), counted = true)
             }
             if (j.contours && !j.cancelled) {
                 j.state = "contours"
@@ -342,46 +371,104 @@ object AreaDownload {
         }
     }
 
-    /** Fetches [wants] on [pool]; returns the ones that failed (network or server). */
-    private fun fetchAll(j: Job, fetcher: OnlineFetcher, pool: java.util.concurrent.ExecutorService, wants: List<Want>, counted: Boolean = false): List<Want> {
-        val cache = OnlineService.get(app).cache
-        val futures: List<Future<Boolean>> = wants.map { w ->
-            pool.submit(Callable {
-                if (j.cancelled) return@Callable true
-                val packs = runCatching { app.tiles.packs }.getOrNull()
-                val inPack = when (w.item.route) {
-                    AreaManifest.ROUTE_DEM -> packs?.demFor(w.z, w.x, w.y) != null
-                    AreaManifest.ROUTE_OSM -> packs?.osmFor(w.z, w.x, w.y) != null
-                    else -> false
-                }
-                if (inPack) {
-                    j.inPacks.incrementAndGet()
-                    if (!counted) j.done.incrementAndGet()
-                    return@Callable true
-                }
-                val transform: (ByteArray) -> ByteArray = if (w.item.route == AreaManifest.ROUTE_OSM) OnlineFetcher::gunzipIfNeeded else { b -> b }
-                val ok = when (val f = fetcher.get(w.item.route, w.path, transform, fresh = true)) { // T95: the current version, so a download again refreshes
-                    is Fetch.Hit -> {
-                        if (!valid(w.item.route, f.bytes)) {
-                            Areas.cacheKeys(w.item.route, w.path, held = false).forEach { cache.clear(it) }
-                            j.invalid.incrementAndGet()
-                        } else if (f.cached) {
-                            j.cached.incrementAndGet()
-                            j.cachedBytes.addAndGet(f.bytes.size.toLong())
-                        } else {
-                            j.fetched.incrementAndGet()
-                            j.bytes.addAndGet(f.bytes.size.toLong())
-                        }
-                        true
-                    }
-                    Fetch.Missing -> { j.missing.incrementAndGet(); true }
-                    is Fetch.Unavailable -> { j.failed.incrementAndGet(); false }
-                }
-                if (!counted) j.done.incrementAndGet()
-                ok
-            })
+    /** T152: a row of the walk being fetched: its index in the walk and the tiles of it not finished yet. */
+    private class RowInFlight(val index: Int, val row: TileRow) {
+        val left = AtomicInteger(row.count)
+    }
+
+    /**
+     * T152: fetches the tiles of [rows] (the walk of [items]) on [pool], row by row, with at most [IN_FLIGHT] tiles queued,
+     * so nothing here grows with the area. Returns the tiles that failed (network or server) as tile items of row sets, one
+     * per route, for a second walk. [counted] (that second walk) leaves `done` and the row counts alone.
+     */
+    private fun fetchRows(
+        j: Job, fetcher: OnlineFetcher, pool: java.util.concurrent.ExecutorService, items: List<TilesItem>, rows: Sequence<TileRow>, counted: Boolean = false,
+    ): List<TilesItem> {
+        val byRoute = items.associateBy { it.route }
+        val failed = HashMap<String, HashMap<Int, TileSet>>() // route, zoom: rows of the tiles that failed (guarded by itself)
+        val open = ArrayDeque<RowInFlight>() // rows started and not whole yet, in the walk's order (guarded by itself)
+        val permits = Semaphore(IN_FLIGHT)
+        fun tileDone(r: RowInFlight) {
+            if (counted || r.left.decrementAndGet() != 0) return
+            j.rowsDone.incrementAndGet()
+            synchronized(open) {
+                while (open.isNotEmpty() && open.first().left.get() == 0) open.removeFirst().let { w -> j.wholePrefix = w.index + 1; j.lastWhole = w.row }
+            }
         }
-        return wants.filterIndexed { i, _ -> runCatching { !futures[i].get() }.getOrDefault(true) }
+        var index = 0
+        walk@ for (row in rows) {
+            if (j.cancelled) break
+            val item = byRoute.getValue(row.route)
+            val r = RowInFlight(index++, row)
+            if (!counted) {
+                synchronized(open) { open.addLast(r) }
+                j.rowsStarted.incrementAndGet()
+                j.rowNow = row
+            }
+            for (x in row.x0..row.x1) {
+                if (j.cancelled) break@walk
+                permits.acquire()
+                try {
+                    pool.execute {
+                        try {
+                            val ok = try {
+                                fetchTile(j, fetcher, item, row.z, x, row.y, counted)
+                            } catch (e: Exception) {
+                                Log.w(Areas.TAG, "an area tile of ${row.route} failed", e)
+                                false
+                            }
+                            if (!ok) synchronized(failed) { failed.getOrPut(row.route) { HashMap() }.getOrPut(row.z) { TileSet(row.z) }.add(x, row.y) }
+                        } finally {
+                            tileDone(r)
+                            permits.release()
+                        }
+                    }
+                } catch (e: java.util.concurrent.RejectedExecutionException) {
+                    permits.release()
+                    throw e
+                }
+            }
+        }
+        permits.acquire(IN_FLIGHT) // every tile queued has finished
+        permits.release(IN_FLIGHT)
+        return synchronized(failed) { failed.map { (route, sets) -> byRoute.getValue(route).let { TilesItem(it.route, it.ext, it.url, sets, 0L) } } }
+    }
+
+    /** One tile of [item] at [z]/[x]/[y]: false when it could not be fetched now (network or server). */
+    private fun fetchTile(j: Job, fetcher: OnlineFetcher, item: TilesItem, z: Int, x: Int, y: Int, counted: Boolean): Boolean {
+        if (j.cancelled) return true
+        val packs = runCatching { app.tiles.packs }.getOrNull()
+        val inPack = when (item.route) {
+            AreaManifest.ROUTE_DEM -> packs?.demFor(z, x, y) != null
+            AreaManifest.ROUTE_OSM -> packs?.osmFor(z, x, y) != null
+            else -> false
+        }
+        if (inPack) {
+            j.inPacks.incrementAndGet()
+            if (!counted) j.done.incrementAndGet()
+            return true
+        }
+        val path = "$z/$x/$y.${item.ext}"
+        val transform: (ByteArray) -> ByteArray = if (item.route == AreaManifest.ROUTE_OSM) OnlineFetcher::gunzipIfNeeded else { b -> b }
+        val ok = when (val f = fetcher.get(item.route, path, transform, fresh = true)) { // T95: the current version, so a download again refreshes
+            is Fetch.Hit -> {
+                if (!valid(item.route, f.bytes)) {
+                    Areas.cacheKeys(item.route, path, held = false).forEach { OnlineService.get(app).cache.clear(it) }
+                    j.invalid.incrementAndGet()
+                } else if (f.cached) {
+                    j.cached.incrementAndGet()
+                    j.cachedBytes.addAndGet(f.bytes.size.toLong())
+                } else {
+                    j.fetched.incrementAndGet()
+                    j.bytes.addAndGet(f.bytes.size.toLong())
+                }
+                true
+            }
+            Fetch.Missing -> { j.missing.incrementAndGet(); true }
+            is Fetch.Unavailable -> { j.failed.incrementAndGet(); false }
+        }
+        if (!counted) j.done.incrementAndGet()
+        return ok
     }
 
     private fun valid(route: String, bytes: ByteArray): Boolean = when (route) {
@@ -389,13 +476,32 @@ object AreaDownload {
         else -> true
     }
 
-    /** The corridor's contour tiles (the map's 512-px contour zooms up to one past the DEM), made and cached now. */
+    /**
+     * The corridor's contour tiles (the map's 512-px contour zooms up to one past the DEM), made and cached now. T152: row
+     * by row with at most [IN_FLIGHT] queued, as the tiles are.
+     */
     private fun makeContours(j: Job, pool: java.util.concurrent.ExecutorService) {
         val hi = minOf(j.area.maxZoom, OnlineTiles.DEM_MAX_ZOOM) + 1
         val lo = maxOf(j.area.minZoom, OnlineTiles.CONTOUR_MIN_ZOOM)
-        val tiles = (lo..hi).flatMap { z -> TileCover.of(j.area, z).tiles().map { (x, y) -> Triple(z, x, y) } }
-        val futures = tiles.map { (z, x, y) -> pool.submit { if (!j.cancelled && runCatching { app.tiles.contourTile(z, x, y).status == 200 }.getOrDefault(false)) j.contourTiles.incrementAndGet() } }
-        futures.forEach { runCatching { it.get() } }
+        val permits = Semaphore(IN_FLIGHT)
+        for (z in lo..hi) {
+            if (j.cancelled) break
+            TileCover.of(j.area, z).forEachRow { y, x0, x1 ->
+                for (x in x0..x1) {
+                    if (j.cancelled) return@forEachRow
+                    permits.acquire()
+                    pool.execute {
+                        try {
+                            if (!j.cancelled && runCatching { app.tiles.contourTile(z, x, y).status == 200 }.getOrDefault(false)) j.contourTiles.incrementAndGet()
+                        } finally {
+                            permits.release()
+                        }
+                    }
+                }
+            }
+        }
+        permits.acquire(IN_FLIGHT)
+        permits.release(IN_FLIGHT)
     }
 
     /** T140: the shapes each server's `GET /area` names (box and corridor when it names none: a server from before T140). */
@@ -435,6 +541,9 @@ object AreaDownload {
                 404, 405 -> null // a server from before T75: make the lists here
                 // T140 (ADR 0041 §3): a server from before the polygon kind ("kind must be box or corridor"): the lists are made here.
                 400 -> if (serverError(text).startsWith("kind must be")) null else throw IOException("server refused the area (HTTP 400): ${serverError(text)}")
+                // T152: over a server's limit (DYSTOPO_AREA_MAX_TILES, or an older server's heap check): the phone's own manifest
+                // is the path past it; the tiles still come from the server's tile routes.
+                413 -> null.also { j?.serverNote = "the server's manifest was refused (HTTP 413: ${serverError(text)}); the phone made it" }
                 else -> throw IOException("server refused the area (HTTP $status): ${runCatching { MiniJson.parseObject(text)["error"] }.getOrNull() ?: text.take(200)}")
             }
         } catch (e: IOException) {
@@ -480,6 +589,8 @@ object AreaDownload {
     const val LESS_DETAIL_MAX_ZOOM = 13
 
     private const val POOL = 6
+    /** T152: tiles queued at most (the walk waits for a slot), so the work in hand never grows with the area. */
+    private const val IN_FLIGHT = POOL * 4
     private const val NO_SOURCE = "no online source: set a server (Settings › Sources) or let the phone read the sources"
 }
 
@@ -538,9 +649,12 @@ internal fun areaBudgetError(pinnedBytes: Long, estimateBytes: Long, alreadyByte
         "Make the area smaller, choose less detail, or raise the budget in Settings › Storage."
 }
 
-/** T140: [aboutMb] below 1 GB, else "1.6 GB". Pure, tested. */
-internal fun aboutSize(bytes: Long): String =
-    if (bytes >= 1L shl 30) String.format(java.util.Locale.US, "%.1f GB", bytes / 1_073_741_824.0) else aboutMb(bytes)
+/** T140: [aboutMb] below 1 GB, else "1.6 GB"; T152: from 1 TB "11.5 TB" (areas past the old heap limit reach it). Pure, tested. */
+internal fun aboutSize(bytes: Long): String = when {
+    bytes >= 1L shl 40 -> String.format(java.util.Locale.US, "%.1f TB", bytes / 1_099_511_627_776.0)
+    bytes >= 1L shl 30 -> String.format(java.util.Locale.US, "%.1f GB", bytes / 1_073_741_824.0)
+    else -> aboutMb(bytes)
+}
 
 /**
  * T140 (ADR 0041 §5): the summary, "About 170 MB (1,300 tiles) at full detail"; "at less detail" for z8 to z13, the zooms

@@ -61,7 +61,8 @@ import kotlin.concurrent.thread
  *
  * The summary is the phone's own plan ([AreaDownload.plan]; the server is asked once, at Download): "About 170 MB (1,300
  * tiles) at full detail", the other detail as a choice ("Less detail (about 30 MB)" or "Full detail (about 170 MB)"), the
- * time line, and the refusal of a plan over the budget or the heap's limit, with no Download then. The choice of detail is
+ * time line, and the refusal of a plan over the budget, with no Download then (T152: the heap no longer refuses an area; past
+ * the tile cache index's comfortable size the plan says so in `GET /areas/draw` and Download proceeds). The choice of detail is
  * always offered (T142's decision for an area within the budget: every rectangle picker of the survey keeps its detail
  * control in view, whatever the size); a drawn area and a disc open at full detail, a country at less detail unless its
  * full detail fits the budget. Names: "Drawn area" or "Around here" with the date, the search result's or the country's
@@ -270,9 +271,10 @@ object AreaPicker {
             "mode" to m?.key, "sheetOpen" to Areas.screenOpen, "name" to name, "detail" to detailOf(s), "detailChosen" to detailChoice,
             "revision" to revision, "plannedRevision" to s?.revision, "planned" to (s != null && s.revision == revision && !s.fullPending),
             "error" to (downloadError ?: s?.error),
-            "sizeLine" to p?.takeIf { it.tooLarge == null }?.let { sizeLine(it.bytes, it.tiles, it.area.minZoom, it.area.maxZoom) },
-            "alternative" to s?.let { alternativeLine(detailOf(it), it) }, "timeLine" to p?.takeIf { it.tooLarge == null }?.let { timeLine(it.bytes, it.bytesPerMs) },
-            "refusal" to p?.refusal, "canDownload" to (p != null && p.refusal == null),
+            "sizeLine" to p?.let { sizeLine(it.bytes, it.tiles, it.area.minZoom, it.area.maxZoom) },
+            "alternative" to s?.let { alternativeLine(detailOf(it), it) }, "timeLine" to p?.let { timeLine(it.bytes, it.bytesPerMs) },
+            "refusal" to p?.refusal, "refused" to (p?.refusal != null), "canDownload" to (p != null && p.refusal == null),
+            "pastHeapLimit" to p?.pastHeapLimit, "heapTiles" to p?.heapTiles, // T152: said, never a refusal
             "bytes" to p?.bytes, "tiles" to p?.tiles, "zooms" to p?.let { listOf(it.area.minZoom, it.area.maxZoom) },
             "full" to s?.full?.json(), "less" to s?.less?.json(), "layerFeatures" to PickerLayer.features,
             "drawing" to AreaDraw.json(),
@@ -305,11 +307,11 @@ internal fun defaultDetail(country: Boolean, fullFits: Boolean?): String = if (!
 
 /**
  * T142: the other detail as a choice under the size line: "Less detail (about 30 MB)" when full is shown, "Full detail
- * (about 170 MB)" when less is (just "Full detail" while it is measured or when the heap's limit refuses it). Pure, tested.
+ * (about 170 MB)" when less is (just "Full detail" while it is measured). Pure, tested.
  */
 internal fun alternativeLine(shown: String, s: AreaPicker.Summary): String? = when (shown) {
     DETAIL_FULL -> s.less?.let { lessDetailLine(it.bytes) }
-    else -> if (s.full == null && !s.fullPending) null else fullDetailLine(s.full?.takeIf { it.tooLarge == null }?.bytes)
+    else -> if (s.full == null && !s.fullPending) null else fullDetailLine(s.full?.bytes)
 }
 
 /** T142: "Full detail (about 170 MB)", or "Full detail" without a size. Pure, tested. */
@@ -449,12 +451,12 @@ private fun SummaryLines() {
     val shown = AreaPicker.detailOf(s)
     val p = AreaPicker.planOf(s)
     if (p == null) BasicText(MEASURING, style = TextStyle(color = Muted, fontSize = 13.sp))
-    else if (p.tooLarge == null) BasicText(sizeLine(p.bytes, p.tiles, p.area.minZoom, p.area.maxZoom), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+    else BasicText(sizeLine(p.bytes, p.tiles, p.area.minZoom, p.area.maxZoom), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
     alternativeLine(shown, s)?.let { alt ->
         CardAction(alt) { AreaPicker.detailChoice = if (shown == DETAIL_FULL) DETAIL_LESS else DETAIL_FULL }
     }
     if (p == null) return
-    if (p.tooLarge == null) timeLine(p.bytes, p.bytesPerMs)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+    timeLine(p.bytes, p.bytesPerMs)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
     p.refusal?.let { BasicText(it, style = TextStyle(color = Red, fontSize = 12.sp)) }
     if (p.refusal == null) {
         BasicText(

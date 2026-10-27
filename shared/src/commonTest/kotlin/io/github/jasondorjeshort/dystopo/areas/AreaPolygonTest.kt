@@ -9,6 +9,7 @@ import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -197,7 +198,7 @@ class AreaPolygonTest {
     }
 
     @Test
-    fun theLimitCountsEachOuterRingsOwnBoxSoAPairAcrossTheAntimeridianPasses() {
+    fun theUpperBoundCountsEachOuterRingsOwnBoxSoAPairAcrossTheAntimeridianIsNotChargedForTheOcean() {
         // Two parts either side of 180 (Fiji's longitudes, a public example): each part is small, their joint box spans the world.
         val east = listOf(AreaPoint(-17.2, 177.2), AreaPoint(-17.2, 178.7), AreaPoint(-16.0, 178.7), AreaPoint(-16.0, 177.2))
         val west = listOf(AreaPoint(-17.0, -179.99), AreaPoint(-17.0, -179.6), AreaPoint(-16.6, -179.6), AreaPoint(-16.6, -179.99))
@@ -209,14 +210,13 @@ class AreaPolygonTest {
         val limit = 50_000L
         assertTrue(wholeBox > limit, "whole box $wholeBox")
         assertTrue(perRing < limit, "per ring $perRing")
-        assertEquals(null, AreaLimit.refusal(area, dem, osm, limit))
         // The fill stays within the bound, and the hole of a ring is not counted.
         assertTrue(AreaManifest.tileItems(area, dem, osm).sumOf { it.count } <= perRing)
         val holed = AreaOfInterest(AreaShape.Polygon(listOf(outer, hole)), 8, 15)
         assertEquals(AreaLimit.upperBound(AreaOfInterest(AreaShape.Polygon(listOf(outer)), 8, 15), dem, osm), AreaLimit.upperBound(holed, dem, osm))
-        // Over the limit: the sentence, before anything is filled.
-        assertEquals(AreaLimit.TOO_LARGE, AreaLimit.refusal(area, dem, osm, perRing - 1))
-        assertEquals(null, AreaLimit.refusal(AreaOfInterest(AreaShape.Box(-121.9, 46.7, -121.6, 46.9), 8, 15), dem, osm, 1), "boxes and corridors keep their own limits")
+        // T152: the heap limit is the tile cache index's, said and never a refusal.
         assertEquals(AreaLimit.maxTiles(512L shl 20), (512L shl 20) / AreaLimit.HEAP_SHARE / AreaLimit.BYTES_PER_TILE)
+        assertTrue(AreaLimit.pastHeap(perRing, perRing - 1))
+        assertFalse(AreaLimit.pastHeap(perRing, perRing))
     }
 }

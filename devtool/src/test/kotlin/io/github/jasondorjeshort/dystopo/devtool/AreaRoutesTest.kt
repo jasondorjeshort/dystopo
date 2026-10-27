@@ -139,14 +139,15 @@ class AreaRoutesTest {
     }
 
     @Test
-    fun aPolygonOverTheHeapLimitIsRefusedBeforeItIsFilled() {
+    fun aPolygonOverTheTileLimitIsRefusedQuickly() {
         val builds = BuildRoutes(live(), out)
-        // Most of North America at z8 to z16: millions of tiles in its box, refused without filling a set.
+        // Most of North America at z8 to z16: millions of tiles. T152: its sets are rows, so they are filled and counted at
+        // once, and the server's own tile limit (DYSTOPO_AREA_MAX_TILES) refuses it; no heap check comes first.
         val body = """{"kind":"polygon","rings":[[[-125,25],[-70,25],[-70,50],[-125,50]]],"minZoom":8,"maxZoom":16}"""
         val t0 = System.currentTimeMillis()
         val e = assertFailsWith<BuildRoutes.Refused> { builds.area(emptyMap(), body) }
         assertEquals(413, e.status)
-        assertEquals("This area is too large at this detail; make it smaller or choose less detail", e.message)
-        assertTrue(System.currentTimeMillis() - t0 < 2000, "refused before any fill")
+        assertTrue(e.message!!.startsWith("the area needs ") && "DYSTOPO_AREA_MAX_TILES" in e.message!!, e.message)
+        assertTrue(System.currentTimeMillis() - t0 < 5000, "rows, not tiles: ${System.currentTimeMillis() - t0} ms")
     }
 }
