@@ -44,7 +44,6 @@ import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
-import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.concurrent.thread
 
@@ -185,7 +184,7 @@ private fun SourcesSection() {
     var text by remember { mutableStateOf(AppSettings.server) }
     var error by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { while (true) { delay(500); tick++ } }
+    LaunchedEffect(Unit) { while (true) { io.github.jasondorjeshort.dystopo.app.Foreground.delay(500); tick++ } } // T150: paused in the background
     val testLine = remember(tick, SettingsUi.revision) { Sources.summary() }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) { // T109: the heading and its help

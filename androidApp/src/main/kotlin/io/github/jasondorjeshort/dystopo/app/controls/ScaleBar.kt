@@ -41,7 +41,6 @@ import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.ScaleLength
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
-import kotlinx.coroutines.delay
 import org.maplibre.android.maps.MapLibreMap
 
 /**
@@ -251,7 +250,7 @@ fun ScaleBar() {
                 }
                 // Also catches camera jumps without move callbacks and changes of units or the night style.
                 m?.let(::read)?.let { view = it }
-                delay(500)
+                io.github.jasondorjeshort.dystopo.app.Foreground.delay(500) // T150: paused in the background
             }
         } finally {
             attached?.removeOnCameraMoveListener(listener)

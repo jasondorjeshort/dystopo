@@ -45,7 +45,6 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.packs.CatalogStatus
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -181,7 +180,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
         CatalogOverlay.show(first)
         withContext(Dispatchers.IO) { CatalogOverlay.framing(first, runCatching { DystopoApp.instance.map.camera() }.getOrNull())?.let { fitAbove(it) } }
         while (true) {
-            delay(if (rows.any { it.status == CatalogStatus.DOWNLOADING || it.status == CatalogStatus.CHECKING }) 700 else 2000)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (rows.any { it.status == CatalogStatus.DOWNLOADING || it.status == CatalogStatus.CHECKING }) 700 else 2000) // T150: paused in the background
             val r = withContext(Dispatchers.IO) { client.rows() }
             rows = r
             CatalogOverlay.show(r)
@@ -195,7 +194,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
             active = a
             used = manager.inUse().toSet() // T41: every usable pack is on the map
             jobs = j
-            delay(if (j.any { it["state"] == "running" || it["state"] == "queued" }) 500 else 2000)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (j.any { it["state"] == "running" || it["state"] == "queued" }) 500 else 2000) // T150: paused in the background
         }
     }
 

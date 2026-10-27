@@ -112,6 +112,8 @@ object CountrySizes {
 
     private fun loop() {
         while (true) {
+            // T150: no measuring and no 5 s re-check in the background (the list stays composed behind HOME; a country can take 30 s).
+            io.github.jasondorjeshort.dystopo.app.Foreground.block()
             val server = server()
             val demFirst = AreaDownload.zooms(countryLessProbe, server).first.first
             if (measuredFor != demFirst) { entries = emptyMap(); measuredFor = demFirst }

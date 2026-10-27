@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.search.PackHit
-import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.concurrent.thread
 
@@ -133,7 +132,7 @@ fun SearchOverlay() {
         // Follows the indexes of the packs on the map; T149: starts them only while the box is open or holds text.
         while (true) {
             ui.refresh()
-            delay(if (PlaceSearch.states.any { it.busy }) 500 else 2000)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (PlaceSearch.states.any { it.busy }) 500 else 2000) // T150: paused in the background
         }
     }
     LaunchedEffect(ui.focused) { ui.refresh() } // T149: opening the box starts the indexes at once

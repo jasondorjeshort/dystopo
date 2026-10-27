@@ -37,10 +37,9 @@ import java.io.File
  * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`, T103 `GET /settings/layout` and `POST /settings/open?group=`: user settings and the sheet's groups ([SettingsRoutes]).
  * - `GET /features` (alias `/labels`), `GET /features/text`: what the map drew ([FeatureRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
- * - T144, the UI-thread watchdog ([MainWatchdog]): `GET /debug/watchdog` (thresholds, armed or why not, heartbeats,
- *   freezes, the dumps in `files/reports/` with their headers), `POST /debug/watchdog?beatMs=&freezeMs=` (override the
- *   1 s and 3 s for this process), `POST /debug/freeze?ms=` (holds the UI thread for that long, posted; answers at once).
- *   `GET /health` has `watchdog` (short form) and `tileServices` (`open`: tile services not yet closed, 1 at rest).
+ * - The `/debug/...` routes (T144's watchdog and freeze, T150's per-thread CPU and StrictMode counts) are documented in
+ *   [io.github.jasondorjeshort.dystopo.app.debug.DebugRoutes]. `GET /health` has `watchdog` (short form) and
+ *   `tileServices` (`open`: tile services not yet closed, 1 at rest).
  * - T123 `GET /stats/requests[?limit=N][&format=jsonl]`: the request log ([RequestLog]): one line per request the
  *   loopback servers answered since start (time, method, path without the query, route, the pack that answered a tile
  *   or `online:<source key>`, status, bytes, ms), the last 4096 kept in memory; `capacity`, `total`, `kept`,
@@ -162,6 +161,7 @@ class Routes(private val app: DystopoApp) {
         io.github.jasondorjeshort.dystopo.app.help.HelpRoutes.handle(app, r)?.let { return it } // T109: GET /help, POST /help/open?key=, POST /help/close
         io.github.jasondorjeshort.dystopo.app.settings.DiagnosticsRoutes.handle(app, r)?.let { return it } // T143: GET /diagnostics, POST /diagnostics/copy, POST /diagnostics/reset
         io.github.jasondorjeshort.dystopo.app.reports.ReportRoutes.handle(app, r)?.let { return it } // T145: GET /reports, GET|DELETE /reports/{id}, POST /reports/ui|open, POST /debug/crash
+        io.github.jasondorjeshort.dystopo.app.debug.DebugRoutes.handle(app, r)?.let { return it } // T150: the other /debug/... routes (watchdog, freeze, cpu, strictmode)
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
@@ -185,17 +185,6 @@ class Routes(private val app: DystopoApp) {
                 val lon = p.d("lon") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
                 Response.json(app.map.injectLocation(lat, lon, (p.d("accuracy") ?: 10.0).toFloat(), p.d("bearing")?.toFloat()))
             }
-            "GET" to "/debug/watchdog" -> Response.json(MainWatchdog.json()) // T144
-            "POST" to "/debug/watchdog" -> { // T144: the thresholds, for tests
-                MainWatchdog.configure(r.query["beatMs"]?.let { it.toLongOrNull() ?: return Response.json(mapOf("error" to "beatMs must be a number"), 400) },
-                    r.query["freezeMs"]?.let { it.toLongOrNull() ?: return Response.json(mapOf("error" to "freezeMs must be a number"), 400) })
-                Response.json(MainWatchdog.json())
-            }
-            "POST" to "/debug/freeze" -> { // T144: blocks the UI thread on purpose (the watchdog's test); answers at once
-                val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 1..60_000 } ?: return Response.json(mapOf("error" to "ms must be 1..60000"), 400)
-                android.os.Handler(android.os.Looper.getMainLooper()).post { freezeUi(ms) }
-                Response.json(mapOf("posted" to true, "ms" to ms))
-            }
             "POST" to "/reload" -> {
                 app.reload()
                 Response.json(health())
@@ -203,16 +192,6 @@ class Routes(private val app: DystopoApp) {
             "POST" to "/cache/clear" -> Response.json(mapOf("deleted" to app.tiles.clearContourCache()))
             "GET" to "/dem/decode-bench" -> Response.json(app.tiles.decodeBench(r.query)) // T42: DEM decoders side by side
             else -> Response.notFound()
-        }
-    }
-
-    /** T144: `POST /debug/freeze`: holds the main thread for [ms]; the watchdog's dump names this frame. */
-    private fun freezeUi(ms: Long) {
-        val until = SystemClock.elapsedRealtime() + ms
-        while (true) {
-            val left = until - SystemClock.elapsedRealtime()
-            if (left <= 0) break
-            Thread.sleep(left)
         }
     }
 

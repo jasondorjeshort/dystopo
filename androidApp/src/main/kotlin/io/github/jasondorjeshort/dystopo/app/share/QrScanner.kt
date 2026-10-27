@@ -46,7 +46,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 
 /**
@@ -104,7 +103,7 @@ fun QrScannerOverlay() {
     var status by remember { mutableStateOf("Point the camera at the QR code on the other phone's Share screen.") }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(500)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(500) // T150: paused in the background
             val t = ScanUi.lastText
             status = when {
                 ScanUi.error != null -> "Camera: ${ScanUi.error}"
