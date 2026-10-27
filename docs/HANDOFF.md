@@ -27,12 +27,10 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Waiting on user
 
-- The wave 18 to 21 strings (ADR 0031; T148's and T149's are in their merge commits).
-- `git push origin --delete task/T138`, `git branch -D carry-back/ownership-project-list`, `git branch -D task/T143`
-  and `task/T146` (pre-rebase copies); the `RELEASE_*` secrets; ADR 0042's confirmations, ADR 0040's positions;
-  real-phone runs (`android-battery.py`, heap numbers, the first watchdog dump); the first PC's Rainier pack recipe.
-- Carried: the S Pen question; the T122 folder, `triage-saved` and `refs/original/*`; the two older
-  Claude-authored commits; T122's and the wave 14 to 17 strings; Play registration; T100, T104.
+- The owner's list is `docs/TASKS.md` › Owner actions pending (rewritten 2026-10-27): the phone checks after the
+  next alpha (CPU after HOME, no new memory reports, issues 23 to 29), the wave 18 to 21 strings, the decisions
+  (auto-resume toggle, ADR 0040 and 0042, S Pen, Play), the git housekeeping, the `RELEASE_*` secrets, the first
+  PC's pack recipe. Carried from older waves: T100, T104.
 
 ## Open findings
 

@@ -9,13 +9,33 @@ Every task is done only when:
 
 "Owns" lists the files a task may change freely. Touching anything else should be a few lines at most and called out in the report. Two tasks that both need `MapRenderer.kt` are told below which part is theirs.
 
-## Owner actions pending (as of 2026-10-10)
+## Owner actions pending (as of 2026-10-27)
+
+The owner's to-do list; the coordinator adds to it whenever a task leaves something only the owner can do, and strikes an item when it is done. `docs/HANDOFF.md` › Waiting on user points here.
+
+**On the phone (after the next alpha, which carries T149 and T150):**
+- Watch Settings › About and advanced › Report a problem for a few days: no new "excessive CPU" kills (the finding: two kills while cached, about 2.8% CPU) and no new memory reports. Issues 23 to 29 (seven problem reports, all v0.1.13-alpha, all memory) can be closed once a week passes without a repeat.
+- The background-CPU read T150 could not make on the emulator: with the app in the background, `adb shell top -H -n 1 -p <pid>` (the main thread and `HeapTaskDaemon` should be near 0%), or on a debug build `GET /debug/cpu` twice 60 s apart after HOME.
+- The first `MainWatchdog` dump that names a freeze's frame (T144); real heap numbers from a long session (`GET /diagnostics` or the Diagnostics row's Copy report); `tools/android-battery.py` on the phone (T146).
+- Routing on a city-sized pack is now refused with a sentence on a 512 MB heap (T149: a z10 city pack estimated at 630 MB against 475 MB free). If that bites on your packs, say so: it decides whether the server-shipped graph (Later) comes before the streaming build.
+
+**Strings (ADR 0031; adjust any you dislike, in a message or an edit):** waves 18 to 21's are in their merge commits (`git log --merges`); T148's three and T149's three ("This map is too large to route across on this phone; download a smaller area for routing", "Waiting for memory to build the trail network", "Not enough memory to index places now; try again in a minute") are the newest.
+
+**Decisions only you can make:**
+- Auto-resume of interrupted downloads (T151, T156) is built without a toggle, on your words; the research flagged a "Resume automatically" switch as your call if cellular data worries you.
+- ADR 0042's confirmations and ADR 0040's positions (their build tasks wait); the S Pen question; Play registration (the beta path below).
+
+**Git housekeeping on your account (the hooks refuse these to agents):** `git push origin --delete task/T138`; `git branch -D carry-back/ownership-project-list`; `git branch -D task/T143` and `task/T146` (pre-rebase copies); the T122 folder, `triage-saved` and `refs/original/*`; the two older Claude-authored commits.
+
+**Secrets and machines:** the four `RELEASE_*` Actions secrets (below) so the release workflow builds again; the first PC's Rainier pack recipe for `docs/reference/machines.md` (zoom ranges and box of its 143 MB pair), so both PCs sweep the same data.
+
+**Standing facts:**
 - **The repo has been public since 2026-10-11.** The one pre-public leftover, PR #45's 2026-10-10 08:13 description revision that named a private place, was deleted by the owner through the UI the same day (confirmed by the API: `deletedAt` set). Scans before and after going public were clean: tree, history, every PR's current text, the release APK's strings.
 - **Releases:** `v0.1.5-alpha` published 2026-10-13 (wave 12: drive mode, long drives, areas, storage budgets, peer sources, the faster first view; built by the workflow and verified from the draft), after `v0.1.4-alpha` on 2026-10-11 (built-in updates, mobile data by default, universal APK only; the first build that offers the next one), after `v0.1.3-alpha` the same day and `v0.1.2-alpha` on 2026-10-10. The four `RELEASE_*` secrets hold the key from `tools/release.keystore` (RSA 4096, alias `dystopo`, CN "Dystopo release"); the keystore and `tools/release.properties` exist only on this machine and in the secrets: back them up privately and never change the key. Releases are tag-driven drafts (`v*`) published by hand after one agent verifies the APKs from the draft itself (certificate fingerprint `47:31:38:10...`, version from the tag).
 - **GitHub Actions:** while the repo was private, the `v0.1.3-alpha` release job did not start ("recent account payments have failed or your spending limit needs to be increased"), and 0.1.3 was built locally (CLAUDE.md › Publishing has the fallback). Public repos get Actions minutes free, so CI, the nightly sweep and soak, and the release workflow should run again; confirm on the next push and dispatch.
 - **Beta path (decided 2026-10-11):** one developer registration with Google, done once by the owner: a Play Console account (one-time fee of about 25 dollars, per developer, not per app or user; the same identity check covers Google's Android developer verification for sideloaded installs). Register the package `io.github.jasondorjeshort.dystopo` and the release certificate `47:31:38:10...` under it. Beta then ships through Google Play (closed testing is enough to start) with automatic updates, keeping our own key under Play App Signing; the "unknown publisher" warning on sideloaded alphas disappears as a side effect. Until then: alphas on GitHub Releases, the Play Protect "More details › Install anyway" tap on first install, and the in-app updater (T83) for everything after. Sideloaded installs are a short-lived alpha arrangement, not the long-term channel.
 - **Machine notes:** both accounts' paths and ports are in `docs/reference/machines.md` (the owner's main checkout is `C:\Users\Dorje\Documents\src\dystopo` since 2026-10-13).
-- **Usage budget:** stop launching new agent work above 50% of the 5-hour budget or 75% of the weekly budget (owner, 2026-10-17; the session's file under `~/.claude/usage-state/`, written by the project status line; the owner lifts a meter with a grant file in `~/.claude/usage-gate-overrides/`, ADR 0035). Owner, 2026-10-13: wave 13 ignores the weekly figure and follows the 5-hour window only.
+- **Usage budget:** stop launching new agent work above 50% of the 5-hour budget or the weekly hold `policy.json` sets (75 by default, owner 2026-10-17; 100 while this project is the owner's priority, commit 05456a6; the session's file under `~/.claude/usage-state/`, written by the project status line; the owner lifts a meter with a grant file in `~/.claude/usage-gate-overrides/`, ADR 0035).
 
 ## Wave 1 (independent)
 
