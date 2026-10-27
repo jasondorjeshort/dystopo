@@ -74,6 +74,12 @@ import java.util.concurrent.atomic.AtomicLong
  * source's versions moved on since. The walk stops as stalled after [STALL_TILES] tiles in a row could not be fetched (the
  * network stopped answering; the record says so and the resume check picks it up later) or [MAX_FAILED_TILES] in a run.
  * [cancel] keeps the user's cancel in the record at once. A budget refusal at the start is a [BudgetRefused].
+ *
+ * T156 ([DownloadWorker], ADR 0046): every start hands the download over to the WorkManager chain ([DownloadWorker.handOver]:
+ * a tap replaces the chain so its worker runs now and shows the notification, any other start keeps the chain there is). The
+ * worker watches the job and keeps the process alive; when the system stops the worker with the app in the background,
+ * [pause] ends the walk like a stall (the cursor saved, the record partial, not counted as a failure) and the chain runs it
+ * again from the cursor. [Job.handedOn] tells the worker that the run's end, its record and the resume check's request are done.
  */
 object AreaDownload {
     private val app: DystopoApp get() = DystopoApp.instance
@@ -145,6 +151,10 @@ object AreaDownload {
         @Volatile var bytes0 = 0L
         @Volatile var cursorSaves = 0
         @Volatile var savedCursor: String? = null
+        /** T156: why the worker paused the walk ([pause]); null when it was not. */
+        @Volatile var pausedBy: String? = null
+        /** T156: the run's end is written and the resume check asked ([DownloadWorker] waits for it before deciding the chain's next step). */
+        @Volatile var handedOn = false
 
         fun json(): Map<String, Any?> {
             val now = if (finishedAt != 0L) finishedAt else System.currentTimeMillis()
@@ -165,6 +175,7 @@ object AreaDownload {
                 "resume" to linkedMapOf(
                     "trigger" to trigger, "from" to resumedFrom?.json()?.minus("failed"), "skippedTiles" to skipped.get(), "failedAgain" to again,
                     "stalled" to stalled, "stalledByNetwork" to stalledByNetwork, "cursorSaves" to cursorSaves, "cursor" to savedCursor,
+                    "pausedBy" to pausedBy, // T156
                 ),
             )
         }
@@ -193,6 +204,20 @@ object AreaDownload {
         // T151: the cancel is the user's and is kept in the record at once, so no trigger resumes it (even if the process ends
         // before the job does); Retry or Download again clears it.
         Areas.update(j.id) { it.copy(cancelled = true) }
+        return true
+    }
+
+    /**
+     * T156: the worker was stopped with the app in the background ([DownloadWorker]): the walk ends as a stall would (the
+     * cursor saved, the record partial, no failure counted) so the chain's next run goes on from the cursor. False when no
+     * job runs.
+     */
+    fun pause(reason: String): Boolean {
+        val j = job ?: return false
+        if (!j.running || j.cancelled) return false
+        j.pausedBy = reason
+        j.stalledByNetwork = true
+        j.stalled = reason
         return true
     }
 
@@ -309,6 +334,8 @@ object AreaDownload {
             ),
         )
         Thread({ run(j, fetcher) }, "area-download").apply { isDaemon = true }.start()
+        // T156: the chain keeps it going when the app is in the background or the process ends (a tap shows the notification).
+        runCatching { DownloadWorker.handOver(app, trigger) }.onFailure { Log.w(Areas.TAG, "the download chain could not be enqueued", it) }
         return linkedMapOf("kind" to area.kind, "download" to j.json())
     }
 
@@ -383,7 +410,7 @@ object AreaDownload {
                 // A second walk cut short keeps every tile of the first (the ones it did not reach are still owed).
                 if (!j.cancelled && j.stalled == null) synchronized(j.failedRows) { j.failedRows.clear(); j.failedRows.putAll(still) }
             }
-            if (j.contours && !j.cancelled) {
+            if (j.contours && !j.cancelled && j.stalled == null) { // T156: not after a stall or a pause (the run is partial anyway)
                 j.state = "contours"
                 makeContours(j, pool)
             }
@@ -412,6 +439,7 @@ object AreaDownload {
                 r.copy(
                     state = when (j.state) { "done" -> "done"; "refused" -> j.stateBefore ?: "partial"; else -> j.state },
                     error = j.error ?: when {
+                        j.pausedBy != null && j.state == "partial" -> RESUME_PAUSED // T156
                         j.stalled != null && j.state == "partial" -> RESUME_STALLED // T151
                         j.failed.get() > 0 -> "${j.failed.get()} tiles could not be fetched." // T151: it continues by itself (the card says when)
                         else -> null
@@ -435,6 +463,7 @@ object AreaDownload {
             recent.addFirst(linkedMapOf("id" to j.id, "name" to j.name, "state" to j.state, "done" to j.done.get(), "planned" to j.planned.get(), "bytes" to j.bytes.get(), "finishedAt" to j.finishedAt, "ms" to j.finishedAt - j.startedAt))
             while (recent.size > 5) recent.pollLast()
             Log.i(Areas.TAG, "area ${j.name}: ${j.state}, ${j.fetched.get()} fetched, ${j.cached.get()} cached, ${j.inPacks.get()} in packs, ${j.bytes.get()} bytes, ${j.finishedAt - j.startedAt} ms")
+            j.handedOn = true // T156
         }
     }
 

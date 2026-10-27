@@ -444,6 +444,9 @@ private fun AroundControls(a: AreaPicker.Mode.Around) {
 /** The size-first summary: the size line, the other detail as a choice, the time line, the refusal or Download. */
 @Composable
 private fun SummaryLines() {
+    // T156: POST_NOTIFICATIONS (Android 13+) asked once, at the first Download (the download's notification); denied, the download still runs.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notificationAsk = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
     val s = AreaPicker.summary
     AreaPicker.downloadError?.let { BasicText(it, style = TextStyle(color = Red, fontSize = 12.sp)) }
     if (s == null) { BasicText(MEASURING, style = TextStyle(color = Muted, fontSize = 13.sp)); return }
@@ -462,7 +465,10 @@ private fun SummaryLines() {
         BasicText(
             "Download",
             style = TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold),
-            modifier = Modifier.background(Teal, RoundedCornerShape(16.dp)).clickable { thread(name = "picker-download") { runCatching { AreaPicker.download() } } }
+            modifier = Modifier.background(Teal, RoundedCornerShape(16.dp)).clickable {
+                if (io.github.jasondorjeshort.dystopo.app.tracking.NotificationPrompt.shouldAsk(context)) notificationAsk.launch(io.github.jasondorjeshort.dystopo.app.tracking.NotificationPrompt.PERMISSION)
+                thread(name = "picker-download") { runCatching { AreaPicker.download() } }
+            }
                 .padding(horizontal = 18.dp, vertical = 7.dp),
         )
     }
