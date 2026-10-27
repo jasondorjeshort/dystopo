@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -121,7 +120,7 @@ fun OnlineOverlay() {
         while (true) {
             val cam = OnlineView.currentOnMain(app)
             ui = withContext(Dispatchers.Default) { runCatching { OnlineUi.make(service, app, cam) }.getOrNull() } ?: ui
-            delay(1000)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1000) // T150: paused in the background
         }
     }
     val u = ui

@@ -20,7 +20,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,7 +82,7 @@ class MainActivity : ComponentActivity() {
                         current = t
                         shown = withContext(Dispatchers.Default) { Shown(attribution(t), if (t.packs.dem == null && t.online == null) NO_PACK else null) } // T38: no message in online mode
                     }
-                    delay(500)
+                    Foreground.delay(500) // T150: paused while the app is in the background
                 }
             }
             MapScreen(mapView, shown.attribution, shown.message)
@@ -110,6 +109,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         mapView.onStart()
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
+        if (Foreground.activityStarted()) app.map.setForeground(true) // T150: the polling loops resume; device fixes again
     }
 
     override fun onResume() {
@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(false) // T100: no compass in the background
+        if (Foreground.activityStopped()) app.map.setForeground(false) // T150: no device fixes and no polling in the background
         mapView.onStop()
         super.onStop()
     }

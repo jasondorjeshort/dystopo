@@ -52,7 +52,6 @@ import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -83,7 +82,7 @@ fun StorageScreen() {
     LaunchedEffect(StorageUi.revision) {
         while (true) {
             info = withContext(Dispatchers.IO) { runCatching { Storage.json(DystopoApp.instance) }.getOrNull() }
-            delay(2_000)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(2_000) // T150: paused in the background
         }
     }
 

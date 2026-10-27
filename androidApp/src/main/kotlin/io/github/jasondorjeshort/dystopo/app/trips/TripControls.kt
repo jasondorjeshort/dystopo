@@ -51,7 +51,6 @@ import io.github.jasondorjeshort.dystopo.model.WaypointAt
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.sync.RouteListItem
-import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xF2FFFCF5)
@@ -82,7 +81,7 @@ fun TripControls() {
     LaunchedEffect(watching) {
         while (watching) {
             Trips.background { Trips.refresh() }
-            delay(3000)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(3000) // T150: paused in the background
         }
     }
     Box(Modifier.fillMaxSize()) {
@@ -246,7 +245,7 @@ private fun TripCard(modifier: Modifier) {
 @Composable
 private fun TripCorridorLine(p: io.github.jasondorjeshort.dystopo.model.RoutePlan) {
     var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
-    LaunchedEffect(p.id) { while (true) { delay(1500); tick++ } }
+    LaunchedEffect(p.id) { while (true) { io.github.jasondorjeshort.dystopo.app.Foreground.delay(1500); tick++ } } // T150: paused in the background
     tick.let { } // read, so the line follows the download
     val c = io.github.jasondorjeshort.dystopo.app.areas.TripCorridors
     val st = c.status(p)

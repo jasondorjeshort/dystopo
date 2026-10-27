@@ -48,7 +48,6 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -112,7 +111,7 @@ private fun AreasSheet() {
             coverage = c
             progress = p
             AreaOutlines.show(Areas.list)
-            delay(1500)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1500) // T150: paused in the background
         }
     }
     // T142: drawing, around a point and a country's summary are a card over the map; the country list is this sheet.

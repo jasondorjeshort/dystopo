@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
-import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xEEFFFCF5)
@@ -297,7 +296,7 @@ private fun BuildProgress() {
                 "waiting" -> GRAPH_WAITING // T149: the heap guard's trim and wait before the build
                 else -> null
             }
-            delay(400)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(400) // T150: paused in the background
         }
     }
     text?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }

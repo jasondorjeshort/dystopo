@@ -15,8 +15,9 @@ import org.maplibre.android.maps.MapView
  *
  * `lat` and `lon` are required (degrees), `z` (or `zoom`, default 12) and `bearing` are optional. The same
  * keys work as intent extras (doubles or strings) on any intent that reaches [MainActivity]. A link on the
- * launch intent becomes the start camera ([camera]); one that arrives while the map is open (`am start`
- * with `--activity-single-top`) moves it ([install]). Anything malformed or out of range is ignored.
+ * launch intent becomes the start camera ([camera]); one that arrives while the map is open moves it ([install]:
+ * `onNewIntent`, which every link reaches since T150 made [MainActivity] `singleTask`). Anything malformed or out of
+ * range is ignored.
  */
 object DeepLink {
     const val SCHEME = "dystopo"

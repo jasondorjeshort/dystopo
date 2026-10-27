@@ -34,7 +34,6 @@ import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
-import kotlinx.coroutines.delay
 import java.util.Locale
 
 private val Ink = Color(0xFF2B2420)
@@ -59,7 +58,7 @@ fun FirstRunCard(fallback: String?) {
     var tick by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(700)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(700) // T150: paused in the background
             tick++
         }
     }

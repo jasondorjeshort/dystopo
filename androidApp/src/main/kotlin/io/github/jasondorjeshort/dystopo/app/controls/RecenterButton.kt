@@ -46,7 +46,6 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.TopChips
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
-import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xF2FFFCF5)
@@ -126,7 +125,7 @@ fun RecenterButton() {
     LaunchedEffect(Unit) {
         while (true) {
             state = Recenter.state(app)
-            delay(500)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(500) // T150: paused in the background
         }
     }
     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {

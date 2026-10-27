@@ -44,7 +44,6 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.sync.crypto.ShareCode
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
@@ -125,7 +124,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
     LaunchedEffect(Unit) {
         while (true) {
             status = withContext(Dispatchers.IO) { session.status() }
-            delay(700)
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(700) // T150: paused in the background
         }
     }
 

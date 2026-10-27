@@ -494,9 +494,20 @@ class MapController {
     private fun movesPuck(a: Location, b: Location): Boolean =
         a.distanceTo(b) >= PUCK_MOVE_M || kotlin.math.abs(a.accuracy - b.accuracy) >= PUCK_MOVE_M
 
-    /** Device fixes from GPS and network providers (main thread). No-op without permission or while injecting. */
+    /**
+     * T150: the map's device fixes follow the app's foreground ([Foreground], from [MainActivity]'s `onStart` and
+     * `onStop`): stopped in the background, where each fix ran the puck and follow mode on the main thread of a stopped map
+     * once a second; started again at the next start (follow mode and the puck resume on the next fix). Track recording
+     * (`tracking/TrackingService`, its own `LocationSource`) and navigation (`NavSession`'s own GPS listener) keep theirs.
+     * Main thread.
+     */
+    fun setForeground(on: Boolean) {
+        if (on) startDeviceLocation() else stopDeviceLocation()
+    }
+
+    /** Device fixes from GPS and network providers (main thread). No-op without permission, while injecting or in the background. */
     private fun startDeviceLocation() {
-        if (injectedLocation || deviceListener != null || !hasLocationPermission()) return
+        if (injectedLocation || deviceListener != null || !Foreground.started || !hasLocationPermission()) return
         val lm = activity?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
         val listener = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { if (!injectedLocation) onFix(it) }
         // T114: every provider the phone has, enabled or not (Android delivers once it is enabled): with the location
@@ -561,6 +572,8 @@ class MapController {
             "permission" to hasLocationPermission(),
             "injected" to injectedLocation,
             "deviceProviders" to deviceProviders,
+            "deviceListening" to (deviceListener != null), // T150: false in the background
+            "foreground" to Foreground.started,
             "last" to l?.let { mapOf("lat" to it.latitude, "lon" to it.longitude, "accuracy" to it.accuracy, "provider" to it.provider) },
         )
     }

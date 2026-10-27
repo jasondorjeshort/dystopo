@@ -31,8 +31,8 @@ import kotlin.math.floor
  * they refresh the tiles ahead (the rest of the area stays at its own version until it is updated); contour and shade
  * tiles made there from the older DEM then go. Each transient pin records the versions it was fetched at.
  *
- * Polled every [POLL_MS] on its own thread; nothing is fetched while the fetcher is offline, or with no server and
- * no direct sources. `GET /areas/prefetch` is [json]; `POST /areas/prefetch?on=0|1` turns it off and on.
+ * Polled every [POLL_MS] on its own thread, in the background only while navigating (T150, [polls]); nothing is fetched
+ * while the fetcher is offline, or with no server and no direct sources. `GET /areas/prefetch` is [json]; `POST /areas/prefetch?on=0|1` turns it off and on.
  */
 object AheadPrefetch {
     const val SEGMENT_M = 1000.0
@@ -40,6 +40,19 @@ object AheadPrefetch {
     const val BUFFER_M = 300.0
     const val MIN_ZOOM = 12
     const val POLL_MS = 2000L
+
+    /** T150: how often a paused poll looks for a navigation started with the app in the background (a debug route's). */
+    const val BACKGROUND_CHECK_MS = 30_000L
+
+    /**
+     * T150: whether the poll runs: always in the foreground, in the background only while a navigation runs ([navigating])
+     * or the last one's segments are still pinned ([holdingPins], released by the next tick). Pure, tested.
+     */
+    internal fun polls(foreground: Boolean, navigating: Boolean, holdingPins: Boolean): Boolean = foreground || navigating || holdingPins
+
+    /** T150: background waits of the poll (`GET /areas/prefetch` `pausedWaits`). */
+    @Volatile var pausedWaits = 0L
+        private set
 
     private val app: DystopoApp get() = DystopoApp.instance
 
@@ -92,6 +105,11 @@ object AheadPrefetch {
             while (true) {
                 try {
                     Thread.sleep(POLL_MS)
+                    // T150: in the background only while a navigation runs (or the last one's pins are still to release).
+                    while (!polls(io.github.jasondorjeshort.dystopo.app.Foreground.started, NavSession.navigator != null, navigator != null)) {
+                        pausedWaits++
+                        io.github.jasondorjeshort.dystopo.app.Foreground.block(BACKGROUND_CHECK_MS)
+                    }
                     tick()
                 } catch (_: InterruptedException) {
                     return@Thread
@@ -214,7 +232,7 @@ object AheadPrefetch {
     fun json(): Map<String, Any?> = linkedMapOf(
         "enabled" to enabled, "navigating" to (navigator != null), "route" to routeName, "progressM" to progressM.toInt(),
         "lengthM" to cum.lastOrNull()?.toInt(), "segmentM" to SEGMENT_M, "aheadM" to AHEAD_M, "bufferM" to BUFFER_M, "zooms" to listOf(MIN_ZOOM, 15),
-        "polls" to runs, "lastSkip" to lastSkip,
+        "polls" to runs, "lastSkip" to lastSkip, "pausedWaits" to pausedWaits, // T150
         "segments" to segments.values.map { it.json() },
         "arrived" to segments.values.count { it.arrivedAt > 0 }, "cachedAtArrival" to segments.values.count { it.cachedAtArrival == true },
     )
