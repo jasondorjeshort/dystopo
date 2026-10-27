@@ -76,12 +76,12 @@ class GraphBuildEstimateTest {
      * T149's measurement: per pack, the vertices [RoutingGraphBuilder.measure] read on the emulator and the heap's growth
      * through the build there (used bytes from its start to its peak, garbage included; API 35, 576 MB heap). The
      * Washington 3 degree box does not fit that heap (the guard refuses it); its figure is the smallest JVM heap that
-     * built it, the upper end of the range found (2.5 GB failed, 2.75 GB built).
+     * built it, the upper end of the range found (2 GB failed; 2.25 GB built in 1,127 s, 2.5 GB in 729 s, 2.75 GB in 489 s).
      */
     private val measured = listOf(
         Triple("rainier-outdoors", 57_826L, 65_069_056L), // 2.6 MB archive, 480 z14 tiles: 3,526 nodes, 3,793 edges, 5.8 s
         Triple("washington 1 x 0.7 degree", 346_512L, 143_216_640L), // 8.9 MB, 2,255 tiles: 35,644 nodes, 39,467 edges, 17.6 s
-        Triple("washington 3 degree", 7_910_526L, 2_816L shl 20), // 124 MB, 24,266 tiles: 1,934,402 nodes, 2,443,472 edges (JVM)
+        Triple("washington 3 degree", 7_910_526L, 2_304L shl 20), // 124 MB, 24,266 tiles: 1,934,402 nodes, 2,443,472 edges (JVM)
     )
 
     @Test

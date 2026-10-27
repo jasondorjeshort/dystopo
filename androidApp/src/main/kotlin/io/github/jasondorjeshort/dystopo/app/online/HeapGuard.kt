@@ -36,6 +36,12 @@ import java.util.concurrent.atomic.AtomicLong
  * `TRIM_MEMORY_BACKGROUND`, so the level is recorded before (and whatever) the trim policy decides, and the policy is
  * unchanged. A rise of the process's peak and each level go to the persisted high-water mark
  * ([io.github.jasondorjeshort.dystopo.app.settings.HeapMark], raise-only, its own writes rate-limited); no timer.
+ *
+ * T149 (finding 2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone), the builders: the routing graph and the
+ * search index each ask [admitBuild] for their estimated peak before building, a weight-only admission beside the
+ * render-shaped [admitNow]: admitted when the estimate fits the heap free now ([Heap.spareBytes], never the maximum),
+ * else after a [trim], else after up to [BUILD_WAIT_MS] of waiting, else refused ([admitWeight], pure and tested). Builds
+ * take turns ([buildTurn]); a [Watch] samples the heap through each build for its peak. `recentBuilds` in [json].
  */
 object HeapGuard {
     const val MB = 1L shl 20

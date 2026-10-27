@@ -49,6 +49,17 @@ share, and what is the one with a stack?
   pressure is app-wide and not only inside the graph build (not retraced; the stack is in `StringBuilder` from
   an obfuscated string-building frame called off a main-looper message).
 
+- T149 (2026-10-27), the graph and search part: a finished download no longer starts either build, and the search
+  box no longer builds every index at launch (it starts them only while open or holding text); every graph and index
+  build first asks `HeapGuard.admitBuild` for its estimated peak (trim, up to 10 s of waiting, refusal; one build at
+  a time), and a refused graph says so on the route card instead of an `OutOfMemoryError`. Measured heap growth
+  through a graph build on an API 35 emulator (576 MB heap): the Rainier outdoors pack 65 MB (58 k routable vertices),
+  a 1 x 0.7 degree box around Rainier 143 MB (347 k); the Washington 3 degree box (7.9 M vertices, 1.9 M nodes) does
+  not fit that heap at all (a JVM needed more than 2 GB), and a "Download this region" over a z10 London view
+  (1.2 M vertices, estimate 630 MB) was refused on the emulator. So the one-pass builder caps routing at about a
+  1 degree rural box on a phone; the streaming build and the server-shipped graph stay on the Later list. Status
+  stays open for the background-CPU part (T150).
+
 ## Next
 
 - Bound the build by the heap: build in tiles or strips and write as it goes, or refuse with a sentence past a

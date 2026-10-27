@@ -668,7 +668,7 @@ class RoutingGraphBuilder(
          * growth through a build (used bytes, garbage included, from the build's start to its peak) on an API 35
          * emulator with a 576 MB heap: the Rainier outdoors pack (57,826 vertices by [measure]) 65.1 MB, a 1 x 0.7
          * degree box around Rainier from the Washington extract (346,512) 143.2 MB; the Washington 3 degree box
-         * (7,910,526) does not fit that heap and needed a JVM heap of 2.75 to 3 GB (`GraphBuildEstimateTest`).
+         * (7,910,526) does not fit that heap and needed a JVM heap of 2 to 2.25 GB (`GraphBuildEstimateTest`).
          */
         const val ESTIMATE_BASE_BYTES = 48L shl 20
 
