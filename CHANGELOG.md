@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-27
 
+- T150: The app rests in the background: the location listener, the polling loops, the activity stack, StrictMode in debug builds
 - T149: No whole-pack graph or search build behind a download or at launch, and a graph build bounded by the heap
 
 ### 2026-10-26
