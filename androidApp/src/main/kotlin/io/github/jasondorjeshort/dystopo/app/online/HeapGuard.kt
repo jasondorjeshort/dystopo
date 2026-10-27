@@ -250,6 +250,127 @@ object HeapGuard {
     @Volatile var lastBudget = 0L
         private set
 
+    // ---- T149: builders (the routing graph, the search index) ----
+
+    /** How long a build waits for room after the trim before it is refused. */
+    const val BUILD_WAIT_MS = 10_000L
+    const val BUILD_WAIT_STEP_MS = 250L
+
+    /**
+     * One build's admission: whether it may start, the [estimateBytes] it asked for, the heap free for it at the decision
+     * ([limitBytes]: [Heap.spareBytes], or the test limit), the [stage] that decided (`now`, `afterTrim`, `afterWait`,
+     * `refused`, `forced`) and how long it [waitedMs] for room.
+     */
+    data class Admission(
+        val name: String, val estimateBytes: Long, val limitBytes: Long, val admitted: Boolean, val stage: String,
+        val trimmed: Boolean, val waitedMs: Long, val at: Long, val testLimit: Boolean = false,
+    ) {
+        val refused: Boolean get() = !admitted
+
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "name" to name, "estimateBytes" to estimateBytes, "limitBytes" to limitBytes, "refused" to refused, "stage" to stage,
+            "trimmed" to trimmed, "waitedMs" to waitedMs, "at" to at, "testLimit" to testLimit,
+        )
+    }
+
+    /**
+     * The admission policy for a build that may take [weight] (pure, `HeapGuardTest`): admitted when [weight] fits the
+     * heap free now ([limit]); else [trim] once and look again; else look every [stepMs] until [waitMs] is spent (a
+     * render burst ending frees its share); else refused. [limit] is read afresh at each look; [now] and [sleep] are
+     * the clock. Builds never take the heap's maximum as their limit: the app holds part of it already.
+     */
+    fun admitWeight(
+        name: String, weight: Long, limit: () -> Long, trim: () -> Unit, sleep: (Long) -> Unit, now: () -> Long,
+        waitMs: Long = BUILD_WAIT_MS, stepMs: Long = BUILD_WAIT_STEP_MS, testLimit: Boolean = false,
+    ): Admission {
+        val t0 = now()
+        fun result(ok: Boolean, stage: String, lim: Long, trimmed: Boolean) =
+            Admission(name, weight, lim, ok, stage, trimmed, now() - t0, System.currentTimeMillis(), testLimit)
+        var lim = limit()
+        if (weight <= lim) return result(true, "now", lim, false)
+        trim()
+        lim = limit()
+        if (weight <= lim) return result(true, "afterTrim", lim, true)
+        while (now() - t0 < waitMs) {
+            sleep(stepMs)
+            lim = limit()
+            if (weight <= lim) return result(true, "afterWait", lim, true)
+        }
+        return result(false, "refused", lim, true)
+    }
+
+    /** One build at a time across the app's builders (fair: the one that asked first goes first). */
+    private val buildTurn = java.util.concurrent.Semaphore(1, true)
+
+    /** Runs [block] when no other build runs (T149: the graph and the search index take turns). */
+    fun <T> buildTurn(block: () -> T): T {
+        buildTurn.acquire()
+        try {
+            return block()
+        } finally {
+            buildTurn.release()
+        }
+    }
+
+    private val recentBuilds = ArrayDeque<Admission>()
+    val buildsAdmitted = AtomicLong()
+    val buildsRefused = AtomicLong()
+
+    /**
+     * [admitWeight] against this process's heap: the limit is [Heap.spareBytes] now (the heap's max less what is used
+     * and the reserve), or [testLimit] when set (`POST /route/guard?maxBytes=`; then nothing waits, the limit does not
+     * move); the trim is [trim] with a collection. [force] admits without asking (`POST /route/build?force=1`).
+     */
+    fun admitBuild(name: String, weight: Long, force: Boolean = false, testLimit: Long? = null): Admission {
+        val a = if (force) {
+            Admission(name, weight, testLimit ?: Heap.now().spareBytes, true, "forced", false, 0, System.currentTimeMillis(), testLimit != null)
+        } else {
+            admitWeight(
+                name, weight, limit = { testLimit ?: Heap.now().spareBytes }, trim = { trim("before a build ($name)") },
+                sleep = { Thread.sleep(it) }, now = { System.nanoTime() / 1_000_000 },
+                waitMs = if (testLimit != null) 0 else BUILD_WAIT_MS, testLimit = testLimit != null,
+            )
+        }
+        (if (a.admitted) buildsAdmitted else buildsRefused).incrementAndGet()
+        synchronized(recentBuilds) {
+            recentBuilds.addLast(a)
+            while (recentBuilds.size > 8) recentBuilds.removeFirst()
+        }
+        Log.i(TAG, "build $name: ${a.stage}, estimate ${a.estimateBytes / MB} MB, limit ${a.limitBytes / MB} MB, waited ${a.waitedMs} ms")
+        return a
+    }
+
+    /**
+     * A heap watch over one build: samples the heap every [WATCH_MS] on its own thread until closed, keeping the build's
+     * peak ([peakBytes], used bytes, garbage not yet collected included) beside the heap when it started; every reading
+     * also goes to the process's peak ([sample]), so `GET /diagnostics` sees a build's peak.
+     */
+    class Watch internal constructor(name: String) : AutoCloseable {
+        val startBytes: Long = Heap.now().usedBytes
+        @Volatile var peakBytes: Long = startBytes
+            private set
+        private val stop = AtomicBoolean()
+        private val thread = Thread({
+            while (!stop.get()) {
+                val u = Heap.now().usedBytes
+                if (u > peakBytes) peakBytes = u
+                sample(u)
+                try { Thread.sleep(WATCH_MS) } catch (e: InterruptedException) { return@Thread }
+            }
+        }, "heap-watch-$name").apply { isDaemon = true; start() }
+
+        override fun close() {
+            stop.set(true)
+            thread.interrupt()
+            val u = Heap.now().usedBytes
+            if (u > peakBytes) peakBytes = u
+        }
+    }
+
+    const val WATCH_MS = 50L
+
+    fun watch(name: String): Watch = Watch(name)
+
     // ---- the record: peaks per render burst ----
 
     /** A burst: renders from the first after an idle spell to the last before the next [BURST_GAP_MS] of none. */
@@ -332,6 +453,8 @@ object HeapGuard {
             "rendersAdmitted" to rendersAdmitted.get(), "rendersWaited" to rendersWaited.get(), "droppedBytes" to droppedBytes.get(), // T143
             "lastSignalLevel" to lastSignalLevel.takeIf { it >= 0 }, "lastSignalAt" to lastSignalAt.takeIf { it > 0 }, "signals" to signals.get(),
             "recentTrims" to synchronized(recentTrims) { recentTrims.map { it.json() } },
+            "buildsAdmitted" to buildsAdmitted.get(), "buildsRefused" to buildsRefused.get(), // T149
+            "recentBuilds" to synchronized(recentBuilds) { recentBuilds.map { it.json() } },
             "hooks" to hooks.map { it.name },
         )
     }

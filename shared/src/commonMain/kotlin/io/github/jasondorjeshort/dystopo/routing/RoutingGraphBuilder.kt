@@ -65,6 +65,29 @@ data class GraphBuildStats(
 }
 
 /**
+ * T149: the size of one vector archive's graph build, read before it starts ([RoutingGraphBuilder.measure]): the tiles at
+ * the read zoom, and the routable line vertices of an even sample of them scaled to every tile ([vertices], what the
+ * build's arrays grow with). [estimateBytes] is the heap the build may take at its peak, the margin included.
+ */
+data class GraphBuildSize(
+    val zoom: Int,
+    val tiles: Int,
+    val archiveBytes: Long,
+    val sampledTiles: Int,
+    val sampledVertices: Long,
+    /** Routable vertices in every tile at [zoom], scaled from the sample (the build's `inputVertices`, about). */
+    val vertices: Long,
+) {
+    val fittedPeakBytes: Long get() = RoutingGraphBuilder.fittedPeakBytes(vertices)
+    val estimateBytes: Long get() = RoutingGraphBuilder.estimatePeakBytes(vertices)
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "zoom" to zoom, "tiles" to tiles, "archiveBytes" to archiveBytes, "sampledTiles" to sampledTiles,
+        "sampledVertices" to sampledVertices, "vertices" to vertices, "fittedPeakBytes" to fittedPeakBytes, "estimateBytes" to estimateBytes,
+    )
+}
+
+/**
  * Builds a [RoutingGraph] from the routable lines of a vector pack ([WayAttrs.of]: paths, footways,
  * cycleways, tracks, service and minor roads up to primary, and since T73 trunks and motorways for
  * drive mode; outdoors or OpenMapTiles schema):
@@ -634,6 +657,92 @@ class RoutingGraphBuilder(
         /** Identifies the vector archive's content: the graph is rebuilt when this changes. */
         fun fingerprint(h: PmtilesHeader): String =
             "v1:${h.tileDataLength}:${h.addressedTiles}:${h.tileContents}:${h.rootDirectoryOffset}:${h.metadataLength}:${h.minZoom}-${h.maxZoom}"
+
+        // ---- T149: the heap a build takes, estimated before it starts ----
+
+        /** Tiles read for the estimate: an even spread over the archive's tile order (a Hilbert curve, so over its area too). */
+        const val ESTIMATE_SAMPLE_TILES = 256
+
+        /**
+         * The fitted peak's fixed part: the reader, the DEM cache and the builder's own tables. T149 measured the heap's
+         * growth through a build (used bytes, garbage included, from the build's start to its peak) on an API 35
+         * emulator with a 576 MB heap: the Rainier outdoors pack (57,826 vertices by [measure]) 65.1 MB, a 1 x 0.7
+         * degree box around Rainier from the Washington extract (346,512) 143.2 MB; the Washington 3 degree box
+         * (7,910,526) does not fit that heap and needed a JVM heap of 2.75 to 3 GB (`GraphBuildEstimateTest`).
+         */
+        const val ESTIMATE_BASE_BYTES = 48L shl 20
+
+        /** The fitted peak's part per routable input vertex (T149's measurement; see [ESTIMATE_BASE_BYTES]). */
+        const val ESTIMATE_BYTES_PER_VERTEX = 300L
+
+        /** What [estimatePeakBytes] adds on top of the fitted peak (the research's "about 1.5x"; T149). */
+        const val ESTIMATE_MARGIN = 1.5
+
+        /** The peak heap a build of [vertices] routable input vertices took in T149's measurement, fitted. Pure. */
+        fun fittedPeakBytes(vertices: Long): Long = ESTIMATE_BASE_BYTES + ESTIMATE_BYTES_PER_VERTEX * vertices
+
+        /** [fittedPeakBytes] with [ESTIMATE_MARGIN]: what a heap guard compares with the heap free now. Pure. */
+        fun estimatePeakBytes(vertices: Long): Long = (fittedPeakBytes(vertices) * ESTIMATE_MARGIN).toLong()
+
+        /**
+         * T149: the size of a build of [reader] (the archive of [archiveBytes]) without building: the tiles at the read
+         * zoom are counted from the directory, and the routable vertices of up to [sample] of them, spread evenly over
+         * the tile order, are decoded and scaled to all. Reads [sample] tiles at most; holds no per-tile list.
+         */
+        fun measure(reader: PmtilesReader, archiveBytes: Long, sample: Int = ESTIMATE_SAMPLE_TILES): GraphBuildSize {
+            val h = reader.header
+            val z = min(h.maxZoom, MAX_ZOOM)
+            val start = TileIds.zoomStart(z)
+            val end = TileIds.zoomStart(z + 1)
+            fun forEachTile(each: (Long) -> Boolean) {
+                for (e in reader.tileEntries()) {
+                    if (e.tileId >= end) break
+                    if (e.tileId + e.runLength <= start) continue
+                    for (k in 0 until e.runLength) {
+                        val id = e.tileId + k
+                        if (id in start until end && !each(id)) return
+                    }
+                }
+            }
+            var tiles = 0
+            forEachTile { tiles++; true }
+            val n = min(tiles, sample.coerceAtLeast(1))
+            val openMapTiles = PackPrecedence.vectorProfile(runCatching { reader.metadata() }.getOrDefault(emptyMap())) == VectorProfile.OPENMAPTILES
+            var picked = 0
+            var index = 0
+            var sampled = 0L
+            if (n > 0) forEachTile { id ->
+                // The picked-th of n sits at index picked * tiles / n.
+                if (index.toLong() == picked.toLong() * tiles / n) {
+                    sampled += routableVertices(reader, id, openMapTiles)
+                    picked++
+                }
+                index++
+                picked < n
+            }
+            val vertices = if (picked == 0) 0L else sampled * tiles / picked
+            return GraphBuildSize(z, tiles, archiveBytes, picked, sampled, vertices)
+        }
+
+        /** The vertices of tile [id]'s routable lines, as [build] reads them (0 for a tile that does not decode). */
+        private fun routableVertices(reader: PmtilesReader, id: Long, openMapTiles: Boolean): Long {
+            val t = TileIds.toZxy(id)
+            return try {
+                val bytes = reader.tile(t.z, t.x, t.y) ?: return 0
+                var n = 0L
+                for (layer in MvtDecoder.decode(LayerFilter.filter(bytes, LAYERS)).layers) {
+                    if (layer.name != LAYER) continue
+                    for (f in layer.features) {
+                        val g = f.geometry as? Geometry.Lines ?: continue
+                        if (WayAttrs.of(f.properties, openMapTiles) == null) continue
+                        for (line in g.lines) n += line.size
+                    }
+                }
+                n
+            } catch (e: IllegalArgumentException) {
+                0
+            }
+        }
 
         /** Tile ids present at zoom [z] (run-length entries expanded), in id order. */
         fun tileIdsAt(reader: PmtilesReader, z: Int): List<Long> {

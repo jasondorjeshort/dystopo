@@ -9,6 +9,7 @@ import io.github.jasondorjeshort.dystopo.app.FileRangeSource
 import io.github.jasondorjeshort.dystopo.app.PackSet
 import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.app.gunzip
+import io.github.jasondorjeshort.dystopo.app.online.HeapGuard
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
 import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
 import io.github.jasondorjeshort.dystopo.model.Route
@@ -21,6 +22,7 @@ import io.github.jasondorjeshort.dystopo.routing.FallbackRouter
 import io.github.jasondorjeshort.dystopo.routing.RemoteRouter
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.GraphTileCache
+import io.github.jasondorjeshort.dystopo.routing.GraphBuildSize
 import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
 import io.github.jasondorjeshort.dystopo.routing.GraphTiler
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
@@ -44,7 +46,15 @@ import java.util.concurrent.TimeUnit
  * background, or builds it from the vector archive (elevation from the pack's DEM archive) when it is
  * missing, unreadable, from before T76 (version 2) or stale (either archive's fingerprint changed), with
  * progress in [json] (`GET /packs` under `routing`, `GET /route/status`). Nothing is built until the
- * first use: the first long-press on the map, `POST /route` or the trip editor.
+ * first use: the first long-press on the map, `POST /route` or the trip editor (T149: not when a download finishes).
+ *
+ * T149, the heap guard: before a build the archive's size is read ([RoutingGraphBuilder.measure]: its tiles at the read
+ * zoom and the routable vertices of a sample of them) and the build's peak heap estimated from it (with a 1.5x margin);
+ * the build then asks [HeapGuard.admitBuild] for that much, one build at a time ([HeapGuard.buildTurn], with the search
+ * index's), against the heap free now: a trim first, then a bounded wait, then the refusal. A refused build is state
+ * `refused` with the sentence [GRAPH_TOO_LARGE] (never an `OutOfMemoryError`) and is asked again by a use after
+ * [REFUSED_RETRY_MS]. `POST /route/build?force=1` builds without asking (measurement); `POST /route/guard?maxBytes=` sets
+ * the limit for tests ([guardMaxBytes]). Each build's heap at its start and its peak are kept (`peakHeapBytes`).
  *
  * A route runs on [router]: one [TiledGraph] over the graph files of every pack in use, tiles read on
  * demand into one LRU ([tileCache]), so a route reads only the tiles around it and crosses from one
@@ -61,7 +71,15 @@ import java.util.concurrent.TimeUnit
 object RoutePlanner {
     /** Graph state for one pack. Fields are written by the worker thread. */
     class State(val pack: String, val vector: File, val dem: File?, val file: File, private val vectorBytes: Long, private val vectorMtime: Long, val bounds: DoubleArray) {
-        @Volatile var status = "queued" // queued, loading, building, ready, error
+        @Volatile var status = "queued" // queued, loading, waiting (T149: for the heap guard), building, ready, refused (T149), error
+        /** T149: the build's size and estimate ([RoutingGraphBuilder.measure]), its admission, and the heap through it. */
+        @Volatile var size: GraphBuildSize? = null
+        @Volatile var guard: HeapGuard.Admission? = null
+        @Volatile var heapStartBytes: Long? = null
+        @Volatile var peakHeapBytes: Long? = null
+        @Volatile var refusedAt = 0L
+        /** Counted down once the state is decided: loaded, admitted, refused or failed (`POST /route/build` answers then). */
+        val decided = CountDownLatch(1)
         @Volatile var done = 0
         @Volatile var total = 0
         @Volatile var buildMs: Long? = null
@@ -94,8 +112,22 @@ object RoutePlanner {
             "buildMs" to buildMs, "loadMs" to loadMs, "demTilesDecoded" to demTilesDecoded, "demDecodeMs" to demDecodeMs, "demDecoder" to demDecoder, "decoder" to TileService.decoderName, "rebuildReason" to rebuildReason, "error" to error, // T57: decoder
             "nodes" to (archive?.nodeCount ?: nodes), "edges" to archive?.edgeCount,
             "graphTiles" to archive?.entries?.size, "tileZoom" to archive?.tileZoom, // T76
+            "heapStartBytes" to heapStartBytes, "peakHeapBytes" to peakHeapBytes, // T149: the build's heap
+            "guard" to (guard?.json().orEmpty() + mapOf("size" to size?.json())).takeIf { size != null || guard != null },
+            "message" to if (status == "refused") GRAPH_TOO_LARGE else null,
         )
+
+        val busy: Boolean get() = status in BUSY
     }
+
+    /** States still on their way to ready, refused or error. */
+    private val BUSY = listOf("queued", "loading", "waiting", "building")
+
+    /** T149: a refused build is asked again by the next use after this long (not sooner: the heap rarely frees faster). */
+    const val REFUSED_RETRY_MS = 30_000L
+
+    /** T149: `POST /route/guard?maxBytes=`: the limit builds are compared with instead of the free heap (tests); null: the heap's. */
+    @Volatile var guardMaxBytes: Long? = null
 
     private val worker = Executors.newSingleThreadExecutor { r ->
         Thread({ Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "dystopo-routing").apply { isDaemon = true }
@@ -154,18 +186,20 @@ object RoutePlanner {
      * primary pack's state (the first pack's without one), null when no pack has a vector archive.
      */
     @Synchronized
-    fun ensure(app: DystopoApp = DystopoApp.instance, rebuild: Boolean = false): State? {
-        val list = regions(app).map { ensureRegion(it, rebuild) }
+    fun ensure(app: DystopoApp = DystopoApp.instance, rebuild: Boolean = false, force: Boolean = false): State? {
+        val list = regions(app).map { ensureRegion(it, rebuild, force) }
         // Packs that left the device (or changed) drop their state and tiles.
         val live = list.map { it.vector.path }.toSet()
-        for ((k, s) in states) if (k !in live && s.status !in listOf("queued", "loading", "building")) { states.remove(k); close(s) }
+        for ((k, s) in states) if (k !in live && !s.busy) { states.remove(k); close(s) }
         return list.firstOrNull()
     }
 
-    private fun ensureRegion(region: PackSet.Region, rebuild: Boolean): State {
+    private fun ensureRegion(region: PackSet.Region, rebuild: Boolean, force: Boolean): State {
         val vector = region.osm!!.file
         val cur = states[vector.path]
-        if (cur != null && cur.matches(region.name, vector) && (!rebuild || cur.status in listOf("queued", "loading", "building"))) return cur
+        // T149: a refused build is asked again by a use after REFUSED_RETRY_MS (the heap may have room by then).
+        val retry = cur?.status == "refused" && SystemClock.elapsedRealtime() - cur.refusedAt >= REFUSED_RETRY_MS
+        if (cur != null && cur.matches(region.name, vector) && !retry && (!rebuild || cur.busy)) return cur
         cur?.let { close(it) }
         val dir = vector.absoluteFile.parentFile
         val h = region.osm.header
@@ -174,7 +208,7 @@ object RoutePlanner {
             doubleArrayOf(h.minLon, h.minLat, h.maxLon, h.maxLat),
         )
         states[vector.path] = state
-        worker.execute { run(state, rebuild) }
+        worker.execute { run(state, rebuild, force) }
         return state
     }
 
@@ -196,7 +230,7 @@ object RoutePlanner {
         }
     }
 
-    private fun run(s: State, rebuild: Boolean) {
+    private fun run(s: State, rebuild: Boolean, force: Boolean) {
         current = s
         try {
             FileRangeSource(s.vector).use { src ->
@@ -222,29 +256,31 @@ object RoutePlanner {
                     } else {
                         s.rebuildReason = if (rebuild) "requested" else "missing"
                     }
-                    s.status = "building"
-                    val t0 = SystemClock.elapsedRealtime()
-                    // Its own small DEM cache: the builder samples in tile order, so each tile is decoded about once.
-                    val pyramid = demReader?.let { r ->
-                        val lock = Any()
-                        // T49: the app's DEM decoder (the shared pure-Kotlin one by default), not BitmapFactory.
-                        DemPyramid(r.header.minZoom, r.header.maxZoom, TileService.demDecoder(), cacheTiles = 32) { z, x, y -> synchronized(lock) { r.tile(z, x, y) } }
+                    // T149: the heap guard. The build's peak is estimated from the archive, and the build starts only when
+                    // that fits the heap free now (after a trim and a bounded wait), one build at a time; never an OOM.
+                    s.status = "waiting"
+                    val size = RoutingGraphBuilder.measure(reader, s.vector.length())
+                    s.size = size
+                    HeapGuard.buildTurn {
+                        val admission = HeapGuard.admitBuild("graph ${s.pack}", size.estimateBytes, force, guardMaxBytes)
+                        s.guard = admission
+                        if (admission.refused) {
+                            s.refusedAt = SystemClock.elapsedRealtime()
+                            s.status = "refused"
+                            Log.w(TAG, "graph for ${s.pack} refused: estimate ${size.estimateBytes shr 20} MB over ${admission.limitBytes shr 20} MB free")
+                        } else {
+                            s.status = "building"
+                            s.decided.countDown()
+                            val w = HeapGuard.watch("graph")
+                            s.heapStartBytes = w.startBytes
+                            try {
+                                build(s, reader, demReader, demFingerprint)
+                            } finally {
+                                w.close()
+                                s.peakHeapBytes = w.peakBytes
+                            }
+                        }
                     }
-                    val builder = RoutingGraphBuilder(pyramid?.let { DemElevation(it) }, demFingerprint) { d, n -> s.done = d; s.total = n }
-                        .withClock { SystemClock.elapsedRealtime() }
-                    val g = builder.build(reader, s.vector.name, System.currentTimeMillis())
-                    val bytes = GraphTileFile.encode(g)
-                    val tmp = File(s.file.path + ".tmp")
-                    tmp.writeBytes(bytes)
-                    if (!tmp.renameTo(s.file)) { s.file.delete(); tmp.renameTo(s.file) }
-                    s.archive = open(s)
-                    s.nodes = g.nodeCount
-                    s.buildMs = SystemClock.elapsedRealtime() - t0
-                    s.demTilesDecoded = pyramid?.tilesDecoded
-                    s.demDecodeMs = pyramid?.decodeMs?.let { Math.round(it * 10) / 10.0 }
-                    s.demDecoder = TileService.decoderName
-                    s.status = "ready"
-                    Log.i(TAG, "built ${s.file.name}: ${g.nodeCount} nodes, ${g.edgeCount} edges, ${s.archive?.entries?.size} tiles, ${bytes.size} bytes in ${s.buildMs} ms (${builder.stats?.timingsMs})")
                 } finally {
                     demSrc?.close()
                 }
@@ -254,8 +290,35 @@ object RoutePlanner {
             s.status = "error"
             Log.w(TAG, "routing graph for ${s.pack} failed", e)
         } finally {
+            s.decided.countDown()
             s.finished.countDown()
         }
+    }
+
+    /** Builds [s]'s graph from [reader] (elevation from [demReader]) and opens it; on the routing worker, admitted. */
+    private fun build(s: State, reader: PmtilesReader, demReader: PmtilesReader?, demFingerprint: String) {
+        val t0 = SystemClock.elapsedRealtime()
+        // Its own small DEM cache: the builder samples in tile order, so each tile is decoded about once.
+        val pyramid = demReader?.let { r ->
+            val lock = Any()
+            // T49: the app's DEM decoder (the shared pure-Kotlin one by default), not BitmapFactory.
+            DemPyramid(r.header.minZoom, r.header.maxZoom, TileService.demDecoder(), cacheTiles = 32) { z, x, y -> synchronized(lock) { r.tile(z, x, y) } }
+        }
+        val builder = RoutingGraphBuilder(pyramid?.let { DemElevation(it) }, demFingerprint) { d, n -> s.done = d; s.total = n }
+            .withClock { SystemClock.elapsedRealtime() }
+        val g = builder.build(reader, s.vector.name, System.currentTimeMillis())
+        val bytes = GraphTileFile.encode(g)
+        val tmp = File(s.file.path + ".tmp")
+        tmp.writeBytes(bytes)
+        if (!tmp.renameTo(s.file)) { s.file.delete(); tmp.renameTo(s.file) }
+        s.archive = open(s)
+        s.nodes = g.nodeCount
+        s.buildMs = SystemClock.elapsedRealtime() - t0
+        s.demTilesDecoded = pyramid?.tilesDecoded
+        s.demDecodeMs = pyramid?.decodeMs?.let { Math.round(it * 10) / 10.0 }
+        s.demDecoder = TileService.decoderName
+        s.status = "ready"
+        Log.i(TAG, "built ${s.file.name}: ${g.nodeCount} nodes, ${g.edgeCount} edges, ${s.archive?.entries?.size} tiles, ${bytes.size} bytes in ${s.buildMs} ms (${builder.stats?.timingsMs})")
     }
 
     /** Thrown when no graph near the route is ready within the wait. */
@@ -338,6 +401,29 @@ object RoutePlanner {
         return LinkedHashMap(each.first()) + linkedMapOf(
             "packs" to each, "tileCache" to tileCache.json(), "lastRoute" to lastRoute,
             "driveOverlay" to driveOverlay.json(), "remote" to remoteJson(), // T77
+            "guardNow" to guardJson(app), // T149
+        )
+    }
+
+    /** T149: waits up to [ms] for [s] to be loaded, admitted, refused or failed (`POST /route/build` answers then). */
+    fun awaitDecision(s: State, ms: Long) {
+        s.decided.await(ms, TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * T149, `POST /route/guard` and `GET /route/status` `guardNow`: the limit builds are compared with (the test's
+     * [guardMaxBytes], else the heap free now) and, with [measure], each pack's build size and estimate read now.
+     */
+    fun guardJson(app: DystopoApp = DystopoApp.instance, measure: Boolean = false): Map<String, Any?> {
+        val heap = HeapGuard.Heap.now()
+        return linkedMapOf(
+            "testMaxBytes" to guardMaxBytes, "spareBytes" to heap.spareBytes, "heapUsedBytes" to heap.usedBytes, "heapMaxBytes" to heap.maxBytes,
+            "limitBytes" to (guardMaxBytes ?: heap.spareBytes), "margin" to RoutingGraphBuilder.ESTIMATE_MARGIN,
+            "packs" to if (!measure) null else regions(app).map { r ->
+                val f = r.osm!!.file
+                val size = runCatching { FileRangeSource(f).use { src -> RoutingGraphBuilder.measure(PmtilesReader.open(src, mapOf(Compression.GZIP to gunzip)), f.length()) } }
+                linkedMapOf("pack" to r.name, "size" to size.getOrNull()?.json(), "error" to size.exceptionOrNull()?.message)
+            },
         )
     }
 

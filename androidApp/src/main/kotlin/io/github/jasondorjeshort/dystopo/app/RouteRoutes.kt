@@ -16,8 +16,17 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   T108: `mode=crow` is the straight line with the DEM pack's heights (no graph, never 503); its `route` has
  *   `bearingDeg` and one arrival in `instructions`.
  * - `GET /route[?profile=1]`: the current route (or failure) and the card's state.
- * - `GET /route/status`: the graph for the active pack (status, build progress, timings, size).
- * - `POST /route/build`: rebuild the graph (progress in `/route/status` and `/packs`).
+ * - `GET /route/status`: the graph for the active pack (status, build progress, timings, size). T149: `guard` (the last
+ *   build's admission: `estimateBytes`, `limitBytes`, `refused`, `stage` `now|afterTrim|afterWait|refused|forced`,
+ *   `waitedMs`, `testLimit`, and `size`, what `RoutingGraphBuilder.measure` read), `heapStartBytes` and `peakHeapBytes`
+ *   (the heap when the build started and its peak through it), `message` when refused; `guardNow` (the limit now:
+ *   `testMaxBytes`, `spareBytes`, `limitBytes`). Status `waiting` while the build waits for the guard, `refused` after.
+ * - `POST /route/build[?force=1]`: rebuild the graph (progress in `/route/status` and `/packs`); T149: answers once the
+ *   build is admitted (the state, status `building`), or refused (409, `error` `graph_refused`, `message` the route
+ *   card's sentence, `graph`), at most 30 s; `force=1` builds without asking the heap guard (for measurement).
+ * - T149: `POST /route/guard?maxBytes=<n>` sets the limit graph builds are compared with instead of the heap free now
+ *   (tests; nothing waits then), `?clear=1` drops it; answers `guardNow`'s keys plus each pack's `size` measured now.
+ *   `POST /route` on a refused graph is the same 409 as `POST /route/build`.
  * - `POST /route/longpress?lat=&lon=`: what a long-press on the map does (start, then end).
  * - `POST /route/mode?mode=hike|bike|drive|crow`: switch mode and plan again; T49: answers after the new route is
  *   planned and shown (the card state, plus `route` like `GET /route`).
@@ -66,6 +75,8 @@ object RouteRoutes {
                 val result = try {
                     RouteSession.plan(fromLat, fromLon, toLat, toLon, mode, r.query["name"] ?: "Route", wait)
                 } catch (e: RoutePlanner.NotReady) {
+                    // T149: a build the heap guard refused is a 409 with the card's sentence, not a "try again" 503.
+                    if (e.state?.status == "refused") return refused(app)
                     return Response.json(mapOf("error" to "graph_not_ready", "graph" to RoutePlanner.json(app)), 503)
                 }
                 val ms = (System.nanoTime() - t0) / 1_000_000
@@ -76,7 +87,17 @@ object RouteRoutes {
             }
             "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1"))
             "GET" to "/route/status" -> Response.json(RoutePlanner.json(app) ?: mapOf("error" to "active pack has no vector archive"))
-            "POST" to "/route/build" -> Response.json(RoutePlanner.ensure(app, rebuild = true)?.json() ?: mapOf("error" to "active pack has no vector archive"))
+            "POST" to "/route/build" -> {
+                // T149: answers once the build is admitted, refused or failed (at most 30 s); force=1 skips the heap guard.
+                val s = RoutePlanner.ensure(app, rebuild = true, force = r.query["force"] == "1") ?: return Response.json(mapOf("error" to "active pack has no vector archive"))
+                RoutePlanner.awaitDecision(s, 30_000)
+                if (s.status == "refused") refused(app) else Response.json(s.json())
+            }
+            "POST" to "/route/guard" -> { // T149: the heap guard's limit for tests
+                if (r.query["clear"] == "1") RoutePlanner.guardMaxBytes = null
+                r.query["maxBytes"]?.let { v -> RoutePlanner.guardMaxBytes = v.toLongOrNull()?.takeIf { it >= 0 } ?: return bad("maxBytes must be a whole number of bytes, 0 or more") }
+                Response.json(RoutePlanner.guardJson(app, measure = true))
+            }
             "POST" to "/route/longpress" -> {
                 val lat = r.query["lat"]?.toDoubleOrNull() ?: return bad("lat and lon required")
                 val lon = r.query["lon"]?.toDoubleOrNull() ?: return bad("lat and lon required")
@@ -165,6 +186,10 @@ object RouteRoutes {
     }
 
     private fun bad(message: String) = Response.json(mapOf("error" to message), 400)
+
+    /** T149: the heap guard refused the graph build: 409 with the route card's sentence and the graph state (`guard`). */
+    private fun refused(app: DystopoApp) =
+        Response.json(linkedMapOf("error" to "graph_refused", "message" to io.github.jasondorjeshort.dystopo.app.routing.GRAPH_TOO_LARGE, "graph" to RoutePlanner.json(app)), 409)
 }
 
 /**

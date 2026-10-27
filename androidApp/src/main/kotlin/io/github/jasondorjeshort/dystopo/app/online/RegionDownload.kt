@@ -210,7 +210,12 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         }
     }
 
-    /** T75: records the finished pack as a pinned area and starts the search index and trail graph builds. */
+    /**
+     * T75: records the finished pack as a pinned area. T149: it no longer starts the search index and trail graph builds
+     * (two whole-pack builds on top of the app's working set ran a 512 MB heap out of memory on a phone, finding
+     * 2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone): each is built on first use, as the `/area`
+     * manifest says (the graph by the first route, `RoutePlanner`; the index when the search box is used, `PlaceSearch`).
+     */
     private fun recordArea(source: String, packName: String) {
         val a = area ?: return
         val bytes = runCatching { PackManager.get(app).find(packName)?.files?.files?.sumOf { it.length() } }.getOrNull() ?: 0L
@@ -220,10 +225,6 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
                 bytes = bytes, estimateBytes = manifest?.bytes ?: bytes, downloadMs = System.currentTimeMillis() - startedAt,
             ),
         )
-        Thread({
-            runCatching { io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.ensure(app) }
-            runCatching { io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.ensure(app) }
-        }, "area-products").apply { isDaemon = true }.start()
     }
 
     /**

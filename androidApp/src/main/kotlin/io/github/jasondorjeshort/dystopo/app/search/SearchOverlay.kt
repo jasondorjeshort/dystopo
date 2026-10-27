@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
@@ -58,17 +59,29 @@ object SearchUi {
     var open by mutableStateOf(false)
     var status by mutableStateOf<String?>(null)
     var selected by mutableStateOf<PackHit?>(null)
+    /** T149: the text field has the focus (the box is open for typing). */
+    var focused by mutableStateOf(false)
 
-    /** Runs the query against every pack's index (T41), centred on the camera. Main thread. */
+    /** T149: the indexes are wanted: the box is open (focused, or its result list open) or holds text. */
+    val wanted: Boolean get() = focused || open || query.isNotBlank()
+
+    /**
+     * Runs the query against every pack's index (T41), centred on the camera. Main thread. T149: loads or builds the
+     * indexes only while they are [wanted] (else it reads their states and starts nothing), so no index is built at
+     * launch or after a download until the search box is used.
+     */
     fun refresh() {
         val q = query.trim()
-        val states = PlaceSearch.ensure()
+        val want = wanted
+        val states = if (want) PlaceSearch.ensure() else PlaceSearch.peek()
         val building = states.filter { it.status == "building" }
         status = when {
+            !want && states.none { it.busy } -> null // not asked for yet: nothing to say
             states.isEmpty() -> "No map data in these packs to search"
             building.isNotEmpty() -> "Indexing places" + building.sumOf { it.total }.let { t -> if (t > 0) " ${building.sumOf { it.done } * 100 / t}%" else "..." } +
                 if (building.size > 1) " (${building.size} packs)" else ""
             states.all { it.status == "error" } -> "Search index failed: ${states.first().error}"
+            states.none { it.index != null } && states.any { it.status == "refused" } -> SEARCH_NO_MEMORY // T149
             states.none { it.index != null } -> "Loading search index..."
             else -> null
         }
@@ -104,6 +117,9 @@ object SearchUi {
     }
 }
 
+/** T149: the box's line when the heap guard refused every index build (asked again after a while). */
+internal const val SEARCH_NO_MEMORY = "Not enough memory to index places now; try again in a minute"
+
 /**
  * The search box over the map (top left): type a place name, pick a result, and the camera moves
  * there with a temporary marker. Drawn by one line in MainActivity's map screen. While the active
@@ -114,12 +130,13 @@ fun SearchOverlay() {
     val ui = SearchUi
     val focus = LocalFocusManager.current
     LaunchedEffect(Unit) {
-        // Starts the indexes of the packs on the map (and follows pack changes); cheap once they are ready.
+        // Follows the indexes of the packs on the map; T149: starts them only while the box is open or holds text.
         while (true) {
             ui.refresh()
-            delay(if (PlaceSearch.status() == "ready") 2000 else 500)
+            delay(if (PlaceSearch.states.any { it.busy }) 500 else 2000)
         }
     }
+    LaunchedEffect(ui.focused) { ui.refresh() } // T149: opening the box starts the indexes at once
     LaunchedEffect(ui.query) { ui.refresh() }
 
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -150,7 +167,7 @@ fun SearchOverlay() {
                             ui.hits.firstOrNull()?.let { h -> thread(name = "dystopo-search-select") { ui.select(h) } }
                             focus.clearFocus()
                         }),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().onFocusChanged { ui.focused = it.isFocused },
                     )
                 }
                 if (ui.query.isNotEmpty() || ui.selected != null) {
