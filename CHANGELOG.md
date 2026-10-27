@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-27
 
+- T151: Interrupted area downloads: the cursor, the repair at start and the cheap check (after T152)
 - T152: Downloads past the heap limit: an estimate instead of nothing, the walk as rows, the download proceeds
 - T150: The app rests in the background: the location listener, the polling loops, the activity stack, StrictMode in debug builds
 - T149: No whole-pack graph or search build behind a download or at launch, and a graph build bounded by the heap
