@@ -1,26 +1,27 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-27, at commit 0d980dd plus this edit, by main session (wave 21: T149 and T150 merged, T152 in flight)
+Updated: 2026-10-27, at commit 85023b9 plus this edit, by main session (wave 21: T149 to T152 merged, T156 in flight)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 21.
 
 ## Now
 
 - Wave 21 is on the board past the critic: nine tasks, launch order T149, T150, T152, T151, T156, T153, T157, T154,
   T155 (T154 and T155 may take any slot). **One agent at a time** (owner, 2026-10-27): implementer, verifier, merge,
-  next task. T149 (dbe6e69) and T150 (98c9a9d) are merged and logged, their branches and worktrees cleaned.
-  T152's implementer (Opus) was launched 2026-10-27 on worktree `~/Documents/src/dystopo-wt/T152`, AVD
-  `dystopo35-T152`, console 5630, host 8750; nothing else is in flight. Merge drafts: `%TEMP%/dystopo-wave21/`.
+  next task. T149 (dbe6e69), T150 (98c9a9d), T152 (3f0af48) and T151 (213bb38) are merged and logged, branches and
+  worktrees cleaned. T156's implementer (Opus) was launched 2026-10-27 on worktree `~/Documents/src/dystopo-wt/T156`,
+  AVD `dystopo35-T156`, console 5630, host 8750; nothing else is in flight. Merge drafts: `%TEMP%/dystopo-wave21/`.
 - Research reports and the critic review: the coordinator's gitignored `out/wave21-research/`. Usage gate: the
-  weekly hold is 100 while this project is the priority (`policy.json`); the 5-hour meter's 50 binds.
+  weekly hold is 100 (`policy.json`); the 7-day meter read 93% at T156's launch and resets 2026-10-30 about
+  04:00 UTC, so the wave may close after T156 or T153 and resume from the launch order after the reset.
 - Machine: 3 GB emulators, at most three, Gradle `--no-daemon`; the Rainier DEM pack is the wide one
   (`machines.md`); the live viewer on 8765 (`out/coordinator-pids.txt`). The owner's phone is attached over
   wireless adb: agents address only their emulator by serial. No `devtool.local.json` on this PC.
 
 ## Next
 
-1. When T152 reports: a Sonnet verifier (host 8790, console 5660), the merge sequence (`wave` skill), the log
-   entry, a Haiku cleanup chore, then T151's implementer (the cursor over T152's rows), and so on down the order.
+1. When T156 reports: a Sonnet verifier (host 8790, console 5660), the merge sequence (`wave` skill), the log
+   entry, a Haiku cleanup chore, then T153's implementer, and so on down the order (T153, T157, T154, T155).
 2. After the last merge the budget allows: README status, the sweep (T154 runs it as its own verification),
    a release (ADR 0024), the handoff.
 3. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
