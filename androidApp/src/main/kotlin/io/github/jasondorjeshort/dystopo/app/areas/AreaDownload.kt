@@ -141,6 +141,8 @@ object AreaDownload {
         /** T151: the failed tiles of the walk as rows, per route and zoom (guarded by itself). */
         val failedRows = HashMap<String, HashMap<Int, TileSet>>()
         @Volatile var lastCursorSave = 0L
+        /** T151: the record's bytes when this run started (earlier runs'; the cursor's saves and the end add this run's). */
+        @Volatile var bytes0 = 0L
         @Volatile var cursorSaves = 0
         @Volatile var savedCursor: String? = null
 
@@ -290,7 +292,7 @@ object AreaDownload {
         val from = cursor?.takeIf { saved != null && planned === saved }
         planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
-        val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state }
+        val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L }
         job = j
         // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
         // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
@@ -323,6 +325,10 @@ object AreaDownload {
         try {
             j.state = "manifest"
             val t0 = System.currentTimeMillis()
+            // T151: a start (a tap, or a resume once the network may be back) tries the network now: the fetcher's own
+            // backoff after a lost connection (its source marked down, tiles failed recently) would fail every tile at once
+            // and stall the run where it began.
+            fetcher.retryNow()
             // T95: the versions the tiles will be fetched at, asked now; a new area records them from the start.
             fetcher.checkVersions()
             changesAtStart = fetcher.sourceList.sumOf { it.versionChanges.get() }
@@ -412,7 +418,7 @@ object AreaDownload {
                     },
                     // T95: a whole run counts what the area holds now (fetched plus already cached; an Update's old tiles are gone).
                     // T151: a run resumed from a cursor adds what it fetched to what the earlier runs did (the tiles before the cursor were not looked at).
-                    bytes = when (j.state) { "refused" -> r.bytes; "done" -> if (resumed) r.bytes + j.bytes.get() else j.bytes.get() + j.cachedBytes.get(); else -> r.bytes + j.bytes.get() },
+                    bytes = when (j.state) { "refused" -> r.bytes; "done" -> if (resumed) j.bytes0 + j.bytes.get() else j.bytes.get() + j.cachedBytes.get(); else -> j.bytes0 + j.bytes.get() },
                     estimateBytes = j.manifest?.bytes ?: r.estimateBytes,
                     tiles = if (j.state == "refused") r.tiles else j.planned.get(),
                     downloadMs = if (j.state == "refused") r.downloadMs else if (resumed) (r.downloadMs ?: 0L) + ms else ms,
@@ -564,7 +570,7 @@ object AreaDownload {
         val c = cursorNow(j, keepEarlier = !j.againDone)
         val stamp = "${c.key} ${c.failedTiles}"
         if (stamp == j.savedCursor) return
-        Areas.update(j.id) { it.copy(cursor = c) }
+        Areas.update(j.id) { it.copy(cursor = c, bytes = j.bytes0 + j.bytes.get()) } // the bytes with it, so a kill loses only the last seconds
         j.savedCursor = stamp
         j.cursorSaves++
     }
