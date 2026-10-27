@@ -76,6 +76,12 @@ object Areas : VersionPins {
          * and why. [area] is then the box of its record-level `bounds` and `zooms`, which pins it; nothing downloads it.
          */
         val opaque: Opaque? = null,
+        /** T151: where an unfinished download got to ([DownloadCursor]); null when it finished whole or never started. */
+        val cursor: DownloadCursor? = null,
+        /** T151: the user cancelled its download: never resumed by itself (Retry or Download again clears it). */
+        val cancelled: Boolean = false,
+        /** T151: the automatic resume's state ([AutoResume]: failures, the next try, why it stopped); null when none. */
+        val autoResume: AutoResume? = null,
     ) {
         val kind: String get() = if (pack != null) "pack" else "tiles"
 
@@ -93,7 +99,11 @@ object Areas : VersionPins {
             "error" to error, "downloadMs" to downloadMs, "createdAt" to createdAt, "bounds" to area.bounds.toList(),
             "lengthM" to area.lengthM.takeIf { it > 0 }, "zooms" to listOf(area.minZoom, area.maxZoom), "area" to area.json(),
             "versions" to versions,
-        )
+        ).also { m -> // T151: only when set, so a finished record is written as before
+            cursor?.let { m["cursor"] = it.json() }
+            if (cancelled) m["cancelled"] = true
+            autoResume?.let { m["autoResume"] = it.json() }
+        }
 
         /** T140: an unreadable record's raw JSON and the sentence that refused it. */
         data class Opaque(val raw: Map<String, Any?>, val reason: String)
@@ -144,6 +154,9 @@ object Areas : VersionPins {
                 estimateBytes = (m["estimateBytes"] as? Number)?.toLong() ?: 0L, tiles = (m["tiles"] as? Number)?.toInt() ?: 0,
                 error = m["error"] as? String, downloadMs = (m["downloadMs"] as? Number)?.toLong(),
                 versions = versionsOf(m["versions"]),
+                cursor = (m["cursor"] as? Map<*, *>)?.let { DownloadCursor.parse(it) }, // T151
+                cancelled = m["cancelled"] == true,
+                autoResume = (m["autoResume"] as? Map<*, *>)?.let { AutoResume.parse(it) },
             )
         }
     }
@@ -240,16 +253,41 @@ object Areas : VersionPins {
         for (r in files.records) records[r.id] = r
         unreadable += files.unreadable
         files.records.count { it.opaque != null }.takeIf { it > 0 }?.let { Log.i(TAG, "$it areas need a newer app; kept as they are") }
-        changed(save = false)
+        // T151: the repair at start. A record left "downloading" by a process that ended has no live job: it becomes partial
+        // (Retry shows at once, and the resume check picks it up) or cancelled when the user had cancelled it.
+        val live = AreaDownload.job?.takeIf { it.running }?.id
+        for (r in records.values.toList()) repairedAtStart(r, live)?.let { records[r.id] = it; repaired += r.id }
+        if (repaired.isNotEmpty()) Log.i(TAG, "repaired ${repaired.size} interrupted downloads: $repaired")
+        changed(save = repaired.isNotEmpty())
     }
+
+    /** T151: the ids [load] found left "downloading" with no live job and repaired (`GET /areas/resume`). */
+    val repaired: MutableList<String> = java.util.Collections.synchronizedList(ArrayList())
 
     /** Installs the cache hook (called when the online service starts) and reads the records. */
     fun attach(service: OnlineService) {
         load()
         service.cache.keep = ::isPinned
         onPinsChanged = { service.cache.recountPinned() } // T91: pinned bytes have their own budget
+        rowsOf(service.cache) // T151: the cache's keys as rows, for coverage
         AheadPrefetch.start()
         TripCorridors.request("start") // T130: trips saved, synced or deleted while the app was not running
+        ResumeCheck.install() // T151: the foreground trigger
+        ResumeCheck.request(ResumeCheck.TRIGGER_START) // T151: interrupted downloads resume from their cursor
+    }
+
+    /** T151: the online cache's keys as rows ([CachedRows]), kept by its [TileCache.onIndex] hook; one per cache. */
+    @Volatile private var cacheRows: Pair<io.github.jasondorjeshort.dystopo.app.online.TileCache, CachedRows>? = null
+
+    private val rowsLock = Any() // not the object's lock: the cache calls [isPinned] under its own lock
+
+    private fun rowsOf(cache: io.github.jasondorjeshort.dystopo.app.online.TileCache): CachedRows = synchronized(rowsLock) {
+        cacheRows?.takeIf { it.first === cache }?.second ?: CachedRows().also { rows ->
+            // The hook first, then every key already there (under the cache's lock: a key added meanwhile is added twice, which is harmless).
+            cache.onIndex = { key, present -> if (present) rows.add(key) else rows.remove(key) }
+            cache.forEachKey { rows.add(it) }
+            cacheRows = cache to rows
+        }
     }
 
     fun all(): List<Record> {
@@ -316,19 +354,28 @@ object Areas : VersionPins {
             records.remove(r.id)
             changed()
         }
+        val t0 = System.currentTimeMillis()
+        val m = manifest(r.id) ?: manifestOf(r) // T151: read before the file goes (it was deleted first, so the manifest was always remade)
         manifestFile(r.id).delete()
+        synchronized(manifestMemo) { manifestMemo.remove(r.id) }
         var tilesDeleted = 0
         var pack: Map<String, Any?>? = null
         if (r.pack != null && PackManager.get(app).find(r.pack) != null) pack = runCatching { PackManager.get(app).delete(r.pack) }.getOrElse { mapOf("error" to it.message) }
-        val m = manifest(r.id) ?: manifestOf(r)
         val cache = OnlineService.get(app).cache
         if (m != null) {
-            for (item in m.items.filterIsInstance<TilesItem>()) for ((z, set) in item.tiles) for ((x, y) in set.tiles()) {
-                for (key in cacheKeys(item.route, "$z/$x/$y.${item.ext}", r.source)) if (!isPinned(key)) tilesDeleted += cache.clear(key)
+            // T151: one pass over the cache's index, each key looked up in the manifest's rows; before, every tile of the
+            // manifest was a prefix scan of the whole index (123 s for a cancelled France download of 934 tiles).
+            val items = m.items.filterIsInstance<TilesItem>()
+            val byPrefix = HashMap<String, TilesItem>()
+            for (item in items) for (p in keyPrefixes(item.route, r.source)) byPrefix[p] = item
+            tilesDeleted = cache.clearWhere { k ->
+                val t = parseTileKey(k)
+                val item = t?.let { byPrefix[it.prefix] }
+                item != null && t.ext == item.ext && item.tiles[t.z]?.contains(t.x, t.y) == true && !isPinned(k)
             }
         }
         val unheld = dropUnheld() // T95: and its tiles of an older version that no other area holds
-        return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted + unheld, "pack" to pack)
+        return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted + unheld, "pack" to pack, "ms" to System.currentTimeMillis() - t0)
     }
 
     /** T91: told (on its own thread, so no lock is held) when the pins change, so the cache recounts its pinned bytes. */
@@ -380,14 +427,18 @@ object Areas : VersionPins {
      * version (T74: `<source>/<route>@<version>/...`), else the recorded [source] unversioned; T95: with [held], also
      * under every older version a pin holds for that source (the keys a lookup tries after a miss).
      */
-    fun cacheKeys(route: String, path: String, source: String? = null, held: Boolean = true): List<String> {
+    fun cacheKeys(route: String, path: String, source: String? = null, held: Boolean = true): List<String> =
+        keyPrefixes(route, source, held).map { "$it/$path" }
+
+    /** T151: the key prefixes (`<source>/<route>[@<version>]`) of [cacheKeys], without the tile's path. */
+    fun keyPrefixes(route: String, source: String? = null, held: Boolean = true): List<String> {
         val f = OnlineService.get(app).fetcher
-        val keys = f?.sourceList?.map { "${it.prefix(route)}/$path" }.orEmpty()
+        val keys = f?.sourceList?.map { it.prefix(route) }.orEmpty()
         val older = if (!held || f == null) emptyList() else OnlineFetcher.VERSION_OF[route]?.let { name ->
             val p = pins()
-            f.sourceList.flatMap { s -> p.versions(s.key, name).filter { it != (s.versions[name] ?: "") }.map { "${s.prefixAt(route, it)}/$path" } }
+            f.sourceList.flatMap { s -> p.versions(s.key, name).filter { it != (s.versions[name] ?: "") }.map { s.prefixAt(route, it) } }
         }.orEmpty()
-        return (keys + older).ifEmpty { listOfNotNull(source?.let { "${OnlineFetcher.keyFor(it)}/$route/$path" }) }
+        return (keys + older).ifEmpty { listOfNotNull(source?.let { "${OnlineFetcher.keyFor(it)}/$route" }) }
     }
 
     fun cached(route: String, path: String, source: String? = null): Boolean {
@@ -404,10 +455,25 @@ object Areas : VersionPins {
     fun manifestFile(id: String) = File(dir, "$id.json")
 
     fun saveManifest(m: AreaManifest) {
-        runCatching { manifestFile(m.id).writeText(MiniJson.encode(m.json())) }.onFailure { Log.w(TAG, "saving manifest ${m.id} failed", it) }
+        runCatching {
+            val f = manifestFile(m.id)
+            f.writeText(MiniJson.encode(m.json()))
+            synchronized(manifestMemo) { manifestMemo[m.id] = Triple(f.lastModified(), f.length(), m) }
+        }.onFailure { Log.w(TAG, "saving manifest ${m.id} failed", it) }
     }
 
-    fun manifest(id: String): AreaManifest? = manifestFile(id).takeIf { it.isFile }?.let { f -> runCatching { AreaManifest.parse(f.readText()) }.getOrNull() }
+    /** T151: the manifests read, by id, with the file's time and length they were read at (the sheet asked for each every 1.5 s, parsing it). */
+    private val manifestMemo = HashMap<String, Triple<Long, Long, AreaManifest>>()
+
+    fun manifest(id: String): AreaManifest? {
+        val f = manifestFile(id).takeIf { it.isFile } ?: return null
+        val time = f.lastModified()
+        val length = f.length()
+        synchronized(manifestMemo) { manifestMemo[id]?.takeIf { it.first == time && it.second == length }?.let { return it.third } }
+        val m = runCatching { AreaManifest.parse(f.readText()) }.getOrNull() ?: return null
+        synchronized(manifestMemo) { manifestMemo[id] = Triple(time, length, m) }
+        return m
+    }
 
     /** A tile manifest computed on the phone for a record whose file is gone. */
     private fun manifestOf(r: Record): AreaManifest? = if (r.pack != null || r.opaque != null) null else AreaDownload.localManifest(r.area, r.source)
@@ -421,36 +487,51 @@ object Areas : VersionPins {
             val p = PackManager.get(app).find(r.pack)
             return linkedMapOf("present" to (p != null), "share" to if (p != null) 1.0 else 0.0, "packBytes" to p?.files?.files?.sumOf { it.length() })
         }
+        val t0 = System.nanoTime()
         val m = manifest(r.id) ?: return linkedMapOf("share" to null, "why" to "no manifest")
         val packs = runCatching { app.tiles.packs }.getOrNull()
-        var have = 0
-        var total = 0
-        var inPacks = 0
-        var olderOnly = 0
-        val perRoute = LinkedHashMap<String, Map<String, Int>>()
+        val rows = rowsOf(OnlineService.get(app).cache)
+        var have = 0L
+        var total = 0L
+        var inPacks = 0L
+        var olderOnly = 0L
+        var rowCount = 0
+        val perRoute = LinkedHashMap<String, Map<String, Long>>()
+        val iv = SpanList()
+        // T151: row by row. Per manifest row, the x spans the packs overlap, the spans cached at the current version and
+        // those cached only at an older version a pin holds; their unions give what the per-tile walk counted (a tile in a
+        // pack first, then cached now, then cached at the version it was fetched at), at the cost of rows and spans.
         for (item in m.items.filterIsInstance<TilesItem>()) {
-            var h = 0
-            var t = 0
-            for ((z, set) in item.tiles) for ((x, y) in set.tiles()) {
-                t++
-                val pack = when (item.route) {
-                    AreaManifest.ROUTE_DEM -> packs?.demFor(z, x, y)
-                    AreaManifest.ROUTE_OSM -> packs?.osmFor(z, x, y)
-                    else -> null
-                }
-                when {
-                    pack != null -> { h++; inPacks++ }
-                    cachedCurrent(item.route, "$z/$x/$y.${item.ext}", r.source) -> h++
-                    cached(item.route, "$z/$x/$y.${item.ext}", r.source) -> { h++; olderOnly++ } // T95: kept at the version it was fetched at
-                }
+            var h = 0L
+            var t = 0L
+            val current = keyPrefixes(item.route, r.source, held = false)
+            val older = keyPrefixes(item.route, r.source, held = true) - current.toSet()
+            val (role, covers) = when (item.route) {
+                AreaManifest.ROUTE_DEM -> io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.DEM to packs?.regions?.mapNotNull { it.demCoverage }.orEmpty()
+                AreaManifest.ROUTE_OSM -> io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.VECTOR to packs?.regions?.mapNotNull { it.osmCoverage }.orEmpty()
+                else -> io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.DEM to emptyList()
+            }
+            for ((z, set) in item.tiles) set.forEachRow { y, x0, x1 ->
+                rowCount++
+                t += x1 - x0 + 1
+                iv.clear()
+                for (c in covers) packSpan(c, role, z, y, x0, x1)?.let { iv.add(it.first, it.last) }
+                val p = iv.unionLength()
+                for (prefix in current) rows.spans(prefix, item.ext, z, y, x0, x1, iv)
+                val pc = iv.unionLength()
+                for (prefix in older) rows.spans(prefix, item.ext, z, y, x0, x1, iv)
+                val all = iv.unionLength()
+                h += all
+                inPacks += p
+                olderOnly += all - pc // T95: kept at the version it was fetched at
             }
             perRoute[item.route] = mapOf("have" to h, "tiles" to t)
             have += h
             total += t
         }
         return linkedMapOf(
-            "share" to if (total == 0) null else Math.round(have * 1000.0 / total) / 1000.0, "have" to have, "tiles" to total, "inPacks" to inPacks,
-            "atOlderVersion" to olderOnly, "routes" to perRoute,
+            "share" to if (total == 0L) null else Math.round(have * 1000.0 / total) / 1000.0, "have" to have, "tiles" to total, "inPacks" to inPacks,
+            "atOlderVersion" to olderOnly, "routes" to perRoute, "rows" to rowCount, "ms" to Math.round((System.nanoTime() - t0) / 1e5) / 10.0,
         )
     }
 
@@ -469,6 +550,7 @@ object Areas : VersionPins {
             "files" to mapOf("areas" to all.count { it.readableByV1 }, "areas2" to all.count { !it.readableByV1 } + unreadable.size), "unreadable" to unreadable.size,
             "pinnedBySource" to pinnedBySource(cache.byPrefix(1, pinned = true), current), // T106 (ADR 0030's deferred item)
             "cache" to cache.json(), "download" to AreaDownload.json(), "prefetch" to AheadPrefetch.json(),
+            "cacheRows" to cacheRows?.second?.let { mapOf("tiles" to it.size, "spans" to it.spanCount) }, // T151: the cache's keys as rows (coverage)
             "outline" to AreaOutlines.json(all), // T106: the corridor polygons; T136: of every kept corridor, drawn or not
         )
     }
@@ -570,4 +652,206 @@ internal class AreaFiles(val records: List<Areas.Record>, val unreadable: List<M
             return AreaFiles(records.values.toList(), unreadable)
         }
     }
+}
+
+/** T151: a tile cache key `<prefix>/<z>/<x>/<y>.<ext>` taken apart; null for any other key (a halo variant, a non-tile). */
+internal class TileKey(val prefix: String, val z: Int, val x: Int, val y: Int, val ext: String)
+
+/** T151: [TileKey] of [k], or null. Pure, tested. */
+internal fun parseTileKey(k: String): TileKey? {
+    val s3 = k.lastIndexOf('/')
+    if (s3 <= 0) return null
+    val s2 = k.lastIndexOf('/', s3 - 1)
+    if (s2 <= 0) return null
+    val s1 = k.lastIndexOf('/', s2 - 1)
+    if (s1 <= 0) return null
+    val dot = k.indexOf('.', s3 + 1)
+    if (dot < 0 || k.indexOf('.', dot + 1) >= 0) return null
+    val y = digits(k, s3 + 1, dot) ?: return null
+    val x = digits(k, s2 + 1, s3) ?: return null
+    val z = digits(k, s1 + 1, s2) ?: return null
+    return TileKey(k.substring(0, s1), z, x, y, k.substring(dot + 1))
+}
+
+private fun digits(s: String, from: Int, to: Int): Int? {
+    if (to <= from || to - from > 9) return null
+    var n = 0
+    for (i in from until to) {
+        val c = s[i]
+        if (c !in '0'..'9') return null
+        n = n * 10 + (c - '0')
+    }
+    return n
+}
+
+/**
+ * T151: a list of x spans (inclusive), filled per row and measured as a union. Reused across rows (no allocation per
+ * row once it has grown). Not thread-safe.
+ */
+internal class SpanList {
+    private var a = LongArray(16)
+    private var n = 0
+
+    fun clear() { n = 0 }
+
+    fun add(lo: Int, hi: Int) {
+        if (hi < lo) return
+        if (n == a.size) a = a.copyOf(n * 2)
+        a[n++] = (lo.toLong() shl 32) or (hi.toLong() and 0xffffffffL) // x is never negative, so the order is by lo, then hi
+    }
+
+    /** The tiles in the union of the spans held. */
+    fun unionLength(): Long {
+        if (n == 0) return 0
+        java.util.Arrays.sort(a, 0, n)
+        var total = 0L
+        var lo = (a[0] ushr 32).toInt()
+        var hi = a[0].toInt()
+        for (i in 1 until n) {
+            val l = (a[i] ushr 32).toInt()
+            val h = a[i].toInt()
+            if (l > hi + 1) { total += hi - lo + 1L; lo = l; hi = h } else if (h > hi) hi = h
+        }
+        return total + (hi - lo + 1L)
+    }
+}
+
+/**
+ * T151: the online tile cache's keys as rows: per key prefix and extension, per zoom and tile row, the sorted, disjoint
+ * spans of x cached. Kept by the cache's [io.github.jasondorjeshort.dystopo.app.online.TileCache.onIndex] hook (every key
+ * added or removed), so [Areas.coverage] asks it per manifest row and span instead of per tile. It costs the rows of what
+ * is cached: a downloaded area's tiles are a few spans per row; a browsed cache's scattered tiles a span each.
+ * Thread-safe.
+ */
+internal class CachedRows {
+    /** One tile row's spans as pairs in [a] (`a[2i]` first x, `a[2i + 1]` last), sorted, disjoint and not adjacent. */
+    private class Row {
+        var a = IntArray(4)
+        var n = 0
+        fun lo(i: Int) = a[2 * i]
+        fun hi(i: Int) = a[2 * i + 1]
+
+        /** The first span whose end is at least [x]; [n] when none. */
+        fun firstEndingAtOrAfter(x: Int): Int {
+            var l = 0
+            var h = n
+            while (l < h) {
+                val m = (l + h) ushr 1
+                if (hi(m) < x) l = m + 1 else h = m
+            }
+            return l
+        }
+
+        /** Adds [x], which is not held (the caller checks), merging with a span ending at x - 1 or starting at x + 1. */
+        fun add(x: Int) {
+            val i = firstEndingAtOrAfter(x - 1)
+            val joinsLeft = i < n && hi(i) == x - 1
+            val joinsRight = if (joinsLeft) i + 1 < n && lo(i + 1) == x + 1 else i < n && lo(i) == x + 1
+            when {
+                joinsLeft && joinsRight -> { a[2 * i + 1] = hi(i + 1); a.copyInto(a, 2 * (i + 1), 2 * (i + 2), 2 * n); n-- }
+                joinsLeft -> a[2 * i + 1] = x
+                joinsRight -> a[2 * i] = x
+                else -> {
+                    if (2 * (n + 1) > a.size) a = a.copyOf(a.size * 2)
+                    a.copyInto(a, 2 * (i + 1), 2 * i, 2 * n)
+                    a[2 * i] = x
+                    a[2 * i + 1] = x
+                    n++
+                }
+            }
+        }
+
+        fun remove(x: Int) {
+            val i = firstEndingAtOrAfter(x)
+            if (i >= n || lo(i) > x) return // not held
+            val l = lo(i)
+            val h = hi(i)
+            when {
+                l == h -> { a.copyInto(a, 2 * i, 2 * (i + 1), 2 * n); n-- }
+                x == l -> a[2 * i] = x + 1
+                x == h -> a[2 * i + 1] = x - 1
+                else -> { // split in two
+                    if (2 * (n + 1) > a.size) a = a.copyOf(a.size * 2)
+                    a.copyInto(a, 2 * (i + 1), 2 * i, 2 * n)
+                    a[2 * i + 1] = x - 1
+                    a[2 * (i + 1)] = x + 1
+                    n++
+                }
+            }
+        }
+    }
+
+    private val byKey = HashMap<String, HashMap<Long, Row>>() // "<prefix>|<ext>" -> (z << 32 | y) -> row
+    private var tiles = 0L
+
+    private fun group(prefix: String, ext: String) = "$prefix|$ext"
+
+    @Synchronized
+    fun add(key: String) {
+        val t = parseTileKey(key) ?: return
+        val row = byKey.getOrPut(group(t.prefix, t.ext)) { HashMap() }.getOrPut((t.z.toLong() shl 32) or t.y.toLong()) { Row() }
+        if (contains(row, t.x)) return
+        row.add(t.x)
+        tiles++
+    }
+
+    @Synchronized
+    fun remove(key: String) {
+        val t = parseTileKey(key) ?: return
+        val rows = byKey[group(t.prefix, t.ext)] ?: return
+        val k = (t.z.toLong() shl 32) or t.y.toLong()
+        val row = rows[k] ?: return
+        if (!contains(row, t.x)) return
+        row.remove(t.x)
+        tiles--
+        if (row.n == 0) rows.remove(k)
+        if (rows.isEmpty()) byKey.remove(group(t.prefix, t.ext))
+    }
+
+    private fun contains(row: Row, x: Int): Boolean {
+        val i = row.firstEndingAtOrAfter(x)
+        return i < row.n && row.lo(i) <= x
+    }
+
+    @Synchronized
+    fun contains(key: String): Boolean {
+        val t = parseTileKey(key) ?: return false
+        return byKey[group(t.prefix, t.ext)]?.get((t.z.toLong() shl 32) or t.y.toLong())?.let { contains(it, t.x) } == true
+    }
+
+    /** Adds to [out] the spans of [prefix] ([ext]) cached on row [y] of zoom [z], clipped to [x0]..[x1]. */
+    @Synchronized
+    fun spans(prefix: String, ext: String, z: Int, y: Int, x0: Int, x1: Int, out: SpanList) {
+        val row = byKey[group(prefix, ext)]?.get((z.toLong() shl 32) or y.toLong()) ?: return
+        var i = row.firstEndingAtOrAfter(x0)
+        while (i < row.n && row.lo(i) <= x1) {
+            out.add(maxOf(row.lo(i), x0), minOf(row.hi(i), x1))
+            i++
+        }
+    }
+
+    /** Tiles and spans held (`GET /areas` reports them with the cache). */
+    @get:Synchronized val size: Long get() = tiles
+    @get:Synchronized val spanCount: Int get() = byKey.values.sumOf { rows -> rows.values.sumOf { it.n } }
+}
+
+/**
+ * T151: the x span of tile row [y] at zoom [z], within [x0]..[x1], whose tiles pack coverage [c] overlaps for [role]
+ * (what `PackSet.demFor` and `osmFor` answer per tile: a tile is in a pack when one overlaps it); null when none. The
+ * overlap in x is one interval (the tile's longitudes grow with x), found from the bounds and checked with
+ * [io.github.jasondorjeshort.dystopo.packs.PackPrecedence.overlaps] at its ends, so it agrees with the per-tile test
+ * exactly. Pure, tested.
+ */
+internal fun packSpan(c: io.github.jasondorjeshort.dystopo.packs.PackCoverage, role: io.github.jasondorjeshort.dystopo.packs.PackRoleZooms, z: Int, y: Int, x0: Int, x1: Int): IntRange? {
+    fun ov(x: Int) = io.github.jasondorjeshort.dystopo.packs.PackPrecedence.overlaps(c, z, x, y, role)
+    val a = kotlin.math.floor(io.github.jasondorjeshort.dystopo.geo.WebMercator.lonToX(c.bounds.minLon, z)).toInt()
+    val b = kotlin.math.floor(io.github.jasondorjeshort.dystopo.geo.WebMercator.lonToX(c.bounds.maxLon, z)).toInt()
+    var lo = maxOf(x0, a - 1)
+    var hi = minOf(x1, b + 1)
+    if (lo > hi) return null
+    var n = 0
+    while (lo <= hi && !ov(lo) && n++ < 3) lo++
+    n = 0
+    while (hi >= lo && !ov(hi) && n++ < 3) hi--
+    return if (lo <= hi && ov(lo) && ov(hi)) lo..hi else null
 }

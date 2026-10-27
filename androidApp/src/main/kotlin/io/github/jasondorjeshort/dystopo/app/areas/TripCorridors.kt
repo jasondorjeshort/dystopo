@@ -43,6 +43,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - a trip the user stopped keeping (the trip card's Stop keeping, or Unpin or Remove on its area in Offline areas) is
  *   left alone until Keep offline or Pin ([notKept], kept in `files/areas/trip-corridors.json`);
  * - width 0 (off) makes no new corridor and leaves the ones there (Remove in Offline areas frees them).
+ * - T151: a corridor whose download was cut short (the process ended, the network stopped answering) is partial and pinned,
+ *   so it is current here; [ResumeCheck] carries it on from its cursor like any other area.
  *
  * The benchmark survey of 2026-10-23 (ADR 0039; the PR cites it) found no established app that keeps a corridor without
  * being asked, and none with a designed budget message; the card's line, Stop keeping and the refusal follow its
@@ -185,8 +187,10 @@ object TripCorridors {
             val wants = plans.filter { it.id !in notKept }.map { it to areaOf(it, width.toDouble()) }
             val todo = wants.filter { (p, want) ->
                 val mine = Areas.all().filter { it.tripId == p.id }
-                // T136: an old corridor left unpinned by an edit is not current (an edit back to its shape makes it again)
-                mine.none { it.id == want.id && (it.pinned || it.state == "downloading") }.also { if (!it) current++ }
+                // T136: an old corridor left unpinned by an edit is not current (an edit back to its shape makes it again).
+                // T151: "downloading" counts only while its job runs (a record left so by an ended process is repaired at start
+                // to partial, and the resume check carries it on from its cursor).
+                mine.none { it.id == want.id && (it.pinned || (it.state == "downloading" && AreaDownload.job?.let { j -> j.id == it.id && j.running } == true)) }.also { if (!it) current++ }
             }
             // T136: a trip whose corridor is current but was left downloading by a superseded run ([make]) drops its old ones once that is done.
             for ((p, want) in wants) {
@@ -244,11 +248,17 @@ object TripCorridors {
         }
         refusals.remove(p.id)
         setNote(p.id, null)
-        try {
-            AreaDownload.start(want, want.name, p.id, manifest = plan.manifest)
-        } catch (e: IllegalStateException) {
-            setNote(p.id, e.message ?: "could not start")
-            return "not started: ${e.message}"
+        var tries = 0
+        while (true) {
+            try {
+                AreaDownload.start(want, want.name, p.id, manifest = plan.manifest)
+                break
+            } catch (e: IllegalStateException) {
+                // T151: the resume check may have started an interrupted download since [waitIdle]: wait for it and try again.
+                if (e !is AreaDownload.BudgetRefused && AreaDownload.job?.running == true && tries++ < 3) { waitIdle(); continue }
+                setNote(p.id, e.message ?: "could not start")
+                return "not started: ${e.message}"
+            }
         }
         // T136: a newer ask (the trip edited again, another trip saved) ends the wait; the download goes on, and the next run
         // either finds it current (its old corridors go when it is done) or cancels it as stale.
