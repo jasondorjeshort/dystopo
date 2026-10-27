@@ -59,6 +59,17 @@ share, and what is the one with a stack?
   (1.2 M vertices, estimate 630 MB) was refused on the emulator. So the one-pass builder caps routing at about a
   1 degree rural box on a phone; the streaming build and the server-shipped graph stay on the Later list. Status
   stays open for the background-CPU part (T150).
+- T150 (2026-10-27), the background part, on an API 35 emulator with the Rainier packs, location granted, the map
+  following the puck and a geo fix every 2 s (per-thread ticks from `/proc/<pid>/task/*/stat`, 60 s after HOME): main
+  before the change, the UI thread 0.95% and the process 1.5% with one activity, 2.2% and 3.4% with six stacked
+  activities (the stacking reproduced: `am start -n`, then five launcher taps, Activities 6); the T150 build 0.00% for
+  the UI thread and `HeapTaskDaemon`, 0.15% for the process, Activities 1 after the same taps. On this Android the
+  system already throttled the background listener to one request per 10 minutes (`dumpsys location`: `{bg, na}`,
+  `@+10m`, inactive), so the emulator's remaining UI-thread cost came from the polling loops and the stacked activities,
+  not from fixes; after T150 `dumpsys location` lists no registration of the package in the background. The country
+  list's sizes (computed when the list opens, not at launch) take 69 s and 60 s of one core for 240 countries; the
+  worker now pauses in the background. Not reproduced: the phone's 50% UI thread (its background state was not
+  captured); a real-phone `GET /debug/cpu` pair after HOME on a T150 build is the check, and the status stays open for it.
 
 ## Next
 
