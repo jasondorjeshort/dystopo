@@ -30,7 +30,7 @@ class AreaPickerTest {
             assertEquals(c.name, area.name)
             for ((dem, osm) in listOf(6..13 to 8..13, 8..13 to 8..13)) {
                 val items = AreaManifest.tileItems(area, dem, osm)
-                val m = measureArea(area, dem, osm, heapTiles)
+                val m = measureArea(area, dem, osm)
                 assertFalse(m.tooLarge)
                 assertEquals(items.sumOf { it.count }, m.tiles, "$code tiles")
                 assertEquals(items.sumOf { it.bytesEstimate }, m.bytes, "$code bytes")
@@ -43,7 +43,7 @@ class AreaPickerTest {
         val ring = listOf(AreaPoint(46.76, -121.80), AreaPoint(46.76, -121.70), AreaPoint(46.82, -121.70), AreaPoint(46.82, -121.80))
         val area = AreaOfInterest(AreaShape.Polygon(listOf(ring)), 8, 15)
         val items = AreaManifest.tileItems(area, 8..15, 8..14)
-        val m = measureArea(area, 8..15, 8..14, heapTiles)
+        val m = measureArea(area, 8..15, 8..14)
         assertEquals(items.sumOf { it.count }, m.tiles)
         assertEquals(items.sumOf { it.bytesEstimate }, m.bytes)
     }
@@ -52,8 +52,8 @@ class AreaPickerTest {
     fun theFullDetailFloorIsBelowTheFullDetailMeasure() {
         for (code in listOf("LIE", "AND", "SMR")) {
             val c = Countries.byCode(code)!!
-            val less = countryArea(c, AreaPicker.LESS_MAX_ZOOM)!!.let { measureArea(it, 8..13, 8..13, heapTiles) }
-            val full = countryArea(c, AreaPicker.FULL_MAX_ZOOM)!!.let { measureArea(it, 8..15, 8..14, heapTiles) }
+            val less = countryArea(c, AreaPicker.LESS_MAX_ZOOM)!!.let { measureArea(it, 8..13, 8..13) }
+            val full = countryArea(c, AreaPicker.FULL_MAX_ZOOM)!!.let { measureArea(it, 8..15, 8..14) }
             assertTrue(less.topTiles > 0)
             assertTrue(fullAtLeast(less) in less.bytes..full.bytes, "$code: ${fullAtLeast(less)} within ${less.bytes}..${full.bytes}")
         }
@@ -66,12 +66,30 @@ class AreaPickerTest {
     }
 
     @Test
-    fun theLargestCountriesAreTooLargeForTheHeapAtLessDetailAndTheSmallestFit() {
-        fun tooLarge(code: String): Boolean = countryArea(Countries.byCode(code)!!, AreaPicker.LESS_MAX_ZOOM)!!.let { a ->
-            AreaLimit.refusal(a, 6..13, 8..13, heapTiles) != null
+    fun pastTheHeapLimitACountryHasItsEstimateAndIsNotTooLarge() {
+        // T152: France at full detail passes the tile cache index's comfortable size on a 576 MB heap (and passed T140's
+        // refusal), Russia at less detail too; both are measured row by row, with the estimate, and are not greyed.
+        for ((code, zoom) in listOf("FRA" to AreaPicker.FULL_MAX_ZOOM, "RUS" to AreaPicker.LESS_MAX_ZOOM)) {
+            val area = countryArea(Countries.byCode(code)!!, zoom)!!
+            val (dem, osm) = (6..minOf(zoom, 15)) to (8..minOf(zoom, 14))
+            val t0 = System.currentTimeMillis()
+            val m = measureArea(area, dem, osm)
+            val ms = System.currentTimeMillis() - t0
+            assertFalse(m.tooLarge, code)
+            assertTrue(AreaLimit.pastHeap(m.tiles.toLong(), heapTiles), "$code: ${m.tiles} tiles past $heapTiles")
+            // The estimate is the tiles times AreaManifest.estimate, per zoom and route.
+            val items = AreaManifest.tileItems(area, dem, osm)
+            assertEquals(items.sumOf { it.count }, m.tiles)
+            assertEquals(items.sumOf { i -> i.tiles.entries.sumOf { (z, t) -> t.size * AreaManifest.estimate(i.route, z) } }, m.bytes, code)
+            assertEquals(m.bytes, items.sumOf { it.bytesEstimate })
+            // Rows, not tiles: the manifest's rows are a sliver of its tiles.
+            val rows = items.sumOf { i -> i.tiles.values.sumOf { it.rowCount } }
+            assertTrue(rows * 20 < m.tiles, "$code: $rows rows for ${m.tiles} tiles")
+            println("T152 $code z8-$zoom: ${m.tiles} tiles, $rows rows, ${m.bytes / mb} MB estimated, measured in $ms ms (limit $heapTiles)")
         }
-        for (code in listOf("RUS", "USA", "CAN")) assertTrue(tooLarge(code), code)
-        for (code in listOf("LIE", "CHE", "ISL")) assertFalse(tooLarge(code), code)
+        // Less detail of France is within the limit.
+        val lessFra = countryArea(Countries.byCode("FRA")!!, AreaPicker.LESS_MAX_ZOOM)!!.let { measureArea(it, 6..13, 8..13) }
+        assertFalse(AreaLimit.pastHeap(lessFra.tiles.toLong(), heapTiles), "${lessFra.tiles}")
     }
 
     @Test
@@ -109,7 +127,7 @@ class AreaPickerTest {
     }
 
     @Test
-    fun aRowTheHeapRefusesIsGreyedWithTheTooLargeSentence() {
+    fun aRowNoAreaCanHoldIsGreyedWithTheTooLargeSentence() {
         val row = countryRow(CountrySizes.Entry(CountryMeasure(0, 0, true), null, null, null), 0, 0, 2048)
         assertEquals(RowState.TOO_LARGE, row.state)
         assertTrue(row.greyed)
@@ -186,15 +204,14 @@ class AreaPickerTest {
         val ring = listOf(AreaPoint(46.76, -121.80), AreaPoint(46.76, -121.70), AreaPoint(46.82, -121.70))
         val full = AreaOfInterest(AreaShape.Polygon(listOf(ring)), 8, 15)
         val less = full.copy(maxZoom = 13)
-        fun plan(a: AreaOfInterest, bytes: Long, tooLarge: String? = null) = AreaDownload.Plan(
+        fun plan(a: AreaOfInterest, bytes: Long) = AreaDownload.Plan(
             a, AreaManifest(a.id, "x", a, AreaManifest.STATUS_READY, listOf(io.github.jasondorjeshort.dystopo.areas.TilesItem("dem", "png", "", emptyMap(), bytes))),
-            "phone", 0, 0, 2048, tooLarge = tooLarge,
+            "phone", 0, 0, 2048,
         )
         val s = AreaPicker.Summary(1, plan(full, 170 * mb), plan(less, 30 * mb), false, null)
         assertEquals("Less detail (about 30 MB)", alternativeLine(DETAIL_FULL, s))
         assertEquals("Full detail (about 170 MB)", alternativeLine(DETAIL_LESS, s))
         assertEquals("Full detail", alternativeLine(DETAIL_LESS, AreaPicker.Summary(1, null, plan(less, 30 * mb), true, null)))
-        assertEquals("Full detail", alternativeLine(DETAIL_LESS, AreaPicker.Summary(1, plan(full, 0, AreaLimit.TOO_LARGE), plan(less, 30 * mb), false, null)))
         assertNull(alternativeLine(DETAIL_LESS, AreaPicker.Summary(1, null, plan(less, 30 * mb), false, null)))
     }
 

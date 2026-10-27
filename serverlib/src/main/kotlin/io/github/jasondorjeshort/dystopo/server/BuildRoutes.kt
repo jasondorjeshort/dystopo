@@ -1,7 +1,6 @@
 package io.github.jasondorjeshort.dystopo.server
 
 import com.sun.net.httpserver.HttpExchange
-import io.github.jasondorjeshort.dystopo.areas.AreaLimit
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -85,7 +84,7 @@ import kotlin.math.floor
  *   (bundled in the app) and what the phone builds itself (trail graph and search index, from a vector pack).
  *   `GET /area` describes the parameters and limits. T140 (ADR 0041): a polygon (`{"kind": "polygon", "rings": ...}`,
  *   or `ring=lat,lon;...`) is tiles like a corridor, as a version 2 manifest; `pack=1` on one is refused (400, a pack
- *   is a box), and one whose outer rings' boxes pass the heap's tile limit is refused (413) before it is filled.
+ *   is a box); T152: its tile sets are rows, so only `maxAreaTiles` limits it.
  *   `GET /area` names the `shapes` read and `manifestVersion` 2.
  *
  * A box across the antimeridian (west > east, e.g. `bbox=179.2,-17.2,-179.8,-16.4`) is split at 180°
@@ -685,7 +684,7 @@ class BuildRoutes(
             "options pack=1|0 (a polygon is tiles only), profile, fallback, source, retry=1",
         // T140 (ADR 0041 §3): the newest manifest version and the shapes this server reads; a phone treats a missing `shapes` as box and corridor.
         "manifestVersion" to AreaManifest.VERSION, "shapes" to AreaShape.KINDS, "maxAreaTiles" to maxAreaTiles,
-        "heapAreaTiles" to AreaLimit.maxTiles(Runtime.getRuntime().maxMemory()), "maxZoom" to AreaOfInterest.MAX_ZOOM,
+        "maxZoom" to AreaOfInterest.MAX_ZOOM,
         "bufferM" to listOf(AreaOfInterest.MIN_BUFFER_M, AreaOfInterest.MAX_BUFFER_M), "build" to limits(),
     )
 
@@ -755,8 +754,7 @@ class BuildRoutes(
             val demZooms = LiveTiles.LIVE_MIN_ZOOM..minOf(maxOf(area.maxZoom, LiveTiles.LIVE_MIN_ZOOM), LiveTiles.LIVE_MAX_ZOOM)
             val osmZooms = (area.minZoom..minOf(area.maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
             val polygon = area.shape is AreaShape.Polygon
-            // T140 (ADR 0041 §3): a polygon's tile sets are filled in memory; its outer rings' boxes are checked against the heap first.
-            AreaLimit.refusal(area, demZooms, osmZooms, AreaLimit.maxTiles(Runtime.getRuntime().maxMemory()))?.let { throw Refused(413, it) }
+            // T152 (ADR 0041 §3's T152 note): tile sets are rows, so no heap check before they are filled; maxAreaTiles below is the limit.
             val tiles = AreaManifest.tileItems(area, demZooms, osmZooms)
             val count = tiles.sumOf { it.count }
             if (count > maxAreaTiles) {

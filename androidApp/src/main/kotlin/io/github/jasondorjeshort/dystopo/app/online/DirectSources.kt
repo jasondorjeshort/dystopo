@@ -51,7 +51,8 @@ class SourceCapReached(message: String) : RuntimeException(message)
  *
  * Costs are capped ([PhoneSourceHttp]): at most [MAX_RANGE_REQUESTS] source requests at once, [MAX_TILES_IN_FLIGHT] tiles
  * rendered at once (their own permits, so map tiles never wait behind them), and [sessionCapBytes] downloaded per app session, after which
- * tiles fail with a clear message until the app restarts (a casual pan cannot pull gigabytes).
+ * tiles fail with a clear message until the app restarts (a casual pan cannot pull gigabytes). T152: an area download is
+ * exempt from that cap ([exempt]); the pinned budget is its limit.
  *
  * T127: the renders at once are also sized from the free Java heap ([HeapGuard.admitNow]), the synthesis pyramid is
  * dropped on a trim ([trimMemory], registered with [HeapGuard]), the decoded blocks take an eighth of the heap
@@ -85,8 +86,30 @@ class DirectSources(private val context: android.content.Context, private val ca
     /** The message the map and the card show, or null. */
     fun notice(): String? = when {
         blockedOnMobile() -> MOBILE_DATA_OFF
-        http.bytes.get() >= sessionCapBytes -> capMessage()
+        http.sessionBytes >= sessionCapBytes -> capMessage()
         else -> null
+    }
+
+    /**
+     * T152: area downloads running now ([exempt]). While one runs, source reads are neither stopped by the session cap nor
+     * counted against it ([PhoneSourceHttp.exemptBytes]): an area download is steered by the pinned budget, which its plan
+     * shows before it starts (ADR 0023), and a 300 MB cap would stop any large one at "partial". The reads cannot be told
+     * apart by thread (a render's block reads run on the shared source-io pool), so a map pan during a download is not
+     * capped either; it is small beside the download.
+     */
+    private val exemptHolds = java.util.concurrent.atomic.AtomicInteger()
+
+    /** True while an area download runs ([exempt]). */
+    val exempting: Boolean get() = exemptHolds.get() > 0
+
+    /** T152: runs [block] (an area download) exempt from the session cap. */
+    fun <T> exempt(block: () -> T): T {
+        exemptHolds.incrementAndGet()
+        try {
+            return block()
+        } finally {
+            exemptHolds.decrementAndGet()
+        }
     }
 
     fun capMessage() = "Online data limit reached for this session (${sessionCapBytes shr 20} MB). Download this area, or raise the limit in " +
@@ -752,7 +775,9 @@ class DirectSources(private val context: android.content.Context, private val ca
     fun json(): Map<String, Any?> {
         val n = demRendered.get()
         return linkedMapOf(
-            "sessionBytes" to http.bytes.get(), "sessionCapBytes" to sessionCapBytes, "capReached" to (http.bytes.get() >= sessionCapBytes),
+            "sessionBytes" to http.sessionBytes, "sessionCapBytes" to sessionCapBytes, "capReached" to (http.sessionBytes >= sessionCapBytes),
+            // T152: area downloads are exempt from the session cap (the pinned budget is their limit); what they read, and whether one runs now.
+            "sessionCapExempt" to linkedMapOf("areaDownloads" to true, "running" to exempting, "bytes" to http.exemptBytes.get(), "totalBytes" to http.bytes.get()),
             "onMobileDataAllowed" to onMobileData, "onCellular" to onCellular(), "blockedOnMobileData" to blockedOnMobile(), "notice" to notice(),
             "requests" to http.requests.get(), "inFlight" to http.inFlight.get(), "maxInFlight" to MAX_RANGE_REQUESTS,
             "offlineFailures" to http.offline.get(), "requestWaitMs" to http.waitMs.get(), "rangeStalls" to http.stalls.get(), "requestNetMs" to http.netMs.get(),
@@ -1021,7 +1046,12 @@ class DirectSources(private val context: android.content.Context, private val ca
  * or no DNS is a [SourceOffline] (not retried); the cap a [SourceCapReached].
  */
 class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
+    /** Every byte read from the sources this session. */
     val bytes = AtomicLong()
+    /** T152: the bytes of [bytes] read while an area download ran ([DirectSources.exempt]): not counted against the cap. */
+    val exemptBytes = AtomicLong()
+    /** T152: the bytes counted against the session cap. */
+    val sessionBytes: Long get() = bytes.get() - exemptBytes.get()
     val requests = AtomicLong()
     val inFlight = AtomicLong()
     val offline = AtomicLong()
@@ -1059,7 +1089,7 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
     override fun get(url: String, timeoutMs: Long): SourceReply = send(url, timeoutMs) {}
 
     private fun send(start: String, timeoutMs: Long, connectTimeoutMs: Int = 15_000, prepare: (HttpURLConnection) -> Unit): SourceReply {
-        if (bytes.get() >= owner.sessionCapBytes) {
+        if (!owner.exempting && sessionBytes >= owner.sessionCapBytes) {
             owner.capReachedAt = System.currentTimeMillis()
             throw SourceCapReached(owner.capMessage())
         }
@@ -1100,6 +1130,7 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
                     val status = conn.responseCode
                     val body = if (status in 200..299) conn.inputStream.use { it.readBytes() } else ByteArray(0)
                     bytes.addAndGet(body.size.toLong())
+                    if (owner.exempting) exemptBytes.addAndGet(body.size.toLong()) // T152
                     // HttpURLConnection asks for gzip and undoes it itself. T88: a body read to its end leaves the
                     // connection to the pool (keep-alive): the next range read to the same host skips the TCP and
                     // TLS handshakes and slow start; disconnect() closed it after every request.

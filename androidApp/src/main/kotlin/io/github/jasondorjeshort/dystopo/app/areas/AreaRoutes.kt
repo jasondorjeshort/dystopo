@@ -57,9 +57,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   a drawn area or a disc is made on the phone and adds `shape` (box, corridor, disc, polygon), `manifestVersion`,
  *   `sizeLine` ("About 170 MB (1,300 tiles) at full detail"), `timeLine` and `seconds` (at the last completed download's
  *   speed; null before the first), `lessDetail` (z8 to z13: `zooms`, `bytes`, `tiles`, `line` "Less detail (about 30 MB)",
- *   `fits`, `refusal`) with `offerLessDetail` (when the full plan is refused), and `tooLarge` with the refusal "This area is
- *   too large at this detail; make it smaller or choose less detail" when the heap's tile limit refuses it (nothing filled).
- *   Over the budget its `refusal` is "This area is about 450 MB; 1.6 GB of your 2 GB offline budget is in use. Make the
+ *   `fits`, `refusal`) with `offerLessDetail` (when the full plan is refused). Over the budget its `refusal` is "This area is about 450 MB; 1.6 GB of your 2 GB offline budget is in use. Make the
  *   area smaller, choose less detail, or raise the budget in Settings › Storage." `GET /areas` gives each area
  *   `needsNewerApp` (a record of a version or kind this build cannot read, kept as it was, pinned by its `bounds` and
  *   `zooms`; `needsNewerAppReason` the raw sentence; Pin, Retry and Dismiss answer 409), a polygon's `rings`, `vertices`
@@ -71,7 +69,8 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *     in its order), each with `code`, `name`, `nameLong`, `continent`, the row's `detail` (`full` or `less`), `zooms`,
  *     `state` (`measuring`, `fits`, `over_budget`, `too_large`), `greyed`, `sizeText` ("About 28 MB at less detail"),
  *     `sentence` (a greyed row's), `bytes`, `tiles`, `less` and `full` (measured sizes), `downloaded` (the row's mark); with
- *     `wait` it measures the rows first. At the top `measured`, `greyed`, `tooLargeNames`, `pinnedBytes`, `budgetMb`, `heapTiles`.
+ *     `wait` it measures the rows first. At the top `measured`, `greyed`, `tooLargeNames`, `pinnedBytes`, `budgetMb`, `heapTiles`
+ *     (T152: the tiles the tile cache index holds comfortably; said, never a refusal).
  *     `POST /areas/countries[?filter=text]` opens the list in the sheet with that filter.
  *   - `POST /areas/country?code=<ADM0_A3 or ISO>[&detail=full|less]`: the country's summary (the default detail without `detail`).
  *   - `POST /areas/draw[?ring=lat,lon;lat,lon;...]`: Draw an area (the ring, else four vertices from the current view);
@@ -86,6 +85,13 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   - `POST /areas/picker?detail=full|less&name=&radiusM=`: the summary's choices; `POST /areas/picker/download` its
  *     Download (202, the download's start; 409 with the refusal past the budget); `POST /areas/picker/close` Cancel.
  *   - `POST /areas/{id}/rename?name=`: the card's Rename.
+ * - T152 (ADR 0041 §3's T152 note): no heap refusal. Every plan (`POST /areas/plan`, the picker's `full` and `less`) carries
+ *   its estimate (`bytes`, `estimated`, `sizeLine` "About ..."), `rows` (what the download walks), `refused` (the budget's
+ *   refusal only), `pastHeapLimit` and `heapTiles` (past the tile cache index's comfortable size: said, and Download proceeds)
+ *   and `manifestMs`; `GET /areas/draw` adds `refused`, `pastHeapLimit` and `heapTiles` for the plan shown.
+ *   `GET /areas/download` `rows`: `planned`, `started`, `done` (whole), `wholePrefix` (the rows before this index of the walk
+ *   are whole), `current` and `lastWhole` (`z`, `route`, `y`, `x0`, `x1`), `order` (zoom, route, y, x0). In direct mode a
+ *   download is exempt from the session cap (`GET /online` `direct.sessionCapExempt`).
  */
 object AreaRoutes {
     private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss|/rename)?$")
