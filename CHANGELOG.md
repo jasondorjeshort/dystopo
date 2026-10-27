@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-27
+
+- T149: No whole-pack graph or search build behind a download or at launch, and a graph build bounded by the heap
+
 ### 2026-10-26
 
 - T148: The issue link stops asking for a paste that repeats the body
