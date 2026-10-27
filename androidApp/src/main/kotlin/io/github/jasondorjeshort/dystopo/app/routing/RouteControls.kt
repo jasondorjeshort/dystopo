@@ -212,6 +212,13 @@ fun RouteControls() {
     }
 }
 
+/**
+ * T149: the card's line when the heap guard refused the trail network's build ([RoutePlanner]: the build's estimated
+ * peak did not fit the heap free after a trim and a wait), and the progress line while the build waits for room.
+ */
+internal const val GRAPH_TOO_LARGE = "This map is too large to route across on this phone; download a smaller area for routing"
+internal const val GRAPH_WAITING = "Waiting for memory to build the trail network"
+
 /** T114: the card's new action labels. */
 internal const val TURN_ON_LOCATION = "Turn on location"
 internal const val TRY_CROW = "Try Crow"
@@ -287,6 +294,7 @@ private fun BuildProgress() {
             text = when (s?.status) {
                 "building" -> "Building the trail network" + (if (s.total > 0) " ${s.done * 100 / s.total}%" else "") + " (first use of this pack)"
                 "loading" -> "Loading the trail network"
+                "waiting" -> GRAPH_WAITING // T149: the heap guard's trim and wait before the build
                 else -> null
             }
             delay(400)

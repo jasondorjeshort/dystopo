@@ -342,6 +342,7 @@ object RouteSession {
             val s = e.state
             val why = when {
                 s == null -> "this pack has no trail data (no vector archive)"
+                s.status == "refused" -> GRAPH_TOO_LARGE // T149: the heap guard refused the build
                 s.status == "error" -> "the trail network could not be built: ${s.error}"
                 else -> "the trail network is still being built (${s.json()["progress"] ?: s.status}); try again in a moment"
             }

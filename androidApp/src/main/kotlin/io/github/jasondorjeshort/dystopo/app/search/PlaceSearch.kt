@@ -23,11 +23,22 @@ import java.util.concurrent.Executors
  * with progress in [json] (shown in `GET /packs` under `search` and in `GET /search/status`). Packs
  * without a vector archive have no index. [search] queries every ready index ([MultiPackSearch]), so
  * results come in while other packs are still being indexed.
+ *
+ * T149: nothing is loaded or built until a use asks: [ensure] is called by [search] (a query), by the search box while
+ * it is open or holds text ([SearchUi.refresh] while [SearchUi.wanted]), and by `POST /search/build`; [peek] and [json] only read
+ * the states, a pack not asked for yet showing `idle`. A build asks the heap guard first
+ * ([io.github.jasondorjeshort.dystopo.app.online.HeapGuard.admitBuild] for [estimateBytes] of the archive, taking turns
+ * with the routing graph's build); a refused one is state `refused` and is asked again after [REFUSED_RETRY_MS].
  */
 object PlaceSearch {
     /** The index state for one pack's vector archive. Fields are written by the worker thread. */
     class State(val pack: String, val vector: File, val file: File, private val vectorBytes: Long, private val vectorMtime: Long) {
-        @Volatile var status = "queued" // queued, loading, building, ready, error
+        @Volatile var status = "queued" // queued, loading, waiting (T149: for the heap guard), building, ready, refused (T149), error; idle in [peek]
+        /** T149: the build's admission by the heap guard, and the heap at its start and its peak. */
+        @Volatile var guard: io.github.jasondorjeshort.dystopo.app.online.HeapGuard.Admission? = null
+        @Volatile var heapStartBytes: Long? = null
+        @Volatile var peakHeapBytes: Long? = null
+        @Volatile var refusedAt = 0L
         @Volatile var done = 0
         @Volatile var total = 0
         @Volatile var buildMs: Long? = null
@@ -38,13 +49,14 @@ object PlaceSearch {
 
         fun matches(name: String?, f: File?) = name == pack && f != null && f.path == vector.path && f.length() == vectorBytes && f.lastModified() == vectorMtime
 
-        val busy: Boolean get() = status in listOf("queued", "loading", "building")
+        val busy: Boolean get() = status in listOf("queued", "loading", "waiting", "building")
 
         fun json(): Map<String, Any?> = linkedMapOf(
             "pack" to pack, "status" to status, "file" to file.path, "bytes" to file.takeIf { it.isFile }?.length(),
             "progress" to if (total > 0) linkedMapOf("tiles" to done, "of" to total, "percent" to done * 100 / total) else null,
             "buildMs" to buildMs, "loadMs" to loadMs, "rebuildReason" to rebuildReason, "error" to error,
             "entries" to index?.entries?.size, "tokens" to index?.tokenCount,
+            "guard" to guard?.json(), "heapStartBytes" to heapStartBytes, "peakHeapBytes" to peakHeapBytes, // T149
         )
     }
 
@@ -67,7 +79,9 @@ object PlaceSearch {
             val vector = r.osm?.file ?: return@mapNotNull null
             val cur = old[r.name]
             // A failed build is not retried on its own (the overlay polls this); POST /search/build retries it.
-            if (cur != null && cur.matches(r.name, vector) && (!rebuild || cur.busy)) return@mapNotNull cur
+            // T149: a refused one is, by a use after REFUSED_RETRY_MS (the heap may have room by then).
+            val retry = cur?.status == "refused" && SystemClock.elapsedRealtime() - cur.refusedAt >= REFUSED_RETRY_MS
+            if (cur != null && cur.matches(r.name, vector) && !retry && (!rebuild || cur.busy)) return@mapNotNull cur
             val state = State(r.name, vector, File(vector.absoluteFile.parentFile, SearchIndex.fileNameFor(vector.name)), vector.length(), vector.lastModified())
             worker.execute { run(state, rebuild) }
             state
@@ -75,6 +89,39 @@ object PlaceSearch {
         states = next
         return next
     }
+
+    /**
+     * T149: the states of the packs on the map without starting anything: a pack whose index was not asked for yet (or
+     * whose archive changed since) is a fresh state with status `idle`, not kept. For [json] and the search box's line.
+     */
+    fun peek(app: DystopoApp = DystopoApp.instance): List<State> {
+        val old = states.associateBy { it.pack }
+        return app.tiles.packs.regions.mapNotNull { r ->
+            val vector = r.osm?.file ?: return@mapNotNull null
+            old[r.name]?.takeIf { it.matches(r.name, vector) }
+                ?: State(r.name, vector, File(vector.absoluteFile.parentFile, SearchIndex.fileNameFor(vector.name)), vector.length(), vector.lastModified()).apply { status = "idle" }
+        }
+    }
+
+    /** T149: a refused build is asked again by the next use after this long. */
+    const val REFUSED_RETRY_MS = 30_000L
+
+    /**
+     * T149: the heap an index build of a vector archive of [archiveBytes] may take at its peak, with the margin the
+     * graph's estimate has ([io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder.ESTIMATE_MARGIN]): the builder
+     * decodes every tile at the top zoom and two lower ones and keeps every named occurrence, which grows with the
+     * archive. Constants measured in T149 (`PlaceSearchEstimateTest`). Pure.
+     */
+    fun estimateBytes(archiveBytes: Long): Long =
+        ((SEARCH_BASE_BYTES + archiveBytes * SEARCH_BYTES_PER_ARCHIVE_BYTE) * io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder.ESTIMATE_MARGIN).toLong()
+
+    /**
+     * T149's measurement (the heap's growth through an index build, used bytes from the start to the peak, on an API 35
+     * emulator): the Rainier outdoors pack (2.6 MB) 5.1 MB, a 1 x 0.7 degree box around Rainier (8.9 MB) 20.4 MB, the
+     * Washington 3 degree box (124 MB) 132.6 MB in 55 s.
+     */
+    const val SEARCH_BASE_BYTES = 12L shl 20
+    const val SEARCH_BYTES_PER_ARCHIVE_BYTE = 1.0
 
     /** Drops a deleted pack's state (its index file is deleted by the pack manager). */
     @Synchronized
@@ -103,18 +150,37 @@ object PlaceSearch {
                 } else {
                     s.rebuildReason = if (rebuild) "requested" else "missing"
                 }
-                s.status = "building"
-                val t0 = SystemClock.elapsedRealtime()
-                val builder = SearchIndexBuilder(reader, s.vector.name) { d, n -> s.done = d; s.total = n }
-                val idx = builder.build(System.currentTimeMillis())
-                val bytes = idx.encode()
-                val tmp = File(s.file.path + ".tmp")
-                tmp.writeBytes(bytes)
-                if (!tmp.renameTo(s.file)) { s.file.delete(); tmp.renameTo(s.file) }
-                s.buildMs = SystemClock.elapsedRealtime() - t0
-                s.index = idx
-                s.status = "ready"
-                Log.i(TAG, "built ${s.file.name}: ${idx.entries.size} entries, ${bytes.size} bytes in ${s.buildMs} ms")
+                // T149: the heap guard, taking turns with the routing graph's build.
+                s.status = "waiting"
+                val guard = io.github.jasondorjeshort.dystopo.app.online.HeapGuard
+                guard.buildTurn {
+                    val admission = guard.admitBuild("search ${s.pack}", estimateBytes(s.vector.length()))
+                    s.guard = admission
+                    if (admission.refused) {
+                        s.refusedAt = SystemClock.elapsedRealtime()
+                        s.status = "refused"
+                        return@buildTurn
+                    }
+                    s.status = "building"
+                    val w = guard.watch("search")
+                    s.heapStartBytes = w.startBytes
+                    try {
+                        val t0 = SystemClock.elapsedRealtime()
+                        val builder = SearchIndexBuilder(reader, s.vector.name) { d, n -> s.done = d; s.total = n }
+                        val idx = builder.build(System.currentTimeMillis())
+                        val bytes = idx.encode()
+                        val tmp = File(s.file.path + ".tmp")
+                        tmp.writeBytes(bytes)
+                        if (!tmp.renameTo(s.file)) { s.file.delete(); tmp.renameTo(s.file) }
+                        s.buildMs = SystemClock.elapsedRealtime() - t0
+                        s.index = idx
+                        s.status = "ready"
+                        Log.i(TAG, "built ${s.file.name}: ${idx.entries.size} entries, ${bytes.size} bytes in ${s.buildMs} ms")
+                    } finally {
+                        w.close()
+                        s.peakHeapBytes = w.peakBytes
+                    }
+                }
             }
         } catch (e: Exception) {
             s.error = "${e.javaClass.simpleName}: ${e.message}"
@@ -134,18 +200,23 @@ object PlaceSearch {
         return MultiPackSearch.search(ready, query, lat, lon, limit, kinds)
     }
 
-    /** Overall state: `none` (no pack to search), `ready` (all), `partial` (some ready, others coming), or the first busy/error state. */
+    /**
+     * Overall state: `none` (no pack to search), `ready` (all), `partial` (some ready, others coming), the first busy
+     * state, T149 `idle` (none asked for yet), `refused` (the heap guard refused every build left), or `error`.
+     */
     fun status(states: List<State> = this.states): String = when {
         states.isEmpty() -> "none"
         states.all { it.status == "ready" } -> "ready"
         states.any { it.status == "ready" } -> "partial"
         states.any { it.busy } -> states.first { it.busy }.status
+        states.any { it.status == "idle" } -> "idle"
+        states.any { it.status == "refused" } -> "refused"
         else -> "error"
     }
 
-    /** Status for `/packs` and `/search/status`: overall, plus one entry per pack. */
+    /** Status for `/packs` and `/search/status`: overall, plus one entry per pack. T149: reads only ([peek]), starts nothing. */
     fun json(app: DystopoApp = DystopoApp.instance): Map<String, Any?> {
-        val s = ensure(app)
+        val s = peek(app)
         return linkedMapOf("status" to status(s), "ready" to s.count { it.index != null }, "packs" to s.map { it.json() })
     }
 

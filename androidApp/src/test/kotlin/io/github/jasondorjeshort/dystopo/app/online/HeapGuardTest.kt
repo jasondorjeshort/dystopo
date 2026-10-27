@@ -61,4 +61,75 @@ class HeapGuardTest {
         assertEquals(24 * MB, DirectSources.decodedCapBytes(192 * MB))
         assertEquals(96 * MB, DirectSources.decodedCapBytes(1024 * MB))
     }
+
+    // ---- T149: the weight-only admission for builders ----
+
+    /** A scripted heap: the limit each look sees, in order (the last repeats), with every call recorded. */
+    private class Script(vararg limits: Long) {
+        val limits = limits.toList()
+        val calls = ArrayList<String>()
+        var looks = 0
+        var clock = 0L
+        fun limit(): Long { calls += "look"; return limits[minOf(looks++, limits.size - 1)] }
+        fun trim() { calls += "trim" }
+        fun sleep(ms: Long) { calls += "sleep"; clock += ms }
+    }
+
+    private fun admit(s: Script, weight: Long, waitMs: Long = 1_000, stepMs: Long = 250) =
+        HeapGuard.admitWeight("graph", weight, s::limit, s::trim, s::sleep, { s.clock }, waitMs, stepMs)
+
+    @Test
+    fun aBuildThatFitsTheFreeHeapStartsAtOnceWithoutATrim() {
+        val s = Script(300 * MB)
+        val a = admit(s, 200 * MB)
+        assertTrue(a.admitted)
+        assertEquals("now", a.stage)
+        assertEquals(listOf("look"), s.calls)
+        assertEquals(300 * MB, a.limitBytes)
+    }
+
+    @Test
+    fun aShortHeapIsTrimmedFirstAndTheBuildStartsWhenTheTrimFreedEnough() {
+        val s = Script(150 * MB, 260 * MB)
+        val a = admit(s, 200 * MB)
+        assertTrue(a.admitted)
+        assertEquals("afterTrim", a.stage)
+        assertEquals(listOf("look", "trim", "look"), s.calls) // the trim before any wait
+        assertEquals(0L, a.waitedMs)
+    }
+
+    @Test
+    fun thenItWaitsInStepsAndStartsWhenRoomComes() {
+        val s = Script(150 * MB, 150 * MB, 150 * MB, 220 * MB)
+        val a = admit(s, 200 * MB)
+        assertTrue(a.admitted)
+        assertEquals("afterWait", a.stage)
+        assertEquals(listOf("look", "trim", "look", "sleep", "look", "sleep", "look"), s.calls)
+        assertEquals(500L, a.waitedMs)
+    }
+
+    @Test
+    fun aBuildThatNeverFitsIsRefusedAfterOneTrimAndTheBoundedWait() {
+        val s = Script(150 * MB)
+        val a = admit(s, 200 * MB, waitMs = 1_000, stepMs = 250)
+        assertFalse(a.admitted)
+        assertTrue(a.refused)
+        assertEquals("refused", a.stage)
+        assertEquals(1, s.calls.count { it == "trim" })
+        assertEquals(4, s.calls.count { it == "sleep" }) // 1 s in 250 ms steps, then no more
+        assertEquals(1_000L, a.waitedMs)
+        assertEquals(200 * MB, a.estimateBytes)
+        assertEquals(150 * MB, a.limitBytes)
+        assertEquals(true, a.json()["refused"])
+    }
+
+    @Test
+    fun aTestLimitRefusesWithoutWaiting() {
+        // POST /route/guard?maxBytes=: the limit does not move, so nothing waits (admitBuild passes waitMs 0).
+        val s = Script(10 * MB)
+        val a = HeapGuard.admitWeight("graph", 20 * MB, s::limit, s::trim, s::sleep, { s.clock }, waitMs = 0, testLimit = true)
+        assertFalse(a.admitted)
+        assertEquals(listOf("look", "trim", "look"), s.calls)
+        assertEquals(true, a.json()["testLimit"])
+    }
 }
