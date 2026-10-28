@@ -55,9 +55,9 @@ def line(path, pack="rainier", status=200, route=None):
     return {"path": path, "route": route or path.split("/")[1], "pack": pack, "status": status, "ts": "2026-10-27T00:00:00Z"}
 
 
-def check(served, log):
+def check(served, log, expectation=x):
     tiles = {k: {"served": served, "notFound": 0, "errors": 0} for k in ac.SOURCES}
-    ok, missing = ac.tiles_check(tiles, ["osm"], log, BOX, lambda src: ac.covering_zooms(VIEW["z"], STYLE.get(src)))
+    ok, missing = ac.tiles_check(tiles, ["osm"], log, expectation)
     return ok, missing, tiles["osm"]
 
 
@@ -72,13 +72,16 @@ for log in ([], None,
             [line("/osm/8/41/90.pbf", pack="online:direct://sources")],  # the online fallback
             [line("/osm/8/41/90.pbf", pack=None)],  # nobody answered
             [line("/osm/8/40/90.pbf")],  # a tile outside the view's box
+            [line("/osm/8/41/89.pbf")],  # a viewport tile the pack's bounds do not overlap
             [line("/osm/7/20/45.pbf")],  # the view's area at another zoom (MapLibre's prefetch of parents)
             [line("/osm/8/41/90.pbf", status=404)],
             [line("/dem/8/41/90.png")]):  # another source
     ok, missing, t = check(0, log)
     assert not ok and missing == ["osm"] and t["servedBeforeBaseline"] == 0, (log, t)
 # Without the view's box nothing before the baseline counts (the centre test cannot place a tile).
-tiles = {k: {"served": 0, "notFound": 0, "errors": 0} for k in ac.SOURCES}
-assert ac.tiles_check(tiles, ["osm"], [line("/osm/8/41/90.pbf")], None, lambda src: [8]) == (False, ["osm"])
+assert check(0, [line("/osm/8/41/90.pbf")], old)[:2] == (False, ["osm"])
+# The pack removed and the app reloaded in the same process: the log still holds the tile the pack answered, but no
+# pack in /health means no overlapping tile, so a view that asks for osm with |req= fails (the negative case).
+assert check(0, [line("/osm/8/41/90.pbf")], gone)[:2] == (False, ["osm"])
 
 print("test_android_check: ok")

@@ -14,8 +14,9 @@ For each view it sets the camera (POST /camera), waits for the map to go idle an
   - tiles:    each expected source (dem, osm, contours) served tiles for the view; a source is expected
               when the view's zoom is in its pack's range (from /health) and, T154, a tile of the viewport itself
               (the view's box from GET /attribution viewBounds, at the zooms MapLibre requests that source at)
-              overlaps the pack's bounds; or when the view lists it with |req=dem+osm+contours. A viewport tile a
-              pack answered before the view's baseline counts too (MapLibre held it, so the view's delta is 0): it
+              overlaps the pack's bounds; or when the view lists it with |req=dem+osm+contours. One of those
+              overlapping tiles (`packTiles`, over a pack /health lists now) that a pack answered before the view's
+              baseline counts too (MapLibre held it, so the view's delta is 0): it
               is read from GET /stats/requests and reported as tiles.<source>.servedBeforeBaseline and
               beforeBaseline (tile, pack, time); the online fallback's answers never count. The view's report
               carries `expectation` per source: expected, the reason and the overlapping `packTiles`
@@ -546,7 +547,7 @@ def tile_name(t):
 
 def source_expectations(health, v, view_box, style_sources):
     """Per source: whether the view expects tiles from its pack, why, and the viewport tiles that overlap the pack's
-    bounds (`packTiles`; at most 24 named). Without the view's box (an app without viewBounds in GET /attribution) the
+    bounds (`packTiles`, the only tiles that may count from before the baseline). Without the view's box (an app without viewBounds in GET /attribution) the
     centre test of covers() decides, as before T154. A view's |req= decides `expected` and keeps the rest as evidence."""
     packs = health.get("packs", {}) or {}
     out = {}
@@ -564,7 +565,7 @@ def source_expectations(health, v, view_box, style_sources):
             tiles = [t for z in zooms for t in viewport_tiles(view_box, z)]
             over = [t for t in tiles if boxes_overlap(tile_box(*t), pack["bounds"])]
             e["expected"] = bool(over)
-            e["packTiles"] = [tile_name(t) for t in over[:24]]
+            e["packTiles"] = [tile_name(t) for t in over]
             e["reason"] = (f"{len(over)} of {len(tiles)} viewport tiles at z{'/'.join(str(z) for z in zooms) or '-'} "
                            f"overlap the pack's bounds")
         if v["req"] is not None:
@@ -574,37 +575,34 @@ def source_expectations(health, v, view_box, style_sources):
     return out
 
 
-def served_before_baseline(log_lines, source, view_box, zooms):
-    """Lines of the phone's request log (GET /stats/requests) where a pack (not the online fallback) answered a tile of
-    this source that lies in the view's box at one of its covering zooms: the tiles MapLibre already held when the
-    view's baseline was read. Each tile once, oldest first."""
-    want = {t for z in zooms for t in viewport_tiles(view_box, z)} if view_box is not None else set()
-    seen, out = set(), []
+def served_before_baseline(log_lines, source, pack_tiles):
+    """Lines of the phone's request log (GET /stats/requests) where a pack (not the online fallback) answered one of
+    `pack_tiles` ("z/x/y", the viewport's tiles that overlap a pack /health lists now) for this source: the tiles MapLibre
+    already held when the view's baseline was read. Only tiles over a pack still listed count, so log lines from a pack
+    removed since (a /reload in the same process) never do. Each tile once, oldest first."""
+    want, seen, out = set(pack_tiles or ()), set(), []
     for ln in log_lines or []:
         if ln.get("route") != source or ln.get("status") != 200:
             continue
         pack = ln.get("pack")
         if not pack or str(pack).startswith("online:"):
             continue
-        try:
-            z, x, y = (int(p) for p in ln["path"].rsplit(".", 1)[0].strip("/").split("/")[1:4])
-        except (KeyError, ValueError):
-            continue
-        if (z, x, y) in want and (z, x, y) not in seen:
-            seen.add((z, x, y))
-            out.append({"tile": f"{z}/{x}/{y}", "pack": pack, "ts": ln.get("ts")})
+        tile = str(ln.get("path", "")).rsplit(".", 1)[0].strip("/").split("/", 1)[-1]
+        if tile in want and tile not in seen:
+            seen.add(tile)
+            out.append({"tile": tile, "pack": pack, "ts": ln.get("ts")})
     return out
 
 
-def tiles_check(tiles, exp, log_lines, view_box, zooms_of):
+def tiles_check(tiles, exp, log_lines, expectation):
     """T154: the tiles check. A source passes when the view's own delta served a tile, or when the request log shows a
-    pack answered one of the view's tiles before the baseline (adds `servedBeforeBaseline` and `beforeBaseline` to
-    tiles[source]). Returns (ok, the expected sources without tiles)."""
+    pack answered one of the source's `packTiles` (source_expectations) before the baseline (adds `servedBeforeBaseline`
+    and `beforeBaseline` to tiles[source]). Returns (ok, the expected sources without tiles)."""
     missing = []
     for s in exp:
         if tiles[s]["served"] > 0:
             continue
-        early = served_before_baseline(log_lines, s, view_box, zooms_of(s))
+        early = served_before_baseline(log_lines, s, expectation[s].get("packTiles"))
         tiles[s]["servedBeforeBaseline"] = len(early)
         if early:
             tiles[s]["beforeBaseline"] = early[:12]
@@ -1236,8 +1234,7 @@ def main():
                 rep["requestLogDropped"] = rl.get("dropped")
             except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:
                 log_lines, rep["requestLogError"] = [], str(e)[:200]
-        c["tiles"], missing = tiles_check(tiles, exp, log_lines, view_box,
-                                          lambda s: covering_zooms(v["z"], (info.get("sources") or {}).get(s)))
+        c["tiles"], missing = tiles_check(tiles, exp, log_lines, expectation)
         if not c["tiles"]:
             rep["sourcesWithoutTiles"] = missing
         c["blank"] = "lumaStddev" in rep["image"] and rep["image"]["lumaStddev"] >= args.min_stddev

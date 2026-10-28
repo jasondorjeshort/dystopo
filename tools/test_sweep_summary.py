@@ -1,5 +1,5 @@
 """T147: sweep-summary.py offline: load_last_json with log text around a report, and the both-units part's four
-screenshots (both phones after each carry).
+screenshots (both phones after each carry); T154: the diagnostics part.
 
     python -I tools/test_sweep_summary.py
 """
@@ -58,6 +58,33 @@ try:
     assert got["screenshots"] == ["ui/bothunits/" + n for n in names], got
     assert got["carries"]["a-on-to-b"]["dstBothUnits"] is True and got["carries"]["b-off-to-a"]["dstBothUnits"] is False, got
     assert got["peer"] == "http://10.0.2.2:8783" and "error" not in got, got
+
+    # T154: the diagnostics part (android-ui.py diagnostics on the release build): the row's numbers, how the
+    # force-stopped session ended, its screenshots on the sheet, and the first failed step as the error.
+    dshots = os.path.join(d, "ui", "diagnostics")
+    os.makedirs(dshots)
+    open(os.path.join(dshots, "02-diagnostics.png"), "wb").close()
+    diag = {"part": "diagnostics", "ok": True, "sdk": 35, "steps": [
+        {"step": "install", "ok": True}, {"step": "row", "ok": True, "heapsize": "576m", "now": {"Max heap": "576 MB"}},
+        {"step": "copy", "ok": True}, {"step": "refresh", "ok": True},
+        {"step": "after-force-stop", "ok": True, "last": {"Ended": "force-stopped", "Peak heap": "80 MB"}}, {"step": "alive", "ok": True}]}
+    write("diagnostics.json", "[ui] install: ok\n" + json.dumps(diag))
+    got = summary.PARTS["diagnostics"](d, "diagnostics")
+    assert got["heapsize"] == "576m" and got["lastAfterForceStop"]["Ended"] == "force-stopped" and got["sdk"] == 35, got
+    assert got["steps"]["after-force-stop"] is True and "error" not in got, got
+    assert ("Diagnostics row (by taps)", "02-diagnostics", os.path.join("ui", "diagnostics", "02-diagnostics.png")) in summary.sheet_images(d)
+    diag["steps"][4] = {"step": "after-force-stop", "ok": False, "error": "after the force-stop: ended"}
+    write("diagnostics.json", json.dumps(diag))
+    assert summary.PARTS["diagnostics"](d, "diagnostics")["error"] == "after-force-stop: after the force-stop: ended"
+
+    # T154: the device tour's runs name the views whose tiles check counted a tile served before the baseline.
+    os.makedirs(os.path.join(d, "device"))
+    tour = {"viewsOk": 2, "viewsTotal": 2, "views": [
+        {"label": "region-z8", "ok": True, "seconds": 12.0, "tiles": {"dem": {"served": 1}, "osm": {"served": 0, "servedBeforeBaseline": 1}}},
+        {"label": "region-z10", "ok": True, "tiles": {"dem": {"served": 4}, "osm": {"served": 3}}}]}
+    write(os.path.join("device", "tour1.json"), json.dumps(tour))
+    runs = summary.device_tour(d, "device-tour")["runs"]
+    assert runs[0]["servedBeforeBaseline"] == {"region-z8": {"osm": 1}} and "failedViews" not in runs[0], runs
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
