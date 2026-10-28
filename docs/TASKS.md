@@ -28,7 +28,7 @@ The owner's to-do list; the coordinator adds to it whenever a task leaves someth
 
 **Git housekeeping on your account (the hooks refuse these to agents):** `git push origin --delete task/T138`; `git branch -D carry-back/ownership-project-list`; `git branch -D task/T143` and `task/T146` (pre-rebase copies); the T122 folder, `triage-saved` and `refs/original/*`; the two older Claude-authored commits.
 
-**Secrets and machines:** the four `RELEASE_*` Actions secrets (below) so the release workflow builds again; the first PC's Rainier pack recipe for `docs/reference/machines.md` (zoom ranges and box of its 143 MB pair), so both PCs sweep the same data.
+**Secrets and machines:** the four `RELEASE_*` Actions secrets (below; `gh secret list` is empty on 2026-10-28, so the workflow debug-signed the v0.1.14-alpha draft and the release was built locally by the `release` skill's fallback, as every release will be until they are set); the first PC's Rainier pack recipe for `docs/reference/machines.md` (zoom ranges and box of its 143 MB pair), so both PCs sweep the same data.
 
 **Standing facts:**
 - **The repo has been public since 2026-10-11.** The one pre-public leftover, PR #45's 2026-10-10 08:13 description revision that named a private place, was deleted by the owner through the UI the same day (confirmed by the API: `deletedAt` set). Scans before and after going public were clean: tree, history, every PR's current text, the release APK's strings.
