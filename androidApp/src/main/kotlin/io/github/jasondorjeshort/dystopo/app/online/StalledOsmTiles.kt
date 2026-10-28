@@ -13,6 +13,10 @@ package io.github.jasondorjeshort.dystopo.app.online
  * which asks MapLibre for that source's tiles again (from the disk cache, the recovered ones from the network) without
  * reloading the style. A tile is given up after [giveUpMs], and every entry recorded before a style load is dropped
  * ([styleLoaded]): the reload asked for it again. At most [capacity] entries, the oldest out first. Pure, tested.
+ *
+ * T155: the same record holds the DEM tiles answered 404 after a failed fetch (`OnlineService.stalledDem`, paths
+ * `z/x/y.png`); there a source that answers again ([wake]) makes every entry due at once, and [oldest] is the tile the
+ * phone tries while none is due, so the recovery does not wait out the backoff ([DemSourceRefresh]).
  */
 class StalledOsmTiles(
     val firstRetryMs: Long = 30_000L,
@@ -36,13 +40,14 @@ class StalledOsmTiles(
     var droppedByStyleLoad = 0L
         private set
 
-    /** Tile [path] (`z/x/y.pbf`) was answered empty at [now] because its fetch failed. A tile already pending keeps its schedule. */
+    /** Tile [path] (`z/x/y.pbf`) was answered empty at [now] because its fetch failed. A tile already pending keeps its schedule. True when newly recorded. */
     @Synchronized
-    fun failed(path: String, now: Long) {
-        if (path in pending) return
+    fun failed(path: String, now: Long): Boolean {
+        if (path in pending) return false
         pending[path] = Entry(now, now + firstRetryMs, firstRetryMs)
         recorded++
         while (pending.size > capacity) pending.remove(pending.keys.first())
+        return true
     }
 
     /** The tiles due for another fetch at [now] (and the ones past [giveUpMs] dropped). */
@@ -89,12 +94,29 @@ class StalledOsmTiles(
         }
     }
 
+    /** T155: times [wake] made pending tiles due early. */
+    var woken = 0L
+        private set
+
+    /** T155: the source answered again at [now] (a read after stalls came back): every pending tile is due now. Returns how many. */
+    @Synchronized
+    fun wake(now: Long): Int {
+        if (pending.isEmpty()) return 0
+        for (e in pending.values) e.nextAt = minOf(e.nextAt, now)
+        woken++
+        return pending.size
+    }
+
+    /** T155: the tile recorded first (the one tried while none is due), or null. */
+    @Synchronized
+    fun oldest(): String? = pending.keys.firstOrNull()
+
     val size: Int @Synchronized get() = pending.size
 
     @Synchronized
     fun json(): Map<String, Any?> = linkedMapOf(
         "pending" to pending.size, "recorded" to recorded, "retried" to retried, "recovered" to recovered,
-        "givenUp" to givenUp, "droppedByStyleLoad" to droppedByStyleLoad, "firstRetryMs" to firstRetryMs,
+        "givenUp" to givenUp, "droppedByStyleLoad" to droppedByStyleLoad, "firstRetryMs" to firstRetryMs, "woken" to woken,
     )
 }
 
@@ -106,6 +128,9 @@ class StalledOsmTiles(
  * came, and a trickle gets one refresh per window (T138 refreshed every 5 to 6 s while retries came in). A refresh the
  * map skipped because its style was loading ([skipped]) stays wanted and is tried at the next look, so a recovery that
  * landed during a style load is not lost. Pure, tested.
+ *
+ * T155: the DEM tiles' refreshes ([DemSourceRefresh]) use one with [quietMs] 0: a DEM retry reports its recoveries as one
+ * batch when the batch ends, so the refresh follows the batch at once, still never twice within [settleMs].
  */
 class OsmRefreshCoalescer(val settleMs: Long = 10_000L, val quietMs: Long = 2_000L) {
     private var wanted = false
@@ -138,6 +163,14 @@ class OsmRefreshCoalescer(val settleMs: Long = 10_000L, val quietMs: Long = 2_00
     fun due(now: Long): Boolean {
         if (!wanted || now - lastRefresh < settleMs) return false
         return now - lastRecovery >= quietMs || now - windowStart >= settleMs
+    }
+
+    /** T155: [due] and [refreshed] in one step, so two threads looking at once (the probe's tick and a retry ending) refresh once. */
+    @Synchronized
+    fun claim(now: Long): Boolean {
+        if (!due(now)) return false
+        refreshed(now)
+        return true
     }
 
     /** The source was replaced at [now]. */

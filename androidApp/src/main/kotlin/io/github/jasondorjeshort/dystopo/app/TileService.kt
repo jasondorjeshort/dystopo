@@ -520,13 +520,15 @@ class TileService(
         val osmHi = osmPacks.maxOfOrNull { it.header.maxZoom }
         // The online generation in the URLs makes MapLibre ask again for tiles it got blank while offline.
         val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" + it.fetcher.contentTag.let { c -> if (c.isEmpty()) "" else "-$c" } + OnlineService.get().renderRefreshes.get().let { r -> if (r > 0) "-r$r" else "" } } ?: "") // T74: and its content versions; T85: and the reloads after rendering (MapLibre keeps a tile it got a 503 for when the style is the same)
+        // T155: the elevation source refreshes for recovered DEM tiles (DemSourceRefresh), in the DEM, contour and shade URLs only.
+        val dv = if (o != null) OnlineService.get().demSourceRefreshes.get().let { n -> if (n > 0) "-d$n" else "" } else ""
         return MapLibreStyle(
             MapLibreSources(
                 // The pack identity in the URL keeps MapLibre's own tile cache from serving a replaced pack's tiles.
-                demTiles = token.url("$base/dem/{z}/{x}/{y}.png?v=$v"), // T49: every URL carries the loopback token
+                demTiles = token.url("$base/dem/{z}/{x}/{y}.png?v=$v$dv"), // T49: every URL carries the loopback token
                 demMinZoom = demLo,
                 demMaxZoom = demHi,
-                contourTiles = token.url("$base/contours/{z}/{x}/{y}.pbf?v=$v-${contourOptions.units.symbol}$intervalTag"), // T33: unit in the URL
+                contourTiles = token.url("$base/contours/{z}/{x}/{y}.pbf?v=$v$dv-${contourOptions.units.symbol}$intervalTag"), // T33: unit in the URL
                 // Contour tile z has the levels of DEM zoom z+1 (512-px vector tiles), and overzoomed DEM is fine
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
                 contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
@@ -538,7 +540,7 @@ class TileService(
                 glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }.let { if (it.startsWith("http")) token.url(it) else it }, // T38: refetch after offline
                 attribution = attribution,
                 sprite = SpriteFiles.styleUrl(packs.glyphDir?.parentFile),
-                shadeTiles = token.url("$base/shade/{z}/{x}/{y}.png?v=${shade.urlVersion()}"), // T47
+                shadeTiles = token.url("$base/shade/{z}/{x}/{y}.png?v=${shade.urlVersion()}$dv"), // T47; T155: dv
                 shadeMinZoom = demLo,
                 shadeMaxZoom = demHi + 2,
             ),

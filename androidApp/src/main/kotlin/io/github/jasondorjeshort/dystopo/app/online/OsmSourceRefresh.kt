@@ -6,8 +6,10 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.HeatmapLayer
+import org.maplibre.android.style.layers.HillshadeLayer
 import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.TileSet
 import org.maplibre.android.style.sources.VectorSource
@@ -36,13 +38,16 @@ object OsmSourceRefresh {
         return sources[SOURCE_ID] as? Map<String, Any?>
     }
 
-    private fun sourceOf(layer: Layer): String? = when (layer) {
+    /** The source [layer] draws from, or null (background). T155: hillshade and raster layers too ([DemSourceRefresh]). */
+    internal fun sourceOf(layer: Layer): String? = when (layer) {
         is LineLayer -> layer.sourceId
         is FillLayer -> layer.sourceId
         is SymbolLayer -> layer.sourceId
         is CircleLayer -> layer.sourceId
         is FillExtrusionLayer -> layer.sourceId
         is HeatmapLayer -> layer.sourceId
+        is HillshadeLayer -> layer.sourceId
+        is RasterLayer -> layer.sourceId
         else -> null
     }
 

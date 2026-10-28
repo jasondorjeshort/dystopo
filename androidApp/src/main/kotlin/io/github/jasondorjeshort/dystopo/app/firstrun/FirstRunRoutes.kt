@@ -33,6 +33,10 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  *   host instead (the TileJSON still from OpenFreeMap), kept across restarts, honoured only in debug builds; for a
  *   stall test against a host that accepts and never answers (`android-debug-routes.md`). 400 for a URL the cleartext
  *   rule refuses.
+ *   T155: `POST /firstrun/direct/dem-base?url=http://10.0.2.2:8751|default`: send every DEM source range read to that
+ *   scheme and host instead (the path kept; not kept across a restart), for the DEM stall test; `GET /firstrun/direct`
+ *   has `demBase`, `failedRenders` (renders failing at once after a network failure: `now`, `blocked`, `ttlMs`) and
+ *   `rangeAnsweredAfterStall`; the recovery is `GET /online` `stalledDem`. 400 for a URL the cleartext rule refuses.
  * - `POST /firstrun/test[?server=]`: Settings › Sources › Test (the saved server unless given; not saved):
  *   `state` ok with `packs`, or failed with `error`. 502 when it failed.
  * - `POST /firstrun/dismiss[?undo=1]`: "Not now" (or bring the card back).
@@ -79,6 +83,17 @@ object FirstRunRoutes {
                     }
                     DirectPrefs.setOsmBase(app, base)
                     OnlineService.get(app).direct.osmBase = base
+                    Response.json(directJson(app))
+                }
+                "POST" to "/firstrun/direct/dem-base" -> {
+                    // T155: where the DEM sources' range reads go (a test's dead host); `default` or empty goes back to the sources' own hosts.
+                    val url = r.query["url"] ?: throw IllegalArgumentException("url required (http(s)://host[:port], or default)")
+                    val base = url.takeUnless { it.isBlank() || it == "default" }
+                    if (base != null) {
+                        io.github.jasondorjeshort.dystopo.app.online.DirectSources.withOsmBase("https://x/a.tif", base) // throws on a malformed URL
+                        CleartextPolicy.problem(base)?.let { throw IllegalArgumentException(it) }
+                    }
+                    OnlineService.get(app).direct.demBase = base
                     Response.json(directJson(app))
                 }
                 "POST" to "/firstrun/test" -> {

@@ -118,7 +118,16 @@ class OnlineTiles(
                 service.served("dem", f)
                 TileResult(200, "image/png", f.bytes)
             }
-            else -> service.served("dem", f).let { TileResult.notFound() }
+            else -> {
+                service.served("dem", f)
+                // T155 (T138's follow-up): a 404 MapLibre never asks for again; recorded, fetched again later, and the
+                // elevation source refreshed once it comes ([OnlineService.demFailed], [DemSourceRefresh]).
+                if (f is Fetch.Unavailable) {
+                    if (direct) DirectTrace.mark("d404 $z/$x/$y")
+                    service.demFailed("$z/$x/$y.png")
+                }
+                TileResult.notFound()
+            }
         }
     }
 
@@ -180,6 +189,7 @@ class OnlineTiles(
             Fetch.Missing -> null
             is Fetch.Unavailable -> {
                 incomplete.set(true)
+                service.demFailed("$z/$x/$y.png") // T155: the shade or contour tile made without it is drawn again once it comes
                 null
             }
         }
@@ -202,6 +212,9 @@ class OnlineTiles(
     }
 
     private fun dropPyramid() = synchronized(this) { current = null }
+
+    /** T155: DEM tiles came back after a stall; the pyramid may remember them as missing, so the next shade or contour tile takes a new one. */
+    fun forgetMissing() = dropPyramid()
 
     /** T127: drops the online pyramid's decoded DEM tiles (made again from the online cache); the bytes dropped. */
     fun trimMemory(): Long = synchronized(this) {
@@ -346,6 +359,18 @@ class OnlineTiles(
             if (missingHalo.isEmpty()) return key
             val names = missingHalo.distinct().sortedWith(compareBy({ it.first }, { it.second }, { it.third })).joinToString("_") { "${it.first}-${it.second}-${it.third}" }
             return "${key.removeSuffix(".pbf")}.halo-$names.pbf"
+        }
+
+        /**
+         * T155: true when [key] is a halo variant ([contourKey]) made without one of the DEM tiles [tiles] (`z/x/y.png`
+         * paths). Those tiles came back after a stall, so such a variant is never looked up again (the tile is made whole
+         * now) and is deleted with the recovery instead of waiting for the trim. Pure, tested.
+         */
+        fun namesHaloTile(key: String, tiles: Set<String>): Boolean {
+            val at = key.lastIndexOf(TileCache.HALO_INFIX)
+            if (at < 0 || tiles.isEmpty()) return false
+            val names = key.substring(at + TileCache.HALO_INFIX.length).substringBefore('.').split('_')
+            return names.any { n -> n.split('-').takeIf { it.size == 3 }?.joinToString("/", postfix = ".png") in tiles }
         }
 
         /**
