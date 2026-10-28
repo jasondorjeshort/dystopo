@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-28
+
+- T154: Sweep and tooling leftovers 14
+
 ### 2026-10-27
 
 - T155: DEM tiles whose online fetch failed are answered again
