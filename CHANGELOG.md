@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-27
 
+- T153: The top "Download this region" button through the size-first card (after T152)
 - T156: Interrupted area downloads survive the background and the process: the WorkManager chain (after T151)
 - T151: Interrupted area downloads: the cursor, the repair at start and the cheap check (after T152)
 - T152: Downloads past the heap limit: an estimate instead of nothing, the walk as rows, the download proceeds
