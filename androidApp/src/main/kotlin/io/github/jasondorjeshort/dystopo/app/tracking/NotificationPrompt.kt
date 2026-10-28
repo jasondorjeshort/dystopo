@@ -9,6 +9,7 @@ import android.os.Build
  * T81: Android 13+ shows the recording notification only with POST_NOTIFICATIONS, a runtime permission. It is
  * asked for once, when the user first starts a recording (the moment the notification matters); recording works
  * either way, and a refusal is not asked again (the user can allow it in the system settings later).
+ * T156: the first area Download asks too (its notification); one flag for both, so it is asked at most once.
  */
 object NotificationPrompt {
     private const val PREFS = "dystopo-notifications"

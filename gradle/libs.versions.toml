@@ -19,6 +19,9 @@ maplibre-android = "11.13.5"
 # SQLDelight (Apache-2.0): the durable TrackStore (T31). Runtime in shared commonMain; the SQLite JDBC driver
 # (sqlite-jdbc, Apache-2.0) only for JVM tests; the Android driver (AndroidX SQLite, Apache-2.0) in the app.
 sqldelight = "2.1.0"
+# WorkManager (Apache-2.0, with Room, SQLite and androidx.startup, all Apache-2.0): the area download chain (T156, ADR 0046).
+# 2.10.x is the line that compiles against API 35 and stops a worker at the Android 15 dataSync timeout.
+work = "2.10.5"
 
 [libraries]
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
@@ -34,6 +37,7 @@ maplibre-android = { module = "org.maplibre.gl:android-sdk", version.ref = "mapl
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

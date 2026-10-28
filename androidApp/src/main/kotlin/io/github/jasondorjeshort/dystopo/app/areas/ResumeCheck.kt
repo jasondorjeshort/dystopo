@@ -39,6 +39,13 @@ import java.util.concurrent.atomic.AtomicInteger
  *   normal and the owner's requirement is that the download continues later without being asked. App start and the
  *   foreground trigger skip the backoff's wait (the user is there), never the stop or the cancel.
  *
+ * T156 (ADR 0046): the out-of-process half is the WorkManager chain ([DownloadWorker]). A check that finds an unfinished
+ * record which may resume and starts nothing keeps the chain enqueued ([DownloadWorker.ensure], KEEP: nothing while it is
+ * there), so the download goes on when the process is gone, on regaining the network (the chain's `CONNECTED` constraint)
+ * and after a reboot; after a user's force-stop, which cancels the chain until the next launch, the start trigger here is
+ * what brings it back. The worker's own check ([TRIGGER_WORKER]) skips the backoff's wait like the user's triggers: the
+ * chain's delay and its network constraint are the wait when it runs.
+ *
  * No user setting (the wave 21 research found no app that resumes by itself to take a default from; the owner's
  * requirement is resume without a toggle; data use stays steered by the visible size and budget, ADR 0023).
  * `GET /areas/resume`, `POST /areas/resume` ([AreaRoutes]).
@@ -49,9 +56,14 @@ object ResumeCheck {
     const val TRIGGER_DOWNLOAD_OVER = "download over"
     const val TRIGGER_BACKOFF = "backoff"
     const val TRIGGER_DEBUG = "debug"
+    /** T156: the WorkManager chain's run ([DownloadWorker]). */
+    const val TRIGGER_WORKER = "worker"
 
     /** Triggers that mean the user is there: they skip the backoff's wait. */
     val USER_PRESENT = setOf(TRIGGER_START, TRIGGER_FOREGROUND, TRIGGER_DEBUG)
+
+    /** T156: triggers that skip the backoff's wait: the user's, and the chain's run (its delay and constraint were the wait). */
+    val SKIP_WAIT = USER_PRESENT + TRIGGER_WORKER
 
     private const val TAG = "DystopoResume"
     private val worker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "area-resume").apply { isDaemon = true } }
@@ -84,16 +96,28 @@ object ResumeCheck {
         return worker.submit(Callable { check(listOf(trigger)) }).get(30, TimeUnit.SECONDS)
     }
 
+    /** T156: the check's note when it leaves a ready record to the chain. */
+    const val LEFT_TO_CHAIN = "left to the chain: the app is in the background without the network"
+
+    /** T156: waits until every check asked for before now has run (the check's thread runs them in order). */
+    fun settle() {
+        worker.submit(Callable { Unit }).get(30, TimeUnit.SECONDS)
+    }
+
     private fun check(triggers: List<String>): Map<String, Any?> {
         val t0 = System.nanoTime()
         val now = System.currentTimeMillis()
         val records = Areas.all() // the records read from the small areas file; nothing from the tile cache
         val live = AreaDownload.job?.takeIf { it.running }?.id
-        val d = decide(records, live, now, AppSettings.pinnedCacheMb, triggers.any { it in USER_PRESENT })
+        val d = decide(records, live, now, AppSettings.pinnedCacheMb, triggers.any { it in SKIP_WAIT })
         val checkMs = (System.nanoTime() - t0) / 1e6
         var started: String? = null
         var note: String? = null
-        d.start?.let { id ->
+        // T156: in the background a cached app has no network outside a job (Android 15), so a download starts here only
+        // while the app is on screen or the network is usable; else the chain's step, a job with the network, starts it.
+        val here = mayStartHere(Foreground.started, DownloadWorker.networkUsable())
+        if (d.start != null && !here) note = LEFT_TO_CHAIN
+        d.start?.takeIf { here }?.let { id ->
             val r = records.first { it.id == id }
             try {
                 AreaDownload.resume(r, triggers.joinToString(", "))
@@ -107,10 +131,12 @@ object ResumeCheck {
             }
         }
         d.nextAt?.let { schedule(it, now) }
+        // T156: an unfinished record that may resume keeps the chain enqueued (a start hands over by itself).
+        val chain = if (started == null) chainDelay(d, now)?.let { delay -> runCatching { DownloadWorker.ensure(delay) }.exceptionOrNull()?.let { "not enqueued: ${it.message}" } ?: "kept, ${delay / 1000} s" } else null
         return linkedMapOf<String, Any?>(
             "run" to runs.incrementAndGet(), "at" to now, "triggers" to triggers, "checkMs" to Math.round(checkMs * 1000) / 1000.0,
             "records" to records.size, "unfinished" to d.unfinished, "started" to started, "waitingFor" to d.waitingFor, "note" to note,
-            "nextAt" to d.nextAt, "ms" to Math.round((System.nanoTime() - t0) / 1e3) / 1000.0,
+            "nextAt" to d.nextAt, "chain" to chain, "ms" to Math.round((System.nanoTime() - t0) / 1e3) / 1000.0,
         ).also {
             last = it
             if (d.unfinished.isNotEmpty() || started != null) Log.i(TAG, "resume check: $it")
@@ -135,6 +161,7 @@ object ResumeCheck {
             "timerAt" to timerAt.takeIf { timer?.isDone == false }, "repairedAtStart" to synchronized(Areas.repaired) { Areas.repaired.toList() },
             "unfinishedNow" to d.unfinished, "nowMs" to Math.round(ms * 1000) / 1000.0,
             "backoffMs" to BACKOFF_MS, "maxFailures" to MAX_FAILURES, "foreground" to Foreground.started,
+            "chain" to runCatching { DownloadWorker.json() }.getOrElse { mapOf("error" to it.toString()) }, // T156
         )
     }
 

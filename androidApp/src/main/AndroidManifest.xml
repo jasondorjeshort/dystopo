@@ -1,5 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- The loopback tile server socket, and (T54) the Share screen: a LAN listener guarded by a 6-digit code and NSD
          (mDNS) announce and discovery, only while that screen is open. NsdManager needs no further permission. -->
@@ -10,6 +11,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- T156 (ADR 0046): an area download runs in WorkManager's foreground service, type dataSync, while a tap started it;
+         WorkManager's own manifest adds RECEIVE_BOOT_COMPLETED and FOREGROUND_SERVICE so its chain survives a reboot. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- T57: the Share screen's QR scanner (asked for when the scanner opens; the app works without it). -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -69,5 +73,12 @@
             android:foregroundServiceType="location" />
         <!-- T83: the system installer's answers for an update session (only its PendingIntent reaches it). -->
         <receiver android:name=".update.UpdateResultReceiver" android:exported="false" />
+        <!-- T156 (ADR 0046): WorkManager's foreground service carries the area download (areas/DownloadWorker.kt) with the
+             dataSync type, and the notification's Cancel reaches the download through this receiver (only its PendingIntent). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+        <receiver android:name=".areas.DownloadCancelReceiver" android:exported="false" />
     </application>
 </manifest>
