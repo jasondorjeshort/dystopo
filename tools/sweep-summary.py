@@ -144,6 +144,10 @@ def device_tour(d, part):
         res.append({"viewsOk": s.get("viewsOk"), "viewsTotal": s.get("viewsTotal"),
                     "glyphsOk": (s.get("glyphs") or {}).get("ok"),
                     "failedViews": [v.get("label") for v in views if not v.get("ok")],
+                    # T154: per view and source, the tiles a pack answered before the view's baseline that the check counted
+                    "servedBeforeBaseline": {v.get("label"): early for v in views if (early := {
+                        k: t["servedBeforeBaseline"] for k, t in (v.get("tiles") or {}).items()
+                        if isinstance(t, dict) and t.get("servedBeforeBaseline")})},
                     # T105: the app's server during the tour, the wait for a quiet device, the first view's seconds
                     "server": (s.get("online") or setup.get("online") or {}).get("server") or "none",
                     "quietWaitS": (setup.get("quiet") or {}).get("waitedS"),
@@ -152,8 +156,9 @@ def device_tour(d, part):
                     "pssMb": mb(mem.get("totalPssKb"), 1024), "javaHeapMb": mb(mem.get("javaHeapUsedBytes"), 1 << 20),
                     "nativeHeapMb": mb(mem.get("nativeHeapAllocatedBytes"), 1 << 20)})
     for r in res:
-        if not r["failedViews"]:
-            del r["failedViews"]
+        for k in ("failedViews", "servedBeforeBaseline"):
+            if not r[k]:
+                del r[k]
     return {"runs": res} if res else {}
 
 
@@ -275,6 +280,12 @@ def ui_part(d, part):
     elif part == "recenter":  # T105
         out["movedPx"] = (steps.get("pan") or {}).get("movedPx")
         out["offsetPx"] = (steps.get("tap") or {}).get("offsetPx")
+    elif part == "diagnostics":  # T154 (T143's follow-up): the row's numbers and how the force-stopped session ended
+        row = steps.get("row") or {}
+        out["heapsize"] = row.get("heapsize")
+        out["now"] = row.get("now")
+        out["lastAfterForceStop"] = (steps.get("after-force-stop") or {}).get("last")
+        out["sdk"] = r.get("sdk")
     elif part == "update":  # T99
         out["versions"] = r.get("versions")
         out["previousCheckAsked"] = (steps.get("create-data") or {}).get("previousCheckAsked")
@@ -352,6 +363,7 @@ PARTS = {
     "apk-strings": apk_strings,
     "features": ui_part,
     "recenter": ui_part,
+    "diagnostics": ui_part,  # T154
     "upgrade": ui_part,
     "permissions": ui_part,
     "background": ui_part,
@@ -408,7 +420,8 @@ def sheet_images(d):
     add("Release smoke tour", os.path.join("release", "*.png"))
     add("First run (release, by taps)", os.path.join("first-run", "*.png"))
     add("First run, no server (release, by taps)", os.path.join("first-run", "direct", "*.png"))  # T105
-    for part, title in (("features", "Release features (by taps)"), ("recenter", "Recenter (by taps)"), ("upgrade", "Upgrade in place"),
+    for part, title in (("features", "Release features (by taps)"), ("recenter", "Recenter (by taps)"),
+                        ("diagnostics", "Diagnostics row (by taps)"), ("upgrade", "Upgrade in place"),
                         ("permissions", "Permissions"),
                         ("background", "Background recording under doze"), ("network", "Network: throttled, server killed"),
                         ("update", "In-app update (mock releases API)")):

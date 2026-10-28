@@ -38,6 +38,9 @@
 #                screenshots), the Routes list, a recorded track, GPX export, sync with the sweep's server, the sync
 #                sheet, the Share screen, Settings; no crash
 #   recenter     T105 (T93's follow-up): pan away from the fix, one tap on Recenter, the puck back where it was
+#   diagnostics  T154 (T143's follow-up): Settings > About and advanced > Diagnostics on the sweep's release build (the
+#                release key where tools\release.properties exists): every line, the max heap equal to dalvik.vm.heapsize,
+#                Copy report, Refresh, then after a force-stop "Last session" names how it ended. Screenshots in ui\diagnostics\.
 #   upgrade      the previous published release (-PrevRelease, default the latest on GitHub) with a track, a trip,
 #                the pack and metric units, then this build installed over it: all of it survives. T91: the
 #                downloaded APK is pinned (tag, file and SHA-256 in ui\previous\previous.json) and must match its
@@ -80,6 +83,7 @@
 # DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in docs/reference/machines.md.
 param(
     [string]$Date = (Get-Date -Format 'yyyyMMdd-HHmm'),
+    # Relative to the checkout only (T154); default out\sweep-<Date>.
     [string]$Out = '',
     [switch]$NoDevice,
     [string[]]$Skip = @(),
@@ -131,9 +135,9 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
 $allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour',
-    'routes', 'search', 'probe', 'bothunits', 'release', 'apk-strings', 'first-run', 'features', 'recenter', 'upgrade', 'permissions', 'background', 'network',
+    'routes', 'search', 'probe', 'bothunits', 'release', 'apk-strings', 'first-run', 'features', 'recenter', 'diagnostics', 'upgrade', 'permissions', 'background', 'network',
     'update', 'matrix')
-$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'release', 'first-run', 'features', 'recenter', 'upgrade', 'permissions',
+$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'release', 'first-run', 'features', 'recenter', 'diagnostics', 'upgrade', 'permissions',
     'background', 'network', 'update', 'matrix')
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -154,7 +158,11 @@ if (-not $AvdHome) {
     if ($env:DYSTOPO_AVD_HOME) { $AvdHome = $env:DYSTOPO_AVD_HOME } elseif (Test-Path 'E:\') { $AvdHome = 'E:\dystopo-avd' }
 }
 if (-not $Out) { $Out = Join-Path 'out' "sweep-$Date" }
+# T154 (T147's follow-up): -Out is a folder under the checkout, given relative to it; an absolute path used to throw
+# inside GetFullPath (Join-Path glued it onto the repo path), and a folder outside the checkout is refused the same way.
+if ([IO.Path]::IsPathRooted($Out)) { throw "-Out must be relative to the checkout (such as out\sweep-w21), not '$Out'" }
 $Out = [IO.Path]::GetFullPath((Join-Path $repo $Out))
+if (-not $Out.StartsWith($repo.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "-Out must stay inside the checkout ($repo), not '$Out'" }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $steps = Join-Path $Out 'steps.tsv'
 # T99: steps.tsv is written through Write-Steps (below), never Add-Content: Add-Content opens the file without read
@@ -640,6 +648,11 @@ try {
                         '--out', (Join-Path $ui 'permissions')) + $knownArgs) (Join-Path $Out 'permissions.json') (Join-Path $Out 'permissions.err.log')
             }
         } finally { Stop-Server 'ui-server' }
+        # T154 (T143's follow-up): the Diagnostics row on the sweep's own release build, by taps.
+        $null = Part 'diagnostics' {
+            Run $py (@('-I', 'tools/android-ui.py', 'diagnostics', '--serial', $serial, '--apk', (Release-Apk $serial), '--dem', $dem, '--osm', $osm,
+                    '--out', (Join-Path $ui 'diagnostics')) + $knownArgs) (Join-Path $Out 'diagnostics.json') (Join-Path $Out 'diagnostics.err.log')
+        }
         $null = Part 'upgrade' {
             Build-Release
             $prevDir = Join-Path $ui 'previous'

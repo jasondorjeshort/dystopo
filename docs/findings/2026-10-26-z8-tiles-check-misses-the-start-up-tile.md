@@ -1,7 +1,8 @@
 ---
 date: 2026-10-26
-status: open
+status: resolved (T154)
 area: android / device tour / sweep
+promoted_to: docs/reference/android-app.md
 ---
 
 # The device tour's z8 `tiles` check fails on a narrow pack because the one in-pack OSM tile is fetched at app start, before the baseline
@@ -45,9 +46,20 @@ Was it an app defect, the check, or this PC's packs?
   (a tile outside every pack comes from the server or the public sources) is the T38 and T41 design.
 - The first PC's 143 MB pack pair presumably covers the neighbouring z8 tiles, which is why the view passed
   there; its zoom ranges and box were never recorded (`docs/reference/machines.md` now records this PC's).
-
-## Next
-
-Wave 21's sweep task: make the `tiles` check count a tile served before the baseline (take the baseline
-before the app's first style load, or expect a source only when a tile of the viewport itself overlaps the
-pack), and record the first PC's Rainier pack recipe in `machines.md` so both PCs sweep the same data.
+- T154 (2026-10-27) fixed the check, not the app. Of the two options above, a baseline taken before the
+  first style load credits only the first view after a restart, credits every start-up tile to it whether
+  or not it lies in that view, and does nothing under `--no-restart`. So the check now expects a source
+  when a tile of the viewport itself overlaps the pack's bounds: the view's box from `GET /attribution`
+  `viewBounds`, at the zooms MapLibre Native asks that source for (vector at floor(z), the 256 px DEM one
+  zoom deeper, clamped to the source's maxzoom). A source whose delta is 0 then passes when the phone's
+  request log (`GET /stats/requests`) shows a pack, not the online fallback, answered one of those
+  overlapping tiles before the baseline (`servedBeforeBaseline`, `beforeBaseline`). Each view reports its
+  `expectation` per source with the reason and the `packTiles`.
+- With the outdoors pack and the wide DEM pack on a fresh API 35 AVD with no server, three runs of the z8
+  view passed `tiles`, each with osm "1 of 3 viewport tiles at z8 overlap the pack's bounds", `8/41/90`,
+  delta 0 and `servedBeforeBaseline` 1 (the old check fails on exactly that). Negative cases: with both packs
+  moved aside and a fresh process, a z11 view with `|req=dem+osm+contours` fails on dem and osm. With the
+  packs moved aside and `POST /reload` in the same process, the request log still held 12 pack-answered OSM
+  lines and the view failed on all three sources: only tiles over a pack that `/health` lists now count.
+  Offline cases are in `tools/test_android_check.py`.
+- The first PC's Rainier pack recipe is still unrecorded (waiting on the owner, wave 21's deferred list).
