@@ -8,47 +8,49 @@ Usage (from anywhere inside the repo, after the coordinator's merge; the `wave` 
 - <status-file>: the **Status: merged.** line with follow-ups, appended to the task in docs/TASKS.md.
 - CHANGELOG.md gets one line under the entry's date in the Unreleased section (newest first).
 Then `git add docs CHANGELOG.md && git commit -m "Planning log: Tnn merged"`. See the wave skill, .claude/skills/wave/SKILL.md (merge sequence).
+Tested offline by tools/test_merge_log.py (T154).
 """
 import os
 import re
 import subprocess
 import sys
 
-os.chdir(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip())
-task, entry_file, status_file = sys.argv[1], sys.argv[2], sys.argv[3]
-pr = sys.argv[4] if len(sys.argv) > 4 else None
-entry = open(entry_file, encoding='utf-8').read().strip() + '\n\n'
-status = open(status_file, encoding='utf-8').read().strip()
+LOG_ANCHOR = 'Phase-0 algorithms live in `shared` from the start'
 
-# docs/PLANNING.md: insert before the paragraph that closes the development log.
-p = 'docs/PLANNING.md'
-s = open(p, encoding='utf-8').read()
-anchor = 'Phase-0 algorithms live in `shared` from the start'
-assert anchor in s and (task + ' merged') not in s, 'log anchor missing or task already logged'
-s = s.replace(anchor, entry + anchor, 1)
-open(p, 'w', encoding='utf-8', newline='\n').write(s)
 
-# docs/TASKS.md: append the Status line after the task's Done-when paragraph.
-p = 'docs/TASKS.md'
-s = open(p, encoding='utf-8').read()
-h = s.index('### ' + task + '.')
-title = s[h + 4:s.index('\n', h)].strip()  # e.g. "T59. Norway and Austria bare-earth elevation"
-j = s.index('\n\n', s.index('**Done when:**', h))
-assert '**Status:' not in s[h:j], 'task already has a Status line'
-s = s[:j] + '\n' + status + s[j:]
-open(p, 'w', encoding='utf-8', newline='\n').write(s)
+def add_log(s, task, entry):
+    """docs/PLANNING.md: the entry inserted before the paragraph that closes the development log."""
+    assert LOG_ANCHOR in s and (task + ' merged') not in s, 'log anchor missing or task already logged'
+    return s.replace(LOG_ANCHOR, entry.strip() + '\n\n' + LOG_ANCHOR, 1)
 
-# CHANGELOG.md: one line under the entry's date heading in Unreleased.
-m = re.match(r'\*\*(\d{4}-\d{2}-\d{2}): ', entry)
-date = m.group(1) if m else None
-if pr is None:
-    pm = re.search(r'\(PR #(\d+)\)', entry)
-    pr = pm.group(1) if pm else None
-name = title.split('. ', 1)[1] if '. ' in title else title
-line = f"- {task}: {name}" + (f" (#{pr})" if pr else "")
-p = 'CHANGELOG.md'
-s = open(p, encoding='utf-8').read()
-if date:
+
+def add_status(s, task, status):
+    """docs/TASKS.md: the Status line appended after the task's Done-when paragraph. Returns (text, title), the title
+    such as "T59. Norway and Austria bare-earth elevation". The paragraph ends at the next blank line, or (T154: the last
+    task of the board, the file ending without a blank line) at the end of the file."""
+    h = s.index('### ' + task + '.')
+    title = s[h + 4:s.index('\n', h)].strip()
+    d = s.index('**Done when:**', h)
+    j = s.find('\n\n', d)
+    if j < 0:
+        j = len(s.rstrip('\n'))
+    assert '**Status:' not in s[h:j], 'task already has a Status line'
+    tail = s[j:] if s[j:] else '\n'
+    return s[:j] + '\n' + status.strip() + tail, title
+
+
+def add_changelog(s, task, title, entry, pr=None):
+    """CHANGELOG.md: one line under the entry's date heading in Unreleased. Returns (text, line); the text is
+    unchanged when the entry has no date."""
+    m = re.match(r'\*\*(\d{4}-\d{2}-\d{2}): ', entry.strip())
+    date = m.group(1) if m else None
+    if pr is None:
+        pm = re.search(r'\(PR #(\d+)\)', entry)
+        pr = pm.group(1) if pm else None
+    name = title.split('. ', 1)[1] if '. ' in title else title
+    line = f"- {task}: {name}" + (f" (#{pr})" if pr else "")
+    if not date:
+        return s, line
     head = f'### {date}\n'
     # Only the Unreleased section is edited: it runs from its heading to the next "## " heading.
     u0 = s.index('## Unreleased\n')
@@ -65,6 +67,23 @@ if date:
         if sec[u:u + 1] == '\n':
             u += 1
         sec = sec[:u] + head + '\n' + line + '\n\n' + sec[u:]
-    s = s[:u0] + sec + s[u1:]
-    open(p, 'w', encoding='utf-8', newline='\n').write(s)
-print('ok', task, '| changelog:', line)
+    return s[:u0] + sec + s[u1:], line
+
+
+def main(argv):
+    os.chdir(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip())
+    task, entry_file, status_file = argv[1], argv[2], argv[3]
+    pr = argv[4] if len(argv) > 4 else None
+    entry = open(entry_file, encoding='utf-8').read().strip()
+    status = open(status_file, encoding='utf-8').read().strip()
+    # All three are computed before any is written, so a failed assertion leaves every file as it was.
+    planning = add_log(open('docs/PLANNING.md', encoding='utf-8').read(), task, entry)
+    tasks, title = add_status(open('docs/TASKS.md', encoding='utf-8').read(), task, status)
+    changelog, line = add_changelog(open('CHANGELOG.md', encoding='utf-8').read(), task, title, entry, pr)
+    for path, text in (('docs/PLANNING.md', planning), ('docs/TASKS.md', tasks), ('CHANGELOG.md', changelog)):
+        open(path, 'w', encoding='utf-8', newline='\n').write(text)
+    print('ok', task, '| changelog:', line)
+
+
+if __name__ == '__main__':
+    main(sys.argv)

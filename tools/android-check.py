@@ -12,8 +12,13 @@ For each view it sets the camera (POST /camera), waits for the map to go idle an
   - contours: every contour tile generated during the view took at most --contour-budget-ms (only with
               --strict; otherwise a miss is a warning, since timings swing with host load)
   - tiles:    each expected source (dem, osm, contours) served tiles for the view; a source is expected
-              when the view centre and zoom are inside its pack (from /health), or when the view lists
-              it with |req=dem+osm+contours
+              when the view's zoom is in its pack's range (from /health) and, T154, a tile of the viewport itself
+              (the view's box from GET /attribution viewBounds, at the zooms MapLibre requests that source at)
+              overlaps the pack's bounds; or when the view lists it with |req=dem+osm+contours. A viewport tile a
+              pack answered before the view's baseline counts too (MapLibre held it, so the view's delta is 0): it
+              is read from GET /stats/requests and reported as tiles.<source>.servedBeforeBaseline and
+              beforeBaseline (tile, pack, time); the online fallback's answers never count. The view's report
+              carries `expectation` per source: expected, the reason and the overlapping `packTiles`
   - blank:    the screenshot is not blank (luma standard deviation of a pixel sample >= --min-stddev)
   - settled:  a second screenshot, taken after the label check has let the map settle, differs from the
               first in at most --max-settle-change of the pixels (else /screenshot returned a half-loaded map;
@@ -46,7 +51,8 @@ The lines and labels checks need the app's /features routes; an app without them
 The summary's `requests` is the app's request log at the end (GET /stats/requests?limit=12: per-route counts and the
 last lines).
 Views: one `z/lat/lon[:label][|req=a+b]` per line in --views-file (`#` comments), or --views a,b,c.
-Every view must need tiles that no earlier view loaded, or the tile check has nothing to count.
+Every view should need tiles that no earlier view loaded, so its own delta counts them; a viewport tile the app's
+start or an earlier view loaded from a pack counts only through the request log (T154, above).
 
 Run it on an emulator with a hardware GPU (android-emu.ps1 -Gpu host, the default when there is one): under
 swiftshader MapLibre draws no text or dash patterns, and the labels check fails on every view.
@@ -483,16 +489,128 @@ def covers(pack, z, lat, lon, overzoom):
     return w <= lon <= e and s <= lat <= n and pack["minZoom"] <= z <= pack["maxZoom"] + overzoom
 
 
-def expected_sources(health, v):
-    packs = health.get("packs", {})
-    dem, osm = packs.get("dem"), packs.get("osm")
-    # MapLibre requests DEM and OSM tiles up to the pack's max zoom and overzooms past it, so deeper views
-    # still load new (parent) tiles; contours are generated from the DEM one zoom past it and overzoomed too.
-    exp = {"dem": covers(dem, v["z"], v["lat"], v["lon"], 4), "osm": covers(osm, v["z"], v["lat"], v["lon"], 4),
-           "contours": covers(dem, v["z"] + 1, v["lat"], v["lon"], 4)}
-    if v["req"] is not None:
-        exp = {s: s in v["req"] for s in SOURCES}
-    return [s for s in SOURCES if exp[s]]
+# MapLibre requests DEM and OSM tiles up to the pack's max zoom and overzooms past it, so deeper views still load new
+# (parent) tiles; contours are generated from the DEM one zoom past it and overzoomed too: hence the +4 and the +1 below.
+# T154 (finding 2026-10-26-z8-tiles-check-misses-the-start-up-tile): a source is expected when a tile of the viewport
+# itself overlaps its pack's bounds, and a tile of the viewport that a pack answered before the view's baseline counts.
+# The z8 view needs three OSM tiles of which one overlaps the narrow outdoors pack; the app fetched that one at start,
+# before the tour's first /stats, and MapLibre kept it, so the view's own delta was 0 although the pack had answered it.
+
+def lon_to_x(lon, z):
+    return (lon + 180.0) / 360.0 * (1 << z)
+
+
+def lat_to_y(lat, z):
+    r = math.radians(max(-85.0511287798, min(85.0511287798, lat)))
+    return (1.0 - math.log(math.tan(r) + 1.0 / math.cos(r)) / math.pi) / 2.0 * (1 << z)
+
+
+def tile_box(z, x, y):
+    """[west, south, east, north] of tile z/x/y in degrees."""
+    n = 1 << z
+    lat = lambda yy: math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * yy / n))))
+    return [x / n * 360.0 - 180.0, lat(y + 1), (x + 1) / n * 360.0 - 180.0, lat(y)]
+
+
+def boxes_overlap(a, b):
+    """Whether boxes [w, s, e, n] overlap; touching edges do not count (PackPrecedence.overlaps, MapViewport.overlaps)."""
+    return a[2] > b[0] and a[0] < b[2] and a[3] > b[1] and a[1] < b[3]
+
+
+def viewport_tiles(box, z):
+    """The tiles (z, x, y) a view's box [w, s, e, n] covers more than an edge of, at zoom z."""
+    n, eps = 1 << z, 1e-9
+    w, s, e, nn = box
+    if e < w:  # across the antimeridian
+        e += 360.0
+    x0, x1 = math.floor(lon_to_x(w, z) + eps), math.ceil(lon_to_x(e, z) - eps) - 1
+    y0, y1 = math.floor(lat_to_y(nn, z) + eps), math.ceil(lat_to_y(s, z) - eps) - 1
+    y0, y1 = max(0, y0), min(n - 1, y1)
+    return [(z, x % n, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+
+
+def covering_zooms(view_z, src):
+    """The zooms MapLibre Native requests a style source's tiles at for a view at view_z: its covering zoom counts
+    512 px tiles, so a vector source (512 px by default) is asked at floor(z) and the 256 px raster-dem one zoom deeper;
+    raster sources round instead of flooring, so both are given. Clamped to the source's maxzoom (overzoomed past it);
+    a view below the source's minzoom asks for none."""
+    size = (src or {}).get("tileSize", 512)
+    zz = view_z + math.log2(512.0 / size)
+    lo, hi = (src or {}).get("minzoom", 0), (src or {}).get("maxzoom", 22)
+    return sorted({min(q, hi) for q in (math.floor(zz), math.floor(zz + 0.5)) if q >= lo})
+
+
+def tile_name(t):
+    return f"{t[0]}/{t[1]}/{t[2]}"
+
+
+def source_expectations(health, v, view_box, style_sources):
+    """Per source: whether the view expects tiles from its pack, why, and the viewport tiles that overlap the pack's
+    bounds (`packTiles`; at most 24 named). Without the view's box (an app without viewBounds in GET /attribution) the
+    centre test of covers() decides, as before T154. A view's |req= decides `expected` and keeps the rest as evidence."""
+    packs = health.get("packs", {}) or {}
+    out = {}
+    for s, pack, zoff in (("dem", packs.get("dem"), 0), ("osm", packs.get("osm"), 0), ("contours", packs.get("dem"), 1)):
+        e = {"expected": False, "packTiles": []}
+        if not pack:
+            e["reason"] = "no pack in /health"
+        elif not pack["minZoom"] <= v["z"] + zoff <= pack["maxZoom"] + 4:
+            e["reason"] = f"zoom {v['z'] + zoff:g} outside the pack's {pack['minZoom']} to {pack['maxZoom']} (+4 overzoom)"
+        elif view_box is None:
+            e["expected"] = covers(pack, v["z"] + zoff, v["lat"], v["lon"], 4)
+            e["reason"] = f"view centre {'inside' if e['expected'] else 'outside'} the pack's bounds (no viewBounds)"
+        else:
+            zooms = covering_zooms(v["z"], (style_sources or {}).get(s))
+            tiles = [t for z in zooms for t in viewport_tiles(view_box, z)]
+            over = [t for t in tiles if boxes_overlap(tile_box(*t), pack["bounds"])]
+            e["expected"] = bool(over)
+            e["packTiles"] = [tile_name(t) for t in over[:24]]
+            e["reason"] = (f"{len(over)} of {len(tiles)} viewport tiles at z{'/'.join(str(z) for z in zooms) or '-'} "
+                           f"overlap the pack's bounds")
+        if v["req"] is not None:
+            e["expected"] = s in v["req"]
+            e["reason"] = f"|req= in the view ({e.get('reason')})"
+        out[s] = e
+    return out
+
+
+def served_before_baseline(log_lines, source, view_box, zooms):
+    """Lines of the phone's request log (GET /stats/requests) where a pack (not the online fallback) answered a tile of
+    this source that lies in the view's box at one of its covering zooms: the tiles MapLibre already held when the
+    view's baseline was read. Each tile once, oldest first."""
+    want = {t for z in zooms for t in viewport_tiles(view_box, z)} if view_box is not None else set()
+    seen, out = set(), []
+    for ln in log_lines or []:
+        if ln.get("route") != source or ln.get("status") != 200:
+            continue
+        pack = ln.get("pack")
+        if not pack or str(pack).startswith("online:"):
+            continue
+        try:
+            z, x, y = (int(p) for p in ln["path"].rsplit(".", 1)[0].strip("/").split("/")[1:4])
+        except (KeyError, ValueError):
+            continue
+        if (z, x, y) in want and (z, x, y) not in seen:
+            seen.add((z, x, y))
+            out.append({"tile": f"{z}/{x}/{y}", "pack": pack, "ts": ln.get("ts")})
+    return out
+
+
+def tiles_check(tiles, exp, log_lines, view_box, zooms_of):
+    """T154: the tiles check. A source passes when the view's own delta served a tile, or when the request log shows a
+    pack answered one of the view's tiles before the baseline (adds `servedBeforeBaseline` and `beforeBaseline` to
+    tiles[source]). Returns (ok, the expected sources without tiles)."""
+    missing = []
+    for s in exp:
+        if tiles[s]["served"] > 0:
+            continue
+        early = served_before_baseline(log_lines, s, view_box, zooms_of(s))
+        tiles[s]["servedBeforeBaseline"] = len(early)
+        if early:
+            tiles[s]["beforeBaseline"] = early[:12]
+        else:
+            missing.append(s)
+    return not missing, missing
 
 
 # T123: the routes the app's background guard answers 503 while its activity is stopped (RequestChecks.needsActivity),
@@ -876,7 +994,10 @@ def style_info(server):
             text.append(layer["id"])
         if layer.get("type") == "line" and layer.get("source") == "contours":
             contour_lines.append(layer["id"])
-    return {"fonts": sorted(fonts), "textLayers": text, "contourLineLayers": contour_lines}
+    # T154: each tile source's type, tile size and zoom range (covering_zooms)
+    sources = {k: {kk: s[kk] for kk in ("type", "tileSize", "minzoom", "maxzoom") if kk in s}
+               for k, s in (style.get("sources") or {}).items() if isinstance(s, dict)}
+    return {"fonts": sorted(fonts), "textLayers": text, "contourLineLayers": contour_lines, "sources": sources}
 
 
 def main():
@@ -1079,7 +1200,14 @@ def main():
             rep["settledScreenshot"] = shot2
         rep["settleChange"] = settle_share
 
-        exp = expected_sources(health, v)
+        try:  # T154: the view's box, for the expectation per source from the viewport's own tiles
+            view_box = server.json("/attribution", timeout=30).get("viewBounds")
+        except (urllib.error.URLError, OSError, ValueError):
+            view_box = None
+        expectation = source_expectations(health, v, view_box, info.get("sources"))
+        exp = [s for s in SOURCES if expectation[s]["expected"]]
+        rep["viewBox"] = view_box
+        rep["expectation"] = expectation
         rep["expectedSources"] = exp
         c = rep["checks"]
         c["style"] = bool(m.get("styleLoaded")) and not m.get("styleError")
@@ -1098,9 +1226,20 @@ def main():
         if empty > 0:  # T98 diagnostic: an empty contour tile where a DEM pack has elevations
             rep["contours"]["noDemOverPack"] = empty
             rep["warnings"].append(f"{empty} contour tile(s) with no elevation over a DEM pack ({', '.join(empty_tiles[-empty:])})")
-        c["tiles"] = all(tiles[s]["served"] > 0 for s in exp)
+        log_lines = None
+        if any(tiles[s]["served"] == 0 for s in exp):
+            # T154: a tile MapLibre already held counts when a pack answered it before the baseline (the request log keeps
+            # the last 4,096 requests; `requestLogDropped` says whether the start of the process is still in it).
+            try:
+                rl = server.json("/stats/requests?limit=4096", timeout=60)
+                log_lines = rl.get("lines") or []
+                rep["requestLogDropped"] = rl.get("dropped")
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:
+                log_lines, rep["requestLogError"] = [], str(e)[:200]
+        c["tiles"], missing = tiles_check(tiles, exp, log_lines, view_box,
+                                          lambda s: covering_zooms(v["z"], (info.get("sources") or {}).get(s)))
         if not c["tiles"]:
-            rep["sourcesWithoutTiles"] = [s for s in exp if tiles[s]["served"] == 0]
+            rep["sourcesWithoutTiles"] = missing
         c["blank"] = "lumaStddev" in rep["image"] and rep["image"]["lumaStddev"] >= args.min_stddev
         if settle_share is not None:
             c["settled"] = settle_share <= args.max_settle_change
@@ -1189,12 +1328,15 @@ def main():
         json.dump(summary, f, indent=2)
 
     print(f"{'#':>2} {'view':<22} {'label':<18} {'ok':<4} {'dem':>4} {'osm':>4} {'cont':>4} {'gen':>4} {'maxMs':>7} {'line':>5} {'clbl':>4} {'text':>4} {'txpx':>6} {'idle':<5} {'luma':>5} {'s':>5}  failed", file=sys.stderr)
+    def served(t):  # T154: "0+1" is a tile the pack answered before the view's baseline
+        return t.get("served", "-") if not t.get("servedBeforeBaseline") else f"{t['served']}+{t['servedBeforeBaseline']}"
+
     for r in reports:
         t = r.get("tiles", {})
         cmax = r.get("contours", {}).get("maxMs")
         rd = r.get("rendered") or {}
         print(f"{r['index']:>2} {r['view']:<22} {r['label'][:18]:<18} {'ok' if r['ok'] else 'FAIL':<4} "
-              f"{t.get('dem', {}).get('served', '-'):>4} {t.get('osm', {}).get('served', '-'):>4} {t.get('contours', {}).get('served', '-'):>4} "
+              f"{served(t.get('dem', {})):>4} {served(t.get('osm', {})):>4} {served(t.get('contours', {})):>4} "
               f"{r.get('contours', {}).get('generated', '-'):>4} {cmax if cmax is not None else '-':>7} "
               f"{rd.get('contourLines', '-'):>5} {rd.get('contourLabels', '-'):>4} {rd.get('text', '-'):>4} {str(rd.get('textPixels', '-')):>6} "
               f"{str(r['checks'].get('idle', '-')):<5} {r.get('image', {}).get('lumaStddev', '-'):>5} {r['seconds']:>5}  {' '.join(r['failed'])}"
