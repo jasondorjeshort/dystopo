@@ -13,7 +13,7 @@ Every task is done only when:
 
 The owner's to-do list; the coordinator adds to it whenever a task leaves something only the owner can do, and strikes an item when it is done. `docs/HANDOFF.md` › Waiting on user points here.
 
-**On the phone (after the next alpha, which carries T149 and T150):**
+**On the phone (after installing v0.1.14-alpha, published 2026-10-28, which carries T149 to T156):**
 - Watch Settings › About and advanced › Report a problem for a few days: no new "excessive CPU" kills (the finding: two kills while cached, about 2.8% CPU) and no new memory reports. Issues 23 to 29 (seven problem reports, all v0.1.13-alpha, all memory) can be closed once a week passes without a repeat.
 - The background-CPU read T150 could not make on the emulator: with the app in the background, `adb shell top -H -n 1 -p <pid>` (the main thread and `HeapTaskDaemon` should be near 0%), or on a debug build `GET /debug/cpu` twice 60 s apart after HOME.
 - The first `MainWatchdog` dump that names a freeze's frame (T144); real heap numbers from a long session (`GET /diagnostics` or the Diagnostics row's Copy report); `tools/android-battery.py` on the phone (T146).
