@@ -12,7 +12,8 @@ needed, a Sonnet-class agent when a part fails or a sheet must be viewed.
 ## The command
 
 After the last merge of a wave: one command, `powershell -ExecutionPolicy Bypass -File tools\sweep.ps1`
-(T71; `-NoDevice` without an emulator, `-Skip`/`-Only <parts>`).
+(T71; `-NoDevice` without an emulator, `-Skip`/`-Only <parts>`; `-Out` a folder relative to the checkout,
+`out\sweep-<date>` by default, T154: an absolute path or one outside the checkout is refused).
 
 It runs `./gradlew check`, `:server:installDist`, `python -I tools/notices.py --check` (regenerate
 `NOTICES.md` when a wave added dependencies or data sources), `tour --zooms 9,12` over the public
@@ -39,7 +40,8 @@ imports the Rainier pair through the file picker; per-step ok and the screenshot
 `summary.json` and on the sheet; T105: the `--direct` run's steps, timings per place and screenshots too,
 under `first-run.direct` and its own section of the sheet), then T81's release realism parts through `tools/android-ui.py`
 (`docs/reference/release-realism.md`; T105: every one installs the sweep's own copies of the release
-APKs in `apk\`): `features`, `recenter` (T105), `permissions`, `upgrade` (from `-PrevRelease`,
+APKs in `apk\`): `features`, `recenter` (T105), `diagnostics` (T154: the Diagnostics row by taps,
+T143's checks), `permissions`, `upgrade` (from `-PrevRelease`,
 default the latest published release, its APK for the emulator's ABI downloaded with `gh`),
 `background`, `network` and `update` (T83: the in-app update by taps against a mock releases API on
 `-BasePort`+7, from the previous release's universal APK to this build to a second build of the same
@@ -55,10 +57,15 @@ stopped by PID; it refuses 8765, 8686, 8687 and console 5554. The `check` part r
 stale build state of finding `docs/findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md`)
 and says so on its `steps.tsv` line.
 
+From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
+`tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
+`tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).
+
 ## Output
 
 `out\sweep-<date>\summary.json` (per part ok, seconds and the numbers the log entry quotes; paste it
-into the log) and `sheet.png` (every contact sheet and screenshot on one page, the `update` part's
+into the log; T154: each device tour run lists under `servedBeforeBaseline` the views whose `tiles`
+check counted a tile a pack answered before the view's baseline) and `sheet.png` (every contact sheet and screenshot on one page, the `update` part's
 included since T99: view it; T111: the page is fitted into one browser capture, more thumbnail columns
 first and a lower scale past that, and `summary.json` `sheetSize` gives the PNG's width and height, the
 columns and scale used and `cut`, true when the page still reached the capture limit and its end may

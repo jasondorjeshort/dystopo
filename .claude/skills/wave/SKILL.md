@@ -85,7 +85,8 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    daemon hold files in the folder).
 5. Write the dated log entry and the **Status:** line to two files and run
    `python -I tools/merge-log.py Tnn <entry> <status>` (it updates `docs/PLANNING.md`, `docs/TASKS.md`
-   and `CHANGELOG.md` together); the entry reads `Tnn merged: <title>` and carries the report's
+   and `CHANGELOG.md` together, or none of them when it refuses a task already logged or with a Status line;
+   T154: the board's last task works whether or not the file ends in a blank line, `tools/test_merge_log.py`); the entry reads `Tnn merged: <title>` and carries the report's
    measurements and findings, describing any personal area generically. Commit to `main` and push with
    `bash tools/push-verified.sh`; report the VERIFIED line.
 6. Rewrite the handoff when Now or Next changed (`handoff` skill).
