@@ -1,32 +1,32 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-28, at commit 8fbc94d plus this edit, by main session (wave 21: v0.1.14-alpha published, T157 in flight)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 21.
+Updated: 2026-10-28, at commit f177758 plus this edit, by main session (wave 21 closed: nine of nine merged, v0.1.14-alpha published)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 21 and Later.
 
 ## Now
 
-- **v0.1.14-alpha is published** (2026-10-28, built locally by the `release` skill's fallback because the repository has
-  no `RELEASE_*` secrets; verified and installed from the draft; the log entry is in PLANNING). Wave 21 ran **one agent
-  at a time** (owner, 2026-10-27); eight of nine tasks are merged and logged, branches and worktrees cleaned: T149
+- **Wave 21 is closed.** Nine of nine tasks merged and logged, run **one agent at a time** (owner, 2026-10-27): T149
   (dbe6e69), T150 (98c9a9d), T152 (3f0af48), T151 (213bb38), T156 (5412c7b), T153 (2d94d75), T155 (ad31b31), T154
-  (9830d8d). The post-wave sweep was T154's (`out/sweep-w21/`, green but `notices`, fixed on its branch).
-- **T157 (the middle detail tier) is the last task**; its implementer (Opus) was launched 2026-10-28 on worktree
-  `~/Documents/src/dystopo-wt/T157`, AVD `dystopo35-T157`, console 5630, host 8750. It merges after v0.1.14-alpha
-  and ships in the next release. Merge drafts: `%TEMP%/dystopo-wave21/`; research: `out/wave21-research/`.
-- Usage gate: the weekly hold is 100 (`policy.json`); the 7-day meter read 97% at T157's launch and resets 2026-10-30
-  about 04:00 UTC. If the gate closes before T157's verifier, the branch waits for the reset.
+  (9830d8d), T157 (f177758). **v0.1.14-alpha is published** (2026-10-28, from 965910c, before T157; built locally by
+  the `release` skill's fallback because the repository has no `RELEASE_*` secrets; verified and installed from the
+  draft). T157 (the middle detail tier, a version-3 record format) is on main unreleased and ships with the next alpha.
+- The post-wave sweep was T154's (`out/sweep-w21/`, green but `notices`, fixed on its branch). A cleanup chore for
+  T157's branch and worktree was the last agent; nothing is in flight. Merge drafts: `%TEMP%/dystopo-wave21/`;
+  research and the critic review: the gitignored `out/wave21-research/`.
+- Usage gate: the weekly hold is 100 (`policy.json`); the 7-day meter read 98% at the close and resets 2026-10-30
+  about 04:00 UTC. No new wave before the reset.
 - Machine (`machines.md`, the second PC): 3 GB emulators, at most three, Gradle `--no-daemon`, the live viewer on 8765;
   the owner's phone is on wireless adb, so agents address only their emulator by serial; no `devtool.local.json`.
 
 ## Next
 
-1. When T157 reports: a Sonnet verifier (host 8790, console 5660), the merge sequence (`wave` skill), the log entry,
-   a Haiku cleanup chore, the handoff. No release for T157 alone unless the owner asks.
-2. Plan wave 22 (`wave` skill, critic first) from the wave 21 Status follow-ups: the streaming or server-shipped
-   routing graph (a city-sized pack is refused on a 512 MB heap; proposal first), precomputed country sizes, the
-   on-disk tile cache index, `PlaceSearch.peek` on the main thread, the `sweep.ps1` switches; and the phone results.
-3. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR
+1. Plan wave 22 (`wave` skill, critic first) from the wave 21 Status follow-ups: the streaming or server-shipped
+   routing graph (a city-sized pack is refused on a 512 MB heap; proposal first), precomputed country sizes (60 s of
+   CPU per list open), the on-disk tile cache index, `PlaceSearch.peek` on the main thread, the `HeadingSensor`
+   violation, `AreaPins` pinning elevation z14 inside a medium area, medium as the z8 to z10 region default, the
+   `sweep.ps1` switches for `--no-daemon` and emulator RAM; and the owner's phone results (the owner list).
+2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR
    for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
 
 ## Waiting on user

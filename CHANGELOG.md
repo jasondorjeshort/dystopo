@@ -4,7 +4,9 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
-(nothing yet)
+### 2026-10-28
+
+- T157: A middle detail tier: elevation to z13 with vector to z14 (after T153)
 
 ## v0.1.14-alpha (2026-10-28)
 
