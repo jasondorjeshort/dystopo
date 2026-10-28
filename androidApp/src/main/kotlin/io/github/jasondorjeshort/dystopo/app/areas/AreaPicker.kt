@@ -41,6 +41,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.online.OnlineView
+import io.github.jasondorjeshort.dystopo.app.online.RegionDownload
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -68,6 +71,13 @@ import kotlin.concurrent.thread
  * full detail fits the budget. Names: "Drawn area" or "Around here" with the date, the search result's or the country's
  * name; the name field renames it before Download, and the area card's Rename after.
  *
+ * T153: **Download this region** ([Mode.Region], the online overlay's button and `POST /areas/region`): the visible box
+ * as a rectangle, with no span cap and a detail chosen for the view ([regionDetail]: full from z10, less below), the other
+ * a link. At full detail a box within the server's build limits ([RegionDownload.packFits]) keeps the pack path (a server-
+ * or phone-built pack with the trail graph and search, outside the pinned budget, sized at the pack's z8 to z14); any other
+ * box, and less detail, takes the area path (tiles only, [AreaDownload] with T151's cursor and T156's chain); the summary
+ * says which ([regionPathLine]).
+ *
  * Plans are made on one worker thread, newest request first (a stale one is skipped), and published to the UI thread.
  */
 object AreaPicker {
@@ -81,6 +91,8 @@ object AreaPicker {
         object Draw : Mode("draw")
         data class Around(val center: AreaPoint, val radiusM: Double) : Mode("around")
         data class Country(val code: String) : Mode("country")
+        /** T153: "Download this region" for [box], the view's camera at [viewZoom]. */
+        data class Region(val box: PackBounds, val viewZoom: Double) : Mode("region")
     }
 
     /** What the picker shows (null: the sheet's list of areas). Main thread writes. */
@@ -107,8 +119,11 @@ object AreaPicker {
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private val planner = Executors.newSingleThreadExecutor { r -> Thread(r, "area-picker-plan").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
 
-    /** One plan of the shape in view: [full] (z8 to z15) and [less] (z8 to z13); [fullPending] while a country's full detail is measured. */
-    class Summary(val revision: Long, val full: AreaDownload.Plan?, val less: AreaDownload.Plan?, val fullPending: Boolean, val error: String?)
+    /**
+     * One plan of the shape in view: [full] (z8 to z15) and [less] (z8 to z13); [fullPending] while a country's full detail is
+     * measured. T153: [pack] when [full] is a region's pack path (the box at z8 to z14, within the server's build limits).
+     */
+    class Summary(val revision: Long, val full: AreaDownload.Plan?, val less: AreaDownload.Plan?, val fullPending: Boolean, val error: String?, val pack: Boolean = false)
 
     // ---- entering and leaving (main thread) ----
 
@@ -177,6 +192,37 @@ object AreaPicker {
         replan()
     }
 
+    /**
+     * T153: "Download this region" for [box] (the visible map) seen at [viewZoom]: the rectangle drawn, the camera fitted
+     * above the card, the summary planned. [packName] is the generated name ([RegionDownload.defaultName], read off the UI
+     * thread). Main thread.
+     */
+    fun openRegion(box: PackBounds, viewZoom: Double, packName: String) {
+        leaveMode()
+        backToSheet = false
+        Areas.screenOpen = true
+        detailChoice = null
+        name = packName
+        mode = Mode.Region(box, viewZoom)
+        PickerLayer.area(regionArea(box, FULL_MAX_ZOOM, null))
+        thread(name = "picker-fit") { fit(box) }
+        replan()
+    }
+
+    /**
+     * T153: [openRegion] from any thread but the UI's: [box] and [viewZoom] default to the camera's (the overlay's button
+     * passes none, so the view is read as it is at the tap). Throws when the map is not laid out.
+     */
+    fun openRegionOffMain(box: PackBounds? = null, viewZoom: Double? = null) {
+        val app = DystopoApp.instance
+        val view = if (box == null || viewZoom == null) app.map.onMain { OnlineView.currentOnMain(app) } else null
+        val b = box ?: view?.bounds ?: throw IllegalStateException("the map is not laid out")
+        val z = viewZoom ?: view?.zoom ?: throw IllegalStateException("the map is not laid out")
+        regionRing(b) // the box is checked before the card opens
+        val n = OnlineService.get(app).region.defaultName()
+        app.map.onMain { openRegion(b, z, n) }
+    }
+
     /** Back: from a summary to the country list it came from, else out of the picker. */
     fun back() {
         if (mode is Mode.Country && backToSheet) { leaveMode(); mode = Mode.Countries; return }
@@ -232,6 +278,17 @@ object AreaPicker {
                         val full = AreaDownload.plan(countryArea(c, FULL_MAX_ZOOM)!!, withLessDetail = false)
                         publish(Summary(rev, full, less, false, null))
                     }
+                    is Mode.Region -> {
+                        // T153: within the server's build limits, full detail is the pack (sized at its z8 to z14); else the area path's z8 to z15.
+                        if (RegionDownload.packFits(m.box)) {
+                            val less = AreaDownload.plan(regionArea(m.box, LESS_MAX_ZOOM, label), withLessDetail = false)
+                            if (rev != revision) return@execute
+                            val pack = AreaDownload.plan(regionArea(m.box, RegionDownload.DEFAULT_MAX_ZOOM, label), withLessDetail = false)
+                            publish(Summary(rev, pack, less, false, null, pack = true))
+                        } else {
+                            AreaDownload.plan(regionArea(m.box, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null)) }
+                        }
+                    }
                     Mode.Countries -> Unit
                 }
             } catch (e: RuntimeException) { // no source, or a shape the format refuses (a ring across the antimeridian)
@@ -243,20 +300,50 @@ object AreaPicker {
 
     private fun publish(s: Summary) = main.post { if (s.revision == revision) summary = s }
 
-    /** The detail shown: the user's choice, else full for a drawn area or a disc, and for a country full only when it fits. */
-    fun detailOf(s: Summary?): String = detailChoice ?: defaultDetail(mode is Mode.Country, s?.full?.let { it.refusal == null })
+    /**
+     * The detail shown: the user's choice, else full for a drawn area or a disc, for a country full only when it fits, and
+     * for a region the view's ([regionDetail]).
+     */
+    fun detailOf(s: Summary?): String = detailChoice ?: when (val m = mode) {
+        is Mode.Region -> regionDetail(m.viewZoom)
+        else -> defaultDetail(m is Mode.Country, s?.full?.let { it.refusal == null })
+    }
 
     fun planOf(s: Summary?): AreaDownload.Plan? = if (detailOf(s) == DETAIL_LESS) s?.less else s?.full
 
+    /** T153: true when the plan shown is a region's pack path (full detail within the server's build limits). */
+    fun packPath(s: Summary?): Boolean = mode is Mode.Region && s?.pack == true && detailOf(s) == DETAIL_FULL
+
+    /** T153: the refusal of the plan shown: the pinned budget's, except on the pack path (a pack is not pinned tiles). */
+    fun refusalOf(s: Summary?): String? = if (packPath(s)) null else planOf(s)?.refusal
+
+    /** T153: the size line of the plan shown; the pack path's z8 to z14 is this card's full detail. */
+    fun sizeLineOf(s: Summary?): String? = planOf(s)?.let { p -> sizeLine(p.bytes, p.tiles, p.area.minZoom, if (packPath(s)) FULL_MAX_ZOOM else p.area.maxZoom) }
+
+    /** T153: a region's path line ([regionPathLine]); null for the other flows. */
+    fun pathLineOf(s: Summary?): String? = if (mode is Mode.Region && s != null && s.error == null) regionPathLine(s.pack, detailOf(s)) else null
+
     /** Starts the download of the plan shown (any thread but the UI's: it records the area). */
     fun download(): Map<String, Any?> {
-        val (p, label) = DystopoApp.instance.map.onMain { planOf(summary) to name.trim() }
+        class Pick(val plan: AreaDownload.Plan?, val label: String, val mode: Mode?, val pack: Boolean, val refusal: String?)
+        val app = DystopoApp.instance
+        val k = app.map.onMain { summary.let { s -> Pick(planOf(s), name.trim(), mode, packPath(s), refusalOf(s)) } }
+        val p = k.plan
         check(p != null) { "nothing planned yet" }
-        p.refusal?.let { throw IllegalStateException(it) }
-        val n = label.ifEmpty { p.area.name ?: defaultName(p.area, java.time.LocalDate.now()) }
+        k.refusal?.let { throw IllegalStateException(it) }
         return try {
-            AreaDownload.start(p.area.withName(n), n).also { DystopoApp.instance.map.onMain { close(); Areas.screenOpen = true } }
-        } catch (e: IllegalStateException) {
+            val region = k.mode as? Mode.Region
+            if (region != null && k.pack) {
+                // T153: the pack path, as the button did before: the server's (or the phone's) build, then the pack downloaded.
+                val r = OnlineService.get(app).region
+                val started = r.start(region.box, null, null, RegionDownload.packNameFrom(k.label, r.defaultName()))
+                linkedMapOf("kind" to "box", "path" to PATH_PACK, "region" to started).also { app.map.onMain { close() } }
+            } else {
+                val n = k.label.ifEmpty { p.area.name ?: defaultName(p.area, java.time.LocalDate.now()) }
+                val started = AreaDownload.start(p.area.withName(n), n)
+                (if (region != null) linkedMapOf<String, Any?>("path" to PATH_AREA) + started else started).also { app.map.onMain { close(); Areas.screenOpen = true } }
+            }
+        } catch (e: RuntimeException) {
             main.post { downloadError = e.message }
             throw e
         }
@@ -271,9 +358,9 @@ object AreaPicker {
             "mode" to m?.key, "sheetOpen" to Areas.screenOpen, "name" to name, "detail" to detailOf(s), "detailChosen" to detailChoice,
             "revision" to revision, "plannedRevision" to s?.revision, "planned" to (s != null && s.revision == revision && !s.fullPending),
             "error" to (downloadError ?: s?.error),
-            "sizeLine" to p?.let { sizeLine(it.bytes, it.tiles, it.area.minZoom, it.area.maxZoom) },
+            "sizeLine" to sizeLineOf(s),
             "alternative" to s?.let { alternativeLine(detailOf(it), it) }, "timeLine" to p?.let { timeLine(it.bytes, it.bytesPerMs) },
-            "refusal" to p?.refusal, "refused" to (p?.refusal != null), "canDownload" to (p != null && p.refusal == null),
+            "refusal" to refusalOf(s), "refused" to (refusalOf(s) != null), "canDownload" to (p != null && refusalOf(s) == null),
             "pastHeapLimit" to p?.pastHeapLimit, "heapTiles" to p?.heapTiles, // T152: said, never a refusal
             "bytes" to p?.bytes, "tiles" to p?.tiles, "zooms" to p?.let { listOf(it.area.minZoom, it.area.maxZoom) },
             "full" to s?.full?.json(), "less" to s?.less?.json(), "layerFeatures" to PickerLayer.features,
@@ -287,6 +374,15 @@ object AreaPicker {
             },
             "country" to (m as? Mode.Country)?.let { c -> Countries.byCode(c.code)?.let { linkedMapOf("code" to it.code, "name" to it.name, "nameLong" to it.nameLong, "toleranceM" to it.toleranceM) } },
             "filter" to filter,
+            "region" to (m as? Mode.Region)?.let { r -> // T153
+                linkedMapOf(
+                    "bbox" to listOf(r.box.minLon, r.box.minLat, r.box.maxLon, r.box.maxLat), "viewZoom" to r.viewZoom,
+                    "defaultDetail" to regionDetail(r.viewZoom), "packFits" to s?.pack, "path" to s?.let { if (packPath(it)) PATH_PACK else PATH_AREA },
+                    "pathLine" to pathLineOf(s), "spanDeg" to listOf(r.box.maxLon - r.box.minLon, r.box.maxLat - r.box.minLat),
+                    "packTiles" to RegionDownload.tileCount(r.box, RegionDownload.DEFAULT_MIN_ZOOM..RegionDownload.DEFAULT_MAX_ZOOM),
+                    "limits" to linkedMapOf("maxSpanDeg" to RegionDownload.MAX_SPAN_DEG, "maxTiles" to RegionDownload.TILE_LIMIT),
+                )
+            },
         )
     }
 
@@ -301,6 +397,54 @@ object AreaPicker {
     /** "Up to 20 km around a point; draw an area for more" holds: the typed value stops there. */
     const val MAX_RADIUS_M = AreaOfInterest.MAX_BUFFER_M
 }
+
+/**
+ * T153 (ADR 0041 §5, "a detail level chosen for the view"): a region's default detail from the view's zoom: full from
+ * [REGION_FULL_FROM_ZOOM] (a city view: the pack path when the box fits the server's limits), less below it (a state
+ * view, whose full detail runs to tens of gigabytes). Pure, tested.
+ */
+internal fun regionDetail(viewZoom: Double): String = if (viewZoom >= REGION_FULL_FROM_ZOOM) DETAIL_FULL else DETAIL_LESS
+
+/** T153: the view zoom from which a region opens at full detail. */
+internal const val REGION_FULL_FROM_ZOOM = 10.0
+
+/**
+ * T153: the line under a region's size line saying which path the download takes: the pack ([REGION_PACK_LINE]) at full
+ * detail when [packFits], else tiles only, with the reason ([REGION_TILES_LINE], [REGION_LESS_LINE]). Pure, tested.
+ */
+internal fun regionPathLine(packFits: Boolean, detail: String): String = when {
+    detail == DETAIL_LESS -> REGION_LESS_LINE
+    packFits -> REGION_PACK_LINE
+    else -> REGION_TILES_LINE
+}
+
+/** T153: the rectangle of [box] as an area (a polygon, counter-clockwise) at z8 to [maxZoom]. */
+internal fun regionArea(box: PackBounds, maxZoom: Int, name: String?): AreaOfInterest =
+    AreaDraw.area(regionRing(box), name).copy(maxZoom = maxZoom)
+
+/** T153: [box]'s corners as a ring. Pure, tested. */
+internal fun regionRing(box: PackBounds): List<AreaPoint> {
+    require(box.maxLon > box.minLon && box.maxLat > box.minLat) { "the view's box is empty or crosses the 180th meridian" }
+    return listOf(AreaPoint(box.minLat, box.minLon), AreaPoint(box.minLat, box.maxLon), AreaPoint(box.maxLat, box.maxLon), AreaPoint(box.maxLat, box.minLon))
+}
+
+/** T153: `bbox=west,south,east,north` as a box. Pure, tested. */
+internal fun regionBox(raw: String): PackBounds {
+    val v = raw.split(',').map { it.trim().toDoubleOrNull() ?: throw IllegalArgumentException("bbox must be west,south,east,north") }
+    require(v.size == 4) { "bbox must be west,south,east,north" }
+    return PackBounds(v[0], v[1], v[2], v[3])
+}
+
+/** T153: the two paths a region takes (`GET /areas/picker` `region.path`, the download's `path`). */
+internal const val PATH_PACK = "pack"
+internal const val PATH_AREA = "area"
+
+/** T153: the card's title, the overlay's button. */
+internal const val REGION_TITLE = "Download this region"
+/** T153: the path lines (ADR 0031: the owner's to adjust). */
+internal const val REGION_PACK_LINE = "With routing and place search (a map pack)"
+internal const val REGION_TILES_LINE = "Tiles only: routing needs a smaller box"
+internal const val REGION_LESS_LINE = "Tiles only: routing needs full detail"
 
 /** T142: the default detail: full for a drawn area or a disc; for a country full only when [fullFits]. Pure, tested. */
 internal fun defaultDetail(country: Boolean, fullFits: Boolean?): String = if (!country || fullFits == true) DETAIL_FULL else DETAIL_LESS
@@ -386,6 +530,7 @@ internal fun PickerCard() {
                 val title = when (m) {
                     AreaPicker.Mode.Draw -> DRAW_AREA
                     is AreaPicker.Mode.Around -> AROUND_HERE
+                    is AreaPicker.Mode.Region -> REGION_TITLE
                     else -> country?.name ?: CHOOSE_COUNTRY
                 }
                 BasicText(title, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold))
@@ -454,14 +599,16 @@ private fun SummaryLines() {
     val shown = AreaPicker.detailOf(s)
     val p = AreaPicker.planOf(s)
     if (p == null) BasicText(MEASURING, style = TextStyle(color = Muted, fontSize = 13.sp))
-    else BasicText(sizeLine(p.bytes, p.tiles, p.area.minZoom, p.area.maxZoom), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+    else BasicText(AreaPicker.sizeLineOf(s) ?: "", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+    AreaPicker.pathLineOf(s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) } // T153: which path, and why
     alternativeLine(shown, s)?.let { alt ->
         CardAction(alt) { AreaPicker.detailChoice = if (shown == DETAIL_FULL) DETAIL_LESS else DETAIL_FULL }
     }
     if (p == null) return
     timeLine(p.bytes, p.bytesPerMs)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
-    p.refusal?.let { BasicText(it, style = TextStyle(color = Red, fontSize = 12.sp)) }
-    if (p.refusal == null) {
+    val refusal = AreaPicker.refusalOf(s)
+    refusal?.let { BasicText(it, style = TextStyle(color = Red, fontSize = 12.sp)) }
+    if (refusal == null) {
         BasicText(
             "Download",
             style = TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold),

@@ -84,6 +84,9 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *     entry, or a search result's with `name`).
  *   - `POST /areas/picker?detail=full|less&name=&radiusM=`: the summary's choices; `POST /areas/picker/download` its
  *     Download (202, the download's start; 409 with the refusal past the budget); `POST /areas/picker/close` Cancel.
+ *   - T153: `POST /areas/region[?bbox=w,s,e,n][&zoom=z][&wait=ms]`: the overlay's "Download this region" (the visible map and
+ *     its zoom by default): the region's summary; `GET /areas/picker` adds `region` (`bbox`, `viewZoom`, `defaultDetail`,
+ *     `packFits`, `path` `pack` or `area`, `pathLine`, `packTiles`, `limits`); its Download answers `path`.
  *   - `POST /areas/{id}/rename?name=`: the card's Rename.
  * - T152 (ADR 0041 §3's T152 note): no heap refusal. Every plan (`POST /areas/plan`, the picker's `full` and `less`) carries
  *   its estimate (`bytes`, `estimated`, `sizeLine` "About ..."), `rows` (what the download walks), `refused` (the budget's
@@ -224,6 +227,10 @@ object AreaRoutes {
                 Response.json(pickerState(app, q))
             }
             "POST" to "/areas/picker/download" -> Response.json(AreaPicker.download(), 202)
+            "POST" to "/areas/region" -> { // T153
+                AreaPicker.openRegionOffMain(q["bbox"]?.let { regionBox(it) }, q["zoom"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("zoom must be a number") })
+                Response.json(pickerState(app, q))
+            }
             "POST" to "/areas/picker/close", "DELETE" to "/areas/picker" -> {
                 app.map.onMain { AreaPicker.close() }
                 Response.json(pickerState(app, q))
