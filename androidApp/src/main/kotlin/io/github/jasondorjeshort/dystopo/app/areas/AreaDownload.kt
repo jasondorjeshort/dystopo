@@ -263,7 +263,7 @@ object AreaDownload {
             "timeLine" to timeLine(bytes, bytesPerMs), "seconds" to bytesPerMs?.let { Math.round(bytes / it / 1000) },
             "lessDetail" to lessDetail?.let { l ->
                 linkedMapOf(
-                    "zooms" to listOf(l.area.minZoom, l.area.maxZoom), "bytes" to l.bytes, "tiles" to l.tiles, "line" to lessDetailLine(l.bytes),
+                    "zooms" to listOf(l.area.minZoom, l.area.maxZoom), "id" to l.area.id, "bytes" to l.bytes, "tiles" to l.tiles, "line" to lessDetailLine(l.bytes),
                     "fits" to (l.refusal == null), "refusal" to l.refusal,
                 )
             },

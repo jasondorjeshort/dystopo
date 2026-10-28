@@ -173,7 +173,12 @@ object Areas : VersionPins {
      * `Application.onCreate` before any composition, as `NavSession.prepare()` does (T86): [AheadPrefetch]'s
      * thread could otherwise be the first to touch it while a composition snapshot is open.
      */
-    fun prepare() = Unit
+    fun prepare() {
+        // T157: the country list's and the picker's Compose state too: a debug route's thread (`GET /areas/countries`) touching
+        // CountrySizes first while the list composed crashed the app ("Reading a state that was created after the snapshot").
+        CountrySizes.revision
+        AreaPicker.mode
+    }
 
     /** For the Areas screen (Compose state, replaced on every change). */
     var list by mutableStateOf<List<Record>>(emptyList())
