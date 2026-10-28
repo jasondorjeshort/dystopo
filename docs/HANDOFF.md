@@ -25,9 +25,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 1. When T154 reports: a Sonnet verifier (host 8790, console 5660; it repeats the z8 check and views the sweep's
    sheet, not a second full sweep), the merge sequence, the log entry, a Haiku cleanup chore; then, with the
    sweep green, the README status paragraph and a release (`release` skill, ADR 0024); then T157 if the meter holds.
-2. After the last merge the budget allows: README status, the sweep (T154 runs it as its own verification),
-   a release (ADR 0024), the handoff.
-3. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
+2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
 
 ## Waiting on user
 
