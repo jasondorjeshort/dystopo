@@ -13,11 +13,11 @@ LGPL libraries (each stays a separate, replaceable jar).
 
 ## Software libraries
 
-249 artifacts from the runtime classpaths of 6 modules, grouped by the licence under which we use them.
+254 artifacts from the runtime classpaths of 6 modules, grouped by the licence under which we use them.
 
 | Licence | Artifacts |
 |---|---|
-| Apache-2.0 | 191 |
+| Apache-2.0 | 196 |
 | MIT | 17 |
 | BSD-3-Clause | 11 |
 | Lesser General Public License (LGPL) | 9 |
@@ -109,12 +109,16 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `androidx.lifecycle:lifecycle-runtime-ktx-android:2.8.7` (androidApp)
 - `androidx.lifecycle:lifecycle-runtime-ktx:2.8.7` (androidApp)
 - `androidx.lifecycle:lifecycle-runtime:2.8.7` (androidApp)
+- `androidx.lifecycle:lifecycle-service:2.8.7` (androidApp)
 - `androidx.lifecycle:lifecycle-viewmodel-android:2.8.7` (androidApp)
 - `androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7` (androidApp)
 - `androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.7` (androidApp)
 - `androidx.lifecycle:lifecycle-viewmodel:2.8.7` (androidApp)
 - `androidx.loader:loader:1.0.0` (androidApp)
 - `androidx.profileinstaller:profileinstaller:1.4.0` (androidApp)
+- `androidx.room:room-common:2.6.1` (androidApp)
+- `androidx.room:room-ktx:2.6.1` (androidApp)
+- `androidx.room:room-runtime:2.6.1` (androidApp)
 - `androidx.savedstate:savedstate-ktx:1.2.1` (androidApp)
 - `androidx.savedstate:savedstate:1.2.1` (androidApp)
 - `androidx.sqlite:sqlite-android:2.5.1` (androidApp)
@@ -128,6 +132,7 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `androidx.vectordrawable:vectordrawable:1.1.0` (androidApp)
 - `androidx.versionedparcelable:versionedparcelable:1.1.1` (androidApp)
 - `androidx.viewpager:viewpager:1.0.0` (androidApp)
+- `androidx.work:work-runtime:2.10.5` (androidApp)
 - `app.cash.sqldelight:android-driver:2.1.0` (androidApp)
 - `app.cash.sqldelight:jdbc-driver:2.1.0` (devtool, server, serverlib)
 - `app.cash.sqldelight:runtime-jvm:2.1.0` (androidApp, devtool, server, serverlib, shared, tilebuild)
