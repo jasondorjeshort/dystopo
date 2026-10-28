@@ -19,6 +19,7 @@ them, on the same branch.
 | `android-app.md` | What the app serves, the build and emulator scripts, the settings sheet's groups, the device tour, the loopback token and the debug port | 2026-10-14 |
 | `android-emulator.md` | Several emulators side by side, host virtualization, GPU and API quirks, the server a task emulator uses, first-boot load | 2026-10-14 |
 | `android-debug-routes.md` | Every debug route family (health, screenshot, camera, stats, settings, storage, packs, routes, navigation, areas, probe) | 2026-10-12 |
+| `android-phone-over-adb.md` | The owner's phone over wireless adb: connecting, the debug build's signing, reading the debug port, and how coders request phone tests | 2026-10-28 |
 | `android-tracks-and-sync.md` | Tracks and GPX, phone-to-phone sync and the relay, sync with the server | 2026-10-12 |
 | `android-online.md` | The phone reading the sources with no server, the cold view stage by stage, no Wi-Fi gates, pinned areas and content versions, in-app updates, first run and cleartext | 2026-10-14 |
 | `android-battery.md` | `tools/android-battery.py`: the app's battery use per scenario (tracking screen off, navigation, idle map) from `dumpsys batterystats`, how to run it on a phone, the report's fields, results | 2026-10-23 |

@@ -15,10 +15,11 @@ The owner reports that the map's centring on app open is wrong (owner, 2026-10-2
 ## Findings
 
 Measured on the owner's phone (Android, the debug build signed with the release key, `0.1.0-dev`), on 2026-10-28,
-through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POST /camera/recenter`):
+through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POST /camera/recenter`; procedure in
+`docs/reference/android-phone-over-adb.md`):
 
 - The app reports `ready` about 12 s after launch.
-- On a cold open the camera shows the first pack's view: a 41 N, 76 W view at zoom 12, north-up, bearing 0.
+- On a cold open the camera shows the first pack's view: the pack's centre at zoom 12, north-up, bearing 0.
 - With no fresh fix, the last location is a stale network fix (accuracy 100 m) from an earlier session, hundreds of
   kilometres from that view. Device fixes are not listening at launch (`deviceListening: false`).
 - `fixOffsetPx` is 610796 at every sample after a cold open: nothing moves the camera to the stale fix.
@@ -29,19 +30,37 @@ through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POS
   not persist across the relaunch (it is in-process only, so the stale network fix remains the last one).
 - One relaunch (the one after the injected fix) crashed the app at start-up: `IllegalStateException: Reading a state
   that was created after the snapshot was taken or in a snapshot that has not yet been applied`, from
-  `AttributionLine` (`app/about/AttributionLine.kt:63`) reading `MapViewport.getBounds` (`MapViewport.kt:28`) during
+  `AttributionLine` (`app/about/AttributionLine.kt:63`) reading `MapViewport.bounds` (`MapViewport.kt:28`) during
   `MainActivity`'s `MapScreen`. The next relaunch with no injected fix did not crash (0 crashes in its log buffer).
-  Not reproduced twice; the crash is the first thing to check if it recurs.
+  Not reproduced twice.
+
+## Code reading (2026-10-28, not yet a fix)
+
+- **Where the cold-open camera comes from.** `MainActivity.onCreate` (`app/MainActivity.kt:55-60`) starts the map at the
+  centre of the active DEM pack's header box, zoom 12.0. Unless the launch carries a `dystopo://map` link (`DeepLink.camera`),
+  nothing else sets the first camera: no last fix, no saved view. The style (`TileService.style`) has no centre. That is
+  the observed pack view. The camera moves to a fix only when a user acts (recentre, `MapOrientation`) or when the
+  first-run card (`FirstRun.kt:82`, `:110`) or a pack switch (`PackManager.jumpTo`) asks.
+- **Why the fix is not used.** Nothing reads `LocationSource`'s last fix at start-up to place the camera, and the device
+  location listener is off until the puck or a route needs it.
+- **The start-up crash.** `MapViewport.bounds` is a Compose `mutableStateOf` on a Kotlin `object` (`MapViewport.kt:13-20`),
+  written in the camera-idle listener on the main thread (`MapController.kt:201`) and read in composition by
+  `AttributionLine` (`AttributionLine.kt:63`), `AppCredits` and `CacheBudget`, and read off the main thread by
+  `DirectSources` (`:636`, `:642`, `:658`) and `CacheBudget` (`:58`). Hypothesis, not confirmed: the object is first touched
+  inside a snapshot on another thread, so its state is created in a snapshot that has not been applied, and the composition
+  reads it on the main thread. The check: find the first touch on a relaunch that crashes (a stack at `MapViewport.<init>`
+  or the first `bounds` read) and whether it is off the main thread.
 
 ## Not yet known
 
 - Whether the open view should follow the last known fix, the last saved view, or the pack, and what the owner expects.
-- Which code picks the first camera on open.
 - Whether a fresh GPS fix at launch (a real device fix, not injected) would move the camera on open. Only injected fixes
   were tested.
-- Whether the start-up crash repeats, and whether it comes from the injected fix or the relaunch timing.
+- Whether the start-up crash repeats, and what first touches `MapViewport` when it does.
 
 ## Next
 
-Read the code that sets the initial camera, and the `AttributionLine` / `MapViewport` read at start-up, with the numbers
-above as the repro. The task that fixes the centring writes its before-and-after readings from these routes in its report.
+1. The owner decides the open rule (fix, saved view, or pack). The centring task builds that rule.
+2. The crash: a reproduction on the phone (relaunch after an injected fix, several times) with the first `MapViewport` touch
+   logged, or a task that makes `MapViewport`'s state created on the main thread.
+3. The centring task's before-and-after readings come from the debug routes above, in its report.
