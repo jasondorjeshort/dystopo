@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+(nothing yet)
+
+## v0.1.14-alpha (2026-10-28)
+
 ### 2026-10-28
 
 - T154: Sweep and tooling leftovers 14
