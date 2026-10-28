@@ -64,6 +64,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         val run = Run(id.toString(), runAttemptCount, System.currentTimeMillis())
         last = run
         runs.incrementAndGet()
+        active.incrementAndGet()
         Log.i(TAG, "download worker run ${run.work} (attempt ${run.attempt}, app ${if (Foreground.started) "on screen" else "in the background"})")
         try {
             withContext(Dispatchers.IO) {
@@ -96,6 +97,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             Log.w(TAG, "download worker failed", e)
             run.end("failed: ${e.message ?: e.javaClass.simpleName}")
             return Result.retry()
+        } finally {
+            active.decrementAndGet()
         }
     }
 
@@ -143,6 +146,10 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         const val PAUSE_REASON = "paused by the system: "
 
         private val runs = AtomicInteger()
+        private val active = AtomicInteger()
+
+        /** T156: a worker runs in this process now (its job gives the process the network in the background). */
+        val running: Boolean get() = active.get() > 0
         private val cancels = AtomicInteger()
         @Volatile private var last: Run? = null
         @Volatile private var lastStop: String? = null
@@ -194,7 +201,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                         "network" to w.constraints.requiredNetworkType.name,
                     )
                 },
-                "runs" to runs.get(), "last" to last?.json(), "lastStop" to lastStop, "notificationCancels" to cancels.get(),
+                "runs" to runs.get(), "runningHere" to running, "last" to last?.json(), "lastStop" to lastStop, "notificationCancels" to cancels.get(),
             )
         }
 
@@ -277,6 +284,15 @@ internal fun notificationText(planned: Int, done: Int): String =
  */
 internal fun handOverPolicy(trigger: String): ExistingWorkPolicy =
     if (trigger == AreaDownload.TRIGGER_USER) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+
+/**
+ * T156: whether a check may start a download in this process: for the user's triggers and the worker's own, while the app
+ * is on screen, or while a worker runs. In the background with no worker the process has no network (Android 15 blocks a
+ * cached app's; the emulator showed a download started by the backoff's timer failing every tile at once), so the chain's
+ * step, a job with the network, starts it instead. Pure, tested.
+ */
+internal fun mayStartHere(triggers: List<String>, appOnScreen: Boolean, workerRunning: Boolean): Boolean =
+    appOnScreen || workerRunning || triggers.any { it in ResumeCheck.SKIP_WAIT }
 
 /** T156: the reasons a check names for an unfinished record that may still resume. */
 private val RESUMABLE = setOf("ready", "backoff", "ending", "running")

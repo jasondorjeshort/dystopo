@@ -44,6 +44,18 @@ class DownloadChainTest {
     }
 
     @Test
+    fun inTheBackgroundOnlyAWorkerOrTheUserStartsADownloadInTheProcess() {
+        val inProcess = listOf(ResumeCheck.TRIGGER_BACKOFF, ResumeCheck.TRIGGER_DOWNLOAD_OVER)
+        for (t in inProcess) {
+            assertFalse(mayStartHere(listOf(t), appOnScreen = false, workerRunning = false), "$t in the background: the chain's job starts it")
+            assertTrue(mayStartHere(listOf(t), appOnScreen = false, workerRunning = true), "$t while a worker runs (the next area)")
+            assertTrue(mayStartHere(listOf(t), appOnScreen = true, workerRunning = false), "$t with the app on screen")
+        }
+        for (t in ResumeCheck.SKIP_WAIT) assertTrue(mayStartHere(listOf(t), appOnScreen = false, workerRunning = false), t)
+        assertTrue(mayStartHere(listOf(ResumeCheck.TRIGGER_BACKOFF, ResumeCheck.TRIGGER_WORKER), appOnScreen = false, workerRunning = false))
+    }
+
+    @Test
     fun aRunEndsTheChainOnlyWhenNothingMayResume() {
         assertNull(chainNext(emptyList(), now, 2048))
         assertNull(chainNext(listOf(record("done", "done"), record("pack", "partial", pack = "p")), now, 2048))

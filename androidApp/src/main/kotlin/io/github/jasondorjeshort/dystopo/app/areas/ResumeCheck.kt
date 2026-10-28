@@ -96,6 +96,9 @@ object ResumeCheck {
         return worker.submit(Callable { check(listOf(trigger)) }).get(30, TimeUnit.SECONDS)
     }
 
+    /** T156: the check's note when it leaves a ready record to the chain. */
+    const val LEFT_TO_CHAIN = "left to the chain: the app is in the background and no worker runs"
+
     /** T156: waits until every check asked for before now has run (the check's thread runs them in order). */
     fun settle() {
         worker.submit(Callable { Unit }).get(30, TimeUnit.SECONDS)
@@ -110,7 +113,11 @@ object ResumeCheck {
         val checkMs = (System.nanoTime() - t0) / 1e6
         var started: String? = null
         var note: String? = null
-        d.start?.let { id ->
+        // T156: in the background only a worker's job has the network (Android 15 blocks a cached app's), so the in-process
+        // triggers (the backoff's timer, a run's end) start a download there only while a worker runs; else the chain does.
+        val here = mayStartHere(triggers, Foreground.started, DownloadWorker.running)
+        if (d.start != null && !here) note = LEFT_TO_CHAIN
+        d.start?.takeIf { here }?.let { id ->
             val r = records.first { it.id == id }
             try {
                 AreaDownload.resume(r, triggers.joinToString(", "))
