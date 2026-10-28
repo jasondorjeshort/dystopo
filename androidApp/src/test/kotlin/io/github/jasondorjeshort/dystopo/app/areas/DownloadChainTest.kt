@@ -44,15 +44,11 @@ class DownloadChainTest {
     }
 
     @Test
-    fun inTheBackgroundOnlyAWorkerOrTheUserStartsADownloadInTheProcess() {
-        val inProcess = listOf(ResumeCheck.TRIGGER_BACKOFF, ResumeCheck.TRIGGER_DOWNLOAD_OVER)
-        for (t in inProcess) {
-            assertFalse(mayStartHere(listOf(t), appOnScreen = false, workerRunning = false), "$t in the background: the chain's job starts it")
-            assertTrue(mayStartHere(listOf(t), appOnScreen = false, workerRunning = true), "$t while a worker runs (the next area)")
-            assertTrue(mayStartHere(listOf(t), appOnScreen = true, workerRunning = false), "$t with the app on screen")
-        }
-        for (t in ResumeCheck.SKIP_WAIT) assertTrue(mayStartHere(listOf(t), appOnScreen = false, workerRunning = false), t)
-        assertTrue(mayStartHere(listOf(ResumeCheck.TRIGGER_BACKOFF, ResumeCheck.TRIGGER_WORKER), appOnScreen = false, workerRunning = false))
+    fun inTheBackgroundADownloadStartsInTheProcessOnlyWithTheNetwork() {
+        assertTrue(mayStartHere(appOnScreen = true, networkUsable = false), "on screen: the walk stalls by itself when offline")
+        assertTrue(mayStartHere(appOnScreen = true, networkUsable = true))
+        assertTrue(mayStartHere(appOnScreen = false, networkUsable = true), "in a job: the process has the network")
+        assertFalse(mayStartHere(appOnScreen = false, networkUsable = false), "a cached app's network is blocked: the chain starts it")
     }
 
     @Test

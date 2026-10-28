@@ -97,7 +97,7 @@ object ResumeCheck {
     }
 
     /** T156: the check's note when it leaves a ready record to the chain. */
-    const val LEFT_TO_CHAIN = "left to the chain: the app is in the background and no worker runs"
+    const val LEFT_TO_CHAIN = "left to the chain: the app is in the background without the network"
 
     /** T156: waits until every check asked for before now has run (the check's thread runs them in order). */
     fun settle() {
@@ -113,9 +113,9 @@ object ResumeCheck {
         val checkMs = (System.nanoTime() - t0) / 1e6
         var started: String? = null
         var note: String? = null
-        // T156: in the background only a worker's job has the network (Android 15 blocks a cached app's), so the in-process
-        // triggers (the backoff's timer, a run's end) start a download there only while a worker runs; else the chain does.
-        val here = mayStartHere(triggers, Foreground.started, DownloadWorker.running)
+        // T156: in the background a cached app has no network outside a job (Android 15), so a download starts here only
+        // while the app is on screen or the network is usable; else the chain's step, a job with the network, starts it.
+        val here = mayStartHere(Foreground.started, DownloadWorker.networkUsable())
         if (d.start != null && !here) note = LEFT_TO_CHAIN
         d.start?.takeIf { here }?.let { id ->
             val r = records.first { it.id == id }

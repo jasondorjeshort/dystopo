@@ -67,6 +67,18 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         active.incrementAndGet()
         Log.i(TAG, "download worker run ${run.work} (attempt ${run.attempt}, app ${if (Foreground.started) "on screen" else "in the background"})")
         try {
+            // A step WorkManager runs in the living process (its in-process scheduler) has no JobScheduler job yet, and in the
+            // background the process has no network until that job starts (it then holds the job open while this runs).
+            var waited = 0L
+            while (!networkUsable(applicationContext) && !Foreground.started) {
+                if (waited >= NETWORK_WAIT_MS) {
+                    run.end("no network for this process after ${waited / 1000} s; retried")
+                    return Result.retry()
+                }
+                delay(NETWORK_POLL_MS)
+                waited += NETWORK_POLL_MS
+            }
+            run.networkWaitMs = waited
             withContext(Dispatchers.IO) {
                 OnlineService.get(applicationContext as DystopoApp) // reads the records: the repair at start, T151's start trigger
                 ResumeCheck.settle()
@@ -120,6 +132,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         @Volatile var foreground: Boolean? = null
         @Volatile var foregroundError: String? = null
         @Volatile var check: String? = null
+        @Volatile var networkWaitMs: Long? = null
         val watched: MutableList<String> = java.util.Collections.synchronizedList(ArrayList())
         @Volatile var endedAt = 0L
         @Volatile var outcome: String? = null
@@ -132,7 +145,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
 
         fun json(): Map<String, Any?> = linkedMapOf(
             "work" to work, "attempt" to attempt, "startedAt" to startedAt, "endedAt" to endedAt.takeIf { it != 0L }, "foreground" to foreground,
-            "foregroundError" to foregroundError, "check" to check, "watched" to watched.toList(), "outcome" to outcome,
+            "foregroundError" to foregroundError, "networkWaitMs" to networkWaitMs, "check" to check, "watched" to watched.toList(), "outcome" to outcome,
         )
     }
 
@@ -148,8 +161,20 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         private val runs = AtomicInteger()
         private val active = AtomicInteger()
 
-        /** T156: a worker runs in this process now (its job gives the process the network in the background). */
+        /** T156: a worker runs in this process now. */
         val running: Boolean get() = active.get() > 0
+
+        private const val NETWORK_POLL_MS = 5_000L
+        private const val NETWORK_WAIT_MS = 9 * 60_000L
+
+        /**
+         * T156: whether this process may use the network now: a default network that is not blocked for the app
+         * (`getActiveNetwork` answers null for a blocked one: a cached app's in the background on Android 15).
+         */
+        fun networkUsable(context: Context = app): Boolean = runCatching {
+            val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+            cm.activeNetwork?.let { cm.getNetworkCapabilities(it)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) } == true
+        }.getOrDefault(false)
         private val cancels = AtomicInteger()
         @Volatile private var last: Run? = null
         @Volatile private var lastStop: String? = null
@@ -201,7 +226,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                         "network" to w.constraints.requiredNetworkType.name,
                     )
                 },
-                "runs" to runs.get(), "runningHere" to running, "last" to last?.json(), "lastStop" to lastStop, "notificationCancels" to cancels.get(),
+                "runs" to runs.get(), "runningHere" to running, "networkUsable" to networkUsable(), "last" to last?.json(), "lastStop" to lastStop, "notificationCancels" to cancels.get(),
             )
         }
 
@@ -286,13 +311,13 @@ internal fun handOverPolicy(trigger: String): ExistingWorkPolicy =
     if (trigger == AreaDownload.TRIGGER_USER) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
 
 /**
- * T156: whether a check may start a download in this process: for the user's triggers and the worker's own, while the app
- * is on screen, or while a worker runs. In the background with no worker the process has no network (Android 15 blocks a
- * cached app's; the emulator showed a download started by the backoff's timer failing every tile at once), so the chain's
- * step, a job with the network, starts it instead. Pure, tested.
+ * T156: whether a check may start a download in this process: while the app is on screen, or while the process has the
+ * network ([DownloadWorker.networkUsable]). In the background Android 15 blocks a cached app's network outside a job
+ * (`dumpsys netpolicy`: `blocked=APP_BACKGROUND`), and WorkManager's in-process scheduler runs a due step without one, so
+ * a download started then failed every tile in three seconds on the emulator; the chain's step, once JobScheduler's job
+ * gives the process the network, starts it instead. Pure, tested.
  */
-internal fun mayStartHere(triggers: List<String>, appOnScreen: Boolean, workerRunning: Boolean): Boolean =
-    appOnScreen || workerRunning || triggers.any { it in ResumeCheck.SKIP_WAIT }
+internal fun mayStartHere(appOnScreen: Boolean, networkUsable: Boolean): Boolean = appOnScreen || networkUsable
 
 /** T156: the reasons a check names for an unfinished record that may still resume. */
 private val RESUMABLE = setOf("ready", "backoff", "ending", "running")
