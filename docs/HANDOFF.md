@@ -16,9 +16,9 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   fill from the draft's `SHA256SUMS.txt`. Merge drafts: `%TEMP%/dystopo-wave21/`; research: `out/wave21-research/`.
 - Usage gate: the weekly hold is 100 (`policy.json`); the 7-day meter read 97% at the tag and resets 2026-10-30
   about 04:00 UTC. T157 (the middle tier) is the one task left; it opens wave 22 unless the meter holds.
-- Machine: 3 GB emulators, at most three, Gradle `--no-daemon`; the Rainier DEM pack is the wide one
-  (`machines.md`); the live viewer on 8765 (`out/coordinator-pids.txt`). The owner's phone is attached over
-  wireless adb: agents address only their emulator by serial. No `devtool.local.json` on this PC.
+- Machine: 3 GB emulators, at most three, Gradle `--no-daemon`, the wide Rainier DEM pack (`machines.md`), the live
+  viewer on 8765 (`out/coordinator-pids.txt`); the owner's phone is on wireless adb, so agents address only their
+  emulator by serial; no `devtool.local.json` on this PC.
 
 ## Next
 
