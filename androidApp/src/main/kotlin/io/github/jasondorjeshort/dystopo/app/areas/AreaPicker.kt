@@ -44,6 +44,7 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineView
 import io.github.jasondorjeshort.dystopo.app.online.RegionDownload
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -78,6 +79,11 @@ import kotlin.concurrent.thread
  * box, and less detail, takes the area path (tiles only, [AreaDownload] with T151's cursor and T156's chain); the summary
  * says which ([regionPathLine]).
  *
+ * T157 (ADR 0041 §5's T157 note): three details, full, medium (elevation to z13 with vector to z14, [AreaDetail.MEDIUM]) and
+ * less; the card shows the two not shown as choices with their sizes ([alternativeLines]) and, at medium detail,
+ * [MEDIUM_DETAIL_HINT] under the size line. A country opens at the deepest detail that fits the budget; a region's medium
+ * detail takes the area path (a pack holds one zoom range).
+ *
  * Plans are made on one worker thread, newest request first (a stale one is skipped), and published to the UI thread.
  */
 object AreaPicker {
@@ -102,7 +108,7 @@ object AreaPicker {
     var filter by mutableStateOf("")
     /** The area's name (renamable before Download). */
     var name by mutableStateOf("")
-    /** The detail the user chose (`full`, `less`), null for the default ([defaultDetail]). */
+    /** The detail the user chose (`full`, `medium`, `less`), null for the default ([defaultDetail]). */
     var detailChoice by mutableStateOf<String?>(null)
     /** The newest plan published. */
     var summary by mutableStateOf<Summary?>(null)
@@ -121,9 +127,20 @@ object AreaPicker {
 
     /**
      * One plan of the shape in view: [full] (z8 to z15) and [less] (z8 to z13); [fullPending] while a country's full detail is
-     * measured. T153: [pack] when [full] is a region's pack path (the box at z8 to z14, within the server's build limits).
+     * measured (T157: and its medium detail, while [medium] is null). T153: [pack] when [full] is a region's pack path (the
+     * box at z8 to z14, within the server's build limits). T157: [medium] (elevation to z13, vector to z14).
      */
-    class Summary(val revision: Long, val full: AreaDownload.Plan?, val less: AreaDownload.Plan?, val fullPending: Boolean, val error: String?, val pack: Boolean = false)
+    class Summary(
+        val revision: Long, val full: AreaDownload.Plan?, val less: AreaDownload.Plan?, val fullPending: Boolean, val error: String?, val pack: Boolean = false,
+        val medium: AreaDownload.Plan? = null,
+    ) {
+        /** T157: the plan of [detail] (`full`, `medium`, `less`). */
+        fun plan(detail: String): AreaDownload.Plan? = when (detail) {
+            DETAIL_LESS -> less
+            DETAIL_MEDIUM -> medium
+            else -> full
+        }
+    }
 
     // ---- entering and leaving (main thread) ----
 
@@ -266,27 +283,32 @@ object AreaPicker {
             if (rev != revision) return@execute // a newer shape is waiting
             try {
                 when (m) {
-                    Mode.Draw -> AreaDownload.plan(AreaDraw.area(ring, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null)) }
-                    is Mode.Around -> AreaDownload.plan(AreaOfInterest.around(m.center, m.radiusM, MIN_ZOOM, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null)) }
+                    Mode.Draw -> AreaDownload.plan(AreaDraw.area(ring, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null, medium = p.mediumDetail)) }
+                    is Mode.Around -> AreaDownload.plan(AreaOfInterest.around(m.center, m.radiusM, MIN_ZOOM, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null, medium = p.mediumDetail)) }
                     is Mode.Country -> {
                         val c = Countries.byCode(m.code)!!
-                        val lessArea = countryArea(c, LESS_MAX_ZOOM)
+                        val lessArea = countryArea(c, AreaDetail.LESS)
                         if (lessArea == null) { publish(Summary(rev, null, null, false, TOO_LARGE_ROW)); return@execute }
                         val less = AreaDownload.plan(lessArea, withLessDetail = false)
                         publish(Summary(rev, null, less, true, null))
                         if (rev != revision) return@execute
-                        val full = AreaDownload.plan(countryArea(c, FULL_MAX_ZOOM)!!, withLessDetail = false)
-                        publish(Summary(rev, full, less, false, null))
+                        val medium = AreaDownload.plan(countryArea(c, AreaDetail.MEDIUM)!!, withLessDetail = false) // T157
+                        publish(Summary(rev, null, less, true, null, medium = medium))
+                        if (rev != revision) return@execute
+                        val full = AreaDownload.plan(countryArea(c, AreaDetail.FULL)!!, withLessDetail = false)
+                        publish(Summary(rev, full, less, false, null, medium = medium))
                     }
                     is Mode.Region -> {
                         // T153: within the server's build limits, full detail is the pack (sized at its z8 to z14); else the area path's z8 to z15.
                         if (RegionDownload.packFits(m.box)) {
-                            val less = AreaDownload.plan(regionArea(m.box, LESS_MAX_ZOOM, label), withLessDetail = false)
+                            val less = AreaDownload.plan(regionArea(m.box, AreaDetail.LESS, label), withLessDetail = false)
+                            if (rev != revision) return@execute
+                            val medium = AreaDownload.plan(regionArea(m.box, AreaDetail.MEDIUM, label), withLessDetail = false) // T157: tiles, the area path
                             if (rev != revision) return@execute
                             val pack = AreaDownload.plan(regionArea(m.box, RegionDownload.DEFAULT_MAX_ZOOM, label), withLessDetail = false)
-                            publish(Summary(rev, pack, less, false, null, pack = true))
+                            publish(Summary(rev, pack, less, false, null, pack = true, medium = medium))
                         } else {
-                            AreaDownload.plan(regionArea(m.box, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null)) }
+                            AreaDownload.plan(regionArea(m.box, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null, medium = p.mediumDetail)) }
                         }
                     }
                     Mode.Countries -> Unit
@@ -306,10 +328,10 @@ object AreaPicker {
      */
     fun detailOf(s: Summary?): String = detailChoice ?: when (val m = mode) {
         is Mode.Region -> regionDetail(m.viewZoom)
-        else -> defaultDetail(m is Mode.Country, s?.full?.let { it.refusal == null })
+        else -> defaultDetail(m is Mode.Country, s?.full?.let { it.refusal == null }, s?.medium?.let { it.refusal == null })
     }
 
-    fun planOf(s: Summary?): AreaDownload.Plan? = if (detailOf(s) == DETAIL_LESS) s?.less else s?.full
+    fun planOf(s: Summary?): AreaDownload.Plan? = s?.plan(detailOf(s))
 
     /** T153: true when the plan shown is a region's pack path (full detail within the server's build limits). */
     fun packPath(s: Summary?): Boolean = mode is Mode.Region && s?.pack == true && detailOf(s) == DETAIL_FULL
@@ -318,7 +340,12 @@ object AreaPicker {
     fun refusalOf(s: Summary?): String? = if (packPath(s)) null else planOf(s)?.refusal
 
     /** T153: the size line of the plan shown; the pack path's z8 to z14 is this card's full detail. */
-    fun sizeLineOf(s: Summary?): String? = planOf(s)?.let { p -> sizeLine(p.bytes, p.tiles, p.area.minZoom, if (packPath(s)) FULL_MAX_ZOOM else p.area.maxZoom) }
+    fun sizeLineOf(s: Summary?): String? = planOf(s)?.let { p ->
+        if (packPath(s)) sizeLine(p.bytes, p.tiles, p.area.minZoom, FULL_MAX_ZOOM) else sizeLine(p.bytes, p.tiles, p.area.minZoom, p.area.maxZoom, p.area.demMaxZoom)
+    }
+
+    /** T157: the line under the size line: what the medium detail keeps and drops; null at the other details. */
+    fun hintOf(s: Summary?): String? = if (s != null && s.error == null && detailOf(s) == DETAIL_MEDIUM) MEDIUM_DETAIL_HINT else null
 
     /** T153: a region's path line ([regionPathLine]); null for the other flows. */
     fun pathLineOf(s: Summary?): String? = if (mode is Mode.Region && s != null && s.error == null) regionPathLine(s.pack, detailOf(s)) else null
@@ -360,10 +387,13 @@ object AreaPicker {
             "error" to (downloadError ?: s?.error),
             "sizeLine" to sizeLineOf(s),
             "alternative" to s?.let { alternativeLine(detailOf(it), it) }, "timeLine" to p?.let { timeLine(it.bytes, it.bytesPerMs) },
+            // T157: every detail not shown, as the card lists them (`detail`, `line`), and the medium detail's hint.
+            "alternatives" to s?.let { alternativeLines(detailOf(it), it).map { (d, l) -> linkedMapOf("detail" to d, "line" to l) } }, "hint" to hintOf(s),
             "refusal" to refusalOf(s), "refused" to (refusalOf(s) != null), "canDownload" to (p != null && refusalOf(s) == null),
             "pastHeapLimit" to p?.pastHeapLimit, "heapTiles" to p?.heapTiles, // T152: said, never a refusal
-            "bytes" to p?.bytes, "tiles" to p?.tiles, "zooms" to p?.let { listOf(it.area.minZoom, it.area.maxZoom) },
-            "full" to s?.full?.json(), "less" to s?.less?.json(), "layerFeatures" to PickerLayer.features,
+            "bytes" to p?.bytes, "tiles" to p?.tiles, "zooms" to p?.let { listOf(it.area.minZoom, it.area.maxZoom) }, "demMaxZoom" to p?.area?.demMaxZoom,
+            "id" to p?.area?.id, // T157: the id of the area Download would record (each detail's differs)
+            "full" to s?.full?.json(), "medium" to s?.medium?.json(), "less" to s?.less?.json(), "layerFeatures" to PickerLayer.features,
             "drawing" to AreaDraw.json(),
             "around" to (m as? Mode.Around)?.let { a ->
                 linkedMapOf(
@@ -413,14 +443,17 @@ internal const val REGION_FULL_FROM_ZOOM = 10.0
  * detail when [packFits], else tiles only, with the reason ([REGION_TILES_LINE], [REGION_LESS_LINE]). Pure, tested.
  */
 internal fun regionPathLine(packFits: Boolean, detail: String): String = when {
-    detail == DETAIL_LESS -> REGION_LESS_LINE
+    detail != DETAIL_FULL -> REGION_LESS_LINE // T157: the medium detail is tiles too
     packFits -> REGION_PACK_LINE
     else -> REGION_TILES_LINE
 }
 
 /** T153: the rectangle of [box] as an area (a polygon, counter-clockwise) at z8 to [maxZoom]. */
 internal fun regionArea(box: PackBounds, maxZoom: Int, name: String?): AreaOfInterest =
-    AreaDraw.area(regionRing(box), name).copy(maxZoom = maxZoom)
+    AreaDraw.area(regionRing(box), name).let { it.withZooms(it.minZoom, maxZoom) }
+
+/** T157: the rectangle of [box] as an area at [detail] (the medium detail's elevation cap included). */
+internal fun regionArea(box: PackBounds, detail: AreaDetail, name: String?): AreaOfInterest = AreaDraw.area(regionRing(box), name).at(detail)
 
 /** T153: [box]'s corners as a ring. Pure, tested. */
 internal fun regionRing(box: PackBounds): List<AreaPoint> {
@@ -446,20 +479,43 @@ internal const val REGION_PACK_LINE = "With routing and place search (a map pack
 internal const val REGION_TILES_LINE = "Tiles only: routing needs a smaller box"
 internal const val REGION_LESS_LINE = "Tiles only: routing needs full detail"
 
-/** T142: the default detail: full for a drawn area or a disc; for a country full only when [fullFits]. Pure, tested. */
-internal fun defaultDetail(country: Boolean, fullFits: Boolean?): String = if (!country || fullFits == true) DETAIL_FULL else DETAIL_LESS
+/**
+ * T142: the default detail: full for a drawn area or a disc; for a country full only when [fullFits], else (T157) medium when
+ * [mediumFits], else less. Pure, tested.
+ */
+internal fun defaultDetail(country: Boolean, fullFits: Boolean?, mediumFits: Boolean? = null): String = when {
+    !country || fullFits == true -> DETAIL_FULL
+    mediumFits == true -> DETAIL_MEDIUM
+    else -> DETAIL_LESS
+}
 
 /**
  * T142: the other detail as a choice under the size line: "Less detail (about 30 MB)" when full is shown, "Full detail
- * (about 170 MB)" when less is (just "Full detail" while it is measured). Pure, tested.
+ * (about 170 MB)" when less is (just "Full detail" while it is measured). T157: the first of [alternativeLines]. Pure, tested.
  */
-internal fun alternativeLine(shown: String, s: AreaPicker.Summary): String? = when (shown) {
-    DETAIL_FULL -> s.less?.let { lessDetailLine(it.bytes) }
-    else -> if (s.full == null && !s.fullPending) null else fullDetailLine(s.full?.bytes)
+internal fun alternativeLine(shown: String, s: AreaPicker.Summary): String? = alternativeLines(shown, s).firstOrNull()?.second
+
+/**
+ * T157: the details not shown, as choices under the size line, deepest first after the shown one's neighbour: at full
+ * detail "Medium detail (about 60 MB)" then "Less detail (about 30 MB)"; at medium "Full detail (...)" then "Less detail
+ * (...)"; at less "Medium detail (...)" then "Full detail (...)". A detail being measured shows its title alone; one with
+ * no plan coming is left out. (detail key, line) pairs. Pure, tested.
+ */
+internal fun alternativeLines(shown: String, s: AreaPicker.Summary): List<Pair<String, String>> {
+    val order = when (shown) {
+        DETAIL_FULL -> listOf(DETAIL_MEDIUM, DETAIL_LESS)
+        DETAIL_MEDIUM -> listOf(DETAIL_FULL, DETAIL_LESS)
+        else -> listOf(DETAIL_MEDIUM, DETAIL_FULL)
+    }
+    return order.mapNotNull { d ->
+        val p = s.plan(d)
+        val pending = p == null && s.fullPending && d != DETAIL_LESS
+        if (p == null && !pending) null else d to detailChoiceLine(AreaDetail.byKey(d)!!, p?.bytes)
+    }
 }
 
 /** T142: "Full detail (about 170 MB)", or "Full detail" without a size. Pure, tested. */
-internal fun fullDetailLine(bytes: Long?): String = if (bytes == null) "Full detail" else "Full detail (about ${aboutSize(bytes)})"
+internal fun fullDetailLine(bytes: Long?): String = detailChoiceLine(AreaDetail.FULL, bytes)
 
 /** T142 (ADR 0041 §5): the around flow's presets in metres: 2, 5, 10, 20 km, or 1, 3, 5, 10 mi. Pure, tested. */
 internal fun radiusPresets(units: ContourUnits): List<Double> =
@@ -600,10 +656,9 @@ private fun SummaryLines() {
     val p = AreaPicker.planOf(s)
     if (p == null) BasicText(MEASURING, style = TextStyle(color = Muted, fontSize = 13.sp))
     else BasicText(AreaPicker.sizeLineOf(s) ?: "", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+    AreaPicker.hintOf(s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) } // T157: what medium detail drops
     AreaPicker.pathLineOf(s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) } // T153: which path, and why
-    alternativeLine(shown, s)?.let { alt ->
-        CardAction(alt) { AreaPicker.detailChoice = if (shown == DETAIL_FULL) DETAIL_LESS else DETAIL_FULL }
-    }
+    for ((d, alt) in alternativeLines(shown, s)) CardAction(alt) { AreaPicker.detailChoice = d } // T157: the two other details
     if (p == null) return
     timeLine(p.bytes, p.bytesPerMs)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
     val refusal = AreaPicker.refusalOf(s)

@@ -70,10 +70,18 @@ class NeedsNewerApp(reason: String) : IllegalArgumentException(reason) {
  * `line` and `rings` are in GeoJSON order (longitude first; a ring is written closed and read closed or open). [id] is
  * a content id of the geometry and zooms (not the name), so the same area asked twice is the same area. T140: a
  * polygon needs manifest version 2 ([manifestVersion]); a box and a corridor stay 1 (ADR 0041 §2).
+ *
+ * T157 (ADR 0041 §5's T157 note): [demMaxZoom], written `"demMaxZoom": 13` after `maxZoom` and only when set, caps the
+ * elevation (DEM) tiles below [maxZoom] while the vector tiles keep going to `min(maxZoom, 14)`: the medium detail
+ * ([AreaDetail.MEDIUM], elevation z13 with vector z14) cannot be written with one range. It is null when the DEM follows
+ * [maxZoom] (every area written before T157, read unchanged with the same [id]); when set it is below [maxZoom] (a reader
+ * drops a cap at or above it). A capped area needs manifest version 3: a version-2 reader would ignore the field and fetch
+ * the elevation to [maxZoom], nearly all the bytes, so it keeps such a record opaque instead.
  */
-data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: Int, val name: String? = null) {
+data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: Int, val name: String? = null, val demMaxZoom: Int? = null) {
     init {
         require(minZoom in 0..MAX_ZOOM && maxZoom in minZoom..MAX_ZOOM) { "need 0 <= minZoom <= maxZoom <= $MAX_ZOOM (got $minZoom..$maxZoom)" }
+        require(demMaxZoom == null || demMaxZoom in 0 until maxZoom) { "demMaxZoom must be 0 to maxZoom - 1 (got $demMaxZoom with maxZoom $maxZoom; leave it out for elevation to maxZoom)" }
         when (shape) {
             is AreaShape.Box -> require(
                 shape.west >= -180 && shape.east <= 180 && shape.west < shape.east && shape.south >= -MAX_LAT && shape.north <= MAX_LAT && shape.south < shape.north,
@@ -97,8 +105,32 @@ data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: I
 
     val kind: String get() = shape.kind
 
-    /** T140 (ADR 0041 §2): the lowest manifest version that holds this area: 2 for a polygon, 1 for a box or a corridor. */
-    val manifestVersion: Int get() = if (shape is AreaShape.Polygon) 2 else 1
+    /**
+     * T140 (ADR 0041 §2): the lowest manifest version that holds this area: 2 for a polygon, 1 for a box or a corridor;
+     * T157: 3 for any area with a [demMaxZoom].
+     */
+    val manifestVersion: Int get() = if (demMaxZoom != null) 3 else if (shape is AreaShape.Polygon) 2 else 1
+
+    /** T157: the deepest elevation zoom this area asks for ([demMaxZoom], else [maxZoom]). */
+    val demTop: Int get() = demMaxZoom ?: maxZoom
+
+    /**
+     * T157: the DEM tile zooms of this area's manifest from a source whose DEM tiles run [sourceMin] to [sourceMax]: from
+     * [sourceMin] (contours sample coarser zooms than they show) to [demTop], within the source's.
+     */
+    fun demZooms(sourceMin: Int, sourceMax: Int): IntRange = sourceMin..minOf(maxOf(demTop, sourceMin), sourceMax)
+
+    /** T157: the vector tile zooms of this area's manifest from a source whose vector tiles stop at [sourceMax]; null for none. */
+    fun osmZooms(sourceMax: Int = AreaManifest.OSM_MAX_ZOOM): IntRange? = (minZoom..minOf(maxZoom, sourceMax)).takeIf { !it.isEmpty() }
+
+    /**
+     * T157: this area at zooms [min] to [max] with the elevation capped at [dem] (null, or [dem] at or past [max]: no cap),
+     * the one way tiers are made, so a cap never outlives the range it was below.
+     */
+    fun withZooms(min: Int, max: Int, dem: Int? = null): AreaOfInterest = copy(minZoom = min, maxZoom = max, demMaxZoom = dem?.takeIf { it < max })
+
+    /** T157: this area at [detail] (its zooms; the shape and the name kept). */
+    fun at(detail: AreaDetail): AreaOfInterest = withZooms(AreaDetail.MIN_ZOOM, detail.maxZoom, detail.demMaxZoom)
 
     /** The rectangle holding the whole area (for a corridor: the line's box grown by the buffer). */
     val bounds: PackBounds
@@ -136,18 +168,22 @@ data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: I
         }
         m["minZoom"] = minZoom
         m["maxZoom"] = maxZoom
+        if (demMaxZoom != null) m["demMaxZoom"] = demMaxZoom // T157: only when set, so an uncapped area is written as before
         if (name != null) m["name"] = name
         return m
     }
 
-    /** `a` + 16 hex digits of the SHA-256 of the geometry and zooms (coordinates rounded to 1e-6 degrees). */
+    /**
+     * `a` + 16 hex digits of the SHA-256 of the geometry and zooms (coordinates rounded to 1e-6 degrees). T157: a
+     * [demMaxZoom] adds `:dem<z>` after the zooms (`...:8-14:dem13`); without one the canonical form is as before.
+     */
     val id: String
         get() {
             val canonical = when (shape) {
                 is AreaShape.Box -> "box:" + listOf(shape.west, shape.south, shape.east, shape.north).joinToString(",") { r6s(it) }
                 is AreaShape.Corridor -> "corridor:${r6s(shape.bufferM)}:" + shape.points.joinToString(";") { r6s(it.lat) + "," + r6s(it.lon) }
                 is AreaShape.Polygon -> "polygon:${r6s(shape.bufferM)}:" + shape.rings.joinToString("|") { ring -> ring.joinToString(";") { r6s(it.lat) + "," + r6s(it.lon) } }
-            } + ":$minZoom-$maxZoom"
+            } + ":$minZoom-$maxZoom" + (demMaxZoom?.let { ":dem$it" } ?: "")
             return "a" + Sha256.hex(canonical.encodeToByteArray()).take(16)
         }
 
@@ -167,8 +203,21 @@ data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: I
         private fun r7(d: Double) = round(d * 1e7) / 1e7
         private fun r6s(d: Double): String = (round(d * 1e6) / 1e6).toString()
 
-        /** Reads the JSON form (see the class comment); throws [IllegalArgumentException] with the reason. */
-        fun parse(m: Map<String, Any?>): AreaOfInterest {
+        /**
+         * Reads the JSON form (see the class comment); throws [IllegalArgumentException] with the reason. T157: a
+         * `demMaxZoom` at or past `maxZoom` is read as none (the same area, the same id).
+         */
+        fun parse(m: Map<String, Any?>): AreaOfInterest = parseZooms(m).let { a ->
+            val dem = when (val v = m["demMaxZoom"]) {
+                null -> null
+                is Number -> v.toInt()
+                is String -> v.toIntOrNull() ?: throw IllegalArgumentException("demMaxZoom must be an integer")
+                else -> throw IllegalArgumentException("demMaxZoom must be an integer")
+            }
+            if (dem == null) a else a.withZooms(a.minZoom, a.maxZoom, dem)
+        }
+
+        private fun parseZooms(m: Map<String, Any?>): AreaOfInterest {
             fun int(k: String, default: Int): Int = when (val v = m[k]) {
                 null -> default
                 is Number -> v.toInt()
@@ -232,8 +281,20 @@ data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: I
          * From query parameters: `bbox=w,s,e,n` or `line=lat,lon;lat,lon;...` (latitude first, like the phone's other
          * routes), plus `bufferM`, `minZoom`, `maxZoom`, `name`. T140: `ring=lat,lon;lat,lon;...` for a polygon (further
          * rings, holes or parts, after a `|`; `bufferM` 0 by default), or `around=lat,lon` with `radiusM` ([around]).
+         * T157: `demMaxZoom` caps the elevation below `maxZoom`, or `detail=full|medium|less` sets the zooms of
+         * [AreaDetail] (over `minZoom`, `maxZoom` and `demMaxZoom`).
          */
         fun fromQuery(q: Map<String, String>): AreaOfInterest {
+            val a = fromQueryZooms(q)
+            q["detail"]?.takeIf { it.isNotBlank() }?.let { k ->
+                val d = AreaDetail.byKey(k) ?: throw IllegalArgumentException("detail must be ${AreaDetail.entries.joinToString(", ") { it.key }} (got '$k')")
+                return a.at(d)
+            }
+            val dem = q["demMaxZoom"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("demMaxZoom must be an integer") } ?: return a
+            return a.withZooms(a.minZoom, a.maxZoom, dem)
+        }
+
+        private fun fromQueryZooms(q: Map<String, String>): AreaOfInterest {
             val name = q["name"]?.trim()?.ifEmpty { null }
             fun int(k: String, default: Int) = q[k]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("$k must be an integer") } ?: default
             fun points(s: String, what: String) = s.split(';').filter { it.isNotBlank() }.map { p ->
@@ -267,5 +328,32 @@ data class AreaOfInterest(val shape: AreaShape, val minZoom: Int, val maxZoom: I
             val buffer = q["bufferM"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("bufferM must be a number") } ?: DEFAULT_BUFFER_M
             return AreaOfInterest(AreaShape.Corridor(line, buffer), int("minZoom", 8), int("maxZoom", 15), name)
         }
+    }
+}
+
+/**
+ * T157 (ADR 0041 §5 and its T157 note): the three details an area is offered at, each from z8 ([MIN_ZOOM]):
+ * - [FULL]: elevation to z15, vector to z14;
+ * - [MEDIUM]: elevation to z13, vector to z14: every sidewalk, crossing, driveway and point of interest that exists only at
+ *   z14 (`tilebuild/PROFILE.md`) and the tiles the routing graph reads, with the terrain (hillshade, contours) overzoomed
+ *   from z13; a tenth or less of the full detail's bytes over a large area (the DEM at z14 and z15 is nearly all of them),
+ *   a third over a 5 km disc;
+ * - [LESS]: both to z13.
+ *
+ * [key] is the debug routes' `detail=` and the reports' name; the words the user sees are the app's (ADR 0031).
+ */
+enum class AreaDetail(val key: String, val maxZoom: Int, val demMaxZoom: Int?) {
+    FULL("full", 15, null),
+    MEDIUM("medium", 14, 13),
+    LESS("less", 13, null);
+
+    companion object {
+        const val MIN_ZOOM = 8
+
+        fun byKey(key: String): AreaDetail? = entries.firstOrNull { it.key == key }
+
+        /** The detail [area]'s zooms are, or null for any other zooms. */
+        fun of(area: AreaOfInterest): AreaDetail? =
+            entries.firstOrNull { area.minZoom == MIN_ZOOM && area.maxZoom == it.maxZoom && area.demMaxZoom == it.demMaxZoom }
     }
 }

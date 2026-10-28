@@ -69,9 +69,9 @@ class AreaPolygonTest {
 
     @Test
     fun versionThenKindThenFieldsEachWithItsSentence() {
-        val v3 = mapOf("version" to 3, "id" to "a1", "area" to mapOf("kind" to "region", "code" to "X"), "items" to emptyList<Any>())
-        val e1 = assertFailsWith<NeedsNewerApp> { AreaManifest.parse(v3) }
-        assertEquals("manifest version 3 is newer than this app reads (2)", e1.message, "the version is checked before the kind")
+        val v4 = mapOf("version" to 4, "id" to "a1", "area" to mapOf("kind" to "region", "code" to "X"), "items" to emptyList<Any>()) // T157: 3 is read now
+        val e1 = assertFailsWith<NeedsNewerApp> { AreaManifest.parse(v4) }
+        assertEquals("manifest version 4 is newer than this app reads (3)", e1.message, "the version is checked before the kind")
         val kind = mapOf("version" to 2, "area" to mapOf("kind" to "region", "code" to "X"))
         val e2 = assertFailsWith<NeedsNewerApp> { AreaManifest.parse(kind) }
         assertEquals("kind must be box, corridor or polygon (got 'region')", e2.message)

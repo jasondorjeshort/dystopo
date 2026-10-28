@@ -33,7 +33,8 @@ import java.io.File
  *   buffer into the tile cache ([AreaDownload]), where the pins keep them.
  *
  * Records live in `files/areas/areas.json`; each area's manifest (with its tile lists) in `files/areas/<id>.json`.
- * T140 (ADR 0041 §2): records a version-1 reader (v0.1.10 and earlier) cannot parse whole, polygons and records this
+ * T140 (ADR 0041 §2): records a version-1 reader (v0.1.10 and earlier) cannot parse whole, polygons (T157: and version 3
+ * records, an area with a `demMaxZoom`, which v0.1.11 to v0.1.14 keep opaque) and records this
  * build cannot read itself, live in the sibling `files/areas/areas2.json` ([AreaFiles]), so a downgraded build's save
  * loses nothing; this build reads both. A record it cannot read is kept opaque ([Record.opaque]): written back
  * unchanged, pinned by its record-level `bounds` and `zooms`, its card saying the phone needs a newer app.
@@ -629,10 +630,16 @@ internal fun shapeJson(r: Areas.Record): Map<String, Any?> {
 internal class AreaFiles(val records: List<Areas.Record>, val unreadable: List<Map<String, Any?>> = emptyList()) {
     fun mainText(): String = MiniJson.encode(mapOf("version" to 1, "areas" to records.filter { it.readableByV1 }.map { it.json() }))
 
-    /** The sibling file's text, or null when every record is in `areas.json` (then the sibling is deleted). */
+    /**
+     * The sibling file's text, or null when every record is in `areas.json` (then the sibling is deleted). T157: its
+     * `version` is the newest its readable records need (2, or 3 with a medium-detail record), so a file of polygons is
+     * written as v0.1.13 wrote it; no reader checks it (each record carries its own).
+     */
     fun siblingText(): String? {
-        val rest = records.filterNot { it.readableByV1 }.map { it.json() } + unreadable
-        return if (rest.isEmpty()) null else MiniJson.encode(mapOf("version" to AreaManifest.VERSION, "areas" to rest))
+        val sibling = records.filterNot { it.readableByV1 }
+        val rest = sibling.map { it.json() } + unreadable
+        val version = maxOf(2, sibling.filter { it.opaque == null }.maxOfOrNull { it.area.manifestVersion } ?: 2)
+        return if (rest.isEmpty()) null else MiniJson.encode(mapOf("version" to version, "areas" to rest))
     }
 
     companion object {

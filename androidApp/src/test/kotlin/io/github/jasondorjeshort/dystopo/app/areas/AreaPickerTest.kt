@@ -101,12 +101,12 @@ class AreaPickerTest {
         assertEquals(MEASURING, measuring.sizeText)
         val fits = countryRow(CountrySizes.Entry(less, full, "a1", "a2"), 0, 0, 2048)
         assertEquals(DETAIL_FULL, fits.detail)
-        assertEquals("About 200 MB at full detail", fits.sizeText)
+        assertEquals("Less 30 MB · Full 200 MB", fits.sizeText) // T157: every detail measured
         assertFalse(fits.greyed)
         // Full detail past the budget: the row is at less detail and fits.
         val lessRow = countryRow(CountrySizes.Entry(less, full, "a1", "a2"), 1900 * mb, 0, 2048)
         assertEquals(DETAIL_LESS, lessRow.detail)
-        assertEquals("About 30 MB at less detail", lessRow.sizeText)
+        assertEquals("Less 30 MB · Full 200 MB", lessRow.sizeText)
         assertEquals(RowState.FITS, lessRow.state)
         // Not measured at full detail (the less-detail size did not fit when measured): less detail.
         assertEquals(DETAIL_LESS, countryRow(CountrySizes.Entry(less, null, "a1", "a2"), 0, 0, 2048).detail)
@@ -121,7 +121,7 @@ class AreaPickerTest {
             "This area is about 1.1 GB; 1.6 GB of your 2 GB offline budget is in use. Make the area smaller, choose less detail, or raise the budget in Settings › Storage.",
             row.sentence,
         )
-        assertEquals("About 1.1 GB at less detail", row.sizeText)
+        assertEquals("Less 1.1 GB", row.sizeText)
         // Its own bytes already pinned (downloaded before) do not count twice.
         assertEquals(RowState.FITS, countryRow(CountrySizes.Entry(CountryMeasure(1157 * mb, 12_512, false), null, "a1", "a2"), 1638 * mb, 1157 * mb, 2048).state)
     }
@@ -211,7 +211,8 @@ class AreaPickerTest {
         val s = AreaPicker.Summary(1, plan(full, 170 * mb), plan(less, 30 * mb), false, null)
         assertEquals("Less detail (about 30 MB)", alternativeLine(DETAIL_FULL, s))
         assertEquals("Full detail (about 170 MB)", alternativeLine(DETAIL_LESS, s))
-        assertEquals("Full detail", alternativeLine(DETAIL_LESS, AreaPicker.Summary(1, null, plan(less, 30 * mb), true, null)))
+        // T157: while a country's deeper details are measured the first choice is the medium detail's title (MediumDetailTest).
+        assertEquals("Medium detail", alternativeLine(DETAIL_LESS, AreaPicker.Summary(1, null, plan(less, 30 * mb), true, null)))
         assertNull(alternativeLine(DETAIL_LESS, AreaPicker.Summary(1, null, plan(less, 30 * mb), false, null)))
     }
 
