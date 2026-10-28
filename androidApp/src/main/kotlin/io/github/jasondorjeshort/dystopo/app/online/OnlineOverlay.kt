@@ -101,7 +101,8 @@ class OnlineUi(
 
 /**
  * The online indicator over the map (top left): online / offline with the source of the current view
- * (pack, online, cached, none) and "Download this region" with its progress. Hidden when no server is set. Drawn by
+ * (pack, online, cached, none) and "Download this region" with its progress (T153: the button opens the area picker's
+ * summary for the view, `AreaPicker.openRegion`; the progress line is the pack path's). Hidden when no server is set. Drawn by
  * one line in MainActivity's map screen. T106: no credit line of its own any more: the map's credit line at the bottom
  * has named the online sources in view since T41 (from the provenance of the tiles in view), while this one, under the
  * top chips and over the map's labels, named the server's whole list ("Elevation: Copernicus DEM GLO-30" at Rainier,
@@ -145,13 +146,14 @@ fun OnlineOverlay() {
             // T80: why the phone is not reading the sources (the session's download limit, or mobile data turned off by the user; T83).
             u.notice?.let { Small(it, Red) {} }
             u.progress?.let { Small(it) { message = null; thread { service.region.cancel() } } }
-            if (u.offerDownload) {
+            // T153: the button opens the area picker's size-first summary for the visible box (no span cap, the detail chosen
+            // for the view, the estimate, the pack path or the area path said); hidden while that card is up.
+            if (u.offerDownload && io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.mode !is io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.Mode.Region) {
                 Button("Download this region") {
-                    val box = u.view?.bounds
                     message = null
-                    if (box != null) thread {
+                    thread(name = "region-open") {
                         message = try {
-                            service.region.start(box, null, null, null)
+                            io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.openRegionOffMain() // the view as it is at the tap
                             null
                         } catch (e: Exception) {
                             e.message

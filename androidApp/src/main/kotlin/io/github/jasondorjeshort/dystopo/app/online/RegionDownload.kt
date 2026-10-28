@@ -42,6 +42,11 @@ import kotlin.math.floor
  * so the download is verified like a catalog download ([PackDownloader.startCatalog]); an older server gets the
  * plain `/build` path as before. Either way (and for a pack built on the phone) the result is recorded in
  * [Areas] as a pinned, pack-backed area, and the phone builds the search index and trail graph from it.
+ *
+ * T153: the overlay's "Download this region" no longer calls [start] directly: it opens the area picker's size-first summary
+ * for the visible box (`AreaPicker.openRegion`), which takes this pack path only for a box within the server's build limits
+ * at full detail ([packFits]: [MAX_SPAN_DEG] a side, [TILE_LIMIT] tiles at z8 to z14), and the area path (tiles only,
+ * `AreaDownload`) for anything wider or at less detail. [start] keeps its limits, which mirror the server's.
  */
 class RegionDownload(private val service: OnlineService, private val app: DystopoApp) {
     init {
@@ -112,6 +117,9 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         Thread({ run(server, packName, box, lo..hi) }, "online-region-download").apply { isDaemon = true }.start()
         return json()
     }
+
+    /** T153: a generated pack name not in use on this phone ([nameFor]); reads the pack catalog, so off the UI thread. */
+    fun defaultName(): String = nameFor(System.currentTimeMillis(), takenNames())
 
     /** T145: the pack and offline-area names in use on this phone, which a generated name must not repeat. */
     private fun takenNames(): Set<String> {
@@ -426,6 +434,27 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             val dem = zooms.filter { it in OnlineTiles.DEM_MIN_ZOOM..OnlineTiles.DEM_MAX_ZOOM }.sumOf(::count)
             val osm = zooms.filter { it <= OnlineTiles.OSM_MAX_ZOOM }.sumOf(::count)
             return dem + osm
+        }
+
+        /**
+         * T153: whether a pack build of [box] stays within the server's build limits at the pack's full zooms (z8 to z14, no
+         * top zoom lowered): at most [MAX_SPAN_DEG] a side and [TILE_LIMIT] tiles. Such a box keeps the pack path (the trail
+         * graph and search); a wider one takes the area path. Pure, tested.
+         */
+        fun packFits(box: PackBounds): Boolean =
+            box.maxLon > box.minLon && box.maxLat > box.minLat &&
+                box.maxLon - box.minLon <= MAX_SPAN_DEG && box.maxLat - box.minLat <= MAX_SPAN_DEG &&
+                tileCount(box, DEFAULT_MIN_ZOOM..DEFAULT_MAX_ZOOM) <= TILE_LIMIT
+
+        /**
+         * T153: the pack name for the picker's name field [typed]: as typed when it is a valid pack name, else made one (runs
+         * of other characters to '-', "Mount Rainier 2" to "Mount-Rainier-2"), else [fallback] (a generated name). Pure, tested.
+         */
+        fun packNameFrom(typed: String, fallback: String): String {
+            val t = typed.trim()
+            if (PackNames.isValidName(t)) return t
+            val slug = t.replace(Regex("[^A-Za-z0-9._]+"), "-").replace(Regex("\\.{2,}"), ".").trimStart('-', '.', '_').trimEnd('-').take(64).trimEnd('-')
+            return if (PackNames.isValidName(slug)) slug else fallback
         }
 
         /**
