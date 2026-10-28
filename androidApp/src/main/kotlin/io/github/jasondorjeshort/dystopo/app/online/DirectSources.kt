@@ -32,6 +32,9 @@ import kotlin.math.floor
 /** The network is down (no route, no DNS): fail the tile at once instead of retrying ([SourceIo] retries only IOExceptions). */
 class SourceOffline(message: String, cause: Throwable?) : RuntimeException(message, cause)
 
+/** T155: a range read refused at once because its host's reads all stall ([StallBreaker]); an I/O failure like the stall itself. */
+class SourceStalled(message: String) : IOException(message)
+
 /** The session's download budget for the sources is spent ([DirectSources.sessionCapBytes]). */
 class SourceCapReached(message: String) : RuntimeException(message)
 
@@ -61,6 +64,10 @@ class SourceCapReached(message: String) : RuntimeException(message)
  * decoded blocks and the geoid memo in place too ([trimBlocks], [trimGeoidMemo]).
  * T127 (T112's deferred fold-in, ADR 0034): `cache/sources/`'s own trim follows the one cache total ([sourceCacheCapBytes],
  * [budgetTotalBytes] set by `cachebudget/CacheBudget`), so the total, not a fixed 512 MB, is its ceiling.
+ * T155: a DEM tile whose render failed on the network (a stalled range read) is answered 404 and recovered by
+ * `OnlineService.stalledDem`: renders that just failed fail again at once ([failedRenders]), the recovery renders the tile
+ * again past the memos ([retryDem]), a read that answers after a stall wakes it ([onSourcesAnswered]); [demBase] is the
+ * debug hook that points the range reads at a dead host.
  */
 class DirectSources(private val context: android.content.Context, private val cacheRoot: File, internal val cache: TileCache) : HttpGet {
     val http = PhoneSourceHttp(this)
@@ -190,6 +197,22 @@ class DirectSources(private val context: android.content.Context, private val ca
             DirectTrace.mark("refresh") // the caller reloads the style now
         }
         return ready
+    }
+
+    /** T155: renders a 503 was answered for that were made, and that failed, since the last [onlyFailuresAwaited]. */
+    private val awaitedMade = AtomicLong()
+    private val awaitedFailed = AtomicLong()
+
+    /**
+     * T155: asked once [readyForRefresh] said yes: true when every render a 503 waited on since the last ask failed and
+     * none was made. A reload then only asks for the same tiles again to fail them (against a stalled source the T88
+     * reload came every 8 to 10 s, each one blanking the map); the failed tiles are recorded for the stall recovery
+     * instead, which refreshes the elevation source once they come. Resets both counts.
+     */
+    fun onlyFailuresAwaited(): Boolean {
+        val made = awaitedMade.getAndSet(0)
+        val failed = awaitedFailed.getAndSet(0)
+        return made == 0L && failed > 0L
     }
 
     /** T88: when the last reload for tiles that were not ready was started (wall clock ms). */
@@ -322,17 +345,73 @@ class DirectSources(private val context: android.content.Context, private val ca
     private fun rendered(t: TileId, wanted: (() -> Boolean)? = null): ByteArray {
         val key = "$KEY/dem/${t.z}/${t.x}/${t.y}.png"
         cache.get(key)?.let { return it }
+        // T155: a render that just failed on the network fails again at once (the stall recovery forgets it first).
+        if (failedRenders.isBlocked(key, System.currentTimeMillis())) throw IOException("DEM ${t.z}/${t.x}/${t.y} failed less than ${failedRenders.ttlMs / 1000} s ago; fetched again by the stall recovery")
         while (true) {
             val job = synchronized(inFlight) { inFlight.getOrPut(key) { lazy { renderAndRecord(t, wanted).also { cache.put(key, it) } } } }
             try {
-                return job.value
+                return job.value.also { if (key in awaited) awaitedMade.incrementAndGet() }
             } catch (e: StaleRender) {
                 if (wanted != null) throw e
+            } catch (e: IOException) {
+                failedRenders.failed(key, System.currentTimeMillis())
+                // T155: a render a map request was answered 503 for failed: MapLibre will not ask for that tile again, so
+                // the stall recovery records it, and a reload only for failures is skipped ([onlyFailuresAwaited]).
+                if (awaited.remove(key)) {
+                    awaitedFailed.incrementAndGet()
+                    OnlineService.get().demFailed("${t.z}/${t.x}/${t.y}.png")
+                }
+                throw e
             } finally {
                 synchronized(inFlight) { if (inFlight[key] === job) inFlight.remove(key) }
             }
         }
     }
+
+    /** T155: DEM renders that failed on the network, failed again at once for a while ([FailedRenders]). */
+    val failedRenders = FailedRenders()
+
+    /**
+     * T155: renders DEM tile [path] (`z/x/y.png`) again for the stall recovery, past the failure memos (this one's and
+     * the online fetcher's), and puts it where the fetcher looks first (the online cache under this source's key), so
+     * the map's next request is answered from there. True when it came.
+     */
+    fun retryDem(path: String): Boolean {
+        val t = parseTile(path, ".png") ?: return false
+        if (t.z < DEM_MIN_ZOOM || t.z > OnlineTiles.DEM_MAX_ZOOM) return false
+        val key = "$KEY/dem/${t.z}/${t.x}/${t.y}.png"
+        val sources = if (t.z > maxZoom) synthesisSources(t, maxZoom) else listOf(t)
+        for (s in sources) failedRenders.forget("$KEY/dem/${s.z}/${s.x}/${s.y}.png")
+        return try {
+            val png = if (t.z > maxZoom) synthesize(t) else rendered(t)
+            if (!cache.contains(key)) cache.put(key, png) // a synthesized tile is kept by the fetcher, not by [synthesize]
+            lastOkAt = System.currentTimeMillis()
+            true
+        } catch (e: Exception) {
+            note(e)
+            false
+        }
+    }
+
+    /** T155: DEM tiles came back after a stall: the failure memo is emptied and the synthesis pyramid (which may remember them as missing) dropped. */
+    fun forgetFailures(): Int {
+        dropPyramid()
+        return failedRenders.clear()
+    }
+
+    /**
+     * T155, debug builds only (`POST /firstrun/direct/dem-base?url=`): the scheme and host every source range read goes to
+     * instead of its own (Copernicus, 3DEP, the national models, the geoid grids; the path is kept), so a test points the
+     * DEM renders at a host that accepts and never answers, then restores it with `default`. Not kept across a restart. The
+     * range cache on disk is keyed on the source's own file, so what was read before the stall is still read from disk.
+     */
+    @Volatile var demBase: String? = null
+
+    /**
+     * T155: called (on the reading thread) when a source range read answers after one stalled: the stall recovery makes
+     * every recorded DEM tile due at once instead of waiting out its backoff.
+     */
+    @Volatile var onSourcesAnswered: (() -> Unit)? = null
 
     private fun renderAndRecord(t: TileId, wanted: (() -> Boolean)? = null): ByteArray {
         // Renders take their own permits, so OpenFreeMap tiles never queue behind them (MapLibre gives up on a
@@ -526,6 +605,8 @@ class DirectSources(private val context: android.content.Context, private val ca
                 // phone-built pack's edge then shows the pack's part offline; it answered 500 and showed nothing.
                 if (cause is IOException || cause is SourceOffline || cause is SourceCapReached) {
                     windowIncomplete.set(true)
+                    // T155: fetched again later; the contour tile is drawn again with it once it comes (DemSourceRefresh).
+                    if (cause is IOException) OnlineService.get().demFailed("${t.z}/${t.x}/${t.y}.png")
                     continue
                 }
                 throw cause
@@ -784,6 +865,9 @@ class DirectSources(private val context: android.content.Context, private val ca
             "maxZoom" to maxZoom, "demSynthesized" to demSynthesized.get(), "renderedByZoom" to synchronized(renderedByZoom) { renderedByZoom.mapKeys { "z${it.key}" } }, "demRendered" to n, "demMsAvg" to if (n == 0L) null else demMs.get() / n, "demMsMax" to demMaxMs.get(),
             "osmFetched" to osmFetched.get(), "osmBytes" to osmBytes.get(),
             "osmStalls" to http.osmStalls.get(), "osmGuardMs" to OSM_GUARD_MS, "osmBase" to osmBase, // T123
+            // T155: the DEM stall hook, renders failing at once after a network failure, reads that answered after a stall.
+            "demBase" to demBase, "failedRenders" to linkedMapOf("now" to failedRenders.size(System.currentTimeMillis()), "blocked" to failedRenders.blocked, "ttlMs" to failedRenders.ttlMs),
+            "rangeAnsweredAfterStall" to http.answeredAfterStall.get(), "stallBreaker" to http.breaker.json(),
             "stages" to linkedMapOf( // T88: summed over threads
                 "renderWaitMs" to renderWaitMs.get(), "coarseFirstHeldMs" to coarseHeldMs.get(), "renderFetchMs" to renderFetchMs.get(), "renderEncodeMs" to renderEncodeMs.get(),
                 "contourDemWaitMs" to contourDemWaitMs.get(), "sources" to io.github.jasondorjeshort.dystopo.sources.elevation.SourceTiming.json(),
@@ -1068,12 +1152,36 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
      * read, not for the whole body) and is retried at once. On the emulator one read in five sat for 5 to 10 s while the
      * same size took 0.4 s on another connection; waiting two minutes for those held whole renders up.
      */
-    override fun range(url: String, offset: Long, length: Int): SourceReply = try {
-        send(url, DirectSources.RANGE_STALL_MS, DirectSources.RANGE_CONNECT_MS) { it.setRequestProperty("Range", "bytes=$offset-${offset + length - 1}") }
-    } catch (e: java.net.SocketTimeoutException) {
-        stalls.incrementAndGet()
-        throw e
+    override fun range(url: String, offset: Long, length: Int): SourceReply {
+        val target = owner.demBase?.let { DirectSources.withOsmBase(url, it) } ?: url // T155: the stall hook, debug builds only
+        val host = hostOf(target)
+        // T155: a host whose reads all stall is not asked again for each block; one read every probe interval finds out it answers again.
+        if (!breaker.admit(host, System.currentTimeMillis())) throw SourceStalled("$host is not answering (its reads stall); asked again every ${StallBreaker.PROBE_MS / 1000} s")
+        return try {
+            send(target, DirectSources.RANGE_STALL_MS, DirectSources.RANGE_CONNECT_MS) { it.setRequestProperty("Range", "bytes=$offset-${offset + length - 1}") }.also {
+                breaker.answered(host, System.currentTimeMillis())
+                // T155: the first read that answers after a stall tells the recovery the sources are back.
+                if (stalledSinceAnswer.compareAndSet(true, false)) {
+                    answeredAfterStall.incrementAndGet()
+                    owner.onSourcesAnswered?.let { cb -> runCatching { cb() } }
+                }
+            }
+        } catch (e: java.net.SocketTimeoutException) {
+            stalls.incrementAndGet()
+            stalledSinceAnswer.set(true)
+            breaker.stalled(host, System.currentTimeMillis())
+            throw e
+        }
     }
+
+    private fun hostOf(url: String): String = url.substringAfter("://").substringBefore('/')
+
+    /** T155: a range read stalled and none has answered since; reads that answered right after a stall. */
+    private val stalledSinceAnswer = java.util.concurrent.atomic.AtomicBoolean()
+    val answeredAfterStall = AtomicLong()
+
+    /** T155: the hosts whose reads all stall ([StallBreaker]). */
+    val breaker = StallBreaker()
 
     /** T123: OpenFreeMap requests that got no connection or no byte within the stall guard ([DirectSources.OSM_STALL_MS]). */
     val osmStalls = AtomicLong()
@@ -1187,3 +1295,117 @@ object DirectTrace {
 }
 
 internal fun logDirect(message: String) = Log.i(DirectSources.TAG, message)
+
+/**
+ * T155: source hosts whose range reads all stall. A read stalls after [DirectSources.RANGE_STALL_MS] without a byte and
+ * [SourceIo] tries it four times, so against a host that accepts and never answers each block cost about 18 s and held
+ * one of the [DirectSources.MAX_RANGE_REQUESTS] permits, which OpenFreeMap's tiles share: on the emulator a stalled view's
+ * renders took over three minutes to fail and the vector map stayed blank meanwhile. After [TRIP_STALLS] stalls in a
+ * row with no read answering for [TRIP_QUIET_MS], the host is open: its reads fail at once ([SourceStalled]), but one
+ * read every [PROBE_MS] goes through, and the first that answers closes it. A healthy link whose reads stall now and
+ * then (T88: one in five on the emulator) has answers in between and never opens. Pure, tested.
+ */
+class StallBreaker {
+    private class Host(var stallsInRow: Int = 0, var lastAnswerAt: Long = 0L, var open: Boolean = false, var probeAt: Long = 0L)
+
+    private val hosts = HashMap<String, Host>()
+
+    /** Times a host opened, reads refused at once, probes let through while open. */
+    var opened = 0L
+        private set
+    var refused = 0L
+        private set
+    var probes = 0L
+        private set
+
+    /** Whether a read of [host] may go to the network at [now] (false: fail it at once). */
+    @Synchronized
+    fun admit(host: String, now: Long): Boolean {
+        val h = hosts[host] ?: return true
+        if (!h.open) return true
+        if (now - h.probeAt >= PROBE_MS) {
+            h.probeAt = now
+            probes++
+            return true
+        }
+        refused++
+        return false
+    }
+
+    @Synchronized
+    fun answered(host: String, now: Long) {
+        val h = hosts.getOrPut(host) { Host() }
+        h.stallsInRow = 0
+        h.lastAnswerAt = now
+        h.open = false
+    }
+
+    @Synchronized
+    fun stalled(host: String, now: Long) {
+        val h = hosts.getOrPut(host) { Host() }
+        h.stallsInRow++
+        if (!h.open && h.stallsInRow >= TRIP_STALLS && now - h.lastAnswerAt >= TRIP_QUIET_MS) {
+            h.open = true
+            h.probeAt = now
+            opened++
+        }
+    }
+
+    @Synchronized
+    fun openHosts(): List<String> = hosts.filterValues { it.open }.keys.sorted()
+
+    @Synchronized
+    fun json(): Map<String, Any?> = linkedMapOf("open" to hosts.filterValues { it.open }.size, "opened" to opened, "refused" to refused, "probes" to probes, "probeMs" to PROBE_MS)
+
+    companion object {
+        const val TRIP_STALLS = 6
+        const val TRIP_QUIET_MS = 15_000L
+        const val PROBE_MS = 2_000L
+    }
+}
+
+/**
+ * T155: DEM renders that failed on the network (a range read that stalled or dropped: an [IOException]), remembered for
+ * [ttlMs] so the next request for the same tile fails at once instead of stalling again. The online fetcher keeps the
+ * same 30 s memo for the map's own DEM requests; a contour tile's DEM tiles bypass the fetcher ([DirectSources.contourWindow]),
+ * and without this each style reload asked for them again, waited 7 s, answered 503 and brought another reload, every
+ * 20 to 25 s for as long as the source stalled. The stall recovery ([OnlineService.stalledDem]) forgets a tile before it
+ * renders it again, and everything once a source answers again. Pure, tested.
+ */
+class FailedRenders(val ttlMs: Long = 30_000L, private val capacity: Int = 1024) {
+    private val until = LinkedHashMap<String, Long>()
+
+    /** Requests failed at once because their render failed within [ttlMs]. */
+    var blocked = 0L
+        private set
+
+    @Synchronized
+    fun failed(key: String, now: Long) {
+        until.remove(key)
+        until[key] = now + ttlMs
+        while (until.size > capacity) until.remove(until.keys.first())
+    }
+
+    /** True (and counted) when [key]'s render failed within [ttlMs] of [now]. */
+    @Synchronized
+    fun isBlocked(key: String, now: Long): Boolean {
+        val u = until[key] ?: return false
+        if (now >= u) {
+            until.remove(key)
+            return false
+        }
+        blocked++
+        return true
+    }
+
+    @Synchronized
+    fun forget(key: String) {
+        until.remove(key)
+    }
+
+    @Synchronized
+    fun clear(): Int = until.size.also { until.clear() }
+
+    @Synchronized
+    fun size(now: Long): Int = until.values.count { it > now }
+}

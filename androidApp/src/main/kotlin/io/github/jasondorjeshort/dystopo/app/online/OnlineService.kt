@@ -51,7 +51,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
      * T80: the phone's own readers of the elevation sources and OpenFreeMap, used when no server is set
      * ([DirectSources]); made on first use; declared before the init block that may use it (it points the shared readers' cache and HTTP at the app).
      */
-    val direct: DirectSources by lazy { DirectSources(app, app.cacheDir, cache).also { it.sessionCapBytes = DirectPrefs.sessionMb(app) * 1024 * 1024; it.maxZoom = DirectPrefs.maxZoom(app); it.onMobileData = DirectPrefs.onMobileData(app); it.osmBase = DirectPrefs.osmBase(app) } } // T123: osmBase, debug only
+    val direct: DirectSources by lazy { DirectSources(app, app.cacheDir, cache).also { it.sessionCapBytes = DirectPrefs.sessionMb(app) * 1024 * 1024; it.maxZoom = DirectPrefs.maxZoom(app); it.onMobileData = DirectPrefs.onMobileData(app); it.osmBase = DirectPrefs.osmBase(app); it.onSourcesAnswered = ::sourcesAnswered } } // T123: osmBase, debug only; T155: the stall recovery's wake
 
     /** `/live/info` of the server (zooms, attribution), from the last successful check. */
     @Volatile var info: Map<String, Any?>? = null
@@ -96,7 +96,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         configure(AppSettings.server)
         probeThread.schedule(::probeLoop, 1, TimeUnit.SECONDS)
         probeThread.scheduleWithFixedDelay(::refreshWhenRendered, 2, 1, TimeUnit.SECONDS) // T80
-        probeThread.scheduleWithFixedDelay(::retryStalledOsm, 2, 2, TimeUnit.SECONDS) // T138
+        probeThread.scheduleWithFixedDelay(::retryStalled, 2, 2, TimeUnit.SECONDS) // T138; T155: and DEM tiles
         app.map.onCameraIdle = ::onViewChanged // T41
         app.map.onMapIdle = ::onMapIdle // T110
     }
@@ -230,6 +230,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
 
     @Volatile private var notReadySeen = 0L
     val renderRefreshes = AtomicLong()
+    /** T155: reloads after rendering left out because every render waited on failed ([DirectSources.onlyFailuresAwaited]). */
+    val renderRefreshesSkipped = AtomicLong()
 
     /**
      * T80: tiles answered "not ready" (503, [OnlineTiles.answerWithinMs]) are not asked for again by MapLibre until
@@ -244,6 +246,11 @@ class OnlineService private constructor(private val app: DystopoApp) {
             if (n == notReadySeen) return
             if (!direct.readyForRefresh()) return // T88: once the renders that were waited on are done, not every render
             notReadySeen = n
+            if (direct.onlyFailuresAwaited()) { // T155: every awaited render failed (a stalled source): no reload, the stall recovery draws them
+                renderRefreshesSkipped.incrementAndGet()
+                DirectTrace.mark("refresh skipped: every awaited render failed")
+                return
+            }
             renderRefreshes.incrementAndGet()
             app.showStyle(app.tiles) // T144: posted, not awaited
         } catch (e: Throwable) {
@@ -270,26 +277,35 @@ class OnlineService private constructor(private val app: DystopoApp) {
         if (isDirect) DirectTrace.mark("oStall $path")
     }
 
+    /** T155: when the last look of [retryStalled] was (wall clock ms); a style load seen now came after it. */
+    @Volatile private var lastStalledLookAt = 0L
+
     /**
      * T138, every 2 s on the probe thread: a style load since the last look clears [stalledOsm] (MapLibre asked for every
      * tile again); the due tiles are fetched again on the prefetch pool, and once one came back the vector source is
      * replaced ([OsmSourceRefresh]) so the tile is drawn without a style reload. T144: the recoveries are coalesced
      * ([osmRefresh]: one refresh per settle window while they trickle in), and a refresh the map skipped because its style
-     * was loading is asked for again.
+     * was loading is asked for again. T155: the same for DEM tiles ([stalledDem], [retryStalledDem]); a style load drops
+     * only the entries recorded before the previous look, which certainly came before it (the load came between the two
+     * looks; T138 dropped every entry up to the look that saw it, so a tile asked for again after the load and failed
+     * again was dropped too, and a DEM tile, asked for again within a second of a reload, often was).
      */
-    private fun retryStalledOsm() {
+    private fun retryStalled() {
         try {
+            val now = System.currentTimeMillis()
             val loads = app.map.styleLoads.get()
             if (loads != styleLoadsSeen) {
-                if (styleLoadsSeen >= 0) stalledOsm.styleLoaded(System.currentTimeMillis())
+                if (styleLoadsSeen >= 0) {
+                    stalledOsm.styleLoaded(lastStalledLookAt)
+                    stalledDem.styleLoaded(lastStalledLookAt)
+                }
                 styleLoadsSeen = loads
             }
-            val now = System.currentTimeMillis()
-            if (osmRefresh.due(now)) {
-                osmRefresh.refreshed(now)
-                refreshOsmSource()
-            }
+            lastStalledLookAt = now
+            if (osmRefresh.claim(now)) refreshOsmSource()
+            if (demRefresh.claim(now)) refreshDemSource()
             val f = fetcher ?: return
+            retryStalledDem(f, now)
             val due = stalledOsm.due(now)
             if (due.isEmpty() || !osmRetrying.compareAndSet(false, true)) return
             prefetchPool.execute {
@@ -324,6 +340,145 @@ class OnlineService private constructor(private val app: DystopoApp) {
             lastOsmRefresh = result + ("at" to System.currentTimeMillis())
             if (isDirect) DirectTrace.mark("osmRefresh ${result["layers"] ?: result["skipped"]}")
             Log.i(TAG, "vector source refreshed for recovered tiles: $result")
+        }
+    }
+
+    // ---- T155: DEM tiles left empty after a failed fetch ----
+
+    /**
+     * DEM tiles answered 404 because their fetch failed (the map's own requests, [OnlineTiles.demTile]) or missing from a
+     * shade or contour tile made without them ([OnlineTiles] and [DirectSources.contourWindow]): fetched again later
+     * ([retryStalledDem]), and the elevation source and its derived sources replaced once they come ([DemSourceRefresh]).
+     */
+    val stalledDem = StalledOsmTiles()
+
+    /** Times the elevation source was replaced to draw recovered DEM tiles (in the style's DEM, contour and shade URLs, `-d<n>`). */
+    val demSourceRefreshes = AtomicLong()
+    @Volatile private var lastDemRefresh: Map<String, Any?>? = null
+    /** One refresh per settle window; quiet gap 0, since a retry reports its recoveries as one batch ([OsmRefreshCoalescer]). */
+    val demRefresh = OsmRefreshCoalescer(quietMs = 0L)
+    private val demRetrying = java.util.concurrent.atomic.AtomicBoolean()
+    /** Tries of the oldest recorded tile while none was due (direct mode), and when the next may start. */
+    val demCanaries = AtomicLong()
+    @Volatile private var nextCanaryAt = 0L
+    @Volatile private var canaryGapMs = CANARY_MIN_GAP_MS
+    /** Source reads that answered after a stall ([DirectSources.onSourcesAnswered]); halo variants deleted with a recovery. */
+    val demSourcesAnswered = AtomicLong()
+    val demHaloVariantsDropped = AtomicLong()
+
+    /** A DEM tile [path] (`z/x/y.png`) was answered 404, or left out of a derived tile, because its fetch failed. */
+    fun demFailed(path: String) {
+        if (stalledDem.failed(path, System.currentTimeMillis()) && isDirect) DirectTrace.mark("dStall $path")
+    }
+
+    /** [DirectSources.onSourcesAnswered]: a source read answered after a stall; every recorded tile is due now. */
+    private fun sourcesAnswered() {
+        demSourcesAnswered.incrementAndGet()
+        if (stalledDem.wake(System.currentTimeMillis()) == 0) return
+        if (isDirect) {
+            DirectTrace.mark("dAnswered")
+            direct.forgetFailures() // the map's requests in the meantime render again rather than fail from the memo
+        }
+        fetcher?.retryNow() // and the fetcher's 30 s per-tile failure memo, as for a raised limit
+        nextCanaryAt = 0L
+        canaryGapMs = CANARY_MIN_GAP_MS
+        probeThread.execute(::retryStalled)
+    }
+
+    /**
+     * The due DEM tiles fetched again, all at once (a DEM render waits on range reads; one after another a dead host's
+     * 18 s per tile would add up). In direct mode, while none is due the oldest is tried anyway, one at a time (a canary:
+     * at once again after a try that stalled, which paced itself; doubling to [CANARY_MAX_GAP_MS] after one that failed
+     * quickly, offline or on a broken file), so a source that answers again is seen within seconds rather than after the
+     * backoff; a canary's failure does not move the tile's own schedule. With a server the tiles follow the schedule
+     * (the online fetcher's 30 s failure memo).
+     */
+    private fun retryStalledDem(f: OnlineFetcher, now: Long) {
+        if (stalledDem.size == 0 || !demRetrying.compareAndSet(false, true)) return
+        val direct = f.server == DirectSources.SERVER
+        val due = stalledDem.due(now)
+        val canary = due.isEmpty()
+        val batch = when {
+            !canary -> due
+            direct && now >= nextCanaryAt -> listOfNotNull(stalledDem.oldest())
+            else -> emptyList()
+        }
+        if (batch.isEmpty()) {
+            demRetrying.set(false)
+            return
+        }
+        if (canary) demCanaries.incrementAndGet()
+        runDemBatch(f, batch, canary, emptyList(), now)
+    }
+
+    private fun runDemBatch(f: OnlineFetcher, batch: List<String>, canary: Boolean, carried: List<String>, startedAt: Long) {
+        val direct = f.server == DirectSources.SERVER
+        val jobs = batch.map { path ->
+            val get = { path to runCatching { if (direct) this.direct.retryDem(path) else f.get("dem", path) is Fetch.Hit }.getOrDefault(false) }
+            if (direct) this.direct.request(get) else CompletableFuture.supplyAsync(get, prefetchPool)
+        }
+        CompletableFuture.allOf(*jobs.toTypedArray()).whenComplete { _, _ ->
+            var chained = false
+            try {
+                val t = System.currentTimeMillis()
+                val back = ArrayList(carried)
+                for (job in jobs) {
+                    val (path, ok) = job.join()
+                    if (canary && !ok) continue
+                    stalledDem.result(path, ok, t)
+                    if (ok) back += path
+                }
+                if (canary) {
+                    // A quick failure while a host's reads stall is the stall breaker's (its probe is the real try): no backoff then.
+                    val quick = back.isEmpty() && t - startedAt < DirectSources.RANGE_STALL_MS && this.direct.http.breaker.openHosts().isEmpty()
+                    canaryGapMs = if (quick) minOf(canaryGapMs * 2, CANARY_MAX_GAP_MS) else CANARY_MIN_GAP_MS
+                    nextCanaryAt = t + canaryGapMs
+                }
+                if (back.size > carried.size && stalledDem.wake(t) > 0) {
+                    // The source answers again: every tile still recorded is fetched now, in this same run, and the
+                    // refresh waits for them (one refresh for the view, not one per tile).
+                    if (direct) this.direct.forgetFailures()
+                    val rest = stalledDem.due(t)
+                    if (rest.isNotEmpty()) {
+                        chained = true
+                        runDemBatch(f, rest, false, back, t)
+                        return@whenComplete
+                    }
+                }
+                if (back.isNotEmpty()) demBack(back, t)
+            } catch (e: Throwable) {
+                Log.w(TAG, "retrying stalled DEM tiles failed", e)
+            } finally {
+                if (!chained) demRetrying.set(false)
+            }
+        }
+    }
+
+    /** DEM tiles [back] came again at [t]: what remembers them as missing is forgotten, and the elevation source refreshed. */
+    private fun demBack(back: List<String>, t: Long) {
+        if (isDirect) {
+            direct.forgetFailures()
+            DirectTrace.mark("dBack ${back.size}")
+        }
+        app.tiles.online?.forgetMissing()
+        fetcher?.retryNow() // the map's next requests for tiles that failed in the meantime are not answered from the fetcher's failure memo
+        val names = back.toSet()
+        demHaloVariantsDropped.addAndGet(cache.clearWhere { OnlineTiles.namesHaloTile(it, names) }.toLong())
+        demRefresh.recovered(t, back.size)
+        if (demRefresh.claim(t)) refreshDemSource()
+    }
+
+    /** The style JSON is made here; the swap is posted to the UI thread, not awaited. A swap skipped mid-style-load is wanted again. */
+    private fun refreshDemSource() {
+        demSourceRefreshes.incrementAndGet() // first: the new style URLs carry it, so MapLibre takes them as new tile sets
+        val json = app.tiles.style()
+        main.post {
+            val result = runCatching { app.map.map?.style?.let { DemSourceRefresh.refresh(it, json) } ?: mapOf("skipped" to "no map") }
+                .getOrElse { mapOf("skipped" to "error: ${it.message}") }
+            if (result["skipped"] == OsmSourceRefresh.STYLE_LOADING) demRefresh.skipped()
+            lastDemRefresh = result + ("at" to System.currentTimeMillis())
+            if (isDirect) DirectTrace.mark("demRefresh ${result["layers"] ?: result["skipped"]}")
+            Log.i(TAG, "elevation source refreshed for recovered DEM tiles: $result")
         }
     }
 
@@ -510,6 +665,11 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
         "stalledOsm" to stalledOsm.json() + osmRefresh.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138; T144: settleMs, refreshes
+        "stalledDem" to stalledDem.json() + demRefresh.json() + linkedMapOf( // T155
+            "sourceRefreshes" to demSourceRefreshes.get(), "lastSourceRefresh" to lastDemRefresh, "retrying" to demRetrying.get(),
+            "canaries" to demCanaries.get(), "canaryGapMs" to canaryGapMs, "sourcesAnswered" to demSourcesAnswered.get(),
+            "haloVariantsDropped" to demHaloVariantsDropped.get(),
+        ),
         "styleRefreshesAfterReconnect" to refreshes.get(),
         "serverInfo" to info?.let { mapOf("demMinZoom" to it["demMinZoom"], "demMaxZoom" to it["demMaxZoom"], "osmMaxZoom" to it["osmMaxZoom"]) },
         "download" to region.json(),
@@ -527,7 +687,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
      * `tools/android-check.py` reads its `recentTrims`; finding 2026-10-23-direct-step-live-heap-unread-with-a-server).
      */
     private fun directJson(): Map<String, Any?> =
-        if (isDirect) linkedMapOf<String, Any?>("direct" to true) + direct.json() + mapOf("notReadyAnswered" to app.tiles.online?.notReady?.get(), "refreshesAfterRendering" to renderRefreshes.get())
+        if (isDirect) linkedMapOf<String, Any?>("direct" to true) + direct.json() + mapOf("notReadyAnswered" to app.tiles.online?.notReady?.get(), "refreshesAfterRendering" to renderRefreshes.get(), "refreshesAfterRenderingSkipped" to renderRefreshesSkipped.get())
         else linkedMapOf("direct" to false, "memory" to HeapGuard.json())
 
     companion object {
@@ -536,6 +696,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
         const val CACHED = "cached"
         const val PROBE_ONLINE_MS = 30_000L
         const val PROBE_OFFLINE_MS = 5_000L
+        /** T155: the gap before the next canary DEM try ([retryStalledDem]): after one that stalled, and the most after quick failures. */
+        const val CANARY_MIN_GAP_MS = 2_000L
+        const val CANARY_MAX_GAP_MS = 30_000L
         /** T74: the content versions of every source, kept across restarts (outside the tile cache directory). */
         const val VERSIONS_FILE = "online/versions.json"
 
