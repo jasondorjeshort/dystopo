@@ -201,7 +201,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 - `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
 - `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`), a route
-  corridor or (T140) a polygon (tile lists); `GET /area` for the parameters, the shapes read and the manifest
+  corridor or (T140) a polygon (tile lists); T157: `demMaxZoom` or `detail=full|medium|less` caps the elevation
+  below the vector tiles; `GET /area` for the parameters, the shapes read, the zoom caps and the manifest
   version. Below, Areas of interest. Token-protected.
 - `/sync/pull`, `/sync/push`, `/sync/status`, `/sync/tracks[/{id}.gpx]`, `/sync/routes[?full=1]`: the sync peer
   (docs/PLANNING.md, Sync). T92: `?full=1` adds each route's `path` value and `waypointList` (the browser
@@ -337,12 +338,16 @@ curl -X POST -H "Authorization: Bearer $TOKEN" "https://maps.example.org/area?bb
 
 `POST /area` takes the area as a JSON body (the area object below, or `{"area": {...}, "pack": 0}`) or as
 query parameters (`bbox=w,s,e,n`, `line=lat,lon;lat,lon;...` or `ring=lat,lon;lat,lon;lat,lon` with latitude
-first, further rings after `|`, or `around=lat,lon` with `radiusM`; `bufferM`, `minZoom`, `maxZoom`, `name`).
-Options (query or body): `pack=1|0` (default: 1 for a box, 0 for a corridor or a polygon), `profile`,
+first, further rings after `|`, or `around=lat,lon` with `radiusM`; `bufferM`, `minZoom`, `maxZoom`, `demMaxZoom`,
+`name`; T157: `detail=full|medium|less` sets the zooms of a detail, over the zoom parameters).
+Options (query or body): `pack=1|0` (default: 1 for a box without `demMaxZoom`, 0 for a corridor, a polygon or a
+capped area), `profile`,
 `fallback`, `source` (as for `/build`), `retry=1` (build again after a failed build). It is token-protected
 like `/build`, because a box starts a build. `GET /area` lists the parameters and limits, `manifestVersion`
-(the newest it reads, 2) and `shapes` (`box`, `corridor`, `polygon`; a phone treats a server whose answer has
-no `shapes` as reading box and corridor only) and `maxAreaTiles`.
+(the newest it reads, 3 since T157) and `shapes` (`box`, `corridor`, `polygon`; a phone treats a server whose answer has
+no `shapes` as reading box and corridor only), `maxAreaTiles`, and (T157) `zoomCaps` (`["dem"]`: it reads `demMaxZoom`;
+a phone asks a server without it for no capped manifest, and takes a server's manifest only when its `id` is the
+area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `demMaxZoom`).
 
 - **A box** (or `pack=1`) is a region pack built through the same jobs as `POST /build` (name: `name`, else
   the area's name when it is a valid pack name, else `area-<12 hex digits of the id>`; the outdoors profile
@@ -366,8 +371,13 @@ no `shapes` as reading box and corridor only) and `maxAreaTiles`.
   comes first; over `DYSTOPO_AREA_MAX_TILES` its 413 ends "lower maxZoom or draw a smaller area". The area within a
   distance of a point is the one-point corridor up to 20 km (every build since T75 reads it), a 48-vertex
   polygon circle beyond.
+- **A capped area** (T157, ADR 0047): any shape with `demMaxZoom` lists DEM tiles from z6 to `demMaxZoom` and
+  vector tiles to `min(maxZoom, 14)`, as a **version 3** manifest. The medium detail is `maxZoom` 14 with
+  `demMaxZoom` 13 (`detail=medium`): every vector tile of full detail, the elevation to z13 (the 5 km disc around
+  Paradise: 274 tiles, about 24 MiB, against 538 tiles and 64 MiB at full detail). A capped box is tiles; `pack=1`
+  with a cap is a 400, "a pack holds one zoom range; leave out demMaxZoom for a pack, or ask for tiles (pack=0)".
 
-### The manifest, field by field (versions 1 and 2)
+### The manifest, field by field (versions 1 to 3)
 
 ```
 {"version": 1, "id": "affd2044dcca0ad24", "name": "Planned: Paradise to Panorama Point", "status": "ready",
@@ -391,14 +401,17 @@ no `shapes` as reading box and corridor only) and `maxAreaTiles`.
 ```
 
 - `version`: the format version, the lowest that holds the content (T140, ADR 0041 §2): 1 for a box or a
-  corridor, 2 for a polygon. A reader checks `version`, then the area's `kind`, then the fields; a version newer
-  than it reads ("manifest version 3 is newer than this app reads (2)") or a kind it does not know ("kind must be
+  corridor, 2 for a polygon, 3 for any area with `demMaxZoom` (T157, ADR 0047: a version 2 reader would ignore the
+  field and fetch the elevation to `maxZoom`, so it refuses the manifest instead). A reader checks `version`, then the
+  area's `kind`, then the fields; a version newer than it reads ("manifest version 4 is newer than this app reads (3)")
+  or a kind it does not know ("kind must be
   box, corridor or polygon (got '...')") is refused rather than misread, and a phone shows "This phone runs an
   older Dystopo; update it to use this area." with that sentence under it. Builds before T140 parse the area
   first, so they answer a polygon with "kind must be box or corridor"; a phone falls back to its own manifest on
   a 400 that starts "kind must be", as on 404 and 405.
 - `id`: the area's content id, `a` + 16 hex digits of the SHA-256 of the geometry (coordinates rounded to
-  1e-6 degrees, the buffer) and the zoom range. The name is not part of it, so the same area asked twice (or by
+  1e-6 degrees, the buffer) and the zoom range (T157: `:dem<z>` after the zooms when `demMaxZoom` is set, so the
+  medium, less and full areas of one shape have three ids and no earlier id changed). The name is not part of it, so the same area asked twice (or by
   two phones) has the same id; the phone keys its area records by it.
 - `name`: the area's name, else the pack name (box) or the id.
 - `status`: `ready` (every item can be fetched now), `building` (HTTP 202: a pack is being built; `build`
@@ -417,6 +430,8 @@ no `shapes` as reading box and corridor only) and `maxAreaTiles`.
   rings never overlap and none crosses the antimeridian), `"bufferM"` (0 to 20000, default 0), zooms, name}; its
   id hashes `polygon:<buffer>:<rings>:<zooms>`. Writers simplify to about 2,000 vertices over all rings and add
   the tolerance to `bufferM`; readers take any count (the 2 MiB body is the only hard limit). Zooms 0 to 16.
+  T157: any kind may carry `"demMaxZoom"` after `maxZoom` (written only when set, below `maxZoom`; a reader drops a
+  cap at or above it): the DEM tiles stop there, the vector tiles at `min(maxZoom, 14)`.
 - `bounds`: the rectangle holding the area (a corridor's line grown by its buffer), `[w, s, e, n]`.
   `lengthM`: a corridor's line length in metres (great circle).
 - `bytes`: the sum of the items' `bytes`; `bytesExact`: false while any item's size is an estimate.

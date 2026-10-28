@@ -4,6 +4,7 @@ Date: 2026-10-23
 Status: accepted (the coordinator's technical decision after the critic; the owner's positions in
 Decision §5 are built as written in alpha and adjusted afterwards, ADR 0031)
 §3's memory guard amended by `0045-area-tiles-as-rows.md` (2026-10-27): tiles held as rows, no heap refusal, the pinned budget the one steer.
+§5 amended by `0047-medium-detail-as-a-per-kind-zoom-cap.md` (2026-10-28): a third detail, elevation to z13 with vector to z14, through an optional `demMaxZoom` in the area (`:dem<z>` in the id, manifest version 3).
 
 Record: proposal `../proposals/0041-polygon-areas.md` and `../proposals/0041-critic-review.md`
 (0 blocking, 5 serious, 6 minor; the recommendation upheld after corrections); the owner's answer
