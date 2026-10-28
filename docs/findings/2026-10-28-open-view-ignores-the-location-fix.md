@@ -53,14 +53,15 @@ through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POS
 
 ## Not yet known
 
-- Whether the open view should follow the last known fix, the last saved view, or the pack, and what the owner expects.
+- (Decided, owner 2026-10-28: the open view is the most recent of the last fix, the last saved view and the pack's view,
+  whichever was set last. Not yet checked: whether a saved view exists today and where the time of each of the three is kept.)
 - Whether a fresh GPS fix at launch (a real device fix, not injected) would move the camera on open. Only injected fixes
   were tested.
 - Whether the start-up crash repeats, and what first touches `MapViewport` when it does.
 
 ## Next
 
-1. The owner decides the open rule (fix, saved view, or pack). The centring task builds that rule.
+1. The centring task (TASKS.md, next wave) builds the owner's rule: the most recent of the last fix, the saved view and the pack's view.
 2. The crash: a reproduction on the phone (relaunch after an injected fix, several times) with the first `MapViewport` touch
    logged, or a task that makes `MapViewport`'s state created on the main thread.
 3. The centring task's before-and-after readings come from the debug routes above, in its report.
