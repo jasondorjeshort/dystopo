@@ -6,8 +6,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Now
 
-- Wave 21 is on the board past the critic: nine tasks, launch order T149, T150, T152, T151, T156, T153, T157, T154,
-  T155 (T154 and T155 may take any slot). **One agent at a time** (owner, 2026-10-27): implementer, verifier, merge,
+- Wave 21 (nine tasks, past the critic) runs **one agent at a time** (owner, 2026-10-27): implementer, verifier, merge,
   next task. Merged and logged, branches and worktrees cleaned: T149 (dbe6e69), T150 (98c9a9d), T152 (3f0af48),
   T151 (213bb38), T156 (5412c7b), T153 (2d94d75), T155 (ad31b31), T154 (9830d8d). The post-wave sweep (T154's,
   `out/sweep-w21/`) was green but `notices`, fixed on its branch. **Release in progress:** the CHANGELOG cut and
