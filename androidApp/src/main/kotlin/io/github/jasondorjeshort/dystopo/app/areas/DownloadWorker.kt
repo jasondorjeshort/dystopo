@@ -99,7 +99,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             run.end(if (next != null) "next in ${next / 1000} s" else "chain ends")
             return Result.success()
         } catch (e: CancellationException) {
-            val reason = stopReason
+            // The stop reason is API 31+; before, a stop just after a tap's REPLACE is the app's own (the rest unknown).
+            val reason = if (Build.VERSION.SDK_INT >= 31) stopReason
+            else if (System.currentTimeMillis() - lastReplaceAt < 10_000) WorkInfo.STOP_REASON_CANCELLED_BY_APP else WorkInfo.STOP_REASON_UNKNOWN
             val pause = pauseOnStop(reason, Foreground.started)
             val paused = pause && AreaDownload.pause(PAUSE_REASON + stopReasonName(reason))
             run.end("stopped: ${stopReasonName(reason)}${if (paused) ", download paused" else if (pause) "" else ", download left running"}")
@@ -178,12 +180,15 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         private val cancels = AtomicInteger()
         @Volatile private var last: Run? = null
         @Volatile private var lastStop: String? = null
+        @Volatile private var lastReplaceAt = 0L
 
         private val app: Context get() = DystopoApp.instance
 
         /** T156: hands a started download to the chain ([handOverPolicy]). */
         fun handOver(context: Context, trigger: String) {
-            WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE, handOverPolicy(trigger), request(0L))
+            val policy = handOverPolicy(trigger)
+            if (policy == ExistingWorkPolicy.REPLACE) lastReplaceAt = System.currentTimeMillis()
+            WorkManager.getInstance(context).enqueueUniqueWork(UNIQUE, policy, request(0L))
         }
 
         /** T156: keeps the chain enqueued (KEEP: nothing when it is), its run after [delayMs]. */
