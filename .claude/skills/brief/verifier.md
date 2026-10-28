@@ -23,7 +23,11 @@ port, host port, or "none">.
    same branch.
 6. Scan the report and the branch's commit messages for personal data:
    `git log origin/main..HEAD --format=%B | java tools/PrivacyCheck.java scan`, and the report text
-   through the same scanner.
+   through the same scanner. The scanner only knows the private terms in `devtool.local.json`, which
+   some machines lack, so also read the report, the commit messages and every doc, finding and test
+   the branch changes for coordinates (whole degrees too) and `view-<lat>n-<lon>w` pack names of any
+   place that is not a major landmark or an `areas.json` area, including readings taken from a
+   phone or an emulator's debug routes. A hit is a FIX: describe the place generically.
 
 You do not edit the code. A small fix-up may go to the implementer directly (<its agent id>);
 anything that changes scope goes to the coordinator. Temporary files go in a folder of your own under

@@ -99,7 +99,10 @@ means rewrite it first: it becomes the merge commit's body, and pushed history i
 a private term even if it is a famous summit; use only `areas.json` names in anything written down.
 Local file names leak too: the live server lists every pack in `out/` by file name through `/catalog`
 and `/route/packs`, and agents copy such listings into reports and sweep summaries, so a local pack
-for a private place gets an alias name (the owner's demo pack is `sdc`), never the place name. `out/`
+for a private place gets an alias name (the owner's demo pack is `sdc`), never the place name. The
+scanner cannot see a place `devtool.local.json` does not list (the second PC has none): coordinates
+and `view-<lat>n-<lon>w` pack names read off the owner's phone leaked into a finding that way
+(2026-10-28), so the coordinator reads reports for them too, and the verifier is told to. `out/`
 and the caches are regenerable; the only files on the machine that are not are the signing key and
 `devtool.local.json`.
 
