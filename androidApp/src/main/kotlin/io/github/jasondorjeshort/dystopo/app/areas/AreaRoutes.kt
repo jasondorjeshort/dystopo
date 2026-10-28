@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.trips.Trips
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.TripCorridor
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
@@ -20,7 +21,10 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   "bufferM": 500, "minZoom": 8, "maxZoom": 15}`, see [AreaOfInterest]) or query parameters (`bbox=w,s,e,n`,
  *   `line=lat,lon;lat,lon`, or `trip=<trip id or prefix>` for a kept route's corridor; with `bufferM`, `minZoom`,
  *   `maxZoom`, `name`, `contours=1`). A box is "Download this region" (a pack); a corridor is fetched into the tile
- *   cache and pinned. `GET /areas/download`: progress; `DELETE /areas/download`: cancel.
+ *   cache and pinned. `GET /areas/download`: progress; `DELETE /areas/download`: cancel. T157: `demMaxZoom` (body or
+ *   query) caps the elevation below `maxZoom` (vector to `min(maxZoom, 14)`), or `detail=full|medium|less` in the query sets
+ *   the zooms (medium: `maxZoom` 14, `demMaxZoom` 13; its id differs from the less and full ones'); a box with a cap is
+ *   refused (400: a region pack holds one zoom range).
  * - T95: `POST /areas/plan` with the same parameters: the corridor's manifest size, tiles per route, and whether the
  *   pinned budget allows it (`fits`, `refusal`), with nothing started (what a trip's Offline button shows).
  *   `GET /areas` and `GET /areas/{id}` give each area's `versions` (per source, what its tiles were fetched at),
@@ -57,7 +61,9 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   a drawn area or a disc is made on the phone and adds `shape` (box, corridor, disc, polygon), `manifestVersion`,
  *   `sizeLine` ("About 170 MB (1,300 tiles) at full detail"), `timeLine` and `seconds` (at the last completed download's
  *   speed; null before the first), `lessDetail` (z8 to z13: `zooms`, `bytes`, `tiles`, `line` "Less detail (about 30 MB)",
- *   `fits`, `refusal`) with `offerLessDetail` (when the full plan is refused). Over the budget its `refusal` is "This area is about 450 MB; 1.6 GB of your 2 GB offline budget is in use. Make the
+ *   `fits`, `refusal`) with `offerLessDetail` (when the full plan is refused); T157: `mediumDetail` (`zooms` 8 to 14,
+ *   `demMaxZoom` 13, `id`, `bytes`, `tiles`, `line` "Medium detail (about 60 MB)", `fits`, `refusal`), and every plan's
+ *   `demMaxZoom` and `detail` (`full`, `medium`, `less`, or null for other zooms). Over the budget its `refusal` is "This area is about 450 MB; 1.6 GB of your 2 GB offline budget is in use. Make the
  *   area smaller, choose less detail, or raise the budget in Settings › Storage." `GET /areas` gives each area
  *   `needsNewerApp` (a record of a version or kind this build cannot read, kept as it was, pinned by its `bounds` and
  *   `zooms`; `needsNewerAppReason` the raw sentence; Pin, Retry and Dismiss answer 409), a polygon's `rings`, `vertices`
@@ -66,23 +72,26 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   that made, refused, cancelled or released a corridor (a run that did nothing leaves it).
  * - T142 (ADR 0041 §5), the area picker ([AreaPicker]), so the sheet is scripted and screenshotted:
  *   - `GET /areas/countries[?find=text][&wait=ms]`: the bundled countries ([CountrySizes]; all, or `Countries.find`'s matches
- *     in its order), each with `code`, `name`, `nameLong`, `continent`, the row's `detail` (`full` or `less`), `zooms`,
- *     `state` (`measuring`, `fits`, `over_budget`, `too_large`), `greyed`, `sizeText` ("About 28 MB at less detail"),
- *     `sentence` (a greyed row's), `bytes`, `tiles`, `less` and `full` (measured sizes), `downloaded` (the row's mark); with
+ *     in its order), each with `code`, `name`, `nameLong`, `continent`, the row's `detail` (`full`, `medium` or `less`: the
+ *     deepest that fits the budget), `zooms`, `demMaxZoom`, `state` (`measuring`, `fits`, `over_budget`, `too_large`),
+ *     `greyed`, `sizeText` (T157: the three sizes, "Less 28 MB · Medium 40 MB · Full 230 MB"), `sentence` (a greyed row's),
+ *     `bytes`, `tiles`, `less`, `medium` and `full` (each `bytes`, `tiles`, `id`, `estimated`: the full detail is estimated
+ *     from z14's cover when its floor is past the budget), `downloaded` (the row's mark) and `downloadedId`; with
  *     `wait` it measures the rows first. At the top `measured`, `greyed`, `tooLargeNames`, `pinnedBytes`, `budgetMb`, `heapTiles`
  *     (T152: the tiles the tile cache index holds comfortably; said, never a refusal).
  *     `POST /areas/countries[?filter=text]` opens the list in the sheet with that filter.
- *   - `POST /areas/country?code=<ADM0_A3 or ISO>[&detail=full|less]`: the country's summary (the default detail without `detail`).
+ *   - `POST /areas/country?code=<ADM0_A3 or ISO>[&detail=full|medium|less]`: the country's summary (the default detail without `detail`).
  *   - `POST /areas/draw[?ring=lat,lon;lat,lon;...]`: Draw an area (the ring, else four vertices from the current view);
  *     `GET /areas/draw[?wait=ms]` (also `GET /areas/picker`): the picker's state: `mode`, `name`, `detail`, `planned` (the
- *     size line is of the shape in view), `sizeLine`, `alternative` (the other detail's line), `timeLine`, `refusal`,
- *     `canDownload`, `bytes`, `tiles`, `full` and `less` (the plans), `drawing` (`ring`, `vertices`, `areaKm2`, `canUndo`,
+ *     size line is of the shape in view), `sizeLine`, `alternative` (the first other detail's line), T157 `alternatives`
+ *     (`detail`, `line` of each detail not shown) and `hint` (the medium detail's line), `timeLine`, `refusal`, `canDownload`,
+ *     `bytes`, `tiles`, `zooms`, `demMaxZoom`, `id`, `full`, `medium` and `less` (the plans), `drawing` (`ring`, `vertices`, `areaKm2`, `canUndo`,
  *     gesture counters), `around`, `country`. `POST /areas/draw/touch?op=drag&index=i[&mid=1]&to=lat,lon`, `op=tap&at=lat,lon`
  *     and `op=hold&index=i` act through the map view's own touch dispatch, as a finger would (drag a vertex or the midpoint
  *     after it, tap the map, long-press a vertex); `POST /areas/draw/undo` is Undo. Each answers the state (`wait` as above).
  *   - `POST /areas/around?at=lat,lon[&radiusM=][&name=][&sheet=1]`: "Keep offline around here" (as the long-press card's
  *     entry, or a search result's with `name`).
- *   - `POST /areas/picker?detail=full|less&name=&radiusM=`: the summary's choices; `POST /areas/picker/download` its
+ *   - `POST /areas/picker?detail=full|medium|less&name=&radiusM=`: the summary's choices; `POST /areas/picker/download` its
  *     Download (202, the download's start; 409 with the refusal past the budget); `POST /areas/picker/close` Cancel.
  *   - T153: `POST /areas/region[?bbox=w,s,e,n][&zoom=z][&wait=ms]`: the overlay's "Download this region" (the visible map and
  *     its zoom by default): the region's summary; `GET /areas/picker` adds `region` (`bbox`, `viewZoom`, `defaultDetail`,
@@ -177,7 +186,7 @@ object AreaRoutes {
             }
             "POST" to "/areas/country" -> {
                 val code = q["code"] ?: throw IllegalArgumentException("code=<country code> (GET /areas/countries)")
-                val detail = q["detail"]?.also { require(it == DETAIL_FULL || it == DETAIL_LESS) { "detail must be full or less" } }
+                val detail = q["detail"]?.also { require(it in DETAILS) { "detail must be ${DETAILS.joinToString(", ")}" } }
                 app.map.onMain { AreaPicker.openCountry(code, detail) }
                 Response.json(pickerState(app, q))
             }
@@ -217,7 +226,7 @@ object AreaRoutes {
                 Response.json(pickerState(app, q))
             }
             "POST" to "/areas/picker" -> {
-                val detail = q["detail"]?.also { require(it == DETAIL_FULL || it == DETAIL_LESS) { "detail must be full or less" } }
+                val detail = q["detail"]?.also { require(it in DETAILS) { "detail must be ${DETAILS.joinToString(", ")}" } }
                 val radius = q["radiusM"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("radiusM must be metres") }
                 app.map.onMain {
                     detail?.let { AreaPicker.detailChoice = it }
@@ -262,14 +271,16 @@ object AreaRoutes {
         val records = Areas.all()
         val rows = list.map { c ->
             val e = sizes[c.code]
-            val rec = records.firstOrNull { r -> e != null && (r.id == e.lessId || r.id == e.fullId) }
+            val rec = records.firstOrNull { r -> e != null && r.id in e.ids }
             val row = countryRow(e, pinned, rec?.takeIf { it.pinned }?.bytes ?: 0L, budget)
-            fun m(x: CountryMeasure?) = x?.let { linkedMapOf("bytes" to it.bytes, "tiles" to it.tiles, "tooLarge" to it.tooLarge) }
+            fun m(x: CountryMeasure?, id: String?) = x?.let { linkedMapOf("bytes" to it.bytes, "tiles" to it.tiles, "tooLarge" to it.tooLarge, "estimated" to it.estimated, "id" to id) }
+            val detail = AreaDetail.byKey(row.detail) ?: AreaDetail.LESS
             c to linkedMapOf(
                 "code" to c.code, "iso3" to c.iso3, "name" to c.name, "nameLong" to c.nameLong, "continent" to c.continent, "toleranceM" to c.toleranceM,
-                "detail" to row.detail, "zooms" to listOf(AreaPicker.MIN_ZOOM, if (row.detail == DETAIL_FULL) AreaPicker.FULL_MAX_ZOOM else AreaPicker.LESS_MAX_ZOOM),
+                "detail" to row.detail, "zooms" to listOf(AreaDetail.MIN_ZOOM, detail.maxZoom), "demMaxZoom" to detail.demMaxZoom,
                 "state" to row.state.name.lowercase(), "greyed" to row.greyed, "sizeText" to row.sizeText, "sentence" to row.sentence,
-                "bytes" to row.bytes, "tiles" to row.tiles, "less" to m(e?.less), "full" to m(e?.full), "downloaded" to downloadMark(rec?.state),
+                "bytes" to row.bytes, "tiles" to row.tiles, "less" to m(e?.less, e?.lessId), "medium" to m(e?.medium, e?.mediumId), "full" to m(e?.full, e?.fullId),
+                "downloaded" to downloadMark(rec?.state), "downloadedId" to rec?.id,
             )
         }
         return linkedMapOf(

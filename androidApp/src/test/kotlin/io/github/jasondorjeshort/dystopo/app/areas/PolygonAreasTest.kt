@@ -69,15 +69,15 @@ class PolygonAreasTest {
     }
 
     @Test
-    fun aVersion3RecordIsKeptWithTheVersionSentenceAndARecordWithoutBoundsAsItIs() {
-        val v3 = """{"version":3,"id":"a00000000000000aa","name":"Later","bounds":[-121.8,46.7,-121.7,46.8],"zooms":[8,15],"area":{"kind":"polygon","rings":[]}}"""
+    fun aNewerVersionRecordIsKeptWithTheVersionSentenceAndARecordWithoutBoundsAsItIs() {
+        val v4 = """{"version":4,"id":"a00000000000000aa","name":"Later","bounds":[-121.8,46.7,-121.7,46.8],"zooms":[8,15],"area":{"kind":"polygon","rings":[]}}"""
         val bare = """{"kind":"region","name":"No bounds"}"""
-        val files = AreaFiles.decode(null, """{"version":2,"areas":[$v3,$bare]}""")
+        val files = AreaFiles.decode(null, """{"version":2,"areas":[$v4,$bare]}""")
         val r = files.records.single()
-        assertEquals("manifest version 3 is newer than this app reads (2)", r.opaque!!.reason, "the version before the kind")
+        assertEquals("manifest version 4 is newer than this app reads (3)", r.opaque!!.reason, "the version before the kind")
         assertEquals(listOf(MiniJson.parseObject(bare)), files.unreadable)
         val sibling = MiniJson.parseObject(files.siblingText()!!)["areas"] as List<*>
-        assertEquals(listOf(MiniJson.parseObject(v3), MiniJson.parseObject(bare)), sibling)
+        assertEquals(listOf(MiniJson.parseObject(v4), MiniJson.parseObject(bare)), sibling)
         assertEquals("""{"version":1,"areas":[]}""", files.mainText())
     }
 

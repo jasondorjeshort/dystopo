@@ -8,6 +8,7 @@ import com.github.ajalt.clikt.parameters.options.multiple
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.int
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail
 import io.github.jasondorjeshort.dystopo.areas.AreaLimit
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
@@ -28,6 +29,9 @@ import kotlinx.serialization.json.JsonElement
  * T152: every range is planned at any size (the tile sets are rows): the estimate (tiles times `AreaManifest.estimate`,
  * `estimated` true), the rows a download walks, and `pastHeapLimit` when the tiles pass what the phone's tile cache index
  * holds comfortably on a 576 MB heap (`AreaLimit`; said, never a refusal).
+ * T157: a range may cap the DEM below its top (`8-14/13`: elevation to z13, vector to z14), and the default ranges are the
+ * three details (`8-13`, `8-14/13`, `8-15`: less, medium, full; `detail` names each, with the area's `id` and
+ * `manifestVersion` at that range).
  *
  * ```
  * devtool area-plan --around 46.786,-121.735 --radius 5km
@@ -42,30 +46,34 @@ class AreaPlanCommand : CliktCommand(name = "area-plan") {
     private val around by option("--around", help = "lat,lon of the centre of a disc")
     private val radius by option("--radius", help = "the disc's radius: metres, or with km or mi (5km, 3mi)")
     private val buffer by option("--buffer", help = "a polygon's buffer in metres").double().default(0.0)
-    private val ranges by option("--ranges", help = "zoom ranges to plan, min-max,min-max").default("8-13,8-15")
+    private val ranges by option("--ranges", help = "zoom ranges to plan, min-max[/demMax],... (8-14/13: elevation to z13, vector to z14)").default("8-13,8-14/13,8-15")
     private val demMinZoom by option("--dem-min-zoom", help = "the lowest DEM zoom (contours sample coarser zooms than they show)").int().default(LiveTiles.LIVE_MIN_ZOOM)
     private val margin by option("--margin", help = "tiles of margin at every zoom").int().default(1)
     private val name by option("--name", help = "the area's name")
 
     override fun run() {
-        val zoomRanges = ranges.split(',').filter { it.isNotBlank() }.map { r ->
-            val p = r.trim().split('-').map { it.trim().toIntOrNull() }
-            if (p.size != 2 || p.any { it == null } || p[0]!! > p[1]!!) throw UsageError("--ranges must be min-max,min-max (got '$r')")
-            p[0]!!..p[1]!!
-        }
+        val zoomRanges = ranges.split(',').filter { it.isNotBlank() }.map { parseRange(it) }
         if (zoomRanges.isEmpty()) throw UsageError("--ranges needs at least one min-max")
         val base = try {
-            shape(zoomRanges.first())
+            shape(zoomRanges.first().first)
         } catch (e: IllegalArgumentException) {
             throw UsageError(e.message ?: "bad area")
         }
         val heap = Runtime.getRuntime().maxMemory()
-        val plans = zoomRanges.map { zs ->
-            val area = base.copy(minZoom = zs.first, maxZoom = zs.last)
-            val dem = minOf(demMinZoom, zs.last)..minOf(zs.last, LiveTiles.LIVE_MAX_ZOOM)
-            val osm = (zs.first..minOf(zs.last, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
+        val plans = zoomRanges.map { (zs, demCap) ->
+            val area = try {
+                base.withZooms(zs.first, zs.last, demCap) // T157: the cap dropped when at or past the top
+            } catch (e: IllegalArgumentException) {
+                throw UsageError(e.message ?: "bad range")
+            }
+            val dem = minOf(demMinZoom, area.demTop)..minOf(area.demTop, LiveTiles.LIVE_MAX_ZOOM)
+            val osm = area.osmZooms(LiveTiles.OSM_MAX_ZOOM)
             val bound = AreaLimit.upperBound(area, dem, osm, margin)
-            val row = linkedMapOf<String, Any?>("zooms" to listOf(zs.first, zs.last), "demZooms" to listOf(dem.first, dem.last), "osmZooms" to osm?.let { listOf(it.first, it.last) })
+            val row = linkedMapOf<String, Any?>(
+                "zooms" to listOf(zs.first, zs.last), "demMaxZoom" to area.demMaxZoom, "detail" to AreaDetail.of(area)?.key, // T157
+                "id" to area.id, "manifestVersion" to area.manifestVersion,
+                "demZooms" to listOf(dem.first, dem.last), "osmZooms" to osm?.let { listOf(it.first, it.last) },
+            )
             row["upperBound"] = bound
             val t0 = System.nanoTime()
             val items = AreaManifest.tileItems(area, dem, osm, margin)
@@ -122,6 +130,17 @@ class AreaPlanCommand : CliktCommand(name = "area-plan") {
     }
 
     companion object {
+        /** T157: `min-max` or `min-max/demMax` as the zooms and the DEM cap (null for none). */
+        fun parseRange(r: String): Pair<IntRange, Int?> {
+            val parts = r.trim().split('/')
+            val p = parts[0].split('-').map { it.trim().toIntOrNull() }
+            val cap = parts.getOrNull(1)?.trim()?.toIntOrNull()
+            if (parts.size > 2 || p.size != 2 || p.any { it == null } || p[0]!! > p[1]!! || (parts.size == 2 && cap == null)) {
+                throw UsageError("--ranges must be min-max[/demMax],... (got '$r')")
+            }
+            return p[0]!!..p[1]!! to cap
+        }
+
         /** T152: the emulator's and a typical phone's large heap (`largeHeap`), for `pastHeapLimit`. */
         const val PHONE_HEAP = 576L shl 20
 

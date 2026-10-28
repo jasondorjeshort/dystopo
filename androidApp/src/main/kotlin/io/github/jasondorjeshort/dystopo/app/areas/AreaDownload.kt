@@ -9,6 +9,7 @@ import io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail
 import io.github.jasondorjeshort.dystopo.areas.AreaLimit
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
@@ -234,6 +235,8 @@ object AreaDownload {
         val bytesPerMs: Double? = null,
         /** T140: the same area at less detail (z8 to z13), for a drawn area or a disc deeper than z13. */
         val lessDetail: Plan? = null,
+        /** T157: the same area at medium detail (elevation to z13, vector to z14), for a drawn area or a disc at full detail. */
+        val mediumDetail: Plan? = null,
         /** T152: the tiles the tile cache's index holds comfortably ([heapTiles]); past it the plan says so and still proceeds. */
         val heapTiles: Long = Long.MAX_VALUE,
         /** T152: milliseconds the manifest took to make (the covers filled row by row); null for a server's. */
@@ -249,21 +252,29 @@ object AreaDownload {
             "id" to area.id, "name" to area.name, "kind" to area.kind, "shape" to shapeName(area), "manifestVersion" to area.manifestVersion,
             "bytes" to bytes, "mb" to Math.round(bytes / 104_857.6) / 10.0, "tiles" to tiles, "estimated" to !manifest.bytesExact, "rows" to manifest.rowCount,
             "perRoute" to manifest.items.filterIsInstance<TilesItem>().associate { it.route to mapOf("tiles" to it.count, "bytes" to it.bytes, "zooms" to it.zooms?.let { z -> listOf(z.first, z.last) }) },
-            "zooms" to listOf(area.minZoom, area.maxZoom), "bufferM" to bufferOf(area), "lengthM" to area.lengthM,
+            "zooms" to listOf(area.minZoom, area.maxZoom), "demMaxZoom" to area.demMaxZoom, "detail" to AreaDetail.of(area)?.key, // T157
+            "bufferM" to bufferOf(area), "lengthM" to area.lengthM,
             "manifestFrom" to manifestFrom, "manifestMs" to manifestMs, "pinnedBytes" to pinnedBytes, "alreadyBytes" to alreadyBytes, "budgetMb" to budgetMb,
             "fits" to (refusal == null), "refusal" to refusal, "refused" to (refusal != null),
             // T152: past the tile cache index's comfortable size the download still proceeds (ADR 0041 §3's T152 note).
             "pastHeapLimit" to pastHeapLimit, "heapTiles" to heapTiles.takeIf { it != Long.MAX_VALUE },
             // T140 (ADR 0041 §3, §5): what the sheet shows before anything starts.
-            "sizeLine" to sizeLine(bytes, tiles, area.minZoom, area.maxZoom),
+            "sizeLine" to sizeLine(bytes, tiles, area.minZoom, area.maxZoom, area.demMaxZoom),
             "timeLine" to timeLine(bytes, bytesPerMs), "seconds" to bytesPerMs?.let { Math.round(bytes / it / 1000) },
             "lessDetail" to lessDetail?.let { l ->
                 linkedMapOf(
-                    "zooms" to listOf(l.area.minZoom, l.area.maxZoom), "bytes" to l.bytes, "tiles" to l.tiles, "line" to lessDetailLine(l.bytes),
+                    "zooms" to listOf(l.area.minZoom, l.area.maxZoom), "id" to l.area.id, "bytes" to l.bytes, "tiles" to l.tiles, "line" to lessDetailLine(l.bytes),
                     "fits" to (l.refusal == null), "refusal" to l.refusal,
                 )
             },
             "offerLessDetail" to (lessDetail != null && refusal != null),
+            // T157: the medium detail (ADR 0041 §5's T157 note), beside the less detail.
+            "mediumDetail" to mediumDetail?.let { l ->
+                linkedMapOf(
+                    "zooms" to listOf(l.area.minZoom, l.area.maxZoom), "demMaxZoom" to l.area.demMaxZoom, "id" to l.area.id, "bytes" to l.bytes, "tiles" to l.tiles,
+                    "line" to detailChoiceLine(AreaDetail.MEDIUM, l.bytes), "fits" to (l.refusal == null), "refusal" to l.refusal,
+                )
+            },
         )
     }
 
@@ -279,13 +290,17 @@ object AreaDownload {
         val own = pinnedOwn(Areas.get(area.id))
         val speed = downloadSpeed(recent.toList(), Areas.all())
         val less = if (withLessDetail && userShape(area) && area.maxZoom > LESS_DETAIL_MAX_ZOOM && area.minZoom <= LESS_DETAIL_MAX_ZOOM) {
-            plan(area.copy(maxZoom = LESS_DETAIL_MAX_ZOOM), withLessDetail = false)
+            plan(area.withZooms(area.minZoom, LESS_DETAIL_MAX_ZOOM), withLessDetail = false)
+        } else null
+        // T157: the medium detail beside it, for an area whose elevation goes past z13 and vector to z14.
+        val medium = if (withLessDetail && userShape(area) && area.maxZoom > AreaDetail.MEDIUM.maxZoom && area.demMaxZoom == null && area.minZoom <= LESS_DETAIL_MAX_ZOOM) {
+            plan(area.withZooms(area.minZoom, AreaDetail.MEDIUM.maxZoom, AreaDetail.MEDIUM.demMaxZoom), withLessDetail = false)
         } else null
         val t0 = System.currentTimeMillis()
         val fromServer = if (fetcher.server == DirectSources.SERVER || userShape(area)) null else serverManifest(fetcher.server, area, null)
         val m = fromServer ?: localManifest(area, fetcher.server)
         return Plan(
-            area, m, if (fromServer != null) "server" else "phone", pinned, own, AppSettings.pinnedCacheMb, bytesPerMs = speed, lessDetail = less,
+            area, m, if (fromServer != null) "server" else "phone", pinned, own, AppSettings.pinnedCacheMb, bytesPerMs = speed, lessDetail = less, mediumDetail = medium,
             heapTiles = heapTiles(), manifestMs = if (fromServer == null) System.currentTimeMillis() - t0 else null,
         )
     }
@@ -302,6 +317,7 @@ object AreaDownload {
     fun start(area: AreaOfInterest, name: String? = null, tripId: String? = null, contours: Boolean = false, manifest: AreaManifest? = null, trigger: String = TRIGGER_USER): Map<String, Any?> {
         val service = OnlineService.get(app)
         if (area.shape is AreaShape.Box) {
+            require(area.demMaxZoom == null) { "a box is a region pack, which holds one zoom range: leave out demMaxZoom, or draw an area for the medium detail" } // T157
             val b = area.bounds
             return linkedMapOf("kind" to "box", "region" to service.region.start(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), area.minZoom, minOf(area.maxZoom, OnlineTiles.DEM_MAX_ZOOM), name))
         }
@@ -657,7 +673,7 @@ object AreaDownload {
      * by row with at most [IN_FLIGHT] queued, as the tiles are.
      */
     private fun makeContours(j: Job, pool: java.util.concurrent.ExecutorService) {
-        val hi = minOf(j.area.maxZoom, OnlineTiles.DEM_MAX_ZOOM) + 1
+        val hi = minOf(j.area.demTop, OnlineTiles.DEM_MAX_ZOOM) + 1 // T157: one past the area's DEM (a medium area's z13)
         val lo = maxOf(j.area.minZoom, OnlineTiles.CONTOUR_MIN_ZOOM)
         val permits = Semaphore(IN_FLIGHT)
         for (z in lo..hi) {
@@ -680,18 +696,20 @@ object AreaDownload {
         permits.release(IN_FLIGHT)
     }
 
-    /** T140: the shapes each server's `GET /area` names (box and corridor when it names none: a server from before T140). */
-    private val shapesByServer = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    /**
+     * T140: the `GET /area` answer of each server (empty for a server without one); [serverShapesOf] reads its shapes (box
+     * and corridor when it names none: a server from before T140), T157 [serverZoomCapsOf] its zoom caps (none before T157).
+     */
+    private val areaHelpByServer = java.util.concurrent.ConcurrentHashMap<String, Map<String, Any?>>()
 
-    private fun serverShapes(server: String): List<String> = shapesByServer.getOrPut(server) {
+    private fun serverAreaHelp(server: String): Map<String, Any?> = areaHelpByServer.getOrPut(server) {
         val conn = CleartextPolicy.open("${server.trimEnd('/')}/area")
         try {
             conn.connectTimeout = 5_000
             conn.readTimeout = 10_000
-            val doc = if (conn.responseCode == 200) MiniJson.parseObject(conn.inputStream.use { it.readBytes().decodeToString() }) else emptyMap()
-            serverShapesOf(doc)
+            if (conn.responseCode == 200) MiniJson.parseObject(conn.inputStream.use { it.readBytes().decodeToString() }) else emptyMap()
         } catch (e: IOException) {
-            return listOf(AreaShape.KIND_BOX, AreaShape.KIND_CORRIDOR) // not kept: asked again next time
+            return emptyMap() // not kept: asked again next time
         } finally {
             conn.disconnect()
         }
@@ -699,7 +717,12 @@ object AreaDownload {
 
     /** `POST <server>/area` for [area] as tile lists (`pack=0`); null when the server has no `/area` (older) or cannot be reached. */
     private fun serverManifest(server: String, area: AreaOfInterest, j: Job?): AreaManifest? {
-        if (area.kind !in AreaShape.KINDS.take(2) && area.kind !in serverShapes(server)) return null // T140: it does not read this shape
+        if (area.kind !in AreaShape.KINDS.take(2) && area.kind !in serverShapesOf(serverAreaHelp(server))) return null // T140: it does not read this shape
+        // T157: a server from before the medium detail would ignore demMaxZoom and list the DEM to maxZoom: the phone makes it.
+        if (area.demMaxZoom != null && AreaManifest.ROUTE_DEM !in serverZoomCapsOf(serverAreaHelp(server))) {
+            j?.serverNote = "the server does not read demMaxZoom (GET /area zoomCaps); the phone made the manifest"
+            return null
+        }
         val conn = CleartextPolicy.open("${server.trimEnd('/')}/area?pack=0")
         return try {
             conn.requestMethod = "POST"
@@ -713,7 +736,9 @@ object AreaDownload {
             val status = conn.responseCode
             val text = (if (status < 400) conn.inputStream else conn.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
             when (status) {
-                200 -> AreaManifest.parse(text).copy(source = server)
+                // T157: a manifest of another area (a server that dropped a field it does not know) is not this one's.
+                200 -> AreaManifest.parse(text).copy(source = server).takeIf { it.id == area.id }
+                    ?: null.also { j?.serverNote = "the server's manifest was for another area (it did not keep every field); the phone made it" }
                 404, 405 -> null // a server from before T75: make the lists here
                 // T140 (ADR 0041 §3): a server from before the polygon kind ("kind must be box or corridor"): the lists are made here.
                 400 -> if (serverError(text).startsWith("kind must be")) null else throw IOException("server refused the area (HTTP 400): ${serverError(text)}")
@@ -751,12 +776,13 @@ object AreaDownload {
         )
     }
 
-    /** T140: the DEM and vector zooms of [area]'s manifest for [server] (DEM from the source's lowest zoom, vector to z14). */
+    /**
+     * T140: the DEM and vector zooms of [area]'s manifest for [server] (DEM from the source's lowest zoom, vector to z14).
+     * T157: the DEM to the area's `demMaxZoom` when it has one ([AreaOfInterest.demZooms]).
+     */
     fun zooms(area: AreaOfInterest, server: String?): Pair<IntRange, IntRange?> {
         val demLo = if (server == DirectSources.SERVER) DirectSources.DEM_MIN_ZOOM else OnlineTiles.DEM_MIN_ZOOM
-        val demZooms = demLo..minOf(maxOf(area.maxZoom, demLo), OnlineTiles.DEM_MAX_ZOOM)
-        val osmZooms = (area.minZoom..minOf(area.maxZoom, OnlineTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
-        return demZooms to osmZooms
+        return area.demZooms(demLo, OnlineTiles.DEM_MAX_ZOOM) to area.osmZooms(OnlineTiles.OSM_MAX_ZOOM)
     }
 
     private fun serverError(text: String): String = runCatching { MiniJson.parseObject(text)["error"]?.toString() }.getOrNull() ?: text.take(200)
@@ -849,19 +875,41 @@ internal fun aboutSize(bytes: Long): String = when {
 
 /**
  * T140 (ADR 0041 §5): the summary, "About 170 MB (1,300 tiles) at full detail"; "at less detail" for z8 to z13, the zooms
- * otherwise. Pure, tested.
+ * otherwise. T157: "at medium detail" for z8 to z14 with the elevation to z13 ([demMaxZoom]); another capped range says
+ * both ("at zoom 8 to 14, elevation to 12"). Pure, tested.
  */
-internal fun sizeLine(bytes: Long, tiles: Int, minZoom: Int, maxZoom: Int): String {
+internal fun sizeLine(bytes: Long, tiles: Int, minZoom: Int, maxZoom: Int, demMaxZoom: Int? = null): String {
     val detail = when {
-        maxZoom >= io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.DEM_MAX_ZOOM -> "at full detail"
-        minZoom == 8 && maxZoom == AreaDownload.LESS_DETAIL_MAX_ZOOM -> "at less detail"
+        demMaxZoom != null && minZoom == AreaDetail.MIN_ZOOM && maxZoom == AreaDetail.MEDIUM.maxZoom && demMaxZoom == AreaDetail.MEDIUM.demMaxZoom -> "at ${detailWord(AreaDetail.MEDIUM)} detail"
+        demMaxZoom != null -> "at zoom $minZoom to $maxZoom, elevation to $demMaxZoom"
+        maxZoom >= io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.DEM_MAX_ZOOM -> "at ${detailWord(AreaDetail.FULL)} detail"
+        minZoom == 8 && maxZoom == AreaDownload.LESS_DETAIL_MAX_ZOOM -> "at ${detailWord(AreaDetail.LESS)} detail"
         else -> "at zoom $minZoom to $maxZoom"
     }
     return "About ${aboutSize(bytes)} (${String.format(java.util.Locale.US, "%,d", tiles)} tiles) $detail"
 }
 
 /** T140 (ADR 0041 §5): "Less detail (about 30 MB)". Pure, tested. */
-internal fun lessDetailLine(bytes: Long): String = "Less detail (about ${aboutSize(bytes)})"
+internal fun lessDetailLine(bytes: Long): String = detailChoiceLine(AreaDetail.LESS, bytes)
+
+/**
+ * T157 (ADR 0031: the owner's words to adjust): the word of each detail, as in "at medium detail" and "Medium detail": full,
+ * medium, less. Pure, tested.
+ */
+internal fun detailWord(d: AreaDetail): String = when (d) {
+    AreaDetail.FULL -> "full"
+    AreaDetail.MEDIUM -> "medium"
+    AreaDetail.LESS -> "less"
+}
+
+/** T157: "Full detail", "Medium detail", "Less detail". Pure, tested. */
+internal fun detailTitle(d: AreaDetail): String = detailWord(d).replaceFirstChar { it.uppercase() } + " detail"
+
+/** T157: a detail as a choice, "Medium detail (about 60 MB)" (T140's "Less detail (about 30 MB)"); without [bytes] just the title. Pure, tested. */
+internal fun detailChoiceLine(d: AreaDetail, bytes: Long?): String = if (bytes == null) detailTitle(d) else "${detailTitle(d)} (about ${aboutSize(bytes)})"
+
+/** T157 (ADR 0031: the owner's words to adjust): what the medium detail keeps and drops, under its size line. */
+internal const val MEDIUM_DETAIL_HINT = "Every path and place of full detail; the terrain shading and contours are coarser"
 
 /**
  * T140 (ADR 0041 §3): the time a download of [bytes] takes at the last completed download's speed ([bytesPerMs]), or null
@@ -938,6 +986,9 @@ internal fun mergeFailed(a: Map<String, Map<Int, TileSet>>, b: Map<String, Map<I
  */
 internal fun versionsMoved(recorded: Map<String, Map<String, String>>, current: Map<String, Map<String, String>>): Boolean =
     current.any { (source, names) -> recorded[source]?.let { old -> names.any { (n, v) -> v.isNotEmpty() && old[n] != null && old[n] != v } } == true }
+
+/** T157: the per-kind zoom caps a server's `GET /area` answer names (`zoomCaps`: `dem`); none when it names none (from before T157). Pure, tested. */
+internal fun serverZoomCapsOf(doc: Map<String, Any?>): List<String> = (doc["zoomCaps"] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
 
 /** T140: the shapes a server's `GET /area` answer names; box and corridor when it names none (from before T140). Pure, tested. */
 internal fun serverShapesOf(doc: Map<String, Any?>): List<String> =

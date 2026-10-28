@@ -176,7 +176,7 @@ data class AreaManifest(
     val generatedAt: String? = null,
     val build: Map<String, Any?>? = null,
     val notes: List<String> = emptyList(),
-    /** T140 (ADR 0041 §2): the lowest version that holds the content, 2 for a polygon, else 1 ([AreaOfInterest.manifestVersion]). */
+    /** T140 (ADR 0041 §2): the lowest version that holds the content: 3 with a `demMaxZoom` (T157), 2 for a polygon, else 1 ([AreaOfInterest.manifestVersion]). */
     val version: Int = area.manifestVersion,
     val versions: Map<String, String> = emptyMap(),
 ) {
@@ -208,8 +208,12 @@ data class AreaManifest(
     ).also { if (versions.isNotEmpty()) it["versions"] = versions.toSortedMap() } // T95
 
     companion object {
-        /** T140: the newest manifest version this build reads (2: the polygon kind, ADR 0041). */
-        const val VERSION = 2
+        /**
+         * T140: the newest manifest version this build reads (2: the polygon kind, ADR 0041). T157: 3, an area's
+         * `demMaxZoom` (the medium detail; a version-2 reader keeps such a record opaque rather than fetch its elevation
+         * to `maxZoom`).
+         */
+        const val VERSION = 3
         const val STATUS_READY = "ready"
         const val STATUS_BUILDING = "building"
         const val STATUS_FAILED = "failed"
@@ -259,7 +263,8 @@ data class AreaManifest(
 
         /**
          * The tile items of [area] for a tile server: DEM tiles at [demZooms] and vector tiles at [osmZooms] (null:
-         * none), each grown by [margin] tiles (contour tiles sample past their edges).
+         * none), each grown by [margin] tiles (contour tiles sample past their edges). T157: callers take both from the
+         * area ([AreaOfInterest.demZooms], [AreaOfInterest.osmZooms]), so a `demMaxZoom` stops the DEM below the vector.
          */
         fun tileItems(area: AreaOfInterest, demZooms: IntRange?, osmZooms: IntRange?, margin: Int = 1): List<TilesItem> {
             val out = ArrayList<TilesItem>()

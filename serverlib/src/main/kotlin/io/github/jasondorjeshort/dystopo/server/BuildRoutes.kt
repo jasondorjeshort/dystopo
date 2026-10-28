@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.server
 
 import com.sun.net.httpserver.HttpExchange
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -85,7 +86,10 @@ import kotlin.math.floor
  *   `GET /area` describes the parameters and limits. T140 (ADR 0041): a polygon (`{"kind": "polygon", "rings": ...}`,
  *   or `ring=lat,lon;...`) is tiles like a corridor, as a version 2 manifest; `pack=1` on one is refused (400, a pack
  *   is a box); T152: its tile sets are rows, so only `maxAreaTiles` limits it.
- *   `GET /area` names the `shapes` read and `manifestVersion` 2.
+ *   `GET /area` names the `shapes` read and `manifestVersion` 2. T157 (ADR 0041 §5's T157 note): an area's `demMaxZoom`
+ *   (body or query; or `detail=full|medium|less` in the query) stops the DEM tiles below `maxZoom` while the vector tiles go
+ *   to `min(maxZoom, 14)`: the medium detail is `maxZoom` 14 with `demMaxZoom` 13, a version 3 manifest; a capped area is
+ *   tiles (`pack=1` on one is refused, 400). `GET /area` adds `zoomCaps` (`["dem"]`) and `details`, `manifestVersion` 3.
  *
  * A box across the antimeridian (west > east, e.g. `bbox=179.2,-17.2,-179.8,-16.4`) is split at 180°
  * into two jobs, `<name>-e` (west..180) and `<name>-w` (-180..east), each a normal rectangular pack
@@ -681,10 +685,14 @@ class BuildRoutes(
             "{\"kind\": \"corridor\", \"line\": [[lon, lat], ...], \"bufferM\": 500, \"minZoom\": 8, \"maxZoom\": 15} or " +
             "{\"kind\": \"polygon\", \"rings\": [[[lon, lat], ...], ...], \"bufferM\": 0, \"minZoom\": 8, \"maxZoom\": 15}, or query parameters " +
             "bbox=, line=lat,lon;lat,lon, ring=lat,lon;lat,lon;lat,lon[|...] or around=lat,lon with radiusM, bufferM, minZoom, maxZoom, name; " +
-            "options pack=1|0 (a polygon is tiles only), profile, fallback, source, retry=1",
+            "options pack=1|0 (a polygon is tiles only), profile, fallback, source, retry=1; " +
+            "demMaxZoom (in the body or the query) stops the DEM tiles below maxZoom (tiles only), detail=full|medium|less sets the zooms",
         // T140 (ADR 0041 §3): the newest manifest version and the shapes this server reads; a phone treats a missing `shapes` as box and corridor.
         "manifestVersion" to AreaManifest.VERSION, "shapes" to AreaShape.KINDS, "maxAreaTiles" to maxAreaTiles,
         "maxZoom" to AreaOfInterest.MAX_ZOOM,
+        // T157 (ADR 0041 §5's T157 note): the per-kind zoom caps read (`demMaxZoom`) and the details; a phone treats a missing `zoomCaps` as none.
+        "zoomCaps" to listOf(AreaManifest.ROUTE_DEM),
+        "details" to AreaDetail.entries.associate { d -> d.key to linkedMapOf("minZoom" to AreaDetail.MIN_ZOOM, "maxZoom" to d.maxZoom, "demMaxZoom" to d.demMaxZoom) },
         "bufferM" to listOf(AreaOfInterest.MIN_BUFFER_M, AreaOfInterest.MAX_BUFFER_M), "build" to limits(),
     )
 
@@ -708,8 +716,10 @@ class BuildRoutes(
         } catch (e: IllegalArgumentException) {
             throw Refused(400, e.message ?: "bad area")
         }
-        val wantPack = opts["pack"]?.let { it == "1" || it == "true" } ?: (area.shape is AreaShape.Box)
+        // T157: a capped area is tiles by default (a pack holds one zoom range), and a pack of one is refused.
+        val wantPack = opts["pack"]?.let { it == "1" || it == "true" } ?: (area.shape is AreaShape.Box && area.demMaxZoom == null)
         if (wantPack && area.shape is AreaShape.Polygon) throw Refused(400, POLYGON_NO_PACK) // T140 (ADR 0041 §3)
+        if (wantPack && area.demMaxZoom != null) throw Refused(400, CAPPED_NO_PACK)
         val name = opts["name"]?.trim()?.ifEmpty { null } ?: area.name?.takeIf { PackNames.isValidName(it) } ?: ("area-" + area.id.drop(1).take(12))
         val items = ArrayList<ManifestItem>()
         val notes = ArrayList<String>()
@@ -751,15 +761,16 @@ class BuildRoutes(
             items += LocalItem(ManifestItem.KIND_GRAPH, vector, true, "the phone builds the trail graph tiles (z11) from the vector pack on first use")
             items += LocalItem(ManifestItem.KIND_SEARCH, vector, true, "the phone builds the place search index from the vector pack")
         } else {
-            val demZooms = LiveTiles.LIVE_MIN_ZOOM..minOf(maxOf(area.maxZoom, LiveTiles.LIVE_MIN_ZOOM), LiveTiles.LIVE_MAX_ZOOM)
-            val osmZooms = (area.minZoom..minOf(area.maxZoom, LiveTiles.OSM_MAX_ZOOM)).takeIf { !it.isEmpty() }
+            // T157: the DEM to the area's demMaxZoom when it has one, the vector to maxZoom (both within the live sources').
+            val demZooms = area.demZooms(LiveTiles.LIVE_MIN_ZOOM, LiveTiles.LIVE_MAX_ZOOM)
+            val osmZooms = area.osmZooms(LiveTiles.OSM_MAX_ZOOM)
             val polygon = area.shape is AreaShape.Polygon
             // T152 (ADR 0041 §3's T152 note): tile sets are rows, so no heap check before they are filled; maxAreaTiles below is the limit.
             val tiles = AreaManifest.tileItems(area, demZooms, osmZooms)
             val count = tiles.sumOf { it.count }
             if (count > maxAreaTiles) {
                 val remedy = if (polygon) "lower maxZoom or draw a smaller area" else "lower maxZoom, narrow the buffer or split the route"
-                throw Refused(413, "the area needs $count tiles at z${area.minZoom}-${area.maxZoom}; the limit is $maxAreaTiles (DYSTOPO_AREA_MAX_TILES): $remedy")
+                throw Refused(413, "the area needs $count tiles at z${area.minZoom}-${area.maxZoom}${area.demMaxZoom?.let { " (DEM to z$it)" } ?: ""}; the limit is $maxAreaTiles (DYSTOPO_AREA_MAX_TILES): $remedy")
             }
             val what = if (polygon) "an area" else "a corridor"
             items += tiles
@@ -885,6 +896,8 @@ class BuildRoutes(
         const val MAX_AREA_BODY = 2 shl 20
         /** T140 (ADR 0041 §3): `pack=1` on a polygon. */
         const val POLYGON_NO_PACK = "a pack is a box; download a box for the trail graph"
+        /** T157: `pack=1` with a `demMaxZoom`. */
+        const val CAPPED_NO_PACK = "a pack holds one zoom range; leave out demMaxZoom for a pack, or ask for tiles (pack=0)"
         private val SPRITE_FILES = listOf("sprite.json", "sprite.png", "sprite@2x.json", "sprite@2x.png")
 
         /** Registry id credited for an extract fetched from the Overpass API. */

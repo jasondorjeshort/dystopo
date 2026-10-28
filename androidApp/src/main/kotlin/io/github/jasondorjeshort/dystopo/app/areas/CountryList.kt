@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail
 import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -51,6 +52,9 @@ import kotlinx.coroutines.withContext
  * written as a polygon area of its rings with T141's simplification tolerance as `bufferM` (ADR 0041's writer rule), at
  * less detail (z8 to z13) unless its full-detail size (z8 to z15) fits the pinned budget: a departure from the catalogue
  * apps of the picker survey, which ship one fixed detail, because these tiles are pyramids eight times larger at z15.
+ * T157: a row shows the three details' sizes ([rowSizes]: less, medium, full) and opens at the deepest that fits the
+ * budget; the medium detail (elevation z13, vector z14) is measured with the less detail's covers plus z14's, and the full
+ * detail, when its floor is past the budget, is estimated from z14's cover ([estimateFull]) instead of filled at z15.
  *
  * A row over the budget stays, greyed, with ADR 0041 §5's budget sentence; a country no area can hold (Antarctica; T152:
  * the heap no longer refuses one) stays, greyed, with [TOO_LARGE_ROW]. Sizes are
@@ -60,8 +64,17 @@ import kotlinx.coroutines.withContext
 object CountrySizes {
     private const val TAG = "DystopoCountries"
 
-    /** One country's sizes: at less detail, and at full detail when the less-detail size fits the budget (else not measured). */
-    class Entry(val less: CountryMeasure, val full: CountryMeasure?, val lessId: String?, val fullId: String?)
+    /**
+     * One country's sizes: at less detail, at full detail (T157: measured when its floor fits the budget, else estimated from
+     * z14's cover, [CountryMeasure.estimated]), and (T157) at medium detail; the area ids of each.
+     */
+    class Entry(
+        val less: CountryMeasure, val full: CountryMeasure?, val lessId: String?, val fullId: String?,
+        val medium: CountryMeasure? = null, val mediumId: String? = null,
+    ) {
+        /** T157: the ids of the three details' areas (a record of any of them is this country's). */
+        val ids: List<String> get() = listOfNotNull(lessId, mediumId, fullId)
+    }
 
     /** Measured countries by code (a snapshot the worker replaces; the UI only reads it). */
     @Volatile var entries: Map<String, Entry> = emptyMap()
@@ -134,16 +147,20 @@ object CountrySizes {
     }
 
     private fun measure(c: Country, server: String?): Entry {
-        val lessArea = countryArea(c, AreaPicker.LESS_MAX_ZOOM) ?: return Entry(CountryMeasure(0, 0, true), null, null, null)
-        val (dem, osm) = AreaDownload.zooms(lessArea, server)
-        val less = measureArea(lessArea, dem, osm)
+        val lessArea = countryArea(c, AreaDetail.LESS) ?: return Entry(CountryMeasure(0, 0, true), null, null, null)
+        val mediumArea = countryArea(c, AreaDetail.MEDIUM)!!
+        val fullArea = countryArea(c, AreaDetail.FULL)!!
         val pinned = runCatching { OnlineService.get(DystopoApp.instance).cache.pinnedBytes }.getOrDefault(0L)
-        val fullArea = countryArea(c, AreaPicker.FULL_MAX_ZOOM)!!
-        // Full detail only when it might fit the budget (it costs eight times the tiles): [fullAtLeast] first.
-        val full = if (!less.tooLarge && areaBudgetError(pinned, fullAtLeast(less), 0, AppSettings.pinnedCacheMb) == null) {
-            AreaDownload.zooms(fullArea, server).let { (d, o) -> measureArea(fullArea, d, o) }
-        } else null
-        return Entry(less, full, lessArea.id, fullArea.id)
+        // T157: every zoom's cover filled once for the three details (the shape is the same; only the zooms differ).
+        val counts = HashMap<Int, Int>()
+        fun measured(a: AreaOfInterest) = AreaDownload.zooms(a, server).let { (d, o) -> measureCounts(d, o) { z -> counts.getOrPut(z) { TileCover.of(a, z, 1).size } } }
+        val less = measured(lessArea)
+        val medium = measured(mediumArea)
+        // Full detail filled only when it might fit the budget (z15 costs four times z14's tiles): [fullAtLeast] first;
+        // else estimated from z14's cover.
+        val full = if (areaBudgetError(pinned, fullAtLeast(less), 0, AppSettings.pinnedCacheMb) == null) measured(fullArea)
+        else estimateFull(medium, counts[AreaDetail.MEDIUM.maxZoom] ?: 0)
+        return Entry(less, full, lessArea.id, fullArea.id, medium, mediumArea.id)
     }
 
     /** A small polygon only for [AreaDownload.zooms]' DEM range (it depends on the server, not the shape). */
@@ -161,9 +178,20 @@ object CountrySizes {
 
 /**
  * T142: a country's tiles and estimated bytes at one detail, or [tooLarge] when no area can hold it (T152: never the heap);
- * [topTiles] is the cover's count at the deepest zoom.
+ * [topTiles] is the cover's count at the deepest zoom. T157: [estimated] when not filled at every zoom ([estimateFull]).
  */
-class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean, val topTiles: Int = 0)
+class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean, val topTiles: Int = 0, val estimated: Boolean = false)
+
+/**
+ * T157: the full detail from the medium detail's measure [medium] and its z14 cover's count [z14]: the medium detail plus the
+ * DEM at z14 (the same cover) and at z15 (four tiles under each z14 one), so an estimate a little high (the margin is one
+ * tile at each zoom, not four). Used when the full detail's floor is past the budget, so z15 is not filled. Pure, tested.
+ */
+internal fun estimateFull(medium: CountryMeasure, z14: Int): CountryMeasure {
+    val z15 = 4L * z14
+    val bytes = medium.bytes + z14 * AreaManifest.estimate(AreaManifest.ROUTE_DEM, 14) + z15 * AreaManifest.estimate(AreaManifest.ROUTE_DEM, 15)
+    return CountryMeasure(bytes, (medium.tiles + z14 + z15).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), false, z15.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), estimated = true)
+}
 
 /**
  * T142: a floor of the full-detail bytes from the less-detail measure [less]: every z13 tile has at least one tile under
@@ -184,17 +212,24 @@ internal fun countryArea(c: Country, maxZoom: Int): AreaOfInterest? = try {
     null
 }
 
+/** T157: [c] as a polygon area at [detail] (the medium detail's elevation cap included); null as [countryArea]. Pure, tested. */
+internal fun countryArea(c: Country, detail: AreaDetail): AreaOfInterest? = countryArea(c, detail.maxZoom)?.at(detail)
+
 /**
  * T142: the tiles and bytes of [area]'s manifest at DEM zooms [dem] and vector zooms [osm] with [margin] (the totals of
  * [AreaManifest.tileItems], each zoom's cover made once for both routes; T152: rows, so at any size). Pure, tested against
  * [AreaManifest.tileItems].
  */
-internal fun measureArea(area: AreaOfInterest, dem: IntRange?, osm: IntRange?, margin: Int = 1): CountryMeasure {
+internal fun measureArea(area: AreaOfInterest, dem: IntRange?, osm: IntRange?, margin: Int = 1): CountryMeasure =
+    measureCounts(dem, osm) { z -> TileCover.of(area, z, margin).size }
+
+/** T157: [measureArea] over the cover counts [count] gives per zoom (filled once and shared between details by the caller). Pure, tested. */
+internal fun measureCounts(dem: IntRange?, osm: IntRange?, count: (Int) -> Int): CountryMeasure {
     var bytes = 0L
     var tiles = 0
     var top = 0
     for (z in (listOfNotNull(dem, osm).flatMap { it.toList() }).toSortedSet()) {
-        val n = TileCover.of(area, z, margin).size
+        val n = count(z)
         if (dem != null && z in dem) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_DEM, z) }
         if (osm != null && z in osm) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_OSM, z) }
         top = n
@@ -205,28 +240,41 @@ internal fun measureArea(area: AreaOfInterest, dem: IntRange?, osm: IntRange?, m
 /** T142: a country row's state: being measured, downloadable, over the pinned budget, or too large for the heap. */
 enum class RowState { MEASURING, FITS, OVER_BUDGET, TOO_LARGE }
 
-/** T142: what a country row shows: the detail it opens at, its size line, and the sentence of a greyed row. */
+/**
+ * T142: what a country row shows: the detail it opens at, its size line, and the sentence of a greyed row. T157: [sizeText]
+ * is the three details' sizes ([rowSizes]) once measured.
+ */
 class CountryRow(val detail: String, val bytes: Long?, val tiles: Int?, val state: RowState, val sizeText: String, val sentence: String?) {
     val greyed: Boolean get() = state == RowState.OVER_BUDGET || state == RowState.TOO_LARGE
 }
 
 /**
  * T142: the row of a country measured as [e] (null: not yet) with [pinnedBytes] pinned, [alreadyBytes] of them its own
- * (downloaded before), and a budget of [budgetMb]: full detail when it fits the budget, else less detail; over the budget
- * at less detail greyed with ADR 0041 §5's sentence; no area can hold it greyed with [TOO_LARGE_ROW]. Pure, tested.
+ * (downloaded before), and a budget of [budgetMb]: full detail when it fits the budget, else (T157) medium detail when it
+ * does, else less detail; over the budget at less detail greyed with ADR 0041 §5's sentence; no area can hold it greyed
+ * with [TOO_LARGE_ROW]. T157: the size text gives every detail measured ([rowSizes]). Pure, tested.
  */
 internal fun countryRow(e: CountrySizes.Entry?, pinnedBytes: Long, alreadyBytes: Long, budgetMb: Long): CountryRow {
     if (e == null) return CountryRow(DETAIL_LESS, null, null, RowState.MEASURING, MEASURING, null)
     if (e.less.tooLarge) return CountryRow(DETAIL_LESS, null, null, RowState.TOO_LARGE, "", TOO_LARGE_ROW)
-    e.full?.takeIf { !it.tooLarge && areaBudgetError(pinnedBytes, it.bytes, alreadyBytes, budgetMb) == null }?.let {
-        return CountryRow(DETAIL_FULL, it.bytes, it.tiles, RowState.FITS, rowSize(it.bytes, DETAIL_FULL), null)
-    }
+    val text = rowSizes(e.less.bytes, e.medium?.takeIf { !it.tooLarge }?.bytes, e.full?.takeIf { !it.tooLarge }?.bytes)
+    fun fits(m: CountryMeasure?) = m?.takeIf { !it.tooLarge && areaBudgetError(pinnedBytes, it.bytes, alreadyBytes, budgetMb) == null }
+    fits(e.full)?.let { return CountryRow(DETAIL_FULL, it.bytes, it.tiles, RowState.FITS, text, null) }
+    fits(e.medium)?.let { return CountryRow(DETAIL_MEDIUM, it.bytes, it.tiles, RowState.FITS, text, null) }
     val over = areaBudgetError(pinnedBytes, e.less.bytes, alreadyBytes, budgetMb)
-    return CountryRow(DETAIL_LESS, e.less.bytes, e.less.tiles, if (over == null) RowState.FITS else RowState.OVER_BUDGET, rowSize(e.less.bytes, DETAIL_LESS), over)
+    return CountryRow(DETAIL_LESS, e.less.bytes, e.less.tiles, if (over == null) RowState.FITS else RowState.OVER_BUDGET, text, over)
 }
 
-/** T142: "About 28 MB at less detail" or "About 230 MB at full detail". Pure, tested. */
-internal fun rowSize(bytes: Long, detail: String): String = "About ${aboutSize(bytes)} at ${if (detail == DETAIL_FULL) "full" else "less"} detail"
+/** T142: "About 28 MB at less detail" or "About 230 MB at full detail" (T157: "at medium detail"). Pure, tested. */
+internal fun rowSize(bytes: Long, detail: String): String = "About ${aboutSize(bytes)} at ${detailWord(AreaDetail.byKey(detail) ?: AreaDetail.LESS)} detail"
+
+/**
+ * T157 (ADR 0031: the owner's words to adjust): a country row's three sizes, "Less 28 MB · Medium 40 MB · Full 230 MB"; a
+ * detail not measured yet is left out. Pure, tested.
+ */
+internal fun rowSizes(less: Long, medium: Long?, full: Long?): String =
+    listOfNotNull(AreaDetail.LESS to less, medium?.let { AreaDetail.MEDIUM to it }, full?.let { AreaDetail.FULL to it })
+        .joinToString(" · ") { (d, b) -> "${detailWord(d).replaceFirstChar { it.uppercase() }} ${aboutSize(b)}" }
 
 /** T142: [countries] grouped by continent (alphabetical), each group in the given (alphabetical) order. Pure, tested. */
 internal fun byContinent(countries: List<Country>): List<Pair<String, List<Country>>> =
@@ -238,6 +286,11 @@ internal fun countryRows(all: List<Country>, filter: String): List<Pair<String?,
 
 const val DETAIL_FULL = "full"
 const val DETAIL_LESS = "less"
+/** T157: the medium detail (elevation z13, vector z14; [AreaDetail.MEDIUM]). */
+const val DETAIL_MEDIUM = "medium"
+
+/** T157: the details by their keys, deepest first. */
+val DETAILS = listOf(DETAIL_FULL, DETAIL_MEDIUM, DETAIL_LESS)
 
 /** T142: the button in the sheet, and the list's title. */
 internal const val CHOOSE_COUNTRY = "Choose a country"
@@ -295,7 +348,7 @@ internal fun CountryListPane(pinnedBytes: Long, modifier: Modifier = Modifier) {
                 }
                 items(countries, key = { it.code }) { c ->
                     val e = sizes[c.code]
-                    val rec = records.firstOrNull { r -> e != null && (r.id == e.lessId || r.id == e.fullId) }
+                    val rec = records.firstOrNull { r -> e != null && r.id in e.ids }
                     CountryRowView(c, countryRow(e, pinnedBytes, rec?.takeIf { it.pinned }?.bytes ?: 0L, AppSettings.pinnedCacheMb), rec)
                 }
             }

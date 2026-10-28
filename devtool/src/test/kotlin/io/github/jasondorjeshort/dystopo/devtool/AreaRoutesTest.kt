@@ -134,8 +134,43 @@ class AreaRoutesTest {
         assertTrue(k.message!!.startsWith("kind must be"), k.message)
         // GET /area: the manifest version and the shapes this server reads.
         val help = builds.areaHelp()
-        assertEquals(2, help["manifestVersion"])
+        assertEquals(3, help["manifestVersion"]) // T157: 3, the medium detail's demMaxZoom
         assertEquals(listOf("box", "corridor", "polygon"), help["shapes"])
+    }
+
+    @Test
+    fun theMediumDetailCapsTheDemBelowTheVectorAsAVersion3Manifest() {
+        // T157 (ADR 0041 §5's T157 note): the 5 km disc around Paradise at elevation z13 with vector z14.
+        val builds = BuildRoutes(live(), out)
+        val body = """{"kind":"corridor","line":[[-121.735,46.786]],"bufferM":5000,"minZoom":8,"maxZoom":14,"demMaxZoom":13,"name":"Around Paradise"}"""
+        val (status, json) = builds.area(emptyMap(), body)
+        assertEquals(200, status)
+        assertEquals(3, json["version"])
+        val m = AreaManifest.parse(MiniJson.encode(json))
+        assertEquals(13, m.area.demMaxZoom)
+        assertEquals(LiveTiles.LIVE_MIN_ZOOM..13, m.tiles("dem")!!.zooms, "no elevation z14")
+        assertEquals(8..14, m.tiles("osm")!!.zooms, "vector z14 kept")
+        // The id differs from the less and full details' and is the phone's (`detail=medium` in the query: the same area).
+        val (_, less) = builds.area(emptyMap(), body.replace(",\"demMaxZoom\":13", "").replace("\"maxZoom\":14", "\"maxZoom\":13"))
+        val (_, full) = builds.area(emptyMap(), body.replace(",\"demMaxZoom\":13", "").replace("\"maxZoom\":14", "\"maxZoom\":15"))
+        assertEquals(setOf(m.id, less["id"], full["id"]).size, 3)
+        assertEquals(1, less["version"])
+        val (_, q) = builds.area(mapOf("around" to "46.786,-121.735", "radiusM" to "5000", "detail" to "medium"), "")
+        assertEquals(m.id, q["id"])
+        // A cap at or past maxZoom is no cap (the uncapped area's id); a capped box is tiles, and a pack of one is refused.
+        val (_, same) = builds.area(emptyMap(), body.replace("\"demMaxZoom\":13", "\"demMaxZoom\":14"))
+        assertEquals(1, same["version"])
+        val box = """{"kind":"box","bbox":[-121.80,46.76,-121.70,46.82],"minZoom":8,"maxZoom":14,"demMaxZoom":13}"""
+        val (boxStatus, boxJson) = builds.area(emptyMap(), box)
+        assertEquals(200, boxStatus)
+        assertEquals(LiveTiles.LIVE_MIN_ZOOM..13, AreaManifest.parse(MiniJson.encode(boxJson)).tiles("dem")!!.zooms)
+        val e = assertFailsWith<BuildRoutes.Refused> { builds.area(mapOf("pack" to "1"), box) }
+        assertEquals(400, e.status)
+        assertEquals(BuildRoutes.CAPPED_NO_PACK, e.message)
+        // GET /area names the caps and the details.
+        val help = builds.areaHelp()
+        assertEquals(listOf("dem"), help["zoomCaps"])
+        assertEquals(mapOf("minZoom" to 8, "maxZoom" to 14, "demMaxZoom" to 13), (help["details"] as Map<*, *>)["medium"])
     }
 
     @Test
