@@ -28,7 +28,7 @@ import kotlin.math.roundToLong
  *
  * A refit ([refitSoon]) runs in the background when a route has been planned and when the Settings row shows, each time the
  * track list changed since the last one, and only while a trail network is loaded (it never starts a graph build itself;
- * `POST /pace/refit` does, as planning a route would). A changed fit replans the route on the card.
+ * `POST /pace/refit` does, as planning a route would). A change of the fits in use plans the route on the card again ([changed]).
  *
  * Debug routes (registered from [io.github.jasondorjeshort.dystopo.app.Routes]):
  * - `GET /pace`: the settings (`standard`, `since`, `setting`), the stored fits (`stored`, by mode, with `flatPaceMinPerKm`,
@@ -57,6 +57,13 @@ object PaceSettings {
     /** Hands the ready fits to the router, or none with "Use the standard estimate" on. */
     fun activate() {
         if (AppSettings.paceStandard) PaceFits.clearActive() else PaceFits.setActive(stored().fits)
+    }
+
+    /** After the fit or the switch changed ([SettingsRoutes.apply]): the router's fits, and a route on the card planned again. */
+    fun changed() {
+        val before = PaceFits.active
+        activate()
+        if (PaceFits.active != before && RouteSession.phase == "route") RouteSession.changeMode(RouteSession.mode)
     }
 
     /** The plural noun of a mode's tracks: "hikes", "rides". */
@@ -151,8 +158,6 @@ object PaceSettings {
             if (changed) apply(app, SettingsRoutes.Parsed.Ok(null, false, null, null, paceFit = value))
             signature = sig
             Log.i(TAG, "refit ($why): ${tracks.size} tracks, ${value.ifEmpty { "no fit" }}${if (changed) " (changed)" else ""} in ${System.currentTimeMillis() - t0} ms")
-            // A route on the card is planned again on the new fit.
-            if (changed && RouteSession.phase == "route") RouteSession.changeMode(RouteSession.mode)
             return linkedMapOf(
                 "at" to t0, "why" to why, "ms" to System.currentTimeMillis() - t0, "tracks" to tracks.size, "setting" to value, "changed" to changed,
                 "report" to report.json(),

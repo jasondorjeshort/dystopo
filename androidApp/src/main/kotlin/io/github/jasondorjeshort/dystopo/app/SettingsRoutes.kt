@@ -114,7 +114,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         // T164: the route-time fit, its switch and its reset; the router reads the result from the next plan.
         if (parsed.paceStandard != null || parsed.paceFit != null || parsed.paceSince != null) {
             AppSettings.setPace(parsed.paceStandard, parsed.paceFit, parsed.paceSince)
-            io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.activate()
+            io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.changed()
         }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
