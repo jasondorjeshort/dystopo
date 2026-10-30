@@ -27,11 +27,30 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   Before, a hidden bar kept its last lengths and the read-back compared them with a camera that had moved.
  * - `POST /scalebar?both=on|off`: the Map options row "Scale bar" (one unit or both; T110: synced, `app.scaleBar.both`
  *   in `GET /sync/status` › `settingsSync`); answers like `GET` once the bar has redrawn. Anything else for `both` is a 400.
+ *
+ * T161, the live readout's strip on the bar's line ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]):
+ * - `GET /readout`: what the strip draws and why: `shown`, `hiddenBecause` (`notComposed`, `noRoomBelowNavCard`,
+ *   `noRoomBelowTopLeft`; nothing is drawn before a fix or with every entry off, `drawn` then empty), the `activity`
+ *   (T172's remembered one) and `units`, `options` per entry (`shown=1;pace=0;damping=medium;pm=0;knots=0`, `barometer`,
+ *   `knots` as honoured), `drawn` (per item as drawn: `entry`, `caption`, `value`, `unit`, `plusMinus`, `full`, `dimmed`;
+ *   the gap's item `entry: gap`), `line` (the strip as one line), `gap`, `text` per entry, `readout` (T160's
+ *   [io.github.jasondorjeshort.dystopo.readout.Readout.json]: each value's `state`, SI `value`, `sigma`, `source`,
+ *   `dimmed`, `frozen`, `reason`; `gapS`; `heights` with `gnssM`, `baroM` and `demM` apart; `barometer` with its `state`,
+ *   `reason`, `offsetM`; `fixSpeedMps`, `routeSpeedMps`, `counters`), `barometerSensor` (`present`, `listening`, `wanted`,
+ *   `samples`, `lastHPa`, `source`: `sensor` or `replay`), `seaLevelPressure` (`none` until T173), `route` (while
+ *   navigating: `alongM`, `distanceM`, `onRoute`), `inputs` (counts per input, the clock offset) and `layout` (`placement`
+ *   `beside` or `above`, `boundsPx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
+ *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`).
+ * - `POST /readout/reset`: forgets every input (between replays); answers like `GET`.
+ * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`; `SettingsRoutes`).
  */
 object ScaleBarRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
         "GET" to "/scalebar" -> Response.json(state(app))
         "POST" to "/scalebar" -> set(app, r)
+        // T161: the live readout's strip on the bar's line (readout/LiveReadout)
+        "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
+        "POST" to "/readout/reset" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.reset() + io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         else -> null
     }
 

@@ -122,6 +122,22 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun theReadoutOptionsAndTheBarometerSwitch() { // T161: whole values per activity and entry, the rows' edits, the switch
+        assertEquals("shown=1;pace=1;damping=medium;pm=0;knots=0", ok("readout.foot.speed" to "pace=1").readoutValues["readout.foot.speed"])
+        assertEquals("shown=0;pace=0;damping=high;pm=1;knots=0", ok("readout.air.climb" to "shown=0;damping=high;pm=1").readoutValues["readout.air.climb"])
+        assertEquals(mapOf(io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE to "shown=0"), ok("readout.course" to "shown=0").readoutEdits)
+        assertEquals(false, ok("readoutBarometer" to "0").readoutBarometer)
+        assertEquals(true, ok("readoutBarometer" to "on").readoutBarometer, "the synced value is on or off")
+        assertNull(ok("units" to "m").readoutBarometer)
+        assertTrue(ok("units" to "m").readoutEdits.isEmpty())
+        assertTrue(bad("readout.foot.speed" to "damping=wild").message.contains("readout.foot.speed"))
+        bad("readout.speed" to "shown=2")
+        bad("readout.speed" to "fast")
+        bad("readout.skate.speed" to "shown=1")
+        bad("readoutBarometer" to "maybe")
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {

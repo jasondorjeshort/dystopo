@@ -28,6 +28,9 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * whole minutes) are [SettingsRoutes] keys too.
  * T172: the recording activity the picker remembers (`app.trackActivity`, an activity code) and one value per activity for its
  * four recording choices (`app.trackProfile.<activity>`, `acc=50;autopause=0;net=1;interval=1000`); both [SettingsRoutes] keys.
+ * T161: the live readout's options per activity and entry (`app.readout.<activity>.<entry>`,
+ * `shown=1;pace=0;damping=medium;pm=0;knots=0`) and its barometer switch (`app.readoutBarometer`, `on` or `off`); both
+ * [SettingsRoutes] keys.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -60,6 +63,8 @@ object SettingsSync {
     const val TURN_MARGIN_MIN = "turnMarginMin"
     /** T172: the remembered recording activity, a [SettingsRoutes] key whose synced value is an activity code. */
     const val TRACK_ACTIVITY = "trackActivity"
+    /** T161: the readout's barometer switch, a [SettingsRoutes] key whose synced value is `on` or `off`. */
+    const val READOUT_BAROMETER = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -107,6 +112,8 @@ object SettingsSync {
         m[syncedKey(TURN_MARGIN_MIN)] = AppSettings.turnMarginMin.toString()
         m[syncedKey(TRACK_ACTIVITY)] = AppSettings.trackActivity.code // T172
         for (a in io.github.jasondorjeshort.dystopo.model.Activity.entries) m[syncedKey(RecordingProfiles.key(a))] = AppSettings.trackProfiles[a]
+        m[syncedKey(READOUT_BAROMETER)] = onOff(AppSettings.readoutBarometer) // T161
+        for (k in io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS) m[syncedKey(k)] = AppSettings.readoutEntries[k]
         return m
     }
 
@@ -166,6 +173,9 @@ object SettingsSync {
         if (parsed.trackActivity != null) keys += syncedKey(TRACK_ACTIVITY) // T172
         parsed.trackProfiles.keys.forEach { keys += syncedKey(RecordingProfiles.key(it)) }
         if (parsed.trackEdit != null) keys += syncedKey(RecordingProfiles.key(AppSettings.trackActivity)) // the remembered one's, as apply edited it
+        if (parsed.readoutBarometer != null) keys += syncedKey(READOUT_BAROMETER) // T161
+        parsed.readoutValues.keys.forEach { keys += syncedKey(it) }
+        parsed.readoutEdits.keys.forEach { keys += syncedKey(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.key(AppSettings.trackActivity, it)) }
         publishKeys(app, keys)
     }
 

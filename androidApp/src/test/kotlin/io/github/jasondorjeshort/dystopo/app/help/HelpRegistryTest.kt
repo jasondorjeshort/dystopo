@@ -98,6 +98,9 @@ class HelpRegistryTest {
             // T172: the recording rows.
             "settings.trackActivity", "settings.trackAccuracy", "settings.trackAutoPause", "settings.trackFallback",
             "settings.trackInterval", "settings.trackBattery",
+            // T161: the readout rows.
+            "settings.readoutSpeed", "settings.readoutClimb", "settings.readoutCourse", "settings.readoutElevation",
+            "settings.readoutBarometer",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

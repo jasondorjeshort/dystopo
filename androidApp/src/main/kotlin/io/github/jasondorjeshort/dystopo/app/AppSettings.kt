@@ -91,6 +91,12 @@ object AppSettings {
         // T172
         trackActivity = Activity.of(p.getString(KEY_TRACK_ACTIVITY, null)) ?: Activity.FOOT
         trackProfiles = Activity.entries.mapNotNull { a -> p.getString(RecordingProfiles.key(a), null)?.let { v -> RecordingProfiles.parseValue(a, v)?.let { a to it } } }.toMap()
+        // T161
+        readoutBarometer = p.getBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, true)
+        readoutEntries = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS.mapNotNull { k ->
+            val (a, e) = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.ofKey(k)!!
+            p.getString(k, null)?.let { v -> io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.parseValue(a, e, v)?.let { k to it } }
+        }.toMap()
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -172,6 +178,31 @@ object AppSettings {
 
     /** [a]'s recording profile: its defaults with the stored choices. */
     fun trackProfile(a: Activity = trackActivity): ActivityProfile = RecordingProfiles.profile(a, trackProfiles[a])
+
+    // ---- T161: the live readout's options per activity and entry, and the barometer switch (readout/ReadoutSettings); synced ----
+
+    /** The barometer switch (default on): the readout's elevation and climb use the phone's barometer on foot, bike and boat. */
+    @Volatile var readoutBarometer: Boolean = true
+        private set
+
+    /** The stored options by [io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.key] (`readout.<activity>.<entry>`); missing ones are the defaults. */
+    @Volatile var readoutEntries: Map<String, String> = emptyMap()
+        private set
+
+    fun setReadoutBarometer(on: Boolean) {
+        readoutBarometer = on
+        prefs?.edit()?.putBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, on)?.apply()
+    }
+
+    /** Stores one activity's entry options ([value] already checked by `ReadoutSettings.parseValue`; null: back to the defaults). */
+    fun setReadoutEntry(key: String, value: String?) {
+        readoutEntries = if (value == null) readoutEntries - key else readoutEntries + (key to value)
+        prefs?.edit()?.apply { if (value == null) remove(key) else putString(key, value) }?.apply()
+    }
+
+    /** [a]'s readout options (the remembered activity's by default): its defaults with the stored values and the barometer switch. */
+    fun readoutOptions(a: Activity = trackActivity): io.github.jasondorjeshort.dystopo.readout.ReadoutOptions =
+        io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.options(a, readoutEntries, readoutBarometer)
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
@@ -465,5 +496,9 @@ object AppSettings {
         "trackActivity" to trackActivity.code,
         "trackProfile" to RecordingProfiles.json(trackProfile()),
         "trackProfiles" to Activity.entries.associate { a -> a.code to (RecordingProfiles.json(trackProfile(a)) + mapOf("stored" to trackProfiles[a])) },
+        // T161: the barometer switch, the remembered activity's readout options per entry, and the stored values
+        "readoutBarometer" to readoutBarometer,
+        "readout" to readoutOptions().let { o -> io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.entries.associate { e -> e.code to o[e].encode() } },
+        "readoutStored" to readoutEntries,
     ) + mapOptions.json(units) // T47
 }

@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  */
 class SettingsLayoutTest {
     /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics; T145: problem reports; T164: route times; T163: the turn-around clock's two rows; T172: recording). */
-    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172")
+    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161") // T161: the readout rows
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -54,6 +54,8 @@ class SettingsLayoutTest {
                 // T172 (the Navigation and tracking page, so before the About rows in list order)
                 "Recording: Activity", "Recording: Accuracy limit", "Recording: Auto-pause", "Recording: Network location",
                 "Recording: Interval", "Recording: Battery",
+                // T161: the readout rows (Navigation and tracking, after T172's)
+                "Readout: Speed", "Readout: Climb", "Readout: Course", "Readout: Elevation", "Readout: Barometer",
                 "Diagnostics", "Report a problem",
             ),
             later,

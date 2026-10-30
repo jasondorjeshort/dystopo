@@ -14,7 +14,9 @@ import io.github.jasondorjeshort.dystopo.nav.Compass
  * (the GPS's own bearing, else the direction between fixes at least [COURSE_STEP_M] apart), the compass when slow
  * or still. The compass ([HeadingSensor]: rotation vector plus the WMM declination) runs only while the map is in
  * facing and the app is in the foreground ([setCompassWanted], [setForeground]), for the battery.
- * Fixes arrive from `MapController.onFix` (every fix the location puck shows), on the main thread.
+ * Fixes arrive from `MapController.onFix` (every fix the location puck shows), on the main thread. T161: each also goes
+ * to the live readout ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]), which keeps its own speed and course
+ * (T160's estimator, the fix's own speed over the activity's window) apart from this one's facing rules.
  */
 object Heading {
     /** A course needs fixes at least this far apart (metres); GPS jitter at a standstill stays below it. */
@@ -51,6 +53,7 @@ object Heading {
     /** One fix the puck shows (main thread): declination for the compass, speed and course over ground. */
     fun onFix(loc: Location) {
         fixes++
+        io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onMapFix(loc) // T161: the live readout (its own thread)
         compass.locate(loc.latitude, loc.longitude, if (loc.time > 0) loc.time else System.currentTimeMillis())
         val now = SystemClock.elapsedRealtime()
         if (loc.hasSpeed()) speedMps = loc.speed.toDouble()
