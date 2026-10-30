@@ -70,6 +70,7 @@
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Skip check,tour    # parts by name
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only live          # just these parts
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoBothUnits        # no second emulator (T147: bothunits is on by default)
+#   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDaemon -EmuMemory 3072   # T170: no Gradle daemon left running, 3 GB emulators
 #
 # Ports and processes. The script starts its own servers (demo-server.py on -BasePort, serve on +1, serve
 # --live on +2, for the live part and then for the debug device parts) and its own emulator (-Avd, console -EmuPort, debug forward -Port, release probe -Port+1),
@@ -107,6 +108,13 @@ param(
     # peer -BasePort+3. T147: part of every device sweep; -NoBothUnits leaves it out, -BothUnits is kept for old command lines.
     [switch]$BothUnits,
     [switch]$NoBothUnits,
+    # T170 (T154's follow-up): no Gradle daemon for any build of the sweep, its own and those of the scripts it runs
+    # (android-emu.ps1 -Build, android-push-pack.ps1, android-release.ps1): GRADLE_OPTS gains -Dorg.gradle.daemon=false,
+    # which every child inherits, so each build runs in a single-use daemon that ends with it.
+    [switch]$NoDaemon,
+    # T170: the RAM in MB of every emulator the sweep boots (android-emu.ps1 -Memory; the AVD's hw.ramSize too); 0 keeps
+    # android-emu.ps1's default (4096).
+    [int]$EmuMemory = 0,
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
     [string]$Known = '', # T91: overlap:search/Settings fixed (the map chips cap their font scale at 1.3)
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
@@ -146,8 +154,12 @@ $MatrixDevices = @($MatrixDevices | ForEach-Object { $_ -split ',' } | Where-Obj
 foreach ($p in $Skip + $Only) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
 
 # --- environment -------------------------------------------------------------------------------------------
-$jdk = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
-if (-not $env:JAVA_HOME -and (Test-Path $jdk)) { $env:JAVA_HOME = $jdk }
+foreach ($jdk in @('C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot', 'C:\Program Files\Java\jdk-21')) { # the two PCs (machines.md)
+    if (-not $env:JAVA_HOME -and (Test-Path $jdk)) { $env:JAVA_HOME = $jdk }
+}
+if ($NoDaemon -and "$env:GRADLE_OPTS" -notmatch 'org\.gradle\.daemon=false') { $env:GRADLE_OPTS = ("$env:GRADLE_OPTS -Dorg.gradle.daemon=false").Trim() } # T170
+if ($EmuMemory -lt 0) { throw '-EmuMemory must be a size in MB, or 0 for the default' }
+$emuMemoryArgs = @(if ($EmuMemory -gt 0) { '-Memory'; "$EmuMemory" }) # T170: every emulator the sweep boots (an empty array, never null)
 if ($env:JAVA_HOME) { $env:PATH = (Join-Path $env:JAVA_HOME 'bin') + ';' + $env:PATH }
 $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null)
 $mainCheckout = if ($commonDir) { Split-Path -Parent ($commonDir.Trim() -replace '/', '\') } else { $repo }
@@ -388,7 +400,7 @@ function Lan-Address {
 $py = 'python'
 $gradle = Join-Path $repo 'gradlew.bat'
 $devtool = Join-Path $repo 'devtool\build\install\devtool\bin\devtool.bat'
-$meta = [ordered]@{ host = 'windows'; startedAt = (Get-Date).ToString('s'); noDevice = [bool]$NoDevice
+$meta = [ordered]@{ host = 'windows'; startedAt = (Get-Date).ToString('s'); noDevice = [bool]$NoDevice; noDaemon = [bool]$NoDaemon; emuMemoryMb = $EmuMemory
     commit = "$(& git rev-parse --short HEAD 2>$null)".Trim() }
 $meta | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Out 'meta.json')
 
@@ -480,6 +492,7 @@ try {
     New-Item -ItemType Directory -Force $dev | Out-Null
     $emuArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $Avd, '-EmuPort', "$EmuPort", '-Port', "$Port")
     if ($AvdHome) { $emuArgs += @('-AvdHome', $AvdHome) }
+    $emuArgs += $emuMemoryArgs
     $dem = Join-Path $localOut 'rainier-dem.pmtiles'
     $osm = Join-Path $localOut 'rainier-outdoors.pmtiles'
     # T79: the device parts need a running emulator. When device-boot is not selected (-Only first-run, -Skip
@@ -549,6 +562,7 @@ try {
             $bAvd = "$Avd-b"; $bEmu = $MatrixEmuPort; $bSerial = "emulator-$bEmu"; $bFwd = $Port + 2; $bp = $BasePort + 3
             $bArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $bAvd, '-EmuPort', "$bEmu", '-Port', "$bFwd")
             if ($AvdHome) { $bArgs += @('-AvdHome', $AvdHome) }
+            $bArgs += $emuMemoryArgs
             # The same debug build as the first emulator's (built by device-boot); built here only when it is missing.
             $debugApk = Join-Path $repo 'androidApp\build\outputs\apk\debug\androidApp-debug.apk'
             $boot = $bArgs + @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) + $(if (Test-Path $debugApk) { @() } else { @('-Build') })
@@ -721,6 +735,7 @@ try {
                 if ([int]$api -lt 30) { $mArgs += @('-Feature', 'GLESDynamicVersion') } # images before 30 offer only GLES 2 otherwise
                 if ($loc) { $mArgs += @('-Locale', $loc) }
                 if ($AvdHome) { $mArgs += @('-AvdHome', $AvdHome) }
+                $mArgs += $emuMemoryArgs
                 try {
                     $c = Run 'powershell.exe' $mArgs (Join-Path $mdir "$label-emu.log") (Join-Path $mdir "$label-emu.err.log")
                     if ($c -ne 0) { $worst = $c; continue }
