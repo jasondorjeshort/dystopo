@@ -40,3 +40,6 @@ Transports, cheapest first:
   foreground service type.
 - Safety wording: this is not an emergency beacon, and the app must not suggest it is.
 - Three or more waves; stage 1 alone is about one.
+
+Question: live positions between phones are a new data flow (the most sensitive data the app has, flagged under CLAUDE.md › Decisions rather than built in alpha): do you want it at all, and if so is stage 1 alone (positions over today's share pairing on a shared network; default off, on per trip, visibly on while it runs) the right start? Recommendation: hold until the trail-conditions idea is decided, since both ride the share machinery and should share one transport design; when wanted, stage 1 goes through a proposal and a critic (a phone-to-phone protocol is a major choice), the BLE relay and the radio each as a later proposal, with the radio protocols' licences checked before any radio work.
+Answer:
