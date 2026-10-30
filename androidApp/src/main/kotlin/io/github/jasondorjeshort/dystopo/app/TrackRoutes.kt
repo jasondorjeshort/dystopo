@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app
 
 import io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu
 import io.github.jasondorjeshort.dystopo.app.tracking.ReplayChecks
+import io.github.jasondorjeshort.dystopo.app.tracking.ReplayScript
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Waypoint
@@ -17,11 +18,18 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  * - `GET /tracks`: recorder state (mode, paused, accepted/rejected/paused fixes, gap splits, live
  *   stats), every stored track with its (store-cached) stats, the shown track, open sheet and
  *   profile, overlay, settings and store info (incl. `statsComputed`, the stats cache misses).
+ *   T159: `state` (`idle`, `recording`, `waiting-for-gps`, `paused`, `auto-paused`, `stopped-by-system`), each track's
+ *   `gaps` count, and in `recording`: `state` and `stateLine` (what the controls show), `pendingGap`, `silentS` (since the
+ *   last GPS fix) and `lastAccuracyM`, `watchdog` (`count` of re-registrations, `timeoutMs` from the profile,
+ *   `registrations` of the GPS listener), `fallback` (`provider`, `listening`, `fixes`, `ignored`), `notification`
+ *   (`title`, `text`, `posts`, `dismissals`, `reposts`), the service (`serviceForeground`, `serviceDown`,
+ *   `serviceRestarts` by the system, `tasksRemoved`), `flagged`, `gapsWritten` and `gaps` (the active track's gap list:
+ *   `start`, `end`, `durationS`, `reason`). `lastFix` carries the accuracy, speed, course and vertical accuracy.
  * - `POST /tracks/record?name=&source=all|gps|injected`: start recording (stops the current track).
  * - `POST /tracks/stop`, `POST /tracks/pause`, `POST /tracks/resume`.
  * - `GET /tracks/settings`; `POST /tracks/settings?gapS=600`: the automatic new-segment gap in
  *   seconds (0 = never split on time), persisted.
- * - `GET /tracks/{id}` (summary, stats, waypoints), `GET /tracks/{id}.gpx` (the GPX export, ids in
+ * - `GET /tracks/{id}` (summary, stats, waypoints, T159 `gaps`), `GET /tracks/{id}.gpx` (the GPX export, ids in
  *   `dystopo:id` extensions), `POST /tracks/{id}/export` (write it to `files/tracks/`),
  *   `POST /tracks/{id}/show`, `DELETE /tracks/{id}`.
  * - `GET /tracks/{id}/profile?n=200`: elevation profile samples (T24's sampling);
@@ -53,9 +61,14 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   body limit does not bind (404 with no route; a body as well is a 400). `GET /location/replay` has `running`,
  *   `finished` (the last replay sent every fix), `cancelled`, `source` (`body` or `route`), `kmh`, `fixes`, `sent`,
  *   `rate`, `durationMs` and `elapsedMs`.
+ *   T159 ([ReplayScript]): `accuracy=5,120@40-60,200@80` reports fixes 40 to 60 (numbered from 0) at 120 m and fix 80 at
+ *   200 m over the default 5 m (a point's own accuracy otherwise); `stall=60@100` holds the replay for 60 s of real time
+ *   before fix 100 (`stall=60`: before the middle fix), the later fixes stamped 60 s later, so the GPS goes silent;
+ *   `GET /location/replay` gains `script` and `stalling`. A bad `accuracy=` or `stall=` is a 400 before anything starts.
  *
  * `POST /location` (T10/T27) is observed, not handled: the fix also goes to the recorder's injected
- * source and [handle] returns null so [Routes] still moves the puck.
+ * source and [handle] returns null so [Routes] still moves the puck. T159: `&provider=network` (or `passive`) gives the
+ * fix that source, so it stands in for the recording's network fallback (taken only while the GPS is silent).
  */
 object TrackRoutes {
     private const val UUID = "[0-9a-fA-F-]{36}"
@@ -71,7 +84,9 @@ object TrackRoutes {
                 val lat = p.d("lat")
                 val lon = p.d("lon")
                 if (lat != null && lon != null) {
-                    t.injected.publish(LocationFix(lat, lon, p.d("ele") ?: p.d("alt"), System.currentTimeMillis(), p.d("accuracy") ?: 10.0, "debug"))
+                    // T159: provider=network (or passive) stands in for the recording's network fallback.
+                    val source = when (p.s("provider")?.lowercase()) { "network" -> "network"; "passive" -> "passive"; else -> "debug" }
+                    t.injected.publish(LocationFix(lat, lon, p.d("ele") ?: p.d("alt"), System.currentTimeMillis(), p.d("accuracy") ?: 10.0, source))
                 }
                 return null
             }
@@ -163,14 +178,31 @@ object TrackRoutes {
                 ReplayChecks.refusal(rate, r.body.isEmpty(), p.s("record"), recording, route, kmh, plan != null, TimedTrack.MAX_KMH)?.let { (status, error) ->
                     return Response.json(if (status == 409) mapOf("error" to error, "recording" to recorderJson(t)) else mapOf("error" to error), status)
                 }
-                p.s("record")?.let { t.start(it, Tracking.Mode.INJECTED) }
-                val accuracy = p.d("accuracy") ?: 5.0
+                // T159: accuracy= may carry ranges (120@40-60) and stall= a silence; checked before anything starts.
+                val accuracy = try {
+                    ReplayScript.defaultAccuracy(p.s("accuracy")) ?: 5.0
+                } catch (e: IllegalArgumentException) {
+                    return Response.json(mapOf("error" to e.message), 400)
+                }
+                var scriptError: String? = null
+                val script = { fixes: Int ->
+                    try {
+                        ReplayScript.parse(p.s("accuracy"), p.s("stall"), fixes)
+                    } catch (e: IllegalArgumentException) {
+                        scriptError = e.message
+                        throw ScriptRefused()
+                    }
+                }
                 return try {
+                    if (plan == null) io.github.jasondorjeshort.dystopo.gpx.Gpx.parse(r.bodyText).tracks.flatMap { it.points }.size.let(script)
+                    p.s("record")?.let { t.start(it, Tracking.Mode.INJECTED) }
                     val started = if (plan != null && kmh != null) {
                         val track = TimedTrack.track(plan.route, kmh, System.currentTimeMillis() / 1000 * 1000)
-                        t.replay.startTracks(listOf(track), rate, accuracy, "route", kmh)
-                    } else t.replay.start(r.bodyText, rate, accuracy)
+                        t.replay.startTracks(listOf(track), rate, accuracy, "route", kmh, script)
+                    } else t.replay.start(r.bodyText, rate, accuracy, script)
                     Response.json(started + mapOf("recording" to t.recorder.activeId))
+                } catch (e: ScriptRefused) {
+                    Response.json(mapOf("error" to scriptError), 400)
                 } catch (e: IllegalArgumentException) {
                     // GpxException and XmlException are IllegalArgumentExceptions too.
                     Response.json(mapOf("error" to "bad GPX: ${e.message}"), 400)
@@ -187,7 +219,9 @@ object TrackRoutes {
         }
         val summary = t.call { t.store.summary(id) } ?: return Response.json(mapOf("error" to "no track $id"), 404)
         return when (r.method to suffix) {
-            "GET" to "" -> Response.json(trackJson(t, summary) + mapOf("waypoints" to t.call { t.store.waypoints(id) }.map(::waypointJson)))
+            "GET" to "" -> Response.json(
+                trackJson(t, summary) + mapOf("waypoints" to t.call { t.store.waypoints(id) }.map(::waypointJson), "gaps" to t.call { t.store.gaps(id) }.map(::gapJson)),
+            )
             "DELETE" to "" -> Response.json(mapOf("deleted" to t.delete(id)))
             "GET" to ".gpx" -> {
                 val gpx = t.call { TrackExport.gpx(t.store, id) }!!
@@ -262,15 +296,39 @@ object TrackRoutes {
         return Response.json(waypointJson(w) + mapOf("track" to trackId))
     }
 
+    private class ScriptRefused : RuntimeException()
+
     private fun recorderJson(t: Tracking): Map<String, Any?> = t.call {
         val rec = t.recorder
-        mapOf(
+        val now = android.os.SystemClock.elapsedRealtime()
+        val w = t.watch
+        linkedMapOf(
             "id" to rec.activeId, "mode" to t.mode.name.lowercase(), "paused" to rec.paused, "service" to t.serviceState, "gps" to t.gpsState,
+            // T159: the one state, the line the controls show, and what drives it.
+            "state" to t.stateNow().code, "stateLine" to t.ui.stateLine, "autoPaused" to rec.autoPaused, "pendingGap" to rec.pendingGap?.code,
+            "serviceForeground" to t.serviceForeground, "serviceDown" to t.serviceDown, "serviceRestarts" to t.serviceRestarts, "tasksRemoved" to t.tasksRemoved,
+            "stoppedBySystemAt" to t.stoppedBySystemAt,
+            "silentS" to w.silentMs(now) / 1000.0, "lastAccuracyM" to w.lastPrimaryAccuracyM,
+            "watchdog" to linkedMapOf(
+                "count" to w.watchdogRestarts, "timeoutMs" to rec.profile.watchdogMs, "registrations" to t.gps.registrations,
+                "lastAgoS" to if (w.watchdogRestarts == 0L) null else (now - w.lastWatchdogAt) / 1000.0,
+            ),
+            "fallback" to linkedMapOf(
+                "enabled" to rec.profile.networkFallback, "provider" to t.fallback.name, "listening" to t.fallback.listening,
+                "fixes" to w.fallbackFixes, "ignored" to t.fallbackIgnored, "lastAccuracyM" to w.lastFallbackAccuracyM,
+                "afterS" to w.waitingAfterMs / 1000,
+            ),
+            "notification" to t.notification.json(),
             "acceptedFixes" to rec.accepted, "flagged" to rec.flagged, "rejectedSpeed" to rec.rejectedSpeed, "rejectedTime" to rec.rejectedTime, // T158
-            "skippedPaused" to rec.skippedPaused, "gapSplits" to rec.gapSplits, "gpsIgnored" to t.gpsIgnored,
+            "skippedPaused" to rec.skippedPaused, "skippedAutoPaused" to rec.skippedAutoPaused, "gapSplits" to rec.gapSplits, "gapsWritten" to rec.gapsWritten,
+            "gpsIgnored" to t.gpsIgnored,
+            "gaps" to rec.activeId?.let { id -> t.store.gaps(id).map(::gapJson) },
             "liveStats" to rec.liveStats()?.let(::statsJson),
         )
     }
+
+    private fun gapJson(g: io.github.jasondorjeshort.dystopo.model.TrackGap): Map<String, Any?> =
+        linkedMapOf("start" to g.start, "end" to g.end, "durationS" to g.durationMs / 1000.0, "reason" to g.reason.code)
 
     private fun settingsJson(t: Tracking): Map<String, Any?> = mapOf("gapS" to t.gapSeconds)
 
@@ -281,10 +339,16 @@ object TrackRoutes {
             val tracks = t.store.list()
             val ui = t.ui
             mapOf(
+                "state" to t.state.code, // T159
                 "recording" to recording,
                 "freeWaypoints" to t.store.waypoints(null).map(::waypointJson), // T91
                 "lastDrop" to t.lastDrop,
-                "lastFix" to rec.lastFix?.let { mapOf("lat" to it.lat, "lon" to it.lon, "ele" to it.ele, "time" to it.time, "source" to it.source) },
+                "lastFix" to rec.lastFix?.let {
+                    mapOf(
+                        "lat" to it.lat, "lon" to it.lon, "ele" to it.ele, "time" to it.time, "source" to it.source,
+                        "accuracyM" to it.accuracyM, "speedMps" to it.speedMps, "courseDeg" to it.courseDeg, "verticalAccuracyM" to it.verticalAccuracyM, // T159
+                    )
+                },
                 "shown" to t.shownId,
                 "selectedWaypoint" to t.selectedWaypointId,
                 "profile" to t.profileId,
@@ -297,7 +361,7 @@ object TrackRoutes {
                     "type" to "sqldelight", "file" to t.dbFile.path, "bytes" to t.dbFile.length(), "tracks" to tracks.size,
                     "schemaVersion" to io.github.jasondorjeshort.dystopo.store.db.TrackDb.Schema.version,
                 ),
-                "tracks" to tracks.map { s -> summaryJson(s) + mapOf("stats" to t.statsOf(s)?.let(::statsJson)) },
+                "tracks" to tracks.map { s -> summaryJson(s) + mapOf("stats" to t.statsOf(s)?.let(::statsJson), "gaps" to t.store.gaps(s.id).size) },
                 "statsComputed" to t.store.statsComputed,
             )
         }

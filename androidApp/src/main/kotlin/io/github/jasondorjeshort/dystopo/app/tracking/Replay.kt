@@ -14,6 +14,11 @@ import io.github.jasondorjeshort.dystopo.store.TrackExport
  * one cancels the old. T146: [startTracks] replays tracks built in the app (`POST /location/replay?route=current&kmh=`,
  * the current route as a timed track) with no request body, so the loopback server's 1 MiB body limit does not bind;
  * [finished] says the last replay sent every fix (`GET /location/replay` `finished`).
+ *
+ * T159: a [ReplayScript] scripts what a failing GPS does: fixes at a given accuracy over a range of fixes, and a stall
+ * (no fix for some seconds of real time before a given fix; the fixes after it later by as much), so the watchdog and
+ * the network fallback run on the emulator. The puck moves only while the app is in the foreground (a stopped map has
+ * nothing to draw, and the replay should cost the main thread nothing in the background).
  */
 class Replay(private val tracking: Tracking) {
     @Volatile private var thread: Thread? = null
@@ -55,13 +60,18 @@ class Replay(private val tracking: Tracking) {
      * moved onto the recording's timeline ([TrackExport.continueAfter], T33): its first fix comes one
      * second after the last kept one, intervals unchanged; the result reports `shiftedMs`.
      */
-    fun start(gpx: String, rate: Double, accuracyM: Double = 5.0): Map<String, Any?> =
-        startTracks(Gpx.parse(gpx).tracks, rate, accuracyM, "body", null)
+    fun start(gpx: String, rate: Double, accuracyM: Double = 5.0, script: (Int) -> ReplayScript = { ReplayScript() }): Map<String, Any?> =
+        startTracks(Gpx.parse(gpx).tracks, rate, accuracyM, "body", null, script)
 
-    /** T146: replays [tracks] (built in the app, no GPX text) as [start] does; [source] and [kmh] are reported. */
-    fun startTracks(tracks: List<Track>, rate: Double, accuracyM: Double, source: String, kmh: Double?): Map<String, Any?> {
-        val original = TrackExport.replay(tracks, rate, accuracyM)
-        require(original.isNotEmpty()) { "the GPX has no track points" }
+    /**
+     * T146: replays [tracks] (built in the app, no GPX text) as [start] does; [source] and [kmh] are reported. T159: [script]
+     * gets the number of fixes (for a stall in the middle) and gives the script.
+     */
+    fun startTracks(tracks: List<Track>, rate: Double, accuracyM: Double, source: String, kmh: Double?, script: (Int) -> ReplayScript = { ReplayScript() }): Map<String, Any?> {
+        val plain = TrackExport.replay(tracks, rate, accuracyM)
+        require(plain.isNotEmpty()) { "the GPX has no track points" }
+        val sc = script(plain.size)
+        val original = sc.apply(plain)
         val last = tracking.call { tracking.recorder.lastAcceptedTime }
         val timed = TrackExport.continueAfter(original, last)
         val shiftedMs = timed.first().fix.time - original.first().fix.time
@@ -73,6 +83,7 @@ class Replay(private val tracking: Tracking) {
         durationMs = timed.last().atMs
         this.source = source
         this.kmh = kmh
+        this.script = sc
         idle = false
         finished = false
         cancelled = false
@@ -90,8 +101,9 @@ class Replay(private val tracking: Tracking) {
                     if (wait > 0) Thread.sleep(wait)
                     if (!current()) throw InterruptedException()
                     tracking.injected.publish(f.fix)
-                    // Move the puck too (best effort; the map may not be attached).
-                    val moved = runCatching { DystopoApp.instance.map.injectLocation(f.fix.lat, f.fix.lon, accuracyM.toFloat(), null) }
+                    // Move the puck too (best effort; the map may not be attached); T159: only while the map is on screen.
+                    val moved = if (!io.github.jasondorjeshort.dystopo.app.Foreground.started) Result.success(Unit)
+                    else runCatching { DystopoApp.instance.map.injectLocation(f.fix.lat, f.fix.lon, (f.fix.accuracyM ?: accuracyM).toFloat(), null) }
                     if (moved.exceptionOrNull() is InterruptedException || !current()) throw InterruptedException()
                     sent++
                 }
@@ -108,6 +120,10 @@ class Replay(private val tracking: Tracking) {
         t.start()
         return json() + mapOf("shiftedMs" to shiftedMs)
     }
+
+    /** T159: the last replay's script (accuracy ranges and a stall). */
+    @Volatile var script: ReplayScript = ReplayScript()
+        private set
 
     /** T146: bumped by every start and cancel; a replay thread stops at its next fix once it is no longer current. */
     private val generation = java.util.concurrent.atomic.AtomicInteger()
@@ -135,7 +151,77 @@ class Replay(private val tracking: Tracking) {
         "rate" to rate,
         "durationMs" to durationMs,
         "elapsedMs" to if (startedAt == 0L) null else SystemClock.elapsedRealtime() - startedAt,
+        // T159: the script, and whether the replay is in its stall now (waiting to send the fix after it).
+        "script" to script.json(),
+        "stalling" to (!idle && script.stall?.beforeFix == sent),
     )
+}
+
+/**
+ * T159: what a replay ([Replay], `POST /location/replay`) does besides playing the file: [ranges] report fixes at a
+ * given accuracy (over the point's own and the `accuracy=` default), and [stall] holds every fix from one on back by
+ * some seconds of real time, their times later by as much, so the recorder sees the GPS go silent. Pure, unit-tested
+ * (`ReplayScriptTest`).
+ *
+ * Query forms: `accuracy=5` (every fix without its own), `accuracy=5,120@40-60,200@80` (fixes 40 to 60 at 120 m and fix
+ * 80 at 200 m, numbered from 0); `stall=60` (60 s before the middle fix) or `stall=60@100` (before fix 100).
+ */
+data class ReplayScript(val ranges: List<AccuracyRange> = emptyList(), val stall: Stall? = null) {
+    data class AccuracyRange(val accuracyM: Double, val from: Int, val to: Int)
+    data class Stall(val seconds: Double, val beforeFix: Int)
+
+    fun apply(timed: List<TrackExport.Timed>): List<TrackExport.Timed> {
+        val stallMs = stall?.let { (it.seconds * 1000).toLong() } ?: 0L
+        return timed.mapIndexed { i, t ->
+            var fix = t.fix
+            ranges.lastOrNull { i in it.from..it.to }?.let { fix = fix.copy(accuracyM = it.accuracyM) }
+            if (stall != null && i >= stall.beforeFix) TrackExport.Timed(t.atMs + stallMs, fix.copy(time = fix.time + stallMs))
+            else t.copy(fix = fix)
+        }
+    }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "accuracy" to ranges.map { mapOf("accuracyM" to it.accuracyM, "from" to it.from, "to" to it.to) },
+        "stall" to stall?.let { mapOf("seconds" to it.seconds, "beforeFix" to it.beforeFix) },
+    )
+
+    companion object {
+        private val range = Regex("""^(\d+(?:\.\d+)?)@(\d+)(?:-(\d+))?$""")
+        private val stallForm = Regex("""^(\d+(?:\.\d+)?)(?:@(\d+))?$""")
+
+        /** The default accuracy in `accuracy=` (its plain number), or null; throws [IllegalArgumentException] as [parse] does. */
+        fun defaultAccuracy(accuracy: String?): Double? = parts(accuracy).mapNotNull { it.toDoubleOrNull() }.lastOrNull()?.also {
+            require(it > 0 && it.isFinite()) { "accuracy must be above 0 m" }
+        }
+
+        private fun parts(spec: String?): List<String> = spec?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+
+        /**
+         * Parses `accuracy=` (its ranges; the plain number is [defaultAccuracy]) and `stall=` for a replay of [fixes]
+         * fixes; throws [IllegalArgumentException] with a readable message.
+         */
+        fun parse(accuracy: String?, stall: String?, fixes: Int): ReplayScript {
+            defaultAccuracy(accuracy)
+            val ranges = parts(accuracy).filter { it.toDoubleOrNull() == null }.map { part ->
+                val m = range.matchEntire(part) ?: throw IllegalArgumentException("accuracy must be metres, metres@fix or metres@from-to (fixes from 0): $part")
+                val a = m.groupValues[1].toDouble()
+                val from = m.groupValues[2].toInt()
+                val to = m.groupValues[3].takeIf { it.isNotEmpty() }?.toInt() ?: from
+                require(a > 0) { "accuracy must be above 0 m: $part" }
+                require(to >= from) { "accuracy range runs backwards: $part" }
+                AccuracyRange(a, from, to)
+            }
+            val st = stall?.trim()?.takeIf { it.isNotEmpty() }?.let { s ->
+                val m = stallForm.matchEntire(s) ?: throw IllegalArgumentException("stall must be seconds or seconds@fix: $s")
+                val seconds = m.groupValues[1].toDouble()
+                require(seconds > 0 && seconds <= 3600) { "stall must be above 0 and at most 3600 s" }
+                val at = m.groupValues[2].takeIf { it.isNotEmpty() }?.toInt() ?: (fixes / 2)
+                require(at in 1 until maxOf(fixes, 2)) { "the stall must come before a fix from 1 to ${fixes - 1}" }
+                Stall(seconds, at)
+            }
+            return ReplayScript(ranges, st)
+        }
+    }
 }
 
 /** T65: when `POST /location/replay` is refused, kept apart from the route so it is unit-tested. */

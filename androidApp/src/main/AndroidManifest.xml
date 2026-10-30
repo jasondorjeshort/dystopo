@@ -71,6 +71,8 @@
             android:name=".tracking.TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- T159: the recording notification's Pause, Resume and Stop, and its dismissal (only its PendingIntents reach it). -->
+        <receiver android:name=".tracking.TrackActionReceiver" android:exported="false" />
         <!-- T83: the system installer's answers for an update session (only its PendingIntent reaches it). -->
         <receiver android:name=".update.UpdateResultReceiver" android:exported="false" />
         <!-- T156 (ADR 0046): WorkManager's foreground service carries the area download (areas/DownloadWorker.kt) with the
