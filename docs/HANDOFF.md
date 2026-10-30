@@ -21,11 +21,10 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Next
 
-1. Plan wave 22 (`wave` skill, critic first) from the wave 21 Status follow-ups: the streaming or server-shipped
-   routing graph (a city-sized pack is refused on a 512 MB heap; proposal first), precomputed country sizes (60 s of
-   CPU per list open), the on-disk tile cache index, `PlaceSearch.peek` on the main thread, the `HeadingSensor`
-   violation, `AreaPins` pinning elevation z14 inside a medium area, medium as the z8 to z10 region default, the
-   `sweep.ps1` switches for `--no-daemon` and emulator RAM; and the owner's phone results (the owner list).
+1. Plan wave 22 (`wave` skill, critic first), **hiking features** (owner, 2026-10-29; order is the coordinator's):
+   the recorder with activity profiles, the live readout, centring on open, the hiking `Plan:` ideas (triaged
+   2026-10-29); plus the wave 21 follow-ups (TASKS › Later, the T149 to T157 Status lines; the routing graph
+   proposal first) and the owner's phone results.
 2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR
    for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
 
