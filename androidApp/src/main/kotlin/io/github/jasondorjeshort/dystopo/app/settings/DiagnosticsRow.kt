@@ -31,7 +31,8 @@ import kotlinx.coroutines.withContext
  * [Diagnostics.nowLines] and, under "Last session", [Diagnostics.lastSessionLines], read on a worker thread when the
  * row opens and on Refresh (never polled), and Copy report ([copyReport]: [Diagnostics.report] as plain text; Android 13 and
  * up confirm a copy themselves, so the toast is shown only below). [DiagnosticsUi.shown] is the snapshot on screen, what
- * `GET /diagnostics?shown=1` and `POST /diagnostics/copy` read.
+ * `GET /diagnostics?shown=1` and `POST /diagnostics/copy` read. T172: under the memory, the live or last track's numbers
+ * ([Diagnostics.trackLines]: points marked, gaps by reason, the watchdog's restarts while recording).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -44,13 +45,15 @@ fun DiagnosticsRow() {
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BasicText("Diagnostics", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-        BasicText("How much memory the app uses, read when this page opens. Nothing leaves the phone unless you copy it.", style = TextStyle(color = Muted, fontSize = 11.sp))
+        BasicText("How much memory the app uses and how the last recording went, read when this page opens. Nothing leaves the phone unless you copy it.", style = TextStyle(color = Muted, fontSize = 11.sp))
         val s = snap
         if (s == null) BasicText("Reading…", style = TextStyle(color = Muted, fontSize = 13.sp))
         else {
             for (l in Diagnostics.nowLines(s)) Value(l)
             BasicText(Diagnostics.LAST_SESSION, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
             for (l in Diagnostics.lastSessionLines(s)) Value(l)
+            BasicText(Diagnostics.trackHeading(s), Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)) // T172
+            for (l in Diagnostics.trackLines(s)) Value(l)
         }
         FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Option("Refresh", false) { refresh++ }

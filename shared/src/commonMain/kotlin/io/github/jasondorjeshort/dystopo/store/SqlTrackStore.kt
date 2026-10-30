@@ -449,13 +449,13 @@ class SqlTrackStore(
         return existed
     }
 
-    override fun list(): List<TrackSummary> = q.selectTracks { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, _, _ ->
-        TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt())
+    override fun list(): List<TrackSummary> = q.selectTracks { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, activity, _ ->
+        TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt(), Activity.of(activity))
     }.executeAsList()
 
     override fun summary(trackId: String): TrackSummary? =
-        q.selectTrack(trackId) { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, _, _ ->
-            TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt())
+        q.selectTrack(trackId) { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, activity, _ ->
+            TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt(), Activity.of(activity))
         }.executeAsOneOrNull()
 
     override fun track(trackId: String): Track? {

@@ -20,6 +20,8 @@ data class TrackSummary(
     val recording: Boolean,
     val points: Int,
     val waypoints: Int,
+    /** T172: how it was travelled (the track's synced `activity` field; null: not said, or a newer build's). */
+    val activity: Activity? = null,
 )
 
 /**

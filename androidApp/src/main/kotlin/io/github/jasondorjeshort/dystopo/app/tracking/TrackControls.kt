@@ -93,6 +93,12 @@ private fun BoxScope.Controls() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val notificationAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) tracking.repostNotification()
+        BatteryExemption.onRecord(context) // T172: after the system's dialog, so the two never stack
+    }
+    // T172: what a recording started from the activity picker asks, each at most once: the notification permission, then
+    // the battery exemption card.
+    val onRecordStarted = {
+        if (NotificationPrompt.shouldAsk(context)) notificationAsk.launch(NotificationPrompt.PERMISSION) else BatteryExemption.onRecord(context)
     }
 
     io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
@@ -131,17 +137,20 @@ private fun BoxScope.Controls() {
                     }
                     Chip("Tracks") { listOpen = !listOpen }
                     Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
-                        val starting = !tracking.ui.recording
-                        Thread { if (tracking.ui.recording) tracking.stop() else tracking.start(null, Tracking.Mode.ALL) }.start()
-                        if (starting && NotificationPrompt.shouldAsk(context)) notificationAsk.launch(NotificationPrompt.PERMISSION)
+                        // T172: Record opens the activity picker (the remembered activity marked); a choice starts the recording.
+                        if (tracking.ui.recording) Thread { tracking.stop() }.start()
+                        else if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else ActivityPicker.openForRecord()
                     }
                     io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, stop and keep
                     Chip("\u00D7") { barOpen = false; listOpen = false }
                 }
             }
+            if (barOpen) ActivityPickerPanel(onRecordStarted) // T172
             if (barOpen && ui.recording) {
                 Panel {
                     BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+                    // T172: the recording's activity; a tap changes it (the recording then uses that activity's settings).
+                    ActivityLine(ui.activeId, ui.activeName, ui.activeActivity)
                     BasicText(
                         UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)),
                         style = TextStyle(color = Ink, fontSize = 13.sp),
@@ -165,11 +174,14 @@ private fun BoxScope.Controls() {
                         items(ui.tracks, key = { it.id }) { t ->
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 val km = ui.distances[t.id]?.let { "  " + UnitFormat.distance(it, AppSettings.units) } ?: ""
-                                BasicText(
-                                    (if (t.id == ui.shownId) "● " else "") + t.name + "\n" + t.points + " pts" + km + if (t.recording) "  recording" else "",
-                                    style = TextStyle(color = Ink, fontSize = 13.sp),
-                                    modifier = Modifier.widthIn(max = 170.dp).clickable { Thread { tracking.show(t.id) }.start() },
-                                )
+                                Column(Modifier.widthIn(max = 170.dp)) {
+                                    BasicText(
+                                        (if (t.id == ui.shownId) "● " else "") + t.name + "\n" + t.points + " pts" + km + if (t.recording) "  recording" else "",
+                                        style = TextStyle(color = Ink, fontSize = 13.sp),
+                                        modifier = Modifier.clickable { Thread { tracking.show(t.id) }.start() },
+                                    )
+                                    ActivityLine(t.id, t.name, t.activity) // T172: changeable afterwards
+                                }
                                 Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
                                 Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start() } // T61: navigate
                                 Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
@@ -198,6 +210,7 @@ private fun BoxScope.Controls() {
         },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        BatteryExemptionCard() // T172: once, on the first Record
         LongPressCard() // T91
         ui.selectedWaypoint?.let { WaypointSheet(tracking, it) }
         ui.profile?.let { ProfilePanel(tracking, it) }
@@ -231,6 +244,20 @@ private fun ImportList(tracking: Tracking, onDone: () -> Unit) {
             },
         )
     }
+}
+
+/**
+ * T172: a track's activity as a link ("On foot ›"; "Activity ›" when the track has none, an import for example); a tap
+ * opens the activity picker for that track.
+ */
+@Composable
+private fun ActivityLine(id: String?, name: String?, activity: io.github.jasondorjeshort.dystopo.model.Activity?) {
+    if (id == null) return
+    BasicText(
+        (activity?.let { RecordingProfiles.label(it) } ?: "Activity") + " ›",
+        style = TextStyle(color = Link, fontSize = 12.sp, fontWeight = FontWeight.Medium),
+        modifier = Modifier.clickable { ActivityPicker.openForTrack(id, name ?: "", activity) }.padding(vertical = 2.dp),
+    )
 }
 
 /** T109: whether the track bar is unfolded (Record, Pause, Tracks); Compose state, main thread. */

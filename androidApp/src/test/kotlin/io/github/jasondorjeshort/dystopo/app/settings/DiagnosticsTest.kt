@@ -75,6 +75,29 @@ class DiagnosticsTest {
     }
 
     @Test
+    fun theTrackLinesCountMarkedPointsAndGapsByReason() { // T172
+        val gaps = listOf(
+            io.github.jasondorjeshort.dystopo.model.TrackGap(1_000, 181_000, io.github.jasondorjeshort.dystopo.model.GapReason.NO_FIX),
+            io.github.jasondorjeshort.dystopo.model.TrackGap(200_000, 250_000, io.github.jasondorjeshort.dystopo.model.GapReason.AUTO_PAUSED),
+            io.github.jasondorjeshort.dystopo.model.TrackGap(300_000, 310_000, io.github.jasondorjeshort.dystopo.model.GapReason.NO_FIX),
+        )
+        val live = snapshot().copy(track = Diagnostics.TrackDiag(true, 1_700_000_000_000, null, io.github.jasondorjeshort.dystopo.model.Activity.FOOT, 340, 12, 3, gaps, 1))
+        val lines = Diagnostics.trackLines(live).map { it.toString() }
+        assertEquals("Recording now", Diagnostics.trackHeading(live))
+        assertEquals("Activity: On foot", lines[1])
+        assertEquals("Points: 340, 12 less accurate than the limit, 3 from network location", lines[2])
+        assertEquals("Gaps: 3, 4 min in all: 2 no fix, 1 auto-paused", lines[3])
+        assertEquals("GPS restarts by the watchdog: 1", lines[4])
+        val stopped = snapshot().copy(track = Diagnostics.TrackDiag(false, 1_700_000_000_000, 1_700_000_600_000, null, 10, 0, 0, emptyList(), null))
+        assertEquals("Last track", Diagnostics.trackHeading(stopped))
+        assertEquals(listOf("Activity: not set", "Points: 10, 0 less accurate than the limit", "Gaps: none"), Diagnostics.trackLines(stopped).drop(1).map { it.toString() })
+        assertTrue(Diagnostics.trackLines(stopped)[0].toString().contains(", ended "))
+        assertEquals(listOf("Tracks: none recorded"), Diagnostics.trackLines(snapshot()).map { it.toString() })
+        assertTrue("Points: 340, 12 less accurate than the limit, 3 from network location" in Diagnostics.report(live))
+        assertEquals(listOf("35 s", "4 min 10 s", "1 h 5 min", "1 h"), listOf(35_000L, 250_000L, 3_900_000L, 3_600_000L).map { Diagnostics.span(it) })
+    }
+
+    @Test
     fun theReportCarriesTheRowAndThePhoneAndTheScrubLeavesItAlone() {
         val s = snapshot(previous = mark(150 * MB))
         val r = Diagnostics.report(s)

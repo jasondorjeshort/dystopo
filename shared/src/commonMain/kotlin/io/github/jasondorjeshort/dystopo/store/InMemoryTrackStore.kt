@@ -282,7 +282,7 @@ class InMemoryTrackStore(
     private fun summaryOf(v: TrackView): TrackSummary {
         val l = local.getValue(v.id)
         val wps = waypointViews.values.count { it.trackId == v.id }
-        return TrackSummary(v.id, v.name, v.createdAt, l.updatedAt, l.recording, v.pointCount, wps)
+        return TrackSummary(v.id, v.name, v.createdAt, l.updatedAt, l.recording, v.pointCount, wps, Activity.of(v.activity))
     }
 
     override fun list(): List<TrackSummary> = tracks.values.map { summaryOf(it) }.sortedWith(compareBy({ it.createdAt }, { it.id }))

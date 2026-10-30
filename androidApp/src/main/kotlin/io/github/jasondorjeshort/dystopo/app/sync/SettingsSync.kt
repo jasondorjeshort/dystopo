@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings
+import io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.sync.SyncStore
@@ -25,6 +26,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * device shows the same numbers), its switch (`app.paceStandard`, `on` or `off`) and its reset (`app.paceSince`, epoch ms).
  * T163: the turn-around clock's deadline and margin (`app.turnDeadline`, `sunset`, `civil` or `HH:MM`; `app.turnMarginMin`,
  * whole minutes) are [SettingsRoutes] keys too.
+ * T172: the recording activity the picker remembers (`app.trackActivity`, an activity code) and one value per activity for its
+ * four recording choices (`app.trackProfile.<activity>`, `acc=50;autopause=0;net=1;interval=1000`); both [SettingsRoutes] keys.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -55,6 +58,8 @@ object SettingsSync {
     /** T163: the turn-around clock's deadline (`sunset`, `civil` or `HH:MM`) and margin (whole minutes), [SettingsRoutes] keys. */
     const val TURN_DEADLINE = "turnDeadline"
     const val TURN_MARGIN_MIN = "turnMarginMin"
+    /** T172: the remembered recording activity, a [SettingsRoutes] key whose synced value is an activity code. */
+    const val TRACK_ACTIVITY = "trackActivity"
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -100,6 +105,8 @@ object SettingsSync {
         m[syncedKey(PACE_SINCE)] = AppSettings.paceSince.toString()
         m[syncedKey(TURN_DEADLINE)] = AppSettings.turnDeadline // T163
         m[syncedKey(TURN_MARGIN_MIN)] = AppSettings.turnMarginMin.toString()
+        m[syncedKey(TRACK_ACTIVITY)] = AppSettings.trackActivity.code // T172
+        for (a in io.github.jasondorjeshort.dystopo.model.Activity.entries) m[syncedKey(RecordingProfiles.key(a))] = AppSettings.trackProfiles[a]
         return m
     }
 
@@ -156,6 +163,9 @@ object SettingsSync {
         if (parsed.paceSince != null) keys += syncedKey(PACE_SINCE)
         if (parsed.turnDeadline != null) keys += syncedKey(TURN_DEADLINE) // T163
         if (parsed.turnMarginMin != null) keys += syncedKey(TURN_MARGIN_MIN)
+        if (parsed.trackActivity != null) keys += syncedKey(TRACK_ACTIVITY) // T172
+        parsed.trackProfiles.keys.forEach { keys += syncedKey(RecordingProfiles.key(it)) }
+        if (parsed.trackEdit != null) keys += syncedKey(RecordingProfiles.key(AppSettings.trackActivity)) // the remembered one's, as apply edited it
         publishKeys(app, keys)
     }
 

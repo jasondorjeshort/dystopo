@@ -102,6 +102,9 @@ class Tracking private constructor(private val app: DystopoApp) {
         /** T159: the recording's state, and the line the controls show under the live stats (null while recording normally). */
         val state: RecState = RecState.IDLE,
         val stateLine: String? = null,
+        /** T172: the recording track and its activity (the recording panel's activity line). */
+        val activeId: String? = null,
+        val activeActivity: Activity? = null,
     )
 
     private val worker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-tracks").apply { isDaemon = true } }
@@ -424,14 +427,16 @@ class Tracking private constructor(private val app: DystopoApp) {
         if (recorder.recording) notification.update(statusNow(), recorder.activeId, startedAtWall(), force = true)
     }
 
-    fun start(name: String?, mode: Mode): TrackSummary {
+    /** Starts recording; T172: with [activity]'s profile from the settings rows (null: the remembered activity, [AppSettings.trackActivity]). */
+    fun start(name: String?, mode: Mode, activity: Activity? = null): TrackSummary {
+        val profile = profileFor(activity ?: AppSettings.trackActivity)
         val s = call {
             this.mode = mode
             val n = name?.takeIf { it.isNotBlank() } ?: "Track ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())}"
             prefs.edit().putString(KEY_REC_MODE, mode.name).apply()
             stoppedBySystemAt = null
             watch.begin(SystemClock.elapsedRealtime())
-            recorder.start(n).also { shownId = it.id }
+            recorder.start(n, profile).also { shownId = it.id }
         }
         startService()
         refreshUi()
@@ -480,6 +485,43 @@ class Tracking private constructor(private val app: DystopoApp) {
     }
 
     val gapSeconds: Long get() = (recorder.profile.gap.timeMs ?: 0L) / 1000
+
+    /** T172: [a]'s profile as the settings rows set it, with this device's segment gap (`POST /tracks/settings?gapS=`) when one is set. */
+    private fun profileFor(a: Activity): ActivityProfile {
+        val p = AppSettings.trackProfile(a)
+        return if (prefs.contains(KEY_GAP_S)) p.copy(gap = p.gap.copy(timeMs = gapMsOf(prefs.getLong(KEY_GAP_S, 0)))) else p
+    }
+
+    /** T172: the settings rows changed [a]'s profile: a recording of that activity takes it from the next fix (the GPS re-registered for a new interval). */
+    fun applyProfile(a: Activity): Unit = post {
+        if (!recorder.recording || recorder.profile.activity != a) return@post
+        val p = profileFor(a)
+        val interval = p.intervalMs != recorder.profile.intervalMs
+        recorder.profile = p
+        recorder.activeId?.let { store.setActivity(it, a, p, System.currentTimeMillis()) }
+        if (interval && serviceForeground && mode.gps) startGps()
+    }
+
+    /**
+     * T172: changes a track's activity afterwards. The recording one takes [a]'s profile from the next fix; another keeps
+     * the profile it was recorded with. False for an unknown track.
+     */
+    fun setActivity(id: String, a: Activity): Boolean {
+        val now = System.currentTimeMillis()
+        val ok = call {
+            if (store.summary(id) == null) return@call false
+            if (id == recorder.activeId) {
+                val p = profileFor(a)
+                val interval = p.intervalMs != recorder.profile.intervalMs
+                recorder.profile = p
+                store.setActivity(id, a, p, now)
+                if (interval && serviceForeground && mode.gps) startGps()
+            } else store.setActivity(id, a, store.track(id)?.profile, now)
+            true
+        }
+        refreshUi()
+        return ok
+    }
 
     fun show(id: String?): Boolean {
         if (id != null && call { store.summary(id) } == null) return false
@@ -668,6 +710,8 @@ class Tracking private constructor(private val app: DystopoApp) {
             selectedWaypoint = selectedWaypointId?.let { store.waypoint(it) },
             profile = profile,
             gapS = gapSeconds,
+            activeId = recorder.activeId, // T172
+            activeActivity = active?.activity,
         )
         val status = if (recorder.recording) statusNow() else null
         val withState = state.copy(state = status?.state ?: RecState.IDLE, stateLine = status?.controlsLine)
