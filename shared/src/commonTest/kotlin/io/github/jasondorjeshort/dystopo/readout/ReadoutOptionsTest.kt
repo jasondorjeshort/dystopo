@@ -51,8 +51,11 @@ class ReadoutOptionsTest {
         val foot = ReadoutOptions.defaults(Activity.FOOT)
         fun speed(mps: Double, o: ReadoutOptions = foot, u: ContourUnits = ContourUnits.METERS) =
             ReadoutText.of(ReadoutValue(ReadoutEntry.SPEED, ValueState.SHOWN, mps, 0.1), o, u)!!.full
-        assertEquals("5 km/h", speed(1.3))
-        assertEquals("3 mph", speed(1.3, u = ContourUnits.FEET))
+        assertEquals("4.5 km/h", speed(1.3)) // T161: half units below 10
+        assertEquals("3.0 mph", speed(1.3, u = ContourUnits.FEET))
+        assertEquals("1.5 mph", speed(0.645, u = ContourUnits.FEET))
+        assertEquals("0.0 km/h", speed(0.01))
+        assertEquals("12 km/h", speed(3.3))
         val pace = foot.with(ReadoutEntry.SPEED, foot.speed.copy(pace = true))
         assertEquals("12:50 /km", speed(1.3, pace))
         assertEquals("20:40 /mi", speed(1.3, pace, ContourUnits.FEET))

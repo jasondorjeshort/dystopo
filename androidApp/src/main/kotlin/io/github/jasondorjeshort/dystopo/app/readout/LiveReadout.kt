@@ -57,6 +57,9 @@ object LiveReadout {
     /** A network fix this soon after a GPS one is not used (the map listens to both providers). */
     const val GPS_PRECEDENCE_MS = 10_000L
 
+    /** A step longer than this, faster than the profile's speed bound, is a jump: the estimator starts afresh (as `Heading.JUMP_M`). */
+    const val JUMP_M = 2_000.0
+
     /** The map's own fixes and the sensor's pressure are ignored this long after an injected fix or pressure. */
     const val INJECTED_PRECEDENCE_MS = 10_000L
 
@@ -65,6 +68,7 @@ object LiveReadout {
     // Worker thread only.
     private var est: ReadoutEstimator? = null
     private var routeHint: Double? = null
+    private var lastFed: LocationFix? = null
 
     /** What the strip draws and `GET /readout` reports, from the last [refresh]. */
     @Volatile var snapshot: Snapshot? = null
@@ -142,6 +146,7 @@ object LiveReadout {
     fun reset(): Map<String, Any?> = call {
         est = null
         routeHint = null
+        lastFed = null
         snapshot = null
         offsetMs = 0L
         lastInjectedAt = 0L
@@ -200,6 +205,18 @@ object LiveReadout {
     private fun <T> call(block: () -> T): T = worker.submit(Callable(block)).get(5, TimeUnit.SECONDS)
 
     private fun feedFix(fix: LocationFix) {
+        // A jump (the first fix of a replay far from the last device fix, a network fix replaced by GPS after a long
+        // silence) is not travel: start afresh rather than read a speed, a climb and a suspect barometer into it.
+        lastFed?.let { l ->
+            val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(l.lat, l.lon, fix.lat, fix.lon)
+            val dt = (fix.time - l.time) / 1000.0
+            if (d > JUMP_M && (dt <= 0 || d / dt > AppSettings.trackProfile().speedBoundMps)) {
+                est = null
+                routeHint = null
+                bump("jumpResets")
+            }
+        }
+        lastFed = fix
         val e = ensure()
         offsetMs = fix.time - System.currentTimeMillis()
         e.onFix(fix, routeAlong(fix))
@@ -257,6 +274,6 @@ object LiveReadout {
         val barometerWanted: Boolean,
     ) {
         /** The strip as one line of text (what `GET /readout` `line` and the strip's description say). */
-        val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l -> (listOfNotNull(gapText) + l.map { "${it.caption} ${it.full}" }).joinToString(" · ") }
+        val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l -> l.joinToString(" · ") { "${it.caption} ${it.full}" } }
     }
 }

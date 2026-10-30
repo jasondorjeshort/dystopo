@@ -268,6 +268,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.READOUT_COURSE -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE, change, help = "settings.readoutCourse")
         SettingsRow.READOUT_ELEVATION -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION, change, help = "settings.readoutElevation")
         SettingsRow.READOUT_BAROMETER -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.readoutBarometer
             val present = remember { io.github.jasondorjeshort.dystopo.app.readout.Barometer.present }
             Setting(row.label, if (present) "steadies the elevation and the climb on foot, by bike and by boat" else "this phone has no barometer: the elevation comes from GPS and the map", help = "settings.readoutBarometer") {
@@ -284,6 +285,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
  */
 @Composable
 private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, change: (SettingsRoutes.Parsed.Ok) -> Unit, help: String) {
+    @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision // a skippable composable: recompose after apply
     val rs = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings
     val a = AppSettings.trackActivity
     val o = AppSettings.readoutOptions(a)[e]

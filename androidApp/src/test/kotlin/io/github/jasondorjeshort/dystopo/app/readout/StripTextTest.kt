@@ -32,9 +32,9 @@ class StripTextTest {
     fun aWalkReadsSpeedCourseElevationThenClimb() {
         val items = StripText.items(walk, ReadoutOptions.defaults(Activity.FOOT), ContourUnits.METERS)
         assertEquals(listOf("speed", "course", "elevation", "climb"), items.map { it.caption })
-        assertEquals(listOf("5 km/h", "245°", "1650 m", "↓360 m/h"), items.map { it.full })
+        assertEquals(listOf("4.5 km/h", "245°", "1650 m", "↓360 m/h"), items.map { it.full })
         val ft = StripText.items(walk, ReadoutOptions.defaults(Activity.FOOT), ContourUnits.FEET)
-        assertEquals(listOf("3 mph", "245°", "5414 ft", "↓1180 ft/h"), ft.map { it.full })
+        assertEquals(listOf("3.0 mph", "245°", "5414 ft", "↓1180 ft/h"), ft.map { it.full })
     }
 
     @Test
