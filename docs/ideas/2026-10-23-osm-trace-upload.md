@@ -1,7 +1,7 @@
 ---
 date: 2026-10-23
 kind: feature
-related: [2026-10-13-external-integrations.md]
+related: [2026-10-13-external-integrations.md, 2026-10-29-trail-corrections-from-tracks.md]
 ---
 
 # Upload a recorded track to OpenStreetMap as a GPS trace

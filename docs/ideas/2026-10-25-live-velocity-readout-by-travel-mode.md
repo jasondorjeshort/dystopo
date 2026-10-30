@@ -1,7 +1,7 @@
 ---
 date: 2026-10-25
 kind: feature
-related: [2026-10-25-track-activity-profiles-and-dropout-handling.md, 2026-10-13-routing-modes-crow-bushwhack.md]
+related: [2026-10-25-track-activity-profiles-and-dropout-handling.md, 2026-10-13-routing-modes-crow-bushwhack.md, 2026-10-29-route-times-fitted-to-your-tracks.md]
 ---
 
 # Live readout of speed, climb rate, heading and elevation near the scale bar, shaped by travel mode

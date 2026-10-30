@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-related: [2026-10-13-route-waypoints-and-reroute.md]
+related: [2026-10-13-route-waypoints-and-reroute.md, 2026-10-29-route-times-fitted-to-your-tracks.md]
 ---
 
 # Crow and bushwhacking routing modes
@@ -41,3 +41,10 @@ Answer: hold until the stops and reroute proposal is decided, then a proposal fo
 already tolerates, off-trail stretches are leg geometry, new directions make the saved directions count
 as absent on older builds, and per-leg data rides as a keyed side field; only a new `LegKind` would
 need a version, and then it rides with 0040's build. The grid A* proposal is still the next step here.
+2026-10-29 (owner's moonshot list): detail for the grid A* proposal. The cost grid must be a window
+around the corridor, never the whole pack: the whole-pack routing graph already runs out of heap on
+the phone (finding `2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`). Land cover
+needs a source the app does not have yet: a global 10 m land cover raster under an open licence gets
+a registry entry in `sources.json` first, and its classes (water, glacier, dense forest, shrub, open)
+become cost factors. The off-trail time model should come from the user's own tracks once those are
+fitted (`2026-10-29-route-times-fitted-to-your-tracks.md`).
