@@ -37,11 +37,15 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   [io.github.jasondorjeshort.dystopo.readout.Readout.json]: each value's `state`, SI `value`, `sigma`, `source`,
  *   `dimmed`, `frozen`, `reason`; `gapS`; `heights` with `gnssM`, `baroM` and `demM` apart; `barometer` with its `state`,
  *   `reason`, `offsetM`; `fixSpeedMps`, `routeSpeedMps`, `counters`), `barometerSensor` (`present`, `listening`, `wanted`,
- *   `samples`, `lastHPa`, `source`: `sensor` or `replay`), `seaLevelPressure` (`none` until T173), `route` (while
+ *   `samples`, `lastHPa`, `source`: `sensor` or `replay`), `seaLevelPressure` (T173, `readout/PressureSource`: `state`
+ *   off, fetching, in use, no station in range or unavailable; the prior's `hPa`, `station`, `distanceM`, `ageS`,
+ *   `source`, `applied`; `limits`, `request`, `box`, `lastResponse`, `counts`), `route` (while
  *   navigating: `alongM`, `distanceM`, `onRoute`), `inputs` (counts per input, the clock offset) and `layout` (`placement`
  *   `beside` or `above`, `boundsPx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
  *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`).
  * - `POST /readout/reset`: forgets every input (between replays); answers like `GET`.
+ * - `POST /readout/stations[?url=<endpoint>]` (T173's test hook): the weather station fetch reads `url` instead of the
+ *   registry's (`url=` empty restores it), forgets the stations and fetches at the next refresh; answers the URL.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`; `SettingsRoutes`).
  */
 object ScaleBarRoutes {
@@ -51,6 +55,7 @@ object ScaleBarRoutes {
         // T161: the live readout's strip on the bar's line (readout/LiveReadout)
         "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         "POST" to "/readout/reset" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.reset() + io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
+        "POST" to "/readout/stations" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.PressureSource.configure(r.query["url"])) // T173
         else -> null
     }
 

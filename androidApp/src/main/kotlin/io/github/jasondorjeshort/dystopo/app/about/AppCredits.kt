@@ -5,10 +5,13 @@ import io.github.jasondorjeshort.dystopo.app.MapViewport
 import io.github.jasondorjeshort.dystopo.app.Pack
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.app.PackSet
+import io.github.jasondorjeshort.dystopo.attribution.CreditedSource
 import io.github.jasondorjeshort.dystopo.attribution.Credits
 import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
 import io.github.jasondorjeshort.dystopo.attribution.PackMetadata
 import io.github.jasondorjeshort.dystopo.boundaries.Countries
+import io.github.jasondorjeshort.dystopo.readout.STATION_SOURCE_ID
+import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 
 /** The app's credits for the packs it has open: what the map line, the About screen and `GET /attribution` show. */
 object AppCredits {
@@ -58,7 +61,17 @@ object AppCredits {
     const val BUNDLED_USE = "bundled"
 
     fun compose(app: DystopoApp = DystopoApp.instance, view: PackBounds? = null): Credits =
-        compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view) // T80: the About screen lists every source the phone reads
+        withReadout(compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view), io.github.jasondorjeshort.dystopo.app.readout.PressureSource.credited) // T80: the About screen lists every source the phone reads
+
+    /** `usedBy` of the weather station pressure the live readout used (T173). */
+    const val READOUT_USE = "readout"
+
+    /** T173: [credits] plus the weather station source ([STATION_SOURCE_ID]) as used by the readout, once it [used] one. */
+    fun withReadout(credits: Credits, used: Boolean): Credits {
+        val s = SourceRegistry.builtIn[STATION_SOURCE_ID]
+        if (!used || s == null || credits.sources.any { it.source.id == s.id }) return credits
+        return credits.copy(sources = credits.sources + CreditedSource(s, listOf(READOUT_USE)))
+    }
 
     /** T49: the map's credit line, for the packs in the current view ([MapViewport]). */
     fun mapLine(app: DystopoApp = DystopoApp.instance): Credits = compose(app, MapViewport.current) // T162: read off the main thread (`GET /attribution`)

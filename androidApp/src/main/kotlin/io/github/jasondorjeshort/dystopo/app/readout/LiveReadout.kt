@@ -19,6 +19,7 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEstimator
 import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
 import io.github.jasondorjeshort.dystopo.readout.ReadoutText
+import io.github.jasondorjeshort.dystopo.readout.STATION_SOURCE_ID
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.store.LocationFix
@@ -48,7 +49,9 @@ import java.util.concurrent.TimeUnit
  * - **Along the route**: while navigating, the fix's progress along the navigated line when within its off-route
  *   distance, so the speed on foot and by bike is distance along the route over a long window (T160's `route` source).
  * - **The DEM** is the active DEM pack's ([Trips.demSampler]); with none the elevation runs on GNSS (and the barometer).
- * - **The sea-level pressure** prior stays "none" until T173.
+ * - **The sea-level pressure** (T173): while the barometer is wanted and present, [PressureSource] fetches the nearest
+ *   weather stations' settings for a whole-degree box around the view and [recompute] hands the chosen one to the
+ *   estimator as a prior (applied once per report); `GET /readout` › `seaLevelPressure` shows it.
  *
  * The estimator reads on its own clock (the fixes' times): [refresh] reads it at the wall clock moved by the last fix's
  * offset from it, so a replay's file times and a device's GPS times both see gaps in real time. The strip
@@ -188,7 +191,7 @@ object LiveReadout {
                     else -> null
                 },
             ),
-            "seaLevelPressure" to "none", // T173 adds the weather station prior
+            "seaLevelPressure" to PressureSource.json(s?.readout?.counters?.get("priors")), // T173
             "route" to route,
             "inputs" to linkedMapOf(
                 "counts" to counts.toSortedMap(),
@@ -266,6 +269,9 @@ object LiveReadout {
         val o = e.options
         val wanted = composed && StripLayout.shown && Foreground.started && barometerUsed(e.profile, o)
         Barometer.want(wanted)
+        // T173: the weather station prior, fetched and fed only while the barometer serves the shown strip.
+        PressureSource.tick(wanted && Barometer.present, lastFed, offsetMs)?.let { e.onStationPressure(it) }
+        if (STATION_SOURCE_ID in r.provenance) PressureSource.credited = true
         snapshot = Snapshot(r, o, units, StripText.items(r, o, units), StripText.gap(r.gapS), wanted)
     }
 
