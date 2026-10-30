@@ -266,7 +266,7 @@ object TrackRoutes {
         val rec = t.recorder
         mapOf(
             "id" to rec.activeId, "mode" to t.mode.name.lowercase(), "paused" to rec.paused, "service" to t.serviceState, "gps" to t.gpsState,
-            "acceptedFixes" to rec.accepted, "rejectedAccuracy" to rec.rejectedAccuracy, "rejectedTime" to rec.rejectedTime,
+            "acceptedFixes" to rec.accepted, "flagged" to rec.flagged, "rejectedSpeed" to rec.rejectedSpeed, "rejectedTime" to rec.rejectedTime, // T158
             "skippedPaused" to rec.skippedPaused, "gapSplits" to rec.gapSplits, "gpsIgnored" to t.gpsIgnored,
             "liveStats" to rec.liveStats()?.let(::statsJson),
         )

@@ -1,7 +1,9 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.GapReason
 import io.github.jasondorjeshort.dystopo.model.RoutePoint
+import io.github.jasondorjeshort.dystopo.model.TrackGap
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.Uuid
 import io.github.jasondorjeshort.dystopo.model.Waypoint
@@ -12,6 +14,12 @@ import io.github.jasondorjeshort.dystopo.model.Waypoint
  * dependency. Integers are LEB128 varints (signed ones zigzag), doubles 8 bytes little-endian (exact,
  * so a GPX survives a sync byte for byte), strings a varint length plus UTF-8, and ids a tag byte:
  * 1 + 16 bytes for a canonical lowercase UUID, 0 + string for anything else, 2 for none.
+ *
+ * T158 adds two operation types rather than new bits in an old one (an older reader would misparse those):
+ * [TYPE_APPEND_V2] (points with accuracy, speed, course, vertical accuracy and flags; a varint field mask per
+ * point, unknown mask or flag bits refused) and [TYPE_GAP] (start and end as signed varints, the reason's code as
+ * a string, an unknown reason refused). A build before T158 refuses both by name in [readOp] ("unknown operation
+ * type 5" or "6"), so the whole bundle is refused and nothing is imported (ADR 0033 §3).
  */
 object OpCodec {
     fun encode(op: Op): ByteArray = ByteWriter().also { writeOp(it, op) }.toByteArray()
@@ -23,7 +31,12 @@ object OpCodec {
     fun digest(append: AppendPoints): String {
         val w = ByteWriter()
         w.uvarint(append.segment.toLong())
-        writePoints(w, append.points)
+        if (append.type == TYPE_APPEND_V2) {
+            w.byte(TYPE_APPEND_V2) // T158: the v1 digest stays what it was; v2 content is marked
+            writePoints2(w, append.points)
+        } else {
+            writePoints(w, append.points)
+        }
         var h = -0x340d631b7bdddcdbL // FNV offset basis 0xcbf29ce484222325
         val bytes = w.toByteArray()
         for (b in bytes) {
@@ -60,7 +73,11 @@ object OpCodec {
             }
             is PutSetting -> w.string(b.value)
             is SetField -> { w.string(b.field); w.nstring(b.value) }
-            is AppendPoints -> { w.uvarint(b.segment.toLong()); writePoints(w, b.points) }
+            is AppendPoints -> {
+                w.uvarint(b.segment.toLong())
+                if (b.type == TYPE_APPEND_V2) writePoints2(w, b.points) else writePoints(w, b.points)
+            }
+            is AddGap -> { w.svarint(b.gap.start); w.svarint(b.gap.end); w.string(b.gap.reason.code) }
             is Delete -> Unit
         }
     }
@@ -92,6 +109,24 @@ object OpCodec {
                 if (segment > Int.MAX_VALUE) throw SyncFormatException("segment $segment out of range")
                 AppendPoints(id, segment.toInt(), readPoints(r))
             }
+            TYPE_APPEND_V2 -> {
+                if (kind != EntityKind.TRACK) throw SyncFormatException("append to a $kind")
+                val segment = r.uvarint()
+                if (segment > Int.MAX_VALUE) throw SyncFormatException("segment $segment out of range")
+                val points = readPoints2(r)
+                // Written only when a point has a fix field (AppendPoints.type), so it re-encodes byte for byte.
+                if (points.none { it.hasFixFields }) throw SyncFormatException("append version 2 without fix fields")
+                AppendPoints(id, segment.toInt(), points)
+            }
+            TYPE_GAP -> {
+                if (kind != EntityKind.TRACK) throw SyncFormatException("gap on a $kind")
+                val start = r.svarint()
+                val end = r.svarint()
+                val code = r.string()
+                val reason = GapReason.of(code) ?: throw SyncFormatException("unknown gap reason \"$code\"")
+                if (end < start) throw SyncFormatException("gap ends before it starts")
+                AddGap(id, TrackGap(start, end, reason))
+            }
             TYPE_DELETE -> Delete(kind, id)
             else -> throw SyncFormatException("unknown operation type $type")
         }
@@ -119,6 +154,61 @@ object OpCodec {
             val f = r.byte()
             val lat = r.double(); val lon = r.double()
             TrackPoint(lat, lon, if (f and HAS_ELE != 0) r.double() else null, if (f and HAS_TIME != 0) r.svarint() else null, if (f and HAS_EXT != 0) r.string() else null)
+        }
+    }
+
+    // T158: the point fields of TYPE_APPEND_V2, one bit each in a varint mask.
+    private const val V2_ACC = 8
+    private const val V2_SPEED = 16
+    private const val V2_COURSE = 32
+    private const val V2_VACC = 64
+    private const val V2_FLAGS = 128
+    private const val V2_KNOWN = HAS_ELE or HAS_TIME or HAS_EXT or V2_ACC or V2_SPEED or V2_COURSE or V2_VACC or V2_FLAGS
+
+    private fun writePoints2(w: ByteWriter, points: List<TrackPoint>) {
+        w.uvarint(points.size.toLong())
+        for (p in points) {
+            var m = 0
+            if (p.ele != null) m = m or HAS_ELE
+            if (p.time != null) m = m or HAS_TIME
+            if (p.extensions != null) m = m or HAS_EXT
+            if (p.accuracyM != null) m = m or V2_ACC
+            if (p.speedMps != null) m = m or V2_SPEED
+            if (p.courseDeg != null) m = m or V2_COURSE
+            if (p.verticalAccuracyM != null) m = m or V2_VACC
+            if (p.flags != 0) m = m or V2_FLAGS
+            w.uvarint(m.toLong())
+            w.double(p.lat); w.double(p.lon)
+            p.ele?.let { w.double(it) }
+            p.time?.let { w.svarint(it) }
+            p.extensions?.let { w.string(it) }
+            p.accuracyM?.let { w.double(it) }
+            p.speedMps?.let { w.double(it) }
+            p.courseDeg?.let { w.double(it) }
+            p.verticalAccuracyM?.let { w.double(it) }
+            if (p.flags != 0) w.uvarint(p.flags.toLong())
+        }
+    }
+
+    private fun readPoints2(r: ByteReader): List<TrackPoint> {
+        val n = r.count()
+        return List(n) {
+            val m = r.uvarint()
+            if (m and V2_KNOWN.toLong().inv() != 0L) throw SyncFormatException("unknown point fields ${m.toString(2)} (a newer format)")
+            val f = m.toInt()
+            val lat = r.double(); val lon = r.double()
+            val ele = if (f and HAS_ELE != 0) r.double() else null
+            val time = if (f and HAS_TIME != 0) r.svarint() else null
+            val ext = if (f and HAS_EXT != 0) r.string() else null
+            val acc = if (f and V2_ACC != 0) r.double() else null
+            val speed = if (f and V2_SPEED != 0) r.double() else null
+            val course = if (f and V2_COURSE != 0) r.double() else null
+            val vacc = if (f and V2_VACC != 0) r.double() else null
+            val flags = if (f and V2_FLAGS != 0) r.uvarint() else 0L
+            if (flags and TrackPoint.KNOWN_FLAGS.toLong().inv() != 0L || (f and V2_FLAGS != 0 && flags == 0L)) {
+                throw SyncFormatException("unknown point flags ${flags.toString(2)} (a newer format)")
+            }
+            TrackPoint(lat, lon, ele, time, ext, acc, speed, course, vacc, flags.toInt())
         }
     }
 

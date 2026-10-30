@@ -1,23 +1,23 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-30, at commit 97e01cd plus this edit, by main session (wave 22 launched, first batch of four)
+Updated: 2026-10-30, at commit 1c60fac plus this edit, by main session (wave 22: T168 and T158 merged, step B done)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 22 (its paragraph holds the launch order, the ports and the emulator rule).
 
 ## Now
 
 - **Wave 22 is open** (17 tasks, T158 to T174; planned, researched and past the critic on 2026-10-30, commit 97e01cd).
-  **In flight (first batch, launched 2026-10-30):** T158 (recorder core, no emulator), T162 (open view, emulator 5630),
-  T168 (closed-waves rules), T170 (leftovers 15, emulator 5632; its sweep runs `-NoBothUnits`). No branch pushed yet.
+  **Merged:** T168 (c36f666; ADR 0050 and step B done: waves 1 to 21 are in `docs/tasks/`, the board 165 lines),
+  T158 (1c60fac). **In flight:** T162 (verifying), T165 (verifying), T170, T167, T166, T160, T171 (implementing),
+  T169 (proposal 0049 pushed, the critic reading it; then the implementer revises, a verifier, the merge, ADR 0049).
 - **Emulator rule (owner, 2026-10-30):** `-Memory 3072`, at most three AVDs alive, at most two emulator-needing
   implementers at a time, the third slot for a verifier. Launch next: T165 and T167 (pure) after the first batch's
   `check` runs; then T169 and T166; T160 and T159 after T158 and T162 merge; T171 after T158; T172 after T159;
   T163 when an emulator slot frees; T164 after T171; T161 after T160 and T172; T173 after T161; T174 after T165.
-- Research reports and the critic review: the gitignored `out/wave22-research/` (also `wave22-section.md`, the
-  board text's draft). Scratchpad for the wave: `%TEMP%/dystopo-wave22/<task>/`.
+- Research, the critic review and the board draft: the gitignored `out/wave22-research/`; scratchpad `%TEMP%/dystopo-wave22/`.
 - The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage at launch: 7-day 3, 5-hour 13.
-- At T168's merge the coordinator writes ADR 0050 (the board's closed waves) and runs step B as a Haiku chore next;
-  T169's proposal is 0049 and gets the critic from the `proposal` skill.
+- Still to launch: T159 (after T162 merges), T172 (after T159), T163 (emulator slot), T164 (after T171), T161
+  (after T160 and T172), T173 (after T161), T174 (after T165).
 
 ## Next
 

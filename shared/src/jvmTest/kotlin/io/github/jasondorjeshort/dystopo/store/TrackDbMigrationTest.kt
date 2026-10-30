@@ -241,6 +241,42 @@ class TrackDbMigrationTest {
         }
     }
 
+    /**
+     * T158: a version-4 file with rows (a track recorded before T108 and T158) upgrades to the current schema: its
+     * points read back with no accuracy, speed, course or flags, no activity, no gaps; the version-5 file of
+     * v0.1.14 is `sync/V014TrackFixtureTest`'s.
+     */
+    @Test
+    fun versionFourDataSurvivesTheUpgrade() {
+        val dir = Files.createTempDirectory("dystopo-upgrade4").toFile()
+        val t1 = "00000000-0000-4000-8000-000000000001"
+        try {
+            val f = frozen(4, dir)
+            DriverManager.getConnection(url(f)).use { c ->
+                c.createStatement().use { st ->
+                    st.executeUpdate("INSERT INTO track(id, name, created_at, updated_at, recording) VALUES ('$t1', 'Before T158', 10, 20, 0)")
+                    for (i in 0 until 4) {
+                        st.executeUpdate("INSERT INTO track_point VALUES ('$t1', $i, 0, ${46.85 + i * 0.001}, -121.76, ${1600 + i * 10}, ${1_000_000 + i * 60_000L}, NULL)")
+                    }
+                    st.executeUpdate("PRAGMA user_version = 4")
+                }
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d)
+                assertEquals(TrackSummary(t1, "Before T158", 10, 20, false, 4, 0), store.summary(t1))
+                val t = store.track(t1)!!
+                assertEquals(4, t.points.size)
+                assertTrue(t.points.none { it.hasFixFields })
+                assertEquals(null, t.activity)
+                assertEquals(emptyList(), store.gaps(t1))
+                assertEquals(store.snapshotFromLog(), store.snapshot())
+            }
+            assertEquals(schemaOf(fresh(dir)), schemaOf(f))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     /** What the app does on first open after an update: a version-1 file with a track, opened with the current schema. */
     @Test
     fun versionOneDataSurvivesTheUpgrade() {

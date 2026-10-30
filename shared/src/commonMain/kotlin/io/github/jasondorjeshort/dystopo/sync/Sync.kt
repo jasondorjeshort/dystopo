@@ -52,6 +52,34 @@ data class SyncReport(
     )
 }
 
+/**
+ * T158 (ADR 0033 §3): a sync refused because the two sides run versions that cannot read each other's data, told
+ * apart from other failures so the app can say so plainly and count it. A build reads only the operation types,
+ * point fields, gap reasons and bundle versions it knows and refuses the whole bundle otherwise (nothing imported),
+ * so a refusal is always one of these messages: in a [SyncFormatException] of our own (the peer is newer), or in
+ * the error text of a peer that refused what we sent (the peer is older).
+ */
+object SyncRefusal {
+    private val MARKERS = listOf("unknown operation type", "unknown point fields", "unknown point flags", "unknown gap reason", "bundle format version")
+
+    /** The marker found in [text], or null. */
+    fun marker(text: String?): String? = text?.let { t -> MARKERS.firstOrNull { it in t } }
+
+    /** A sentence for the user when [e] is a format refusal, else null. */
+    fun reason(e: Throwable): String? {
+        val chain = generateSequence(e) { it.cause }.take(8).toList()
+        val text = chain.mapNotNull { it.message }.joinToString(" ")
+        if (marker(text) == null) return null
+        val detail = Regex("""unknown operation type \d+|unknown point (fields|flags) [01]+|unknown gap reason "[^"]*"|bundle format version \d+""").find(text)?.value
+        val suffix = detail?.let { " ($it)" } ?: ""
+        return if (chain.any { it is SyncFormatException }) {
+            "The other device runs a newer Dystopo whose tracks this version cannot read$suffix. Update this one; nothing was imported."
+        } else {
+            "The other device runs an older Dystopo that cannot read this one's tracks$suffix. Update it; nothing was sent."
+        }
+    }
+}
+
 object Sync {
     /** Default page size of a paged sync (T51): operations and raw bytes per page. */
     const val DEFAULT_PAGE_OPS = 2000
@@ -207,7 +235,8 @@ class HttpSyncTransport(
  * - `POST /sync/push` with a gzipped (or raw) bundle: merges it; JSON with the merge counts and the
  *   vector afterwards.
  * - `GET /sync/status`: device id, vector, operation count, synced state summary and digest, the
- *   clock-skew guard's log, request counts.
+ *   clock-skew guard's log, request counts; T158: `refused`, pushes refused for a format this build cannot read
+ *   (answered 400 with `refused: "format"`, the readable reason in `error` and the parser's message in `detail`).
  * Stores are not thread-safe: the caller runs one call at a time per store.
  */
 class SyncServer(
@@ -227,6 +256,9 @@ class SyncServer(
         private set
     /** T51: conflicts found in pushes since start. */
     var conflicts = 0L
+        private set
+    /** T158: pushes refused because their bundle uses a format this build cannot read ([SyncRefusal]), since start. */
+    var refused = 0L
         private set
 
     private fun json(status: Int, m: Map<String, Any?>) = Reply(status, "application/json", (MiniJson.encode(m) + "\n").encodeToByteArray())
@@ -260,12 +292,19 @@ class SyncServer(
                 }
                 "GET" to "/sync/status", "GET" to "/sync" -> json(
                     200,
-                    status(store) + mapOf("pulls" to pulls, "pushes" to pushes, "partialPages" to partialPages, "conflictsSeen" to conflicts),
+                    status(store) + mapOf("pulls" to pulls, "pushes" to pushes, "partialPages" to partialPages, "conflictsSeen" to conflicts, "refused" to refused),
                 )
                 else -> json(405, mapOf("error" to "POST /sync/pull?since=[&limit=], POST /sync/push, GET /sync/status"))
             }
         } catch (e: IllegalArgumentException) {
-            json(400, mapOf("error" to (e.message ?: e.toString())))
+            val reason = SyncRefusal.reason(e)
+            if (reason != null) {
+                // T158: the readable reason, the raw message for the other side's own SyncRefusal, nothing merged.
+                refused++
+                json(400, mapOf("error" to reason, "refused" to "format", "detail" to e.message))
+            } else {
+                json(400, mapOf("error" to (e.message ?: e.toString())))
+            }
         }
     }
 

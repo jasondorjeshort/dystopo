@@ -1,6 +1,10 @@
 package io.github.jasondorjeshort.dystopo.store
 
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
+import io.github.jasondorjeshort.dystopo.model.TrackGap
+import io.github.jasondorjeshort.dystopo.sync.AddGap
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.RouteWaypoints
@@ -244,6 +248,25 @@ class InMemoryTrackStore(
         setField(EntityKind.TRACK, trackId, "name", name, now)
     }
 
+    override fun setActivity(trackId: String, activity: Activity?, profile: ActivityProfile?, now: Long) {
+        val v = view(trackId)
+        if (v.activity != activity?.code) setField(EntityKind.TRACK, trackId, "activity", activity?.code, now)
+        val encoded = profile?.encode()
+        if (v.profile != encoded) setField(EntityKind.TRACK, trackId, "profile", encoded, now)
+    }
+
+    override fun addGap(trackId: String, gap: TrackGap, now: Long) {
+        view(trackId)
+        emit(AddGap(trackId, gap), now)
+        rematerialize(Key(EntityKind.TRACK, trackId))
+        touch(trackId, now)
+    }
+
+    override fun gaps(trackId: String): List<TrackGap> = tracks[trackId]?.gaps ?: emptyList()
+
+    override fun lastProfile(): ActivityProfile? =
+        tracks.values.sortedWith(compareBy({ it.createdAt }, { it.id })).asReversed().firstNotNullOfOrNull { ActivityProfile.decode(it.profile) }
+
     override fun delete(trackId: String): Boolean {
         if (trackId !in tracks) return false
         val now = wallClock()
@@ -278,6 +301,9 @@ class InMemoryTrackStore(
         val t = track
         emit(PutTrack(t.id, createdAt, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
         t.segments.filter { it.points.isNotEmpty() }.forEachIndexed { i, s -> emit(AppendPoints(t.id, i, s.points), now) }
+        t.activity?.let { emit(SetField(EntityKind.TRACK, t.id, "activity", it.code), now) } // T158
+        t.profile?.let { emit(SetField(EntityKind.TRACK, t.id, "profile", it.encode()), now) }
+        t.gaps.distinct().forEach { emit(AddGap(t.id, it), now) }
         rematerialize(Key(EntityKind.TRACK, t.id))
         check(t.id in tracks) { "track ${t.id} stays hidden by a delete stamped more than 30 days ahead of this device's clock" }
         for (w in waypoints) {

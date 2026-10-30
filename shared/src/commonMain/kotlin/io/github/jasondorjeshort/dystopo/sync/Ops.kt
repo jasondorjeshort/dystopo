@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.sync
 
 import io.github.jasondorjeshort.dystopo.model.Route
+import io.github.jasondorjeshort.dystopo.model.TrackGap
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 
@@ -24,7 +25,8 @@ enum class EntityKind(val code: Int) {
     companion object {
         fun of(code: Int): EntityKind = entries.firstOrNull { it.code == code } ?: throw SyncFormatException("unknown entity kind $code")
 
-        private val TRACK_FIELDS = FieldSet(setOf("name", "description", "comment", "source", "type", "extensions"))
+        // T158: `activity` (Activity.code) and `profile` (ActivityProfile.encode); builds before T158 keep them in the log and ignore them.
+        private val TRACK_FIELDS = FieldSet(setOf("name", "description", "comment", "source", "type", "extensions", "activity", "profile"))
         private val WAYPOINT_FIELDS = FieldSet(setOf("name", "description", "comment", "symbol", "type", "extensions"))
         // T60: `path` (RoutePath.encode) and `waypoints` (RouteWaypoints.encode) are the route's shape and waypoints;
         // T65: `wpt:<id>` is one waypoint (RouteOps.encodeWaypoint; null = removed), so concurrent waypoint edits merge;
@@ -58,6 +60,7 @@ class FieldSet(private val names: Set<String>, private val prefix: String? = nul
  * - `Put*` creates an entity, or replaces all its fields (a re-import, a revived entity after a delete).
  * - [SetField] changes one field (rename): last writer wins per field by HLC.
  * - [AppendPoints] adds recorded points to a track segment: points from all appends are kept (union).
+ * - [AddGap] (T158) adds a gap record to a track: gaps from all of them are kept (union).
  * - [Delete] removes an entity and everything older than it (a tombstone).
  */
 sealed class OpBody {
@@ -108,11 +111,16 @@ data class SetField(override val kind: EntityKind, override val id: String, val 
     override val type get() = TYPE_SET
 }
 
-/** Points appended to segment [segment] of track [id], in order. */
+/**
+ * Points appended to segment [segment] of track [id], in order. T158: written as [TYPE_APPEND] when no point has a
+ * fix field ([TrackPoint.hasFixFields]), byte for byte what earlier builds wrote and read; else as
+ * [TYPE_APPEND_V2], which carries them and which a build before T158 refuses by name ("unknown operation type 5")
+ * rather than misread (ADR 0033 §3).
+ */
 data class AppendPoints(override val id: String, val segment: Int, val points: List<TrackPoint>) : OpBody() {
     override val kind get() = EntityKind.TRACK
     override val parent get() = id
-    override val type get() = TYPE_APPEND
+    override val type get() = if (points.any { it.hasFixFields }) TYPE_APPEND_V2 else TYPE_APPEND
 
     companion object {
         /**
@@ -124,6 +132,13 @@ data class AppendPoints(override val id: String, val segment: Int, val points: L
     }
 }
 
+/** T158: a gap record on track [id] ([TrackGap]); a build before T158 refuses it by name ("unknown operation type 6"). */
+data class AddGap(override val id: String, val gap: TrackGap) : OpBody() {
+    override val kind get() = EntityKind.TRACK
+    override val parent get() = id
+    override val type get() = TYPE_GAP
+}
+
 data class Delete(override val kind: EntityKind, override val id: String) : OpBody() {
     override val type get() = TYPE_DELETE
 }
@@ -132,6 +147,12 @@ const val TYPE_PUT = 1
 const val TYPE_SET = 2
 const val TYPE_APPEND = 3
 const val TYPE_DELETE = 4
+
+/** T158: [AppendPoints] whose points carry accuracy, speed, course, vertical accuracy or flags. */
+const val TYPE_APPEND_V2 = 5
+
+/** T158: [AddGap]. */
+const val TYPE_GAP = 6
 
 /** An operation: its unique, totally ordered timestamp and what it does. */
 data class Op(val hlc: Hlc, val body: OpBody) {

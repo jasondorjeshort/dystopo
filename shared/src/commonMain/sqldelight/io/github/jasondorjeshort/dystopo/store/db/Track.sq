@@ -2,7 +2,7 @@
 -- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
 -- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
 --
--- This file is the CURRENT schema (version 5). Changing it needs a migration: see 1.sqm to 4.sqm and the
+-- This file is the CURRENT schema (version 6). Changing it needs a migration: see 1.sqm to 5.sqm and the
 -- "Track database migrations" paragraph in CLAUDE.md. New columns go at the END of a table, in the
 -- order the migration adds them.
 --
@@ -43,7 +43,10 @@ CREATE TABLE track (
     stats_west REAL,
     stats_south REAL,
     stats_east REAL,
-    stats_north REAL
+    stats_north REAL,
+    -- Version 6 (T158): the synced `activity` (Activity.code) and `profile` (ActivityProfile.encode) fields.
+    activity TEXT,
+    profile TEXT
 );
 
 CREATE TABLE track_point (
@@ -55,7 +58,22 @@ CREATE TABLE track_point (
     ele REAL,
     time INTEGER,
     extensions TEXT,
+    -- Version 6 (T158): what the receiver said (NULL: nothing), and TrackPoint.flags (1 inaccurate, 2 network).
+    accuracy REAL,
+    speed REAL,
+    course REAL,
+    vertical_accuracy REAL,
+    flags INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (track_id, seq)
+);
+
+-- Version 6 (T158): gap records of a track (TrackGap), the union of its gap operations; reason is GapReason.code.
+CREATE TABLE track_gap (
+    track_id TEXT NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (track_id, start_time, end_time, reason)
 );
 
 CREATE TABLE waypoint (
@@ -80,7 +98,8 @@ CREATE TABLE waypoint (
 CREATE INDEX waypoint_track ON waypoint(track_id, seq);
 
 -- Version 3 (T44): the operation log. One row per operation: its HLC text (unique; sorts in HLC order),
--- the device that made it, the operation type (1 put, 2 set field, 3 append points, 4 delete), the
+-- the device that made it, the operation type (1 put, 2 set field, 3 append points, 4 delete; T158: 5 append points
+-- with fix fields, 6 gap), the
 -- entity kind (1 track, 2 waypoint, 3 route, 4 setting) and id, the parent track of a waypoint or an
 -- append, the content digest of an append, and the encoded operation (sync/OpCodec.kt).
 CREATE TABLE sync_op (
@@ -145,14 +164,20 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 selectTracks:
 SELECT t.id, t.name, t.created_at, t.updated_at, t.recording, t.description, t.comment, t.source, t.type, t.extensions,
     (SELECT count(*) FROM track_point p WHERE p.track_id = t.id) AS point_count,
-    (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count
+    (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count,
+    t.activity, t.profile
 FROM track t ORDER BY t.created_at, t.id;
 
 selectTrack:
 SELECT t.id, t.name, t.created_at, t.updated_at, t.recording, t.description, t.comment, t.source, t.type, t.extensions,
     (SELECT count(*) FROM track_point p WHERE p.track_id = t.id) AS point_count,
-    (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count
+    (SELECT count(*) FROM waypoint w WHERE w.track_id = t.id) AS waypoint_count,
+    t.activity, t.profile
 FROM track t WHERE t.id = ?;
+
+-- T158: the newest profiles, for the one a new recording starts with.
+recentProfiles:
+SELECT profile FROM track WHERE profile IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 20;
 
 setRecording:
 UPDATE track SET recording = ?, updated_at = ? WHERE id = ?;
@@ -191,14 +216,25 @@ UPDATE track SET stats_points = ?, stats_segments = ?, stats_distance_m = ?, sta
 WHERE id = ?;
 
 insertPoint:
-INSERT INTO track_point(track_id, seq, segment, lat, lon, ele, time, extensions)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO track_point(track_id, seq, segment, lat, lon, ele, time, extensions, accuracy, speed, course, vertical_accuracy, flags)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 lastPoint:
 SELECT seq, segment FROM track_point WHERE track_id = ? ORDER BY seq DESC LIMIT 1;
 
 selectPoints:
-SELECT segment, lat, lon, ele, time, extensions FROM track_point WHERE track_id = ? ORDER BY seq;
+SELECT segment, lat, lon, ele, time, extensions, accuracy, speed, course, vertical_accuracy, flags FROM track_point WHERE track_id = ? ORDER BY seq;
+
+-- ---- Gaps (T158) ----
+
+insertGap:
+INSERT OR IGNORE INTO track_gap(track_id, start_time, end_time, reason) VALUES (?, ?, ?, ?);
+
+selectGaps:
+SELECT start_time, end_time, reason FROM track_gap WHERE track_id = ? ORDER BY start_time, end_time, reason;
+
+deleteTrackGaps:
+DELETE FROM track_gap WHERE track_id = ?;
 
 -- Insert or replace a materialised waypoint, keeping its seq when it exists.
 upsertWaypoint:
@@ -233,13 +269,17 @@ DELETE FROM waypoint WHERE id = ?;
 -- Materialised track fields after a merge (T44); updated_at only moves forward.
 updateTrackFields:
 UPDATE track SET name = ?, created_at = ?, description = ?, comment = ?, source = ?, type = ?, extensions = ?,
-    updated_at = max(updated_at, ?) WHERE id = ?;
+    activity = ?, profile = ?, updated_at = max(updated_at, ?) WHERE id = ?;
+
+-- T158: the one refresh after the schema-6 migration (updated_at stays).
+setTrackActivity:
+UPDATE track SET activity = ?, profile = ? WHERE id = ?;
 
 invalidateStats:
 UPDATE track SET stats_points = NULL WHERE id = ?;
 
 selectAllPoints:
-SELECT track_id, segment, lat, lon, ele, time, extensions FROM track_point ORDER BY track_id, seq;
+SELECT track_id, segment, lat, lon, ele, time, extensions, accuracy, speed, course, vertical_accuracy, flags FROM track_point ORDER BY track_id, seq;
 
 -- ---- Operation log (T44) ----
 
@@ -283,9 +323,9 @@ SELECT hlc FROM sync_op WHERE kind = ? AND entity = ? ORDER BY hlc DESC LIMIT 1;
 countDigest:
 SELECT count(*) FROM sync_op WHERE entity = ? AND digest = ?;
 
--- Operations that write fields or delete (no appends), for conflict detection.
+-- Operations that write fields or delete (no appends or gaps), for conflict detection.
 fieldOpsOfEntity:
-SELECT body FROM sync_op WHERE kind = ? AND entity = ? AND type != 3 ORDER BY hlc;
+SELECT body FROM sync_op WHERE kind = ? AND entity = ? AND type NOT IN (3, 5, 6) ORDER BY hlc;
 
 countOps:
 SELECT count(*) FROM sync_op;

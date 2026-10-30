@@ -24,6 +24,10 @@ import io.github.jasondorjeshort.dystopo.sync.EntityKind
  * and `runsExtended`. Also:
  * - `GET /sync/conflicts`: fields edited on two devices (newest first); `DELETE /sync/conflicts[?id=]` dismisses notes.
  * - `POST /sync/ui?open=1|0`: opens or closes the sync status sheet (for screenshots).
+ *
+ * T158 (ADR 0033 §3): a sync refused because one side cannot read the other's data format (a newer peer's
+ * operation types, or an older peer refusing ours) fails `POST /sync` with the readable reason in `error` and
+ * `refused: "format"`; `/sync/status` counts them in `refusals` and keeps the last in `last`.
  */
 object SyncRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -72,10 +76,13 @@ object SyncRoutes {
                 }
                 else -> Response.json(mapOf("error" to "POST /sync?with=[&page=], GET /sync/status, GET|POST /sync/settings, POST /sync/field, GET|DELETE /sync/conflicts, POST /sync/ui"), 404)
             }
-        } catch (e: IllegalArgumentException) {
-            Response.json(mapOf("error" to e.message), 400)
         } catch (e: Exception) {
-            Response.json(mapOf("error" to "${e.javaClass.simpleName}: ${e.message}"), 502)
+            val refusal = io.github.jasondorjeshort.dystopo.sync.SyncRefusal.reason(e) // T158: before the generic 400 (a SyncFormatException is one)
+            when {
+                refusal != null -> Response.json(mapOf("error" to refusal, "refused" to "format", "detail" to e.message), 409)
+                e is IllegalArgumentException -> Response.json(mapOf("error" to e.message), 400)
+                else -> Response.json(mapOf("error" to "${e.javaClass.simpleName}: ${e.message}"), 502)
+            }
         }
     }
 }

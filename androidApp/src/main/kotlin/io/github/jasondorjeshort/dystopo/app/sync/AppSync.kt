@@ -19,6 +19,7 @@ import io.github.jasondorjeshort.dystopo.sync.HttpSyncTransport
 import io.github.jasondorjeshort.dystopo.sync.Op
 import io.github.jasondorjeshort.dystopo.sync.SkewLog
 import io.github.jasondorjeshort.dystopo.sync.Sync
+import io.github.jasondorjeshort.dystopo.sync.SyncRefusal
 import io.github.jasondorjeshort.dystopo.sync.SyncReplica
 import io.github.jasondorjeshort.dystopo.sync.SyncReport
 import io.github.jasondorjeshort.dystopo.sync.SyncServer
@@ -173,8 +174,17 @@ class AppSync private constructor(private val app: DystopoApp) {
                 return json
             } catch (e: Exception) {
                 Log.w(TAG, "sync with $target failed", e)
-                remember(linkedMapOf("ok" to false, "peer" to target, "at" to System.currentTimeMillis(), "error" to "${e.javaClass.simpleName}: ${e.message}"))
-                tracking.refreshUi("Sync failed: ${e.message}")
+                // T158 (ADR 0033 §3): a peer on a version that cannot read ours, or ours theirs: said plainly and counted.
+                val refusal = SyncRefusal.reason(e)
+                if (refusal != null) {
+                    refusals = prefs.getLong(KEY_REFUSALS, 0) + 1
+                    prefs.edit().putLong(KEY_REFUSALS, refusals).apply()
+                }
+                remember(
+                    linkedMapOf("ok" to false, "peer" to target, "at" to System.currentTimeMillis(), "error" to (refusal ?: "${e.javaClass.simpleName}: ${e.message}")) +
+                        (if (refusal != null) mapOf("refused" to "format", "detail" to e.message) else emptyMap()),
+                )
+                tracking.refreshUi(if (refusal != null) "Sync refused: $refusal" else "Sync failed: ${e.message}")
                 throw e
             } finally {
                 running = false
@@ -182,6 +192,10 @@ class AppSync private constructor(private val app: DystopoApp) {
             }
         }
     }
+
+    /** T158: syncs refused for a data format one side cannot read ([SyncRefusal]), kept across restarts. */
+    @Volatile var refusals: Long = prefs.getLong(KEY_REFUSALS, 0)
+        private set
 
     /** T57: the last clock comparison with any peer (kept across restarts); null before the first sync. */
     @Volatile var clockCheck: ClockCheck? = loadClock()
@@ -244,6 +258,7 @@ class AppSync private constructor(private val app: DystopoApp) {
     fun status(): Map<String, Any?> = linkedMapOf<String, Any?>(
         "peer" to defaultPeer, "peerSetting" to peerSetting, "tokenSet" to syncToken.isNotEmpty(), "running" to running, "syncs" to syncs, "last" to last,
         "pendingOps" to pending(),
+        "refusals" to refusals, // T158: syncs refused for a format one side cannot read; `last.error` says which side
         "clockCheck" to clockCheck?.json(), // T57: the last clock comparison with a peer
         "conflicts" to linkedMapOf("total" to conflictsTotal, "concurrent" to conflicts.count { it["concurrent"] == true }, "recent" to conflicts.take(10)),
         "settingsSync" to SettingsSync.json(runCatching { tracking.call { store.settings() } }.getOrNull()), // T110: and what the log holds
@@ -261,6 +276,7 @@ class AppSync private constructor(private val app: DystopoApp) {
         private const val KEY_TOKEN = "token"
         private const val KEY_PEER_VECTOR = "peerVector:"
         private const val KEY_CLOCK = "clockCheck"
+        private const val KEY_REFUSALS = "refusals"
         const val MAX_CONFLICTS = 100
 
         @Volatile private var instance: AppSync? = null
