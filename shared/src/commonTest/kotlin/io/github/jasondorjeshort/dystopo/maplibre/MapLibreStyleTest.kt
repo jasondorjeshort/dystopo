@@ -32,6 +32,7 @@ class MapLibreStyleTest {
         val ids = layers(json).map { it["id"] as String }
         assertEquals(ids.size, ids.toSet().size, "unique layer ids")
         for (layer in DefaultOsmStyle.style.layers) {
+            if (!MapOptions().showsLayer(layer.id)) continue // T174: drainage is off by default (MapOptionsTest turns it on)
             when (layer) {
                 is StyleLayer.Contours -> assertTrue("contour-index" in ids && "contour-minor" in ids && "contour-labels" in ids)
                 is StyleLayer.Symbol -> assertTrue(layer.id in ids || "${layer.id}-marker" in ids, "symbol ${layer.id}")
