@@ -29,4 +29,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(AreasCommand(), AreaPlanCommand(), RenderCommand(), CompareCommand(), MvtCommand(), PmtilesCommand(), TilesCommand(), SourcesCommand(), TourCommand(), GpxCommand(), ServeCommand(), SearchCommand(), ContoursCommand(), SpriteCommand(), SyncSimCommand(), SyncCommand(), RouteCommand(), NavCommand(), BordersCommand(), CountriesCommand(), CacheReplayCommand())
     // T165: streams from the DEM.
     .subcommands(DrainageCommand())
+    // T167: the printed map sheet.
+    .subcommands(PrintCommand())
     .main(args)

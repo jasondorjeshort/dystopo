@@ -91,14 +91,14 @@ class ContourLayer(val spec: ContourSpec, val lines: List<ContourLine>, val labe
     private val haloColor = Color(246, 241, 228, 200)
 
     /** Draws lines, then labels (halo first) on top of [image]. */
-    fun draw(image: BufferedImage) {
+    fun draw(image: BufferedImage, lineScale: Float = 1f) {
         val g2 = image.createGraphics()
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
         g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
         g2.color = lineColor
-        val thin = BasicStroke(0.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-        val bold = BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        val thin = BasicStroke(0.8f * lineScale, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        val bold = BasicStroke(1.8f * lineScale, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
         for (line in lines) {
             g2.stroke = if (spec.isIndex(line.level)) bold else thin
             val path = Path2D.Double()

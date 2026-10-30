@@ -41,7 +41,7 @@ class ServeCommand : CliktCommand(name = "serve") {
     override fun run() {
         val glyphDir = File(glyphs ?: (System.getenv("DYSTOPO_CACHE") ?: "cache") + "/glyphs")
         if (live) SourceBudget.install(SourceBudget.fromEnv()) // T92: DYSTOPO_SOURCE_CAPS=request=256,hour=8192 (MB; 0: no cap)
-        if (live) return LiveTiles.findPacks(listOf(File(dem), File(osm))).let { (d, o) -> LiveTiles(d, o, tileCacheRoot = LiveTiles.tileCacheFromEnv(), caps = LiveTiles.CacheCaps.fromEnv()).serve(port, glyphDir, textScale = textScale) }
+        if (live) return LiveTiles.findPacks(listOf(File(dem), File(osm))).let { (d, o) -> LiveTiles(d, o, tileCacheRoot = LiveTiles.tileCacheFromEnv(), caps = LiveTiles.CacheCaps.fromEnv()).serve(port, glyphDir, textScale = textScale, extra = mapOf("/print" to PrintRoutes())) } // T167: GET /print (PrintRoutes)
         PackServer(File(dem), osm.takeIf { it.isNotEmpty() }?.let { File(it) }, glyphDir, textScale).serve(port)
     }
 }
