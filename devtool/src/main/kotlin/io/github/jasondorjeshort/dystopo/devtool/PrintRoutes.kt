@@ -91,7 +91,7 @@ class PrintRoutes(private val outDir: File = File("out")) : HttpHandler {
 
     /** The sheet asked for, and the name its file gets. */
     private fun request(q: Map<String, String>): Pair<SheetRequest, String> {
-        var name = "sheet"
+        var name = "map"
         var title: String? = null
         var box: BoundingBox? = null
         val lat: Double

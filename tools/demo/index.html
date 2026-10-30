@@ -35,6 +35,10 @@
   route's card with its profile, GPX file and Save trip into this browser's sync replica and on to the server's sync
   peer, the saved trips); see the top of trips.js. T92: tools/demo/trip-sync.js adds the pull side ("Get from server")
   and waypoint editing for the open trip; see the top of trip-sync.js. Both send the panel's Server token.
+
+  Print a map sheet (T167, devtool serve --live only): the panel's Print box asks GET /print for a PDF of the map's centre
+  at 1:10,000, 1:25,000 or 1:50,000 (or fitting the view), on A4, Letter or A3, with a UTM grid or latitude and longitude
+  ticks, in the page's units; the box shows only when a probe of GET /print answers (devtool/.../PrintRoutes.kt).
 -->
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
@@ -107,6 +111,15 @@
     </details>
     <label id="token-row" title="The server's bearer token, when it has one: for building packs and for saving trips there (kept in this browser only)">Server token <input id="packtoken" type="password" size="12" autocomplete="off" placeholder="none"></label>
   </div>
+  <details id="print" hidden>
+    <summary>Print a map sheet</summary>
+    <label>Scale <select id="printscale"><option value="10000">1:10,000</option><option value="25000" selected>1:25,000</option><option value="50000">1:50,000</option><option value="fit">fit the view</option></select></label>
+    <label title="By region: Letter in the US, A4 elsewhere, as units are">Paper <select id="printpaper"><option value="">by region</option><option value="a4">A4</option><option value="letter">Letter</option><option value="a3">A3</option></select></label>
+    <label><input type="checkbox" id="printlandscape"> landscape</label>
+    <label>Grid <select id="printgrid"><option value="utm">UTM, 1 km at 1:25,000</option><option value="latlon">latitude and longitude ticks</option><option value="both">both</option><option value="none">none</option></select></label>
+    <button id="printsheet" type="button">Make the sheet (PDF)</button>
+    <div class="hint" id="printstatus">A sheet of the map's centre at a true scale. Print it at 100 percent (actual size), not fit to page.</div>
+  </details>
 </details>
 <div id="sources" hidden></div>
 <div id="status"></div>
@@ -726,6 +739,38 @@ if (LIVE) {
   };
   cancelBtn.onclick = async () => { if (buildId) await fetch(base + "/build/" + buildId, authed({ method: "DELETE" })); };
 }
+// T167: Print a map sheet. GET /print (devtool serve --live only; PrintRoutes.kt) renders a PDF of the map's centre at a true
+// scale; the box shows only when a probe of GET /print answers with its options, so the standalone server (no such route)
+// and the static demo never show it. The sheet follows the page's units. window.dystopoPrint has the last result.
+if (LIVE) (async () => {
+  let opts = null;
+  try { const r = await fetch(base + "/print"); if (r.ok) opts = await r.json(); } catch (e) { /* no route: no box */ }
+  window.dystopoPrint = { available: !!(opts && opts.print) };
+  if (!window.dystopoPrint.available) return;
+  const box = document.getElementById("print"), status = document.getElementById("printstatus");
+  box.hidden = false;
+  document.getElementById("printsheet").onclick = async () => {
+    const c = map.getCenter(), b = map.getBounds(), scale = document.getElementById("printscale").value;
+    const q = new URLSearchParams({ scale, grid: document.getElementById("printgrid").value, units: UNITS });
+    if (scale === "fit") q.set("bbox", [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(5)).join(","));
+    else { q.set("lat", c.lat.toFixed(5)); q.set("lon", c.lng.toFixed(5)); }
+    const paper = document.getElementById("printpaper").value;
+    if (paper) q.set("paper", paper);
+    if (document.getElementById("printlandscape").checked) q.set("landscape", "1");
+    status.textContent = "Making the sheet (10 to 60 s)...";
+    const t0 = performance.now();
+    const r = await fetch(base + "/print?" + q);
+    if (!r.ok) { status.textContent = "Could not make the sheet: " + (await r.text()).trim(); window.dystopoPrint = { available: true, ok: false, status: r.status }; return; }
+    const blob = await r.blob(), info = r.headers.get("X-Dystopo-Print") || "";
+    const name = ((r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "map-sheet.pdf";
+    const kv = Object.fromEntries(info.split(";").map(s => s.trim().split("=")).filter(p => p.length === 2));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    window.dystopoPrint = { available: true, ok: true, status: r.status, bytes: blob.size, type: blob.type, file: name, header: kv, ms: Math.round(performance.now() - t0) };
+    status.textContent = "Sheet ready: " + name + ", " + (blob.size / 1048576).toFixed(1) + " MB, " + (kv.pages || "1") + " page. Print it at 100 percent (actual size), not fit to page.";
+  };
+})();
 // T68: the trip editor (tools/demo/trips.js, served as /trips.js) plans on the server's /route routes, so live mode only.
 // It has its own Trips box at the top right (T107) and sends the Server token with every request (a server with users
 // keeps /route* behind its tokens, T92), so the page passes it the field and nothing more.

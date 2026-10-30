@@ -752,7 +752,7 @@ class PrintCommand : CliktCommand(name = "print") {
             gpx = gpx?.let { GpxCommand.load(it).document }, textScale = textScale, area = name,
         )
         val sheet = PrintSheet.make(req, timings)
-        val stem = out ?: "out/${PrintSheet.stem(name ?: "sheet", sheet.layout)}"
+        val stem = out ?: "out/${PrintSheet.stem(name ?: "map", sheet.layout)}"
         val pdfFile = File("$stem.pdf")
         val pngFile = File("$stem.png")
         pdfFile.absoluteFile.parentFile.mkdirs()
