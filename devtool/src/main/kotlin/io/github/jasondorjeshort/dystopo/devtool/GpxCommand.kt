@@ -240,7 +240,7 @@ class GpxCommand : CliktCommand(name = "gpx") {
                 "unknownAccuracyM" to smoothing.unknownAccuracyM,
                 "assumedAccuracyM" to smoothing.assumedAccuracyM,
             ),
-            stopRules = mapOf("radiusM" to stopOptions.radiusM, "minStopS" to stopOptions.minStopS),
+            stopRules = mapOf("radiusM" to stopOptions.radiusM, "minStopS" to stopOptions.minStopS, "stillSpeedMps" to stopOptions.stillSpeedMps),
             timingsMs = timings.ms,
         )
         echo(reportJson.encodeToString(report))

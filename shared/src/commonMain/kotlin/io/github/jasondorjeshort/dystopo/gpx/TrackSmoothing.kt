@@ -100,8 +100,15 @@ object TrackSmoothing {
     }
 
     /** One segment smoothed (one point out per point in), or [seg] itself when it is not [smoothable]. */
-    fun smoothSegment(seg: List<TrackPoint>, options: SmoothingOptions = SmoothingOptions()): List<TrackPoint> {
-        if (!smoothable(seg, options)) return seg
+    fun smoothSegment(seg: List<TrackPoint>, options: SmoothingOptions = SmoothingOptions()): List<TrackPoint> =
+        smoothWithSpeed(seg, options).points
+
+    /** A segment's smoothed points and the smoother's ground speed at each, m/s (null when it was not smoothed). */
+    class Smoothed(val points: List<TrackPoint>, val speedMps: DoubleArray?)
+
+    /** [smoothSegment] with the speeds of the smoothed velocity, which [TrackStops] reads. */
+    fun smoothWithSpeed(seg: List<TrackPoint>, options: SmoothingOptions = SmoothingOptions()): Smoothed {
+        if (!smoothable(seg, options)) return Smoothed(seg, null)
         val n = seg.size
         val anyAccuracy = seg.any { it.accuracyM != null }
         val fallback = if (anyAccuracy) options.unknownAccuracyM else options.assumedAccuracyM!!
@@ -113,27 +120,28 @@ object TrackSmoothing {
         val x = DoubleArray(n) { wrapLon(seg[it].lon - lon0) * mx }
         val y = DoubleArray(n) { (seg[it].lat - lat0) * M_PER_DEG }
         val all = BooleanArray(n) { true }
-        val sx = smoothAxis(t, x, all, sigma, options.accelerationDensity)
-        val sy = smoothAxis(t, y, all, sigma, options.accelerationDensity)
+        val (sx, vx) = smoothAxis(t, x, all, sigma, options.accelerationDensity)
+        val (sy, vy) = smoothAxis(t, y, all, sigma, options.accelerationDensity)
         val hasEle = BooleanArray(n) { seg[it].ele != null }
         val sz = if (hasEle.any { it }) {
             val vs = DoubleArray(n) { max(seg[it].verticalAccuracyM?.takeIf { a -> a > 0 } ?: (sigma[it] * options.verticalFactor), options.minAccuracyM) }
-            smoothAxis(t, DoubleArray(n) { seg[it].ele ?: 0.0 }, hasEle, vs, options.verticalAccelerationDensity)
+            smoothAxis(t, DoubleArray(n) { seg[it].ele ?: 0.0 }, hasEle, vs, options.verticalAccelerationDensity).first
         } else null
-        return List(n) { i ->
+        val points = List(n) { i ->
             val p = seg[i]
             var lon = lon0 + sx[i] / mx
             if (lon > 180.0) lon -= 360.0 else if (lon < -180.0) lon += 360.0
             p.copy(lat = lat0 + sy[i] / M_PER_DEG, lon = lon, ele = if (p.ele != null) sz!![i] else null)
         }
+        return Smoothed(points, DoubleArray(n) { kotlin.math.hypot(vx[it], vy[it]) })
     }
 
     /**
      * One axis: a forward Kalman filter of (position, velocity) with white-acceleration process noise [q], a
      * measurement of position [z] with standard deviation [sigma] where [has], then the Rauch-Tung-Striebel
-     * backward pass. Returns the smoothed positions. [t] in seconds, non-decreasing.
+     * backward pass. Returns the smoothed positions and velocities. [t] in seconds, non-decreasing.
      */
-    internal fun smoothAxis(t: DoubleArray, z: DoubleArray, has: BooleanArray, sigma: DoubleArray, q: Double): DoubleArray {
+    internal fun smoothAxis(t: DoubleArray, z: DoubleArray, has: BooleanArray, sigma: DoubleArray, q: Double): Pair<DoubleArray, DoubleArray> {
         val n = t.size
         // Filtered (f) and predicted (p) state and covariance [[a, b], [b, d]] per index.
         val fx = DoubleArray(n); val fv = DoubleArray(n)
@@ -171,9 +179,11 @@ object TrackSmoothing {
             fx[k] = xx; fv[k] = xv; fa[k] = a; fb[k] = b; fd[k] = d
         }
         val out = DoubleArray(n)
+        val vel = DoubleArray(n)
         var sx = fx[n - 1]
         var sv = fv[n - 1]
         out[n - 1] = sx
+        vel[n - 1] = sv
         for (k in n - 2 downTo 0) {
             val dt = t[k + 1] - t[k]
             // C = Pf[k] F^T Pp[k+1]^-1
@@ -199,8 +209,9 @@ object TrackSmoothing {
                 sx = nx; sv = nv
             }
             out[k] = sx
+            vel[k] = sv
         }
-        return out
+        return out to vel
     }
 
     private fun wrapLon(d: Double): Double = if (d > 180.0) d - 360.0 else if (d < -180.0) d + 360.0 else d

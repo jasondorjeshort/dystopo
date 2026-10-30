@@ -10,10 +10,15 @@ import io.github.jasondorjeshort.dystopo.model.TrackPoint
  * fixes, which reads a standing phone's jitter as 0.5 to 2 m/s; foot thresholds of 0.28 to 0.5 m/s elsewhere.
  */
 data class StopOptions(
-    /** How far the smoothed position may wander during a stop, metres. */
+    /** How far the smoothed position may wander during a stop, metres, the climb included (as gpxpy's 3D moving test). */
     val radiusM: Double = 15.0,
     /** How long a stay must last to be a stop, seconds: a 3-minute rest is cut, a 30 s pause is not. */
     val minStopS: Double = 60.0,
+    /**
+     * A stay is a stop only when its median speed (the receiver's where it gave one, else the smoother's) is at most
+     * this, m/s: [StatsOptions.movingSpeedMps]'s 0.3. A segment without speeds (not smoothed) skips the check.
+     */
+    val stillSpeedMps: Double = 0.3,
     /** The smoothing the positions go through first ([TrackSmoothing]); null for the raw points. */
     val smoothing: SmoothingOptions? = SmoothingOptions(),
 )
@@ -54,8 +59,8 @@ data class StopCut(val stops: List<TrackStop>, val stretches: List<TrackStretch>
  *
  * The test runs per segment on the smoothed points that count ([TrackSmoothing.counts]; all of them in a segment
  * with fewer than two that do): from each point, the following points within [StopOptions.radiusM] of it form a
- * stay; one lasting [StopOptions.minStopS] or more is a stop, extended while the next point is within the radius
- * of the stay's centre, and the search resumes after it. A segment whose
+ * stay; one lasting [StopOptions.minStopS] or more, with a median speed of at most [StopOptions.stillSpeedMps], is
+ * a stop, extended while the next point is within the radius of the stay's centre, and the search resumes after it. A segment whose
  * points do not all have times has no stops and no stretches. Usage: `TrackStops.cut(track).stretches`, then
  * the points of a stretch from `track.segments[s.segment].points` (raw) or `TrackSmoothing.smooth(track)[s.segment]`
  * (smoothed) between its indices.
@@ -68,7 +73,10 @@ object TrackStops {
         val stretches = ArrayList<TrackStretch>()
         for ((si, raw) in segments.withIndex()) {
             if (raw.isEmpty() || raw.any { it.time == null }) continue
-            val seg = options.smoothing?.let { TrackSmoothing.smoothSegment(raw, it) } ?: raw
+            val smoothed = options.smoothing?.let { TrackSmoothing.smoothWithSpeed(raw, it) }
+            val seg = smoothed?.points ?: raw
+            // The receiver's own (Doppler) speed where it gave one, else the smoother's.
+            val speed = DoubleArray(seg.size) { raw[it].speedMps ?: smoothed?.speedMps?.get(it) ?: Double.NaN }
             val counted = seg.indices.filter { TrackSmoothing.counts(seg[it]) }
             val idx = if (counted.size >= 2) counted else seg.indices.toList()
             val segStops = ArrayList<TrackStop>()
@@ -76,21 +84,30 @@ object TrackStops {
             while (i < idx.size - 1) {
                 val a = seg[idx[i]]
                 var j = i
-                while (j + 1 < idx.size && TrackStats.distanceM(a.lat, a.lon, seg[idx[j + 1]].lat, seg[idx[j + 1]].lon) <= options.radiusM) j++
+                while (j + 1 < idx.size && distance3(a.lat, a.lon, a.ele, seg[idx[j + 1]]) <= options.radiusM) j++
                 val t0 = a.time!!
                 if (j > i && (seg[idx[j]].time!! - t0) / 1000.0 >= options.minStopS) {
                     // A stay: it goes on while the next point is within the radius of the stay's centre, so
                     // wandering about a rest spot (or the anchor having been on the approach) does not end it.
                     var latSum = 0.0
                     var lonSum = 0.0
-                    for (m in i..j) { latSum += seg[idx[m]].lat; lonSum += seg[idx[m]].lon }
+                    var eleSum = 0.0
+                    var eleCount = 0
+                    fun add(p: TrackPoint) {
+                        latSum += p.lat; lonSum += p.lon
+                        p.ele?.let { eleSum += it; eleCount++ }
+                    }
+                    for (m in i..j) add(seg[idx[m]])
                     while (j + 1 < idx.size) {
                         val q = seg[idx[j + 1]]
                         val count = j - i + 1
-                        if (TrackStats.distanceM(latSum / count, lonSum / count, q.lat, q.lon) > options.radiusM) break
-                        latSum += q.lat; lonSum += q.lon
+                        if (distance3(latSum / count, lonSum / count, if (eleCount > 0) eleSum / eleCount else null, q) > options.radiusM) break
+                        add(q)
                         j++
                     }
+                    // The speed check: a slow walk round a hairpin also stays within the radius for a minute.
+                    val speeds = (i..j).map { speed[idx[it]] }.filter { !it.isNaN() }.sorted()
+                    if (speeds.isNotEmpty() && speeds[speeds.size / 2] > options.stillSpeedMps) { i++; continue }
                     segStops += TrackStop(si, idx[i], idx[j], t0, seg[idx[j]].time!!)
                     i = j + 1
                 } else {
@@ -112,6 +129,13 @@ object TrackStops {
             stretch(idx.last())
         }
         return StopCut(stops, stretches)
+    }
+
+    /** From a position to [p], metres: the climb counts too where both have a height, so a slow steep pitch is no stay. */
+    private fun distance3(lat: Double, lon: Double, ele: Double?, p: TrackPoint): Double {
+        val h = TrackStats.distanceM(lat, lon, p.lat, p.lon)
+        val dz = if (ele != null && p.ele != null) p.ele - ele else 0.0
+        return kotlin.math.sqrt(h * h + dz * dz)
     }
 
     /** Distance along [seg]'s points in [idx] from raw index [from] to [to]. */

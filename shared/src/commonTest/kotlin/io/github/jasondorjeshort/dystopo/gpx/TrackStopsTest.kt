@@ -67,6 +67,28 @@ class TrackStopsTest {
     }
 
     @Test
+    fun aSlowWalkUpTightSwitchbacksIsNoStop() {
+        // Legs of 12 m east and west, 2 m apart, at 0.5 m/s for 5 minutes: within 15 m of a point for over a
+        // minute, but moving.
+        for (seed in 1..5) {
+            val rnd = Random(seed)
+            fun gauss(): Double = sqrt(-2 * ln(1 - rnd.nextDouble())) * cos(2 * PI * rnd.nextDouble())
+            val pts = (0..300).map { t ->
+                val along = 0.5 * t
+                val leg = (along / 14).toInt()
+                val f = along - leg * 14
+                val (e, n) = if (f < 12) (if (leg % 2 == 0) f else 12 - f) to leg * 2.0 else (if (leg % 2 == 0) 12.0 else 0.0) to leg * 2.0 + (f - 12)
+                TrackPoint((n + 1.5 * gauss()) / mPerDeg, (e + 1.5 * gauss()) / mPerDeg, 500.0 + n * 0.5, t0 + t * 1000L, accuracyM = 4.0)
+            }
+            val cut = TrackStops.cut(listOf(pts))
+            assertEquals(emptyList(), cut.stops, "seed $seed")
+            assertEquals(1, cut.stretches.size)
+            // The radius alone would have cut it: the speed check is what keeps it.
+            assertTrue(TrackStops.cut(listOf(pts), StopOptions(stillSpeedMps = 100.0)).stops.isNotEmpty(), "seed $seed")
+        }
+    }
+
+    @Test
     fun gapsSplitTheStretchesAndUntimedSegmentsAreSkipped() {
         val a = walk(1, 120 to true, 120 to false)
         val b = walk(2, 120 to true).map { it.copy(time = it.time!! + 3_600_000L) }
