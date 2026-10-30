@@ -35,7 +35,7 @@ import java.util.TimeZone
  * freezeMs: 3000
  * samples: 10                           main-stack samples taken during the silence
  * topStackShare: 9                      samples that had the most common stack
- * blockingFrame: io.github...Routes.freezeUi(Routes.kt:120)   topmost app frame of that stack, or of the main
+ * blockingFrame: io.github...debug.DebugRoutes.freezeUi(DebugRoutes.kt:70)   topmost app frame of that stack, or of the main
  *                                       stack at the dump when there was no sample; `-` when no app frame
  * version: 0.1.12-alpha                 versionName; then build (debug|release), sdk, device
  * build: debug

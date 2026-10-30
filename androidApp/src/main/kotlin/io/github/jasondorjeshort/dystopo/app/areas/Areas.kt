@@ -83,6 +83,8 @@ object Areas : VersionPins {
         val cancelled: Boolean = false,
         /** T151: the automatic resume's state ([AutoResume]: failures, the next try, why it stopped); null when none. */
         val autoResume: AutoResume? = null,
+        /** T170 (T151's follow-up): the download makes the contour tiles too (`contours=1`), kept for its resume and Retry. */
+        val contours: Boolean = false,
     ) {
         val kind: String get() = if (pack != null) "pack" else "tiles"
 
@@ -104,6 +106,7 @@ object Areas : VersionPins {
             cursor?.let { m["cursor"] = it.json() }
             if (cancelled) m["cancelled"] = true
             autoResume?.let { m["autoResume"] = it.json() }
+            if (contours) m["contours"] = true // T170: only when set, so other records are written as before
         }
 
         /** T140: an unreadable record's raw JSON and the sentence that refused it. */
@@ -158,6 +161,7 @@ object Areas : VersionPins {
                 cursor = (m["cursor"] as? Map<*, *>)?.let { DownloadCursor.parse(it) }, // T151
                 cancelled = m["cancelled"] == true,
                 autoResume = (m["autoResume"] as? Map<*, *>)?.let { AutoResume.parse(it) },
+                contours = m["contours"] == true, // T170
             )
         }
     }
@@ -396,7 +400,8 @@ object Areas : VersionPins {
             transient.values.map { it.first }
         val same = covers == pinCovers
         pinCovers = covers
-        current = AreaPins(covers, pinned.map { it.versions } + transient.values.map { it.second }) // T95: with the versions
+        // T95: with the versions; T170: and a medium area's elevation cap (DEM tiles past it are not pinned).
+        current = AreaPins(covers, pinned.map { it.versions } + transient.values.map { it.second }, pinned.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } })
         if (!same) onPinsChanged?.let { hook -> Thread(hook, "areas-recount").apply { isDaemon = true }.start() }
         list = all
         if (save) runCatching {

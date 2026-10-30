@@ -19,7 +19,11 @@ For each view it sets the camera (POST /camera), waits for the map to go idle an
               baseline counts too (MapLibre held it, so the view's delta is 0): it
               is read from GET /stats/requests and reported as tiles.<source>.servedBeforeBaseline and
               beforeBaseline (tile, pack, time); the online fallback's answers never count. The view's report
-              carries `expectation` per source: expected, the reason and the overlapping `packTiles`
+              carries `expectation` per source: expected, the reason and the overlapping `packTiles`.
+              T170: a contour delta counts only when the view's own lines of the request log show a pack
+              answered one of them, or the online fallback answered one of the `packTiles` (a tile over the
+              pack's edge: tiles.contours.servedFromPack, servedOverPack, servedOnline), since contour tiles
+              made over online DEM elsewhere count in the delta too
   - blank:    the screenshot is not blank (luma standard deviation of a pixel sample >= --min-stddev)
   - settled:  a second screenshot, taken after the label check has let the map settle, differs from the
               first in at most --max-settle-change of the pixels (else /screenshot returned a half-loaded map;
@@ -587,21 +591,70 @@ def served_before_baseline(log_lines, source, pack_tiles):
         pack = ln.get("pack")
         if not pack or str(pack).startswith("online:"):
             continue
-        tile = str(ln.get("path", "")).rsplit(".", 1)[0].strip("/").split("/", 1)[-1]
+        tile = tile_of_path(ln.get("path"))
         if tile in want and tile not in seen:
             seen.add(tile)
             out.append({"tile": tile, "pack": pack, "ts": ln.get("ts")})
     return out
 
 
-def tiles_check(tiles, exp, log_lines, expectation):
+# T170 (T154's follow-up): the sources whose delta also counts tiles made over the online fallback (a contour tile is
+# generated over online DEM where no pack covers it), so only the request log's pack-answered lines prove the pack.
+PACK_ONLY_SOURCES = ("contours",)
+
+
+def pack_answered(lines, source):
+    """T170: the lines of `lines` (the request log) where a pack, not the online fallback, answered a tile of `source`."""
+    return [ln for ln in lines or [] if ln.get("route") == source and ln.get("status") == 200
+            and ln.get("pack") and not str(ln.get("pack")).startswith("online:")]
+
+
+def online_over_pack(lines, source, pack_tiles):
+    """T170: the lines where the online fallback answered one of `pack_tiles` ("z/x/y", the viewport's tiles that overlap
+    the pack's bounds) for `source`: a tile the pack covers only in part is made over the pack's and the online elevation
+    together, so it shows the pack's contours too."""
+    want = set(pack_tiles or ())
+    return [ln for ln in lines or [] if ln.get("route") == source and ln.get("status") == 200
+            and str(ln.get("pack") or "").startswith("online:") and tile_of_path(ln.get("path")) in want]
+
+
+def tile_of_path(path):
+    """"/contours/10/165/360.pbf" -> "10/165/360"."""
+    return str(path or "").rsplit(".", 1)[0].strip("/").split("/", 1)[-1]
+
+
+REQUEST_LOG_CAPACITY = 4096  # RequestLog.DEFAULT_CAPACITY on the phone
+
+
+def request_log_total(server):
+    """T170: the request log's `total` (lines ever added), or None from an app without GET /stats/requests."""
+    try:
+        return server.json("/stats/requests?limit=0", timeout=30).get("total")
+    except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+        return None
+
+
+def tiles_check(tiles, exp, log_lines, expectation, view_lines=None):
     """T154: the tiles check. A source passes when the view's own delta served a tile, or when the request log shows a
     pack answered one of the source's `packTiles` (source_expectations) before the baseline (adds `servedBeforeBaseline`
-    and `beforeBaseline` to tiles[source]). Returns (ok, the expected sources without tiles)."""
+    and `beforeBaseline` to tiles[source]). T170: for PACK_ONLY_SOURCES the delta counts only when the view's own lines
+    of the request log (`view_lines`, None when not read or not whole) show a pack answered one of them, or the online
+    fallback answered one of the source's `packTiles` (a tile over the pack's edge; adds `servedFromPack`, `servedOverPack`
+    and `servedOnline`); else the source is checked as one with no delta. Returns (ok, the expected sources without
+    tiles)."""
     missing = []
     for s in exp:
         if tiles[s]["served"] > 0:
-            continue
+            if s not in PACK_ONLY_SOURCES or view_lines is None:
+                continue
+            own = len(pack_answered(view_lines, s))
+            edge = len(online_over_pack(view_lines, s, expectation[s].get("packTiles")))
+            tiles[s]["servedFromPack"] = own
+            tiles[s]["servedOverPack"] = edge
+            tiles[s]["servedOnline"] = sum(1 for ln in view_lines if ln.get("route") == s and ln.get("status") == 200
+                                           and str(ln.get("pack") or "").startswith("online:"))
+            if own + edge > 0:
+                continue
         early = served_before_baseline(log_lines, s, expectation[s].get("packTiles"))
         tiles[s]["servedBeforeBaseline"] = len(early)
         if early:
@@ -1131,6 +1184,7 @@ def main():
         t0 = time.time()
         try:
             before = server.json("/stats")
+            log_total0 = request_log_total(server)  # T170: where this view's lines of the request log start
             cam = server.json(f"/camera?lat={v['lat']}&lon={v['lon']}&zoom={v['z']}&bearing=0&tilt=0", method="POST")
             png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
             rep["idleSeconds"] = round(time.time() - t0, 1)  # T110
@@ -1224,17 +1278,25 @@ def main():
         if empty > 0:  # T98 diagnostic: an empty contour tile where a DEM pack has elevations
             rep["contours"]["noDemOverPack"] = empty
             rep["warnings"].append(f"{empty} contour tile(s) with no elevation over a DEM pack ({', '.join(empty_tiles[-empty:])})")
-        log_lines = None
-        if any(tiles[s]["served"] == 0 for s in exp):
+        log_lines, view_lines = None, None
+        pack_only = log_total0 is not None and any(s in exp and tiles[s]["served"] > 0 for s in PACK_ONLY_SOURCES)
+        if any(tiles[s]["served"] == 0 for s in exp) or pack_only:
             # T154: a tile MapLibre already held counts when a pack answered it before the baseline (the request log keeps
             # the last 4,096 requests; `requestLogDropped` says whether the start of the process is still in it).
+            # T170: and this view's own lines (from log_total0 on) tell a pack's contour tiles from those made over online DEM.
             try:
-                rl = server.json("/stats/requests?limit=4096", timeout=60)
+                rl = server.json(f"/stats/requests?limit={REQUEST_LOG_CAPACITY}", timeout=60)
                 log_lines = rl.get("lines") or []
                 rep["requestLogDropped"] = rl.get("dropped")
+                if pack_only:
+                    n = rl.get("total", 0) - log_total0
+                    if 0 <= n <= len(log_lines):
+                        view_lines = log_lines[len(log_lines) - n:]
+                    else:
+                        rep["viewLogIncomplete"] = n  # more lines than the log keeps: the delta counts as before
             except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:
                 log_lines, rep["requestLogError"] = [], str(e)[:200]
-        c["tiles"], missing = tiles_check(tiles, exp, log_lines, expectation)
+        c["tiles"], missing = tiles_check(tiles, exp, log_lines, expectation, view_lines)
         if not c["tiles"]:
             rep["sourcesWithoutTiles"] = missing
         c["blank"] = "lumaStddev" in rep["image"] and rep["image"]["lumaStddev"] >= args.min_stddev

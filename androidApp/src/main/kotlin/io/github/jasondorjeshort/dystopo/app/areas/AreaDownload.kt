@@ -164,7 +164,7 @@ object AreaDownload {
                 "id" to id, "name" to name, "state" to state, "error" to error, "source" to source, "manifestFrom" to manifestFrom, "serverNote" to serverNote,
                 "planned" to p, "done" to done.get(), "percent" to if (p == 0) null else Math.round(done.get() * 1000.0 / p) / 10.0,
                 "fetched" to fetched.get(), "alreadyCached" to cached.get(), "inPacks" to inPacks.get(), "missing" to missing.get(),
-                "failed" to failed.get(), "invalid" to invalid.get(), "bytes" to bytes.get(), "contourTiles" to contourTiles.get(),
+                "failed" to failed.get(), "invalid" to invalid.get(), "bytes" to bytes.get(), "contours" to contours, "contourTiles" to contourTiles.get(), // T170: contours
                 "rows" to linkedMapOf(
                     "planned" to rowsPlanned.get(), "started" to rowsStarted.get(), "done" to rowsDone.get(), "wholePrefix" to wholePrefix,
                     "current" to rowNow?.json(), "lastWhole" to lastWhole?.json(), "order" to "zoom, route, y, x0",
@@ -333,7 +333,9 @@ object AreaDownload {
         val from = cursor?.takeIf { saved != null && planned === saved }
         planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
-        val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L }
+        // T170 (T151's follow-up): a download started with contours keeps them on its resume, Retry and Download again.
+        val withContours = contours || old?.contours == true
+        val j = Job(area.id, label, area, fetcher.server, withContours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L }
         job = j
         // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
         // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
@@ -347,6 +349,7 @@ object AreaDownload {
                 state = "downloading", source = fetcher.server, tripId = tripId ?: old?.tripId, bytes = old?.bytes ?: 0L,
                 estimateBytes = old?.estimateBytes ?: 0L, tiles = old?.tiles ?: 0, versions = old?.versions.orEmpty(), // T95: held until it completes
                 downloadMs = old?.downloadMs, cursor = from, cancelled = false, autoResume = resumeState, // T151
+                contours = withContours, // T170
             ),
         )
         Thread({ run(j, fetcher) }, "area-download").apply { isDaemon = true }.start()
@@ -862,15 +865,30 @@ internal fun budgetRefusal(area: AreaOfInterest, pinnedBytes: Long, estimateByte
 internal fun areaBudgetError(pinnedBytes: Long, estimateBytes: Long, alreadyBytes: Long, budgetMb: Long): String? {
     if (budgetError(pinnedBytes, estimateBytes, alreadyBytes, budgetMb) == null) return null
     val inUse = pinnedBytes - minOf(alreadyBytes, pinnedBytes)
-    return "This area is about ${aboutSize(estimateBytes)}; ${aboutSize(inUse)} of your ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(budgetMb)} offline budget is in use. " +
+    return "This area is about ${aboutSize(estimateBytes)}; ${aboutSize(inUse)} of your ${budgetSize(budgetMb)} offline budget is in use. " +
         "Make the area smaller, choose less detail, or raise the budget in Settings › Storage."
 }
 
-/** T140: [aboutMb] below 1 GB, else "1.6 GB"; T152: from 1 TB "11.5 TB" (areas past the old heap limit reach it). Pure, tested. */
+/**
+ * T140: [aboutMb] below 1 GB, else "1.6 GB"; T152: from 1 TB "11.5 TB" (areas past the old heap limit reach it); T170
+ * (T152's follow-up): whole gigabytes from 100 GB, "174 GB". Pure, tested.
+ */
 internal fun aboutSize(bytes: Long): String = when {
     bytes >= 1L shl 40 -> String.format(java.util.Locale.US, "%.1f TB", bytes / 1_099_511_627_776.0)
+    bytes >= 100L shl 30 -> String.format(java.util.Locale.US, "%.0f GB", bytes / 1_073_741_824.0)
     bytes >= 1L shl 30 -> String.format(java.util.Locale.US, "%.1f GB", bytes / 1_073_741_824.0)
     else -> aboutMb(bytes)
+}
+
+/**
+ * T170 (T152's follow-up, "11818.4 GB of your 1024 GB"): the budget in [areaBudgetError]'s sentence in [aboutSize]'s units,
+ * so both sizes read alike: the Storage screen's label up to 100 GB ("2 GB", "1.5 GB"), whole gigabytes from there
+ * ("128 GB"), terabytes from 1 TB ("1 TB", "1.5 TB"). Pure, tested.
+ */
+internal fun budgetSize(budgetMb: Long): String = when {
+    budgetMb >= 1L shl 20 -> String.format(java.util.Locale.US, "%.1f TB", budgetMb / 1_048_576.0).replace(".0 TB", " TB")
+    budgetMb >= 100L shl 10 -> String.format(java.util.Locale.US, "%.0f GB", budgetMb / 1024.0)
+    else -> io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(budgetMb)
 }
 
 /**

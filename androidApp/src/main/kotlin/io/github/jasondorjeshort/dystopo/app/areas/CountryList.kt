@@ -59,6 +59,9 @@ import kotlinx.coroutines.withContext
  * A row over the budget stays, greyed, with ADR 0041 §5's budget sentence; a country no area can hold (Antarctica; T152:
  * the heap no longer refuses one) stays, greyed, with [TOO_LARGE_ROW]. Sizes are
  * measured on the phone, off the UI thread ([CountrySizes]), over the same cover and estimate as the download's manifest.
+ * T170 (T142's follow-up; T150 measured 60 s of CPU per list open): each country's cover counts per zoom are kept in
+ * `files/areas/country-covers.txt` ([CoverCounts]) once measured, for the bundled set they were measured from, so a list
+ * opened again (in this process or a later one) adds up sizes from stored counts instead of filling every cover again.
  * No sovereignty text anywhere: the list shows `NAME` and Natural Earth's continent, nothing else.
  */
 object CountrySizes {
@@ -93,6 +96,8 @@ object CountrySizes {
     private val lock = Object()
     private var worker: Thread? = null
     private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val revisionPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private const val REVISION_MS = 150L
 
     /** Measures [codes] (first to last) in the background; replaces the previous request. */
     fun request(codes: List<String>) {
@@ -122,6 +127,42 @@ object CountrySizes {
 
     private fun server(): String? = runCatching { OnlineService.get(DystopoApp.instance).fetcher?.server }.getOrNull()
 
+    /** T170: the stored cover counts, read on the worker's first pass and written when it idles after measuring. */
+    private var covers: CoverCounts? = null
+    private var coversDirty = false
+    /** T170: for `GET /areas/countries` `coverCache`: the file's countries, counts filled and reused, the last load and save. */
+    @Volatile var coverStats: Map<String, Any?> = emptyMap()
+        private set
+    @Volatile private var filled = 0
+    @Volatile private var reused = 0
+
+    private fun coverFile() = java.io.File(java.io.File(DystopoApp.instance.filesDir, "areas").apply { mkdirs() }, CoverCounts.FILE_NAME)
+
+    private fun loadCovers(): CoverCounts {
+        covers?.let { return it }
+        val t0 = System.currentTimeMillis()
+        val key = CoverCounts.keyOf(Countries.all)
+        val c = runCatching { coverFile().takeIf { it.isFile }?.readText()?.let { CoverCounts.parse(it, key) } }
+            .onFailure { Log.w(TAG, "reading ${CoverCounts.FILE_NAME} failed", it) }.getOrNull() ?: CoverCounts(key)
+        covers = c
+        coverStats = linkedMapOf("file" to CoverCounts.FILE_NAME, "key" to key, "countriesRead" to c.size, "loadMs" to System.currentTimeMillis() - t0)
+        return c
+    }
+
+    private fun saveCovers() {
+        val c = covers ?: return
+        if (!coversDirty) return
+        coversDirty = false
+        val t0 = System.currentTimeMillis()
+        runCatching {
+            val f = coverFile()
+            val tmp = java.io.File(f.path + ".tmp")
+            tmp.writeText(c.text())
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        }.onFailure { Log.w(TAG, "writing ${CoverCounts.FILE_NAME} failed", it) }
+        coverStats = coverStats + mapOf("countriesSaved" to c.size, "saveMs" to System.currentTimeMillis() - t0, "saves" to ((coverStats["saves"] as? Int ?: 0) + 1))
+    }
+
     private fun loop() {
         while (true) {
             // T150: no measuring and no 5 s re-check in the background (the list stays composed behind HOME; a country can take 30 s).
@@ -131,6 +172,7 @@ object CountrySizes {
             if (measuredFor != demFirst) { entries = emptyMap(); measuredFor = demFirst }
             val next = want.firstOrNull { it !in entries } ?: extra.firstOrNull { it !in entries }
             if (next == null) {
+                saveCovers() // T170: once the rows asked for are measured
                 synchronized(lock) { if (want.all { it in entries } && extra.all { it in entries }) lock.wait(5_000) }
                 continue
             }
@@ -142,25 +184,48 @@ object CountrySizes {
                 Entry(CountryMeasure(0, 0, true), null, null, null)
             } ?: Entry(CountryMeasure(0, 0, true), null, null, null)
             entries = entries + (next to e)
-            main.post { revision++ }
+            // T170: one recomposition per [REVISION_MS] at most (stored sizes arrive in a burst; each bump redraws the list).
+            if (revisionPending.compareAndSet(false, true)) main.postDelayed({ revisionPending.set(false); revision++ }, REVISION_MS)
         }
     }
 
     private fun measure(c: Country, server: String?): Entry {
-        val lessArea = countryArea(c, AreaDetail.LESS) ?: return Entry(CountryMeasure(0, 0, true), null, null, null)
-        val mediumArea = countryArea(c, AreaDetail.MEDIUM)!!
-        val fullArea = countryArea(c, AreaDetail.FULL)!!
+        val tooLarge = Entry(CountryMeasure(0, 0, true), null, null, null)
+        // T170: the stored counts and ids first ([CoverCounts]); the country's polygon (its rings decoded, an id written out
+        // over every vertex) is made only for what is not stored yet.
+        val store = loadCovers()
+        val known = store.idsOf(c.code)
+        if (known != null && known.isEmpty()) return tooLarge
+        val real by lazy(LazyThreadSafetyMode.NONE) { AreaDetail.entries.associateWith { countryArea(c, it) } }
+        if (known == null && real[AreaDetail.LESS] == null) {
+            store.putIds(c.code, emptyMap())
+            coversDirty = true
+            return tooLarge
+        }
+        val ids = known ?: AreaDetail.entries.associateWith { real.getValue(it)!!.id }.also { store.putIds(c.code, it); coversDirty = true }
         val pinned = runCatching { OnlineService.get(DystopoApp.instance).cache.pinnedBytes }.getOrDefault(0L)
         // T157: every zoom's cover filled once for the three details (the shape is the same; only the zooms differ).
-        val counts = HashMap<Int, Int>()
-        fun measured(a: AreaOfInterest) = AreaDownload.zooms(a, server).let { (d, o) -> measureCounts(d, o) { z -> counts.getOrPut(z) { TileCover.of(a, z, 1).size } } }
-        val less = measured(lessArea)
-        val medium = measured(mediumArea)
+        // T170: and kept for the next open; a zoom stored before is not filled again. The zooms come from the probe at
+        // the same detail (they depend on the detail and the server, not the shape).
+        val counts = HashMap<Int, Int>(store.of(c.code))
+        fun measured(d: AreaDetail) = AreaDownload.zooms(countryLessProbe.at(d), server).let { (dz, oz) ->
+            measureCounts(dz, oz) { z ->
+                counts[z]?.also { reused++ } ?: TileCover.of(real.getValue(d)!!, z, 1).size.also { n ->
+                    counts[z] = n
+                    store.put(c.code, z, n)
+                    coversDirty = true
+                    filled++
+                }
+            }
+        }
+        val less = measured(AreaDetail.LESS)
+        val medium = measured(AreaDetail.MEDIUM)
         // Full detail filled only when it might fit the budget (z15 costs four times z14's tiles): [fullAtLeast] first;
         // else estimated from z14's cover.
-        val full = if (areaBudgetError(pinned, fullAtLeast(less), 0, AppSettings.pinnedCacheMb) == null) measured(fullArea)
+        val full = if (areaBudgetError(pinned, fullAtLeast(less), 0, AppSettings.pinnedCacheMb) == null) measured(AreaDetail.FULL)
         else estimateFull(medium, counts[AreaDetail.MEDIUM.maxZoom] ?: 0)
-        return Entry(less, full, lessArea.id, fullArea.id, medium, mediumArea.id)
+        coverStats = coverStats + mapOf("filled" to filled, "reused" to reused)
+        return Entry(less, full, ids[AreaDetail.LESS], ids[AreaDetail.FULL], medium, ids[AreaDetail.MEDIUM])
     }
 
     /** A small polygon only for [AreaDownload.zooms]' DEM range (it depends on the server, not the shape). */
@@ -173,6 +238,82 @@ object CountrySizes {
     fun clear() {
         entries = emptyMap()
         synchronized(lock) { lock.notifyAll() }
+    }
+}
+
+/**
+ * T170: the cover counts of the bundled countries, per country code and zoom (the tiles of [TileCover.of] with margin 1 of
+ * the country's polygon area; the same at every detail, since only the zooms differ), for the set [key] names
+ * ([keyOf]: the codes, names, boxes and simplification tolerances of every country, and [VERSION]), and the area ids of
+ * its three details ([AreaOfInterest.id] goes over every vertex). The text form, one country per line after a header line:
+ * `country-covers <VERSION> <key>`, then `<code>\t<z>:<count>,<z>:<count>,...\t<id full>,<id medium>,<id less>` (the ids
+ * in [AreaDetail] order, `-` for a country no area can hold). A file of another version or set reads as empty, so a new
+ * bundled set or cover rule is measured afresh. Pure, tested.
+ */
+internal class CoverCounts(val key: String) {
+    private val byCode = HashMap<String, MutableMap<Int, Int>>()
+    private val idsByCode = HashMap<String, Map<AreaDetail, String>>()
+
+    val size: Int get() = (byCode.keys + idsByCode.keys).size
+
+    fun of(code: String): Map<Int, Int> = byCode[code].orEmpty()
+
+    fun put(code: String, z: Int, count: Int) {
+        byCode.getOrPut(code) { java.util.TreeMap() }[z] = count
+    }
+
+    /** The area ids of the country's three details; empty for a country no area can hold; null when not stored. */
+    fun idsOf(code: String): Map<AreaDetail, String>? = idsByCode[code]
+
+    fun putIds(code: String, ids: Map<AreaDetail, String>) {
+        idsByCode[code] = ids
+    }
+
+    fun text(): String = buildString {
+        append("country-covers ").append(VERSION).append(' ').append(key).append('\n')
+        for (code in (byCode.keys + idsByCode.keys).sorted()) {
+            append(code).append('\t').append(of(code).entries.joinToString(",") { (z, n) -> "$z:$n" })
+            idsByCode[code]?.let { ids -> append('\t').append(if (ids.isEmpty()) TOO_LARGE else AreaDetail.entries.joinToString(",") { ids[it].orEmpty() }) }
+            append('\n')
+        }
+    }
+
+    companion object {
+        const val FILE_NAME = "country-covers.txt"
+        /** The ids field of a country no area can hold. */
+        const val TOO_LARGE = "-"
+        /** Bumped when the cover rule changes (the margin, [TileCover]'s fill), so stored counts are measured again. */
+        const val VERSION = 1
+
+        /** The bundled set's fingerprint: what the covers depend on, without decoding a ring. Pure, tested. */
+        fun keyOf(countries: List<Country>): String {
+            var h = 1125899906842597L
+            for (c in countries) {
+                for (v in listOf<Any>(c.code, c.name, c.west, c.south, c.east, c.north, c.toleranceM)) h = 31 * h + v.hashCode()
+            }
+            return "${countries.size}-${java.lang.Long.toHexString(h)}"
+        }
+
+        /** [text] read back for the set [key]; empty when the header names another version or set, a bad pair skipped. */
+        fun parse(text: String, key: String): CoverCounts {
+            val out = CoverCounts(key)
+            val lines = text.lineSequence().iterator()
+            if (!lines.hasNext() || lines.next().trim() != "country-covers $VERSION $key") return out
+            for (line in lines) {
+                val code = line.substringBefore('\t', "").takeIf { it.isNotBlank() } ?: continue
+                val fields = line.split('\t')
+                for (p in fields.getOrElse(1) { "" }.split(',')) {
+                    val z = p.substringBefore(':').toIntOrNull()
+                    val n = p.substringAfter(':', "").toIntOrNull()
+                    if (z != null && n != null && z in 0..AreaOfInterest.MAX_ZOOM && n >= 0) out.put(code, z, n)
+                }
+                val ids = fields.getOrNull(2)?.trim() ?: continue
+                if (ids == TOO_LARGE) out.putIds(code, emptyMap())
+                else ids.split(',').takeIf { l -> l.size == AreaDetail.entries.size && l.all { it.isNotBlank() } }
+                    ?.let { l -> out.putIds(code, AreaDetail.entries.zip(l).toMap()) }
+            }
+            return out
+        }
     }
 }
 
