@@ -12,7 +12,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 - **v0.1.15-alpha is published** (tag 4c61312, 2026-10-30 22:22 UTC, built locally at the tag because the repository
   has no `RELEASE_*` secrets; the workflow's draft was debug-signed). The permission system refuses an agent the copy
   of the signing key into a build worktree: the owner made `../dystopo-rel`, copied the key by hand and removed it after
-  the publish; the durable fix is the four secrets set once (`release.yml` header), after which the workflow signs. Ten new idea files of 2026-10-30 are untriaged (`node .claude/hooks/queue-list.js ideas`).
+  the publish, then set the four `RELEASE_*` secrets (22:40 UTC): the next tag's draft should come out release-signed. Ten new idea files of 2026-10-30 are untriaged (`node .claude/hooks/queue-list.js ideas`).
   Local pre-rebase branch copies (`task/T169`, `T166`, `T160`, `T172`) are on the housekeeping list.
 - The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`); the wave's research and critic review in the
   gitignored `out/wave22-research/`; the emulator rule is in the wave paragraph. Usage: 7-day 3 at launch, 27 at the close.
@@ -27,7 +27,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Waiting on user
 
-- `docs/TASKS.md` › Owner actions pending: the `RELEASE_*` secrets (above); install
+- `docs/TASKS.md` › Owner actions pending: install
   v0.1.15-alpha and watch the recorder and the readout on the phone; the wave 18 to 22 strings (in the merge commits);
   the decisions (auto-resume toggle, ADR 0040 and 0042, S Pen, Play; the z10 answer decides ADR 0049's C); the git
   housekeeping; the first PC's pack recipe; Android 14 lets users swipe the recording notification away (T159 survives it).
