@@ -19,4 +19,5 @@ for later, not a priority.
 - Testing: the emulator can inject stylus events; hover cannot be checked on a real pen from here.
 
 Question: keep this at rest, or pick one behaviour? Nothing here is anchored to a screen yet, hover cannot be checked on a real pen from here, and the vendor SDK is proprietary. Recommendation: if you want it parked, write a `Waits:` with your trigger; if you want one thing, hover to show a feature's name and elevation through the standard Android stylus hover events, which needs no SDK and fits one pass.
-Answer:
+Answer: one behaviour, possibly drawing a route; not necessarily for the next wave (owner, 2026-10-29).
+2026-10-29: drawing a route means a stylus stroke on the map turned into a route. The route editor of T60 (via points, dragging the line) and `RouteSession` are the anchors; whether the stroke snaps to trails or stays as drawn (a crow-like leg) is the task's first question, and it uses the standard Android stylus input, no vendor SDK.
