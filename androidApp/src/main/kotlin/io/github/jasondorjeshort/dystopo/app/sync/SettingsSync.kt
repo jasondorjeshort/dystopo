@@ -21,6 +21,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T126: spoken directions (`app.navSpeech`, `on` or `off`) are a [SettingsRoutes] key and sync through it.
  * T136: so is the trip corridor's width (`app.tripCorridorM`, whole metres, `0` off); the per-trip "not kept" choice
  * stays on the phone (T130).
+ * T164: the route-time fit (`app.paceFit`, [io.github.jasondorjeshort.dystopo.routing.PaceFits.encode]'s value, so every
+ * device shows the same numbers), its switch (`app.paceStandard`, `on` or `off`) and its reset (`app.paceSince`, epoch ms).
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -43,6 +45,11 @@ object SettingsSync {
 
     /** T136: the trip corridor's width each side, a [SettingsRoutes] key whose synced value is whole metres (`0` off). */
     const val TRIP_CORRIDOR_M = "tripCorridorM"
+
+    /** T164: the route-time fit, its "Use the standard estimate" switch and its reset, [SettingsRoutes] keys. */
+    const val PACE_FIT = "paceFit"
+    const val PACE_STANDARD = "paceStandard"
+    const val PACE_SINCE = "paceSince"
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -83,6 +90,9 @@ object SettingsSync {
         m += localValues(ScaleBarSettings.bothUnits) // T110
         m[syncedKey(NAV_SPEECH)] = onOff(AppSettings.navSpeech) // T126
         m[syncedKey(TRIP_CORRIDOR_M)] = AppSettings.tripCorridorM.toString() // T136
+        m[syncedKey(PACE_STANDARD)] = onOff(AppSettings.paceStandard) // T164
+        m[syncedKey(PACE_FIT)] = AppSettings.paceFit
+        m[syncedKey(PACE_SINCE)] = AppSettings.paceSince.toString()
         return m
     }
 
@@ -134,6 +144,9 @@ object SettingsSync {
         parsed.map.keys.forEach { keys += syncedKey(it) }
         if (parsed.navSpeech != null) keys += syncedKey(NAV_SPEECH) // T126
         if (parsed.tripCorridorM != null) keys += syncedKey(TRIP_CORRIDOR_M) // T136
+        if (parsed.paceStandard != null) keys += syncedKey(PACE_STANDARD) // T164
+        if (parsed.paceFit != null) keys += syncedKey(PACE_FIT)
+        if (parsed.paceSince != null) keys += syncedKey(PACE_SINCE)
         publishKeys(app, keys)
     }
 

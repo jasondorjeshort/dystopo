@@ -91,6 +91,8 @@ class HelpRegistryTest {
             "settings.navSpeech",
             // T174: the drainage row of Map options.
             "map.drainage",
+            // T164: the route times row.
+            "settings.pace",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

@@ -77,6 +77,37 @@ object AppSettings {
         navSnoozeMin = p.getInt(KEY_NAV_SNOOZE_MIN, DEFAULT_NAV_SNOOZE_MIN).coerceIn(NAV_SNOOZE_RANGE)
         mapOrientation = p.getString(KEY_MAP_ORIENTATION, null) ?: "north-up" // T100
         navSpeech = p.getBoolean(KEY_NAV_SPEECH, false) // T126
+        // T164: the route-time fit and its switch, then the fits the router reads.
+        paceStandard = p.getBoolean(KEY_PACE_STANDARD, false)
+        paceFit = p.getString(KEY_PACE_FIT, "") ?: ""
+        paceSince = p.getLong(KEY_PACE_SINCE, 0L)
+        io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.activate()
+    }
+
+    // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
+
+    private const val KEY_PACE_STANDARD = "paceStandard"
+    private const val KEY_PACE_FIT = "paceFit"
+    private const val KEY_PACE_SINCE = "paceSince"
+
+    /** "Use the standard estimate": routes keep the standard model even with a fit (off by default: the fit is used once ready). */
+    @Volatile var paceStandard: Boolean = false
+        private set
+
+    /** The fit as its synced value ([io.github.jasondorjeshort.dystopo.routing.PaceFits.encode]); "" for none yet. */
+    @Volatile var paceFit: String = ""
+        private set
+
+    /** Reset: only tracks started at or after this count (epoch ms; 0 all tracks). */
+    @Volatile var paceSince: Long = 0L
+        private set
+
+    fun setPace(standard: Boolean?, fit: String?, since: Long?) {
+        val e = prefs?.edit()
+        standard?.let { paceStandard = it; e?.putBoolean(KEY_PACE_STANDARD, it) }
+        fit?.let { paceFit = it; e?.putString(KEY_PACE_FIT, it) }
+        since?.let { paceSince = it; e?.putLong(KEY_PACE_SINCE, it) }
+        e?.apply()
     }
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
@@ -365,5 +396,6 @@ object AppSettings {
         "debugFixedPort" to debugFixedPort,
         "navStaleS" to navStaleS, "navStartM" to navStartM, "navSnoozeMin" to navSnoozeMin, // T91
         "navSpeech" to navSpeech, // T126
+        "paceStandard" to paceStandard, "paceFit" to paceFit, "paceSince" to paceSince, // T164
     ) + mapOptions.json(units) // T47
 }

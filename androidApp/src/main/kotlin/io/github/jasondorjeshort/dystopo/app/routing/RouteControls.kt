@@ -152,6 +152,9 @@ fun RouteControls() {
             Ends(phase) // T114: From and To
             if (plan != null && phase == "route") {
                 BasicText(RouteSession.summary(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                // T164: whose pace the time is ("Based on your last 5 hikes", or the standard estimate); a refit when the tracks changed.
+                PaceSettings.cardLine(plan.mode)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+                LaunchedEffect(plan) { PaceSettings.refitSoon(app, "route") }
                 // T108: a crow line's bearing (it follows no trail).
                 if (plan.mode == TravelMode.CROW) {
                     val b = plan.route.points.let { io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) }

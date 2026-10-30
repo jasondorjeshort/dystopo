@@ -29,6 +29,11 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   synced; also Settings › Navigation and tracking and `POST /nav/speech?enabled=`.
  *   T130 `tripCorridorM` (0 off, or 100 to 10000 m; default 1000): the corridor every trip keeps offline; T136: synced
  *   (`app.tripCorridorM`, the metres as a whole number). Raising `pinnedCacheMb` (T136) tries a refused trip corridor again.
+ *   T164 `paceStandard` (1/0, default 0: "Use the standard estimate"), `paceFit` (the fitted route times as their synced
+ *   value, `1;hike:<peak m/s>,<width>,<peak grade>,<tracks>,<metres>,<spread>;...`, "" for none; set by the phone's refit,
+ *   [io.github.jasondorjeshort.dystopo.app.routing.PaceSettings]) and `paceSince` (the reset: only tracks started at or after
+ *   this epoch ms count, 0 all), all three synced (`app.paceStandard` `on`/`off`, `app.paceFit`, `app.paceSince`); also
+ *   Settings › Navigation and tracking › Route times and `GET /pace`.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -106,6 +111,11 @@ class SettingsRoutes(private val app: DystopoApp) {
             AppSettings.setNavSpeech(on)
             if (!on) io.github.jasondorjeshort.dystopo.app.nav.NavSpeech.silence()
         }
+        // T164: the route-time fit, its switch and its reset; the router reads the result from the next plan.
+        if (parsed.paceStandard != null || parsed.paceFit != null || parsed.paceSince != null) {
+            AppSettings.setPace(parsed.paceStandard, parsed.paceFit, parsed.paceSince)
+            io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.activate()
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -133,6 +143,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val pinnedCacheMb: Long? = null,
             val navSpeech: Boolean? = null, // T126
             val tripCorridorM: Int? = null, // T130, T136
+            // T164: "Use the standard estimate", the fit's synced value ("" none), the reset's start (epoch ms).
+            val paceStandard: Boolean? = null, val paceFit: String? = null, val paceSince: Long? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -145,7 +157,8 @@ class SettingsRoutes(private val app: DystopoApp) {
         val CACHE_KEYS = setOf("onlineCacheMb", "contourCacheMb", "pinnedCacheMb") // T91: pinnedCacheMb
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
-        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin", "tripCorridorM", "navSpeech") + MapOptions.KEYS + CACHE_KEYS // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
+        val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin", "tripCorridorM", "navSpeech") + MapOptions.KEYS + CACHE_KEYS + // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
+            setOf("paceStandard", "paceFit", "paceSince") // T164
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -226,7 +239,22 @@ class SettingsRoutes(private val app: DystopoApp) {
                 tripCorridorM = io.github.jasondorjeshort.dystopo.app.areas.parseCorridorWidth(raw)
                     ?: return Parsed.Error(io.github.jasondorjeshort.dystopo.app.areas.corridorWidthError(raw))
             }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM)
+            // T164: the switch is a flag; the fit a value this build reads (PaceFits.decode); the reset an instant, epoch ms.
+            var paceStandard: Boolean? = null
+            params["paceStandard"]?.let { raw -> paceStandard = flag(raw) ?: return Parsed.Error("paceStandard must be 1 or 0 (got $raw)") }
+            var paceFit: String? = null
+            params["paceFit"]?.let { raw ->
+                val v = raw.toString().trim()
+                if (io.github.jasondorjeshort.dystopo.routing.PaceFits.decode(v) == null) return Parsed.Error("paceFit is not a fit this build reads (got $v)")
+                paceFit = v
+            }
+            var paceSince: Long? = null
+            params["paceSince"]?.let { raw ->
+                val v = (raw as? Number)?.toLong() ?: raw.toString().trim().toLongOrNull()
+                if (v == null || v < 0) return Parsed.Error("paceSince must be a time in epoch milliseconds, 0 for every track (got $raw)")
+                paceSince = v
+            }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

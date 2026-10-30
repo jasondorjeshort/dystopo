@@ -154,6 +154,7 @@ class Routes(private val app: DystopoApp) {
         SyncRoutes.handle(app, r)?.let { return it } // T44: POST /sync?with=, /sync/status, /sync/settings, /sync/field
         ShareRoutes.handle(app, r)?.let { return it } // T54: /share/start, /share/stop, /share/status, /share/connect, /share/qr
         RouteRoutes.handle(app, r)?.let { return it } // T45: /route, /route/status, /route/build, /route/longpress, /route/save, /route/gpx
+        io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.handle(app, r)?.let { return it } // T164: GET /pace, POST /pace/refit, POST /pace/reset
         io.github.jasondorjeshort.dystopo.app.update.UpdateRoutes.handle(app, r)?.let { return it } // T83: /update, /update/check, /update/install
         io.github.jasondorjeshort.dystopo.app.areas.AreaRoutes.handle(app, r)?.let { return it } // T75: /areas, /areas/download, /areas/trim, /areas/prefetch
         io.github.jasondorjeshort.dystopo.app.controls.ControlRoutes.handle(app, r)?.let { return it } // T93: GET /camera, POST /camera/recenter
