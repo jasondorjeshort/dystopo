@@ -27,7 +27,7 @@ class ServeCommand : CliktCommand(name = "serve") {
             "POST /catalog/refresh rehashes every file, ignoring the .sha256 sidecars, and lists those that changed. " +
             "Map options as on the phone, in the query string of /style.json, / and /phone: hillshade=off|single|multi, " +
             "hillshadeIntensity=0..1, slope=off|avalanche|steepness, contourInterval=auto|<n>, contourLabels=sparse|normal|dense, night=on, " +
-            "trails|water|landcover|pois|boundaries=off (tiles at /shade/{z}/{x}/{y}.png and /contours/...?interval=<n>). " +
+            "trails|water|landcover|pois|boundaries=off, drainage=on (tiles at /shade/{z}/{x}/{y}.png and /contours/...?interval=<n>). " +
             "With --live: /contours/{z}/{x}/{y}.pbf?units=ft|m and /style.json?units=ft|m (or ?lat=&lon= for the default there: " +
             "feet in the US, metres elsewhere), /live/units?lat=&lon=, /live/sources?bbox=w,s,e,n&dz=&oz= (sources and attribution of a view)."
 

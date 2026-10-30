@@ -152,6 +152,11 @@ class OsmFixture(private val build: (OsmFixture.Canvas) -> Unit) {
             c.line("transportation", listOf(205.0 to 105.0, 214.0 to 60.0, 240.0 to 20.0, 264.0 to -8.0), *tr("sac_scale" to "alpine_hiking", "trail_visibility" to "bad"))
             c.line("transportation", listOf(60.0 to 126.0, 72.0 to 60.0, 92.0 to -8.0), *tr("informal" to 1))
 
+            // T174: derived drainage of each class, a dry gully and a seasonal branch joining a running stream into the lake.
+            c.line("drainage", listOf(150.0 to 96.0, 156.0 to 124.0, 150.0 to 150.0), "class" to "likely_dry", "catchment_km2" to 0.4)
+            c.line("drainage", listOf(150.0 to 150.0, 132.0 to 188.0, 104.0 to 214.0), "class" to "seasonal", "catchment_km2" to 2.6)
+            c.line("drainage", listOf(140.0 to 236.0, 104.0 to 214.0, 70.0 to 206.0, 30.0 to 200.0), "class" to "likely_running", "catchment_km2" to 11.2)
+
             c.point("mountain_peak", 236.0, 46.0, "class" to "peak", "name" to "Rim Peak", "ele" to c.elevation(236.0, 46.0).roundToLong(), "rank" to 1)
             c.point("outdoor_poi", 26.0, 122.0, "class" to "trailhead")
             c.point("outdoor_poi", 16.0, 96.0, "class" to "parking", "subclass" to "surface")

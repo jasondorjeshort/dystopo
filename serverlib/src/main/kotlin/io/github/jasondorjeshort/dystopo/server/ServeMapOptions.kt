@@ -21,7 +21,7 @@ import javax.imageio.ImageIO
  * style it gets points its tile URLs at the matching routes:
  * - `/style.json` and `/phone` take the [MapOptions.KEYS] (`hillshade=off|single|multi`, `hillshadeIntensity=0..1`,
  *   `slope=off|avalanche|steepness` (T104; `on` is avalanche), `contourInterval=auto|<n>` in the contour units, `contourLabels`, `trails`, `water`, `landcover`, `pois`,
- *   `boundaries`, `night`); a bad value is a 400 naming it.
+ *   `boundaries`, `drainage` (T174, off by default), `night`); a bad value is a 400 naming it.
  * - `/contours/{z}/{x}/{y}.pbf?interval=<n>` draws a fixed interval from [MapOptions.FIXED_INTERVAL_FROM_ZOOM] up,
  *   as on the phone.
  * - `/shade/{z}/{x}/{y}.png?hillshade=&hillshadeIntensity=&slope=&night=` is the phone's shade raster

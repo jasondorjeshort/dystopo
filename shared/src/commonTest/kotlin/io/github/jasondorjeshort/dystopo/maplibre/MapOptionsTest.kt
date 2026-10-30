@@ -86,6 +86,13 @@ class MapOptionsTest {
         }
         assertFalse("trail" in ids(MapOptions(trails = false)))
         assertTrue("trail" in all && "trail-names" in all)
+        // T174: drainage is the one group off by default, and the toggle brings it in.
+        val drainage = MapOptions.LayerGroup.ids(MapOptions.LayerGroup.DRAINAGE)
+        assertEquals(3, drainage.size)
+        assertTrue(drainage.none { it in all })
+        assertTrue(drainage.all { it in ids(MapOptions(drainage = true)) })
+        assertEquals(MapOptions(drainage = true), MapOptions.parse(mapOf("drainage" to "on"), MapOptions(), ContourUnits.FEET))
+        assertEquals(false, MapOptions().json(ContourUnits.FEET)["drainage"])
     }
 
     @Test
