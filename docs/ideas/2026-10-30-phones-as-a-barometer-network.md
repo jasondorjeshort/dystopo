@@ -15,3 +15,11 @@ peers as a second source). Over hours, the group's readings form a local pressur
 storm-warning idea. Open: it waits on the transport proposal with key attestation that the
 group-positions idea names; what a reading reveals about a peer's position (pressure plus height is
 not a location, but a timestamped series is a pattern).
+
+Question: should pressure readings be part of the group-positions payload when that transport is designed? It is a new data
+flow between phones, the owner's to flag. Recommendation: yes, as an optional field of the position record in the one transport
+proposal: the hPa, the GNSS height and the estimator's sigma, adding little to a position the group already sees. Build it
+only after stage 1 of group positions and after the storm warning has run on real hikes. `PressureSource.kt` would then take
+peers as a second prior beside the station, through the same `StationPressure`-style sigma by distance and age. Nothing is
+buildable before the proposal.
+Answer:

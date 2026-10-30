@@ -13,3 +13,12 @@ safe time here" updates as you walk; one tap shows the bail-outs ranked by time 
 the routing graph shipped with the pack (ADR 0049) so the whole graph is on the phone, and the sun
 and shade idea for a horizon that is not flat. Open: how to show many times on a small screen (a
 coloured graph overlay, or the next junction only); what counts as a trailhead in OSM data.
+
+Question: this is several waves and leans on two things not yet built: ADR 0049's B, the graph shipped with the pack, which
+wave 23 builds, and the horizon sweep of the sun-and-shade idea (only `nav/Sun.kt` exists). Should it become a design doc
+after B ships, with a small first step? Recommendation: yes. The first task after B: the nav card shows the latest safe time
+at the next junction only, and the single best bail-out from it. One reverse search runs from the exits over the pack's graph.
+An exit is an `outdoor_poi` `trailhead` or `parking`, or any graph node on a drivable way. The search is costed by
+`CostModel`'s time with the fitted pace, and the deadline resolves as `TurnAround`'s does. The graph overlay of times, the
+battery and barometer inputs and a real horizon wait for the design doc.
+Answer:

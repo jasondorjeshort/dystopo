@@ -12,3 +12,13 @@ end for the turn-back, and when a planned route overlaps a recorded track, say s
 time ("you did this trail in 3:52 in June"). Open: how wide a range reads as useful rather than
 vague (the benchmark pass, ADR 0039); matching a route to a past track needs the overlap measure
 `NavPath` already has or the trail-corrections matcher.
+
+Question: should the turn-around clock (`nav/TurnAround.kt`) take the slow end of the range, giving an earlier turn-back than
+today? That is a safety behaviour you sign off. Recommendation: split the work. First pass: the route card's range and the
+"you did this trail in" line, with the clock unchanged; its margin (`turnMarginMin`, default 30) already plays the pessimistic part.
+Two findings from the code shape that pass. `PaceFit.spread` is the scatter of short pieces about the curve, which averages
+out over a route's many pieces, so the range needs a whole-track statistic: each recorded track's real time against the fit's
+prediction, measured with `devtool pace-fit` before the survey (ADR 0039) sets the width. And `NavPath` has projection, not an
+overlap measure; the match goes through T164's `routing/TrackMatch.kt`. Second pass, on your answer: the clock reads the
+slow end, and the margin's default drops to match.
+Answer:
