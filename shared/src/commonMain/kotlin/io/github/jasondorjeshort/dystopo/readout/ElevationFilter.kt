@@ -70,6 +70,9 @@ internal class ElevationFilter(var activity: Activity) {
     /** The barometer is open, calibrated and has sent a sample within [BARO_FRESH_MS] of [nowMs]. */
     fun fused(nowMs: Long): Boolean = baroOpen && offsetKnown && heightKnown && lastBaroMs?.let { nowMs - it <= BARO_FRESH_MS } == true
 
+    /** The filter's time (the latest input's), null before the first (the estimator's clock check, T161). */
+    val timeMs: Long? get() = t
+
     /** Moves the state to [tMs]; a time before the filter's is taken as the filter's (a late sample). */
     fun predictTo(tMs: Long) {
         val t0 = t

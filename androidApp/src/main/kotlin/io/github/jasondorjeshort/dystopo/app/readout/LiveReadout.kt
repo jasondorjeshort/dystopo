@@ -39,6 +39,9 @@ import java.util.concurrent.TimeUnit
  *   elevation, speed and accuracy; while they flow the map's own fixes are ignored, as the recorder does).
  * - **Pressure**: the [Barometer] ([onSensorPressure]) or a replay's pressure column ([onReplayPressure]); while fixes are
  *   injected the sensor's samples are ignored, so a replay's heights are not fought by the emulator's fixed pressure.
+ *   The sensor's samples wait for the first fix after a start or a reset: before it the fixes' clock is unknown, and
+ *   a sample stamped on the wall clock would put the estimator hours ahead of a replay's file times (the fix round's
+ *   stall; the estimator now also starts afresh on a clock that goes back).
  * - **The activity** is T172's remembered one ([AppSettings.trackActivity]) with its recording profile, the options
  *   [AppSettings.readoutOptions]; a change takes effect at the next [refresh] (the estimator's windows restart, the
  *   elevation carries on).
@@ -69,6 +72,8 @@ object LiveReadout {
     private var est: ReadoutEstimator? = null
     private var routeHint: Double? = null
     private var lastFed: LocationFix? = null
+    /** A fix has set [offsetMs] since the start or the last [reset]. */
+    private var clockKnown = false
 
     /** What the strip draws and `GET /readout` reports, from the last [refresh]. */
     @Volatile var snapshot: Snapshot? = null
@@ -121,8 +126,10 @@ object LiveReadout {
     /** A barometer sample ([Barometer], its own thread); [wallMs] on the wall clock. */
     fun onSensorPressure(wallMs: Long, hPa: Double) {
         if (SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS) { bump("sensorPressureIgnored"); return }
-        bump("sensorPressure")
-        post { ensure().onPressure(PressureSample(wallMs + offsetMs, hPa)) }
+        post {
+            if (!clockKnown) bump("sensorPressureBeforeClock")
+            else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa)) }
+        }
     }
 
     /** The strip entered ([on]) or left the composition; starts listening to injected fixes and the foreground once. */
@@ -147,6 +154,7 @@ object LiveReadout {
         est = null
         routeHint = null
         lastFed = null
+        clockKnown = false
         snapshot = null
         offsetMs = 0L
         lastInjectedAt = 0L
@@ -219,6 +227,7 @@ object LiveReadout {
         lastFed = fix
         val e = ensure()
         offsetMs = fix.time - System.currentTimeMillis()
+        clockKnown = true
         e.onFix(fix, routeAlong(fix))
     }
 
