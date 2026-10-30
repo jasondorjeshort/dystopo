@@ -1,37 +1,40 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-30, at commit 3979dda plus this edit, by main session (wave 22 closed, v0.1.15-alpha published)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (Later holds wave 22's follow-ups; the record `docs/tasks/wave-22.md` holds its paragraph with the ports and the emulator rule).
+Updated: 2026-10-30, at commit 1083c17 plus this edit, by main session (wave 23 planned, past the critic, first batch launched)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 23 (its paragraph holds the slots, ports, launch order and ownership), the surveys and the critic review in the gitignored `out/wave23-research/`.
 
 ## Now
 
-- **Wave 22 is closed** (eighteen tasks, T158 to T175, all merged on 2026-10-30; ADR 0049 and 0050; the three
-  triage-scan chores of 2026-10-29 done at ccb5af5). The sweep and its rerun are green on every app part (the
-  upgrade part's first capture came back empty twice: the capture tooling, on the board as T175's follow-up).
-- **v0.1.15-alpha is published** (tag 4c61312, 2026-10-30 22:22 UTC, built locally at the tag because the repository
-  has no `RELEASE_*` secrets; the workflow's draft was debug-signed). The permission system refuses an agent the copy
-  of the signing key into a build worktree: the owner made `../dystopo-rel`, copied the key by hand and removed it after
-  the publish, then set the four `RELEASE_*` secrets (22:40 UTC): the next tag's draft should come out release-signed. Ten new idea files of 2026-10-30 are untriaged (`node .claude/hooks/queue-list.js ideas`).
-  Local pre-rebase branch copies (`task/T169`, `T166`, `T160`, `T172`) are on the housekeeping list.
-- The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`); the wave's research and critic review in the
-  gitignored `out/wave22-research/`; the emulator rule is in the wave paragraph. Usage: 7-day 3 at launch, 27 at the close.
+- **Wave 23 is open** (fourteen tasks, T176 to T189, planned 2026-10-30 from the owner's hike priorities; seven
+  surveys and the critic the same day, every objection taken; commits 7bb2aae and 1083c17). **Launched 2026-10-30,
+  all Opus:** T176 (slot A, emulator console 5630, host 8750), T180 (slot B, console 5638, host 8758), T179, T181 and
+  T186 without emulators, T189 on its server and `shared` halves (its phone half waits on a slot and on T184).
+  Not yet launched, in order: T177 when slot A frees, T185 after T176 merges, T178 after T177, T187 after T180 and
+  T179, T188 after T181, T182 after T181 (phone files after T188), T184 after T187, T183 when a slot frees.
+- The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage at launch: 5-hour 16, 7-day 28.
+- Owner words this session (2026-10-30): "We can probably fit all of that in the budget"; on the storm warning,
+  "we're gaining thousands of feet of elevation so have to use QNH" (T178: the reduction to a local reference height
+  with one fixed temperature per window; the critic's § 1 and 12 corrected the survey's method).
 
 ## Next
 
-1. Triage the ten ideas of 2026-10-30 (`triage` skill); the owner called the water-sources and storm-warning ones superb.
-2. Plan wave 23 from the owner's next theme: the deferred-by-name list in the wave 22 paragraph (sun and shade,
-   the viewshed, the drainage toggle, the phone's sheet, the terrain fix's live source) and the Status follow-ups.
-3. A Hatchery-rooted session (carry-backs, ADR 0048's included, the ownership idea, ADR 0021's follow-ups, the second
-   base update; the ADR for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
+1. As each implementer reports: a Sonnet verifier (`brief` skill, `verifier.md`; the third emulator is its slot),
+   then the `wave` skill's merge sequence; launch the next task of the chain when a slot frees. T189's first round
+   may merge before its phone half; T186's proposal gets the `proposal` skill's critic from the coordinator, then
+   ADR 0051.
+2. At the close: the sweep, the release (the `RELEASE_*` secrets were set 2026-10-30: check the draft is
+   release-signed), the handoff, the wave record, the allowance reading.
+3. Later: a Hatchery-rooted session (five pending carry-backs per the triage of d14c2c1; the triage skill's
+   carry-back step classifies against the wrong `main` in project trees); ADR 0040's and 0042's build tasks after
+   the owner; ADR 0049's C after the z10 answer.
 
 ## Waiting on user
 
-- `docs/TASKS.md` › Owner actions pending: install
-  v0.1.15-alpha and watch the recorder and the readout on the phone; the wave 18 to 22 strings (in the merge commits);
-  the decisions (auto-resume toggle, ADR 0040 and 0042, S Pen, Play; the z10 answer decides ADR 0049's C); the git
-  housekeeping; the first PC's pack recipe; Android 14 lets users swipe the recording notification away (T159 survives it).
+- `docs/TASKS.md` › Owner actions pending; the seven `Question:` blocks of 2026-10-30 in `docs/ideas/`; the hike
+  checks (Later, 2026-10-30) once the next alpha carries T176, T177, T178 and T180.
 
 ## Open findings
 
-- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T149, T150 merged; the phone next.
+- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T149, T150 merged; T189 ships
+  the graph; the phone next.
