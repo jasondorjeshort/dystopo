@@ -23,10 +23,17 @@ Owner priority for wave 23 (2026-10-30). Anchor: `androidApp/.../app/controls/Re
    (`MapOrientation`: a bearing change drops north-up to free rotate). With the lock on, a gesture must not change the
    orientation type. Most users prefer other views, so the lock's default is off and the setting is the owner's lever.
 
+## Prior art (owner, 2026-10-30, from use; not yet surveyed)
+
+CalTopo, which the owner takes as the gold standard for this kind of app: the map is always north-up (a power-user
+choice; most apps default otherwise) and one button brings the map onto the user at zoom 14. That supports the one-button
+default zooming to a fixed close level, with z14 as the starting value, and the lock as the power-user setting. The task's
+survey (ADR 0039) still checks the mainstream apps and records where the build departs.
+
 ## Open (settle in the task, per ADR 0039 and ADR 0044)
 
-- The close zoom: a fixed default, or per activity (the recorder's activity picker is the remembered one), and whether
-  a tap while already close zooms back out. A survey of how the established apps do it comes first (ADR 0039).
+- The close zoom: z14 to start (above), a fixed default or per activity (the recorder's activity picker is the
+  remembered one), and whether a tap while already close zooms back out. The survey comes first (ADR 0039).
 - Whether a tap on an already centred, already close map still advances the orientation, or the second button owns that.
 - What the lock does to rotation gestures: ignore them, or let them rotate and snap back on release.
 - Layout and the panels: the bar must clear the nav card, the readout strip and the scale bar (`RecenterLayout`).
