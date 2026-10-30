@@ -125,4 +125,17 @@ try:
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
+# T176: the recenter part reads the zoom from the scale bar's description and width.
+assert ui.scale_metres("Scale 500 ft") == 500 * 0.3048
+assert ui.scale_metres("Scale 1 km and 0.5 mi") == 1000.0
+assert ui.scale_metres("Scale 2,000 ft") == 2000 * 0.3048
+assert ui.scale_metres("Scale") is None
+bar = lambda desc, w: [{"desc": "Recenter", "bounds": [0, 0, 10, 10]}, {"desc": desc, "bounds": [20, 2000, 20 + w, 2060]}]
+d2 = 2.625  # a Pixel 6's 420 dpi
+mpp13 = ui.scale_mpp(bar("Scale 1 km", round(84 * d2 + ui.SCALE_PAD_DP * d2)), d2)  # 1 km over an 84 dp ruler
+mpp14 = ui.scale_mpp(bar("Scale 500 m", round(84 * d2 + ui.SCALE_PAD_DP * d2)), d2)  # one level in: half the metres
+assert ui.zoom_step(mpp13, mpp14) == 1.0, (mpp13, mpp14)
+assert abs(ui.zoom_step(mpp14, ui.scale_mpp(bar("Scale 200 m", round(33.6 * d2 + ui.SCALE_PAD_DP * d2)), d2))) < 0.05
+assert ui.zoom_step(None, mpp14) is None and ui.scale_mpp([{"desc": "Recenter", "bounds": [0, 0, 1, 1]}]) is None
+
 print("test_android_ui: ok")
