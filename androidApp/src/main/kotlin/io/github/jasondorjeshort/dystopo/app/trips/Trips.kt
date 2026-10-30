@@ -113,19 +113,16 @@ object Trips {
 
     // ---- the editor's inputs ----
 
-    @Volatile private var dem: Pair<String, ElevationSampler>? = null
-
-    /** A DEM sampler on the active DEM pack (its own small tile cache), or null without one. */
-    private fun elevation(): ElevationSampler? {
-        val p: Pack = app.tiles.packs.dem ?: return null
-        dem?.takeIf { it.first == p.file.path }?.let { return it.second }
+    /** T175: per opened pack, not per file path: a reload reopens the same file and closes the pack a path-keyed sampler read. */
+    private val dem = PerPack { p: Pack ->
         val pyramid = DemPyramid(p.header.minZoom, p.header.maxZoom, TileService.demDecoder(), cacheTiles = 16) { z, x, y -> p.tile(z, x, y) }
         val sampler = DemElevation(pyramid)
         val lock = Any()
-        val safe = ElevationSampler { lat, lon -> synchronized(lock) { sampler.elevation(lat, lon) } }
-        dem = p.file.path to safe
-        return safe
+        ElevationSampler { lat, lon -> synchronized(lock) { sampler.elevation(lat, lon) } }
     }
+
+    /** A DEM sampler on the active DEM pack (its own small tile cache), or null without one. */
+    private fun elevation(): ElevationSampler? = dem.get(app.tiles.packs.dem)
 
     /** T108: the active DEM pack's sampler for a crow line on the route card ([RoutePlanner.plan]), or null without one. */
     fun demSampler(): ElevationSampler? = elevation()

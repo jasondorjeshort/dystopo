@@ -13,11 +13,11 @@ LGPL libraries (each stays a separate, replaceable jar).
 
 ## Software libraries
 
-254 artifacts from the runtime classpaths of 6 modules, grouped by the licence under which we use them.
+258 artifacts from the runtime classpaths of 6 modules, grouped by the licence under which we use them.
 
 | Licence | Artifacts |
 |---|---|
-| Apache-2.0 | 196 |
+| Apache-2.0 | 200 |
 | MIT | 17 |
 | BSD-3-Clause | 11 |
 | Lesser General Public License (LGPL) | 9 |
@@ -180,6 +180,7 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `com.squareup.okio:okio-jvm:3.6.0` (androidApp)
 - `com.squareup.okio:okio:3.6.0` (androidApp)
 - `commons-io:commons-io:2.19.0` (tilebuild)
+- `commons-logging:commons-logging:1.3.5` (devtool)
 - `commons-pool:commons-pool:1.5.4` (tilebuild)
 - `io.airlift:aircompressor:2.0.2` (tilebuild)
 - `io.prometheus:simpleclient:0.16.0` (tilebuild)
@@ -202,6 +203,9 @@ Licence text: https://www.apache.org/licenses/LICENSE-2.0
 - `org.apache.parquet:parquet-format-structures:1.16.0` (tilebuild)
 - `org.apache.parquet:parquet-hadoop:1.16.0` (tilebuild)
 - `org.apache.parquet:parquet-jackson:1.16.0` (tilebuild)
+- `org.apache.pdfbox:fontbox:3.0.5` (devtool)
+- `org.apache.pdfbox:pdfbox-io:3.0.5` (devtool)
+- `org.apache.pdfbox:pdfbox:3.0.5` (devtool)
 - `org.apiguardian:apiguardian-api:1.1.2` (tilebuild)
 - `org.eclipse.imagen:imagen-core:0.9.0` (tilebuild)
 - `org.eclipse.imagen:iterators:0.9.0` (tilebuild)
@@ -413,3 +417,4 @@ their metadata, and the app and the web pages show the attribution below for wha
 | Natural Earth | osm | Natural Earth (naturalearthdata.com), packaged as SQLite by OpenMapTiles; file hosted by MapTiler | [Public domain](https://www.naturalearthdata.com/about/terms-of-use/) | Made with Natural Earth. |
 | OpenMapTiles schema | osm | OpenMapTiles (MapTiler) | [Design CC-BY 4.0; code BSD-3-Clause](https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md) | © OpenMapTiles |
 | Noto Sans (map label glyphs) | font | The Noto Project Authors (Google); glyph PBF ranges from Protomaps basemaps-assets | [SIL Open Font License 1.1](https://openfontlicense.org/open-font-license-official-text/) | Labels: Noto Sans, © The Noto Project Authors (SIL Open Font License 1.1). |
+| Weather station altimeter settings (NOAA Aviation Weather Center data API) | weather | U.S. National Weather Service, Aviation Weather Center (NOAA): routine weather station reports | [Public domain (US federal government work)](https://www.usa.gov/government-copyright) | Weather station pressure: NOAA Aviation Weather Center (public domain). |

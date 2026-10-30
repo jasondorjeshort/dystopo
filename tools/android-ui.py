@@ -16,7 +16,7 @@ Parts:
                search (type, pick a hit), routing (long-press start and end, the card, Keep as a trip, the Routes
                list; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
                "From: Your location"), a waypoint with no recording (long-press, Waypoint here,
-               the sheet), tracks (Record, fixes through `adb emu geo fix`, Stop, the list, GPX export), the sync sheet
+               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Stop, the list, GPX export), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -867,6 +867,24 @@ def close_tracks(dev):
         dev.tap(n)
 
 
+def start_recording(dev, allow=True, dialog_timeout=4):
+    """Record as a user starts it since T172: Record, then the "Record as" picker's On foot (its first choice; the
+    remembered activity is marked, the choice is what counts), then the notification prompt when the app asks (API 33+,
+    the first Record of an install; answered with [allow]), then the battery card's "Not now" when it shows (the first
+    Record of an install that is not exempt). A build before T172 (the published release `upgrade` and `update` record
+    on) starts at Record with no picker (its notification prompt may cover the bar, so neither is a failure here; the
+    caller's Stop is the check). Returns the prompt button tapped, or None (T175)."""
+    dev.tap_text("^Record$")
+    n, nodes = dev.wait_for("^(Record as|Stop)$", 10)
+    if n and dev.find("^Record as$", nodes):
+        dev.tap_text("^On foot$")
+    asked = answer_dialogs(dev, allow=allow, timeout=dialog_timeout)
+    card, _ = dev.wait_for("^Keep recording with the screen off$", 3)  # BatteryExemption.TITLE
+    if card:
+        dev.tap_text("^Not now$")
+    return asked
+
+
 def record_track(dev, points, interval=1.0):
     """Record, feed the fixes, Stop; returns the points count the bar showed just before Stop."""
     lat, lon, *_ = points[0]
@@ -875,8 +893,7 @@ def record_track(dev, points, interval=1.0):
     nodes = tracks_bar(dev)
     if dev.find("^Stop$", nodes):
         dev.tap_text("^Stop$")
-    dev.tap_text("^Record$")
-    answer_dialogs(dev, allow=True, timeout=3)  # a notification prompt, if the app asks for one
+    start_recording(dev, allow=True, dialog_timeout=3)  # the picker, a notification prompt and the battery card, if shown
     geo_fixes(dev, points, interval)
     n = dev.find(r"\d+ pts")
     pts = int(PTS.search(n["text"]).group(1)) if n else None
@@ -1361,8 +1378,9 @@ def part_permissions(args):
             nodes = tracks_bar(dev)
             if dev.find("^Stop$", nodes):
                 dev.tap_text("^Stop$")
-            dev.tap_text("^Record$")
-            asked = answer_dialogs(dev, allow=allow, timeout=6) if api >= 33 else "not needed below API 33"
+            asked = start_recording(dev, allow=allow, dialog_timeout=6 if api >= 33 else 1)
+            if api < 33:
+                asked = "not needed below API 33"
             geo_fixes(dev, walk(*PARADISE, 46.7900, -121.7350, 6), 1.0)
             n = dev.find(r"\d+ pts")
             pts = int(PTS.search(n["text"]).group(1)) if n else 0
@@ -1416,8 +1434,7 @@ def part_background(args):
         dev.adb("emu", "geo", "fix", str(PARADISE[1]), str(PARADISE[0]), check_ok=False)
         time.sleep(2)
         tracks_bar(dev)
-        dev.tap_text("^Record$")
-        answer_dialogs(dev, allow=True, timeout=4)
+        start_recording(dev, allow=True, dialog_timeout=4)
         geo_fixes(dev, [PARADISE] * 3, 1.0)
         n = dev.find(r"\d+ pts")
         st["before"] = int(PTS.search(n["text"]).group(1)) if n else 0
