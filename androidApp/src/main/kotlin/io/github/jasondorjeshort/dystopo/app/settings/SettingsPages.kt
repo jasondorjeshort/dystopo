@@ -276,6 +276,33 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBarometer = false)) }
             }
         }
+        // T176: the position button (controls/RecenterButton): its layout, its close zoom and the orientation lock.
+        SettingsRow.MAP_CONTROLS -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val n = AppSettings.mapControls
+            Setting(row.label, "one button that centres and turns the map; two add an orientation button; three add a lock", help = "settings.mapControls") {
+                for (k in io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS) {
+                    Option(if (k == 1) "1 button" else "$k buttons", n == k) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, mapControls = k)) }
+                }
+            }
+        }
+        SettingsRow.RECENTER_ZOOM -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val z = AppSettings.recenterZoom
+            Setting(row.label, "how close a tap brings the map to you; higher is closer, and a tap never zooms out", help = "settings.recenterZoom") {
+                for (k in io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_CHOICES) {
+                    Option("$k", z == k) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, recenterZoom = k)) }
+                }
+            }
+        }
+        SettingsRow.ORIENTATION_LOCK -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.orientationLock
+            Setting(row.label, "two-finger turns no longer rotate the map", help = "settings.orientationLock") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, orientationLock = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, orientationLock = false)) }
+            }
+        }
     }
 }
 
@@ -503,6 +530,20 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "Air pressure falls by about 1 hPa every ${if (units == ContourUnits.FEET) "27 ft" else "8 m"} you climb. On foot, by bike " +
                 "and by boat the readout uses the phone's barometer, checked against the GPS, for a steady elevation and climb; " +
                 "not in a car, train or aircraft, whose air does not follow the height. Off uses the GPS and the elevation map."
+        },
+        // T176: the position button's rows.
+        HelpText("settings.mapControls", "Position button", at(SettingsGroup.MAP, "Position button"), show = page(SettingsGroup.MAP)) {
+            "A tap on the position button brings the map onto you and zooms in. With one button, a tap on a map already on " +
+                "you turns it to face the way you point and back. Two buttons put that on its own button; three add a lock. " +
+                "With one or two, a long press locks the orientation."
+        },
+        HelpText("settings.recenterZoom", "Close zoom", at(SettingsGroup.MAP, "Position button: Close zoom"), show = page(SettingsGroup.MAP)) {
+            "The zoom level a tap on the position button brings the map to: 14 shows trails and contours around you. " +
+                "A map you zoomed in closer stays as it is, and the map keeps its own zoom while you navigate a route."
+        },
+        HelpText("settings.orientationLock", "Keep north up", at(SettingsGroup.MAP, "Keep north up"), show = page(SettingsGroup.MAP)) {
+            "Keeps the map the way you set it, north up unless you chose heading up: two-finger turns no longer rotate it, and " +
+                "a tap on the position button no longer turns it. The orientation button still changes it; a padlock shows the lock."
         },
     )
 }

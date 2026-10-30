@@ -54,6 +54,11 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `readout.<activity>.<entry>`; `readoutBarometer=1|0` (default on, synced `app.readoutBarometer`). Pace and knots
  *   are speed's only, knots honoured in boat and air only. `GET /settings` reports `readoutBarometer`, `readout` (the
  *   remembered activity's options per entry) and `readoutStored`. The readout takes a change at its next refresh.
+ *   T176, the position button (Settings › Map, `controls/RecenterButton`): `mapControls=1|2|3` (default 1: one button;
+ *   2 adds the orientation button, 3 the lock), `recenterZoom` (10 to 18, default 14: the zoom a tap brings the map to;
+ *   a tap never zooms out) and `orientationLock=1|0` ("Keep north up", default off: no gesture turns the map; the
+ *   orientation button and the navigation card still change the mode), all three synced (`app.mapControls`,
+ *   `app.recenterZoom`, `app.orientationLock` `on`/`off`). The button and the lock take a change at once.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -163,6 +168,11 @@ class SettingsRoutes(private val app: DystopoApp) {
             if (AppSettings.readoutEntries[rs.key(a, e)] != v) AppSettings.setReadoutEntry(rs.key(a, e), v)
         }
         if (parsed.readoutBarometer != null || parsed.readoutValues.isNotEmpty() || parsed.readoutEdits.isNotEmpty()) io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh()
+        // T176: the position button redraws from the values; the lock turns the rotate gesture off or on at once.
+        if (parsed.mapControls != null || parsed.recenterZoom != null || parsed.orientationLock != null) {
+            AppSettings.setMapControls(parsed.mapControls, parsed.recenterZoom, parsed.orientationLock)
+            io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.onSettings()
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -203,6 +213,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val readoutBarometer: Boolean? = null,
             val readoutValues: Map<String, String> = emptyMap(),
             val readoutEdits: Map<io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, String> = emptyMap(),
+            // T176: the position button's layout, its close zoom and "Keep north up".
+            val mapControls: Int? = null, val recenterZoom: Int? = null, val orientationLock: Boolean? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -222,7 +234,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf("trackActivity", "trackAccuracyM", "trackAutoPause", "trackNetworkFallback", "trackIntervalS") + io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.KEYS +
             // T161
             setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER) + io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS +
-            io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS
+            io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS +
+            setOf("mapControls", "recenterZoom", "orientationLock") // T176
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -359,9 +372,16 @@ class SettingsRoutes(private val app: DystopoApp) {
                     readoutEdits[e] = raw
                 }
             }
+            // T176: the position button's layout (1, 2 or 3), its close zoom (whole levels) and the lock.
+            val (mapControls, e5) = intIn("mapControls", io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS, "buttons")
+            e5?.let { return Parsed.Error(it) }
+            val (recenterZoom, e6) = intIn("recenterZoom", io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE, "(zoom level)")
+            e6?.let { return Parsed.Error(it) }
+            val orientationLock = params["orientationLock"]?.let { flag(it) ?: return Parsed.Error("orientationLock must be 1 or 0 (got $it)") }
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
-                readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits)
+                readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
+                mapControls = mapControls, recenterZoom = recenterZoom, orientationLock = orientationLock)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

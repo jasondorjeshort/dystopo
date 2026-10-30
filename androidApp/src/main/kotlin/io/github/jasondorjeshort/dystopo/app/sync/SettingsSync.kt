@@ -31,6 +31,9 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T161: the live readout's options per activity and entry (`app.readout.<activity>.<entry>`,
  * `shown=1;pace=0;damping=medium;pm=0;knots=0`) and its barometer switch (`app.readoutBarometer`, `on` or `off`); both
  * [SettingsRoutes] keys.
+ * T176: the position button's layout (`app.mapControls`, `1`, `2` or `3`), its close zoom (`app.recenterZoom`, a whole
+ * zoom level) and "Keep north up" (`app.orientationLock`, `on` or `off`); [SettingsRoutes] keys. The orientation itself
+ * stays on each phone.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -65,6 +68,10 @@ object SettingsSync {
     const val TRACK_ACTIVITY = "trackActivity"
     /** T161: the readout's barometer switch, a [SettingsRoutes] key whose synced value is `on` or `off`. */
     const val READOUT_BAROMETER = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER
+    /** T176: the position button's layout, its close zoom and the orientation lock, [SettingsRoutes] keys. */
+    const val MAP_CONTROLS = "mapControls"
+    const val RECENTER_ZOOM = "recenterZoom"
+    const val ORIENTATION_LOCK = "orientationLock"
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -114,6 +121,9 @@ object SettingsSync {
         for (a in io.github.jasondorjeshort.dystopo.model.Activity.entries) m[syncedKey(RecordingProfiles.key(a))] = AppSettings.trackProfiles[a]
         m[syncedKey(READOUT_BAROMETER)] = onOff(AppSettings.readoutBarometer) // T161
         for (k in io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS) m[syncedKey(k)] = AppSettings.readoutEntries[k]
+        m[syncedKey(MAP_CONTROLS)] = AppSettings.mapControls.toString() // T176
+        m[syncedKey(RECENTER_ZOOM)] = AppSettings.recenterZoom.toString()
+        m[syncedKey(ORIENTATION_LOCK)] = onOff(AppSettings.orientationLock)
         return m
     }
 
@@ -176,6 +186,9 @@ object SettingsSync {
         if (parsed.readoutBarometer != null) keys += syncedKey(READOUT_BAROMETER) // T161
         parsed.readoutValues.keys.forEach { keys += syncedKey(it) }
         parsed.readoutEdits.keys.forEach { keys += syncedKey(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.key(AppSettings.trackActivity, it)) }
+        if (parsed.mapControls != null) keys += syncedKey(MAP_CONTROLS) // T176
+        if (parsed.recenterZoom != null) keys += syncedKey(RECENTER_ZOOM)
+        if (parsed.orientationLock != null) keys += syncedKey(ORIENTATION_LOCK)
         publishKeys(app, keys)
     }
 
