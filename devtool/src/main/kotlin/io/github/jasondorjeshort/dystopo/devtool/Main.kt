@@ -31,4 +31,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(DrainageCommand())
     // T167: the printed map sheet.
     .subcommands(PrintCommand())
+    // T166: the terrain-matched position measurement.
+    .subcommands(TerrainFixCommand())
     .main(args)
