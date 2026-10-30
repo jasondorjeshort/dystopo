@@ -121,7 +121,7 @@ class PolygonAreasTest {
         assertEquals("About 30 MB (190 tiles) at less detail", sizeLine(30 * mb, 190, 8, 13))
         assertEquals("About 1.5 GB (12,000 tiles) at zoom 8 to 14", sizeLine(1536 * mb, 12_000, 8, 14))
         // T152: past the old heap limit sizes reach terabytes (France at full detail is about 174 GB, Russia's full detail 11.5 TB).
-        assertEquals("About 173.8 GB (1,437,049 tiles) at full detail", sizeLine(186_610_390_000, 1_437_049, 8, 15))
+        assertEquals("About 174 GB (1,437,049 tiles) at full detail", sizeLine(186_610_390_000, 1_437_049, 8, 15)) // T170: whole GB from 100
         assertEquals("11.5 TB", aboutSize(12_689_954_735_000))
         assertEquals("Less detail (about 30 MB)", lessDetailLine(30 * mb))
         assertNull(timeLine(170 * mb, null), "before the first download")
