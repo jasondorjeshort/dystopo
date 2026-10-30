@@ -10,5 +10,5 @@
                    "build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradlew",
                    "gradlew.bat", "gradle", "buildSrc", "shared", "devtool", "serverlib", "server",
                    "tilebuild", "androidApp", "tools", "docs/ARCHITECTURE.md", "docs/PLANNING.md",
-                   "docs/SERVER.md", "docs/TASKS.md", "docs/images"]
+                   "docs/SERVER.md", "docs/TASKS.md", "docs/tasks", "docs/images"]
 }
