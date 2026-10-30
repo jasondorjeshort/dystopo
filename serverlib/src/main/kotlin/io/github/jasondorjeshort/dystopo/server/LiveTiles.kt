@@ -767,12 +767,16 @@ class LiveTiles(
         }
     }
 
-    /** Starts the live server on 127.0.0.1:[port] and prints one JSON line describing it. */
-    fun serve(port: Int, glyphDir: File, demoPage: File = File("tools/demo/index.html"), textScale: Double = 1.0) {
+    /**
+     * Starts the live server on 127.0.0.1:[port] and prints one JSON line describing it. [extra] adds routes by path
+     * prefix that need more than serverlib has (T167: devtool's `/print`, which renders through devtool's MapRenderer).
+     */
+    fun serve(port: Int, glyphDir: File, demoPage: File = File("tools/demo/index.html"), textScale: Double = 1.0, extra: Map<String, HttpHandler> = emptyMap()) {
         val base = "http://127.0.0.1:$port"
         val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 128)
         server.executor = Executors.newFixedThreadPool(32)
         server.createContext("/", handler(glyphDir, demoPage, textScale) { base })
+        for ((path, h) in extra) server.createContext(path, h)
         server.start()
         val stale = pruneStaleDemCaches() // only once the port is ours: a second server that fails to bind touches nothing
         pruneNorwayTiles() // T92: once per cache

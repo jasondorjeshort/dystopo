@@ -25,6 +25,7 @@ class StyleOptions : OptionGroup("Style") {
     val smooth by option("--smooth", help = "Chaikin smoothing iterations after simplification (0 disables)").int().default(0)
     val minSpacing by option("--min-spacing", help = "Drop non-index contours where lines would be closer than this many pixels (0 disables)").double().default(3.0)
     val textScale by option("--text-scale", help = "Label size multiplier; 1.0 is 12 px text").double().default(1.4)
+    val lineScale by option("--line-scale", help = "Line width multiplier for contours and OSM lines (T167: print sheets draw at 2 for 300 dpi)").double().default(1.0)
     val noLabels by option("--no-labels").flag()
     val zFactor by option("--z-factor", help = "Hillshade vertical exaggeration").double().default(1.0)
     val shading by option("--shading", help = "hillshade: single light from the north-west; multi: blend of lights from 225-360 degrees, keeps steep faces readable; none: flat paper")
@@ -68,14 +69,14 @@ object MapRenderer {
         val (pixels, shading) = Shading.render(grid, style, timings, prefix)
         val contours = ContourLayer.build(grid, zoom, style, timings, prefix)
         val osm = OsmLayer.build(style, window, grid, timings, prefix)
-        val image = timings.time("${prefix}draw") { draw(grid, pixels, contours, osm) }
+        val image = timings.time("${prefix}draw") { draw(grid, pixels, contours, osm, style.lineScale.toFloat()) }
         return RenderResult(image, contours.stats, shading, osm?.stats)
     }
 
-    private fun draw(grid: ElevationGrid, pixels: IntArray, contours: ContourLayer, osm: OsmLayer?): BufferedImage {
+    private fun draw(grid: ElevationGrid, pixels: IntArray, contours: ContourLayer, osm: OsmLayer?, lineScale: Float): BufferedImage {
         val image = BufferedImage(grid.width, grid.height, BufferedImage.TYPE_INT_RGB)
         image.setRGB(0, 0, grid.width, grid.height, pixels, 0, grid.width)
-        if (osm == null) contours.draw(image) else osm.draw(image, contours)
+        if (osm == null) contours.draw(image, lineScale) else osm.draw(image, contours)
         return image
     }
 }

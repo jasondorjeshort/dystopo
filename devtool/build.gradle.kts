@@ -17,6 +17,8 @@ dependencies {
     // T44: the server peer stores its replica of the sync log in a SQLite file (SqlTrackStore over JDBC;
     // SQLDelight's driver and sqlite-jdbc are both Apache-2.0), and sync-sim --store sql uses it.
     implementation(libs.sqldelight.sqlite.driver)
+    // T167: the printed map sheet's PDF (`print`, `GET /print`). Apache-2.0; devtool only, never shared.
+    implementation(libs.pdfbox)
     testImplementation(kotlin("test"))
 }
 

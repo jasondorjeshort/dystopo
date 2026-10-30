@@ -42,6 +42,10 @@ T116: and that the saved trip carries them (check_saved_directions: the browser'
 `directionsValue`, written after the path, and the server's replica counts as many saved directions for the trip's
 path in GET /sync/routes?full=1); the browser's trips are written as `<out>-route.dsync` (the bundle "Send to server"
 pushes) for `devtool sync-sim --bundle`.
+T167: --print (live mode, `devtool serve --live`) opens the panel's Print box, picks --print-scale and --print-paper, clicks
+"Make the sheet (PDF)" and checks the download is a PDF (`%PDF-` header) of one page whose size and page count the
+`print` entry of the JSON states, saved as `<out>-print.pdf`, with a screenshot `<out>-print.png`; the box must show,
+since GET /print answers there. Elsewhere the probe's 404 on GET /print is expected and not counted as a failure.
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -602,6 +606,41 @@ def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280
     return out
 
 
+def check_print(page, shot, pdf_path, scale, paper, timeout):
+    """T167: the viewer's Print box against GET /print: shown, the sheet downloaded, a one-page PDF."""
+    out = {"step": "print", "ok": False}
+    page.wait_for_function("() => window.dystopoPrint !== undefined", timeout=timeout * 1000)
+    out["available"] = page.evaluate("() => window.dystopoPrint.available")
+    if not out["available"]:
+        out["error"] = "the Print box did not show (GET /print did not answer)"
+        return out
+    page.evaluate("() => { document.getElementById('panel').open = true; document.getElementById('print').open = true; }")
+    page.select_option("#printscale", scale)
+    page.select_option("#printpaper", paper)
+    out["visible"] = page.is_visible("#printsheet")
+    t0 = time.time()
+    with page.expect_download(timeout=max(timeout, 180) * 1000) as dl:
+        page.click("#printsheet")
+    d = dl.value
+    d.save_as(pdf_path)
+    out["seconds"] = round(time.time() - t0, 1)
+    with open(pdf_path, "rb") as f:
+        data = f.read()
+    out["file"] = pdf_path
+    out["suggested"] = d.suggested_filename
+    out["bytes"] = len(data)
+    out["pdfHeader"] = data[:5] == b"%PDF-"
+    # Written uncompressed (PrintSheet.pdf): page objects are plain text.
+    out["pages"] = len(re.findall(rb"/Type\s*/Page(?![s\w])", data))
+    out["printScalingNone"] = b"/PrintScaling /None" in data
+    out["result"] = page.evaluate("() => window.dystopoPrint")
+    out["status"] = page.inner_text("#printstatus")
+    page.screenshot(path=shot)
+    out["screenshot"] = shot
+    out["ok"] = bool(out["visible"] and out["pdfHeader"] and out["pages"] == 1 and out["printScalingNone"] and out["result"].get("ok"))
+    return out
+
+
 def not_idle_because(state, v):
     """Why a view did not count as idle: the MapLibre flags that were false, or the zoom still moving."""
     if not state:
@@ -636,6 +675,9 @@ def main() -> int:
                     help="T107, live mode: hold trips.js back until the first view is idle, jump to Z/LAT/LON (tiles not loaded yet), "
                          "release it while the style is still loading and check the editor adds its layers anyway (late_trips; the load-before-style race)")
     ap.add_argument("--token", default="", help="T92: the server's bearer token, typed into the page's Token field (a server with users keeps /route* and /sync* behind it)")
+    ap.add_argument("--print", action="store_true", help="T167, live mode: the Print box makes a sheet of the last view (check_print)")
+    ap.add_argument("--print-scale", default="25000", help="T167: the Print box's scale for --print (10000, 25000, 50000, fit)")
+    ap.add_argument("--print-paper", default="a4", help="T167: the Print box's paper for --print (a4, letter, a3; '' by region)")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
 
@@ -661,7 +703,9 @@ def main() -> int:
                 cur["console"].append({"type": m.type, "text": m.text[:500]})
 
         def on_response(r):
-            if r.status == 404 and r.url.endswith(".png") and "/out/" in r.url:
+            if r.status == 404 and urllib.parse.urlparse(r.url).path == "/print":
+                pass  # T167: the Print box's probe; a server without the route hides the box
+            elif r.status == 404 and r.url.endswith(".png") and "/out/" in r.url:
                 cur["missingTiles"] += 1
             elif r.status == 404 and TILE_URL.search(r.url):
                 cur["tile404"].append({"url": r.url, "status": r.status})
@@ -803,6 +847,10 @@ def main() -> int:
                                   args.long_route_ms, args.long_route_packs)
             errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
             reports[-1].update(longRoute=lr, ok=reports[-1]["ok"] and lr["ok"] and not errors)
+        if args.print:
+            pr = check_print(page, f"{stem}-print{ext}", f"{stem}-print.pdf", args.print_scale, args.print_paper, args.timeout)
+            errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
+            reports[-1].update(print=pr, ok=reports[-1]["ok"] and pr["ok"] and not errors)
         browser.close()
 
     if tour:

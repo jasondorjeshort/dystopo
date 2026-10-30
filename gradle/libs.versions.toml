@@ -22,6 +22,9 @@ sqldelight = "2.1.0"
 # WorkManager (Apache-2.0, with Room, SQLite and androidx.startup, all Apache-2.0): the area download chain (T156, ADR 0046).
 # 2.10.x is the line that compiles against API 35 and stops a worker at the Android 15 dataSync timeout.
 work = "2.10.5"
+# Apache PDFBox (Apache-2.0, with fontbox, pdfbox-io and commons-logging, all Apache-2.0): the printed map sheet's PDF
+# (T167), devtool only, never shared.
+pdfbox = "3.0.5"
 
 [libraries]
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
@@ -38,6 +41,7 @@ sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sq
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
+pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

@@ -118,6 +118,8 @@ class OsmLayer private constructor(
     private val placer: LabelPlacer,
     /** Elevation at an image pixel position (bilinear), NaN outside; for downhill tick sides. */
     private val elevation: (Double, Double) -> Float,
+    /** T167: line widths, casings and cliff ticks times this ([StyleOptions.lineScale]). */
+    private val lineScale: Float = 1f,
 ) {
     private val drawMs = LinkedHashMap<String, Double>()
     private var contourLabelsDropped = 0
@@ -200,7 +202,7 @@ class OsmLayer private constructor(
                 contourLabelsDropped = 0,
                 layers = layerStats,
             )
-            return OsmLayer(scene, labels, style.textScale, stats, placer, LineTicks.bilinear(grid.width, grid.height) { i, j -> grid[i, j] })
+            return OsmLayer(scene, labels, style.textScale, stats, placer, LineTicks.bilinear(grid.width, grid.height) { i, j -> grid[i, j] }, style.lineScale.toFloat())
         }
     }
 
@@ -210,7 +212,7 @@ class OsmLayer private constructor(
         val g2 = graphics(image)
         for (layer in scene.layers.subList(0, split)) drawLayer(g2, layer)
         g2.dispose()
-        ContourLayer(contours.spec, contours.lines, emptyList(), contours.stats).draw(image)
+        ContourLayer(contours.spec, contours.lines, emptyList(), contours.stats).draw(image, lineScale)
         val g3 = graphics(image)
         for (layer in scene.layers.subList(minOf(split + 1, scene.layers.size), scene.layers.size)) drawLayer(g3, layer)
         g3.dispose()
@@ -258,9 +260,9 @@ class OsmLayer private constructor(
                     path.moveTo(line[0], line[1])
                     for (i in 1 until line.size / 2) path.lineTo(line[2 * i], line[2 * i + 1])
                 }
-                val width = (s.width.at(zoom) * layer.widthScale).toFloat()
+                val width = (s.width.at(zoom) * layer.widthScale).toFloat() * lineScale
                 val opacity = (s.opacity.at(zoom) * layer.opacityScale).coerceIn(0.0, 1.0)
-                val casing = s.casingWidth.at(zoom).toFloat()
+                val casing = s.casingWidth.at(zoom).toFloat() * lineScale
                 if (s.casingColor != null && casing > 0) {
                     g2.color = color(s.casingColor!!, opacity)
                     g2.stroke = BasicStroke(width + 2 * casing, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
@@ -284,8 +286,8 @@ class OsmLayer private constructor(
 
     /** Tick hatching on each line; [TickSide.DOWNHILL] asks the DEM which side is lower, per segment. */
     private fun drawTicks(g2: Graphics2D, layer: SceneLayer.Line, t: Ticks, zoom: Double) {
-        val length = t.lengthAt(zoom)
-        val spacing = t.spacingAt(zoom)
+        val length = t.lengthAt(zoom) * lineScale
+        val spacing = t.spacingAt(zoom) * lineScale
         val ticks = Path2D.Double()
         for (line in layer.lines) {
             // Raw cliff ways zig-zag at the pixel scale; ticks follow a lightly simplified copy.
@@ -305,7 +307,7 @@ class OsmLayer private constructor(
                 ticks.lineTo(seg[2], seg[3])
             }
         }
-        g2.stroke = BasicStroke((t.widthAt(zoom) * layer.widthScale).toFloat(), BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER)
+        g2.stroke = BasicStroke((t.widthAt(zoom) * layer.widthScale).toFloat() * lineScale, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER)
         g2.draw(ticks)
     }
 
