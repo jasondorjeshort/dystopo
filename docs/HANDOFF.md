@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-30, at commit ce01016 plus this edit, by main session (wave 22: 11 of 17 merged)
+Updated: 2026-10-30, at commit 37e4f6f plus this edit, by main session (wave 22: 15 of 17 merged)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 22 (its paragraph holds the launch order, the ports and the emulator rule).
 
 ## Now
 
 - **Wave 22 is open** (17 tasks, T158 to T174; planned, researched and past the critic on 2026-10-30, commit 97e01cd).
-  **Merged (11):** T168 (ADR 0050, step B done), T158, T165, T169 (proposal 0049, ADR 0049: B first, C on the
-  owner's z10 answer), T162, T167, T166, T171, T160, T174, T159. **In flight:** T170 and T164 verifying, T163 and
-  T172 implementing. **Still to launch:** T161 (after T172), T173 (after T161). Local pre-rebase branch copies
-  (`task/T169`, `T166`, `T160`) are on the owner's housekeeping list; empty held `dystopo-wt/*-verify` folders remain.
+  **Merged (15):** T168 (ADR 0050, step B done), T158, T165, T169 (proposal 0049, ADR 0049: B first, C on the
+  owner's z10 answer), T162, T167, T166, T171, T160, T174, T159, T170, T164, T163, T172 (154df4f). **In flight:**
+  T161 implementing (Opus, console 5636, host 8756); the T172 cleanup chore. **Still to launch:** T173 (after T161).
+  Local pre-rebase branch copies (`task/T169`, `T166`, `T160`, `T172`) are on the owner's housekeeping list.
 - **Emulator rule (owner, 2026-10-30):** `-Memory 3072`, at most three AVDs alive, at most two emulator-needing
   implementers at a time, the third slot for a verifier. The Kotlin compiler ran out of memory under five parallel
   `check` builds plus three emulators several times (a two-minute wait and a retry passed each time).
 - Research, the critic review and the board draft: the gitignored `out/wave22-research/`; scratchpad `%TEMP%/dystopo-wave22/`.
-- The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage: 7-day 3 at launch, 12 after 11 merges.
+- The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage: 7-day 3 at launch, 12 after 11 merges; read again at the close.
 
 ## Next
 
@@ -35,4 +35,3 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 ## Open findings
 
 - `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T149, T150 merged; the phone next.
-- `docs/findings/2026-10-28-open-view-ignores-the-location-fix.md`: T162 in flight resolves it.
