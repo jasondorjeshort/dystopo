@@ -12,7 +12,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar"),
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
-    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording"), // T164: route times; T163: turn-back time; T172: recording
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout"), // T164: route times; T163: turn-back time; T172: recording; T161: readout
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, diagnostics, problem reports, contour warm-up, credits"),
     ;
@@ -59,6 +59,12 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     TRACK_FALLBACK("trackFallback", SettingsGroup.NAVIGATION, "Recording: Network location", "SettingsPages", "T172"),
     TRACK_INTERVAL("trackInterval", SettingsGroup.NAVIGATION, "Recording: Interval", "SettingsPages", "T172"),
     TRACK_BATTERY("trackBattery", SettingsGroup.NAVIGATION, "Recording: Battery", "SettingsPages", "T172"),
+    // T161: the live readout beside the scale bar, per entry for the remembered activity, and the barometer switch
+    READOUT_SPEED("readoutSpeed", SettingsGroup.NAVIGATION, "Readout: Speed", "SettingsPages", "T161"),
+    READOUT_CLIMB("readoutClimb", SettingsGroup.NAVIGATION, "Readout: Climb", "SettingsPages", "T161"),
+    READOUT_COURSE("readoutCourse", SettingsGroup.NAVIGATION, "Readout: Course", "SettingsPages", "T161"),
+    READOUT_ELEVATION("readoutElevation", SettingsGroup.NAVIGATION, "Readout: Elevation", "SettingsPages", "T161"),
+    READOUT_BAROMETER("readoutBarometer", SettingsGroup.NAVIGATION, "Readout: Barometer", "SettingsPages", "T161"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

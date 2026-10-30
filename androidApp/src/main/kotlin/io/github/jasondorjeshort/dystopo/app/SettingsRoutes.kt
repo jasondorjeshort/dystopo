@@ -46,6 +46,14 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `trackAutoPause=1|0`, `trackNetworkFallback=1|0`, `trackIntervalS=1..3600`. A recording of that activity takes the
  *   change from its next fix. `GET /settings` reports `trackActivity`, `trackProfile` (the remembered activity's choices)
  *   and `trackProfiles` (every activity's, with the `stored` value or null for the defaults).
+ *   T161, the live readout (Settings › Navigation and tracking, `readout/ReadoutSettings`): `readout.<activity>.<entry>`
+ *   (entry `speed`, `climb`, `course` or `elevation`), that activity's options for the entry as one value
+ *   (`shown=1;pace=0;damping=low|medium|high;pm=0;knots=0`, keys left out keep their current value; synced as
+ *   `app.readout.<activity>.<entry>`); the rows' own keys `readout.<entry>`, the same form, which edit the remembered
+ *   activity's options (`trackActivity`'s, also when set in the same request) and sync through its
+ *   `readout.<activity>.<entry>`; `readoutBarometer=1|0` (default on, synced `app.readoutBarometer`). Pace and knots
+ *   are speed's only, knots honoured in boat and air only. `GET /settings` reports `readoutBarometer`, `readout` (the
+ *   remembered activity's options per entry) and `readoutStored`. The readout takes a change at its next refresh.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -144,6 +152,17 @@ class SettingsRoutes(private val app: DystopoApp) {
             val t = io.github.jasondorjeshort.dystopo.app.tracking.Tracking.of(app)
             profilesChanged.forEach { t.applyProfile(it) }
         }
+        // T161: whole readout values (a sync), then the rows' edits of the remembered activity's entries (after T172 set
+        // the activity); the readout takes them at its next refresh.
+        parsed.readoutBarometer?.let { AppSettings.setReadoutBarometer(it) }
+        for ((k, v) in parsed.readoutValues) if (AppSettings.readoutEntries[k] != v) AppSettings.setReadoutEntry(k, v)
+        for ((e, raw) in parsed.readoutEdits) {
+            val rs = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings
+            val a = AppSettings.trackActivity
+            val v = rs.merge(e, raw, AppSettings.readoutOptions(a)[e])?.encode() ?: continue
+            if (AppSettings.readoutEntries[rs.key(a, e)] != v) AppSettings.setReadoutEntry(rs.key(a, e), v)
+        }
+        if (parsed.readoutBarometer != null || parsed.readoutValues.isNotEmpty() || parsed.readoutEdits.isNotEmpty()) io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh()
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -179,6 +198,11 @@ class SettingsRoutes(private val app: DystopoApp) {
             val trackActivity: io.github.jasondorjeshort.dystopo.model.Activity? = null,
             val trackProfiles: Map<io.github.jasondorjeshort.dystopo.model.Activity, String> = emptyMap(),
             val trackEdit: io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.Edit? = null,
+            // T161: the readout's barometer switch, whole values per activity and entry (also what a sync brings), and
+            // the rows' edits of the remembered activity's entries (checked here, merged over its options in apply).
+            val readoutBarometer: Boolean? = null,
+            val readoutValues: Map<String, String> = emptyMap(),
+            val readoutEdits: Map<io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, String> = emptyMap(),
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -195,7 +219,10 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf("paceStandard", "paceFit", "paceSince") + // T164
             setOf("turnDeadline", "turnMarginMin") + // T163
             // T172
-            setOf("trackActivity", "trackAccuracyM", "trackAutoPause", "trackNetworkFallback", "trackIntervalS") + io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.KEYS
+            setOf("trackActivity", "trackAccuracyM", "trackAutoPause", "trackNetworkFallback", "trackIntervalS") + io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.KEYS +
+            // T161
+            setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER) + io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS +
+            io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -317,8 +344,24 @@ class SettingsRoutes(private val app: DystopoApp) {
             } catch (e: IllegalArgumentException) {
                 return Parsed.Error(e.message ?: "bad recording setting")
             }
+            // T161: the readout's options and barometer switch.
+            val rs = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings
+            val readoutBarometer = params[rs.BAROMETER]?.let { flag(it) ?: return Parsed.Error("${rs.BAROMETER} must be 1 or 0 (got $it)") }
+            val readoutValues = LinkedHashMap<String, String>()
+            val readoutEdits = LinkedHashMap<io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, String>()
+            val valueForm = "shown=0|1;pace=0|1;damping=low|medium|high;pm=0|1;knots=0|1 (any of them)"
+            for (k in params.keys.sorted()) {
+                val raw = params[k].toString()
+                rs.ofKey(k)?.let { (a, e) -> readoutValues[k] = rs.parseValue(a, e, raw) ?: return Parsed.Error("$k must be $valueForm (got $raw)") }
+                rs.entryOfEditKey(k)?.let { e ->
+                    rs.merge(e, raw, io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.defaults(io.github.jasondorjeshort.dystopo.model.Activity.FOOT)[e])
+                        ?: return Parsed.Error("$k must be $valueForm (got $raw)")
+                    readoutEdits[e] = raw
+                }
+            }
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
-                trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit)
+                trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
+                readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

@@ -19,6 +19,11 @@ import io.github.jasondorjeshort.dystopo.store.TrackExport
  * (no fix for some seconds of real time before a given fix; the fixes after it later by as much), so the watchdog and
  * the network fallback run on the emulator. The puck moves only while the app is in the foreground (a stopped map has
  * nothing to draw, and the replay should cost the main thread nothing in the background).
+ *
+ * T161: a pressure column. A point whose extensions hold a `pressure` element (hPa, any prefix:
+ * `<extensions><pressure>1013.25</pressure></extensions>`) sends that pressure to the live readout
+ * ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onReplayPressure]) at the fix's time, just before the fix,
+ * as the barometer would; the phone's own barometer is ignored meanwhile. [pressures] counts the points that carry one.
  */
 class Replay(private val tracking: Tracking) {
     @Volatile private var thread: Thread? = null
@@ -70,6 +75,7 @@ class Replay(private val tracking: Tracking) {
     fun startTracks(tracks: List<Track>, rate: Double, accuracyM: Double, source: String, kmh: Double?, script: (Int) -> ReplayScript = { ReplayScript() }): Map<String, Any?> {
         val plain = TrackExport.replay(tracks, rate, accuracyM)
         require(plain.isNotEmpty()) { "the GPX has no track points" }
+        val column = pressureColumn(tracks) // T161: one per fix (TrackExport.replay keeps the points' order, one fix each)
         val sc = script(plain.size)
         val original = sc.apply(plain)
         val last = tracking.call { tracking.recorder.lastAcceptedTime }
@@ -84,6 +90,7 @@ class Replay(private val tracking: Tracking) {
         this.source = source
         this.kmh = kmh
         this.script = sc
+        pressures = column.count { it != null }
         idle = false
         finished = false
         cancelled = false
@@ -96,10 +103,11 @@ class Replay(private val tracking: Tracking) {
             // running under the battery script's rate-1 replay).
             fun current() = generation.get() == gen
             try {
-                for (f in timed) {
+                for ((i, f) in timed.withIndex()) {
                     val wait = start + f.atMs - SystemClock.elapsedRealtime()
                     if (wait > 0) Thread.sleep(wait)
                     if (!current()) throw InterruptedException()
+                    column.getOrNull(i)?.let { io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onReplayPressure(f.fix.time, it) } // T161
                     tracking.injected.publish(f.fix)
                     // Move the puck too (best effort; the map may not be attached); T159: only while the map is on screen.
                     val moved = if (!io.github.jasondorjeshort.dystopo.app.Foreground.started) Result.success(Unit)
@@ -120,6 +128,10 @@ class Replay(private val tracking: Tracking) {
         t.start()
         return json() + mapOf("shiftedMs" to shiftedMs)
     }
+
+    /** T161: how many of the last replay's points carried a pressure (hPa). */
+    @Volatile var pressures = 0
+        private set
 
     /** T159: the last replay's script (accuracy ranges and a stall). */
     @Volatile var script: ReplayScript = ReplayScript()
@@ -154,7 +166,15 @@ class Replay(private val tracking: Tracking) {
         // T159: the script, and whether the replay is in its stall now (waiting to send the fix after it).
         "script" to script.json(),
         "stalling" to (!idle && script.stall?.beforeFix == sent),
+        "pressures" to pressures, // T161: points with a pressure column
     )
+
+    companion object {
+        /** T161: each point's `pressure` extension (hPa, 300 to 1100), or null, in the order [TrackExport.replay] makes fixes. */
+        fun pressureColumn(tracks: List<Track>): List<Double?> = tracks.flatMap { it.points }.map { p ->
+            io.github.jasondorjeshort.dystopo.gpx.GpxExtensions.value(p.extensions, "pressure")?.takeIf { it in 300.0..1100.0 }
+        }
+    }
 }
 
 /**

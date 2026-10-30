@@ -262,6 +262,55 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option("Battery settings ›", false) { BatteryExemption.openSettings(context) }
             }
         }
+        // T161: the live readout beside the scale bar; the entry rows edit the remembered activity's options.
+        SettingsRow.READOUT_SPEED -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.SPEED, change, help = "settings.readoutSpeed")
+        SettingsRow.READOUT_CLIMB -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB, change, help = "settings.readoutClimb")
+        SettingsRow.READOUT_COURSE -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE, change, help = "settings.readoutCourse")
+        SettingsRow.READOUT_ELEVATION -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION, change, help = "settings.readoutElevation")
+        SettingsRow.READOUT_BAROMETER -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.readoutBarometer
+            val present = remember { io.github.jasondorjeshort.dystopo.app.readout.Barometer.present }
+            Setting(row.label, if (present) "steadies the elevation and the climb on foot, by bike and by boat" else "this phone has no barometer: the elevation comes from GPS and the map", help = "settings.readoutBarometer") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBarometer = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBarometer = false)) }
+            }
+        }
+    }
+}
+
+/**
+ * T161: one readout entry's row for the remembered activity (T172's, named in the hint): shown or not, then for a
+ * shown entry the speed's unit (km/h or mph, pace, and knots for boat and flying), the smoothing and the ±.
+ */
+@Composable
+private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, change: (SettingsRoutes.Parsed.Ok) -> Unit, help: String) {
+    @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision // a skippable composable: recompose after apply
+    val rs = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings
+    val a = AppSettings.trackActivity
+    val o = AppSettings.readoutOptions(a)[e]
+    fun edit(v: String) = change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutEdits = mapOf(e to v)))
+    val what = when (e) {
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.SPEED -> "your speed or pace beside the scale bar"
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB -> "how fast you climb or descend, left out when level"
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE -> "the direction you travel, held while you stand"
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION -> "your height above sea level"
+    }
+    Setting(row.label, "${RecordingProfiles.label(a)}: $what", help = help) {
+        Option("On", o.shown) { edit("shown=1") }
+        Option("Off", !o.shown) { edit("shown=0") }
+        if (o.shown) {
+            if (rs.offersPace(e)) {
+                Option(if (AppSettings.units == ContourUnits.FEET) "mph" else "km/h", !o.pace && !(o.knots && rs.offersKnots(a, e))) { edit("pace=0;knots=0") }
+                Option("Pace", o.pace) { edit("pace=1;knots=0") }
+                if (rs.offersKnots(a, e)) Option("Knots", o.knots && !o.pace) { edit("pace=0;knots=1") }
+            }
+            BasicText("Smoothing", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Muted, fontSize = 13.sp))
+            for (d in io.github.jasondorjeshort.dystopo.readout.Damping.entries) {
+                Option(d.code.replaceFirstChar { it.uppercase() }, o.damping == d) { edit("damping=${d.code}") }
+            }
+            Option("±", o.plusMinus) { edit(if (o.plusMinus) "pm=0" else "pm=1") }
+        }
     }
 }
 
@@ -430,6 +479,30 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         HelpText("settings.trackBattery", "Battery", at(SettingsGroup.NAVIGATION, "Recording: Battery"), show = page(SettingsGroup.NAVIGATION)) {
             "Android may stop an app working with the screen off to save battery. In the list this opens, choose Dystopo and " +
                 "allow it unrestricted battery use. Some phones also have their own setting for sleeping apps under Battery or Apps."
+        },
+        // T161: the readout rows
+        HelpText("settings.readoutSpeed", "Speed", at(SettingsGroup.NAVIGATION, "Readout: Speed"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "Your speed from the GPS over the last few seconds (more with more smoothing), or a dash while you stand. Pace is " +
+                "the time per ${if (units == ContourUnits.FEET) "mile" else "kilometre"}; boats and aircraft can use knots. Following " +
+                "a route on foot or by bike, it is your speed along the route. Each activity keeps its own; these rows set the one Record uses."
+        },
+        HelpText("settings.readoutClimb", "Climb", at(SettingsGroup.NAVIGATION, "Readout: Climb"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "How fast you are going up or down, per hour on the ground (${if (units == ContourUnits.FEET) "ft/h" else "m/h"}) and per " +
+                "minute when flying. It lags a few seconds so it does not jump with each step, and it is left out when you are " +
+                "on the level or the reading is too uncertain to tell."
+        },
+        HelpText("settings.readoutCourse", "Course", at(SettingsGroup.NAVIGATION, "Readout: Course"), show = page(SettingsGroup.NAVIGATION)) {
+            "The direction you are moving over the ground, in degrees from true north, from the GPS. It stays at the last " +
+                "direction while you stand still, since the GPS cannot tell a direction then."
+        },
+        HelpText("settings.readoutElevation", "Elevation", at(SettingsGroup.NAVIGATION, "Readout: Elevation"), show = page(SettingsGroup.NAVIGATION)) {
+            "Your height above sea level, from the GPS, the elevation map on foot, and the barometer when the phone has one. " +
+                "± shows how far off it may be. The GPS alone can be off by tens of metres in a canyon."
+        },
+        HelpText("settings.readoutBarometer", "Barometer", at(SettingsGroup.NAVIGATION, "Readout: Barometer"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "Air pressure falls by about 1 hPa every ${if (units == ContourUnits.FEET) "27 ft" else "8 m"} you climb. On foot, by bike " +
+                "and by boat the readout uses the phone's barometer, checked against the GPS, for a steady elevation and climb; " +
+                "not in a car, train or aircraft, whose air does not follow the height. Off uses the GPS and the elevation map."
         },
     )
 }

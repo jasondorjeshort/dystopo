@@ -16,8 +16,10 @@ data class ReadoutLabel(val text: String, val unit: String, val plusMinus: Strin
  * The readout's units and rounding (T160), for T161's strip and `GET /readout`. Units follow the user's preference
  * (ADR 0022: [ContourUnits.METERS] reads km/h and metres, [ContourUnits.FEET] mph and feet), knots where
  * [ReadoutOptions.knots]. Rounding is to a step that matches the noise (the readout idea's research, 2026-10-25):
- * whole speed units, pace to 10 s, climb to tens per hour on the ground and tens of feet (or whole metres) per minute
- * in the air, whole degrees, whole metres or feet. T161 adjusts these after driving the emulator (the idea's item 9).
+ * speed in half units below 10 (T161, after driving the emulator: whole mph on foot jumped between 1 and 2 at a steady
+ * walk, a step of 0.45 mph or 0.14 m/s where the speed's own noise is about 0.1 to 0.2 m/s) and whole units from 10, pace
+ * to 10 s, climb to tens per hour on the ground and tens of feet (or whole metres) per minute in the air, whole degrees,
+ * whole metres or feet.
  * Plain ASCII digits as [UnitFormat]; no product names.
  */
 object ReadoutText {
@@ -71,6 +73,7 @@ object ReadoutText {
         val x = convert(e, v, options, units)
         val text = when {
             e == ReadoutEntry.SPEED && options.speed.pace -> pace(x)
+            e == ReadoutEntry.SPEED && x < HALF_STEPS_BELOW -> halves(x)
             e == ReadoutEntry.COURSE -> "${((x.roundToLong() % 360) + 360) % 360}"
             else -> step(x, stepOf(e, options, units)).let { if (it == 0L) "0" else it.toString() }
         }
@@ -91,6 +94,14 @@ object ReadoutText {
     }
 
     private fun step(x: Double, step: Long): Long = (x / step).roundToLong() * step
+
+    /** T161: speeds below this (in the shown unit) read to half a unit with one decimal ("4.5 km/h", "3.0 mph"). */
+    const val HALF_STEPS_BELOW = 9.75
+
+    private fun halves(x: Double): String {
+        val h = (x * 2).roundToLong()
+        return "${h / 2}.${if (h % 2 == 0L) 0 else 5}"
+    }
 
     /** Seconds per unit distance as m:ss to 10 s; a dash past 99 minutes (standing). */
     fun pace(secondsPerUnit: Double): String {

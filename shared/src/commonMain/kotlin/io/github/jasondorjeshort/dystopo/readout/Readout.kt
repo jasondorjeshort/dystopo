@@ -165,7 +165,7 @@ class ReadoutEstimator(
     var options: ReadoutOptions = options
     val activity: Activity get() = profile.activity
 
-    private val filter = ElevationFilter(profile.activity)
+    private var filter = ElevationFilter(profile.activity)
 
     private class Sample(
         val t: Long, val lat: Double, val lon: Double, val speed: Double?, val course: Double?, val ele: Double?,
@@ -194,7 +194,7 @@ class ReadoutEstimator(
 
     private val counts = linkedMapOf(
         "fixes" to 0L, "pressureSamples" to 0L, "lateInputs" to 0L, "spikesDropped" to 0L,
-        "suspects" to 0L, "reopens" to 0L, "demTries" to 0L,
+        "suspects" to 0L, "reopens" to 0L, "demTries" to 0L, "clockResets" to 0L,
     )
 
     init {
@@ -239,6 +239,7 @@ class ReadoutEstimator(
      * navigating and on the route, else null. Fixes not newer than the last are ignored.
      */
     fun onFix(fix: LocationFix, routeAlongM: Double? = null) {
+        clockCheck(fix.time)
         val last = fixes.lastOrNull()
         if (last != null && fix.time <= last.t) { bump("lateInputs"); return }
         bump("fixes")
@@ -278,6 +279,7 @@ class ReadoutEstimator(
     fun onPressure(sample: PressureSample) {
         if (!(sample.hPa in 300.0..1100.0)) return
         bump("pressureSamples")
+        clockCheck(sample.timeMs)
         val lastT = baro.lastOrNull()?.first
         if (lastT != null && sample.timeMs < lastT) bump("lateInputs")
         lastPressureHPa = sample.hPa
@@ -551,6 +553,32 @@ class ReadoutEstimator(
         return atan(hypot(gx, gy)) / DEG
     }
 
+    /**
+     * An input more than [CLOCK_BACK_MS] before the latest one is a clock that went back (a replay run again, a sample
+     * stamped on another clock): a jump, so the windows and the elevation filter start afresh at the new time (T161).
+     * Without this every later input counts as late, the filter never predicts, the climb stays at zero and the
+     * elevation lags.
+     */
+    private fun clockCheck(tMs: Long) {
+        val latest = listOfNotNull(fixes.lastOrNull()?.t, baro.lastOrNull()?.first, filter.timeMs).maxOrNull() ?: return
+        if (tMs >= latest - CLOCK_BACK_MS) return
+        bump("clockResets")
+        fixes.clear()
+        baro.clear()
+        moving = false
+        lastCourse = null
+        windowStart = null
+        disagreeRun = 0
+        lastDemAt = null
+        smoothAt = null
+        smoothV = 0.0
+        climbShown = false
+        suspectUntilMs = null
+        suspectReason = null
+        filter = ElevationFilter(activity)
+        applyBarometerSwitch(tMs)
+    }
+
     /** The climb rate's display lag and its near-zero gate, after each filter step. */
     private fun smooth(tMs: Long) {
         if (!filter.heightKnown) return
@@ -571,6 +599,9 @@ class ReadoutEstimator(
     companion object {
         /** Ground speed over which the barometer is suspect (research: about 7 m/s). */
         const val BARO_MAX_GROUND_MPS = 7.0
+
+        /** An input this far before the latest is a clock gone back, not a late sample (batched barometer samples lag a few seconds). */
+        const val CLOCK_BACK_MS = 60_000L
 
         /** The barometer reopens this long after the last suspect trigger. */
         const val SUSPECT_HOLD_MS = 60_000L
