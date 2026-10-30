@@ -68,8 +68,17 @@ enum class TravelMode(val label: String) {
  * unpaved 1.25x. Paths, footways, cycleways, bridleways and steps are closed, so are lines whose
  * motor access is no or private; one-ways only the way they go ([allows]); `destination` roads only at
  * a route's ends (the router's destination zones). No slope penalty.
+ *
+ * T164: [pace], the user's own fitted curve for hike or bike ([PaceFit]; by default [PaceFits.active], which only the
+ * phone sets, from its tracks), replaces Naismith and the fixed slope penalty when there is one: [timeS], [edgeTimeS]
+ * and [pathTimeS] time the walk on the fitted curve, and [slopePenalty] becomes the fit's extra time over the flat
+ * time, as equivalent flat metres at the fit's flat speed (never negative, so the A* heuristic stays admissible). The
+ * class, surface and SAC weights are kept. [fitted] says which ("your pace" or the standard estimate).
  */
-class CostModel(val mode: TravelMode) {
+class CostModel(val mode: TravelMode, val pace: PaceFit? = PaceFits.active[mode]?.takeIf { it.mode == mode && mode in PaceFits.FITTED }) {
+    /** T164: true when this model times routes on the user's fitted pace ([pace]). */
+    val fitted: Boolean get() = pace != null
+
     fun classWeight(c: WayClass): Double = when (mode) {
         TravelMode.DRIVE -> driveSpeedKmh(c).let { if (it > 0) DRIVE_REF_KMH / it else Double.POSITIVE_INFINITY }
         TravelMode.HIKE, TravelMode.CROW -> when (c) { // T108: crow never searches the graph; hike's weights if asked
@@ -160,9 +169,19 @@ class CostModel(val mode: TravelMode) {
         return if (tagged > 0) tagged.toDouble().coerceIn(5.0, DRIVE_REF_KMH) else driveSpeedKmh(g.wayClass(e))
     }
 
-    /** T73: seconds to drive [metres] of edge [e] ([speedKmh]; unpaved slower). */
-    fun edgeTimeS(g: RoutingGraph, e: Int, metres: Double): Double =
-        metres / (speedKmh(g, e) / 3.6) * surfaceWeight(g.surface(e))
+    /**
+     * T73: seconds to drive [metres] of edge [e] ([speedKmh]; unpaved slower). T164: for hike and bike, the time over
+     * that share of the edge travelled [forward] (from its `from` node) or back, with its share of the climb: on the
+     * fitted curve with a [pace], else Naismith ([timeS]).
+     */
+    fun edgeTimeS(g: RoutingGraph, e: Int, metres: Double, forward: Boolean = true): Double {
+        if (mode == TravelMode.DRIVE) return metres / (speedKmh(g, e) / 3.6) * surfaceWeight(g.surface(e))
+        val len = g.edgeLength[e].toDouble()
+        val part = if (len > 0) (metres / len).coerceIn(0.0, 1.0) else 0.0
+        val up = (if (forward) g.edgeAscent[e] else g.edgeDescent[e]) * part
+        val down = (if (forward) g.edgeDescent[e] else g.edgeAscent[e]) * part
+        return timeS(metres, up, down)
+    }
 
     /** The smallest [weight] any edge can have: the A* heuristic's factor (keeps it admissible). */
     val minWeight: Double get() = if (mode == TravelMode.DRIVE) 1.0 else WayClass.entries.minOf { classWeight(it) }
@@ -172,6 +191,7 @@ class CostModel(val mode: TravelMode) {
         if (lengthM <= 0) return 0.0
         val up = ascentM / lengthM
         val down = descentM / lengthM
+        pace?.let { p -> return ((p.timeS(lengthM, ascentM, descentM) - lengthM / p.flatMps) * p.flatMps).coerceAtLeast(0.0) } // T164
         return when (mode) {
             TravelMode.HIKE, TravelMode.CROW -> 8 * ascentM + ascentM * max(0.0, up - 0.25) * 20 + descentM * max(0.0, down - 0.15) * 10
             TravelMode.BIKE -> 12 * ascentM + ascentM * max(0.0, up - 0.08) * 80 + descentM * max(0.0, down - 0.12) * 30
@@ -185,13 +205,29 @@ class CostModel(val mode: TravelMode) {
      * 500 m of ascent (a touring pace; descents are not credited). Drive: [DRIVE_SUMMARY_KMH], used only
      * for a drive leg without a router time (straight or imported; T89): a routed drive leg keeps the
      * router's own sum of each road's time ([edgeTimeS]) and the summary adds those up. Crow (T108): Naismith over the
-     * straight line, a lower bound for anyone walking it (a crow route is not a path to walk).
+     * straight line, a lower bound for anyone walking it (a crow route is not a path to walk). T164: with a [pace],
+     * Naismith's form with the fit's flat pace and climb rate ([PaceFit.timeS]).
      */
-    fun timeS(distanceM: Double, ascentM: Double): Double = when (mode) {
+    fun timeS(distanceM: Double, ascentM: Double): Double = pace?.timeS(distanceM, ascentM) ?: when (mode) {
         TravelMode.HIKE, TravelMode.CROW -> distanceM / 5000.0 * 3600 + ascentM / 600.0 * 3600
         TravelMode.BIKE -> distanceM / 16000.0 * 3600 + ascentM / 500.0 * 3600
         TravelMode.DRIVE -> distanceM / (DRIVE_SUMMARY_KMH * 1000.0) * 3600
     }
+
+    /**
+     * T164: [timeS] when the descent is known too: on the fitted curve ([PaceFit.timeS], climbing and descending parts
+     * at the stretch's mean grade) with a [pace]; Naismith ignores descent, so without one this is [timeS].
+     */
+    fun timeS(distanceM: Double, ascentM: Double, descentM: Double): Double =
+        pace?.timeS(distanceM, ascentM.coerceAtLeast(0.0), descentM.coerceAtLeast(0.0)) ?: timeS(distanceM, ascentM)
+
+    /**
+     * T164: the time along a line with heights ([points]), as the trip summary and the router report it: on the fitted
+     * curve piece by piece ([PaceFit.pathTimeS], the pieces the fit was measured on) with a [pace]; else [timeS] of
+     * [distanceM] and [ascentM] (the caller's own measure of the line, so routes without a fit keep their numbers).
+     */
+    fun pathTimeS(points: List<TrackPoint>, distanceM: Double, ascentM: Double): Double =
+        pace?.takeIf { points.size >= 2 }?.pathTimeS(points) ?: timeS(distanceM, ascentM)
 
     companion object {
         /** Drive costs are metres at this speed; also the largest speed drive mode assumes. */
@@ -265,6 +301,8 @@ data class PlannedRoute(
     val memory: Map<String, Any?> = emptyMap(),
     /** T102: the turn directions along [route]'s points ([Directions]); empty when the router has no graph to read them from. */
     val instructions: List<Instruction> = emptyList(),
+    /** T164: the user's fitted pace [timeS] came from ([CostModel.pace]); null for the standard estimate. */
+    val pace: PaceFit? = null,
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -278,7 +316,7 @@ data class PlannedRoute(
         "memory" to memory.ifEmpty { null }, // T76
         "instructions" to Directions.cued(instructions).map { it.json(mode) }, // T102; T116: texts with the default level's "then" cues
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
-    )
+    ).also { m -> pace?.let { m["pace"] = it.json() } } // T164: only when the time is the user's own
 
     companion object {
         fun r1(v: Double) = (v * 10).roundToLong() / 10.0
@@ -587,14 +625,14 @@ class TileRouter(
     }
 
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double): EdgeSnap? = snap(View(tiles), lat, lon, maxDistanceM)?.let { e ->
-        e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
+        e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge), ele = TrackMatch.eleAt(e.piece.graph, e.snap)) // T164: ele
     }
 
     override fun nearest(lat: Double, lon: Double, maxDistanceM: Double, mode: TravelMode): EdgeSnap? {
         if (mode != TravelMode.DRIVE) return nearest(lat, lon, maxDistanceM)
         val model = CostModel(mode)
         return snap(View(tiles), lat, lon, maxDistanceM) { p, e -> p.graph.source.drive && model.usable(p.graph, e) }?.let { e ->
-            e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge))
+            e.snap.copy(name = e.piece.graph.name(e.snap.edge), wayClass = e.piece.graph.wayClass(e.snap.edge), ele = TrackMatch.eleAt(e.piece.graph, e.snap)) // T164
         }
     }
 
@@ -981,7 +1019,8 @@ class TileRouter(
         val track = listOf(pts.map { TrackPoint(it.lat, it.lon, it.ele) })
         val distance = TrackStats.of(track).distanceM
         val hasEle = pts.any { it.ele != null }
-        val time = if (model.mode == TravelMode.DRIVE) driveS else model.timeS(distance, if (hasEle) ascent else 0.0)
+        // T164: a fitted pace times the route's points piece by piece (as the trip summary does); else Naismith as before.
+        val time = if (model.mode == TravelMode.DRIVE) driveS else model.pathTimeS(if (hasEle) track[0] else emptyList(), distance, if (hasEle) ascent else 0.0)
         fun minVia(i: Int) = if (model.mode != TravelMode.DRIVE && runRoadM[i] * 2 > runs[i].second) Router.MIN_VIA_ROAD_M else Router.MIN_VIA_M
         val via = runs.filterIndexed { i, it -> it.first != null && it.second >= minVia(i) }.map { it.first!! to it.second }
             .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
@@ -994,6 +1033,7 @@ class TileRouter(
             route, model.mode, distance, if (hasEle) ascent else null, if (hasEle) descent else null, time,
             TrackStats.profile(track, Router.PROFILE_SAMPLES), cost, steps.size, named(s), named(t), expanded, byClass, via, memory,
             Directions.of(pts, model.mode, this), // T102
+            model.pace, // T164
         )
     }
 

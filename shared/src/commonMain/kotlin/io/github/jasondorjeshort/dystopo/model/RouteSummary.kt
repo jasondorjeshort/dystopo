@@ -56,7 +56,7 @@ data class RouteSummary(
             val track = listOf(pts.map { TrackPoint(it.lat, it.lon, it.ele) })
             val stats = TrackStats.of(track)
             val travel = TravelMode.of(path.mode) ?: TravelMode.HIKE
-            val time = if (travel == TravelMode.DRIVE && path.legs.isNotEmpty()) driveTimeS(path) else CostModel(travel).timeS(stats.distanceM, stats.ascentM ?: 0.0)
+            val time = if (travel == TravelMode.DRIVE && path.legs.isNotEmpty()) driveTimeS(path) else CostModel(travel).pathTimeS(if (stats.ascentM != null) track[0] else emptyList(), stats.distanceM, stats.ascentM ?: 0.0) // T164: the user's fitted pace when there is one
             val straight = path.legs.filter { it.kind == LegKind.STRAIGHT }.sumOf { leg ->
                 leg.points.zipWithNext { a, b -> TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon) }.sum()
             }
