@@ -89,6 +89,8 @@ class HelpRegistryTest {
             "nav.card", "nav.fixLost", "nav.offRoute",
             // T126: the spoken directions row.
             "settings.navSpeech",
+            // T174: the drainage row of Map options.
+            "map.drainage",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

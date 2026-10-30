@@ -100,7 +100,11 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
             Chip("Land cover", o.landcover) { change(mapOf("landcover" to !o.landcover)) }
             Chip("POIs", o.pois) { change(mapOf("pois" to !o.pois)) }
             Chip("Boundaries", o.boundaries) { change(mapOf("boundaries" to !o.boundaries)) }
-            Chip("Drainage", o.drainage) { change(mapOf("drainage" to !o.drainage)) } // T174: off unless turned on
+        }
+        // T174: the streams derived from the elevation grid, beside the layers; off unless turned on.
+        OptionRow("Drainage", "streams worked out from the terrain, where an offline area has them", help = "map.drainage") {
+            Chip("On", o.drainage) { change(mapOf("drainage" to "on")) }
+            Chip("Off", !o.drainage) { change(mapOf("drainage" to "off")) }
         }
         OptionRow("Night", "dark base, dimmed relief", help = "map.night") {
             Chip("On", o.night) { change(mapOf("night" to "on")) }
@@ -251,11 +255,12 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
         HelpText("map.layers", "Layers", "$place › Layers", show = show) {
             "Shows or hides parts of the map. Trails: paths and tracks. Water: lakes, rivers, streams. Land cover: " +
                 "forest, wetland, rock and glacier. POIs: huts, trailheads, campsites, viewpoints, springs, parking. " +
-                "Boundaries: parks and wilderness. Drainage (off until you turn it on): stream lines worked out from the " +
-                "elevation data where an offline area has them, drawn lighter than and under the mapped streams: solid " +
-                "where water likely runs all year, dashed where it likely runs part of the year, faint dots where it is " +
-                "likely dry. They come from the shape of the land alone, so a line may be dry or a stream missing. " +
-                "Roads, peaks, places and contours always show."
+                "Boundaries: parks and wilderness. Roads, peaks, places and contours always show."
+        },
+        HelpText("map.drainage", "Drainage", "$place › Drainage", show = show) {
+            "Stream lines worked out from an offline area's elevation data, drawn lighter than and under the mapped " +
+                "streams: solid where water likely runs all year, dashed where part of the year, dots where likely dry. " +
+                "They come from the shape of the land alone, so a line may be dry or a stream missing."
         },
         HelpText("map.night", "Night", "$place › Night", show = show) {
             "A dark map for use in the dark: a dark base with dimmed relief, easier on your eyes than a bright screen."
