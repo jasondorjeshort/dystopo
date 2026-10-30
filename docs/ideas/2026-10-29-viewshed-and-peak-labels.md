@@ -36,3 +36,6 @@ Stages, each useful alone:
   does not ask for today: a new permission the owner should see before it is built.
 - Benchmark first (ADR 0039): how established apps present viewsheds and skyline labels, and what
   the user is told about accuracy.
+
+Question: stage 3 needs the camera permission and a camera dependency, a permission the app does not ask for today: do you want the camera stage at all, and are stages 1 and 2 (the overlay, then the list of peaks in view) wanted first on their own? Recommendation: stages 1 and 2 as one task when you want them (the horizon sweep shared with the sun-and-shade idea; coarser zooms past a few kilometres; the range capped from a phone measurement, off the UI thread; the benchmark above first); stage 3 only on your word, as its own task with the permission text in its report.
+Answer:
