@@ -35,3 +35,6 @@ finds the few hundred metres worth looking at. Anchors: the track store and GPX
 - Time on and off a trail is also what the live readout and activity profiles look at
   (`2026-10-25-track-activity-profiles-and-dropout-handling.md`); share the map matching.
 - Roughly two waves: map matching and detection, then the marker and the send.
+
+Question: sending divergent stretches to OpenStreetMap is a second outward data flow beyond ADR 0042's one-track upload, and the detection reads the user's own movements: do you want it, and with the send or detection only? Recommendation: detection and the marker only first ("Your tracks leave the mapped trail here", built in alpha under ADR 0031), after the track activity profiles land (they share the map matching) and after ADR 0042's build task has shipped and been used, so a send would reuse its confirmation and trimming; the send as a second task on your word.
+Answer:
