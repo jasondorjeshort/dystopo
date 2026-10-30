@@ -43,3 +43,6 @@ hundred bytes of public text between strangers, which is a different trust quest
   how long they keep them.
 - Two waves: notes with sync between a user's own devices first (worth having alone), the meeting
   exchange second.
+
+Question: notes that spread between strangers' phones are a new data flow (a note says its author was at a place around a time) and an open channel for spam and lies: do you want open relay at all, or only notes synced between your own devices and exchanged with paired phones (today's share code)? Recommendation: stage 1 when wanted (notes as sync ops with expiry by type, a marker layer, the sync simulator proving convergence), which stands on its own; open relay decided after a benchmark of how the established outdoor apps collect and keep user condition reports (ADR 0039), and if wanted, its transport through one proposal and critic together with the group-positions idea, which rides the same machinery.
+Answer:
