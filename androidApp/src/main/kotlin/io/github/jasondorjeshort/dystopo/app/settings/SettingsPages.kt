@@ -484,7 +484,7 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         HelpText("settings.readoutSpeed", "Speed", at(SettingsGroup.NAVIGATION, "Readout: Speed"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "Your speed from the GPS over the last few seconds (more with more smoothing), or a dash while you stand. Pace is " +
                 "the time per ${if (units == ContourUnits.FEET) "mile" else "kilometre"}; boats and aircraft can use knots. Following " +
-                "a route on foot or by bike, it is your speed along the route. These rows set the activity chosen in Recording: Activity."
+                "a route on foot or by bike, it is your speed along the route. Each activity keeps its own; these rows set the one Record uses."
         },
         HelpText("settings.readoutClimb", "Climb", at(SettingsGroup.NAVIGATION, "Readout: Climb"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "How fast you are going up or down, per hour on the ground (${if (units == ContourUnits.FEET) "ft/h" else "m/h"}) and per " +
