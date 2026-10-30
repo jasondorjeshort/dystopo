@@ -284,6 +284,14 @@ object PaceFits {
 
     /** What [fromTracks] found: a fit per fitted mode (null where too few pieces) and every track's row. */
     data class Report(val fits: Map<TravelMode, PaceFit?>, val rows: List<TrackRow>) {
+        /** Per fitted mode, the tracks with pieces among the newest [MAX_TRACKS] and their metres (shown while too few to fit). */
+        fun counts(): Map<TravelMode, Pair<Int, Double>> = FITTED.associateWith { m ->
+            rows.filter { r -> r.mode == m && (r.rank ?: Int.MAX_VALUE) < MAX_TRACKS }.let { used -> used.size to used.sumOf { it.match?.metres ?: 0.0 } }
+        }.filterValues { it.first > 0 }
+
+        /** The synced setting value of this report ([encode]). */
+        fun setting(): String = encode(fits.values, counts())
+
         fun json(): Map<String, Any?> = linkedMapOf(
             "fits" to FITTED.associate { m -> m.label to fits[m]?.json() },
             "tracks" to rows.map { it.json() },

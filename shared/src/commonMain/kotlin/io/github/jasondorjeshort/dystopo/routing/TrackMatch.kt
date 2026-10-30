@@ -166,6 +166,30 @@ object SyntheticWalk {
     const val STEP_S = 3.0
     const val LOOK_M = 20.0
 
+    /** The noise-free time the walker takes along [line] (heights required) at [truth]'s speed for the grade over the next [LOOK_M]. */
+    fun timeS(line: List<TrackPoint>, truth: PaceFit, stepM: Double = 2.0): Double {
+        val cum = DoubleArray(line.size)
+        for (i in 1 until line.size) cum[i] = cum[i - 1] + TrackStats.distanceM(line[i - 1].lat, line[i - 1].lon, line[i].lat, line[i].lon)
+        fun ele(s: Double): Double {
+            var k = 0
+            while (k < line.size - 2 && cum[k + 1] < s) k++
+            val span = cum[k + 1] - cum[k]
+            val f = if (span > 0) ((s - cum[k]) / span).coerceIn(0.0, 1.0) else 0.0
+            return line[k].ele!! + f * (line[k + 1].ele!! - line[k].ele!!)
+        }
+        var t = 0.0
+        var s = 0.0
+        val total = cum.last()
+        while (s < total) {
+            val step = minOf(stepM, total - s)
+            val ahead = minOf(s + LOOK_M, total)
+            val g = if (ahead - s > 1) (ele(ahead) - ele(s)) / (ahead - s) else 0.0
+            t += step / truth.speedMps(g)
+            s += step
+        }
+        return t
+    }
+
     fun track(
         id: String, name: String, line: List<TrackPoint>, truth: PaceFit, startMs: Long, seed: Int,
         gpsNoiseM: Double = 3.0, paceNoise: Double = 0.04, stopS: Double = 300.0,
