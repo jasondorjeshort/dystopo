@@ -74,6 +74,11 @@ class OnlineService private constructor(private val app: DystopoApp) {
     @Volatile private var refreshedGeneration = 0
     val refreshes = AtomicLong()
 
+    /** T173: the live readout's weather station requests ([io.github.jasondorjeshort.dystopo.app.readout.PressureSource]). */
+    val stationFetches = AtomicLong()
+    val stationFetchFailures = AtomicLong()
+    val stationBytes = AtomicLong()
+
     private class RouteCounters {
         val hits = AtomicLong()
         val cached = AtomicLong()
@@ -679,6 +684,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "credits" to credits().map { mapOf("role" to it.role, "provenance" to it.metadata["provenance"]) },
         "assets" to lastAssets,
         "direct" to directJson(), // T80
+        "stationPressure" to linkedMapOf("fetches" to stationFetches.get(), "failures" to stationFetchFailures.get(), "bytes" to stationBytes.get()), // T173
     )
 
     /**

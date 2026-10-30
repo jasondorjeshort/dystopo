@@ -13,7 +13,8 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  *   heap record, `memory`, either way). `stalledOsm` (T138, T144) and `stalledDem` (T155): tiles answered 404 after a
  *   failed fetch, fetched again and drawn by replacing their map source in place (`pending`, `recorded`, `retried`,
  *   `recovered`, `woken`, `settleMs`, `refreshes`, `lastSourceRefresh`; DEM also `canaries`, `sourcesAnswered`,
- *   `haloVariantsDropped`).
+ *   `haloVariantsDropped`). `stationPressure` (T173): the live readout's weather station requests (`fetches`,
+ *   `failures`, `bytes`), made only while the readout uses the barometer (`GET /readout` › `seaLevelPressure`).
  * - `POST /online/download[?bbox=w,s,e,n][&zooms=8-13][&name=][&profile=outdoors|openmaptiles]`: "Download this region" for the box
  *   (default: the visible map) through the server's `/build` and the pack downloader. `GET /online/download`:
  *   progress. `DELETE /online/download`: cancel.
