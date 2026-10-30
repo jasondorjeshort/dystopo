@@ -2,7 +2,7 @@
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-10-30, at commit 4c61312 plus this edit, by main session (wave 22 closed; the alpha waits on the key)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 22 (its paragraph holds the launch order, the ports and the emulator rule).
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (Later holds wave 22's follow-ups; the record `docs/tasks/wave-22.md` holds its paragraph with the ports and the emulator rule).
 
 ## Now
 
