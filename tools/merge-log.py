@@ -5,7 +5,7 @@ Usage (from anywhere inside the repo, after the coordinator's merge; the `wave` 
 
 - <entry-file>: the dated log paragraph for docs/PLANNING.md. It starts with
   **YYYY-MM-DD: Tnn merged: title.** (older entries carry `(PR #n)`) and is inserted at the end of the development log.
-- <status-file>: the **Status: merged.** line with follow-ups, appended to the task in docs/TASKS.md.
+- <status-file>: the **Status: merged.** line with follow-ups, appended to the task in docs/TASKS.md (a task is on the board until its wave closes).
 - CHANGELOG.md gets one line under the entry's date in the Unreleased section (newest first).
 Then `git add docs CHANGELOG.md && git commit -m "Planning log: Tnn merged"`. See the wave skill, .claude/skills/wave/SKILL.md (merge sequence).
 Tested offline by tools/test_merge_log.py (T154).

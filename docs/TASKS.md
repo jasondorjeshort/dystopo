@@ -1,6 +1,6 @@
 # Task board
 
-Work is split into tasks that don't depend on each other, so several agents can run at once. One agent per task, one git worktree per agent; see `CLAUDE.md` › Working in parallel.
+Work is split into tasks that don't depend on each other, so several agents can run at once. One agent per task, one git worktree per agent; see `CLAUDE.md` › Working in parallel. Closed waves are in `docs/tasks/`, one record each; this board holds the open wave, Owner actions pending, Later and the follow-up lists.
 
 Every task is done only when:
 1. `./gradlew check` passes (existing tests plus new ones).
