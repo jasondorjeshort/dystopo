@@ -1,7 +1,10 @@
 package io.github.jasondorjeshort.dystopo.store
 
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.Track
+import io.github.jasondorjeshort.dystopo.model.TrackGap
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 
@@ -44,6 +47,21 @@ interface TrackStore {
 
     fun setRecording(trackId: String, recording: Boolean, now: Long)
 
+    /**
+     * T158: sets the track's [Activity] and the [ActivityProfile] it is recorded with (null clears either); each is
+     * a synced track field (`activity`, `profile`). Throws if the track is unknown.
+     */
+    fun setActivity(trackId: String, activity: Activity?, profile: ActivityProfile?, now: Long)
+
+    /** T158: records a gap on the track (synced; the same gap twice counts once). Throws if the track is unknown. */
+    fun addGap(trackId: String, gap: TrackGap, now: Long)
+
+    /** T158: the track's gaps, oldest first (empty for an unknown track). */
+    fun gaps(trackId: String): List<TrackGap>
+
+    /** T158: the profile of the newest track (by creation) that has one: the one a new recording starts with. */
+    fun lastProfile(): ActivityProfile?
+
     fun rename(trackId: String, name: String, now: Long)
 
     /** Deletes the track, its points and its waypoints; false if it did not exist. */
@@ -62,8 +80,8 @@ interface TrackStore {
 
     /**
      * Stores a complete track (an import) and [waypoints] on it, in one transaction: the track's
-     * fields and segments as given (empty segments dropped; segment extensions are not stored), not
-     * recording. Throws if the track id or a waypoint id exists.
+     * fields and segments as given (empty segments dropped; segment extensions are not stored), its
+     * activity, profile and gaps (T158), not recording. Throws if the track id or a waypoint id exists.
      */
     fun insert(track: Track, waypoints: List<Waypoint>, createdAt: Long, now: Long): TrackSummary
 

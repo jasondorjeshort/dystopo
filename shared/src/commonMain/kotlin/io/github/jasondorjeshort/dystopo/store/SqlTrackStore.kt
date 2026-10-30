@@ -3,6 +3,11 @@ package io.github.jasondorjeshort.dystopo.store
 import app.cash.sqldelight.db.SqlDriver
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
+import io.github.jasondorjeshort.dystopo.model.GapReason
+import io.github.jasondorjeshort.dystopo.model.TrackGap
+import io.github.jasondorjeshort.dystopo.sync.AddGap
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
@@ -104,6 +109,10 @@ class SqlTrackStore(
     var routesMaterialized = 0
         private set
 
+    /** T158: track rows whose fields were rewritten from the log on this open (after the schema-6 migration); 0 otherwise. */
+    var tracksRefreshed = 0
+        private set
+
     init {
         var seeded = false
         var device = ""
@@ -130,6 +139,18 @@ class SqlTrackStore(
                 for (id in q.routeIdsInLog().executeAsList()) { rebuildRoute(id); n++ }
                 routesMaterialized = n
                 q.putMeta("routes", ROUTES_TABLE)
+            }
+            // T158 (schema 6): once, every track's fields from the log, for `activity` and `profile` writes an older
+            // build held without showing them.
+            if (q.getMeta("tracks").executeAsOneOrNull() != TRACKS_TABLE) {
+                var n = 0
+                for (t in q.selectTracks().executeAsList()) {
+                    val view = Materializer.track(t.id, opsOf(EntityKind.TRACK, t.id)) ?: continue
+                    if (view.activity != null || view.profile != null) q.setTrackActivity(view.activity, view.profile, t.id)
+                    n++
+                }
+                tracksRefreshed = n
+                q.putMeta("tracks", TRACKS_TABLE)
             }
         }
         seededFromTables = seeded
@@ -172,7 +193,7 @@ class SqlTrackStore(
         for (t in tracks) {
             emit(PutTrack(t.id, t.created_at, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
             q.selectPoints(t.id).executeAsList().groupBy { it.segment }.toList().sortedBy { it.first }.forEach { (seg, pts) ->
-                emit(AppendPoints(t.id, seg.toInt(), pts.map { TrackPoint(it.lat, it.lon, it.ele, it.time, it.extensions) }), now)
+                emit(AppendPoints(t.id, seg.toInt(), pts.map { pointOf(it.lat, it.lon, it.ele, it.time, it.extensions, it.accuracy, it.speed, it.course, it.vertical_accuracy, it.flags) }), now)
             }
         }
         for (w in waypoints) {
@@ -192,22 +213,30 @@ class SqlTrackStore(
         if (view == null) {
             if (exists) {
                 q.deleteTrackPoints(id)
+                q.deleteTrackGaps(id)
                 q.deleteTrack(id)
             }
             return
         }
         if (!exists) {
             q.insertTrack(id, view.name, view.createdAt, view.lastHlc.wall, 0L, view.description, view.comment, view.source, view.type, view.extensions)
-        } else {
-            q.updateTrackFields(view.name, view.createdAt, view.description, view.comment, view.source, view.type, view.extensions, view.lastHlc.wall, id)
         }
+        q.updateTrackFields(view.name, view.createdAt, view.description, view.comment, view.source, view.type, view.extensions, view.activity, view.profile, view.lastHlc.wall, id)
         if (!fieldsOnly || !exists) {
             q.deleteTrackPoints(id)
             var seq = 0L
-            for (s in view.segments) for (p in s.points) q.insertPoint(id, seq++, s.number.toLong(), p.lat, p.lon, p.ele, p.time, p.extensions)
+            for (s in view.segments) for (p in s.points) insertPoint(id, seq++, s.number.toLong(), p)
             q.invalidateStats(id)
+            q.deleteTrackGaps(id)
+            for (g in view.gaps) q.insertGap(id, g.start, g.end, g.reason.code)
         }
     }
+
+    private fun insertPoint(trackId: String, seq: Long, segment: Long, p: TrackPoint) =
+        q.insertPoint(trackId, seq, segment, p.lat, p.lon, p.ele, p.time, p.extensions, p.accuracyM, p.speedMps, p.courseDeg, p.verticalAccuracyM, p.flags.toLong())
+
+    private fun pointOf(lat: Double, lon: Double, ele: Double?, time: Long?, ext: String?, acc: Double?, speed: Double?, course: Double?, vacc: Double?, flags: Long) =
+        TrackPoint(lat, lon, ele, time, ext, acc, speed, course, vacc, flags.toInt())
 
     private fun rebuildWaypoint(id: String) {
         val view = Materializer.waypoint(id, opsOf(EntityKind.WAYPOINT, id))
@@ -254,7 +283,7 @@ class SqlTrackStore(
                 if (q.countDigest(trackId, OpCodec.digest(grown)).executeAsOne() == 0L) {
                     q.deleteOp(prev.hlc.text)
                     val op = emit(grown, now)
-                    q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
+                    insertPoint(trackId, seq + 1, seg, point)
                     q.touchTrackPoints(now, trackId)
                     next = Run(trackId, seg, op.hlc, grown.points)
                     return@transaction
@@ -275,7 +304,7 @@ class SqlTrackStore(
             val t = if (same.isEmpty()) null else tombstone(EntityKind.TRACK, trackId)
             added = same.none { t == null || Hlc.parse(it) > t }
             if (added) {
-                q.insertPoint(trackId, seq + 1, seg, point.lat, point.lon, point.ele, point.time, point.extensions)
+                insertPoint(trackId, seq + 1, seg, point)
                 q.touchTrackPoints(now, trackId)
                 next = Run(trackId, seg, op.hlc, body.points)
             } else {
@@ -296,6 +325,9 @@ class SqlTrackStore(
             val t = track
             emit(PutTrack(t.id, createdAt, t.name, t.description, t.comment, t.source, t.type, t.extensions), now)
             t.segments.filter { it.points.isNotEmpty() }.forEachIndexed { i, s -> emit(AppendPoints(t.id, i, s.points), now) }
+            t.activity?.let { emit(SetField(EntityKind.TRACK, t.id, "activity", it.code), now) } // T158
+            t.profile?.let { emit(SetField(EntityKind.TRACK, t.id, "profile", it.encode()), now) }
+            t.gaps.distinct().forEach { emit(AddGap(t.id, it), now) }
             rebuildTrack(t.id)
             check(q.selectTrack(t.id).executeAsOneOrNull() != null) { "track ${t.id} stays hidden by a delete stamped more than 30 days ahead of this device's clock" }
             for (w in waypoints) {
@@ -376,6 +408,30 @@ class SqlTrackStore(
         setField(EntityKind.TRACK, trackId, "name", name, now)
     }
 
+    override fun setActivity(trackId: String, activity: Activity?, profile: ActivityProfile?, now: Long) {
+        q.transaction {
+            val t = q.selectTrack(trackId).executeAsOneOrNull() ?: throw TrackNotFoundException(trackId)
+            if (t.activity != activity?.code) setField(EntityKind.TRACK, trackId, "activity", activity?.code, now)
+            val encoded = profile?.encode()
+            if (t.profile != encoded) setField(EntityKind.TRACK, trackId, "profile", encoded, now)
+        }
+    }
+
+    override fun addGap(trackId: String, gap: TrackGap, now: Long) {
+        q.transaction {
+            if (q.selectTrack(trackId).executeAsOneOrNull() == null) throw TrackNotFoundException(trackId)
+            emit(AddGap(trackId, gap), now)
+            // A union: the row is the same whichever order gap operations arrive in.
+            q.insertGap(trackId, gap.start, gap.end, gap.reason.code)
+            q.touchTrack(now, trackId)
+        }
+    }
+
+    override fun gaps(trackId: String): List<TrackGap> =
+        q.selectGaps(trackId).executeAsList().mapNotNull { g -> GapReason.of(g.reason)?.let { TrackGap(g.start_time, g.end_time, it) } }
+
+    override fun lastProfile(): ActivityProfile? = q.recentProfiles().executeAsList().firstNotNullOfOrNull { ActivityProfile.decode(it) }
+
     override fun delete(trackId: String): Boolean {
         var existed = false
         q.transaction {
@@ -393,19 +449,19 @@ class SqlTrackStore(
         return existed
     }
 
-    override fun list(): List<TrackSummary> = q.selectTracks { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints ->
+    override fun list(): List<TrackSummary> = q.selectTracks { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, _, _ ->
         TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt())
     }.executeAsList()
 
     override fun summary(trackId: String): TrackSummary? =
-        q.selectTrack(trackId) { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints ->
+        q.selectTrack(trackId) { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, _, _ ->
             TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt())
         }.executeAsOneOrNull()
 
     override fun track(trackId: String): Track? {
         val t = q.selectTrack(trackId).executeAsOneOrNull() ?: return null
         val segments = segmentsOf(trackId).map { TrackSegment(it.points) }
-        return Track(t.id, t.name, segments, t.description, t.comment, t.source, t.type, t.extensions)
+        return Track(t.id, t.name, segments, t.description, t.comment, t.source, t.type, t.extensions, Activity.of(t.activity), ActivityProfile.decode(t.profile), gaps(trackId))
     }
 
     private fun segmentsOf(trackId: String): List<SegmentView> {
@@ -418,7 +474,7 @@ class SqlTrackStore(
                 current = ArrayList()
                 currentSegment = p.segment
             }
-            current += TrackPoint(p.lat, p.lon, p.ele, p.time, p.extensions)
+            current += pointOf(p.lat, p.lon, p.ele, p.time, p.extensions, p.accuracy, p.speed, p.course, p.vertical_accuracy, p.flags)
         }
         if (current.isNotEmpty()) segments += SegmentView(currentSegment.toInt(), current)
         return segments
@@ -622,7 +678,7 @@ class SqlTrackStore(
     /** The synced state as the tables show it (what the app displays). */
     override fun snapshot(): SyncSnapshot {
         val tracks = q.selectTracks().executeAsList().map { t ->
-            TrackView(t.id, t.created_at, t.name, t.description, t.comment, t.source, t.type, t.extensions, segmentsOf(t.id), Hlc.zero(""))
+            TrackView(t.id, t.created_at, t.name, t.description, t.comment, t.source, t.type, t.extensions, segmentsOf(t.id), Hlc.zero(""), t.activity, t.profile, gaps(t.id))
         }.sortedBy { it.id }
         val waypoints = q.selectVisibleWaypoints().executeAsList().map { w ->
             WaypointView(
@@ -664,5 +720,8 @@ class SqlTrackStore(
     private companion object {
         /** T108: sync_meta `routes` once the route table holds every route with its directions (schema 5); "1" was T60's. */
         const val ROUTES_TABLE = "2"
+
+        /** T158: sync_meta `tracks` once every track row's fields were rewritten from the log (schema 6). */
+        const val TRACKS_TABLE = "6"
     }
 }

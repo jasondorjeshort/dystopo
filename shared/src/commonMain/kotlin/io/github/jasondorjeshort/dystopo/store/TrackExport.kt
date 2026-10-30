@@ -53,7 +53,7 @@ object TrackExport {
      * The points of [tracks] as fixes for a replay at [rate] times real time: a point is due
      * (its time - first time) / rate after the start. Points without a time follow the previous one
      * after [untimedStepMs] / rate. Fixes keep the file's own times (so the recorded track's
-     * durations equal the original's), with [accuracyM] and source "replay". A new segment in the
+     * durations equal the original's), with [accuracyM] (or the point's own, T158) and source "replay". A new segment in the
      * file is not marked in the fixes; the recorder sees one continuous stream.
      */
     fun replay(tracks: List<Track>, rate: Double, accuracyM: Double = 5.0, untimedStepMs: Long = 1000): List<Timed> {
@@ -68,7 +68,8 @@ object TrackExport {
             val at = if (p.time != null && first != null) ((p.time - first) / rate).roundToLong() else lastAt + (untimedStepMs / rate).roundToLong()
             lastAt = maxOf(lastAt, at)
             lastTime = time
-            out += Timed(lastAt, LocationFix(p.lat, p.lon, p.ele, time, accuracyM, "replay"))
+            // T158: a point's own accuracy, speed and course when it has them (an exported recording).
+            out += Timed(lastAt, LocationFix(p.lat, p.lon, p.ele, time, p.accuracyM ?: accuracyM, "replay", p.speedMps, p.courseDeg, p.verticalAccuracyM))
         }
         return out
     }

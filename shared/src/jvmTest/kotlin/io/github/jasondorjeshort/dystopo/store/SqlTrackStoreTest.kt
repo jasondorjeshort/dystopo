@@ -41,13 +41,21 @@ class SqlTrackStoreTest : TrackStoreContract() {
             val fresh = TrackRecorder(second, clock = { 2_000L })
             assertEquals(listOf(id), fresh.recoverInterrupted())
             val s = second.summary(id)!!
-            assertFalse(s.recording)
+            assertTrue(s.recording, "T158: kept open for the restart")
             assertEquals(31, s.points)
             assertEquals(1, s.waypoints)
             assertEquals(before, TrackExport.gpx(second, id))
-            // Appending after the reopen continues the sequence.
-            second.append(id, loopPoints(2).last().copy(time = 9_999_999_999_999L), newSegment = true)
+            // The next fix continues it after a "stopped by the system" gap, which survives another reopen.
+            val last = loopPoints(30).last()
+            assertTrue(fresh.onFix(LocationFix(last.lat, last.lon, last.ele, last.time!! + 600_000, 5.0)))
+            val gap = io.github.jasondorjeshort.dystopo.model.TrackGap(last.time!!, last.time!! + 600_000, io.github.jasondorjeshort.dystopo.model.GapReason.STOPPED_BY_SYSTEM)
             assertEquals(listOf(31, 1), second.track(id)!!.segments.map { it.points.size })
+            drivers.last().close()
+            val third = SqlTrackStore(driver(url))
+            assertEquals(listOf(gap), third.gaps(id))
+            assertEquals(listOf(31, 1), third.track(id)!!.segments.map { it.points.size })
+            assertEquals(5.0, third.track(id)!!.points.last().accuracyM)
+            assertEquals(third.snapshotFromLog(), third.snapshot())
         } finally {
             dir.toFile().deleteRecursively()
         }

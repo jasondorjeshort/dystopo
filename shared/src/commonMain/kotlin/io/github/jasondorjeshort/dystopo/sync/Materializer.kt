@@ -1,10 +1,13 @@
 package io.github.jasondorjeshort.dystopo.sync
 
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RouteDirections
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RoutePlan
 import io.github.jasondorjeshort.dystopo.model.Track
+import io.github.jasondorjeshort.dystopo.model.TrackGap
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
 import io.github.jasondorjeshort.dystopo.model.Waypoint
@@ -25,10 +28,19 @@ data class TrackView(
     val segments: List<SegmentView>,
     /** The newest live operation (for `updatedAt` on a replica that received it). */
     val lastHlc: Hlc,
+    /** T158: the `activity` field as written (an [Activity] code; a newer peer's code stays as text). */
+    val activity: String? = null,
+    /** T158: the `profile` field as written ([ActivityProfile.encode]). */
+    val profile: String? = null,
+    /** T158: the union of the live [AddGap]s, oldest first. */
+    val gaps: List<TrackGap> = emptyList(),
 ) {
     val pointCount: Int get() = segments.sumOf { it.points.size }
 
-    fun toTrack(): Track = Track(id, name, segments.filter { it.points.isNotEmpty() }.map { TrackSegment(it.points) }, description, comment, source, type, extensions)
+    fun toTrack(): Track = Track(
+        id, name, segments.filter { it.points.isNotEmpty() }.map { TrackSegment(it.points) }, description, comment, source, type, extensions,
+        Activity.of(activity), ActivityProfile.decode(profile), gaps,
+    )
 }
 
 /** A waypoint as the log says it is now; [order] sorts the waypoints of a track (the HLC of its first live put). */
@@ -49,6 +61,7 @@ data class WaypointView(val trackId: String?, val waypoint: Waypoint, val order:
  *   append, position in it): a device's own appends are in its HLC order, so a recording keeps its
  *   order. Two appends with the same segment and the same points ([OpCodec.digest]), such as the same
  *   GPX imported on two devices, count once (the older one is kept).
+ * - **Gaps** (T158) are the union of all live [AddGap]s, each distinct gap once, ordered by start, end and reason.
  */
 object Materializer {
     fun tombstone(ops: Collection<Op>): Hlc? = ops.filter { it.body is Delete }.maxOfOrNull { it.hlc }
@@ -80,13 +93,21 @@ object Materializer {
         val live = live(ops)
         val lastPut = live.lastOrNull { it.body is PutTrack }?.body as PutTrack? ?: return null
         val f = lww(EntityKind.TRACK, live) { b ->
-            (b as? PutTrack)?.let { mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "source" to it.source, "type" to it.trackType, "extensions" to it.extensions) }
+            (b as? PutTrack)?.let {
+                // T158: a put replaces every field, so it clears `activity` and `profile` (a recording writes them after its put).
+                mapOf("name" to it.name, "description" to it.description, "comment" to it.comment, "source" to it.source, "type" to it.trackType, "extensions" to it.extensions,
+                    "activity" to null, "profile" to null)
+            }
         }!!
         return TrackView(
             id, lastPut.createdAt, f["name"] ?: "", f["description"], f["comment"], f["source"], f["type"], f["extensions"],
-            segments(live), live.last().hlc,
+            segments(live), live.last().hlc, f["activity"], f["profile"], gaps(live),
         )
     }
+
+    /** T158: the distinct gaps of the live [AddGap]s, ordered by start, end and reason. */
+    fun gaps(live: List<Op>): List<TrackGap> =
+        live.mapNotNull { (it.body as? AddGap)?.gap }.distinct().sortedWith(compareBy({ it.start }, { it.end }, { it.reason.code }))
 
     fun segments(live: List<Op>): List<SegmentView> {
         val seen = HashSet<Pair<Int, String>>()

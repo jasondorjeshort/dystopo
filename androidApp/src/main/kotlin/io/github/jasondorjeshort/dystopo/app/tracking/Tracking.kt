@@ -16,7 +16,8 @@ import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
 import io.github.jasondorjeshort.dystopo.store.LocationFix
-import io.github.jasondorjeshort.dystopo.store.RecorderOptions
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.store.SqlTrackStore
 import io.github.jasondorjeshort.dystopo.store.StoredWaypoint
 import io.github.jasondorjeshort.dystopo.store.TrackExport
@@ -45,7 +46,7 @@ import java.util.concurrent.TimeUnit
  * [INJECTED_PRECEDENCE_MS] after an injected fix, so a replay on an emulator (whose GPS reports a
  * default position) doesn't zigzag between the two.
  *
- * The segment gap ([RecorderOptions.segmentGapMs]) is a setting kept in the `dystopo-tracking`
+ * The segment gap (the recorder profile's [ActivityProfile.gap] time, T158) is a setting kept in the `dystopo-tracking`
  * preferences (`gapS`, 0 = never split); `POST /tracks/settings?gapS=` changes it.
  */
 class Tracking private constructor(private val app: DystopoApp) {
@@ -70,7 +71,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         /** The waypoint the rename/delete sheet is open for. */
         val selectedWaypoint: StoredWaypoint? = null,
         val profile: ProfileView? = null,
-        val gapS: Long = RecorderOptions.DEFAULT_SEGMENT_GAP_MS / 1000,
+        val gapS: Long = ActivityProfile.of(Activity.FOOT).gap.timeMs!! / 1000,
     )
 
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-tracks").apply { isDaemon = true } }
@@ -78,7 +79,7 @@ class Tracking private constructor(private val app: DystopoApp) {
     private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val dbFile: File = app.getDatabasePath(DB_NAME)
     val store: TrackStore = SqlTrackStore(AndroidSqliteDriver(TrackDb.Schema, app, DB_NAME), System::currentTimeMillis) // T44: wall clock under the sync HLC
-    val recorder = TrackRecorder(store, RecorderOptions(segmentGapMs = gapMsOf(prefs.getLong(KEY_GAP_S, RecorderOptions.DEFAULT_SEGMENT_GAP_MS / 1000))), clock = System::currentTimeMillis)
+    val recorder = TrackRecorder(store, clock = System::currentTimeMillis).apply { if (prefs.contains(KEY_GAP_S)) profile = profile.copy(gap = profile.gap.copy(timeMs = gapMsOf(prefs.getLong(KEY_GAP_S, 0)))) }
     val injected = InjectedLocationSource()
     val gps = GpsLocationSource(app)
     val overlay = TrackOverlay()
@@ -192,11 +193,11 @@ class Tracking private constructor(private val app: DystopoApp) {
     fun setGapSeconds(seconds: Long) {
         val s = seconds.coerceAtLeast(0)
         prefs.edit().putLong(KEY_GAP_S, s).apply()
-        call { recorder.options = recorder.options.copy(segmentGapMs = gapMsOf(s)) }
+        call { recorder.profile = recorder.profile.copy(gap = recorder.profile.gap.copy(timeMs = gapMsOf(s))) }
         refreshUi()
     }
 
-    val gapSeconds: Long get() = (recorder.options.segmentGapMs ?: 0L) / 1000
+    val gapSeconds: Long get() = (recorder.profile.gap.timeMs ?: 0L) / 1000
 
     fun show(id: String?): Boolean {
         if (id != null && call { store.summary(id) } == null) return false
