@@ -164,7 +164,7 @@ object AreaDownload {
                 "id" to id, "name" to name, "state" to state, "error" to error, "source" to source, "manifestFrom" to manifestFrom, "serverNote" to serverNote,
                 "planned" to p, "done" to done.get(), "percent" to if (p == 0) null else Math.round(done.get() * 1000.0 / p) / 10.0,
                 "fetched" to fetched.get(), "alreadyCached" to cached.get(), "inPacks" to inPacks.get(), "missing" to missing.get(),
-                "failed" to failed.get(), "invalid" to invalid.get(), "bytes" to bytes.get(), "contourTiles" to contourTiles.get(),
+                "failed" to failed.get(), "invalid" to invalid.get(), "bytes" to bytes.get(), "contours" to contours, "contourTiles" to contourTiles.get(), // T170: contours
                 "rows" to linkedMapOf(
                     "planned" to rowsPlanned.get(), "started" to rowsStarted.get(), "done" to rowsDone.get(), "wholePrefix" to wholePrefix,
                     "current" to rowNow?.json(), "lastWhole" to lastWhole?.json(), "order" to "zoom, route, y, x0",
@@ -333,7 +333,9 @@ object AreaDownload {
         val from = cursor?.takeIf { saved != null && planned === saved }
         planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
-        val j = Job(area.id, label, area, fetcher.server, contours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L }
+        // T170 (T151's follow-up): a download started with contours keeps them on its resume, Retry and Download again.
+        val withContours = contours || old?.contours == true
+        val j = Job(area.id, label, area, fetcher.server, withContours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L }
         job = j
         // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
         // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
@@ -347,6 +349,7 @@ object AreaDownload {
                 state = "downloading", source = fetcher.server, tripId = tripId ?: old?.tripId, bytes = old?.bytes ?: 0L,
                 estimateBytes = old?.estimateBytes ?: 0L, tiles = old?.tiles ?: 0, versions = old?.versions.orEmpty(), // T95: held until it completes
                 downloadMs = old?.downloadMs, cursor = from, cancelled = false, autoResume = resumeState, // T151
+                contours = withContours, // T170
             ),
         )
         Thread({ run(j, fetcher) }, "area-download").apply { isDaemon = true }.start()
