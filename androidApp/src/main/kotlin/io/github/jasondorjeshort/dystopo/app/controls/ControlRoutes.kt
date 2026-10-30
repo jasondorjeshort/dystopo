@@ -18,6 +18,11 @@ import java.util.concurrent.TimeUnit
  *   `compass`, `simulated`, `courseDeg`, `speedMps`, and `compass` with `running`, `fresh`, `trueDeg`),
  *   `lastChange` (from, to, reason: `tap`, `rotateGesture`, `bearingChanged`, `route`, `navCard`, ...),
  *   `lastFollowEnd` (why following stopped: `pan`, `fling`, `cameraMoved`, ...) and counters.
+ *   T162: `openView`, what the map opened at (`OpenView` in `MapViewport.kt`): `won` (`fix`, `saved`, `pack`,
+ *   `deepLink`, `restored`, `world`), `openedAt`, `view`, the three candidates' times `fixAt` (when the fix last moved),
+ *   `savedAt`, `packAt` (epoch ms; 0 for a pack never activated) and the candidates themselves (`fix`, `saved`, `pack`);
+ *   `window`: the fix window after open (`ms`, `state` `open`, `recentred`, `gesture`, `cameraSet`, `cameraMoved`,
+ *   `expired` or `none`, `endedAfterMs`, `fixes`, `recentredTo`); `lastFix` and `savedNow` as stored now, `savedWrites`.
  * - `POST /camera` with query parameters or a JSON body (lat, lon, zoom, bearing, tilt): moves the camera
  *   (in [io.github.jasondorjeshort.dystopo.app.Routes]); like any move that is not ours it stops following, and a
  *   bearing other than north turns north-up into free rotate.
@@ -65,6 +70,7 @@ object ControlRoutes {
             "fixOffsetPx" to app.map.fixOffsetPx()?.let(::round2),
             "orientation" to MapOrientation.json(),
             "recenter" to Recenter.json(app),
+            "openView" to app.map.openViewJson(), // T162
         )
 
     private fun recenter(app: DystopoApp, r: Request): Response {

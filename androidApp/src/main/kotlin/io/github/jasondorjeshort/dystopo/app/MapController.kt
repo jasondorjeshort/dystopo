@@ -193,12 +193,17 @@ class MapController {
             m.uiSettings.isLogoEnabled = false
             m.setMinZoomPreference(3.0)
             m.setMaxZoomPreference(18.0)
-            m.addOnCameraMoveStartedListener { animating = true; lastCameraAt = SystemClock.elapsedRealtime() }
+            m.addOnCameraMoveStartedListener { reason ->
+                animating = true
+                lastCameraAt = SystemClock.elapsedRealtime()
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) endOpenWindow("gesture") // T162
+            }
             m.addOnCameraIdleListener {
                 animating = false
                 lastCameraAt = SystemClock.elapsedRealtime()
                 runCatching { onCameraIdle() } // T41: online mode retries negative-cached tiles, refreshes its credits
                 runCatching { MapViewport.update(m) } // T49: the credit line covers the packs in view
+                runCatching { atRest(m) } // T162: the saved view; a move elsewhere ends the open window
                 runCatching { MapOrientation.onCameraIdle(m) } // T100: a move that was not ours ends following
             }
             MapOrientation.install(m) // T100: pan, fling and rotate gestures; the persisted orientation
@@ -263,6 +268,7 @@ class MapController {
     fun setCamera(lat: Double?, lon: Double?, zoom: Double?, bearing: Double?, tilt: Double?): Map<String, Any?> {
         onMain {
             val m = map ?: throw IllegalStateException("map not ready")
+            endOpenWindow("cameraSet") // T162: a fix after this does not take the camera back
             val c = m.cameraPosition
             val target = LatLng(lat ?: c.target?.latitude ?: 0.0, lon ?: c.target?.longitude ?: 0.0)
             lastCameraAt = SystemClock.elapsedRealtime()
@@ -473,6 +479,8 @@ class MapController {
     private fun onFix(loc: Location) {
         val shown = lastLocation
         lastLocation = loc
+        val recorded = runCatching { LastFix.record(loc) }.getOrNull() // T162: the open view's last fix
+        if (recorded != null) runCatching { openFix(recorded) }
         if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
         // T41: the half-second redraw on a still map was this: GPS and network each report the same fix every
         // second, and every update of the puck's source makes MapLibre draw a frame. Skip fixes that would not
@@ -578,6 +586,96 @@ class MapController {
         )
     }
 
+    // ---- T162: the open view (OpenView in MapViewport.kt) ----
+
+    /** What the map opened at, and what happened to the fix window after it. Main thread writes; any thread reads. */
+    private class Opened(val choice: OpenView.Choice, val atWall: Long, val atElapsed: Long, val windowMs: Long, val fix: LastFix.Fix?, val saved: ViewAt?, val pack: ViewAt?) {
+        @Volatile var window = if (choice.source == OpenView.Source.DEEP_LINK || choice.source == OpenView.Source.RESTORED) "none" else "open"
+        @Volatile var endedAfterMs: Long? = null
+        @Volatile var recentredTo: Map<String, Any?>? = null
+        @Volatile var fixesInWindow = 0
+    }
+
+    @Volatile private var opened: Opened? = null
+
+    /** Where the app itself put the camera (the open view, its recentre, an activated pack's view): a rest there is not saved. */
+    private var placed: ViewAt? = null
+
+    /**
+     * Called by [MainActivity] when it builds the map (main thread): what the camera opens at and the three candidates,
+     * for `GET /camera` `openView`; starts the fix window ([OpenView.recentres]).
+     */
+    fun opened(choice: OpenView.Choice, fix: LastFix.Fix?, saved: ViewAt?, pack: ViewAt?) {
+        val now = System.currentTimeMillis()
+        opened = Opened(choice, now, SystemClock.elapsedRealtime(), OpenView.windowMs(choice.view, now), fix, saved, pack)
+        placed = choice.view
+    }
+
+    /** A rest at this view is the app's own placement (`PackManager.jumpTo` for an activated pack), not saved. Main thread. */
+    fun placedByApp(lat: Double, lon: Double, zoom: Double) {
+        placed = ViewAt(lat, lon, zoom, 0.0, System.currentTimeMillis())
+    }
+
+    private fun endOpenWindow(why: String) {
+        val o = opened ?: return
+        if (o.window != "open") return
+        o.window = why
+        o.endedAfterMs = SystemClock.elapsedRealtime() - o.atElapsed
+    }
+
+    /** T162: a fix in the open window recentres the camera once when it is newer than the open view (main thread). */
+    private fun openFix(fix: LastFix.Fix) {
+        val o = opened ?: return
+        if (o.window != "open") return
+        val since = SystemClock.elapsedRealtime() - o.atElapsed
+        if (since > o.windowMs) { endOpenWindow("expired"); return }
+        o.fixesInWindow++
+        if (!OpenView.recentres(o.choice.view, fix, since, System.currentTimeMillis())) return
+        val m = map ?: return
+        placed = ViewAt(fix.lat, fix.lon, m.cameraPosition.zoom, 0.0, fix.at)
+        lastCameraAt = SystemClock.elapsedRealtime()
+        m.moveCamera(CameraUpdateFactory.newLatLng(LatLng(fix.lat, fix.lon)))
+        o.recentredTo = linkedMapOf("lat" to fix.lat, "lon" to fix.lon, "afterMs" to since)
+        endOpenWindow("recentred")
+    }
+
+    /** T162: the camera came to rest (main thread): saved unless the app put it there; a move away ends the open window. */
+    private fun atRest(m: MapLibreMap) {
+        val c = m.cameraPosition
+        val t = c.target ?: return
+        val p = placed
+        if (p != null && distanceM(p.lat, p.lon, t.latitude, t.longitude) < PLACED_TOLERANCE_M && kotlin.math.abs(p.zoom - c.zoom) < 0.01) return
+        placed = null
+        endOpenWindow("cameraMoved")
+        SavedView.save(ViewAt(t.latitude, t.longitude, c.zoom, c.bearing, System.currentTimeMillis()))
+    }
+
+    /** `GET /camera` `openView`: which candidate won, the three candidates with their times, and the fix window. */
+    fun openViewJson(): Map<String, Any?>? {
+        val o = opened ?: return null
+        fun view(v: ViewAt?) = v?.let { linkedMapOf("lat" to it.lat, "lon" to it.lon, "zoom" to it.zoom, "bearing" to it.bearing, "at" to it.at) }
+        return linkedMapOf(
+            "won" to o.choice.source.json,
+            "openedAt" to o.atWall,
+            "view" to view(o.choice.view),
+            "fixAt" to o.fix?.movedAt, "savedAt" to o.saved?.at, "packAt" to o.pack?.at,
+            "fix" to o.fix?.let { linkedMapOf("lat" to it.lat, "lon" to it.lon, "accuracy" to it.accuracyM, "at" to it.at, "movedAt" to it.movedAt) },
+            "saved" to view(o.saved), "pack" to view(o.pack),
+            "window" to linkedMapOf(
+                "ms" to o.windowMs, "state" to o.window, "endedAfterMs" to o.endedAfterMs,
+                "fixes" to o.fixesInWindow, "recentredTo" to o.recentredTo,
+            ),
+            "lastFix" to LastFix.json(),
+            "savedNow" to view(SavedView.get()), "savedWrites" to SavedView.writes,
+        )
+    }
+
+    private fun distanceM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val out = FloatArray(1)
+        Location.distanceBetween(lat1, lon1, lat2, lon2, out)
+        return out[0].toDouble()
+    }
+
     // ---- T93, T100: recentre (controls/Recenter, controls/MapOrientation) ----
 
     /** T100: our own camera moves (controls/MapOrientation) count as camera activity for [idle]. */
@@ -614,6 +712,9 @@ class MapController {
     fun follow(lat: Double, lon: Double, headingDeg: Double?, zoom: Double? = null) = MapOrientation.followTo(lat, lon, zoom)
 
     companion object {
+        /** T162: a rest this close to where the app put the camera (at the same zoom) is the app's placement, not saved. */
+        const val PLACED_TOLERANCE_M = 1.0
+
         /** How long everything must stay settled before the map counts as idle. */
         const val QUIET_MS = 500L
 

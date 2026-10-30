@@ -111,7 +111,7 @@ class PackManager private constructor(private val app: DystopoApp) {
         app.reload()
         // No contour cache clear (T33): the cache directory is keyed on the DEM pack identity (T26), so another
         // pack never sees these tiles, and clearing here deleted the tiles the new service's warm-up had just made.
-        val camera = if (moveCamera) pack.info.bounds?.let { jumpTo(it) } else null
+        val camera = if (moveCamera) pack.info.bounds?.let { jumpTo(it, activated = name) } else null
         Log.i(TAG, "activated pack $name (was $previous)")
         return linkedMapOf("active" to activeName(), "previous" to previous, "camera" to camera, "pack" to pack.json(true))
     }
@@ -119,15 +119,24 @@ class PackManager private constructor(private val app: DystopoApp) {
     /**
      * Moves the camera to show [b], if the map is up. Returns the camera asked for, or null. T144: the move is posted to
      * the UI thread (after a style swap posted before it), not awaited; the view's size is read from its fields.
+     *
+     * T162: with [activated] (the pack just made primary) this is the pack's view of the open view (`OpenView`): its
+     * activation time is stored (`PackView`) and the camera's rest there is not saved as the user's view.
      */
-    fun jumpTo(b: PackBounds): Map<String, Any?>? {
+    fun jumpTo(b: PackBounds, activated: String? = null): Map<String, Any?>? {
         val view = app.map.mapView ?: return null
         return try {
             val w = view.width
             val h = view.height
             val density = view.resources.displayMetrics.density
             val zoom = (if (w > 0 && h > 0) b.fitZoom(w / density.toDouble(), h / density.toDouble(), 512.0, 24.0) else 10.0).coerceIn(3.0, 16.0)
-            main.post { runCatching { app.map.setCamera(b.centerLat, b.centerLon, zoom, 0.0, 0.0) }.onFailure { Log.w(TAG, "camera jump failed", it) } }
+            if (activated != null) io.github.jasondorjeshort.dystopo.app.PackView.activated(activated) // T162
+            main.post {
+                runCatching {
+                    app.map.setCamera(b.centerLat, b.centerLon, zoom, 0.0, 0.0)
+                    if (activated != null) app.map.placedByApp(b.centerLat, b.centerLon, zoom) // T162
+                }.onFailure { Log.w(TAG, "camera jump failed", it) }
+            }
             linkedMapOf("lat" to b.centerLat, "lon" to b.centerLon, "zoom" to zoom, "bearing" to 0.0, "tilt" to 0.0, "posted" to true)
         } catch (e: Exception) {
             Log.w(TAG, "camera jump failed", e)
@@ -166,7 +175,7 @@ class PackManager private constructor(private val app: DystopoApp) {
         io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(name) // T49
         // T41: and its contour tiles (no DEM file on the device has that identity any more).
         app.collectContourGarbage()
-        if (wasActive) app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h)) }
+        if (wasActive) app.tiles.packs.dem?.header?.let { h -> jumpTo(PackBounds.of(h), activated = activeName()) } // T162: the next primary's view
         files.forEach { archiveCache.remove(it.path) }
         return linkedMapOf(
             "deleted" to deleted, "downloadCancelled" to cancelled, "wasActive" to wasActive, "wasInUse" to wasInUse,

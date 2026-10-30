@@ -1,8 +1,8 @@
 ---
 date: 2026-10-28
-status: open
+status: resolved (T162)
 area: android / map camera / location
-promoted_to:
+promoted_to: docs/reference/android-app.md (The open view)
 ---
 
 # On a cold open the camera shows the first pack's view, not the location fix
@@ -12,7 +12,7 @@ promoted_to:
 The owner reports that the map's centring on app open is wrong (owner, 2026-10-28, next wave; TASKS.md › the
 "Map centring on app open" bullet). What does the camera do on a cold start, and what is the location fix at that moment?
 
-## Findings
+## What was tried
 
 Measured on the owner's phone (Android, the debug build signed with the release key, `0.1.0-dev`), on 2026-10-28,
 through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POST /camera/recenter`; procedure in
@@ -34,7 +34,7 @@ through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POS
   `MainActivity`'s `MapScreen`. The next relaunch with no injected fix did not crash (0 crashes in its log buffer).
   Not reproduced twice.
 
-## Code reading (2026-10-28, not yet a fix)
+### Code reading (2026-10-28)
 
 - **Where the cold-open camera comes from.** `MainActivity.onCreate` (`app/MainActivity.kt:55-60`) starts the map at the
   centre of the active DEM pack's header box, zoom 12.0. Unless the launch carries a `dystopo://map` link (`DeepLink.camera`),
@@ -51,17 +51,33 @@ through the debug routes (`GET /camera`, `GET /location`, `POST /location`, `POS
   reads it on the main thread. The check: find the first touch on a relaunch that crashes (a stack at `MapViewport.<init>`
   or the first `bounds` read) and whether it is off the main thread.
 
-## Not yet known
+### The crash on the emulator (T162, 2026-10-30)
 
-- (Decided, owner 2026-10-28: the open view is the most recent of the last fix, the last saved view and the pack's view,
-  whichever was set last. Not yet checked: whether a saved view exists today and where the time of each of the three is kept.)
-- Whether a fresh GPS fix at launch (a real device fix, not injected) would move the camera on open. Only injected fixes
-  were tested.
-- Whether the start-up crash repeats, and what first touches `MapViewport` when it does.
+- With a log line at `MapViewport`'s first touch, 25 launches of a fresh API 35 emulator with the Rainier packs (17 of
+  them after an injected fix) all made the state in the first composition on the main thread (`AttributionLine`,
+  inside the composition's snapshot): no crash.
+- With the caches over their budget at launch (a 1.1 GB file in the cache's `sources` folder, as a phone with full
+  caches has), 6 of 6 relaunches made it first on the `cache-budget` thread, in the global snapshot, from
+  `CacheBudget`'s eviction pass (`BudgetEngine.enforce` > `CacheGuard.predicate` > `viewBox` > `MapViewport.<clinit>`).
+  On the emulator that ran before the first composition began, so it did not crash; with a larger cache index to walk
+  first it lands later, which on the phone can be during the first composition.
+- A unit test (`MapViewportTest`) reproduces the reported message in the Compose runtime the app ships: state made on
+  another thread while a composition's snapshot is open is unreadable in that snapshot ("Reading a state that was
+  created after the snapshot was taken").
 
-## Next
+## Result
 
-1. The centring task (TASKS.md, next wave) builds the owner's rule: the most recent of the last fix, the saved view and the pack's view.
-2. The crash: a reproduction on the phone (relaunch after an injected fix, several times) with the first `MapViewport` touch
-   logged, or a task that makes `MapViewport`'s state created on the main thread.
-3. The centring task's before-and-after readings come from the debug routes above, in its report.
+- **The crash** is the hypothesis, confirmed in its specific form: `MapViewport`'s Compose state was made by whichever
+  thread touched the object first; with the caches over budget at launch that is `CacheBudget`'s thread, and when that
+  falls inside the first composition the composition cannot read it. Fixed in T162: the state is made by
+  `MapViewport.prepare()` on the main thread in `MainActivity.onCreate` before `setContent`, and every reader off the
+  main thread (`DirectSources`, `CacheBudget`, `AppCredits.mapLine` for `GET /attribution`) reads a plain volatile
+  copy, `MapViewport.current`. After the fix: 20 relaunches after injected fixes, 10 of them with the caches over
+  budget, no `IllegalStateException` and no crash.
+- **The open view** follows the owner's rule: the newest of the last fix (persisted, `LastFix.kt`), the saved view and
+  the primary pack's view, a link first, a fix in the first 10 s after open recentring once (60 s when the open view
+  is a week old). Before T162 a relaunch after an injected fix opened at the pack's centre at zoom 12 (the emulator:
+  the Rainier pack's middle, the fix not kept); after it the camera opened on the fix (0 m) with `openView.won: fix`,
+  on Sunrise after a move there (`saved`) and on the pack after activating another (`pack`). The rule and its numbers:
+  `../reference/android-app.md` › The open view.
+- Not measured: a real device fix at launch on the owner's phone; the phone's numbers come with the next alpha.

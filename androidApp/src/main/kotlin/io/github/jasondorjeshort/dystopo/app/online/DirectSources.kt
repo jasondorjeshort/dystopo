@@ -633,13 +633,13 @@ class DirectSources(private val context: android.content.Context, private val ca
 
     /** True when contour tile zoom [z] is the view's own zoom or MapLibre's fallback zoom (true while the view is not known). */
     fun atViewZoom(z: Int): Boolean {
-        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds ?: return true
+        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.current ?: return true // T162: tile threads read the plain copy
         return viewZoom(v).let { z == it || z == it - PREFETCH_ZOOM_DELTA }
     }
 
     /** Whether the view needs DEM tile [t] for contour tile zoom [contourZoom] (see [contourWindow]); true while the view is not known. */
     private fun wanted(t: TileId, contourZoom: Int, core: Boolean): Boolean {
-        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds ?: return true
+        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.current ?: return true // T162: tile threads read the plain copy
         // The view's own contour zoom, and the zoom MapLibre loads four levels up as a fallback while the view's tiles come in.
         if (core && atViewZoom(contourZoom)) return true
         return inView(t)
@@ -655,7 +655,7 @@ class DirectSources(private val context: android.content.Context, private val ca
 
     /** True when tile [t] overlaps the map's view (true while the view is not known yet). */
     private fun inView(t: TileId): Boolean {
-        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds ?: return true
+        val v = io.github.jasondorjeshort.dystopo.app.MapViewport.current ?: return true // T162: tile threads read the plain copy
         val west = WebMercator.xToLon(t.x.toDouble(), t.z)
         val east = WebMercator.xToLon(t.x + 1.0, t.z)
         val north = WebMercator.yToLat(t.y.toDouble(), t.z)

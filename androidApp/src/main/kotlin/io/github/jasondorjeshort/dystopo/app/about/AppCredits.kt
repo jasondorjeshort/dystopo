@@ -61,7 +61,7 @@ object AppCredits {
         compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view) // T80: the About screen lists every source the phone reads
 
     /** T49: the map's credit line, for the packs in the current view ([MapViewport]). */
-    fun mapLine(app: DystopoApp = DystopoApp.instance): Credits = compose(app, MapViewport.bounds)
+    fun mapLine(app: DystopoApp = DystopoApp.instance): Credits = compose(app, MapViewport.current) // T162: read off the main thread (`GET /attribution`)
 
     /** First `href` in a registry HTML credit: the source's home page, for a link on the About screen. */
     fun homePage(attributionHtml: String): String? = Regex("href=\"([^\"]+)\"").find(attributionHtml)?.groupValues?.get(1)

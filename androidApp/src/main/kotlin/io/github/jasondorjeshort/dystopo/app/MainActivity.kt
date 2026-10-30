@@ -48,14 +48,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val tiles = app.tiles
-        val dem = tiles.packs.dem?.header
-        // Start over the middle of the DEM pack (a public test area such as Rainier), else a world view.
-        val start = DeepLink.camera(intent) ?: if (dem != null) { // T55: dystopo://map?lat=&lon=&z= wins
-            CameraPosition.Builder()
-                .target(LatLng((dem.minLat + dem.maxLat) / 2, (dem.minLon + dem.maxLon) / 2))
-                .zoom(12.0).build()
-        } else CameraPosition.Builder().target(LatLng(0.0, 0.0)).zoom(1.0).build()
+        MapViewport.prepare() // T162: its Compose state, on the main thread before the first composition
+        val start = startCamera(savedInstanceState)
         mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
         mapView.onCreate(savedInstanceState)
         app.map.activity = this
@@ -94,6 +88,35 @@ class MainActivity : ComponentActivity() {
 
     private class Shown(val attribution: String, val message: String?)
 
+    /**
+     * T162: the camera the map opens at ([OpenView]): a `dystopo://map` link first (T55), then the camera MapLibre
+     * restores for a recreated activity, else the newest of the last fix, the saved view and the primary pack's view
+     * (its box fitted to the screen, as activating it shows), else a world view. Tells [MapController.opened].
+     */
+    private fun startCamera(savedInstanceState: Bundle?): CameraPosition {
+        DeepLink.camera(intent)?.let { link ->
+            val t = link.target
+            app.map.opened(OpenView.Choice(OpenView.Source.DEEP_LINK, t?.let { ViewAt(it.latitude, it.longitude, link.zoom, link.bearing, System.currentTimeMillis()) }), null, null, null)
+            return link
+        }
+        val fix = runCatching { LastFix.get() }.getOrNull()
+        val saved = runCatching { SavedView.get() }.getOrNull()
+        val pack = runCatching { packView() }.getOrNull()
+        val choice = if (savedInstanceState != null) OpenView.Choice(OpenView.Source.RESTORED, null) else OpenView.choose(fix, saved, pack)
+        app.map.opened(choice, fix, saved, pack)
+        val v = choice.view ?: ViewAt(0.0, 0.0, WORLD_ZOOM, 0.0, 0L)
+        return CameraPosition.Builder().target(LatLng(v.lat, v.lon)).zoom(v.zoom).bearing(v.bearing).build()
+    }
+
+    /** The primary pack's view: its box fitted to the screen (as `PackManager.jumpTo` shows it), at its activation time. */
+    private fun packView(): ViewAt? {
+        val packs = app.tiles.packs
+        val b = io.github.jasondorjeshort.dystopo.packs.PackBounds.of(packs.dem?.header ?: return null)
+        val m = resources.displayMetrics
+        val zoom = b.fitZoom(m.widthPixels / m.density.toDouble(), m.heightPixels / m.density.toDouble(), 512.0, 24.0).coerceIn(3.0, 16.0)
+        return ViewAt(b.centerLat, b.centerLon, zoom, 0.0, io.github.jasondorjeshort.dystopo.app.PackView.activatedAt(packs.name))
+    }
+
     private fun attribution(tiles: TileService): String {
         val packs = tiles.packs
         // Pack metadata holds HTML (`&copy; OpenStreetMap`); the overlay shows plain text. T41: every pack on the map.
@@ -125,6 +148,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        SavedView.flush() // T162: a view still waiting for its write
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(false) // T100: no compass in the background
         if (Foreground.activityStopped()) app.map.setForeground(false) // T150: no device fixes and no polling in the background
         mapView.onStop()
@@ -150,6 +174,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         /** T79: the three ways to a map, all in the app (the first-run card has them as buttons). */
+        /** T162: the world view with no pack, no fix and no saved view (the map's minimum zoom). */
+        const val WORLD_ZOOM = 3.0
+
         const val NO_PACK = "No region pack. Download the map around you or choose a pack from your server (set it in Settings › Sources), or import pack files (Packs)."
     }
 }
