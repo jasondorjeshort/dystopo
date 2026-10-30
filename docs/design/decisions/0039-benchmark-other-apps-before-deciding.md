@@ -65,6 +65,13 @@ corridor), so the rule is written before they start.
 
 - Prediction, check when wave 18 closes: the owner adjusts fewer of wave 18's user-facing changes
   after merge than wave 17's (T122's three strings and the 1.5 cap were all owner adjustments).
+  Outcome 2026-10-30 (checked at the close of wave 22, the triage scan of 2026-10-29): undecidable
+  from the record. No post-merge adjustment is written down for either wave: the log and the Status
+  lines record T122's cap and help texts and T130's 1 km corridor as the owner's calls at merge, no
+  later commit changes them, and Owner actions pending names no wave 17 or 18 string. An adjustment
+  made in chat and never written down cannot be counted, so the measure needs the owner's
+  adjustments on the board or in the log (the Owner actions pending line asks for them as a message
+  or an edit; a message must then be logged). The second prediction, by 2027-01-23, stands as the operative check.
 - Prediction, check by 2027-01-23: every proposal written since this date has a filled `## Prior
   art` section, and no task PR has picked a user-facing default without citing a survey or an
   earlier decision.

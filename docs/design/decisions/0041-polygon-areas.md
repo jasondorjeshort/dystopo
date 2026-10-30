@@ -108,6 +108,9 @@ boundary can be read from the tiles.
    coarse for a county), the polygons kept whole where a name search can reach them (a server
    index or a per-region boundary pack; the tiles cannot serve it), simplification within the
    writer's budget with the tolerance in the buffer, and a buffer. The format carries it unchanged.
+   Trigger fired 2026-10-30 (the first polygon build shipped with T140 in wave 20; noted at the
+   close of wave 22): the search is not built; it waits on the board's Later entry for a boundary
+   source with a licence and a registry entry, where wave 18 put it.
 
 Rejected: a polygon that degrades to a box (`kind: box` plus a `ring` hint: a format that lies
 about its kind, and the same trick again for holes); everything as a polygon (every existing id
@@ -133,6 +136,12 @@ older build); accepting the one-time downgrade loss (a silent drop, ADR 0033 §3
   when the boundary search lands (its source, index and buffer rule), or when areas are synced
   between phones (the opaque `area` object then needs a sync rule).
 - Prediction, check when the first polygon build ships: a v0.1.10 phone that reads its `areas.json`
-  after that build has written polygon records keeps every box and corridor area it had.
+  after that build has written polygon records keeps every box and corridor area it had. Outcome
+  2026-10-30: held by construction, checked at the close of wave 22 (the triage scan of 2026-10-29).
+  T140 (wave 20, v0.1.12-alpha, merge d268446) kept `areas.json` at exactly what v0.1.10 reads and
+  wrote polygons to the sibling `areas2.json`, so a version-1 reader never meets a polygon record;
+  `PolygonAreasTest` reads that release's fixture back byte-equal with no sibling, and after a polygon
+  is added the main file still equals the v0.1.10 text. Not tried: a real v0.1.10 install reading
+  the post-polygon files; its behaviour rests on the byte-equal fixture.
 - Prediction, check by 2027-04-23: no reader-side cap on the polygon's vertices or the disc's
   radius has been raised in a version step; the boundary step, if built, fitted the writer's budget.

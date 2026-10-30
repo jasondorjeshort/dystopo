@@ -66,6 +66,11 @@ spoken directions (T126) and the cache budget (ADR 0034) are settings made this 
 
 - Prediction, check when wave 21 closes: every wave 20 and 21 report names the research behind each
   open choice (user-facing or technical) or the decision that settled it, and every setting added
-  says why it is a setting.
+  says why it is a setting. Outcome 2026-10-30 (checked at the close of wave 22, the triage scan of
+  2026-10-29): held for settings, none having been added in either wave; failed for citations, three
+  of eighteen reports (T149, T153, T143) choosing without naming the research, which sat in the wave
+  paragraphs and the briefs; finding
+  `docs/findings/2026-10-30-reports-leave-the-research-in-the-wave-paragraph.md`, the implementer
+  brief's report line now asks for it.
 - Prediction, check by 2027-01-25: the owner removes or merges fewer than one in four of the settings
   added under this ADR.

@@ -38,5 +38,7 @@ background sleep or monitor loop, and leave nothing of yours running when you re
 wakes you again and the coordinator reads each wake as a new result).
 
 Report to the coordinator: the branch's head SHA, what was run and seen (numbers, screenshots
-described, public places only), every edit outside Owns, follow-ups, what is not done, anything you
-could not place. Under 40 lines; it is pasted into the merge commit.
+described, public places only), the research or decision behind each open choice you faced and the
+reason for each setting you added (ADR 0044; the report, not the wave paragraph, is the record), every
+edit outside Owns, follow-ups, what is not done, anything you could not place. Under 40 lines; it is
+pasted into the merge commit.
