@@ -16,11 +16,24 @@ package io.github.jasondorjeshort.dystopo.areas
  *
  * T152: a cover is [TileSet]s, so rows: every pinned area is held for the app's life at a cost of its tile rows (a few
  * thousand for a country at z15), not its tiles; [contains] is a hash lookup of the row and a binary search of its spans.
+ *
+ * T170 (T157's follow-up): a cover may carry an elevation cap ([demTops], one per cover, null for none: a medium-detail
+ * area's `demMaxZoom`), so the elevation tiles (route [AreaManifest.ROUTE_DEM]) deeper than the cap are not its own:
+ * browsing at z14 inside a medium area fetches DEM z14 tiles the area never asked for, and they stay evictable. Every
+ * other route (vector, the contours and shading made from the DEM) keeps the cover's zooms.
  */
-class AreaPins(covers: List<Map<Int, TileSet>>, versions: List<Map<String, Map<String, String>>> = emptyList()) {
-    private class Cover(val sets: Map<Int, TileSet>, val versions: Map<String, Map<String, String>>) {
+class AreaPins(
+    covers: List<Map<Int, TileSet>>,
+    versions: List<Map<String, Map<String, String>>> = emptyList(),
+    demTops: List<Int?> = emptyList(),
+) {
+    private class Cover(val sets: Map<Int, TileSet>, val versions: Map<String, Map<String, String>>, val demTop: Int?) {
         val maxZoom = sets.keys.maxOrNull() ?: -1
         val minZoom = sets.keys.minOrNull() ?: 0
+
+        /** T170: [contains] for a tile of [route]: an elevation tile past [demTop] is not this cover's. */
+        fun holdsRoute(route: String?, z: Int, x: Int, y: Int): Boolean =
+            (demTop == null || route != AreaManifest.ROUTE_DEM || z <= demTop) && contains(z, x, y)
 
         fun contains(z: Int, x: Int, y: Int): Boolean {
             if (maxZoom < 0) return false
@@ -33,7 +46,7 @@ class AreaPins(covers: List<Map<Int, TileSet>>, versions: List<Map<String, Map<S
         }
     }
 
-    private val covers = covers.mapIndexed { i, c -> Cover(c, versions.getOrNull(i).orEmpty()) }.filter { it.maxZoom >= 0 }
+    private val covers = covers.mapIndexed { i, c -> Cover(c, versions.getOrNull(i).orEmpty(), demTops.getOrNull(i)) }.filter { it.maxZoom >= 0 }
 
     /** Source key to content name to the versions some cover holds. */
     private val held: Map<String, Map<String, Set<String>>> = buildMap<String, MutableMap<String, MutableSet<String>>> {
@@ -52,7 +65,8 @@ class AreaPins(covers: List<Map<Int, TileSet>>, versions: List<Map<String, Map<S
         val parts = key.split('/')
         if (parts.size >= 2 && parts[1].substringBefore('@') == "glyphs") return true // T74: routes may carry a content version
         val (z, x, y) = tileOf(key) ?: return false
-        return contains(z, x, y)
+        val route = parts[1].substringBefore('@') // T170: the elevation cap of a capped cover
+        return covers.any { it.holdsRoute(route, z, x, y) }
     }
 
     /** T95: the versions of content [name] (`dem`, `osm`) of [source] (a cache key) that pinned covers were fetched at. */
@@ -60,7 +74,7 @@ class AreaPins(covers: List<Map<Int, TileSet>>, versions: List<Map<String, Map<S
 
     /** T95: true when a cover fetched at [version] of content [name] from [source] holds tile z/x/y. */
     fun holds(source: String, name: String, version: String, z: Int, x: Int, y: Int): Boolean =
-        covers.any { it.versions[source]?.get(name) == version && it.contains(z, x, y) }
+        covers.any { it.versions[source]?.get(name) == version && it.holdsRoute(name, z, x, y) } // T170: `dem` past a cap is not held
 
     companion object {
         val NONE = AreaPins(emptyList())

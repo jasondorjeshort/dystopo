@@ -161,6 +161,24 @@ class AreasTest {
     }
 
     @Test
+    fun aMediumAreaPinsNoElevationPastItsCap() { // T170 (T157's follow-up)
+        val medium = corridor.at(AreaDetail.MEDIUM)
+        val src = "sources"
+        val pins = AreaPins(listOf(AreaPins.cover(medium)), listOf(mapOf(src to mapOf("dem" to "v1"))), listOf(medium.demMaxZoom))
+        val (x, y) = tileOf(46.80, -121.7355, 14)
+        assertTrue(pins.isPinned("$src/dem/13/${x shr 1}/${y shr 1}.png"), "elevation to the cap")
+        assertFalse(pins.isPinned("$src/dem/14/$x/$y.png"), "no elevation z14 in a medium area")
+        assertFalse(pins.isPinned("$src/dem@v1/15/${2 * x}/${2 * y}.png"), "nor deeper")
+        assertTrue(pins.isPinned("$src/osm/14/$x/$y.pbf"), "vector to z14")
+        assertTrue(pins.isPinned("$src/contours-v9-ft-512/14/$x/$y.pbf"), "the contours made on the phone keep the area's zooms")
+        assertTrue(pins.holds(src, "dem", "v1", 13, x shr 1, y shr 1))
+        assertFalse(pins.holds(src, "dem", "v1", 14, x, y))
+        // Another cover over the same tiles without a cap (a full area) still pins them; without caps nothing changes.
+        assertTrue(AreaPins(listOf(AreaPins.cover(medium), AreaPins.cover(corridor)), demTops = listOf(13, null)).isPinned("$src/dem/14/$x/$y.png"))
+        assertTrue(AreaPins(listOf(AreaPins.cover(medium))).isPinned("$src/dem/14/$x/$y.png"))
+    }
+
+    @Test
     fun manifestVersionsRoundTripAndAreLeftOutWhenUnknown() { // T95
         val tiles = AreaManifest.tileItems(corridor, 6..15, 8..14)
         val m = AreaManifest(corridor.id, "test", corridor, AreaManifest.STATUS_READY, tiles, versions = mapOf("osm" to "b1.0", "dem" to "best-v2.aaaa1111"))

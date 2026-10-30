@@ -396,7 +396,8 @@ object Areas : VersionPins {
             transient.values.map { it.first }
         val same = covers == pinCovers
         pinCovers = covers
-        current = AreaPins(covers, pinned.map { it.versions } + transient.values.map { it.second }) // T95: with the versions
+        // T95: with the versions; T170: and a medium area's elevation cap (DEM tiles past it are not pinned).
+        current = AreaPins(covers, pinned.map { it.versions } + transient.values.map { it.second }, pinned.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } })
         if (!same) onPinsChanged?.let { hook -> Thread(hook, "areas-recount").apply { isDaemon = true }.start() }
         list = all
         if (save) runCatching {

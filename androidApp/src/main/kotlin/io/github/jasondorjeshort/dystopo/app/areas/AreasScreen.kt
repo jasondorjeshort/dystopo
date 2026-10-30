@@ -211,7 +211,7 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
         }
         val share = (cov?.get("share") as? Number)?.toDouble()
         BasicText(
-            "$kind · z${r.area.minZoom}-${r.area.maxZoom} · ${r.state}",
+            "$kind · ${zoomText(r.area)} · ${r.state}", // T170: with the elevation cap of a medium area
             style = TextStyle(color = Ink, fontSize = 13.sp),
         )
         BasicText(
@@ -531,3 +531,10 @@ internal fun polygonParts(rings: List<List<AreaPoint>>): List<Pair<List<AreaPoin
     }
     return outers.map { rings[it] to holes.getValue(it).toList() }
 }
+
+/**
+ * T170 (T157's follow-up; ADR 0031, the owner's words to adjust): an area card's zooms, "z8-15", and for an area whose
+ * elevation stops below its deepest zoom (the medium detail) "z8-14, elevation to z13". Pure, tested.
+ */
+internal fun zoomText(area: io.github.jasondorjeshort.dystopo.areas.AreaOfInterest): String =
+    "z${area.minZoom}-${area.maxZoom}" + (area.demMaxZoom?.let { ", elevation to z$it" } ?: "")
