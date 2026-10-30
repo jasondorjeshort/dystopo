@@ -1,7 +1,7 @@
 ---
 date: 2026-10-25
 kind: feature
-related: [2026-10-13-battery-efficiency.md, 2026-10-25-live-velocity-readout-by-travel-mode.md, 2026-10-29-route-times-fitted-to-your-tracks.md, 2026-10-29-trail-corrections-from-tracks.md]
+related: [2026-10-13-battery-efficiency.md, 2026-10-25-live-velocity-readout-by-travel-mode.md, 2026-10-29-route-times-fitted-to-your-tracks.md, 2026-10-29-trail-corrections-from-tracks.md, 2026-10-29-terrain-matched-position-without-gps.md]
 ---
 
 # Track activity profiles, and a recorder that survives bad GPS

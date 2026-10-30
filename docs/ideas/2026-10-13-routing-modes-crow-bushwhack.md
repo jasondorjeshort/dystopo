@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-related: [2026-10-13-route-waypoints-and-reroute.md, 2026-10-29-route-times-fitted-to-your-tracks.md]
+related: [2026-10-13-route-waypoints-and-reroute.md, 2026-10-29-route-times-fitted-to-your-tracks.md, 2026-10-29-streams-from-the-dem.md]
 ---
 
 # Crow and bushwhacking routing modes

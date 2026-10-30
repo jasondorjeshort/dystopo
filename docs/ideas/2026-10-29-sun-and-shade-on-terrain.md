@@ -1,7 +1,7 @@
 ---
 date: 2026-10-29
 kind: feature
-related: [2026-10-29-viewshed-and-peak-labels.md]
+related: [2026-10-29-viewshed-and-peak-labels.md, 2026-10-29-turn-around-clock.md]
 ---
 
 # Sun and shade on the real terrain

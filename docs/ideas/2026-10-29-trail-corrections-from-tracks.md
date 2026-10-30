@@ -1,7 +1,7 @@
 ---
 date: 2026-10-29
 kind: feature
-related: [2026-10-23-osm-trace-upload.md, 2026-10-25-track-activity-profiles-and-dropout-handling.md]
+related: [2026-10-23-osm-trace-upload.md, 2026-10-25-track-activity-profiles-and-dropout-handling.md, 2026-10-29-trail-conditions-phone-to-phone.md]
 ---
 
 # The map learns where its trails are wrong from your tracks

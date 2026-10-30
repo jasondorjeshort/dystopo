@@ -1,6 +1,7 @@
 ---
 date: 2026-10-29
 kind: feature
+related: [2026-10-29-trail-conditions-phone-to-phone.md]
 ---
 
 # A group sees each other's positions with no signal

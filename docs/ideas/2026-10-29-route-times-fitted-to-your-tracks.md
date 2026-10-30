@@ -1,7 +1,7 @@
 ---
 date: 2026-10-29
 kind: feature
-related: [2026-10-13-routing-modes-crow-bushwhack.md, 2026-10-25-live-velocity-readout-by-travel-mode.md, 2026-10-25-track-activity-profiles-and-dropout-handling.md]
+related: [2026-10-13-routing-modes-crow-bushwhack.md, 2026-10-25-live-velocity-readout-by-travel-mode.md, 2026-10-25-track-activity-profiles-and-dropout-handling.md, 2026-10-29-turn-around-clock.md]
 ---
 
 # Route times fitted to your own tracks

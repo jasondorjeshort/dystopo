@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-related: [2026-10-13-spoken-directions-and-detail-levels.md]
+related: [2026-10-13-spoken-directions-and-detail-levels.md, 2026-10-29-terrain-matched-position-without-gps.md]
 ---
 
 # Battery: a doctrine of highest efficiency, and a low-battery mode

@@ -1,7 +1,7 @@
 ---
 date: 2026-10-13
 kind: feature
-related: [2026-10-13-routing-modes-crow-bushwhack.md, 2026-10-13-spoken-directions-and-detail-levels.md]
+related: [2026-10-13-routing-modes-crow-bushwhack.md, 2026-10-13-spoken-directions-and-detail-levels.md, 2026-10-29-turn-around-clock.md]
 ---
 
 # "Route to": a destination, waypoints, reroute, in every mode
