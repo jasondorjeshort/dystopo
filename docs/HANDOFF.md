@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-28, at commit f177758 plus this edit, by main session (wave 21 closed: nine of nine merged, v0.1.14-alpha published)
+Updated: 2026-10-29, at commit 3b30b84 plus this edit, by main session (ADR 0048 built by hand; wave 22 not yet planned)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 21 and Later.
 
 ## Now
@@ -11,21 +11,22 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   (9830d8d), T157 (f177758). **v0.1.14-alpha is published** (2026-10-28, from 965910c, before T157; built locally by
   the `release` skill's fallback because the repository has no `RELEASE_*` secrets; verified and installed from the
   draft). T157 (the middle detail tier, a version-3 record format) is on main unreleased and ships with the next alpha.
-- The post-wave sweep was T154's (`out/sweep-w21/`, green but `notices`, fixed on its branch). A cleanup chore for
-  T157's branch and worktree was the last agent; nothing is in flight. Merge drafts: `%TEMP%/dystopo-wave21/`;
-  research and the critic review: the gitignored `out/wave21-research/`.
-- Usage gate: the weekly hold is 100 (`policy.json`); the 7-day meter read 98% at the close and resets 2026-10-30
-  about 04:00 UTC. No new wave before the reset.
-- Machine (`machines.md`, the second PC): 3 GB emulators, at most three, Gradle `--no-daemon`, the live viewer on 8765;
-  the owner's phone is on wireless adb, so agents address only their emulator by serial; no `devtool.local.json`.
+- The post-wave sweep was T154's (`out/sweep-w21/`, green but `notices`, fixed on its branch). Nothing is in flight.
+  Merge drafts: `%TEMP%/dystopo-wave21/`; research and the critic review: the gitignored `out/wave21-research/`.
+- **ADR 0048 is in** (2026-10-29, the coordinator's hand on `main`): waves sized by whole cost with an allowance
+  sentence in the wave paragraph; an optional **Interacts with:** line per task, a crossing scenario for its verifier.
+- Usage gate: the weekly hold is 100 (`policy.json`); the 7-day meter reset on 2026-10-30 and read 2% after it.
+- Machine (`machines.md`, the second PC): 3 GB emulators, at most three, Gradle `--no-daemon`, viewer on 8765; the
+  owner's phone is on wireless adb, so agents address only their emulator by serial; no `devtool.local.json`.
 
 ## Next
 
 1. Plan wave 22 (`wave` skill, critic first), **hiking features** (owner, 2026-10-29; order is the coordinator's):
    the recorder with activity profiles, the live readout, centring on open, the hiking `Plan:` ideas (triaged
    2026-10-29); plus the wave 21 follow-ups (TASKS › Later, the T149 to T157 Status lines; the routing graph
-   proposal first) and the owner's phone results.
-2. A Hatchery-rooted session (carry-backs, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR
+   proposal first), the closed-waves idea (step A a task, step B a chore after it) and the owner's phone results.
+   The wave paragraph carries the first allowance sentence (ADR 0048).
+2. A Hatchery-rooted session (carry-backs, ADR 0048's included, the ownership idea, ADR 0021's follow-ups, the second base update; the ADR
    for T144's reference counting); ADR 0040's and 0042's build tasks after the owner.
 
 ## Waiting on user

@@ -11,6 +11,8 @@ Machine facts for this run: make your own detached worktree,
 worktree holds the branch, and a local branch of your own would survive the cleanup chore);
 `JAVA_HOME=<jdk>`, `DYSTOPO_CACHE=<main>\cache`. Your ports: <...>; your emulator: <AVD, console
 port, host port, or "none">.
+Interacts with: <Tmm, its merge SHA from its Status line or "not merged", the files of the shared
+mechanism, the crossing scenario, or "none">.
 
 1. If `main` moved since the branch forked: `git fetch && git rebase origin/main`; on success push with
    `git push --force-with-lease origin HEAD:task/Tnn` (the only force push allowed). A conflict you
@@ -18,10 +20,15 @@ port, host port, or "none">.
 2. `./gradlew check`.
 3. Repeat the report's key runs (<list them>) and view every PNG and screenshot they produce.
 4. Check each Done-when item: <the Done-when line>.
-5. Review the branch (`git log origin/main..HEAD`, `git diff origin/main...HEAD`) for correctness,
+5. When the task carries an **Interacts with:** line and Tmm has merged: read Tmm's change to the
+   mechanism (`git show <sha> -- <its files>`) and run the crossing scenario from the brief, or one
+   you design from the two Goals when the brief gives none, saying which; a wrong result is FIX, and
+   the report names the scenario and what it showed. When Tmm has not merged, say so: the coordinator
+   briefs Tmm's verifier with this task's change instead.
+6. Review the branch (`git log origin/main..HEAD`, `git diff origin/main...HEAD`) for correctness,
    edits outside the Owns line (<the Owns line>) the report does not name, and docs updated on the
    same branch.
-6. Scan the report and the branch's commit messages for personal data:
+7. Scan the report and the branch's commit messages for personal data:
    `git log origin/main..HEAD --format=%B | java tools/PrivacyCheck.java scan`, and the report text
    through the same scanner. The scanner only knows the private terms in `devtool.local.json`, which
    some machines lack, so also read the report, the commit messages and every doc, finding and test

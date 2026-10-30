@@ -16,7 +16,8 @@ named in your report.
 
 Context only this task knows: <owner's words, decisions since the task was written, or "none">.
 Already ruled out: <what was tried and why it failed, with finding paths, or "nothing">.
-Sequencing: <branches that touch the same files and the order, or "none">.
+Sequencing: <branches that touch the same files and the order; the task an **Interacts with:** line
+names, with the mechanism and whether its branch has merged; or "none">.
 
 Choices in doubt (ADR 0039, ADR 0044): <the research already done for this task and its answers, or
 "none">. A choice the task, an ADR or the owner leaves open is not yours to make from taste: launch a

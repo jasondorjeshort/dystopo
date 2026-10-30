@@ -9,6 +9,8 @@ Every task is done only when:
 
 "Owns" lists the files a task may change freely. Touching anything else should be a few lines at most and called out in the report. Two tasks that both need `MapRenderer.kt` are told below which part is theirs.
 
+**Interacts with:** (optional) names another task of the wave and the mechanism the two share although their Owns lines are disjoint (a hook, a cache, a format, an index, a join); the verifier of whichever merges second runs one scenario across both (ADR 0048).
+
 ## Owner actions pending (as of 2026-10-27)
 
 The owner's to-do list; the coordinator adds to it whenever a task leaves something only the owner can do, and strikes an item when it is done. `docs/HANDOFF.md` › Waiting on user points here.

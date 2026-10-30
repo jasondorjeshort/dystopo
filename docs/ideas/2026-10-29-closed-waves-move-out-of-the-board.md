@@ -1,7 +1,6 @@
 ---
 date: 2026-10-29
 kind: chore
-related: [2026-10-29-size-a-wave-by-its-close-out-cost.md, 2026-10-29-interacts-with-line-and-a-crossing-scenario-for-the-verifier.md]
 ---
 
 # Closed waves move out of the board into one record each
@@ -57,3 +56,11 @@ each record's body is byte-equal to the board's old section (`git show HEAD:docs
 scan < docs/tasks/wave-NN.md` clean for every record (a hit is reported, not fixed); `python -I
 tools/test_merge_log.py` ok. Stop on the first failed check and report; the coordinator relaunches
 Sonnet-class. Commit by the coordinator; delete this file in that commit.
+
+Coordinator's additions (2026-10-29, when the two related ideas were built by hand, ADR 0048):
+(C) before a wave moves in step B, the chore lifts every unfinished follow-up from its Status lines
+into `## Later` on the board as one line each naming the task (the wave 21 follow-ups live only in
+T149 to T157's Status lines today; a record in `docs/tasks/` drops out of sight at resume), and the
+coordinator reads that list before the commit. (D) The ADR of step A names the dated log in
+`docs/PLANNING.md` (580 kB, read before architectural changes) as the follow-up with the same
+treatment, one record per closed wave, so it is not left implicit.

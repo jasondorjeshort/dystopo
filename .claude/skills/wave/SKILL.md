@@ -25,18 +25,20 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    `out/coordinator-pids.txt`) so agents and the owner have the viewer (`docs/reference/live-server.md`).
    AVDs go under `E:\dystopo-avd`.
 4. Read the usage before launching (the status line, or this session's file under
-   `~/.claude/usage-state/`); at 50% of the 5-hour meter or 75% of the 7-day one launch no new
-   implementers. On the owner's word,
-   and only then, write a grant file in `~/.claude/usage-gate-overrides/` (`{"until": <epoch seconds>,
+   `~/.claude/usage-state/`); at 50% of the 5-hour meter or the 7-day hold `policy.json` sets launch
+   no new implementers. On the owner's word, and only then, write a grant file in `~/.claude/usage-gate-overrides/` (`{"until": <epoch seconds>,
    "reason": "<the owner's words>", "meters": ["7d"]}`, both meters when `meters` is absent, optionally
    `"session": "<id>"` or `"project": "<path>"`; ADR 0035) with the meters and the end time the owner
    gave; delete it when the owner's period ends.
 
 ## Plan and launch
 
-1. Write the wave in `docs/TASKS.md`: per task a Goal, an **Owns:** line, a **Done when:** line.
-   Make the Owns lines disjoint; two tasks that must touch one file go in different waves, or one task
-   owns the file and the other records a follow-up. A wave paragraph at the top states ownership
+1. Write the wave in `docs/TASKS.md`: per task a Goal, an **Owns:** line, a **Done when:** line
+   and, where two tasks share a mechanism behind disjoint Owns lines (a hook, a cache, a format, an
+   index, a join), an **Interacts with:** line on each naming the other task and the mechanism
+   (ADR 0048). Make the Owns lines disjoint; two tasks that must touch one file go in different
+   waves, or one task owns the file and the other records a follow-up. A wave paragraph at the top
+   states ownership
    resolved for the wave and the machine's paths when they differ from `docs/reference/machines.md`.
    Before the critic, list the wave's open choices (user-facing or technical) that nothing settles
    and launch one read-only research agent per choice (`brief` skill, `benchmark.md`; ADR 0039 and
@@ -47,11 +49,20 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    Status lines, the ideas and ADRs the plan draws on, and asks for numbered objections with severity
    and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
    observable, premises checked against the code, major choices that need a proposal, follow-ups
-   dropped silently, cross-task sequencing, choices left to an implementer's taste without research,
+   dropped silently, cross-task sequencing, behaviour shared across tasks that no Interacts with
+   line names, choices left to an implementer's taste without research,
 and settings added or missing against ADR 0044. Answer every objection by editing the plan or by writing
    why not in the wave paragraph; launch after the edits, re-plan on a blocking one.
-3. 5 to 8 implementers at once; when a wave would not fit the budget, launch it in halves with
-   disjoint ownership.
+3. Size the wave by its whole cost, not by whether its launch fits (ADR 0048): per task an
+   implementer, a verifier, one fix round with its re-verify and the merge, plus the wave's fixed cost
+   of research agents, the critic, the post-wave sweep and the release. Starting figures: 3 points of
+   the 7-day meter per task and 5 per wave, read off waves 20 and 21 (two data points, not a model);
+   revised at each close from the readings the allowance sentences collect. Launch only when the
+   meter at planning plus that cost is at or under the 7-day hold `policy.json` sets, and otherwise
+   plan a smaller wave or wait for the reset (the 5-hour meter keeps its own line, Resume step 4).
+   Write the allowance into the wave paragraph as one sentence: the meter at planning, the task
+   count, the cost assumed, the figure it adds up to. Still 5 to 8 implementers at once; a wave
+   larger than the budget is not launched in halves on the same meter.
 4. Brief each implementer with the `brief` skill (`implementer.md`), its own worktree, ports and
    emulator; set the model explicitly (Opus-class).
 5. A task that faces a major choice writes a proposal first (`proposal` skill).
@@ -113,4 +124,6 @@ and the caches are regenerable; the only files on the machine that are not are t
 2. Launch the post-wave sweep (`sweep` skill). Its findings become the next wave's sweep task.
 3. When the sweep is green, publish an alpha (`release` skill); the owner need not be asked again
    (ADR 0024).
-4. Rewrite the handoff (`handoff` skill) and commit it.
+4. Rewrite the handoff (`handoff` skill) and commit it. Add the meter at the close to the wave
+   paragraph's allowance sentence; when it is more than five points over the figure, raise the
+   per-task figure in step 3 of Plan and launch in the same commit and say so in the handoff.

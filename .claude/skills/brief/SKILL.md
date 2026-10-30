@@ -28,7 +28,8 @@ chore), and the critic brief is in the `proposal` skill.
 5. "Already ruled out" prevents re-investigation: what was tried and why it failed, with the finding
    path when there is one.
 6. Scope is the task's **Owns:** line plus anything resolved for this wave (the wave's paragraph in
-   `docs/TASKS.md`); name what must not be touched.
+   `docs/TASKS.md`); name what must not be touched; an **Interacts with:** line is copied into both
+   the implementer's and the verifier's brief.
 7. Verification is a command or an observable from the task's **Done when:**, never "make sure it
    works".
 8. The report asks for what the coordinator needs to merge or relaunch, and nothing else.
