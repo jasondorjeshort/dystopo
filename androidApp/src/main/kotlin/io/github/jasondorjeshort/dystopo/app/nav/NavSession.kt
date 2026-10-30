@@ -25,6 +25,14 @@ import io.github.jasondorjeshort.dystopo.nav.NavPath
 import io.github.jasondorjeshort.dystopo.nav.NavPoint
 import io.github.jasondorjeshort.dystopo.nav.NavState
 import io.github.jasondorjeshort.dystopo.nav.Navigator
+import io.github.jasondorjeshort.dystopo.nav.Deadline
+import io.github.jasondorjeshort.dystopo.nav.DeadlineSetting
+import io.github.jasondorjeshort.dystopo.nav.TurnAlerts
+import io.github.jasondorjeshort.dystopo.nav.TurnAround
+import io.github.jasondorjeshort.dystopo.nav.TurnClock
+import io.github.jasondorjeshort.dystopo.nav.TurnPace
+import io.github.jasondorjeshort.dystopo.nav.TurnState
+import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.DirectionsText
@@ -47,6 +55,9 @@ import java.util.concurrent.Executors
  * ([NavSources.Resolved.directions]) ride along; the card shows the next one at the default detail level with its
  * distance ([Directions.next], passed [Directions.passM] after the junction), and `/nav/status` lists them. T126: with
  * the spoken-directions setting on, [NavSpeech] says each one once as the card turns it to the alert colour.
+ * T163: the turn-around clock ([TurnAround]) on the card under the end ("Turn back by 14:10", amber at the margin, red at
+ * the time, then the arrival clock), read on every fix and every tick of the wall clock; one alert at the margin and one
+ * at the time ([NavAlerts.turnAround]) and one spoken line ([NavSpeech.sayTurnAround]); `GET /nav` `turnAround`.
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -82,6 +93,12 @@ object NavSession {
         val turnType: String? = null,
         /** T102: within its lead distance ([Instruction.leadM]): the card shows it in the alert colour. */
         val turnSoon: Boolean = false,
+        /** T163: the turn-around clock's line ("Turn back by 14:10", "Out by 18:52"); null before a fix and after arriving. */
+        val turnBack: String? = null,
+        /** T163: what it counts to and on what pace ("Sunset 19:12, flat horizon, 30 min margin, standard pace"). */
+        val turnBackLabel: String? = null,
+        /** T163: `normal`, `amber` or `red`. */
+        val turnBackColour: String = TurnAround.NORMAL,
     )
 
     /** T86: backed by [NavUiState], so touching [NavSession] from a background thread never creates Compose state. */
@@ -112,6 +129,12 @@ object NavSession {
     @Volatile private var directions: List<Instruction> = emptyList()
     @Volatile private var shownDirections: List<Instruction> = emptyList()
     @Volatile private var travel: TravelMode = TravelMode.HIKE
+    /** T163: the turn-around clock along the line, its alerts given in this navigation, its last reading and spoken line. */
+    @Volatile private var turn: TurnAround? = null
+    private val turnAlerts = TurnAlerts()
+    @Volatile private var turnClock: TurnClock? = null
+    @Volatile private var turnSpoken: String? = null
+    private val turnEvents = ArrayList<Map<String, Any?>>()
 
     val layer = NavMapLayer()
     private val alerts by lazy { NavAlerts(app) }
@@ -156,6 +179,10 @@ object NavSession {
             this.directions = directions
             shownDirections = Directions.shown(directions)
             travel = options.mode
+            turn = TurnAround(path, TurnPace.of(CostModel(options.mode))) // T163: T164's fitted pace reaches it through CostModel
+            synchronized(turnAlerts) { turnAlerts.reset(); turnEvents.clear() }
+            turnClock = null
+            turnSpoken = null
             snooze.clear()
             // T91: the thresholds are settings now (navStaleS, navStartM), read at each start.
             val stale = io.github.jasondorjeshort.dystopo.app.AppSettings.navStaleS.toDouble()
@@ -240,6 +267,8 @@ object NavSession {
     fun stop(): Map<String, Any?> {
         val was = navigator != null
         navigator = null
+        turn = null // T163
+        turnClock = null
         NavSpeech.end() // T126: the text-to-speech engine is released
         app.map.cameraMode = CameraMode.FREE
         main.removeCallbacks(ticker)
@@ -290,6 +319,7 @@ object NavSession {
                 return@locationListener
             }
             val fix = GpsLocationSource.toFix(loc)
+            io.github.jasondorjeshort.dystopo.app.LastFix.record(fix) // T162's last fix, from navigation's own listener (T163)
             val course = if (loc.hasBearing() && loc.hasSpeed() && loc.speed > 0.7f) loc.bearing.toDouble() else null
             worker.execute { onFix(fix, "gps", gpsCourse = course) }
         }
@@ -354,6 +384,7 @@ object NavSession {
         if (nav.fixes == 1 && !repeat) app.map.follow(fix.lat, fix.lon, headingDeg, zoom)
         val u = uiOf(nav, s)
         main.post { if (navigator === nav) ui = u }
+        turnClock?.let { turnAlert(it) } // T163
         // T126: not from the last known location at the start (it can be anywhere, the end of the route included, and a
         // direction said there would never be said again); the first live fix speaks.
         if (origin != "last") speak(s)
@@ -389,6 +420,15 @@ object NavSession {
             val age = fixAgeText(now)
             val sn = snoozedText(now)
             ui?.let { u -> if (u.fixAge != age || u.snoozed != sn) ui = u.copy(fixAge = age, snoozed = sn) }
+            // T163: the turn-around clock follows the wall clock between fixes (a walker standing still still runs out of day).
+            nav.state?.let { s ->
+                val c = turnReading(s, now)
+                ui?.let { u ->
+                    val text = c?.text(::clock)
+                    if (u.turnBack != text || u.turnBackColour != (c?.colour ?: TurnAround.NORMAL)) ui = u.copy(turnBack = text, turnBackLabel = c?.label(::clock), turnBackColour = c?.colour ?: TurnAround.NORMAL)
+                }
+                c?.let { turnAlert(it) }
+            }
             main.postDelayed(this, 500)
         }
     }
@@ -408,10 +448,85 @@ object NavSession {
     /** T102: the next direction shown at [progressM] along the line, as an index into [shownDirections], -1 when none is left. */
     private fun nextTurn(progressM: Double): Int = Directions.next(shownDirections, progressM, passM = Directions.passM(travel))
 
+    /**
+     * T163: the turn-around clock at [s] and wall time [now] (null when not navigating, or after arriving): the deadline
+     * setting at the line's end, the margin setting, the way back to the line when off it. Kept as [turnClock].
+     */
+    private fun turnReading(s: NavState, now: Long): TurnClock? {
+        val t = turn ?: return null
+        if (s.arrived) return null.also { turnClock = null }
+        val setting = DeadlineSetting.parse(AppSettings.turnDeadline) ?: DeadlineSetting.SUNSET
+        val end = t.path.points.last()
+        val deadline = Deadline.resolve(setting, end.lat, end.lon, now, localMidnight(now))
+        val off = if (s.offRoute) s.projection.distanceM else 0.0
+        return runCatching { t.clock(s.progress, now, deadline, AppSettings.turnMarginMin, off) }
+            .onFailure { Log.w(TAG, "turn-around clock", it) }.getOrNull().also { turnClock = it }
+    }
+
+    /** T163: the alerts a reading has made due: a tone and a buzz on the alert path, the spoken line once (at the first). */
+    private fun turnAlert(c: TurnClock) {
+        val due = synchronized(turnAlerts) { turnAlerts.due(c) }
+        for (k in due) {
+            alerts.turnAround(k.key, sound, vibrate)
+            val line = if (turnSpoken == null) c.spoken(::clock).also { turnSpoken = it } else null
+            val said = line?.let { NavSpeech.sayTurnAround(it) }
+            synchronized(turnAlerts) {
+                turnEvents += linkedMapOf("kind" to k.key, "atMs" to c.nowMs, "text" to c.text(::clock), "colour" to c.colour, "spoken" to line, "speech" to (said?.let { if (it.muted) "muted" else it.engine } ?: line?.let { "off" }))
+            }
+            Log.i(TAG, "turn-around ${k.key}: ${c.text(::clock)}" + (line?.let { " / said: $it" } ?: ""))
+        }
+    }
+
+    private fun localMidnight(now: Long): Long = java.util.Calendar.getInstance().apply {
+        timeInMillis = now
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    /** T163: `GET /nav` `turnAround` and `GET /nav/turnaround` while navigating. */
+    fun turnJson(): Map<String, Any?>? {
+        val t = turn ?: return null
+        val c = turnClock
+        return linkedMapOf<String, Any?>(
+            "source" to "navigation", "loop" to t.loop, "deadlineSetting" to AppSettings.turnDeadline, "marginMin" to AppSettings.turnMarginMin,
+            "pace" to t.pace.label, "totalTimeS" to Math.round(t.totalS),
+            "text" to c?.text(::clock), "label" to c?.label(::clock), "clock" to c?.json(),
+            "turnBack" to c?.turnBackMs?.let(::clock), "arrival" to c?.arrivalMs?.let(::clock),
+            "deadline" to c?.deadline?.atMs?.let(::clock),
+            "alerts" to synchronized(turnAlerts) { turnAlerts.json() + mapOf("events" to ArrayList(turnEvents)) },
+            "spoken" to turnSpoken,
+            "ui" to ui?.let { linkedMapOf("text" to it.turnBack, "label" to it.turnBackLabel, "colour" to it.turnBackColour) },
+        )
+    }
+
+    /**
+     * T163, free tracking: the clock along the track being recorded, the way out back along it to its start (T159's track
+     * controls show it later; this wave it is read on `GET /nav/turnaround` only). Null when nothing is recording.
+     */
+    fun freeTrackingTurnJson(): Map<String, Any?>? {
+        val t = Tracking.of(app)
+        val track = runCatching { t.call { t.recorder.activeId?.let { t.store.track(it) } } }.getOrNull() ?: return null
+        val path = runCatching { NavPath.of(track) }.getOrElse { return linkedMapOf("source" to "recording", "id" to track.id, "error" to "fewer than two points recorded yet") }
+        val ta = TurnAround(path, TurnPace.of(CostModel(TravelMode.HIKE)), retraceOnly = true)
+        val now = System.currentTimeMillis()
+        val start = path.points.first()
+        val deadline = Deadline.resolve(DeadlineSetting.parse(AppSettings.turnDeadline) ?: DeadlineSetting.SUNSET, start.lat, start.lon, now, localMidnight(now))
+        val c = ta.clock(path.totalM, now, deadline, AppSettings.turnMarginMin)
+        return linkedMapOf(
+            "source" to "recording", "id" to track.id, "points" to path.points.size, "totalM" to Math.round(path.totalM),
+            "deadlineSetting" to AppSettings.turnDeadline, "marginMin" to AppSettings.turnMarginMin, "pace" to ta.pace.label,
+            "text" to c.text(::clock), "label" to c.label(::clock), "clock" to c.json(),
+            "turnBack" to c.turnBackMs?.let(::clock), "arrival" to clock(c.arrivalMs), "deadline" to c.deadline.atMs?.let(::clock),
+        )
+    }
+
     private fun uiOf(nav: Navigator, s: NavState): Ui {
         val u = AppSettings.units
         val rejoin = s.rejoin
         val mapBearing = runCatching { lastMapBearing() }.getOrDefault(0.0)
+        val tc = turnReading(s, System.currentTimeMillis()) // T163
         return Ui(
             name = nav.path.name,
             next = s.next?.name,
@@ -430,6 +545,7 @@ object NavSession {
             waiting = false,
             fixAge = fixAgeText(System.currentTimeMillis()),
             snoozed = snoozedText(System.currentTimeMillis()),
+            turnBack = tc?.text(::clock), turnBackLabel = tc?.label(::clock), turnBackColour = tc?.colour ?: TurnAround.NORMAL, // T163
         ).let { ui ->
             // T102: the next turn direction and how far ahead it is.
             val k = if (s.arrived) -1 else nextTurn(s.progress)
@@ -493,6 +609,7 @@ object NavSession {
             "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon) },
             "directions" to linkedMapOf("count" to directions.size, "shown" to shownDirections.size, "level" to Directions.DEFAULT_LEVEL), // T102
             "speech" to NavSpeech.navJson(), // T137: the mute and the no-voice notice
+            "turnAround" to turnJson(), // T163
             "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null)), // T65
         )
     }

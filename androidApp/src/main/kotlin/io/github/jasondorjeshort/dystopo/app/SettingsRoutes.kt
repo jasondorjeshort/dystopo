@@ -34,6 +34,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   [io.github.jasondorjeshort.dystopo.app.routing.PaceSettings]) and `paceSince` (the reset: only tracks started at or after
  *   this epoch ms count, 0 all), all three synced (`app.paceStandard` `on`/`off`, `app.paceFit`, `app.paceSince`); also
  *   Settings › Navigation and tracking › Route times and `GET /pace`.
+ *   T163 `turnDeadline` (`sunset`, the default; `civil`; or a typed local time `HH:MM`; there is no off) and `turnMarginMin`
+ *   (0 to 240, default 30): the turn-around clock's deadline and margin, synced (`app.turnDeadline`, `app.turnMarginMin`);
+ *   also Settings › Navigation and tracking. A running navigation reads them at its next reading.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -116,6 +119,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             AppSettings.setPace(parsed.paceStandard, parsed.paceFit, parsed.paceSince)
             io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.changed()
         }
+        // T163: the turn-around clock reads them at its next reading (a running navigation included)
+        if (parsed.turnDeadline != null || parsed.turnMarginMin != null) AppSettings.setTurn(parsed.turnDeadline, parsed.turnMarginMin)
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -145,6 +150,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             val tripCorridorM: Int? = null, // T130, T136
             // T164: "Use the standard estimate", the fit's synced value ("" none), the reset's start (epoch ms).
             val paceStandard: Boolean? = null, val paceFit: String? = null, val paceSince: Long? = null,
+            val turnDeadline: String? = null, val turnMarginMin: Int? = null, // T163
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -158,7 +164,8 @@ class SettingsRoutes(private val app: DystopoApp) {
 
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
         val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin", "tripCorridorM", "navSpeech") + MapOptions.KEYS + CACHE_KEYS + // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
-            setOf("paceStandard", "paceFit", "paceSince") // T164
+            setOf("paceStandard", "paceFit", "paceSince") + // T164
+            setOf("turnDeadline", "turnMarginMin") // T163
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -254,7 +261,15 @@ class SettingsRoutes(private val app: DystopoApp) {
                 if (v == null || v < 0) return Parsed.Error("paceSince must be a time in epoch milliseconds, 0 for every track (got $raw)")
                 paceSince = v
             }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince)
+            // T163: the turn-around clock's deadline (sunset, civil or a typed HH:MM; no off) and margin (whole minutes).
+            var turnDeadline: String? = null
+            params["turnDeadline"]?.let { raw ->
+                turnDeadline = io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(raw.toString())?.value
+                    ?: return Parsed.Error("turnDeadline must be sunset, civil or a time HH:MM (got $raw)")
+            }
+            val (turnMarginMin, e4) = intIn("turnMarginMin", io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE, "min")
+            e4?.let { return Parsed.Error(it) }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

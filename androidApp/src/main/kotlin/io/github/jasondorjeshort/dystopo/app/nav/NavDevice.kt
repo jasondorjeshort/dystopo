@@ -14,7 +14,8 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import android.view.Surface
-import android.view.WindowManager
+import android.hardware.display.DisplayManager
+import android.view.Display
 import io.github.jasondorjeshort.dystopo.nav.Compass
 
 /**
@@ -47,6 +48,22 @@ class NavAlerts(private val context: Context) {
         if (sound) beep(ToneGenerator.TONE_PROP_ACK, 200)
     }
 
+    /** T163: the turn-around clock's two alerts, counted by kind: `margin` (one beep, one buzz) and `turn` (the off-route double). */
+    @Volatile var turnAlerts = 0
+        private set
+
+    fun turnAround(kind: String, sound: Boolean, vibrate: Boolean) {
+        lastAlert = "turnAround:$kind"
+        turnAlerts++
+        if (kind == "turn") {
+            if (sound) beep(ToneGenerator.TONE_PROP_BEEP2, 500)
+            if (vibrate) buzz(longArrayOf(0, 250, 150, 250))
+        } else {
+            if (sound) beep(ToneGenerator.TONE_PROP_BEEP, 300)
+            if (vibrate) buzz(longArrayOf(0, 400))
+        }
+    }
+
     private fun beep(kind: Int, ms: Int) {
         val t = tone ?: return
         runCatching { t.startTone(kind, ms) }.onSuccess { tones++ }.onFailure { lastError = "tone: ${it.message}" }
@@ -69,7 +86,7 @@ class NavAlerts(private val context: Context) {
         }.onFailure { lastError = "vibrate: ${it.message}"; Log.w(NavSession.TAG, "vibrate failed", it) }
     }
 
-    fun json(): Map<String, Any?> = linkedMapOf("tones" to tones, "vibrations" to vibrations, "lastAlert" to lastAlert, "lastError" to lastError)
+    fun json(): Map<String, Any?> = linkedMapOf("tones" to tones, "vibrations" to vibrations, "lastAlert" to lastAlert, "lastError" to lastError, "turnAround" to turnAlerts)
 
     fun release() {
         runCatching { tone?.release() }
@@ -82,8 +99,13 @@ class NavAlerts(private val context: Context) {
  * (controls/Heading), running only while the map is in facing and the app is in the foreground; the azimuth is
  * where the phone points however it is held (see [onSensorChanged]).
  */
-class HeadingSensor(private val context: Context, val compass: Compass) : SensorEventListener {
+class HeadingSensor(context: Context, val compass: Compass) : SensorEventListener {
     private val manager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    /**
+     * T163: the screen's rotation from the display service, which any context may ask. The window service asked from the
+     * application context (as before) is a StrictMode context-use violation on every reading (T150: 228 per tour).
+     */
+    private val displays = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     private val sensor: Sensor? = manager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
     private val rot = FloatArray(9)
 
@@ -115,8 +137,7 @@ class HeadingSensor(private val context: Context, val compass: Compass) : Sensor
 
     override fun onSensorChanged(event: SensorEvent) {
         SensorManager.getRotationMatrixFromVector(rot, event.values)
-        @Suppress("DEPRECATION")
-        val rotation = (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.rotation
+        val rotation = displays.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
         // The top of the screen in the phone's own axes, as the display is turned.
         val (ux, uy) = when (rotation) {
             Surface.ROTATION_90 -> -1f to 0f

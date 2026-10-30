@@ -190,6 +190,35 @@ object NavSpeech {
         }
     }
 
+    /** T163: the index the turn-around clock's line is listed under (not a direction's). */
+    const val TURN_AROUND_INDEX = -2
+
+    /**
+     * T163: the turn-around clock's one spoken line ([io.github.jasondorjeshort.dystopo.nav.TurnClock.spoken], "Turn back by
+     * 14:10 to be out by sunset."), said once per navigation by the caller, under the same setting and mute as the
+     * directions; listed in `GET /nav/speech` with index -2. Returns the line, or null when the setting is off.
+     */
+    fun sayTurnAround(text: String): Line? {
+        synchronized(this) {
+            if (!enabled) return null
+            val now = System.currentTimeMillis()
+            if (muted) {
+                val line = Line(now, TURN_AROUND_INDEX, text, "turn-around", text, engine?.name ?: "none", muted = true)
+                if (lines.size >= MAX_LINES) lines.removeAt(0)
+                lines += line
+                mutedCount++
+                return line
+            }
+            val e = engine ?: makeEngine().also { engine = it; it.open() }
+            val line = Line(now, TURN_AROUND_INDEX, text, "turn-around", text, e.name)
+            if (lines.size >= MAX_LINES) lines.removeAt(0)
+            lines += line
+            runCatching { e.speak(line.voice, "dystopo-turn") }.onFailure { Log.w(NavSession.TAG, "speaking failed", it) }
+            Log.i(NavSession.TAG, "spoke the turn-around line: $text")
+            return line
+        }
+    }
+
     private fun makeEngine(): Engine = when {
         !BuildConfig.DEBUG_ENDPOINTS -> PlatformEngine(DystopoApp.instance)
         engineChoice == "silent" -> SilentEngine()

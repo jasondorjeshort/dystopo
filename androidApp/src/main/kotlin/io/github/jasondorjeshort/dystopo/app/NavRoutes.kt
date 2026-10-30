@@ -62,6 +62,16 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `/nav` adds `muteButtonShown`. `dismiss=1` dismisses the notice as its Dismiss does. Debug builds:
  *   `engine=failing` (an engine whose init fails as with no text-to-speech engine installed) and `engine=novoice` (no
  *   voice for English) bring up the notice on the emulator.
+ * - T163, the turn-around clock ([io.github.jasondorjeshort.dystopo.nav.TurnAround]): `GET /nav` `turnAround` while
+ *   navigating: `text` and `label` as the card draws them ("Turn back by 14:10", "Sunset 19:12, flat horizon, 30 min
+ *   margin, standard pace"), `clock` (`state` `ahead|margin|turn|returning|arrival|noDeadline`, `colour`
+ *   `normal|amber|red`, `deadline`, `marginMin`, `pace`, `loop`, `alongM`, `retraceS`, `onwardS`, `returnS`, `way`
+ *   `back|on`, `turnBackMs`, `warnAtMs`, `arrivalMs`, `arrivalIfTurnedAtMs`), the same times as clock strings, `alerts`
+ *   (`marginGiven`, `turnGiven`, `events` with each alert's `kind`, `atMs`, `text`, `colour` and the `spoken` line) and
+ *   `spoken`; `alerts.turnAround` counts the alert path's tones. The clock reads the wall clock (a replay's old fix times
+ *   do not move it) and the settings `turnDeadline` and `turnMarginMin` (`POST /settings`) at every reading.
+ *   `GET /nav/turnaround`: the same while navigating; else, in free tracking, the clock along the track being recorded
+ *   (the way out back along it to its start; `source` `recording`), or `{"active": false}`.
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate; T146: `?route=current&kmh=<n>` replays the current route timed in the app, no
  * body) and the device GPS while navigating.
@@ -76,6 +86,11 @@ object NavRoutes {
         return when (r.method to r.path) {
             "GET" to "/nav" -> Response.json(NavSession.json())
             "GET" to "/nav/status" -> Response.json(NavSession.status())
+            "GET" to "/nav/turnaround" -> Response.json( // T163
+                NavSession.turnJson()?.let { mapOf("active" to true) + it }
+                    ?: NavSession.freeTrackingTurnJson()?.let { mapOf("active" to true) + it }
+                    ?: mapOf("active" to false, "reason" to "not navigating and not recording"),
+            )
             "POST" to "/nav/stop" -> Response.json(NavSession.stop() + NavSession.json())
             "POST" to "/nav/start" -> start(r)
             "GET" to "/nav/directions" -> directions(r) // T102
