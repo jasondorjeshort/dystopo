@@ -21,8 +21,9 @@ For each view it sets the camera (POST /camera), waits for the map to go idle an
               beforeBaseline (tile, pack, time); the online fallback's answers never count. The view's report
               carries `expectation` per source: expected, the reason and the overlapping `packTiles`.
               T170: a contour delta counts only when the view's own lines of the request log show a pack
-              answered one of them (tiles.contours.servedFromPack, servedOnline), since contour tiles made
-              over online DEM count in the delta too
+              answered one of them, or the online fallback answered one of the `packTiles` (a tile over the
+              pack's edge: tiles.contours.servedFromPack, servedOverPack, servedOnline), since contour tiles
+              made over online DEM elsewhere count in the delta too
   - blank:    the screenshot is not blank (luma standard deviation of a pixel sample >= --min-stddev)
   - settled:  a second screenshot, taken after the label check has let the map settle, differs from the
               first in at most --max-settle-change of the pixels (else /screenshot returned a half-loaded map;
@@ -590,7 +591,7 @@ def served_before_baseline(log_lines, source, pack_tiles):
         pack = ln.get("pack")
         if not pack or str(pack).startswith("online:"):
             continue
-        tile = str(ln.get("path", "")).rsplit(".", 1)[0].strip("/").split("/", 1)[-1]
+        tile = tile_of_path(ln.get("path"))
         if tile in want and tile not in seen:
             seen.add(tile)
             out.append({"tile": tile, "pack": pack, "ts": ln.get("ts")})
@@ -608,6 +609,20 @@ def pack_answered(lines, source):
             and ln.get("pack") and not str(ln.get("pack")).startswith("online:")]
 
 
+def online_over_pack(lines, source, pack_tiles):
+    """T170: the lines where the online fallback answered one of `pack_tiles` ("z/x/y", the viewport's tiles that overlap
+    the pack's bounds) for `source`: a tile the pack covers only in part is made over the pack's and the online elevation
+    together, so it shows the pack's contours too."""
+    want = set(pack_tiles or ())
+    return [ln for ln in lines or [] if ln.get("route") == source and ln.get("status") == 200
+            and str(ln.get("pack") or "").startswith("online:") and tile_of_path(ln.get("path")) in want]
+
+
+def tile_of_path(path):
+    """"/contours/10/165/360.pbf" -> "10/165/360"."""
+    return str(path or "").rsplit(".", 1)[0].strip("/").split("/", 1)[-1]
+
+
 REQUEST_LOG_CAPACITY = 4096  # RequestLog.DEFAULT_CAPACITY on the phone
 
 
@@ -623,19 +638,22 @@ def tiles_check(tiles, exp, log_lines, expectation, view_lines=None):
     """T154: the tiles check. A source passes when the view's own delta served a tile, or when the request log shows a
     pack answered one of the source's `packTiles` (source_expectations) before the baseline (adds `servedBeforeBaseline`
     and `beforeBaseline` to tiles[source]). T170: for PACK_ONLY_SOURCES the delta counts only when the view's own lines
-    of the request log (`view_lines`, None when not read or not whole) show a pack answered one of them (adds
-    `servedFromPack` and `servedOnline`); else the source is checked as one with no delta. Returns (ok, the expected
-    sources without tiles)."""
+    of the request log (`view_lines`, None when not read or not whole) show a pack answered one of them, or the online
+    fallback answered one of the source's `packTiles` (a tile over the pack's edge; adds `servedFromPack`, `servedOverPack`
+    and `servedOnline`); else the source is checked as one with no delta. Returns (ok, the expected sources without
+    tiles)."""
     missing = []
     for s in exp:
         if tiles[s]["served"] > 0:
             if s not in PACK_ONLY_SOURCES or view_lines is None:
                 continue
             own = len(pack_answered(view_lines, s))
+            edge = len(online_over_pack(view_lines, s, expectation[s].get("packTiles")))
             tiles[s]["servedFromPack"] = own
+            tiles[s]["servedOverPack"] = edge
             tiles[s]["servedOnline"] = sum(1 for ln in view_lines if ln.get("route") == s and ln.get("status") == 200
                                            and str(ln.get("pack") or "").startswith("online:"))
-            if own > 0:
+            if own + edge > 0:
                 continue
         early = served_before_baseline(log_lines, s, expectation[s].get("packTiles"))
         tiles[s]["servedBeforeBaseline"] = len(early)

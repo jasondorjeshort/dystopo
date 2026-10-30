@@ -93,15 +93,20 @@ def check_contours(served, view_lines, log=None, expectation=x):
 
 
 ONLINE = "online:direct://sources"
+x["contours"]["packTiles"] = ["9/82/180"]  # the viewport's contour tile over the pack (the rest lie outside its bounds)
 ok, _, t = check_contours(3, [line("/contours/9/82/180.pbf"), line("/contours/9/81/180.pbf", pack=ONLINE)])
 assert ok and t["servedFromPack"] == 1 and t["servedOnline"] == 1, t
 ok, missing, t = check_contours(3, [line("/contours/9/81/180.pbf", pack=ONLINE), line("/contours/9/81/181.pbf", pack=ONLINE)], log=[])
-assert not ok and missing == ["contours"] and t["servedFromPack"] == 0 and t["servedOnline"] == 2, t
+assert not ok and missing == ["contours"] and t["servedFromPack"] == 0 and t["servedOverPack"] == 0 and t["servedOnline"] == 2, t
+# The tour's region-z10 case: the tile over the pack's edge is made by the online fallback over both elevations: counted.
+ok, _, t = check_contours(3, [line("/contours/9/82/180.pbf", pack=ONLINE), line("/contours/9/81/180.pbf", pack=ONLINE)], log=[])
+assert ok and t["servedFromPack"] == 0 and t["servedOverPack"] == 1, t
+# The pack removed (no pack in /health, the view asks with |req=): no packTiles, so online answers never count.
+assert check_contours(3, [line("/contours/9/82/180.pbf", pack=ONLINE)], log=[], expectation=gone)[:2] == (False, ["contours"])
 assert check_contours(3, None)[:2] == (True, [])  # the view's lines not read (an older app, or more than the log keeps)
 assert check_contours(3, [line("/osm/8/41/90.pbf")], log=[])[:2] == (False, ["contours"])  # another source's line
 assert check_contours(3, [line("/contours/9/82/180.pbf", status=404)], log=[])[:2] == (False, ["contours"])
 # Online answers in the view, but the pack answered one of its viewport tiles before the baseline: counted as T154 does.
-x["contours"]["packTiles"] = ["9/82/180"]
 ok, _, t = check_contours(3, [line("/contours/9/81/180.pbf", pack=ONLINE)], log=[line("/contours/9/82/180.pbf")])
 assert ok and t["servedBeforeBaseline"] == 1, t
 # dem and osm keep the plain delta (their online answers come only where no pack covers the tile).
