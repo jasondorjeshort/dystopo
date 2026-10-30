@@ -46,6 +46,8 @@ data class EdgeSnap(
     /** T76: the edge's way name and class, filled by [Router.nearest] (edge ids are local to a graph tile). */
     val name: String? = null,
     val wayClass: WayClass? = null,
+    /** T164: the network's height at the snap, filled by [Router.nearest] ([TrackMatch.eleAt]); null without a DEM. */
+    val ele: Double? = null,
 )
 
 /**

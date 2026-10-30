@@ -168,6 +168,18 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        SettingsRow.PACE -> {
+            // T164: route times fitted to the user's tracks; a refit when the track list changed (only with a trail network loaded).
+            val app = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance
+            androidx.compose.runtime.LaunchedEffect(Unit) { io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.refitSoon(app, "settings") }
+            val standard = AppSettings.paceStandard
+            val pace = io.github.jasondorjeshort.dystopo.app.routing.PaceSettings
+            Setting(row.label, pace.rowText(units), help = "settings.pace") {
+                Option(pace.YOUR_PACE, !standard) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, paceStandard = false)) }
+                Option(pace.USE_STANDARD, standard) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, paceStandard = true)) }
+                Option(pace.RESET, false) { Thread { pace.reset(app) }.start() }
+            }
+        }
     }
 }
 
@@ -294,6 +306,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         HelpText("settings.warmup", "Contour warm-up", at(SettingsGroup.ABOUT, "Contour warm-up"), show = page(SettingsGroup.ABOUT)) {
             "After a pack opens, the phone prepares its contour lines in the background, so the map draws faster as you " +
                 "move around. Turn it off to save battery; contours are then made when they are first shown."
+        },
+        // T164
+        HelpText("settings.pace", "Route times", at(SettingsGroup.NAVIGATION, "Route times"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "Route times use a standard estimate until you have ${io.github.jasondorjeshort.dystopo.routing.PaceFits.MIN_TRACKS} hikes over " +
+                "${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(io.github.jasondorjeshort.dystopo.routing.PaceFits.MIN_METRES, units)} on mapped trails, " +
+                "then your own pace on flat, up and down, from your recent hikes (rides for bike routes), stops left out. Reset " +
+                "forgets it and counts only tracks from now on."
         },
     )
 }

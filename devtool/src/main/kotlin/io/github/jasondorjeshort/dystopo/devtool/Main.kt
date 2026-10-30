@@ -37,4 +37,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(ReadoutCommand())
     // T174: the drainage layer written into an outdoors pack.
     .subcommands(DrainagePackCommand())
+    // T164: the pace fitted to a directory of tracks.
+    .subcommands(PaceFitCommand())
     .main(args)

@@ -91,6 +91,21 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun paceKeysAreAFlagAFitAndAnInstant() { // T164
+        assertEquals(true, ok("paceStandard" to "on").paceStandard)
+        assertEquals(false, ok("paceStandard" to "0").paceStandard)
+        val fit = "1;hike:1.0734,2.8029,-0.0575,5,22788,0.057"
+        assertEquals(fit, ok("paceFit" to fit).paceFit)
+        assertEquals("", ok("paceFit" to "").paceFit, "a reset clears it")
+        assertTrue(bad("paceFit" to "2;hike:1,2,0,5,30000,0").message.contains("paceFit"), "another version is refused, so a pull skips it")
+        bad("paceFit" to "1;hike:fast")
+        assertEquals(1_790_000_000_000L, ok("paceSince" to "1790000000000").paceSince)
+        bad("paceSince" to "-1")
+        bad("paceSince" to "yesterday")
+        assertNull(ok("units" to "m").paceFit)
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {
