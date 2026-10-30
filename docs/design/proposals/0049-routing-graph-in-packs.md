@@ -1,7 +1,7 @@
 # 0049. The routing graph shipped with a pack, and a streaming graph build
 
 Date: 2026-10-30
-Status: under review (revised on the critic's review, `0049-critic-review.md`)
+Status: promoted to ADR 0049
 
 ## Question
 
