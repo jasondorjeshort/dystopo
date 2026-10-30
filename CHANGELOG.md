@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+(nothing yet)
+
+## v0.1.15-alpha (2026-10-30)
+
 ### 2026-10-30
 
 - T175: Sweep leftovers 16: the crow route 500, the Record-as picker in the release-realism script, NOTICES (added at the close, 2026-10-30)
