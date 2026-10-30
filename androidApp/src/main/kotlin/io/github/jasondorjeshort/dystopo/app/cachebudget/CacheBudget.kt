@@ -55,7 +55,7 @@ object CacheBudget {
 
     /** The view and the route ahead: the map's visible box and the navigated route's next 3 km. */
     val guard = CacheGuard(
-        view = { runCatching { MapViewport.bounds }.getOrNull() },
+        view = { MapViewport.current }, // T162: the plain copy (this runs on the budget thread)
         route = {
             NavSession.navigator?.let { nav ->
                 CacheGuard.RouteAhead(nav, nav.state?.progress ?: 0.0) { nav.path.points.map { AreaPoint(it.lat, it.lon) } }

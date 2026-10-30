@@ -23,7 +23,7 @@ object AttributionRoutes {
             Response.json(
                 AppCredits.compose(app).json() + mapOf(
                     "mapLine" to line.json().let { mapOf("compact" to it["compact"], "packs" to it["packs"]) },
-                    "viewBounds" to MapViewport.bounds?.let { listOf(it.minLon, it.minLat, it.maxLon, it.maxLat) },
+                    "viewBounds" to MapViewport.current?.let { listOf(it.minLon, it.minLat, it.maxLon, it.maxLat) },
                     "lineShown" to shown, // T110
                     "lineComposedMsAgo" to io.github.jasondorjeshort.dystopo.app.about.CreditLine.composedAt.takeIf { it > 0 }?.let { System.currentTimeMillis() - it },
                     "lineMatchesView" to (expected == null || shown == expected),
