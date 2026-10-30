@@ -42,6 +42,9 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Sources
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
+import io.github.jasondorjeshort.dystopo.app.tracking.BatteryExemption
+import io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles
+import io.github.jasondorjeshort.dystopo.model.Activity
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import java.util.Locale
@@ -209,6 +212,56 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option(pace.RESET, false) { Thread { pace.reset(app) }.start() }
             }
         }
+        // T172: recording per activity; the four choice rows edit the remembered activity's profile.
+        SettingsRow.TRACK_ACTIVITY -> {
+            val a = AppSettings.trackActivity
+            Setting(row.label, "what Record starts with, and the activity the rows below set", help = "settings.trackActivity") {
+                for (x in Activity.entries) Option(RecordingProfiles.label(x), a == x) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackActivity = x)) }
+            }
+        }
+        SettingsRow.TRACK_ACCURACY -> {
+            val p = AppSettings.trackProfile()
+            Setting(row.label, "${RecordingProfiles.label(p.activity)}: fixes less accurate than this are kept but marked, and left out of the distance", help = "settings.trackAccuracy") {
+                for (m in RecordingProfiles.ACCURACY_CHOICES) {
+                    Option(m?.let { io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(it, units) } ?: "Off", p.accuracyBoundM == m) {
+                        change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackEdit = RecordingProfiles.Edit(accuracyGiven = true, accuracyM = m)))
+                    }
+                }
+            }
+        }
+        SettingsRow.TRACK_AUTO_PAUSE -> {
+            val p = AppSettings.trackProfile()
+            val hint = "${RecordingProfiles.label(p.activity)}: holds the recording while you stand still and goes on when you move" +
+                if (p.activity.suggestsAutoPause && !p.autoPause) " (suggested for this activity)" else ""
+            Setting(row.label, hint, help = "settings.trackAutoPause") {
+                Option("On", p.autoPause) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackEdit = RecordingProfiles.Edit(autoPause = true))) }
+                Option("Off", !p.autoPause) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackEdit = RecordingProfiles.Edit(autoPause = false))) }
+            }
+        }
+        SettingsRow.TRACK_FALLBACK -> {
+            val p = AppSettings.trackProfile()
+            Setting(row.label, "${RecordingProfiles.label(p.activity)}: while the GPS is silent, rough positions from mobile networks and Wi-Fi are recorded and marked", help = "settings.trackFallback") {
+                Option("On", p.networkFallback) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackEdit = RecordingProfiles.Edit(networkFallback = true))) }
+                Option("Off", !p.networkFallback) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackEdit = RecordingProfiles.Edit(networkFallback = false))) }
+            }
+        }
+        SettingsRow.TRACK_INTERVAL -> {
+            val p = AppSettings.trackProfile()
+            Setting(row.label, "${RecordingProfiles.label(p.activity)}: how often a point is recorded", help = "settings.trackInterval") {
+                for (s in RecordingProfiles.INTERVAL_CHOICES_S) {
+                    Option(if (s < 60) "$s s" else "${s / 60} min", p.intervalMs == s * 1000L) {
+                        change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackEdit = RecordingProfiles.Edit(intervalMs = s * 1000L)))
+                    }
+                }
+            }
+        }
+        SettingsRow.TRACK_BATTERY -> {
+            val context = LocalContext.current
+            val exempt = remember(SettingsUi.revision) { BatteryExemption.exempt(context) }
+            Setting(row.label, if (exempt) "not limited: recording goes on with the screen off" else "Android may stop a long recording to save battery", help = "settings.trackBattery") {
+                Option("Battery settings ›", false) { BatteryExemption.openSettings(context) }
+            }
+        }
     }
 }
 
@@ -352,6 +405,31 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(io.github.jasondorjeshort.dystopo.routing.PaceFits.MIN_METRES, units)} on mapped trails, " +
                 "then your own pace on flat, up and down, from your recent hikes (rides for bike routes), stops left out. Reset " +
                 "forgets it and counts only tracks from now on."
+        },
+        // T172: the recording rows
+        HelpText("settings.trackActivity", "Activity", at(SettingsGroup.NAVIGATION, "Recording: Activity"), show = page(SettingsGroup.NAVIGATION)) {
+            "Record asks how you travel and remembers the answer for next time. Each activity keeps its own accuracy limit, " +
+                "auto-pause, network location and interval: the rows below change the settings of the activity chosen here."
+        },
+        HelpText("settings.trackAccuracy", "Accuracy limit", at(SettingsGroup.NAVIGATION, "Recording: Accuracy limit"), show = page(SettingsGroup.NAVIGATION)) {
+            "Every position is kept with its accuracy. Those less accurate than the limit are marked: they still show where " +
+                "you were, but they do not add to the distance or the climb. Off counts every position, which suits flying."
+        },
+        HelpText("settings.trackAutoPause", "Auto-pause", at(SettingsGroup.NAVIGATION, "Recording: Auto-pause"), show = page(SettingsGroup.NAVIGATION)) {
+            "When on, the recording holds by itself while you stand still and goes on when you move again, so a stop at a " +
+                "light or a long lunch adds no wandering points. The pause is kept in the track as a gap."
+        },
+        HelpText("settings.trackFallback", "Network location", at(SettingsGroup.NAVIGATION, "Recording: Network location"), show = page(SettingsGroup.NAVIGATION)) {
+            "When the GPS goes quiet, in a building or a deep valley, the phone's rough position from mobile networks and " +
+                "Wi-Fi is recorded instead, marked as less accurate, until the GPS answers again. Off leaves a gap instead."
+        },
+        HelpText("settings.trackInterval", "Interval", at(SettingsGroup.NAVIGATION, "Recording: Interval"), show = page(SettingsGroup.NAVIGATION)) {
+            "How often a point is recorded. Every second follows each bend; a longer interval makes smaller tracks for long " +
+                "drives or flights. It saves little battery, since the GPS stays on either way."
+        },
+        HelpText("settings.trackBattery", "Battery", at(SettingsGroup.NAVIGATION, "Recording: Battery"), show = page(SettingsGroup.NAVIGATION)) {
+            "Android may stop an app working with the screen off to save battery. Turn off battery optimisation for Dystopo in " +
+                "the list this opens. Some phones also have their own setting for sleeping apps under Battery or Apps."
         },
     )
 }

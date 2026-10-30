@@ -37,6 +37,15 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   T163 `turnDeadline` (`sunset`, the default; `civil`; or a typed local time `HH:MM`; there is no off) and `turnMarginMin`
  *   (0 to 240, default 30): the turn-around clock's deadline and margin, synced (`app.turnDeadline`, `app.turnMarginMin`);
  *   also Settings › Navigation and tracking. A running navigation reads them at its next reading.
+ *   T172, recording per activity (Settings › Navigation and tracking): `trackActivity=foot|bike|road|rail|boat|air`, the
+ *   activity the picker marks and Record starts with (synced, `app.trackActivity`); `trackProfile.<activity>`, that
+ *   activity's four choices as one value (`acc=50;autopause=0;net=1;interval=1000`, `acc=none` for no bound; synced as
+ *   `app.trackProfile.<activity>`, [io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles]); and the rows' own
+ *   keys, which edit the remembered activity's profile (the one `trackActivity` sets in the same request, else the
+ *   remembered one) and are synced through its `trackProfile.<activity>`: `trackAccuracyM=off|1..10000`,
+ *   `trackAutoPause=1|0`, `trackNetworkFallback=1|0`, `trackIntervalS=1..3600`. A recording of that activity takes the
+ *   change from its next fix. `GET /settings` reports `trackActivity`, `trackProfile` (the remembered activity's choices)
+ *   and `trackProfiles` (every activity's, with the `stored` value or null for the defaults).
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -121,6 +130,20 @@ class SettingsRoutes(private val app: DystopoApp) {
         }
         // T163: the turn-around clock reads them at its next reading (a running navigation included)
         if (parsed.turnDeadline != null || parsed.turnMarginMin != null) AppSettings.setTurn(parsed.turnDeadline, parsed.turnMarginMin)
+        // T172: the remembered activity first, then whole values (a sync), then a row's edit of the remembered one's profile;
+        // a recording of a changed activity takes its profile from the next fix.
+        parsed.trackActivity?.let { AppSettings.setTrackActivity(it) }
+        val profilesChanged = LinkedHashSet<io.github.jasondorjeshort.dystopo.model.Activity>()
+        for ((a, v) in parsed.trackProfiles) if (AppSettings.trackProfiles[a] != v) { AppSettings.setTrackProfile(a, v); profilesChanged += a }
+        parsed.trackEdit?.let { e ->
+            val a = AppSettings.trackActivity
+            val v = io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.encode(e.applyTo(AppSettings.trackProfile(a)))
+            if (AppSettings.trackProfiles[a] != v) { AppSettings.setTrackProfile(a, v); profilesChanged += a }
+        }
+        if (profilesChanged.isNotEmpty()) {
+            val t = io.github.jasondorjeshort.dystopo.app.tracking.Tracking.of(app)
+            profilesChanged.forEach { t.applyProfile(it) }
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -151,6 +174,11 @@ class SettingsRoutes(private val app: DystopoApp) {
             // T164: "Use the standard estimate", the fit's synced value ("" none), the reset's start (epoch ms).
             val paceStandard: Boolean? = null, val paceFit: String? = null, val paceSince: Long? = null,
             val turnDeadline: String? = null, val turnMarginMin: Int? = null, // T163
+            // T172: the remembered activity, whole profile values per activity (`trackProfile.<a>`, also what a sync brings),
+            // and a row's edit of the remembered activity's profile.
+            val trackActivity: io.github.jasondorjeshort.dystopo.model.Activity? = null,
+            val trackProfiles: Map<io.github.jasondorjeshort.dystopo.model.Activity, String> = emptyMap(),
+            val trackEdit: io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.Edit? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -165,7 +193,9 @@ class SettingsRoutes(private val app: DystopoApp) {
         /** `server` (T38) is validated and applied by [OnlineRoutes.setServer]. */
         val KEYS = setOf("textScale", "units", "warmup", "server", "decoder", "routeSnapM", "debugFixedPort", "directSessionMb", "directOnMobileData", "navStaleS", "navStartM", "navSnoozeMin", "tripCorridorM", "navSpeech") + MapOptions.KEYS + CACHE_KEYS + // T80: direct* // decoder: T42, TileService.setDecoder; T57: routeSnapM, debugFixedPort
             setOf("paceStandard", "paceFit", "paceSince") + // T164
-            setOf("turnDeadline", "turnMarginMin") // T163
+            setOf("turnDeadline", "turnMarginMin") + // T163
+            // T172
+            setOf("trackActivity", "trackAccuracyM", "trackAutoPause", "trackNetworkFallback", "trackIntervalS") + io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.KEYS
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -269,7 +299,26 @@ class SettingsRoutes(private val app: DystopoApp) {
             }
             val (turnMarginMin, e4) = intIn("turnMarginMin", io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE, "min")
             e4?.let { return Parsed.Error(it) }
-            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin)
+            // T172: the recording activity and the profiles per activity.
+            val profiles = io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles
+            var trackActivity: io.github.jasondorjeshort.dystopo.model.Activity? = null
+            params["trackActivity"]?.let { raw ->
+                trackActivity = io.github.jasondorjeshort.dystopo.model.Activity.of(raw.toString().trim().lowercase())
+                    ?: return Parsed.Error("trackActivity must be one of ${io.github.jasondorjeshort.dystopo.model.Activity.entries.map { it.code }} (got $raw)")
+            }
+            val trackProfiles = LinkedHashMap<io.github.jasondorjeshort.dystopo.model.Activity, String>()
+            for (k in params.keys.filter { it in profiles.KEYS }) {
+                val a = profiles.activityOfKey(k)!!
+                trackProfiles[a] = profiles.parseValue(a, params[k].toString())
+                    ?: return Parsed.Error("$k must be acc=off|none or metres;autopause=0|1;net=0|1;interval=<ms> (got ${params[k]})")
+            }
+            val trackEdit = try {
+                profiles.parseEdit(params)
+            } catch (e: IllegalArgumentException) {
+                return Parsed.Error(e.message ?: "bad recording setting")
+            }
+            return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
+                trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

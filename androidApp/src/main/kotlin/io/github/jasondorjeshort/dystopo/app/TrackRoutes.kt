@@ -25,7 +25,11 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   (`title`, `text`, `posts`, `dismissals`, `reposts`), the service (`serviceForeground`, `serviceDown`,
  *   `serviceRestarts` by the system, `tasksRemoved`), `flagged`, `gapsWritten` and `gaps` (the active track's gap list:
  *   `start`, `end`, `durationS`, `reason`). `lastFix` carries the accuracy, speed, course and vertical accuracy.
- * - `POST /tracks/record?name=&source=all|gps|injected`: start recording (stops the current track).
+ * - `POST /tracks/record?name=&source=all|gps|injected[&activity=foot|bike|road|rail|boat|air]`: start recording (stops the
+ *   current track); T172: with that activity's profile from the settings rows (default: the remembered activity, which
+ *   this does not change). Tracks and the recording carry `activity`; the recording also `profile` (its four choices and the
+ *   encoded `value`). The activity picker's and the battery card's routes: [io.github.jasondorjeshort.dystopo.app.tracking.ActivityPicker.handle],
+ *   [io.github.jasondorjeshort.dystopo.app.tracking.BatteryExemption.handle].
  * - `POST /tracks/stop`, `POST /tracks/pause`, `POST /tracks/resume`.
  * - `GET /tracks/settings`; `POST /tracks/settings?gapS=600`: the automatic new-segment gap in
  *   seconds (0 = never split on time), persisted.
@@ -77,6 +81,8 @@ object TrackRoutes {
 
     fun handle(app: DystopoApp, r: Request): Response? {
         if (r.path != "/tracks" && !r.path.startsWith("/tracks/") && !r.path.startsWith("/location") && r.path != "/waypoint" && !r.path.startsWith("/map/longpress")) return null
+        io.github.jasondorjeshort.dystopo.app.tracking.ActivityPicker.handle(app, r)?.let { return it } // T172: the picker, a track's activity
+        io.github.jasondorjeshort.dystopo.app.tracking.BatteryExemption.handle(app, r)?.let { return it } // T172: the battery card
         val t = Tracking.of(app)
         val p = params(r)
         when (r.method to r.path) {
@@ -127,7 +133,8 @@ object TrackRoutes {
                     "injected" -> Tracking.Mode.INJECTED
                     else -> return Response.json(mapOf("error" to "source must be all, gps or injected"), 400)
                 }
-                val s = t.start(p.s("name"), mode)
+                val activity = p.s("activity")?.let { io.github.jasondorjeshort.dystopo.model.Activity.of(it.lowercase()) ?: return Response.json(mapOf("error" to "activity must be foot, bike, road, rail, boat or air"), 400) } // T172
+                val s = t.start(p.s("name"), mode, activity)
                 return Response.json(mapOf("started" to summaryJson(s), "service" to t.serviceState))
             }
             "POST" to "/tracks/stop" -> {
@@ -304,6 +311,7 @@ object TrackRoutes {
         val w = t.watch
         linkedMapOf(
             "id" to rec.activeId, "mode" to t.mode.name.lowercase(), "paused" to rec.paused, "service" to t.serviceState, "gps" to t.gpsState,
+            "activity" to rec.profile.activity.code, "profile" to io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.json(rec.profile), // T172
             // T159: the one state, the line the controls show, and what drives it.
             "state" to t.stateNow().code, "stateLine" to t.ui.stateLine, "autoPaused" to rec.autoPaused, "pendingGap" to rec.pendingGap?.code,
             "serviceForeground" to t.serviceForeground, "serviceDown" to t.serviceDown, "serviceRestarts" to t.serviceRestarts, "tasksRemoved" to t.tasksRemoved,
@@ -373,6 +381,7 @@ object TrackRoutes {
     private fun summaryJson(s: TrackSummary): Map<String, Any?> = mapOf(
         "id" to s.id, "name" to s.name, "createdAt" to s.createdAt, "updatedAt" to s.updatedAt,
         "recording" to s.recording, "points" to s.points, "waypoints" to s.waypoints,
+        "activity" to s.activity?.code, // T172
     )
 
     private fun waypointJson(w: Waypoint): Map<String, Any?> =

@@ -8,6 +8,12 @@ import android.os.Build
 import android.os.Debug
 import io.github.jasondorjeshort.dystopo.app.BuildConfig
 import io.github.jasondorjeshort.dystopo.app.online.HeapGuard
+import io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles
+import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.GapReason
+import io.github.jasondorjeshort.dystopo.model.TrackGap
+import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.reports.Scrub
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -24,6 +30,11 @@ import java.util.Locale
  * and PSS at the system's last sample, not at its death) and the persisted mark of the session before ([HeapMark]).
  * [lines] and [report] are pure (`DiagnosticsTest`); the report adds the app version, build type, Android version,
  * device model, `memoryClass`, `largeMemoryClass` and the large-heap flag, and passes through [Scrub.text].
+ *
+ * T172: the recording's own numbers ([TrackDiag], [trackLines]): the live track, else the newest one, with its activity, its
+ * points and how many are marked (worse than the accuracy limit, from network location), its gaps by reason and their total
+ * length, and while it records the watchdog's restarts of the GPS listener. No name and no position: the report may leave
+ * the phone.
  */
 object Diagnostics {
     /** The previous process's end, from `ApplicationExitInfo`. Sizes in kB as the system gives them (0: not sampled). */
@@ -61,7 +72,43 @@ object Diagnostics {
         val memoryClassMb: Int,
         val largeMemoryClassMb: Int,
         val largeHeap: Boolean,
+        /** T172: the live or the newest track; null when there is none. */
+        val track: TrackDiag? = null,
     )
+
+    /** T172: the recording's numbers for the row. Times are wall-clock millis. */
+    data class TrackDiag(
+        val live: Boolean,
+        val startedAt: Long,
+        /** The last change of a stopped track (its end); null while it records. */
+        val endedAt: Long?,
+        val activity: Activity?,
+        val points: Int,
+        /** Points worse than the profile's accuracy limit ([TrackPoint.INACCURATE]). */
+        val flagged: Int,
+        /** Points from network location while the GPS was silent ([TrackPoint.NETWORK]). */
+        val network: Int,
+        val gaps: List<TrackGap>,
+        /** Re-registrations of the GPS listener since the recording started or resumed; null for a stopped track (not kept). */
+        val watchdogRestarts: Long?,
+    )
+
+    /** T172: the live track, else the newest stored one (the tracking thread; a few ms, the points read once). */
+    fun readTrack(context: Context): TrackDiag? = runCatching {
+        val t = Tracking.of(context)
+        t.call {
+            val rec = t.recorder
+            val id = rec.activeId ?: t.store.list().lastOrNull()?.id ?: return@call null
+            val s = t.store.summary(id) ?: return@call null
+            val live = id == rec.activeId
+            val pts = if (live) rec.livePoints().flatten() else t.store.track(id)?.points.orEmpty()
+            TrackDiag(
+                live, s.createdAt, if (live) null else s.updatedAt, s.activity, pts.size,
+                pts.count { it.inaccurate }, pts.count { it.flags and TrackPoint.NETWORK != 0 }, t.store.gaps(id),
+                if (live) t.watch.watchdogRestarts else null,
+            )
+        }
+    }.getOrNull()
 
     /** A snapshot now (a worker thread: not the UI thread). Also a heap sample, so the peak counts this reading. */
     fun read(context: Context): Snapshot {
@@ -88,6 +135,7 @@ object Diagnostics {
             android = Build.VERSION.RELEASE ?: "", sdk = Build.VERSION.SDK_INT, device = deviceName(),
             memoryClassMb = am.memoryClass, largeMemoryClassMb = am.largeMemoryClass,
             largeHeap = (context.applicationInfo.flags and ApplicationInfo.FLAG_LARGE_HEAP) != 0,
+            track = readTrack(context), // T172
         )
     }
 
@@ -185,6 +233,44 @@ object Diagnostics {
     /** The heading above [lastSessionLines]. */
     const val LAST_SESSION = "Last session"
 
+    /** T172: the heading above [trackLines]. */
+    fun trackHeading(s: Snapshot): String = if (s.track?.live == true) "Recording now" else "Last track"
+
+    /** T172: a length of time as the row shows it ("35 s", "4 min 10 s", "1 h 5 min"). */
+    fun span(ms: Long): String {
+        val t = (ms + 500) / 1000
+        return when {
+            t < 60 -> "$t s"
+            t < 3600 -> "${t / 60} min" + if (t % 60 != 0L) " ${t % 60} s" else ""
+            else -> "${t / 3600} h" + if (t / 60 % 60 != 0L) " ${t / 60 % 60} min" else ""
+        }
+    }
+
+    /** T172: the recording's lines (no name, no position). */
+    fun trackLines(s: Snapshot): List<Line> {
+        val d = s.track ?: return listOf(Line("Tracks", "none recorded"))
+        val out = ArrayList<Line>()
+        out += Line("Started", time(d.startedAt) + (d.endedAt?.let { ", ended ${time(it)}" } ?: ""))
+        out += Line("Activity", d.activity?.let { RecordingProfiles.label(it) } ?: "not set")
+        out += Line("Points", "${d.points}, ${d.flagged} less accurate than the limit" + if (d.network > 0) ", ${d.network} from network location" else "")
+        out += Line(
+            "Gaps",
+            if (d.gaps.isEmpty()) "none" else "${d.gaps.size}, ${span(d.gaps.sumOf { it.durationMs })} in all: " +
+                d.gaps.groupingBy { it.reason }.eachCount().entries.joinToString(", ") { (r, n) -> "$n ${reasonWords(r)}" },
+        )
+        d.watchdogRestarts?.let { out += Line("GPS restarts by the watchdog", "$it") }
+        return out
+    }
+
+    private fun reasonWords(r: GapReason): String = when (r) {
+        GapReason.NO_FIX -> "no fix"
+        GapReason.REJECTED -> "fixes rejected"
+        GapReason.PAUSED -> "paused"
+        GapReason.AUTO_PAUSED -> "auto-paused"
+        GapReason.STOPPED_BY_SYSTEM -> "stopped by the system"
+        GapReason.RESTARTED -> "restarted"
+    }
+
     /** Copy report: the same lines with the build and the phone, plain text, through [Scrub.text]. */
     fun report(s: Snapshot): String {
         val text = buildString {
@@ -196,6 +282,8 @@ object Diagnostics {
             for (l in nowLines(s)) append(l).append('\n')
             append(LAST_SESSION).append('\n')
             for (l in lastSessionLines(s)) append(l).append('\n')
+            append(trackHeading(s)).append('\n') // T172
+            for (l in trackLines(s)) append(l).append('\n')
         }
         return Scrub.text(text)
     }
@@ -220,6 +308,16 @@ object Diagnostics {
         ),
         "lines" to nowLines(s).map { it.toString() },
         "lastSession" to lastSessionLines(s).map { it.toString() },
+        // T172: the live or newest track's numbers and the row's lines
+        "track" to s.track?.let { d ->
+            linkedMapOf(
+                "live" to d.live, "startedAt" to d.startedAt, "endedAt" to d.endedAt, "activity" to d.activity?.code, "points" to d.points,
+                "flagged" to d.flagged, "network" to d.network, "gaps" to d.gaps.size, "gapMs" to d.gaps.sumOf { it.durationMs },
+                "gapReasons" to d.gaps.groupingBy { it.reason.code }.eachCount(), "watchdogRestarts" to d.watchdogRestarts,
+            )
+        },
+        "trackHeading" to trackHeading(s),
+        "trackLines" to trackLines(s).map { it.toString() },
         "report" to report(s),
     )
 }

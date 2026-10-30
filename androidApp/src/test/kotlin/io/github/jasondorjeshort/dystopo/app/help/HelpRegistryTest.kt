@@ -95,6 +95,9 @@ class HelpRegistryTest {
             "settings.pace",
             // T163: the turn-around clock's line on the navigation card and its two settings rows.
             "nav.turnAround", "settings.turnDeadline", "settings.turnMargin",
+            // T172: the recording rows.
+            "settings.trackActivity", "settings.trackAccuracy", "settings.trackAutoPause", "settings.trackFallback",
+            "settings.trackInterval", "settings.trackBattery",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

@@ -368,7 +368,7 @@ abstract class TrackStoreContract {
         )
         val w = Waypoint("00000000-0000-4000-8000-0000000000f1", "Camp", 1.0, 2.0)
         val sum = s.insert(t, listOf(w), createdAt = 50, now = 60)
-        assertEquals(TrackSummary(t.id, "Imported", 50, 60, false, 13, 1), sum)
+        assertEquals(TrackSummary(t.id, "Imported", 50, 60, false, 13, 1, Activity.BOAT), sum) // T172: the summary carries the activity
         assertEquals(t.copy(segments = listOf(t.segments[0], t.segments[2])), s.track(t.id))
         assertEquals(t.gaps, s.gaps(t.id))
         assertEquals(t.profile, s.lastProfile())
@@ -379,6 +379,8 @@ abstract class TrackStoreContract {
         // T158: the activity can change afterwards; null clears it.
         s.setActivity(t.id, Activity.FOOT, null, 70)
         assertEquals(Activity.FOOT, s.track(t.id)!!.activity)
+        assertEquals(Activity.FOOT, s.summary(t.id)!!.activity) // T172
+        assertEquals(Activity.FOOT, s.list().single { it.id == t.id }.activity)
         assertNull(s.track(t.id)!!.profile)
         assertFailsWith<TrackNotFoundException> { s.setActivity("nope", null, null, 1) }
         assertFailsWith<TrackNotFoundException> { s.addGap("nope", TrackGap(1, 2, GapReason.PAUSED), 1) }

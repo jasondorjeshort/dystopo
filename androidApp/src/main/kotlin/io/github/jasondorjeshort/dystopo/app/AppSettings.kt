@@ -3,7 +3,10 @@ package io.github.jasondorjeshort.dystopo.app
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitPreference
@@ -85,6 +88,9 @@ object AppSettings {
         // T163
         turnDeadline = p.getString(KEY_TURN_DEADLINE, null)?.let { io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(it)?.value } ?: io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.DEFAULT
         turnMarginMin = p.getInt(KEY_TURN_MARGIN_MIN, io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN).coerceIn(io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE)
+        // T172
+        trackActivity = Activity.of(p.getString(KEY_TRACK_ACTIVITY, null)) ?: Activity.FOOT
+        trackProfiles = Activity.entries.mapNotNull { a -> p.getString(RecordingProfiles.key(a), null)?.let { v -> RecordingProfiles.parseValue(a, v)?.let { a to it } } }.toMap()
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -140,6 +146,32 @@ object AppSettings {
         marginMin?.let { turnMarginMin = it; e?.putInt(KEY_TURN_MARGIN_MIN, it) }
         e?.apply()
     }
+
+    // ---- T172: the recording activity remembered for the next Record, and one profile value per activity (tracking/ActivityPicker); synced ----
+
+    private const val KEY_TRACK_ACTIVITY = "trackActivity"
+
+    /** The activity the picker marks and a recording with none given starts with (T161's readout reads it too). */
+    @Volatile var trackActivity: Activity = Activity.FOOT
+        private set
+
+    /** The stored choices per activity ([RecordingProfiles.encode]'s form); an activity missing has its defaults. */
+    @Volatile var trackProfiles: Map<Activity, String> = emptyMap()
+        private set
+
+    fun setTrackActivity(a: Activity) {
+        trackActivity = a
+        prefs?.edit()?.putString(KEY_TRACK_ACTIVITY, a.code)?.apply()
+    }
+
+    /** Stores [a]'s choices ([value] already checked by [RecordingProfiles.parseValue]; null: back to the defaults). */
+    fun setTrackProfile(a: Activity, value: String?) {
+        trackProfiles = if (value == null) trackProfiles - a else trackProfiles + (a to value)
+        prefs?.edit()?.apply { if (value == null) remove(RecordingProfiles.key(a)) else putString(RecordingProfiles.key(a), value) }?.apply()
+    }
+
+    /** [a]'s recording profile: its defaults with the stored choices. */
+    fun trackProfile(a: Activity = trackActivity): ActivityProfile = RecordingProfiles.profile(a, trackProfiles[a])
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
@@ -429,5 +461,9 @@ object AppSettings {
         "navSpeech" to navSpeech, // T126
         "paceStandard" to paceStandard, "paceFit" to paceFit, "paceSince" to paceSince, // T164
         "turnDeadline" to turnDeadline, "turnMarginMin" to turnMarginMin, // T163
+        // T172: the remembered activity, its profile's four choices, and every activity's (stored value or null for the defaults)
+        "trackActivity" to trackActivity.code,
+        "trackProfile" to RecordingProfiles.json(trackProfile()),
+        "trackProfiles" to Activity.entries.associate { a -> a.code to (RecordingProfiles.json(trackProfile(a)) + mapOf("stored" to trackProfiles[a])) },
     ) + mapOptions.json(units) // T47
 }

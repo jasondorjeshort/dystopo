@@ -12,7 +12,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar"),
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
-    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time"), // T164: route times; T163: turn-back time
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording"), // T164: route times; T163: turn-back time; T172: recording
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, diagnostics, problem reports, contour warm-up, credits"),
     ;
@@ -52,6 +52,13 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     REPORTS("reports", SettingsGroup.ABOUT, "Report a problem", "ReportRow", "T145"),
     WARMUP("warmup", SettingsGroup.ABOUT, "Contour warm-up", "SettingsPages", "T33"),
     CREDITS("credits", SettingsGroup.ABOUT, "Credits", "SettingsPages", "T103"),
+    // T172: recording per activity (the remembered one's profile) and the battery exemption
+    TRACK_ACTIVITY("trackActivity", SettingsGroup.NAVIGATION, "Recording: Activity", "SettingsPages", "T172"),
+    TRACK_ACCURACY("trackAccuracy", SettingsGroup.NAVIGATION, "Recording: Accuracy limit", "SettingsPages", "T172"),
+    TRACK_AUTO_PAUSE("trackAutoPause", SettingsGroup.NAVIGATION, "Recording: Auto-pause", "SettingsPages", "T172"),
+    TRACK_FALLBACK("trackFallback", SettingsGroup.NAVIGATION, "Recording: Network location", "SettingsPages", "T172"),
+    TRACK_INTERVAL("trackInterval", SettingsGroup.NAVIGATION, "Recording: Interval", "SettingsPages", "T172"),
+    TRACK_BATTERY("trackBattery", SettingsGroup.NAVIGATION, "Recording: Battery", "SettingsPages", "T172"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

@@ -17,8 +17,8 @@ import kotlin.test.assertTrue
  * pages draw ([GroupPage] walks [SettingsLayout.rows]).
  */
 class SettingsLayoutTest {
-    /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics; T145: problem reports). */
-    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163") // T164: route times; T163: the turn-around clock's two rows
+    /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics; T145: problem reports; T164: route times; T163: the turn-around clock's two rows; T172: recording). */
+    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172")
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -46,7 +46,18 @@ class SettingsLayoutTest {
         val later = all.filter { it["since"] in AFTER_T103 }.map { it["label"] as String }
         assertEquals(beforeT103.sorted(), (labels - added.toSet() - later.toSet()).sorted())
         assertEquals(listOf("Offline areas", "Sync status", "Share", "Credits"), added)
-        assertEquals(listOf("Navigation: Spoken directions", "Route times", "Navigation: Turn back by", "Navigation: Turn-back margin", "Diagnostics", "Report a problem"), later) // T164: Route times; T163: the turn-around rows
+        assertEquals(
+            listOf(
+                "Navigation: Spoken directions",
+                "Route times", // T164
+                "Navigation: Turn back by", "Navigation: Turn-back margin", // T163
+                // T172 (the Navigation and tracking page, so before the About rows in list order)
+                "Recording: Activity", "Recording: Accuracy limit", "Recording: Auto-pause", "Recording: Network location",
+                "Recording: Interval", "Recording: Battery",
+                "Diagnostics", "Report a problem",
+            ),
+            later,
+        )
     }
 
     @Test
