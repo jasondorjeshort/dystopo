@@ -78,7 +78,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *     `bytes`, `tiles`, `less`, `medium` and `full` (each `bytes`, `tiles`, `id`, `estimated`: the full detail is estimated
  *     from z14's cover when its floor is past the budget), `downloaded` (the row's mark) and `downloadedId`; with
  *     `wait` it measures the rows first. At the top `measured`, `greyed`, `tooLargeNames`, `pinnedBytes`, `budgetMb`, `heapTiles`
- *     (T152: the tiles the tile cache index holds comfortably; said, never a refusal).
+ *     (T152: the tiles the tile cache index holds comfortably; said, never a refusal), T170 `coverCache` (`CountrySizes.coverStats`).
  *     `POST /areas/countries[?filter=text]` opens the list in the sheet with that filter.
  *   - `POST /areas/country?code=<ADM0_A3 or ISO>[&detail=full|medium|less]`: the country's summary (the default detail without `detail`).
  *   - `POST /areas/draw[?ring=lat,lon;lat,lon;...]`: Draw an area (the ring, else four vertices from the current view);
@@ -286,7 +286,7 @@ object AreaRoutes {
         return linkedMapOf(
             "total" to all.size, "shown" to rows.size, "measured" to rows.count { it.second["state"] != "measuring" },
             "greyed" to rows.count { it.second["greyed"] == true }, "tooLargeNames" to rows.filter { it.second["state"] == "too_large" }.map { it.first.name },
-            "pinnedBytes" to pinned, "budgetMb" to budget, "heapTiles" to AreaDownload.heapTiles(),
+            "pinnedBytes" to pinned, "budgetMb" to budget, "heapTiles" to AreaDownload.heapTiles(), "coverCache" to CountrySizes.coverStats, // T170
             "countries" to rows.map { it.second },
         )
     }
