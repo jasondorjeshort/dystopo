@@ -1,16 +1,18 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-30, at commit f849a8d plus this edit, by main session (wave 22: all 17 merged, the sweep running)
+Updated: 2026-10-30, at commit f5342bb plus this edit, by main session (wave 22: 17 merged, T175 from the sweep)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 22 (its paragraph holds the launch order, the ports and the emulator rule).
 
 ## Now
 
 - **Wave 22 is closing** (17 tasks, T158 to T174, all merged on 2026-10-30, the last T173 at bde2a49; ADR 0049 and
   0050; the three triage-scan chores of 2026-10-29 done at ccb5af5: ADR 0041 held, 0039 undecidable, 0044 half held
-  with a finding and the brief's report line fixed). **Running:** the post-wave sweep (Sonnet, `-NoDaemon -EmuMemory
-  3072`, `out/sweep-wave22`; T170's green run) and the T173 cleanup chore. **Then:** the alpha (`release` skill,
-  v0.1.15-alpha, the CHANGELOG cut, the README status line), the allowance reading in the wave paragraph, this file.
+  with a finding and the brief's report line fixed). **The sweep of 2026-10-30 was not green** (`out/sweep-wave22`;
+  recenter and update passed on a rerun): the two crow routes answer 500, the release-realism script meets T172's
+  Record-as picker, `NOTICES.md` is stale. **Running:** T175 (Opus, console 5650, host 8766) fixes the three; then
+  its verifier, the merge, `-Only notices,routes,features,permissions,background,network`, and the alpha (`release`
+  skill, v0.1.15-alpha; notes drafted in the scratchpad), the allowance reading in the wave paragraph, this file.
   Local pre-rebase branch copies (`task/T169`, `T166`, `T160`, `T172`) are on the owner's housekeeping list.
 - **Emulator rule (owner, 2026-10-30):** `-Memory 3072`, at most three AVDs alive, at most two emulator-needing
   implementers at a time, the third slot for a verifier. The Kotlin compiler ran out of memory under five parallel
@@ -20,7 +22,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Next
 
-1. Read the sweep's report; a failed part becomes the next wave's sweep task (`finding` skill); green: the alpha.
+1. Verify and merge T175; rerun the failed sweep parts; green: the alpha.
 2. Plan wave 23 from the owner's next theme: the deferred-by-name list in the wave 22 paragraph (sun and shade,
    the viewshed, the drainage toggle, the phone's sheet, the terrain fix's live source) and the Status follow-ups.
 3. A Hatchery-rooted session (carry-backs, ADR 0048's included, the ownership idea, ADR 0021's follow-ups, the second
