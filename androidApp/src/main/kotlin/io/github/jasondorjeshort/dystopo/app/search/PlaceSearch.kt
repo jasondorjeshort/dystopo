@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app.search
 
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -15,6 +16,7 @@ import io.github.jasondorjeshort.dystopo.search.SearchIndex
 import io.github.jasondorjeshort.dystopo.search.SearchIndexBuilder
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Place search over every pack on the map (T39, T41). Each pack's index lives next to its vector
@@ -29,10 +31,16 @@ import java.util.concurrent.Executors
  * the states, a pack not asked for yet showing `idle`. A build asks the heap guard first
  * ([io.github.jasondorjeshort.dystopo.app.online.HeapGuard.admitBuild] for [estimateBytes] of the archive, taking turns
  * with the routing graph's build); a refused one is state `refused` and is asked again after [REFUSED_RETRY_MS].
+ *
+ * T170 (T150's follow-up: 240 StrictMode disk reads per device tour from the search box's 2 s poll): the UI thread never
+ * reads a file here. A vector archive's size and time ([Stamp], how a changed archive is told) come from [stamps], a
+ * snapshot refreshed on [statter] after each read on the UI thread; other threads read the file and update it.
  */
 object PlaceSearch {
     /** The index state for one pack's vector archive. Fields are written by the worker thread. */
-    class State(val pack: String, val vector: File, val file: File, private val vectorBytes: Long, private val vectorMtime: Long) {
+    class State(val pack: String, val vector: File, val file: File, stamp: Stamp?) {
+        /** T170: the archive's size and time this state was made for; null until a thread other than the UI's read them. */
+        @Volatile var stamp: Stamp? = stamp
         @Volatile var status = "queued" // queued, loading, waiting (T149: for the heap guard), building, ready, refused (T149), error; idle in [peek]
         /** T149: the build's admission by the heap guard, and the heap at its start and its peak. */
         @Volatile var guard: io.github.jasondorjeshort.dystopo.app.online.HeapGuard.Admission? = null
@@ -47,7 +55,12 @@ object PlaceSearch {
         @Volatile var rebuildReason: String? = null
         @Volatile var index: SearchIndex? = null
 
-        fun matches(name: String?, f: File?) = name == pack && f != null && f.path == vector.path && f.length() == vectorBytes && f.lastModified() == vectorMtime
+        /** T170: the stamps compared only when both are known (on the UI thread from [stamps]; never a file read there). */
+        fun matches(name: String?, f: File?): Boolean {
+            if (name != pack || f == null || f.path != vector.path) return false
+            val mine = stamp ?: return true
+            return PlaceSearch.stampOf(f)?.let { it == mine } ?: true
+        }
 
         val busy: Boolean get() = status in listOf("queued", "loading", "waiting", "building")
 
@@ -58,6 +71,52 @@ object PlaceSearch {
             "entries" to index?.entries?.size, "tokens" to index?.tokenCount,
             "guard" to guard?.json(), "heapStartBytes" to heapStartBytes, "peakHeapBytes" to peakHeapBytes, // T149
         )
+    }
+
+    /** T170: a vector archive's size and modification time. */
+    data class Stamp(val bytes: Long, val mtime: Long)
+
+    /** T170: the last stamps read, by path; replaced whole, read by the UI thread. */
+    @Volatile private var stamps: Map<String, Stamp> = emptyMap()
+    private val stampLock = Any()
+    private val statPending = AtomicBoolean(false)
+    private val statter = Executors.newSingleThreadExecutor { r ->
+        Thread({ Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "dystopo-search-stat").apply { isDaemon = true }
+    }
+
+    /** T170: refreshes of [stamps] made on [statter] (for `GET /search/status` `stampRefreshes`). */
+    @Volatile var stampRefreshes = 0
+        private set
+
+    /**
+     * T170: [f]'s stamp. On the UI thread the last one read (null before the first refresh) and a refresh queued on
+     * [statter]; on any other thread the file is read now and the snapshot updated.
+     */
+    fun stampOf(f: File): Stamp? {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            refreshStamps()
+            return stamps[f.path]
+        }
+        val s = Stamp(f.length(), f.lastModified())
+        if (stamps[f.path] != s) synchronized(stampLock) { stamps = stamps + (f.path to s) }
+        return s
+    }
+
+    /** T170: re-reads the stamps of every pack's vector archive on [statter]; one refresh at a time, extra calls dropped. */
+    private fun refreshStamps(app: DystopoApp = DystopoApp.instance) {
+        if (!statPending.compareAndSet(false, true)) return
+        statter.execute {
+            try {
+                val files = app.tiles.packs.regions.mapNotNull { it.osm?.file }
+                val next = files.associate { it.path to Stamp(it.length(), it.lastModified()) }
+                synchronized(stampLock) { stamps = next }
+                stampRefreshes++
+            } catch (e: Exception) {
+                Log.w(TAG, "reading the vector archives' stamps failed", e)
+            } finally {
+                statPending.set(false)
+            }
+        }
     }
 
     private val worker = Executors.newSingleThreadExecutor { r ->
@@ -82,7 +141,7 @@ object PlaceSearch {
             // T149: a refused one is, by a use after REFUSED_RETRY_MS (the heap may have room by then).
             val retry = cur?.status == "refused" && SystemClock.elapsedRealtime() - cur.refusedAt >= REFUSED_RETRY_MS
             if (cur != null && cur.matches(r.name, vector) && !retry && (!rebuild || cur.busy)) return@mapNotNull cur
-            val state = State(r.name, vector, File(vector.absoluteFile.parentFile, SearchIndex.fileNameFor(vector.name)), vector.length(), vector.lastModified())
+            val state = State(r.name, vector, File(vector.absoluteFile.parentFile, SearchIndex.fileNameFor(vector.name)), stampOf(vector))
             worker.execute { run(state, rebuild) }
             state
         }
@@ -99,7 +158,7 @@ object PlaceSearch {
         return app.tiles.packs.regions.mapNotNull { r ->
             val vector = r.osm?.file ?: return@mapNotNull null
             old[r.name]?.takeIf { it.matches(r.name, vector) }
-                ?: State(r.name, vector, File(vector.absoluteFile.parentFile, SearchIndex.fileNameFor(vector.name)), vector.length(), vector.lastModified()).apply { status = "idle" }
+                ?: State(r.name, vector, File(vector.absoluteFile.parentFile, SearchIndex.fileNameFor(vector.name)), stampOf(vector)).apply { status = "idle" }
         }
     }
 
@@ -132,6 +191,7 @@ object PlaceSearch {
     private fun run(s: State, rebuild: Boolean) {
         try {
             if (!s.vector.isFile) throw IllegalStateException("${s.vector.name} is gone")
+            if (s.stamp == null) s.stamp = stampOf(s.vector) // T170: made on the UI thread before any stamp was read
             FileRangeSource(s.vector).use { src ->
                 val reader = PmtilesReader.open(src, mapOf(Compression.GZIP to gunzip))
                 val fingerprint = SearchIndexBuilder.fingerprint(reader.header)
@@ -217,7 +277,7 @@ object PlaceSearch {
     /** Status for `/packs` and `/search/status`: overall, plus one entry per pack. T149: reads only ([peek]), starts nothing. */
     fun json(app: DystopoApp = DystopoApp.instance): Map<String, Any?> {
         val s = peek(app)
-        return linkedMapOf("status" to status(s), "ready" to s.count { it.index != null }, "packs" to s.map { it.json() })
+        return linkedMapOf("status" to status(s), "ready" to s.count { it.index != null }, "packs" to s.map { it.json() }, "stampRefreshes" to stampRefreshes)
     }
 
     const val TAG = "DystopoSearch"
