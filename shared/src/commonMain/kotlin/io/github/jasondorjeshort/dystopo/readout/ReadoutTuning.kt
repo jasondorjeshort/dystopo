@@ -70,12 +70,14 @@ object ReadoutTuning {
         if (activity == Activity.AIR) ClimbGate(100 * FT / 60, 200 * FT / 60) else ClimbGate(50.0 / 3600, 100.0 / 3600)
 
     /**
-     * The elevation filter's vertical acceleration noise (m²/s³; derived so the climb rate's effective window is
-     * about 20 to 30 s on foot with the barometer and about 10 s in the air on GNSS alone).
+     * The elevation filter's vertical acceleration noise (m²/s³). With the barometer (derived: the climb rate's
+     * effective window about 10 to 15 s on foot, so the 7 s display lag makes the research's 20 to 30 s); on GNSS
+     * alone larger, so the height follows a summit or a pass within about a minute instead of overshooting, the
+     * climb rate then mostly hidden by its own uncertainty. Road, rail and air never use the barometer.
      */
-    fun verticalNoise(activity: Activity): Double = when (activity) {
-        Activity.FOOT, Activity.BOAT -> 1e-6
-        Activity.BIKE -> 1e-5
+    fun verticalNoise(activity: Activity, fused: Boolean): Double = when (activity) {
+        Activity.FOOT, Activity.BOAT -> if (fused) 1e-5 else 3e-4
+        Activity.BIKE -> if (fused) 1e-4 else 1e-3
         Activity.ROAD, Activity.RAIL -> 0.006
         Activity.AIR -> 0.1
     }

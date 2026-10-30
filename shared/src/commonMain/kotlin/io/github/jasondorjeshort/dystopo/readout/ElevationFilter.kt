@@ -14,7 +14,7 @@ import kotlin.math.sqrt
  * - **GNSS**: with the barometer, one height per [ReadoutTuning.gnssCorrelationS] (30 s on foot; its error is
  *   correlated), one per 10 s for the first 5 minutes after the offset is set (the research's fast gain after a cold start) at a variance of (2 × vertical accuracy)²; on GNSS alone, every fix with that variance scaled by the
  *   correlation time over the fix interval. Gated at 5 sigma (of the fix's own variance); four in a row on one side averaging over
- *   1.5 sigma are a coarse recalibration (the research's "residual beyond k times the vertical
+ *   1 sigma are a coarse recalibration (the research's "residual beyond k times the vertical
  *   uncertainty": the spread of height and offset opens to the residual, so the next updates pull it in fast).
  * - **DEM** ([dem]): a height with the caller's sigma (the estimator gates it: on foot, slope, structures, 150 m).
  * - **Weather station pressure** ([prior]): a prior on the offset with a sigma that grows with distance and age.
@@ -79,7 +79,7 @@ internal class ElevationFilter(var activity: Activity) {
         }
         val dt = (tMs - t0) / 1000.0
         t = tMs
-        val q = ReadoutTuning.verticalNoise(activity)
+        val q = ReadoutTuning.verticalNoise(activity, fused(t0))
         // P = F P F' + Q with F = [[1, dt, 0], [0, 1, 0], [0, 0, 1]].
         val p00 = p[0] + dt * (p[1] + p[3]) + dt * dt * p[4] + q * dt * dt * dt / 3
         val p01 = p[1] + dt * p[4] + q * dt * dt / 2
@@ -178,8 +178,11 @@ internal class ElevationFilter(var activity: Activity) {
         if (shifted) {
             // Coarse recalibration: the height (and the offset, which the barometer ties to it) may be this far off.
             recalibrations++
-            p[0] += y * y
-            if (offsetKnown) { p[8] += y * y; offsetSinceMs = tMs }
+            // The shift is in the offset, the height following it through the barometer: open the spread along
+            // (h, b) = (1, -1) so the next GNSS heights move both, in opposite directions.
+            val y2 = y * y
+            set(p[0] + y2, p[1], p[2] - y2, p[4], p[5], p[8] + y2)
+            offsetSinceMs = tMs
             residuals.clear()
         } else if (y * y > GATE * GATE * s) {
             gnssRejected++
@@ -276,7 +279,7 @@ internal class ElevationFilter(var activity: Activity) {
         const val GATE = 5.0
 
         /** [RECAL_AFTER] GNSS residuals in a row on one side, averaging over this many sigmas, trigger a coarse recalibration. */
-        const val RECAL_SIGMAS = 1.5
+        const val RECAL_SIGMAS = 1.0
         const val RECAL_AFTER = 4
     }
 }

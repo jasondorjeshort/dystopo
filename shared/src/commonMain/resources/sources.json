@@ -1,5 +1,5 @@
 {
-  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay | font (fonts the app draws labels with). license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
+  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay | font (fonts the app draws labels with) | weather (live readings the app uses, such as weather station pressure). license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
   "version": 1,
   "sources": [
     {
@@ -554,6 +554,26 @@
       "url": "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
       "updateCadence": "Static; fetched once into the cache by tools/android-push-pack.ps1 and pushed with the packs.",
       "notes": "MapLibre loads label glyphs as signed-distance-field PBF ranges (0-255 ... 65280-65535) per font stack. The PBFs are generated from the Noto Sans TTFs, so the font's OFL applies to them. The devtool PNG renderer bundles Noto Sans Regular and Bold (unhinted TTFs from the notofonts NotoSans-v2.015 release) with the OFL text in serverlib/src/main/resources/fonts/."
+    },
+    {
+      "id": "awc-metar",
+      "name": "Weather station altimeter settings (NOAA Aviation Weather Center data API)",
+      "kind": "weather",
+      "provider": "U.S. National Weather Service, Aviation Weather Center (NOAA): routine weather station reports",
+      "coverage": {
+        "summary": "Airport weather stations worldwide that report routinely; densest in North America and Europe.",
+        "bbox": [-180, -90, 180, 90]
+      },
+      "resolution": "Point observations, usually hourly (more often in changing weather)",
+      "license": "LicenseRef-US-Government-Public-Domain",
+      "licenseName": "Public domain (US federal government work)",
+      "licenseUrl": "https://www.usa.gov/government-copyright",
+      "attribution": "Weather station pressure: NOAA Aviation Weather Center (public domain).",
+      "attributionHtml": "Weather station pressure: <a href=\"https://aviationweather.gov/\" target=\"_blank\">NOAA Aviation Weather Center</a> (public domain).",
+      "allowedUses": "Any lawful use without charge; it may not be presented as one's own, implying NOAA or NWS endorsement, or modified and presented as official (weather.gov/disclaimer).",
+      "url": "https://aviationweather.gov/api/data/metar",
+      "updateCadence": "Live: a new report per station about every hour; the readout reads one only while it is in use (T173).",
+      "notes": "Used as a prior on the readout's barometer offset (T160): the altimeter group of the raw report (A in hundredths of inHg, Q in hPa), parsed by readout/MetarAltimeter, not the remark's sea-level pressure; the JSON form's altim is rounded to whole hPa, so the raw report (rawOb) is parsed; lat, lon and obsTime come with it. The data API allows 100 requests a minute (aviationweather.gov/data/api). NWS web information is public domain unless noted (weather.gov/disclaimer). User-facing text says weather station pressure."
     }
   ]
 }

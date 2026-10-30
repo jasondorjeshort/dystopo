@@ -105,6 +105,8 @@ data class Readout(
     val fixSpeedMps: Double?,
     val routeSpeedMps: Double?,
     val counters: Map<String, Long>,
+    /** Registry ids (`sources.json`) of the data sources that contributed: [STATION_SOURCE_ID] once a weather station's pressure was used. */
+    val provenance: List<String> = emptyList(),
 ) {
     operator fun get(entry: ReadoutEntry): ReadoutValue = when (entry) {
         ReadoutEntry.SPEED -> speed
@@ -118,7 +120,7 @@ data class Readout(
         "speed" to speed.json(), "climb" to climb.json(), "course" to course.json(), "elevation" to elevation.json(),
         "gapS" to gapS?.let { r3(it) }, "heights" to heights.json(), "barometer" to barometer.json(),
         "fixSpeedMps" to fixSpeedMps?.let { r3(it) }, "routeSpeedMps" to routeSpeedMps?.let { r3(it) },
-        "counters" to counters,
+        "counters" to counters, "provenance" to provenance,
     )
 }
 
@@ -376,7 +378,8 @@ class ReadoutEstimator(
         c["baroUpdates"] = filter.baroUpdates.toLong()
         c["recalibrations"] = filter.recalibrations.toLong()
         c["priors"] = filter.priors.toLong()
-        return Readout(nowMs, activity, speed, climb, course, elevation, gapS, heights, baroState, fixSpeed?.first ?: pos?.first, route?.first, c)
+        return Readout(nowMs, activity, speed, climb, course, elevation, gapS, heights, baroState, fixSpeed?.first ?: pos?.first, route?.first, c,
+            if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList())
     }
 
     private val gapMs: Long get() = max((ReadoutTuning.GAP_S * 1000).toLong(), 3 * profile.intervalMs)

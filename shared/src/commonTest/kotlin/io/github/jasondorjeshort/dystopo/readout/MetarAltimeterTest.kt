@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.readout
 
 import io.github.jasondorjeshort.dystopo.gpx.GpxFormat
+import io.github.jasondorjeshort.dystopo.sources.SourceKind
+import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -68,5 +70,14 @@ class MetarAltimeterTest {
         near(0.5, sp.sigmaHPa(0.0, 0L))
         assertTrue(sp.sigmaHPa(100_000.0, 0L) > 1.1)
         assertTrue(sp.sigmaHPa(0.0, 12 * 3_600_000L) > 1.2)
+    }
+
+    @Test
+    fun registryEntryIsPublicDomainStationData() {
+        val s = SourceRegistry.builtIn.getValue(STATION_SOURCE_ID)
+        assertEquals(SourceKind.WEATHER, s.kind)
+        assertEquals("LicenseRef-US-Government-Public-Domain", s.license)
+        assertTrue("weather station pressure" in s.attribution.lowercase())
+        assertTrue(SourceRegistry.validate(SourceRegistry.builtIn.sources).isEmpty())
     }
 }

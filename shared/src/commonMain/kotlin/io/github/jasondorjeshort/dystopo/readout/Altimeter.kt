@@ -73,12 +73,19 @@ data class ParsedAltimeter(val station: String, val day: Int, val hour: Int, val
     }
 }
 
+/** The registry id (`sources.json`) of the weather station pressure source: what a readout that used it credits. */
+const val STATION_SOURCE_ID = "awc-metar"
+
 /**
  * A pure parser of the altimeter group of a METAR or SPECI report (T160; the fetch is T173's): `A2992` (inches of
  * mercury, hundredths) or `Q1013` (hPa). Only the body is read: the remarks (`RMK ...`, where the sea-level
  * pressure `SLP...` sits) are ignored, because the remark's sea-level pressure is reduced with a temperature model
  * and drifts at high stations, while the altimeter setting is what an altimeter at the station is set to. User-facing
  * text calls this "weather station pressure", never by the report's name.
+ *
+ * The source is registry entry [STATION_SOURCE_ID] (`sources.json`: public domain, US government work, with its
+ * credit line). T173's fetch reads the data API's JSON (`rawOb`, `lat`, `lon`, `obsTime`) and parses `rawOb` here:
+ * the JSON's own `altim` is rounded to whole hPa.
  */
 object MetarAltimeter {
     private val STATION = Regex("^[A-Z][A-Z0-9]{3}$")
