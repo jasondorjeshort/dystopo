@@ -170,8 +170,8 @@ The board then carries every wave since the first, so the first run differs from
 `## One-off fixes after wave 20` section goes to the end of `wave-20.md`; the `### Later` block of
 wave 20 becomes the board's `## Later` above wave 22; `## Browser demo follow-ups` stays on the
 board. The lift starts at T148 because the wave 22 paragraph leaves the follow-ups of T148 to T157
-in their Status lines; older waves' follow-ups were taken into a task or Later when the next wave
-was planned. The coordinator's commit also deletes
+in their Status lines; older waves' follow-ups were triaged into a task or Later when the next
+wave was planned (the critic checks for follow-ups dropped silently). The coordinator's commit also deletes
 `docs/ideas/2026-10-29-closed-waves-move-out-of-the-board.md`, and drops this section.
 
 ## Records

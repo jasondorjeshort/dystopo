@@ -48,8 +48,8 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    behaviours that become user settings and their defaults.
 2. Run the written plan past a critic before launching anything (the most capable model, read-only;
    owner, 2026-10-16: standard for every wave). Its brief names the wave section, the previous wave's
-   record (`docs/tasks/wave-NN.md`, its Status lines) and the board's Later, the ideas and ADRs the plan draws on, and asks for numbered objections with severity
-   and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
+   record (`docs/tasks/wave-NN.md`, its Status lines) and the board's Later, the ideas and ADRs the
+   plan draws on, and asks for numbered objections with severity and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
    observable, premises checked against the code, major choices that need a proposal, follow-ups
    dropped silently, cross-task sequencing, behaviour shared across tasks that no Interacts with
    line names, choices left to an implementer's taste without research,
