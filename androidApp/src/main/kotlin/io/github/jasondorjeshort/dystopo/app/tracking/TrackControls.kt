@@ -92,7 +92,7 @@ private fun BoxScope.Controls() {
     // recording's notification is posted at once. Refused: recording goes on without it.
     val context = androidx.compose.ui.platform.LocalContext.current
     val notificationAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) TrackingService.instance?.update(tracking.ui)
+        if (granted) tracking.repostNotification()
     }
 
     io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
@@ -143,10 +143,10 @@ private fun BoxScope.Controls() {
                 Panel {
                     BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                     BasicText(
-                        UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)) +
-                            if (ui.paused) "  PAUSED" else "",
-                        style = TextStyle(color = if (ui.paused) RecordRed else Ink, fontSize = 13.sp),
+                        UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)),
+                        style = TextStyle(color = Ink, fontSize = 13.sp),
                     )
+                    RecordingStateLine(ui)
                 }
             }
             if (barOpen && listOpen) {
@@ -204,6 +204,17 @@ private fun BoxScope.Controls() {
     }
 }
 
+/**
+ * T159: the recording's state ([Tracking.UiState.state]) as one line under the live stats in the recording panel, the
+ * same words as the notification ([RecordingStatus.controlsLine]); nothing while it records normally. Kept to this one
+ * line so the activity picker (T172) can sit beside it in the panel.
+ */
+@Composable
+private fun RecordingStateLine(ui: Tracking.UiState) {
+    val line = ui.stateLine ?: return
+    BasicText(line, style = TextStyle(color = if (ui.state == RecState.PAUSED || ui.state == RecState.AUTO_PAUSED) Ink else RecordRed, fontSize = 12.sp))
+}
+
 @Composable
 private fun ImportList(tracking: Tracking, onDone: () -> Unit) {
     var files by remember { mutableStateOf<List<File>?>(null) }
@@ -233,10 +244,9 @@ object TrackBar {
  */
 internal val TRACK_BAR_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.bar", "Recording tracks", "The map, top right: Tracks, then the bar", show = { TrackBar.open = true }) {
-        "Record starts a track of where you go; it keeps recording with the screen off, with a notification while it " +
-            "runs. Pause stops adding points without ending the track. Stop ends it and keeps it in the Tracks list " +
-            "(profile, Go to follow it, GPX to save a file). Waypoint marks where you are; long-press the map to mark " +
-            "another place."
+        "Record starts a track; it goes on with the screen off and the app in the background, its notification saying " +
+            "how (recording, waiting for GPS, paused). Pause holds it; Stop ends it and keeps it in the Tracks list " +
+            "(profile, Go to follow it, GPX to save a file). Waypoint marks where you are; long-press the map for another place."
     },
 )
 

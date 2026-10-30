@@ -58,6 +58,8 @@ class MainActivity : ComponentActivity() {
         DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
         io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(intent) // T57: dystopo://share links
         addOnNewIntentListener { io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(it) }
+        io.github.jasondorjeshort.dystopo.app.tracking.TrackNotification.handle(intent) // T159: the recording notification's tap
+        addOnNewIntentListener { io.github.jasondorjeshort.dystopo.app.tracking.TrackNotification.handle(it) }
 
         // Dark status-bar icons: the map, the pack list and the sheets are all light (paper) under the bar.
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true

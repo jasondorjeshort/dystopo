@@ -1,83 +1,74 @@
 package io.github.jasondorjeshort.dystopo.app.tracking
 
-import io.github.jasondorjeshort.dystopo.app.AppSettings
-import io.github.jasondorjeshort.dystopo.render.UnitFormat
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
-import io.github.jasondorjeshort.dystopo.app.MainActivity
-import java.util.Locale
 
 /**
- * The foreground service that keeps the process (and the GPS) alive while a track records, with
- * a notification showing the live distance. Recording itself lives in [Tracking]; this service only
- * runs the [GpsLocationSource] (when the recording mode uses it) and the notification.
+ * The foreground service that keeps the process (and the GPS) alive while a track records, with the recording's
+ * notification ([TrackNotification]). Recording itself lives in [Tracking], which starts the GPS once this service is
+ * in the foreground ([Tracking.onServiceForeground]).
+ *
+ * T159: `START_STICKY`. When the process dies while recording, the system restarts this service with no intent; the new
+ * process's [Tracking] finds the track still marked as recording in the store (T158 keeps it open with a pending
+ * "stopped by the system" gap) and goes on into it. [onTaskRemoved] (the app swiped away from the recent apps) keeps
+ * the recording. Foreground-service type `location` (the manifest's and [startForeground]'s).
  */
 class TrackingService : Service() {
-    private val tracking get() = Tracking.of(this)
-
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        creating = true
+        super.onCreate()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val t = tracking
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Track recording", NotificationManager.IMPORTANCE_LOW))
+        instance = this
+        val t = Tracking.of(this)
+        creating = false
+        if (intent == null) t.onServiceRestarted()
         try {
-            val n = notification(t.ui)
-            if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-            else startForeground(NOTIFICATION_ID, n)
-            t.serviceState = "foreground"
+            val n = t.foregroundNotification()
+            if (Build.VERSION.SDK_INT >= 29) startForeground(TrackNotification.ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            else startForeground(TrackNotification.ID, n)
         } catch (e: Exception) {
-            // Android 14 refuses a location-type foreground service without the location permission.
+            // Android 12+ refuses a foreground service started from the background, and Android 14 a location-type one
+            // without the location permission: the recording waits for the app (Tracking.onServiceFailed).
             Log.w(Tracking.TAG, "startForeground failed", e)
-            t.serviceState = "failed: ${e.javaClass.simpleName}: ${e.message}"
+            t.onServiceFailed(e)
             stopSelf()
             return START_NOT_STICKY
         }
-        instance = this
-        t.gpsState = if (!t.mode.gps) "off (mode ${t.mode.name.lowercase()})"
-        else if (t.gps.start { t.onGpsFix(it) }) "on" else "unavailable (permission or provider)"
-        return START_NOT_STICKY
+        if (!t.call { t.recorder.recording }) {
+            // A restart after the recording was stopped (or a start that lost a race with Stop): nothing to keep alive.
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        t.onServiceForeground()
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Tracking.of(this).onTaskRemoved()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        tracking.gps.stop()
-        tracking.gpsState = "off"
+        creating = false
+        Tracking.of(this).onServiceDestroyed()
         if (instance === this) instance = null
         super.onDestroy()
     }
 
-    fun update(state: Tracking.UiState) {
-        if (!state.recording) return
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(state))
-    }
-
-    private fun notification(state: Tracking.UiState): Notification {
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE,
-        )
-        val text = UnitFormat.distance(state.distanceM, AppSettings.units) + String.format(Locale.US, ", %d points", state.points)
-        return Notification.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("Recording ${state.activeName ?: "track"}")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(open)
-            .build()
-    }
-
     companion object {
-        const val CHANNEL = "tracking"
-        const val NOTIFICATION_ID = 31
         @Volatile var instance: TrackingService? = null
+            private set
+        /** T159: true from `onCreate` until `onStartCommand` has the [Tracking] (which then does not start the service again). */
+        @Volatile var creating = false
             private set
     }
 }
