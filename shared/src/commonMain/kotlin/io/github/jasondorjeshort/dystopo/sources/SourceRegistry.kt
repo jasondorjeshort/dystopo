@@ -10,7 +10,10 @@ enum class SourceKind(val json: String) {
     /** Inputs to the OSM vector tile build (OSM itself, OSM-derived aux data, Natural Earth, the schema). */
     OSM("osm"),
     OVERLAY("overlay"),
-    FONT("font");
+    FONT("font"),
+
+    /** T160: live readings the app uses, not map data (weather station pressure for the readout's barometer). */
+    WEATHER("weather");
 
     companion object {
         fun parse(s: String): SourceKind? = entries.firstOrNull { it.json == s }

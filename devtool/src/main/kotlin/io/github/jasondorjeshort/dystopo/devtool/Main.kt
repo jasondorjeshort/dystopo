@@ -33,4 +33,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(PrintCommand())
     // T166: the terrain-matched position measurement.
     .subcommands(TerrainFixCommand())
+    // T160: the live readout replayed over a GPX.
+    .subcommands(ReadoutCommand())
     .main(args)
