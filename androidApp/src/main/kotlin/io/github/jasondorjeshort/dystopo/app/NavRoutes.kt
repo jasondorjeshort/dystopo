@@ -68,7 +68,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `normal|amber|red`, `deadline`, `marginMin`, `pace`, `loop`, `alongM`, `retraceS`, `onwardS`, `returnS`, `way`
  *   `back|on`, `turnBackMs`, `warnAtMs`, `arrivalMs`, `arrivalIfTurnedAtMs`), the same times as clock strings, `alerts`
  *   (`marginGiven`, `turnGiven`, `events` with each alert's `kind`, `atMs`, `text`, `colour` and the `spoken` line) and
- *   `spoken`; `alerts.turnAround` counts the alert path's tones. The clock reads the wall clock (a replay's old fix times
+ *   `spoken`, `farthestM` (more than 100 m short of it the walker has turned back: `returning`); `alerts.turnAround` counts the alert path's tones. The clock reads the wall clock (a replay's old fix times
  *   do not move it) and the settings `turnDeadline` and `turnMarginMin` (`POST /settings`) at every reading.
  *   `GET /nav/turnaround`: the same while navigating; else, in free tracking, the clock along the track being recorded
  *   (the way out back along it to its start; `source` `recording`), or `{"active": false}`.

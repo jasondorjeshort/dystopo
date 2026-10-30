@@ -105,7 +105,7 @@ enum class TurnState(val key: String) {
     /** The turn-back time has come (red): the second alert. */
     TURN("turn"),
 
-    /** On a loop or an out-and-back, going on is now the shorter way out: the arrival clock. */
+    /** On a loop or an out-and-back, going on is now the shorter way out, or the walker has turned back: the arrival clock. */
     RETURNING("returning"),
 
     /** A point-to-point line (no way back to the start to time): the arrival clock only. */
@@ -248,15 +248,18 @@ class TurnAround(val path: NavPath, val pace: TurnPace, val loopM: Double = LOOP
 
     /**
      * The clock at [alongM] along the line, [offLineM] from it (its straight way back is added, as navigation adds it
-     * to the ETA), at [nowMs], for [deadline] and [marginMin].
+     * to the ETA), at [nowMs], for [deadline] and [marginMin]. [farthestM] is the farthest the walker got along the line:
+     * more than [TURNED_BACK_M] short of it, the walker has turned back already and the clock gives the arrival (a walk
+     * back along the way out projects onto the way out, so its progress runs backwards).
      */
-    fun clock(alongM: Double, nowMs: Long, deadline: Deadline, marginMin: Int, offLineM: Double = 0.0): TurnClock {
+    fun clock(alongM: Double, nowMs: Long, deadline: Deadline, marginMin: Int, offLineM: Double = 0.0, farthestM: Double = alongM): TurnClock {
         require(marginMin >= 0) { "the margin is minutes, 0 or more" }
         val rejoin = if (offLineM > 0) pace.timeS(offLineM, 0.0, 0.0) else 0.0
         val retrace = retraceS(alongM) + rejoin
         val onward = if (retraceOnly) Double.POSITIVE_INFINITY else onwardS(alongM) + rejoin
         val turnable = retraceOnly || loop
         val onwardShorter = !retraceOnly && onward <= retrace
+        val turnedBack = !retraceOnly && loop && farthestM - alongM > TURNED_BACK_M
         val returnS = if (!turnable) onward else minOf(retrace, onward)
         val arrival = nowMs + (returnS * 1000).roundToLong()
         val marginMs = marginMin * 60_000L
@@ -274,7 +277,7 @@ class TurnAround(val path: NavPath, val pace: TurnPace, val loopM: Double = LOOP
         return when {
             at == null -> base.copy(state = TurnState.NO_DEADLINE)
             !turnable -> base.copy(state = TurnState.ARRIVAL, colour = arrivalColour())
-            onwardShorter -> base.copy(state = TurnState.RETURNING, colour = arrivalColour())
+            onwardShorter || turnedBack -> base.copy(state = TurnState.RETURNING, colour = arrivalColour())
             else -> {
                 val turnBack = at - marginMs - (retrace * 1000).roundToLong()
                 val warn = turnBack - marginMs
@@ -294,6 +297,8 @@ class TurnAround(val path: NavPath, val pace: TurnPace, val loopM: Double = LOOP
     companion object {
         /** A line whose start and end are this close is a loop or an out-and-back: it has a turn. */
         const val LOOP_M = 250.0
+        /** Progress this far short of the farthest reached: the walker has turned back. */
+        const val TURNED_BACK_M = 100.0
         const val DEFAULT_MARGIN_MIN = 30
         /** The margin presets the setting offers (any whole minute in [MARGIN_RANGE] can be typed). */
         val MARGIN_PRESETS = listOf(0, 15, 30, 60, 90)

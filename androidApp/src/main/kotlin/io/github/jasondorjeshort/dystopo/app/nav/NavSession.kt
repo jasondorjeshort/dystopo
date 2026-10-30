@@ -133,6 +133,8 @@ object NavSession {
     @Volatile private var turn: TurnAround? = null
     private val turnAlerts = TurnAlerts()
     @Volatile private var turnClock: TurnClock? = null
+    /** T163: the farthest progress on the line so far: well short of it, the walker has turned back. */
+    @Volatile private var turnFarthestM = 0.0
     @Volatile private var turnSpoken: String? = null
     private val turnEvents = ArrayList<Map<String, Any?>>()
 
@@ -183,6 +185,7 @@ object NavSession {
             synchronized(turnAlerts) { turnAlerts.reset(); turnEvents.clear() }
             turnClock = null
             turnSpoken = null
+            turnFarthestM = 0.0
             snooze.clear()
             // T91: the thresholds are settings now (navStaleS, navStartM), read at each start.
             val stale = io.github.jasondorjeshort.dystopo.app.AppSettings.navStaleS.toDouble()
@@ -459,7 +462,8 @@ object NavSession {
         val end = t.path.points.last()
         val deadline = Deadline.resolve(setting, end.lat, end.lon, now, localMidnight(now))
         val off = if (s.offRoute) s.projection.distanceM else 0.0
-        return runCatching { t.clock(s.progress, now, deadline, AppSettings.turnMarginMin, off) }
+        if (!s.offRoute) turnFarthestM = maxOf(turnFarthestM, s.progress)
+        return runCatching { t.clock(s.progress, now, deadline, AppSettings.turnMarginMin, off, farthestM = turnFarthestM) }
             .onFailure { Log.w(TAG, "turn-around clock", it) }.getOrNull().also { turnClock = it }
     }
 
@@ -491,7 +495,7 @@ object NavSession {
         val c = turnClock
         return linkedMapOf<String, Any?>(
             "source" to "navigation", "loop" to t.loop, "deadlineSetting" to AppSettings.turnDeadline, "marginMin" to AppSettings.turnMarginMin,
-            "pace" to t.pace.label, "totalTimeS" to Math.round(t.totalS),
+            "pace" to t.pace.label, "totalTimeS" to Math.round(t.totalS), "farthestM" to r1(turnFarthestM),
             "text" to c?.text(::clock), "label" to c?.label(::clock), "clock" to c?.json(),
             "turnBack" to c?.turnBackMs?.let(::clock), "arrival" to c?.arrivalMs?.let(::clock),
             "deadline" to c?.deadline?.atMs?.let(::clock),

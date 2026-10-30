@@ -96,6 +96,21 @@ class TurnAroundTest {
     }
 
     @Test
+    fun aWalkerWhoTurnedBackGetsTheArrivalClock() {
+        // Turned at 2.5 km, now 2 km out on the way back: progress runs back along the way out, the farthest stays.
+        val t = TurnAround(outAndBack(5000.0), TurnPace(false) { l, _, _ -> l / 1.25 })
+        val now = sixPm - 3 * h
+        val back = t.clock(2000.0, now, deadline(), 30, farthestM = 2500.0)
+        assertEquals(TurnState.RETURNING, back.state)
+        assertEquals("back", back.way)
+        assertNull(back.turnBackMs)
+        assertEquals((now + 1_600_000).toDouble(), back.arrivalMs.toDouble(), 1000.0)
+        assertTrue(back.text { "x" }.startsWith("Out by"))
+        // GPS wobble short of the farthest is not a turn.
+        assertEquals(TurnState.AHEAD, t.clock(2450.0, now, deadline(), 30, farthestM = 2500.0).state)
+    }
+
+    @Test
     fun aPointToPointLineShowsTheArrivalClockOnly() {
         val pts = (0..20).map { i -> NavPoint(46.78 + i * 0.0045, -121.73, 1600.0) } // 10 km north, no way back to time
         val t = TurnAround(NavPath("a to b", pts), TurnPace(false) { l, _, _ -> l / 1.25 })
