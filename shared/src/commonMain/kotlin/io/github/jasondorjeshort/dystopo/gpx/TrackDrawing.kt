@@ -4,6 +4,7 @@ import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.Track
+import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.Waypoint
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -15,6 +16,13 @@ data class LineArrow(val x: Double, val y: Double, val angle: Double)
 
 /** Platform-neutral geometry for drawing tracks on a map; renderers do the actual painting. */
 object TrackDrawing {
+    /**
+     * The line to draw for a track, one point list per segment (T171): the smoothed line without flagged fixes
+     * ([TrackSmoothing.line]), so 100 m fixes do not zigzag it; a track without accuracy (an import) is drawn
+     * as recorded. The raw points stay in the store.
+     */
+    fun line(track: Track, options: SmoothingOptions = SmoothingOptions()): List<List<TrackPoint>> = TrackSmoothing.line(track, options)
+
     /**
      * Arrows along a pixel polyline ([xy] = x0, y0, x1, y1...), one every [spacing] pixels of line
      * length, the first [offset] pixels from the start (default half a spacing, so a short line still

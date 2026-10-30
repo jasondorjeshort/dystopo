@@ -24,9 +24,13 @@ import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
 import io.github.jasondorjeshort.dystopo.gpx.GpxException
 import io.github.jasondorjeshort.dystopo.gpx.GpxFormat
 import io.github.jasondorjeshort.dystopo.gpx.ProfileSample
+import io.github.jasondorjeshort.dystopo.gpx.SmoothingOptions
 import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
+import io.github.jasondorjeshort.dystopo.gpx.StopOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackDrawing
+import io.github.jasondorjeshort.dystopo.gpx.TrackSmoothing
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.gpx.TrackStops
 import io.github.jasondorjeshort.dystopo.gpx.XmlException
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -138,15 +142,109 @@ data class GpxExportReport(
     val timingsMs: Map<String, Long>,
 )
 
+@Serializable
+data class GpxGapInfo(val start: String, val end: String, val durationS: Double, val reason: String)
+
+@Serializable
+data class GpxStopInfo(val segment: Int, val startIndex: Int, val endIndex: Int, val start: String, val end: String, val durationS: Double)
+
+/** `gpx --stats`: one track's raw and smoothed stats (T171), its flagged fixes, gaps and stops. */
+@Serializable
+data class GpxTrackSmoothingStats(
+    val name: String,
+    val id: String,
+    val activity: String?,
+    val points: Int,
+    /** Points with an accuracy. */
+    val pointsWithAccuracy: Int,
+    /** Points flagged over the recording profile's accuracy bound: they add no distance or elevation. */
+    val flaggedPoints: Int,
+    /** Segments the smoother changed (the others have no accuracy; see `--assume-accuracy`). */
+    val smoothedSegments: Int,
+    val raw: GpxItemStats,
+    val smoothed: GpxItemStats,
+    /** Smoothed distance against raw, percent (negative: shorter). */
+    val distanceChangePct: Double?,
+    val ascentChangeM: Double?,
+    val gaps: List<GpxGapInfo>,
+    val stops: List<GpxStopInfo>,
+    val stoppedS: Double,
+    /** Moving stretches between stops (T164's input). */
+    val stretches: Int,
+)
+
+@Serializable
+data class GpxSmoothingReport(
+    val file: String,
+    val tracks: List<GpxTrackSmoothingStats>,
+    val smoothing: Map<String, Double?>,
+    val stopRules: Map<String, Double>,
+    val timingsMs: Map<String, Long>,
+)
+
 /** `devtool gpx ...`: GPX import, stats, rendering and export. */
 class GpxCommand : CliktCommand(name = "gpx") {
     init {
         subcommands(GpxInfoCommand(), GpxRenderCommand(), GpxExportCommand())
     }
 
-    override fun help(context: Context) = "Tracks, waypoints and routes from GPX files: stats (info), map render (render), round-trip export (export)."
+    override val invokeWithoutSubcommand = true
 
-    override fun run() = Unit
+    override fun help(context: Context) =
+        "Tracks, waypoints and routes from GPX files: stats (info), map render (render), round-trip export (export); " +
+            "--stats <file>: raw against smoothed track stats, flagged fixes, gaps and stops."
+
+    private val statsFile by option("--stats", help = "GPX file: print each track's raw and smoothed stats, flagged count, gaps and stops as JSON").file()
+    private val assumeAccuracy by option("--assume-accuracy", help = "With --stats: smooth tracks without accuracy as if every fix had this accuracy (m)").double()
+    private val profileSamples by option("--profile", help = "With --stats: elevation profile samples per track (0: none)").int().default(0)
+
+    override fun run() {
+        if (currentContext.invokedSubcommand != null) return
+        val file = statsFile ?: throw UsageError("give a subcommand (info, render, export) or --stats <file>")
+        val timings = Timings()
+        val doc = timings.time("parse") { load(file).document }
+        val smoothing = SmoothingOptions(assumedAccuracyM = assumeAccuracy)
+        val stopOptions = StopOptions(smoothing = smoothing)
+        val tracks = timings.time("stats") {
+            doc.tracks.map { t ->
+                val segs = t.segments.map { it.points }
+                val raw = TrackStats.of(segs, StatsOptions(smoothing = null))
+                val smooth = TrackStats.of(segs, StatsOptions(smoothing = smoothing))
+                val cut = TrackStops.cut(segs, stopOptions)
+                GpxTrackSmoothingStats(
+                    name = t.name,
+                    id = t.id,
+                    activity = t.activity?.code,
+                    points = raw.points,
+                    pointsWithAccuracy = segs.sumOf { s -> s.count { it.accuracyM != null } },
+                    flaggedPoints = segs.sumOf { s -> s.count { !TrackSmoothing.counts(it) } },
+                    smoothedSegments = segs.count { TrackSmoothing.smoothable(it, smoothing) },
+                    raw = itemStats("track", t.name, t.id, raw, if (profileSamples >= 2) TrackStats.profile(segs, profileSamples, null) else null),
+                    smoothed = itemStats("track", t.name, t.id, smooth, if (profileSamples >= 2) TrackStats.profile(segs, profileSamples, smoothing) else null),
+                    distanceChangePct = raw.distanceM.takeIf { it > 0 }?.let { round((smooth.distanceM - it) / it * 100, 2) },
+                    ascentChangeM = if (raw.ascentM != null && smooth.ascentM != null) round(smooth.ascentM!! - raw.ascentM!!) else null,
+                    gaps = t.gaps.map { GpxGapInfo(GpxFormat.formatTime(it.start), GpxFormat.formatTime(it.end), it.durationMs / 1000.0, it.reason.code) },
+                    stops = cut.stops.map { GpxStopInfo(it.segment, it.startIndex, it.endIndex, GpxFormat.formatTime(it.startTime), GpxFormat.formatTime(it.endTime), it.durationS) },
+                    stoppedS = cut.stoppedS,
+                    stretches = cut.stretches.size,
+                )
+            }
+        }
+        val report = GpxSmoothingReport(
+            file = file.path,
+            tracks = tracks,
+            smoothing = mapOf(
+                "accelerationDensity" to smoothing.accelerationDensity,
+                "verticalAccelerationDensity" to smoothing.verticalAccelerationDensity,
+                "minAccuracyM" to smoothing.minAccuracyM,
+                "unknownAccuracyM" to smoothing.unknownAccuracyM,
+                "assumedAccuracyM" to smoothing.assumedAccuracyM,
+            ),
+            stopRules = mapOf("radiusM" to stopOptions.radiusM, "minStopS" to stopOptions.minStopS, "stillSpeedMps" to stopOptions.stillSpeedMps),
+            timingsMs = timings.ms,
+        )
+        echo(reportJson.encodeToString(report))
+    }
 
     companion object {
         /** Ids are random per run unless seeded; the export round trip check seeds both parses alike. */
@@ -405,7 +503,7 @@ class GpxOverlay(
             routePoints += r.points.size
             line(g, xy, routeColor, 3.2f, dashed = true)
         }
-        val segments = doc.tracks.flatMap { t -> t.segments.map { s -> s.points } }.filter { it.isNotEmpty() }
+        val segments = doc.tracks.flatMap { t -> TrackDrawing.line(t) }.filter { it.isNotEmpty() }
         val segXy = segments.map { pts ->
             DoubleArray(pts.size * 2).also { xy ->
                 pts.forEachIndexed { i, p -> xy[2 * i] = x(p.lon); xy[2 * i + 1] = y(p.lat); if (!inside(xy[2 * i], xy[2 * i + 1])) outside++ }

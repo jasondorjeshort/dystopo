@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.store
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
+import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.store.db.TrackDb
 import java.nio.file.Files
@@ -75,7 +76,7 @@ class SqlTrackStoreTest : TrackStoreContract() {
         rec.stop()
         val exported = Gpx.parse(TrackExport.gpx(store, id)!!).tracks.single()
         val a = TrackStats.of(original)
-        val b = TrackStats.of(exported)
+        val b = TrackStats.of(exported, StatsOptions(smoothing = null)) // T171: the points, not the smoothed line
         assertEquals(a.distanceM, b.distanceM, 1e-6)
         assertEquals(a.durationS, b.durationS)
         assertEquals(a.ascentM, b.ascentM)

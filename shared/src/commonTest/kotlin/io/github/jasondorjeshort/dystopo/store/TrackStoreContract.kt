@@ -4,6 +4,7 @@ import io.github.jasondorjeshort.dystopo.gpx.Gpx
 import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
 import io.github.jasondorjeshort.dystopo.gpx.GpxMetadata
 import io.github.jasondorjeshort.dystopo.gpx.SyntheticTracks
+import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.model.Activity
 import io.github.jasondorjeshort.dystopo.model.ActivityProfile
@@ -244,7 +245,9 @@ abstract class TrackStoreContract {
         rec.stop()
         val t = s.track(id)!!
         assertEquals(listOf(first.size, second.size), t.segments.map { it.points.size })
-        assertEquals(TrackStats.of(listOf(first, second)).distanceM, s.stats(id)!!.distanceM, 1e-9)
+        // T171: the stored points are the fixes; the cached stats are of the smoothed line.
+        assertEquals(TrackStats.of(listOf(first, second)).distanceM, TrackStats.of(t, StatsOptions(smoothing = null)).distanceM, 1e-9)
+        assertEquals(TrackStats.of(t).distanceM, s.stats(id)!!.distanceM, 1e-9)
         // A gap of exactly the threshold does not split; disabled splitting never does.
         val r2 = TrackRecorder(s, withGap(60_000), clock = { 0L })
         val id2 = r2.start("edge").id

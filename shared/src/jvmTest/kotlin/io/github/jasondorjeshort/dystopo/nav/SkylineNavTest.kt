@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.nav
 
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
+import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
@@ -86,7 +87,9 @@ class SkylineNavTest {
         for (p in pts) assertTrue(rec.onFix(io.github.jasondorjeshort.dystopo.store.LocationFix(p.lat, p.lon, p.ele, p.time!!, 5.0, "replay")))
         assertEquals(0, rec.gapSplits)
         assertEquals(1, store.track(id)!!.segments.size)
-        assertEquals(TrackStats.of(loop.tracks.single()).distanceM, store.stats(id)!!.distanceM, 1e-6)
+        // T171: the recorded points are the fixture's; the stats read them smoothed (5 m fixes: 3.5 m shorter).
+        assertEquals(TrackStats.of(loop.tracks.single()).distanceM, TrackStats.of(store.track(id)!!, StatsOptions(smoothing = null)).distanceM, 1e-6)
+        assertEquals(TrackStats.of(store.track(id)!!).distanceM, store.stats(id)!!.distanceM, 1e-6)
     }
 
     /** T65: `devtool nav replay` runs the same check on the JVM. */

@@ -20,6 +20,12 @@ data class StatsOptions(
     val elevationThresholdM: Double = 3.0,
     /** An interval between two timed points counts as moving when its ground speed is at least this (0.3 m/s = 1.08 km/h). */
     val movingSpeedMps: Double = 0.3,
+    /**
+     * T171: distance, elevation, moving time and bounds come from [TrackSmoothing.line] with these options
+     * (the smoothed line without flagged fixes); null gives the raw stats. Segments without accuracy (imports,
+     * routes) are not smoothed either way.
+     */
+    val smoothing: SmoothingOptions? = SmoothingOptions(),
 )
 
 /** One sample of an elevation profile: [distanceM] along the track, interpolated position and elevation. */
@@ -33,7 +39,9 @@ data class ProfileSample(
 )
 
 /**
- * Derived numbers for a track or route. Distances in meters, times in seconds (epoch millis for
+ * Derived numbers for a track or route, from its smoothed line (T171, [StatsOptions.smoothing]: a recorded track's
+ * fixes weighted by accuracy, flagged fixes adding no distance or elevation); [points] counts the raw points and
+ * times and heart rate are the raw points'. Distances in meters, times in seconds (epoch millis for
  * [startTime]/[endTime]), speeds in m/s, pace in seconds per kilometer. Fields that need data the
  * track doesn't have (elevation, time, heart rate) are null.
  */
@@ -88,6 +96,7 @@ data class TrackStats(
             of(listOf(route.points.map { TrackPoint(it.lat, it.lon, it.ele, it.time) }), options)
 
         fun of(segments: List<List<TrackPoint>>, options: StatsOptions = StatsOptions()): TrackStats {
+            val line = options.smoothing?.let { TrackSmoothing.line(segments, it) } ?: segments
             var distance = 0.0
             var movingDistance = 0.0
             var movingMs = 0L
@@ -107,7 +116,16 @@ data class TrackStats(
             var south = Double.POSITIVE_INFINITY
             var north = Double.NEGATIVE_INFINITY
 
-            for (seg in segments) {
+            for (seg in segments) for (p in seg) {
+                p.time?.let {
+                    if (start == null || it < start!!) start = it
+                    if (end == null || it > end!!) end = it
+                }
+                GpxExtensions.heartRate(p.extensions)?.let {
+                    hrSum += it; hrCount++; hrMax = maxOf(hrMax, it)
+                }
+            }
+            for (seg in line) {
                 val eles = ArrayList<Double>(seg.size)
                 for ((i, p) in seg.withIndex()) {
                     west = min(west, p.lon); east = maxOf(east, p.lon)
@@ -117,13 +135,6 @@ data class TrackStats(
                         anyEle = true
                         minEle = min(minEle, it)
                         maxEle = maxOf(maxEle, it)
-                    }
-                    p.time?.let {
-                        if (start == null || it < start!!) start = it
-                        if (end == null || it > end!!) end = it
-                    }
-                    GpxExtensions.heartRate(p.extensions)?.let {
-                        hrSum += it; hrCount++; hrMax = maxOf(hrMax, it)
                     }
                     if (i == 0) continue
                     val q = seg[i - 1]
@@ -165,7 +176,7 @@ data class TrackStats(
                 overallPaceSPerKm = duration?.takeIf { distance >= 1.0 }?.let { it / (distance / 1000.0) },
                 avgHeartRate = if (hrCount > 0) hrSum / hrCount else null,
                 maxHeartRate = if (hrCount > 0) hrMax else null,
-                bounds = if (points > 0) boundsOf(west, south, east, north) else null,
+                bounds = if (line.any { it.isNotEmpty() }) boundsOf(west, south, east, north) else null,
             )
         }
 
@@ -226,15 +237,17 @@ data class TrackStats(
          * [n] samples evenly spaced by distance from the first point (0 m) to the last
          * (the total distance), across segments (the gap between segments adds no distance).
          * Elevations are interpolated linearly between points that have one; points without
-         * elevation are passed over. Empty for no points or n < 2.
+         * elevation are passed over. Empty for no points or n < 2. T171: along the smoothed line
+         * ([TrackSmoothing.line] with [smoothing]; null for the raw points).
          */
-        fun profile(segments: List<List<TrackPoint>>, n: Int): List<ProfileSample> {
-            val pts = segments.flatten()
+        fun profile(segments: List<List<TrackPoint>>, n: Int, smoothing: SmoothingOptions? = SmoothingOptions()): List<ProfileSample> {
+            val segs = smoothing?.let { TrackSmoothing.line(segments, it) } ?: segments
+            val pts = segs.flatten()
             if (pts.isEmpty() || n < 2) return emptyList()
             val cum = DoubleArray(pts.size)
             val segOf = IntArray(pts.size)
             var k = 0
-            for ((si, seg) in segments.withIndex()) {
+            for ((si, seg) in segs.withIndex()) {
                 for ((i, p) in seg.withIndex()) {
                     segOf[k] = si
                     cum[k] = when {
@@ -271,7 +284,8 @@ data class TrackStats(
             return out
         }
 
-        fun profile(track: Track, n: Int): List<ProfileSample> = profile(track.segments.map { it.points }, n)
+        fun profile(track: Track, n: Int, smoothing: SmoothingOptions? = SmoothingOptions()): List<ProfileSample> =
+            profile(track.segments.map { it.points }, n, smoothing)
 
         private const val DEG = kotlin.math.PI / 180.0
     }
