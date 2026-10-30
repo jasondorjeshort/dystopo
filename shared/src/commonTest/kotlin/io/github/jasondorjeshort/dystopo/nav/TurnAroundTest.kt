@@ -163,6 +163,20 @@ class TurnAroundTest {
     }
 
     @Test
+    fun aFittedPaceFlowsThroughTheCostModel() { // T164's fit: its time, its label
+        val fit = io.github.jasondorjeshort.dystopo.routing.PaceFits.decode("1;hike:1.0734,2.8029,-0.0575,5,22788,0.057")!!.fit(TravelMode.HIKE)!!
+        val path = outAndBack(5000.0) { d -> 1000 + 600 * d / 5000 }
+        val standard = TurnAround(path, TurnPace.of(CostModel(TravelMode.HIKE, null)))
+        val fitted = TurnAround(path, TurnPace.of(CostModel(TravelMode.HIKE, fit)))
+        assertEquals("your pace", fitted.pace.label)
+        assertEquals("standard pace", standard.pace.label)
+        val a = standard.clock(4000.0, sixPm - 4 * h, deadline(), 30)
+        val b = fitted.clock(4000.0, sixPm - 4 * h, deadline(), 30)
+        assertTrue(abs(a.retraceS - b.retraceS) > 60, "the fit changes the way back: ${a.retraceS} vs ${b.retraceS}")
+        assertTrue(a.turnBackMs != b.turnBackMs)
+    }
+
+    @Test
     fun eachAlertOnce() {
         val t = TurnAround(outAndBack(5000.0), TurnPace(false) { l, _, _ -> l / 1.25 })
         val tb = t.clock(2500.0, 0, deadline(), 30).turnBackMs!!

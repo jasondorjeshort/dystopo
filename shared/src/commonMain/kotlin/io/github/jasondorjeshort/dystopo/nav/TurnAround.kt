@@ -20,11 +20,11 @@ class TurnPace(val fitted: Boolean, private val stretchTimeS: (lengthM: Double, 
         const val STANDARD_PACE = "standard pace"
 
         /**
-         * The routing time model of [model] ([CostModel.timeS]: Naismith for hiking, the touring pace for bikes). The
-         * hook for T164's fitted pace: once `CostModel` carries a fit, this reads its three-argument time (descent
-         * included) and its `fitted` flag, and the label says "your pace"; until then it is the standard estimate.
+         * The routing time model of [model]: T164's fitted curve when the user has one in that mode and has not chosen
+         * the standard estimate ([CostModel.fitted], its time with the descent, so the way down is timed as walked; the
+         * label says "your pace"), else the standard estimate (Naismith for hiking, the touring pace for bikes).
          */
-        fun of(model: CostModel): TurnPace = TurnPace(false) { l, up, _ -> model.timeS(l, up) }
+        fun of(model: CostModel): TurnPace = TurnPace(model.fitted) { l, up, down -> model.timeS(l, up, down) }
     }
 }
 

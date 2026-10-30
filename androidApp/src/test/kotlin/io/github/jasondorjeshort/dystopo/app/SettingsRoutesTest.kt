@@ -91,7 +91,6 @@ class SettingsRoutesTest {
     }
 
     @Test
-<<<<<<< HEAD
     fun paceKeysAreAFlagAFitAndAnInstant() { // T164
         assertEquals(true, ok("paceStandard" to "on").paceStandard)
         assertEquals(false, ok("paceStandard" to "0").paceStandard)
@@ -104,7 +103,9 @@ class SettingsRoutesTest {
         bad("paceSince" to "-1")
         bad("paceSince" to "yesterday")
         assertNull(ok("units" to "m").paceFit)
-=======
+    }
+
+    @Test
     fun theTurnAroundDeadlineAndMargin() { // T163: sunset, civil or a typed time; never off; the margin in whole minutes
         assertEquals("sunset", ok("turnDeadline" to "sunset").turnDeadline)
         assertEquals("civil", ok("turnDeadline" to "Civil").turnDeadline)
@@ -118,7 +119,6 @@ class SettingsRoutesTest {
         bad("turnMarginMin" to "-5")
         bad("turnMarginMin" to "241")
         bad("turnMarginMin" to "soon")
->>>>>>> 9bd2ea9 (T163: the turn-around clock on the phone and in devtool nav)
     }
 
     @Test
