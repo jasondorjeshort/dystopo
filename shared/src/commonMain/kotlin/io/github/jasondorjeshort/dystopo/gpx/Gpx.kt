@@ -41,7 +41,9 @@ class GpxException(message: String) : IllegalArgumentException(message)
  *
  * Import keeps everything the model has a field for and the verbatim inner XML of every
  * `<extensions>` element; other elements (`link`, `fix`, `hdop`, GPX 1.0 `speed`/`course`...) are
- * skipped and counted in [ParseResult.ignored]. Points with a missing or out-of-range lat/lon are
+ * skipped and counted in [ParseResult.ignored]. T158: a track point's accuracy, speed, course, vertical accuracy
+ * and flags, and a track's activity, profile and gaps, travel in our namespace ([GpxExtensions.withFix],
+ * [GpxExtensions.withTrackFields]) and are read back into the model's fields; a file without them reads as before. Points with a missing or out-of-range lat/lon are
  * dropped and counted too. A waypoint, route or track keeps the id our writer stored in its
  * `dystopo:id` extension ([GpxExtensions.NS_DYSTOPO]; T40), so an export and its re-import are the
  * same entity; any other gets a fresh UUID from the caller's [UuidGenerator] (plain GPX has no ids).
@@ -249,7 +251,8 @@ object Gpx {
                 }
             }
             val (id, ext) = idOf(t.extensions)
-            return t.copy(id = id, extensions = ext, segments = segments)
+            // T158: our activity, profile and gaps out of the extensions into the track's fields.
+            return GpxExtensions.takeTrackFields(t.copy(id = id, extensions = ext, segments = segments), idPrefixes)
         }
 
         private fun segment(): TrackSegment {
@@ -257,7 +260,7 @@ object Gpx {
             var ext: String? = null
             while (x.nextChild()) {
                 when (child()) {
-                    "trkpt" -> point()?.let { points += TrackPoint(it.lat, it.lon, it.ele, it.time, it.extensions) }
+                    "trkpt" -> point()?.let { points += GpxExtensions.takeFix(TrackPoint(it.lat, it.lon, it.ele, it.time, it.extensions), idPrefixes) }
                     "extensions" -> ext = extensions()
                     else -> skip()
                 }
@@ -275,7 +278,9 @@ object Gpx {
         val namespaces = LinkedHashMap(doc.namespaces)
         if ("gpxtpx" !in namespaces && usesPrefix(doc, "gpxtpx:")) namespaces["gpxtpx"] = NS_GARMIN_TPX1
         val withIds = ids && (doc.waypoints.isNotEmpty() || doc.routes.isNotEmpty() || doc.tracks.isNotEmpty())
-        if (withIds) namespaces[GpxExtensions.DYSTOPO_PREFIX] = GpxExtensions.NS_DYSTOPO
+        // T158: fix fields, activity, profile and gaps are in our namespace too.
+        val withFields = doc.tracks.any { t -> t.activity != null || t.profile != null || t.gaps.isNotEmpty() || t.segments.any { s -> s.points.any { it.hasFixFields } } }
+        if (withIds || withFields) namespaces[GpxExtensions.DYSTOPO_PREFIX] = GpxExtensions.NS_DYSTOPO
         fun ext(id: String, extensions: String?) = if (withIds) GpxExtensions.withId(id, extensions) else extensions
         val rootAttrs = ArrayList<Pair<String, String>>()
         rootAttrs += "version" to "1.1"
@@ -315,10 +320,10 @@ object Gpx {
             w.element("desc", t.description)
             w.element("src", t.source)
             w.element("type", t.type)
-            w.rawElement("extensions", ext(t.id, t.extensions))
+            w.rawElement("extensions", ext(t.id, GpxExtensions.withTrackFields(t, t.extensions)))
             for (s in t.segments) {
                 w.start("trkseg")
-                for (p in s.points) point(w, "trkpt", p.lat, p.lon, p.ele, p.time, null, null, null, null, null, p.extensions)
+                for (p in s.points) point(w, "trkpt", p.lat, p.lon, p.ele, p.time, null, null, null, null, null, GpxExtensions.withFix(p, p.extensions))
                 w.rawElement("extensions", s.extensions)
                 w.end()
             }

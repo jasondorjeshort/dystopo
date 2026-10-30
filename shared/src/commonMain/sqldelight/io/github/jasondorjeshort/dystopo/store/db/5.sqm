@@ -1,0 +1,21 @@
+-- Version 5 -> 6 (T158): per-point accuracy, speed, course, vertical accuracy and flags (NULL and 0 for points
+-- recorded before: nothing was kept then), each track's activity and recording profile (NULL before), and the
+-- track_gap table (empty before: no gaps were recorded). An older build kept a newer peer's `activity` and
+-- `profile` writes in its log without showing them, so SqlTrackStore rewrites every track row's fields from the
+-- log once on the first open after this migration (sync_meta `tracks` is absent until it has).
+
+ALTER TABLE track ADD COLUMN activity TEXT;
+ALTER TABLE track ADD COLUMN profile TEXT;
+ALTER TABLE track_point ADD COLUMN accuracy REAL;
+ALTER TABLE track_point ADD COLUMN speed REAL;
+ALTER TABLE track_point ADD COLUMN course REAL;
+ALTER TABLE track_point ADD COLUMN vertical_accuracy REAL;
+ALTER TABLE track_point ADD COLUMN flags INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE track_gap (
+    track_id TEXT NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (track_id, start_time, end_time, reason)
+);

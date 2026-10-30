@@ -305,7 +305,7 @@ object Conflicts {
         is PutRoute -> Materializer.routePutFields(body)
         is PutSetting -> mapOf("value" to body.value)
         is SetField -> if (body.field in body.kind.fields) mapOf(body.field to body.value) else null
-        is AppendPoints, is Delete -> null
+        is AppendPoints, is AddGap, is Delete -> null // T158: gaps are a union, like appends
     }
 
     /**
