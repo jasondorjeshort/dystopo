@@ -212,3 +212,20 @@ Point, z11-14. Backcountry points of interest. Areas (campsites, parking lots) b
 | `operator` | OSM `operator` |
 | `access` | no or private when tagged so |
 | `fee` | 1 when fee=yes |
+
+### `drainage`
+
+Line, z12-14 (the pack's last zoom). **Not written by tilebuild:** `devtool drainage-pack` (T174) adds it to a built
+outdoors pack as one more source layer, leaving every other layer byte for byte as it was, so a pack with or without it
+has the same format and the same other layers. Stream lines derived from the elevation grid, not mapped data: flow
+accumulation over one z13 grid of the pack's whole box (`shared/.../dem/FlowGrid.kt`, `dem/Drainage.kt`, T165),
+channels from a catchment of about 0.1 km² (scaled by the local slope), nothing drawn under `water` polygons or
+`landcover` ice, the D8 staircases smoothed and simplified (half a grid cell) before the lines are cut into tiles with a
+4 px buffer. The style draws it lighter than and under `waterway`, and the phone only when its Drainage map option is on.
+The metadata gains a `vector_layers` and a `dystopo:layers` entry, `dystopo:drainage` (the settings used) and the
+elevation sources in `dystopo:provenance`.
+
+| Attribute | Meaning |
+|---|---|
+| `class` | likely_running, seasonal, likely_dry: the project's own classes from the catchment area and its mean slope (no climate, no season) |
+| `catchment_km2` | contributing area at the line's downstream end, km² (two decimals; a lower bound where the catchment reaches past the pack's box) |

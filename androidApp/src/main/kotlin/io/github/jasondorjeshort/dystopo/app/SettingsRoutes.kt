@@ -18,7 +18,7 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   tiles are generated per unit, cached per unit). `server` (T38) sets the online-mode server.
  *   T47 map options ([MapOptions.KEYS]): `hillshade=off|single|multi`, `hillshadeIntensity=0..1`, `slope=off|avalanche|steepness` (T104; `on` is avalanche),
  *   `contourInterval=auto|<one of contourIntervalChoices, in the units>`, `contourLabels=sparse|normal|dense`,
- *   `trails`, `water`, `landcover`, `pois`, `boundaries` and `night` `=on|off`. A contour interval change
+ *   `trails`, `water`, `landcover`, `pois`, `boundaries`, `drainage` (T174, off by default) and `night` `=on|off`. A contour interval change
  *   reopens the tile service (contour tiles are cached per interval); every other option rebuilds the style
  *   (hillshade and slope switch to generated `/shade` tiles, cached per option set).
  *   T80 `directSessionMb` (1..100000, default 300: what the phone may download from the public sources per session

@@ -294,6 +294,8 @@ class StyleParityTest {
             osmTiles = "osm/{z}/{x}/{y}.pbf", glyphs = "glyphs/{fontstack}/{range}.pbf", sprite = "sprite",
         ),
         units = units,
+        // T174: the drainage rows are off by default on the phone; compared with the toggle on.
+        options = io.github.jasondorjeshort.dystopo.maplibre.MapOptions(drainage = true),
     ).json()
 
     /** Every feature of the scene once (the fixture repeats each in all four tiles), with its source layer. */

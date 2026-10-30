@@ -33,6 +33,10 @@ package io.github.jasondorjeshort.dystopo.style
  * opacity, `informal` ones at 65% width. Cliffs are dark brown lines with ticks on the downhill side;
  * the ticks grow with zoom up to z17 (length, width and spacing keep one ratio, so MapLibre's single
  * dash pattern matches every zoom).
+ * Drainage (T174, the `drainage` layer `devtool drainage-pack` writes: streams derived from the elevation grid, not
+ * mapped data) is a lighter blue than the mapped waterways and drawn under them and under water, from z12: solid
+ * thin where water likely runs all year, dashed where seasonal, faint dots where likely dry, so a mapped stream
+ * always reads on top. Off on the phone unless the map options turn it on (`drainage`).
  * Park boundaries are green dashes; wilderness areas (outdoors class `wilderness`, OpenMapTiles
  * `wilderness_area`) teal dots, so the two read apart where they overlap, over a faint teal fill
  * (under the contours, like the land cover tints) so the inside of a wilderness reads as such.
@@ -89,6 +93,13 @@ object DefaultOsmStyle {
      "minzoom": 8, "color": "#1f7a6e", "opacity": 0.07},
 
     {"id": "contours", "type": "contours"},
+
+    {"id": "drainage-dry", "type": "line", "source-layer": "drainage", "filter": {"class": "likely_dry"},
+     "minzoom": 12, "color": "#5ea3e0", "opacity": 0.8, "width": [[12, 0.8], [15, 1.4]], "dash": [0.8, 2]},
+    {"id": "drainage-seasonal", "type": "line", "source-layer": "drainage", "filter": {"class": "seasonal"},
+     "minzoom": 12, "color": "#5ea3e0", "opacity": 0.9, "width": [[12, 0.6], [15, 1.1]], "dash": [4, 2.5]},
+    {"id": "drainage-running", "type": "line", "source-layer": "drainage", "filter": {"class": "likely_running"},
+     "minzoom": 12, "color": "#5ea3e0", "opacity": 0.95, "width": [[12, 0.6], [15, 1.1]]},
 
     {"id": "water", "type": "fill", "source-layer": "water",
      "color": "#a5cbe9", "opacity": 1.0},

@@ -37,6 +37,8 @@ data class MapOptions(
     val pois: Boolean = true,
     val boundaries: Boolean = true,
     val night: Boolean = false,
+    /** T174: the streams derived from the elevation grid (`drainage` layer of a rewritten pack); off unless turned on. */
+    val drainage: Boolean = false,
 ) {
     init {
         require(hillshadeIntensity in 0.0..1.0) { "hillshadeIntensity must be in 0..1" }
@@ -60,6 +62,7 @@ data class MapOptions(
         LayerGroup.LANDCOVER -> landcover
         LayerGroup.POIS -> pois
         LayerGroup.BOUNDARIES -> boundaries
+        LayerGroup.DRAINAGE -> drainage
         null -> true
     }
 
@@ -77,13 +80,14 @@ data class MapOptions(
         "landcover" to landcover,
         "pois" to pois,
         "boundaries" to boundaries,
+        "drainage" to drainage,
         "night" to if (night) "on" else "off",
         "shadeTiles" to (shade != null),
     )
 
     /** The layer toggles, for the settings sheet and `/settings`. */
     enum class LayerGroup(val key: String) {
-        TRAILS("trails"), WATER("water"), LANDCOVER("landcover"), POIS("pois"), BOUNDARIES("boundaries");
+        TRAILS("trails"), WATER("water"), LANDCOVER("landcover"), POIS("pois"), BOUNDARIES("boundaries"), DRAINAGE("drainage");
 
         companion object {
             private val byId: Map<String, LayerGroup> = buildMap {
@@ -94,6 +98,7 @@ data class MapOptions(
                 listOf("huts", "trailheads", "campsites", "shelters", "waterfalls", "viewpoints", "springs", "caves", "outdoor-pois", "parking")
                     .forEach { put(it, POIS) }
                 listOf("wilderness-fill", "park-boundary", "wilderness-boundary", "admin-boundary", "park-names").forEach { put(it, BOUNDARIES) }
+                listOf("drainage-dry", "drainage-seasonal", "drainage-running").forEach { put(it, DRAINAGE) }
             }
 
             /** The group a style layer id belongs to, or null for layers no toggle hides (roads, peaks, places, contours). */
@@ -115,7 +120,7 @@ data class MapOptions(
 
         val KEYS = setOf(
             "hillshade", "hillshadeIntensity", "slope", "contourInterval", "contourLabels",
-            "trails", "water", "landcover", "pois", "boundaries", "night",
+            "trails", "water", "landcover", "pois", "boundaries", "drainage", "night",
         )
 
         /**
@@ -148,6 +153,7 @@ data class MapOptions(
             params["landcover"]?.let { o = o.copy(landcover = bool("landcover", it)) }
             params["pois"]?.let { o = o.copy(pois = bool("pois", it)) }
             params["boundaries"]?.let { o = o.copy(boundaries = bool("boundaries", it)) }
+            params["drainage"]?.let { o = o.copy(drainage = bool("drainage", it)) }
             params["night"]?.let { o = o.copy(night = bool("night", it)) }
             return o
         }

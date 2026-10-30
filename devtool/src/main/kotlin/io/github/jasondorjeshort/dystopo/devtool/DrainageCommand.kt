@@ -311,7 +311,7 @@ private fun path(points: DoubleArray): Path2D.Double = Path2D.Double().apply {
  * The mapped water of an outdoors pack over a grid: `waterway` lines (in grid coordinates, for drawing and for
  * the score), `water` polygons and `landcover` ice as cell masks, and a buffer of [bufferM] around the waterways.
  */
-private class MappedWater(
+internal class MappedWater(
     val waterways: List<DoubleArray>,
     /** Per waterway line, which points lie inside their own tile's extent (for an unduplicated length). */
     private val own: List<BooleanArray>,
