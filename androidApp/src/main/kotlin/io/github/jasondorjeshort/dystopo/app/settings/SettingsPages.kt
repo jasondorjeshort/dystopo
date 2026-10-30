@@ -428,8 +428,8 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "drives or flights. It saves little battery, since the GPS stays on either way."
         },
         HelpText("settings.trackBattery", "Battery", at(SettingsGroup.NAVIGATION, "Recording: Battery"), show = page(SettingsGroup.NAVIGATION)) {
-            "Android may stop an app working with the screen off to save battery. Turn off battery optimisation for Dystopo in " +
-                "the list this opens. Some phones also have their own setting for sleeping apps under Battery or Apps."
+            "Android may stop an app working with the screen off to save battery. In the list this opens, choose Dystopo and " +
+                "allow it unrestricted battery use. Some phones also have their own setting for sleeping apps under Battery or Apps."
         },
     )
 }

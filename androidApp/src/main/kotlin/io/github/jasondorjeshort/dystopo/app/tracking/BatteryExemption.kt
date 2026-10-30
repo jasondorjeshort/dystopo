@@ -125,7 +125,7 @@ object BatteryExemption {
     /** The card's sentence and the pointer to the maker's own setting (ADR 0031: listed for the owner). */
     const val TITLE = "Keep recording with the screen off"
     const val TEXT = "To save battery, Android may stop an app that works in the background, which would end a long recording early. " +
-        "In the list that opens, find Dystopo and turn off its battery optimisation."
+        "In the list that opens, choose Dystopo and allow it unrestricted battery use."
     const val MAKER = "Some phones also have their own setting that puts apps to sleep, under Battery or Apps in the phone's " +
         "Settings (look for background activity, autostart or sleeping apps). If a recording stops by itself, allow Dystopo there too."
 
@@ -133,7 +133,8 @@ object BatteryExemption {
      * T172 debug routes, consulted by [io.github.jasondorjeshort.dystopo.app.TrackRoutes] first:
      * - `GET /tracks/battery`: `exempt` (the system's answer), `answer` (`allow`, `not-now` or null), `shouldAsk`,
      *   `cardOpen`, `shown` (this process), `lastOpened` (`battery-optimisation-list`, `app-details` or `none`).
-     * - `POST /tracks/battery/answer?choice=allow|not-now`: taps the card's button (allow opens the system's list).
+     * - `POST /tracks/battery/answer?choice=allow|not-now`: taps the card's button (allow opens the system's list; with the
+     *   app in the background Android drops the activity start without an error, so `lastOpened` names what was asked for).
      * - `POST /tracks/battery/reset`: forgets the answer, so the next Record asks again.
      */
     fun handle(app: DystopoApp, r: Request): Response? {
