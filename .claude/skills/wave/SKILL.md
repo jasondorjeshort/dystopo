@@ -16,8 +16,10 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
 
 1. Read `docs/HANDOFF.md` (already loaded) and the files its Resume line names, normally
    `docs/reference/machines.md` for this account's paths and ports.
-2. Read `docs/TASKS.md` from the bottom: the first wave whose tasks lack a **Status:** line is the
-   open wave; `git fetch && git branch -r --list 'origin/task/*'` shows the branches not yet merged (a
+2. Read `docs/TASKS.md`: the board holds the open wave (its tasks lack a **Status:** line; no wave
+   between a close and the next plan); the previous wave's Status lines are its record in
+   `docs/tasks/` (index in its README), and its unfinished follow-ups are in the board's Later;
+   `git fetch && git branch -r --list 'origin/task/*'` shows the branches not yet merged (a
    merged one is deleted by the cleanup chore). Owner actions the project is waiting on are
    listed at the top of `docs/TASKS.md`.
 3. Have a Haiku agent start the live server from the main checkout (`./gradlew :tilebuild:installDist`
@@ -46,8 +48,8 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    behaviours that become user settings and their defaults.
 2. Run the written plan past a critic before launching anything (the most capable model, read-only;
    owner, 2026-10-16: standard for every wave). Its brief names the wave section, the previous wave's
-   Status lines, the ideas and ADRs the plan draws on, and asks for numbered objections with severity
-   and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
+   record (`docs/tasks/wave-NN.md`, its Status lines) and the board's Later, the ideas and ADRs the
+   plan draws on, and asks for numbered objections with severity and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
    observable, premises checked against the code, major choices that need a proposal, follow-ups
    dropped silently, cross-task sequencing, behaviour shared across tasks that no Interacts with
    line names, choices left to an implementer's taste without research,
@@ -127,3 +129,9 @@ and the caches are regenerable; the only files on the machine that are not are t
 4. Rewrite the handoff (`handoff` skill) and commit it. Add the meter at the close to the wave
    paragraph's allowance sentence; when it is more than five points over the figure, raise the
    per-task figure in step 3 of Plan and launch in the same commit and say so in the handoff.
+5. A Haiku chore moves the closed wave to `docs/tasks/wave-NN.md` by the recipe in that README and
+   adds its index line (`brief` skill, `chore.md`; the chore works in the main checkout and commits
+   nothing). The recipe first lifts the wave's follow-ups from its Status lines into the board's
+   `## Later`, one line per task naming it; read that list, strike what is done or taken, then
+   commit the board, the record and the index together and push with `bash tools/push-verified.sh`.
+   A failed check in the recipe stops the chore; relaunch it Sonnet-class.

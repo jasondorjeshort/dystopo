@@ -29,14 +29,16 @@ their one-line replacements. From the Hatchery base, with this project's exempti
    `promoted_to`.
    An idea, a bug nobody has looked into, or a missing feature: `docs/ideas/` (one file each, see
    its README); the `triage` skill writes its block.
-6. What is happening now or next: `docs/HANDOFF.md` (`handoff` skill). Tasks: `docs/TASKS.md`.
+6. What is happening now or next: `docs/HANDOFF.md` (`handoff` skill). Tasks: `docs/TASKS.md`;
+   closed waves: `docs/tasks/`, one record each (the recipe in its README).
    What a merged task did: the dated log in `docs/PLANNING.md` (the coordinator, `tools/merge-log.py`).
 
 ## Size caps (the post-edit hook warns)
 
 - Any `docs/**/*.md`: at most 300 lines. Split by topic, never by date, never by "part 2". Exempt:
-  `docs/PLANNING.md`, `docs/TASKS.md`, `docs/SERVER.md` (dated records and the server manual, ADR
-  0020) and `docs/design/proposals/`; the list is `edit.capExempt` in `.claude/hooks/policy.json`,
+  `docs/PLANNING.md`, `docs/SERVER.md` (dated records and the server manual, ADR 0020 as amended by
+  ADR 0050, which takes the board off the list: closed waves move to `docs/tasks/`) and
+  `docs/design/proposals/`; the list is `edit.capExempt` in `.claude/hooks/policy.json`,
   which the post-edit hook reads.
 - `docs/HANDOFF.md`: at most 40 lines. Detail goes to a finding or the board; the handoff links.
 - `CLAUDE.md`: under 130 lines (ADR 0020). The base's 40-line and 190-loaded caps are lifted here by

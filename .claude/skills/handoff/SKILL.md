@@ -41,7 +41,7 @@ resume pointers are this project's.
    Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
    Updated: YYYY-MM-DD, at commit <short sha>, by <main session | agent name>
    Resume: <the reference files a fresh session needs, normally docs/reference/machines.md and the
-   wave skill; the open wave in docs/TASKS.md>
+   wave skill; the open wave in docs/TASKS.md and the last closed wave's record in docs/tasks/>
 
    ## Now
    1-4 bullets: what is in flight (task, branch, PR, verdict so far), exact state; no process ids,
