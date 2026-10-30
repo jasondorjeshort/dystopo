@@ -24,7 +24,9 @@ class RegionPickerTest {
     fun theViewsZoomChoosesTheDetail() {
         assertEquals(DETAIL_FULL, regionDetail(12.0), "a city view opens at full detail")
         assertEquals(DETAIL_FULL, regionDetail(REGION_FULL_FROM_ZOOM))
-        assertEquals(DETAIL_LESS, regionDetail(9.9))
+        assertEquals(DETAIL_MEDIUM, regionDetail(9.9), "T170: a z8 to z10 view opens at medium detail")
+        assertEquals(DETAIL_MEDIUM, regionDetail(REGION_MEDIUM_FROM_ZOOM))
+        assertEquals(DETAIL_LESS, regionDetail(7.9))
         assertEquals(DETAIL_LESS, regionDetail(6.0), "a state view opens at less detail")
     }
 

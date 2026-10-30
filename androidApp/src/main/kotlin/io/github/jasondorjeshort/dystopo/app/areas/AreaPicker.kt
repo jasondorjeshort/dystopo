@@ -73,7 +73,7 @@ import kotlin.concurrent.thread
  * name; the name field renames it before Download, and the area card's Rename after.
  *
  * T153: **Download this region** ([Mode.Region], the online overlay's button and `POST /areas/region`): the visible box
- * as a rectangle, with no span cap and a detail chosen for the view ([regionDetail]: full from z10, less below), the other
+ * as a rectangle, with no span cap and a detail chosen for the view ([regionDetail]: full from z10, T170 medium from z8, less below), the other
  * a link. At full detail a box within the server's build limits ([RegionDownload.packFits]) keeps the pack path (a server-
  * or phone-built pack with the trail graph and search, outside the pinned budget, sized at the pack's z8 to z14); any other
  * box, and less detail, takes the area path (tiles only, [AreaDownload] with T151's cursor and T156's chain); the summary
@@ -431,12 +431,19 @@ object AreaPicker {
 /**
  * T153 (ADR 0041 §5, "a detail level chosen for the view"): a region's default detail from the view's zoom: full from
  * [REGION_FULL_FROM_ZOOM] (a city view: the pack path when the box fits the server's limits), less below it (a state
- * view, whose full detail runs to tens of gigabytes). Pure, tested.
+ * view, whose full detail runs to tens of gigabytes). T170 (T157's follow-up): medium from [REGION_MEDIUM_FROM_ZOOM] (a
+ * county or a range of hills: every path and place for little more than less detail). Pure, tested.
  */
-internal fun regionDetail(viewZoom: Double): String = if (viewZoom >= REGION_FULL_FROM_ZOOM) DETAIL_FULL else DETAIL_LESS
+internal fun regionDetail(viewZoom: Double): String = when {
+    viewZoom >= REGION_FULL_FROM_ZOOM -> DETAIL_FULL
+    viewZoom >= REGION_MEDIUM_FROM_ZOOM -> DETAIL_MEDIUM
+    else -> DETAIL_LESS
+}
 
 /** T153: the view zoom from which a region opens at full detail. */
 internal const val REGION_FULL_FROM_ZOOM = 10.0
+/** T170: the view zoom from which a region opens at medium detail (below [REGION_FULL_FROM_ZOOM]). */
+internal const val REGION_MEDIUM_FROM_ZOOM = 8.0
 
 /**
  * T153: the line under a region's size line saying which path the download takes: the pack ([REGION_PACK_LINE]) at full
