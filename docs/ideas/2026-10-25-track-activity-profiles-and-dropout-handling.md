@@ -85,7 +85,12 @@ recording (raw points kept, smoothed ones derived), so the live recorder stays s
 intervals stay at 1 s (battery cost is the GPS being on, not the rate); a per-profile gap rule of
 time only for flying.
 
-Plan: a benchmark survey first, then two tasks: (a) recorder core in `shared` (accuracy kept and
-weighted, gap records, profiles as data, schema migration, tests, replay checks) and (b) the app side
-(watchdog, fallback provider, restart and exemption, notification state, profile picker, diagnostics
-rows). They share `Tracking.kt`, so different waves or one owner.
+Plan (rewritten 2026-10-30 by T158, which built task (a): `docs/PLANNING.md` › Sync › Recorded tracks): what is
+left is (b) the app side, split in wave 22 into T159 (the GPS kept on while recording, the notification and its
+states, the watchdog, the network fallback, the restart that resumes the track T158 keeps open with a "stopped by
+the system" gap, `GET /tracks` with the state, gaps and flagged count) and T172 (the activity picker, the profile
+rows per activity: accuracy bound, auto-pause, network fallback, interval; the exemption prompt, the diagnostics
+rows; T172 deletes this file), and the smoother, T171 (an accuracy-weighted pass over the raw points, flagged points
+excluded from or down-weighted in distance and elevation stats, the stop cut, `gpx --stats`). Not yet planned: the
+constant-velocity bridge of short gaps in flight (flagged as predicted), and whether the interval relaxes for road
+and air.
