@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-30
 
+- T175: Sweep leftovers 16: the crow route 500, the Record-as picker in the release-realism script, NOTICES (added at the close, 2026-10-30)
 - T173: The sea-level pressure from public weather stations (after T161)
 - T161: The readout on the phone (after T160 and T172)
 - T172: The activity picker, the profile rows, the diagnostics rows, the exemption prompt (after T159)
