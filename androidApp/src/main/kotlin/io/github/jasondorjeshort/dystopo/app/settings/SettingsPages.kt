@@ -142,6 +142,35 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 for (m in SNOOZE_CHOICES) Option("$m min", snoozeMin == m) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSnoozeMin = m)) }
             }
         }
+        // T163: the turn-around clock's deadline and margin (ADR 0044: the researched defaults, sunset and 30 minutes).
+        SettingsRow.TURN_DEADLINE -> {
+            val d = io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(AppSettings.turnDeadline) ?: io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.SUNSET
+            val typed = d.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TIME
+            Setting(row.label, "what the navigation card's turn-back time counts to", help = "settings.turnDeadline") {
+                Option("Sunset", d.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.SUNSET) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = "sunset")) }
+                Option("Civil twilight", d.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.CIVIL) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = "civil")) }
+                Option("A time I type", typed) { if (!typed) change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = AppSettings.turnTypedTime)) }
+                if (typed) TypedValue(d.value, "HH:MM", KeyboardType.Number) { raw ->
+                    val v = io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(raw)?.takeIf { it.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TIME }
+                        ?: return@TypedValue "a time like 18:30"
+                    change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = v.value))
+                    null
+                }
+            }
+        }
+        SettingsRow.TURN_MARGIN -> {
+            val margin = AppSettings.turnMarginMin
+            val presets = io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_PRESETS
+            Setting(row.label, "how long before the deadline to be back out", help = "settings.turnMargin") {
+                for (m in presets) Option("$m min", margin == m) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnMarginMin = m)) }
+                TypedValue(if (margin in presets) "" else margin.toString(), "other", KeyboardType.Number, suffix = "min") { raw ->
+                    val r = io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE
+                    val v = raw.trim().toIntOrNull()?.takeIf { it in r } ?: return@TypedValue "${r.first} to ${r.last} minutes"
+                    change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnMarginMin = v))
+                    null
+                }
+            }
+        }
         SettingsRow.SYNC_STATUS -> Setting(row.label, "the last sync of tracks and routes, what it moved and what is still waiting", help = "settings.syncStatus") {
             Option("${row.label} ›", false) {
                 leaveFor { io.github.jasondorjeshort.dystopo.app.sync.SyncUi.visible = true; io.github.jasondorjeshort.dystopo.app.sync.SyncUi.refresh() }
@@ -294,6 +323,16 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "When you leave the route while navigating, a banner warns you. Its Snooze button silences the warning for " +
                 "this long, while you take a detour on purpose for example."
         },
+        // T163: the turn-around clock's two rows.
+        HelpText("settings.turnDeadline", "Turn back by", at(SettingsGroup.NAVIGATION, "Navigation: Turn back by"), show = page(SettingsGroup.NAVIGATION)) {
+            "While you navigate a loop or an out-and-back, the card says when to turn back to be out by this. Sunset is " +
+                "for a level horizon. Civil twilight ends about half an hour later and relies on a headlamp: under trees " +
+                "a trail is dark before it ends. Or type a time, for a pickup or a last ferry."
+        },
+        HelpText("settings.turnMargin", "Turn-back margin", at(SettingsGroup.NAVIGATION, "Navigation: Turn-back margin"), show = page(SettingsGroup.NAVIGATION)) {
+            "How long before the deadline you want to be out. The turn-back time leaves this much spare, and the card " +
+                "turns amber this long before it. 30 minutes covers a slow descent; raise it in steep or unfamiliar ground."
+        },
         HelpText("settings.syncStatus", "Sync status", at(SettingsGroup.SYNC, "Sync status"), show = page(SettingsGroup.SYNC)) {
             "Tracks, waypoints, routes and your settings sync with your server when one is set, and with the phones " +
                 "you share with. This shows when the last sync ran, what it sent and received, and what is still waiting."
@@ -321,6 +360,37 @@ internal val SETTINGS_HELP: List<HelpText> = run {
 private val SNAP_CHOICES = listOf(300, 500, 1000)
 private val STALE_CHOICES = listOf(15, 30, 60, 120) // T91
 private val SNOOZE_CHOICES = listOf(5, 10, 30)
+
+/**
+ * T163: a value typed into a row (the deadline's time, a margin outside the presets): a small field and Set. [submit]
+ * applies the text and returns null, or returns what is wrong with it, shown under the field.
+ */
+@Composable
+private fun TypedValue(initial: String, placeholder: String, keyboard: KeyboardType, suffix: String? = null, submit: (String) -> String?) {
+    var text by remember(initial) { mutableStateOf(initial) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                text, { text = it; error = null },
+                singleLine = true,
+                textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+                keyboardOptions = KeyboardOptions(keyboardType = keyboard, imeAction = ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { error = submit(text) }),
+                decorationBox = { inner ->
+                    Box {
+                        if (text.isEmpty()) BasicText(placeholder, style = TextStyle(color = Muted, fontSize = 14.sp))
+                        inner()
+                    }
+                },
+                modifier = Modifier.widthIn(min = 64.dp, max = 96.dp).background(Color.White, RoundedCornerShape(6.dp)).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            suffix?.let { BasicText(it, Modifier.padding(horizontal = 6.dp), style = TextStyle(color = Ink, fontSize = 14.sp)) }
+            Option("Set", false) { error = submit(text) }
+        }
+        error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp)) }
+    }
+}
 
 private fun stepScale(scale: Double, dir: Int): Double =
     (Math.round((scale + 0.1 * dir) * 10) / 10.0).coerceIn(MapLibreStyle.MIN_TEXT_SCALE, MapLibreStyle.MAX_TEXT_SCALE)

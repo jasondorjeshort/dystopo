@@ -23,6 +23,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * stays on the phone (T130).
  * T164: the route-time fit (`app.paceFit`, [io.github.jasondorjeshort.dystopo.routing.PaceFits.encode]'s value, so every
  * device shows the same numbers), its switch (`app.paceStandard`, `on` or `off`) and its reset (`app.paceSince`, epoch ms).
+ * T163: the turn-around clock's deadline and margin (`app.turnDeadline`, `sunset`, `civil` or `HH:MM`; `app.turnMarginMin`,
+ * whole minutes) are [SettingsRoutes] keys too.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -50,6 +52,9 @@ object SettingsSync {
     const val PACE_FIT = "paceFit"
     const val PACE_STANDARD = "paceStandard"
     const val PACE_SINCE = "paceSince"
+    /** T163: the turn-around clock's deadline (`sunset`, `civil` or `HH:MM`) and margin (whole minutes), [SettingsRoutes] keys. */
+    const val TURN_DEADLINE = "turnDeadline"
+    const val TURN_MARGIN_MIN = "turnMarginMin"
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -93,6 +98,8 @@ object SettingsSync {
         m[syncedKey(PACE_STANDARD)] = onOff(AppSettings.paceStandard) // T164
         m[syncedKey(PACE_FIT)] = AppSettings.paceFit
         m[syncedKey(PACE_SINCE)] = AppSettings.paceSince.toString()
+        m[syncedKey(TURN_DEADLINE)] = AppSettings.turnDeadline // T163
+        m[syncedKey(TURN_MARGIN_MIN)] = AppSettings.turnMarginMin.toString()
         return m
     }
 
@@ -147,6 +154,8 @@ object SettingsSync {
         if (parsed.paceStandard != null) keys += syncedKey(PACE_STANDARD) // T164
         if (parsed.paceFit != null) keys += syncedKey(PACE_FIT)
         if (parsed.paceSince != null) keys += syncedKey(PACE_SINCE)
+        if (parsed.turnDeadline != null) keys += syncedKey(TURN_DEADLINE) // T163
+        if (parsed.turnMarginMin != null) keys += syncedKey(TURN_MARGIN_MIN)
         publishKeys(app, keys)
     }
 

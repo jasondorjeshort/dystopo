@@ -82,6 +82,9 @@ object AppSettings {
         paceFit = p.getString(KEY_PACE_FIT, "") ?: ""
         paceSince = p.getLong(KEY_PACE_SINCE, 0L)
         io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.activate()
+        // T163
+        turnDeadline = p.getString(KEY_TURN_DEADLINE, null)?.let { io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(it)?.value } ?: io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.DEFAULT
+        turnMarginMin = p.getInt(KEY_TURN_MARGIN_MIN, io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN).coerceIn(io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE)
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -107,6 +110,34 @@ object AppSettings {
         standard?.let { paceStandard = it; e?.putBoolean(KEY_PACE_STANDARD, it) }
         fit?.let { paceFit = it; e?.putString(KEY_PACE_FIT, it) }
         since?.let { paceSince = it; e?.putLong(KEY_PACE_SINCE, it) }
+        e?.apply()
+    }
+
+    // ---- T163: the turn-around clock (nav/TurnAround): what it counts to and the margin; synced (sync/SettingsSync) ----
+
+    private const val KEY_TURN_DEADLINE = "turnDeadline"
+    private const val KEY_TURN_MARGIN_MIN = "turnMarginMin"
+    private const val KEY_TURN_TYPED = "turnTypedTime"
+
+    /** `sunset` (the default), `civil` or a typed `HH:MM` ([io.github.jasondorjeshort.dystopo.nav.DeadlineSetting]); never off. */
+    @Volatile var turnDeadline: String = io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.DEFAULT
+        private set
+
+    /** Minutes to be out before the deadline (default 30, 0 to 240). */
+    @Volatile var turnMarginMin: Int = io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN
+        private set
+
+    /** The last time typed for the deadline (this phone only), so A time I type offers it again after sunset was chosen. */
+    val turnTypedTime: String get() = prefs?.getString(KEY_TURN_TYPED, null) ?: "18:00"
+
+    fun setTurn(deadline: String?, marginMin: Int?) {
+        val e = prefs?.edit()
+        deadline?.let {
+            turnDeadline = it
+            e?.putString(KEY_TURN_DEADLINE, it)
+            if (':' in it) e?.putString(KEY_TURN_TYPED, it)
+        }
+        marginMin?.let { turnMarginMin = it; e?.putInt(KEY_TURN_MARGIN_MIN, it) }
         e?.apply()
     }
 
@@ -397,5 +428,6 @@ object AppSettings {
         "navStaleS" to navStaleS, "navStartM" to navStartM, "navSnoozeMin" to navSnoozeMin, // T91
         "navSpeech" to navSpeech, // T126
         "paceStandard" to paceStandard, "paceFit" to paceFit, "paceSince" to paceSince, // T164
+        "turnDeadline" to turnDeadline, "turnMarginMin" to turnMarginMin, // T163
     ) + mapOptions.json(units) // T47
 }

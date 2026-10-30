@@ -12,7 +12,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar"),
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
-    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times"), // T164: route times
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time"), // T164: route times; T163: turn-back time
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, diagnostics, problem reports, contour warm-up, credits"),
     ;
@@ -42,6 +42,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     NAV_SNOOZE("navSnooze", SettingsGroup.NAVIGATION, "Navigation: Snooze", "SettingsPages", "T91"),
     // T164: route times fitted to the user's tracks (last of its group).
     PACE("pace", SettingsGroup.NAVIGATION, "Route times", "SettingsPages", "T164"),
+    // T163
+    TURN_DEADLINE("turnDeadline", SettingsGroup.NAVIGATION, "Navigation: Turn back by", "SettingsPages", "T163"),
+    TURN_MARGIN("turnMargin", SettingsGroup.NAVIGATION, "Navigation: Turn-back margin", "SettingsPages", "T163"),
     SYNC_STATUS("syncStatus", SettingsGroup.SYNC, "Sync status", "SettingsPages", "T103"),
     SHARE("share", SettingsGroup.SYNC, Screens.SHARE, "SettingsPages", "T103"),
     UPDATES("updates", SettingsGroup.ABOUT, "Updates", "UpdateRow", "T83"),

@@ -66,7 +66,7 @@ private val Link = Color(0xFF2C7BB6)
  * banner (Unsnooze while snoozed), "No GPS fix for N s" when the position is old, and the card's bottom
  * edge goes to [io.github.jasondorjeshort.dystopo.app.TopChips] so the Tracks and Routes chips stack below it.
  * T102: the next turn direction first, in large type with its distance and an arrow for the turn, in the alert
- * colour once it is within its lead distance.
+ * colour once it is within its lead distance. T163: the turn-around clock under the end ([TurnBack]).
  */
 @Composable
 fun NavOverlay() {
@@ -153,6 +153,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                 Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
             }
             Stat("End", null, u.endDistance, u.endTime + if (u.endClock.isNotEmpty()) "  (${u.endClock})" else "")
+            u.turnBack?.let { TurnBack(it, u.turnBackLabel, u.turnBackColour) } // T163
             if (u.rejoin != null) {
                 Row(
                     Modifier.fillMaxWidth().background(if (u.offRoute) Alert else Color(0xFFFDAE61), RoundedCornerShape(8.dp))
@@ -285,6 +286,12 @@ internal val NAV_HELP: List<HelpText> = listOf(
         "The phone has had no new position for longer than GPS fix stale after (Settings › Navigation and tracking). The " +
             "card's numbers are from the last position until a new one comes; under trees or in a canyon that can take a while."
     },
+    // T163: the turn-around clock's line.
+    HelpText("nav.turnAround", "Turn back by", "The map: navigation card, turn-back time", needs = "navigating, after a fix") {
+        "The latest time to turn back and still be out by sunset, or the deadline you chose, with your margin to spare. " +
+            "It turns amber the margin before that time and red at it; on the way out it shows when you will be out. " +
+            "Sunset is for a level horizon, so a deep valley darkens sooner."
+    },
     HelpText("nav.offRoute", "Off route", "The map: navigation card, off the route", needs = "navigating, off the route") {
         "You have left the route. The arrow points the shortest way back to it, with the direction and distance below. " +
             "Snooze silences the warning for a while, for a detour on purpose; Quiet until back silences it until you rejoin."
@@ -305,6 +312,30 @@ private fun Stat(label: String, name: String?, distance: String, time: String) {
         if (name != null) {
             BasicText(name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
         }
+    }
+}
+
+/**
+ * T163: the turn-around clock: "Turn back by 14:10" in large type with what it counts to under it ("Sunset 19:12, flat
+ * horizon, 30 min margin, standard pace"); amber within the margin of the time, red from it ("Turn back now, out by
+ * 18:52"), and on the way out the arrival clock ("Out by 18:05") coloured by the deadline.
+ */
+@Composable
+private fun TurnBack(text: String, label: String?, colour: String) {
+    val (bg, ink) = when (colour) {
+        "red" -> Alert to Color.White
+        "amber" -> Color(0xFFFDAE61) to Ink
+        else -> Color(0x1F7B3294) to Ink
+    }
+    Row(
+        Modifier.fillMaxWidth().background(bg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            BasicText(text, style = TextStyle(color = ink, fontSize = 22.sp, fontWeight = FontWeight.Bold))
+            label?.let { BasicText(it, style = TextStyle(color = ink, fontSize = 12.sp)) }
+        }
+        HelpIcon("nav.turnAround")
     }
 }
 

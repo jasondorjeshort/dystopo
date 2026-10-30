@@ -15,7 +15,14 @@ import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
 import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
+import io.github.jasondorjeshort.dystopo.nav.Deadline
+import io.github.jasondorjeshort.dystopo.nav.DeadlineKind
+import io.github.jasondorjeshort.dystopo.nav.DeadlineSetting
 import io.github.jasondorjeshort.dystopo.nav.NavOptions
+import io.github.jasondorjeshort.dystopo.nav.Sun
+import io.github.jasondorjeshort.dystopo.nav.TurnAround
+import io.github.jasondorjeshort.dystopo.nav.TurnPace
+import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.nav.NavPath
 import io.github.jasondorjeshort.dystopo.nav.NavReplay
 import io.github.jasondorjeshort.dystopo.model.RoutePoint
@@ -45,15 +52,90 @@ import kotlin.math.roundToLong
  * them for a kept or saved route) and the report has `directions` (those shown at the default level, as text) and,
  * in each progress sample, `next` (the direction navigation shows there) and `aheadM`; `directionsPassed` counts
  * those behind the walker at the end. `--expect-directions N` exits 1 unless N are shown.
+ *
+ * T163: `devtool nav --turn-around --path <gpx> [--path-track] --deadline sunset|civil|<ISO instant> --margin-min 30`
+ * prints the turn-around clock ([TurnAround]) at readings along the line (`--along-m` for one), at `--now` (default the
+ * line's first track time): the day's sun times at the line's end, and per reading the state, the turn-back time, the
+ * return time each way and the arrival. `--retrace` times the way out back along the line only (free tracking).
  */
 class NavCommand : CliktCommand(name = "nav") {
     init {
         subcommands(NavReplayCommand())
     }
 
-    override fun help(context: Context) = "Navigation on the JVM (T65): `nav replay` runs a GPX walk along a route or track through the phone's off-route logic."
+    override val invokeWithoutSubcommand = true
 
-    override fun run() = Unit
+    override fun help(context: Context) =
+        "Navigation on the JVM (T65): `nav replay` runs a GPX walk along a route or track through the phone's off-route logic; " +
+            "T163: `nav --turn-around --path <gpx> --deadline sunset|civil|<iso instant> --margin-min 30` prints the turn-around clock along the line."
+
+    // T163: the turn-around clock.
+    private val turnAround by option("--turn-around", help = "T163: print the turn-around clock along --path as JSON").flag()
+    private val pathFile by option("--path", help = "T163: GPX with the route (or track) the clock runs along").file(mustExist = true, canBeDir = false)
+    private val pathTrack by option("--path-track", help = "T163: use the GPX's first track instead of its first route").flag()
+    private val deadline by option("--deadline", help = "T163: sunset (default), civil (end of civil twilight) or an ISO 8601 instant (2025-08-14T18:30:00-07:00)").default("sunset")
+    private val marginMin by option("--margin-min", help = "T163: minutes to be out before the deadline (default 30)").int().default(TurnAround.DEFAULT_MARGIN_MIN)
+    private val now by option("--now", help = "T163: the time of the reading, ISO 8601 (default: the line's first track time, else now)")
+    private val alongM by option("--along-m", help = "T163: one reading this far along the line (default: --samples readings over it)").double()
+    private val samples by option("--samples", help = "T163: readings along the line (default 11: every tenth)").int().default(11)
+    private val mode by option("--mode", help = "T163: hike (default) or bike: the time model").choice("hike", "bike").default("hike")
+    private val retrace by option("--retrace", help = "T163: free tracking: the way out is always back along the line (the recorded track)").flag()
+
+    override fun run() {
+        if (currentContext.invokedSubcommand != null) return
+        if (!turnAround) throw UsageError("use `nav replay ...` or `nav --turn-around --path <gpx> ...`")
+        val f = pathFile ?: throw UsageError("--turn-around needs --path")
+        val t0 = System.nanoTime()
+        val doc = Gpx.parse(f.readText(Charsets.UTF_8))
+        val route = doc.routes.firstOrNull()
+        val track = doc.tracks.firstOrNull()
+        val path = when {
+            !pathTrack && route != null && route.points.size >= 2 -> NavPath.of(route, doc.waypoints)
+            track != null && track.points.size >= 2 -> NavPath.of(track, doc.waypoints)
+            else -> throw UsageError("${f.path} has no route or track with two points")
+        }
+        val nowMs = now?.let { parseInstant(it) ?: throw UsageError("--now must be an ISO 8601 instant (got $it)") }
+            ?: track?.points?.firstOrNull()?.time ?: System.currentTimeMillis()
+        val end = path.points.last()
+        val dl = when (deadline.trim().lowercase()) {
+            "sunset" -> Deadline.resolve(DeadlineSetting.SUNSET, end.lat, end.lon, nowMs, 0)
+            "civil" -> Deadline.resolve(DeadlineSetting(DeadlineKind.CIVIL), end.lat, end.lon, nowMs, 0)
+            else -> Deadline(DeadlineKind.TIME, parseInstant(deadline) ?: throw UsageError("--deadline must be sunset, civil or an ISO 8601 instant (got $deadline)"), DeadlineKind.TIME.label)
+        }
+        if (marginMin !in TurnAround.MARGIN_RANGE) throw UsageError("--margin-min must be ${TurnAround.MARGIN_RANGE.first} to ${TurnAround.MARGIN_RANGE.last}")
+        val ta = TurnAround(path, TurnPace.of(CostModel(TravelMode.of(mode)!!)), retraceOnly = retrace)
+        val day = Sun.dayAt(end.lat, end.lon, nowMs)
+        // Clock times in the line's mean solar time (the JSON's ISO instants are UTC); whole minutes of offset.
+        val zone = java.time.ZoneOffset.ofTotalSeconds(((end.lon / 15) * 60).roundToLong().toInt() * 60)
+        val clock: (Long) -> String = { ms -> java.time.Instant.ofEpochMilli(ms).atOffset(zone).toLocalTime().withSecond(0).withNano(0).toString() }
+        val iso: (Long?) -> String? = { ms -> ms?.let { java.time.Instant.ofEpochMilli(it).toString() } }
+        val n = samples.coerceAtLeast(2)
+        val at = alongM?.let { listOf(it) } ?: (0 until n).map { path.totalM * it / (n - 1) }
+        val readings = at.map { a ->
+            val c = ta.clock(a, nowMs, dl, marginMin)
+            linkedMapOf<String, Any?>("text" to c.text(clock)) + (c.json() - setOf("deadline", "marginMin", "pace", "nowMs", "loop")) +
+                linkedMapOf("turnBack" to iso(c.turnBackMs), "arrival" to iso(c.arrivalMs))
+        }
+        val report = linkedMapOf<String, Any?>(
+            "command" to "nav --turn-around", "pathFile" to f.path, "name" to path.name,
+            "totalM" to Math.round(path.totalM), "totalAscentM" to Math.round(path.totalAscentM), "loop" to ta.loop, "retraceOnly" to retrace,
+            "now" to iso(nowMs), "nowMs" to nowMs, "marginMin" to marginMin, "pace" to ta.pace.label, "mode" to mode,
+            "deadline" to linkedMapOf("kind" to dl.kind.key, "at" to iso(dl.atMs), "atMs" to dl.atMs, "label" to dl.label),
+            "sun" to linkedMapOf(
+                "lat" to end.lat, "lon" to end.lon, "date" to "%04d-%02d-%02d".format(day.year, day.month, day.day),
+                "noon" to iso(day.noonMs), "sunset" to iso(day.sunsetMs), "civilTwilightEnd" to iso(day.civilEndMs),
+            ),
+            "totalTimeS" to Math.round(ta.totalS),
+            "label" to ta.clock(at.first(), nowMs, dl, marginMin).label(clock),
+            "clockZone" to zone.id,
+            "readings" to readings,
+            "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,
+        )
+        echo(pretty(report))
+    }
+
+    private fun parseInstant(s: String): Long? = runCatching { java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli() }.getOrNull()
+        ?: runCatching { java.time.Instant.parse(s).toEpochMilli() }.getOrNull()
 }
 
 class NavReplayCommand : CliktCommand(name = "replay") {

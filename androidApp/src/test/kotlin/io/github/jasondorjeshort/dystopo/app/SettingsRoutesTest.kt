@@ -106,6 +106,22 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun theTurnAroundDeadlineAndMargin() { // T163: sunset, civil or a typed time; never off; the margin in whole minutes
+        assertEquals("sunset", ok("turnDeadline" to "sunset").turnDeadline)
+        assertEquals("civil", ok("turnDeadline" to "Civil").turnDeadline)
+        assertEquals("07:30", ok("turnDeadline" to "7:30").turnDeadline, "a typed time is stored as HH:MM")
+        assertNull(ok("units" to "m").turnDeadline)
+        assertTrue(bad("turnDeadline" to "off").message.contains("turnDeadline"), "the clock cannot be switched off")
+        bad("turnDeadline" to "25:00")
+        assertEquals(30, ok("turnMarginMin" to "30").turnMarginMin)
+        assertEquals(0, ok("turnMarginMin" to 0).turnMarginMin)
+        assertEquals(45, ok("turnMarginMin" to "45").turnMarginMin, "a typed value outside the presets")
+        bad("turnMarginMin" to "-5")
+        bad("turnMarginMin" to "241")
+        bad("turnMarginMin" to "soon")
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {
