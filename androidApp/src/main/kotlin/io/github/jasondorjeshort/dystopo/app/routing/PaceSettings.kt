@@ -92,7 +92,7 @@ object PaceSettings {
             else -> {
                 val (n, m) = s.count(TravelMode.HIKE) ?: (0 to 0.0)
                 "Your pace is used once you have ${PaceFits.MIN_TRACKS} hikes over ${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(PaceFits.MIN_METRES, units)}" +
-                    " on mapped trails (so far $n, ${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(m, units)})."
+                    " on mapped trails" + (if (n == 0) " (none yet)." else " (so far $n, ${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(m, units)}).")
             }
         }
         return "$mine $standard"
