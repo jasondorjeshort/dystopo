@@ -163,18 +163,27 @@ echo "Follow-ups lifted into ## Later (the coordinator reads these before the co
 cat "$T/lifted.txt"
 ```
 
-## The first move (once, step B of the idea that set this up)
-
-The board then carries every wave since the first, so the first run differs from a close:
-`bash "$S" 1 21 148`. Wave 2 has no heading of its own (the script notes it and goes on); the
-`## One-off fixes after wave 20` section goes to the end of `wave-20.md`; the `### Later` block of
-wave 20 becomes the board's `## Later` above wave 22; `## Browser demo follow-ups` stays on the
-board. The lift starts at T148 because the wave 22 paragraph leaves the follow-ups of T148 to T157
-in their Status lines; older waves' follow-ups were triaged into a task or Later when the next
-wave was planned (the critic checks for follow-ups dropped silently). The coordinator's commit also deletes
-`docs/ideas/2026-10-29-closed-waves-move-out-of-the-board.md`, and drops this section.
-
 ## Records
 
 | Record | Tasks |
 |---|---|
+| [wave-01.md](wave-01.md) | T1 to T10 |
+| [wave-03.md](wave-03.md) | T12 to T18 |
+| [wave-04.md](wave-04.md) | T19 to T22 |
+| [wave-05.md](wave-05.md) | T23 to T24 |
+| [wave-06.md](wave-06.md) | T25 to T32 |
+| [wave-07.md](wave-07.md) | T33 to T40 |
+| [wave-08.md](wave-08.md) | T41 to T48 |
+| [wave-09.md](wave-09.md) | T49 to T56 |
+| [wave-10.md](wave-10.md) | T57 to T64 |
+| [wave-11.md](wave-11.md) | T65 to T72 |
+| [wave-12.md](wave-12.md) | T73 to T87 |
+| [wave-13.md](wave-13.md) | T88 to T97 |
+| [wave-14.md](wave-14.md) | T98 to T107 |
+| [wave-15.md](wave-15.md) | T108 to T113 |
+| [wave-16.md](wave-16.md) | T114 to T119 |
+| [wave-17.md](wave-17.md) | T120 to T125 |
+| [wave-18.md](wave-18.md) | T126 to T135 |
+| [wave-19.md](wave-19.md) | T136 to T139 |
+| [wave-20.md](wave-20.md) | T140 to T148 |
+| [wave-21.md](wave-21.md) | T149 to T157 |
