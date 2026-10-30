@@ -4,6 +4,26 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-30
+
+- T173: The sea-level pressure from public weather stations (after T161)
+- T161: The readout on the phone (after T160 and T172)
+- T172: The activity picker, the profile rows, the diagnostics rows, the exemption prompt (after T159)
+- T163: The turn-around clock (when an emulator slot frees)
+- T164: Route times fitted to your own tracks (after T171)
+- T170: Sweep and tooling leftovers 15, and the small follow-ups of wave 21
+- T159: Recording on the phone: the GPS stays on, the notification, the watchdog, the restart (after T158 and T162)
+- T174: The drainage layer in the OSM archive (after T165, when the wave has room)
+- T160: The live readout estimator in `shared` (after T158)
+- T171: The track smoother and the stop cut (after T158)
+- T166: Terrain-matched position without GPS: the measurement
+- T167: The printed map sheet: devtool and the live viewer
+- T162: The open view: the most recent of the last fix, the saved view and the pack's view; the `MapViewport` start-up crash
+- T169: Proposal: the routing graph shipped with a pack, and the streaming build
+- T165: Streams from the DEM: the algorithm and the devtool
+- T158: The recorder core in `shared`: accuracy kept, gaps as data, activity profiles
+- T168: Closed waves move out of the board: the rules (step A)
+
 ### 2026-10-28
 
 - T157: A middle detail tier: elevation to z13 with vector to z14 (after T153)
