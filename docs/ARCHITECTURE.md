@@ -29,8 +29,9 @@ decisions in [design/decisions/](design/decisions/README.md); one line per merge
    extract or an Overpass box), OpenFreeMap tiles as the world-wide base, or an existing pack. Vector packs are
    PMTiles with the OpenMapTiles schema plus the outdoors layers; `dystopo:profile` in the metadata says which.
 3. **Packs.** A region pack is `<name>-dem.pmtiles` plus `<name>-outdoors.pmtiles`. Beside them live derived files
-   the app builds on first use: `<name>-search.idx`, `<name>-outdoors-graph.idx`, the contour cache. The server's
-   `/catalog` lists packs with content hashes; the phone verifies every download.
+   the app builds on first use: `<name>-search.idx`, `<name>-outdoors-graph.idx`, the contour cache; a server-built
+   pack ships its graph as a `derived` catalog entry the phone fetches and verifies instead of building (T189). The
+   server's `/catalog` lists packs with content hashes; the phone verifies every download.
 4. **Rendering.** The one declarative style (`shared/.../style/DefaultOsmStyle`) drives the desktop PNG renderer,
    the MapLibre style for the phone and browser, the sprite sheet and the marker table test. Contours, hillshade,
    slope bands and cliff ticks are generated from the DEM on whichever side renders.
@@ -49,7 +50,7 @@ decisions in [design/decisions/](design/decisions/README.md); one line per merge
 | MVT encoder/decoder | `shared/.../mvt/` | hand-written protobuf |
 | GPX 1.1 with `dystopo:id` | `shared/.../gpx/` | hand-written XML, extensions preserved |
 | Search index `*-search.idx` | `shared/.../search/` | versioned, checksummed, pack fingerprint |
-| Routing graph `*-graph.idx` | `shared/.../routing/` | `DYSG` v3 (T76): tile directory, then one body per z11 graph tile (nodes, edges, trail names), both pack fingerprints; tiles load on demand |
+| Routing graph `*-graph.idx` | `shared/.../routing/` | `DYSG` v6: tile directory, then one body per z11 graph tile (nodes, edges, trail names), both pack fingerprints; tiles load on demand. Built on the phone, or shipped by a server-built pack as derived data: a `derived` entry on the catalog outside `files` (ADR 0049, T189), fetched with the archives and verified by fingerprint, never part of the pack's hash |
 | Sync bundle `DSYNC` | `shared/.../sync/` | v1 whole, v2 paged; gzip; one exception type on bad input |
 | Encrypted frame `DSEAL`, relay reply `DRLY` | `shared/.../sync/EncryptedBundle.kt`, `sync/crypto/` | ChaCha20-Poly1305 under HKDF(share code, per-frame salt); LAN link and server relay (T72) |
 | Track database | `shared/src/commonMain/sqldelight/` | schema versions frozen under `databases/`, migrations verified by a JVM test |
