@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-30
 
+- T179: Water along a route in `shared`: the crossings, their class from the terrain, and the truth table
 - T186: Proposal: the phone-to-phone transport between signed copies (positions, condition notes, breadcrumbs, pressure)
 
 ## v0.1.15-alpha (2026-10-30)
