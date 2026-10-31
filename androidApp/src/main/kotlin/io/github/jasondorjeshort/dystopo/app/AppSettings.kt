@@ -105,6 +105,8 @@ object AppSettings {
         readoutBar = p.getBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, true)
         climbWindowS = p.getInt(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S)
             .takeIf { it in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S } ?: io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S
+        // T178
+        pressureFallWarning = p.getString(KEY_PRESSURE_FALL_WARNING, null)?.let { io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it) } ?: io.github.jasondorjeshort.dystopo.readout.FallWarning.DEFAULT
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -227,6 +229,19 @@ object AppSettings {
         bar?.let { readoutBar = it; e?.putBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, it) }
         windowS?.let { climbWindowS = it; e?.putInt(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, it) }
         e?.apply()
+    }
+
+    // ---- T178: the pressure-fall warning (readout/PressureWatch); synced ----
+
+    const val KEY_PRESSURE_FALL_WARNING = "pressureFallWarning"
+
+    /** The fall in 3 hours that warns: Off, More warnings (3 hPa), Standard (4, default) or Fewer (6). */
+    @Volatile var pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning = io.github.jasondorjeshort.dystopo.readout.FallWarning.DEFAULT
+        private set
+
+    fun setPressureFallWarning(w: io.github.jasondorjeshort.dystopo.readout.FallWarning) {
+        pressureFallWarning = w
+        prefs?.edit()?.putString(KEY_PRESSURE_FALL_WARNING, w.code)?.apply()
     }
 
     // ---- T176: the position button's layout, its close zoom and the orientation lock (controls/RecenterButton); synced ----
@@ -553,5 +568,6 @@ object AppSettings {
         "readoutStored" to readoutEntries,
         "mapControls" to mapControls, "recenterZoom" to recenterZoom, "orientationLock" to orientationLock, // T176
         "readoutBar" to readoutBar, "climbWindow" to climbWindowS, // T177
+        "pressureFallWarning" to pressureFallWarning.code, // T178
     ) + mapOptions.json(units) // T47
 }

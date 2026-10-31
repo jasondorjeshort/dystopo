@@ -321,6 +321,16 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        // T178: the pressure-fall warning, in words (ADR 0022: the numbers in hPa are in the help text).
+        SettingsRow.PRESSURE_FALL_WARNING -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val w = AppSettings.pressureFallWarning
+            Setting(row.label, "a card and a spoken line when the barometer falls fast while you record", help = "settings.pressureFallWarning") {
+                for (o in io.github.jasondorjeshort.dystopo.readout.FallWarning.entries) {
+                    Option(o.label, w == o) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, pressureFallWarning = o)) }
+                }
+            }
+        }
     }
 }
 
@@ -576,6 +586,14 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "The climb rate is your average climb over this window. 30 seconds follows each switchback; 5 or 10 minutes " +
                 "gives a steady figure for the whole slope, but takes that long to catch up after a change. Flying keeps a " +
                 "few seconds' lag whatever the window."
+        },
+        // T178: the pressure-fall warning's row.
+        HelpText("settings.pressureFallWarning", "Pressure-fall warning", at(SettingsGroup.NAVIGATION, "Pressure-fall warning"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            val inHg = units == ContourUnits.FEET
+            "A phone barometer gives a trend, not a forecast. While you record, a fast fall in air pressure over 3 hours " +
+                "(sea-level equivalent, your climbing allowed for) brings a card and a spoken line: More warnings at " +
+                (if (inHg) "0.09 inHg, Standard at 0.12, Fewer at 0.18." else "3 hPa, Standard at 4, Fewer at 6.") +
+                " It is a hint to check the weather, not a safety alarm."
         },
     )
 }

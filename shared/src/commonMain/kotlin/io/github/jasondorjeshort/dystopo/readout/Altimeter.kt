@@ -116,3 +116,51 @@ object MetarAltimeter {
         return null
     }
 }
+
+/**
+ * T178: the temperature and the 3-hour pressure tendency of a report ([MetarWeather.parse]). [tempC] from the remarks'
+ * precise group (`T01230034`, tenths) when present, else the body's whole degrees (`12/M03`, `M01/`); [tendencyHPa]
+ * from the remarks' `5appp` group (US reports at the synoptic hours; positive a rise), null when absent.
+ */
+data class StationWeather(val tempC: Double?, val tendencyHPa: Double?)
+
+/**
+ * T178: the temperature group (and the remarks' tendency) of a METAR or SPECI report, for the pressure trend's fixed
+ * temperature (`PressureTrend`: the station's last temperature lapsed to the walker's height). Pure, like
+ * [MetarAltimeter]; the body's group sits after the time and before the altimeter, the remarks after `RMK`.
+ */
+object MetarWeather {
+    private val BODY_TEMP = Regex("""^(M?)(\d{2})/(M?\d{2})?$""")
+    private val PRECISE = Regex("""^T([01])(\d{3})([01])(\d{3})$""")
+    private val TENDENCY = Regex("""^5([0-8])(\d{3})$""")
+
+    fun parse(report: String): StationWeather {
+        val tokens = report.trim().removeSuffix("=").split(Regex("""\s+""")).map { it.removeSuffix("=") }
+        var body: Double? = null
+        var precise: Double? = null
+        var tendency: Double? = null
+        var remarks = false
+        for ((i, tok) in tokens.withIndex()) {
+            if (tok == "RMK") { remarks = true; continue }
+            if (!remarks) {
+                if (i < 2) continue // the report type and station, before any group
+                BODY_TEMP.matchEntire(tok)?.let { m ->
+                    val v = m.groupValues[2].toInt().toDouble()
+                    body = if (m.groupValues[1] == "M") -v else v
+                }
+            } else {
+                PRECISE.matchEntire(tok)?.let { m ->
+                    val v = m.groupValues[2].toInt() / 10.0
+                    precise = if (m.groupValues[1] == "1") -v else v
+                }
+                TENDENCY.matchEntire(tok)?.let { m ->
+                    val a = m.groupValues[1].toInt()
+                    val v = m.groupValues[2].toInt() / 10.0
+                    // WMO code table 0200: 0 to 3 higher than 3 hours ago, 4 the same, 5 to 8 lower.
+                    tendency = when { a <= 3 -> v; a == 4 -> 0.0; else -> -v }
+                }
+            }
+        }
+        return StationWeather(precise ?: body, tendency)
+    }
+}

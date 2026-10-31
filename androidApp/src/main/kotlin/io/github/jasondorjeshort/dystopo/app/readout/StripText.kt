@@ -15,8 +15,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  * T177: every shown entry is always drawn, [state] `value`, `zero` or `dash`; [other] is the other unit system's text
  * in both-units mode ("5414 ft" under "1650 m"); [template], [captionTemplate] and [otherTemplate] are the widest
  * texts the entry can show, drawn invisibly under the real ones so the entry's width never changes and nothing after
- * it moves. [trend] is the place for an arrow beside the elevation (T178: the pressure trend; null until then; T178
- * widens the elevation's [template] by the arrow so the climb does not move when it appears).
+ * it moves. [trend] is the place for an arrow beside the elevation (T178: the barometer's trend, [trendLabel] its words,
+ * "falling slowly"); [trendSlot] widens the elevation's template by the widest arrow whenever an arrow can appear (the
+ * barometer switch on and a barometer present), so the climb does not move when it comes and goes.
  */
 data class StripItem(
     val entry: ReadoutEntry,
@@ -31,13 +32,15 @@ data class StripItem(
     val captionTemplate: String = caption,
     val otherTemplate: String? = null,
     val trend: String? = null,
+    val trendLabel: String? = null,
+    val trendSlot: Boolean = false,
 ) {
     /** "4 km/h", "↑320 m/h ± 40", "1650 m". */
     val full: String get() = (if (unit.isEmpty()) value else "$value $unit") + (plusMinus?.let { " $it" } ?: "")
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "entry" to entry.code, "caption" to caption, "state" to state, "value" to value, "unit" to unit, "plusMinus" to plusMinus,
-        "full" to full, "other" to other, "dimmed" to dimmed, "trend" to trend,
+        "full" to full, "other" to other, "dimmed" to dimmed, "trend" to trend, "trendLabel" to trendLabel, "trendSlot" to trendSlot,
     )
 
     companion object {
@@ -78,9 +81,10 @@ object StripText {
 
     /**
      * The items the bar draws: one per entry shown in [o], from [r] (null before the estimator ran: every entry a dash).
-     * [both]: the scale bar's both-units mode, each item with the other system's text under it.
+     * [both]: the scale bar's both-units mode, each item with the other system's text under it. T178: [trend] and
+     * [trendLabel] the barometer's trend arrow and words beside the elevation, [trendSlot] whether one can appear.
      */
-    fun items(r: Readout?, o: ReadoutOptions, units: ContourUnits, both: Boolean = false): List<StripItem> {
+    fun items(r: Readout?, o: ReadoutOptions, units: ContourUnits, both: Boolean = false, trend: String? = null, trendLabel: String? = null, trendSlot: Boolean = false): List<StripItem> {
         val out = ArrayList<StripItem>()
         val gap = gap(r?.gapS)
         val otherUnits = if (units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET
@@ -107,6 +111,9 @@ object StripText {
                 template = template(e, o, units),
                 captionTemplate = if (first) longer(caption(e, o), GAP_TEMPLATE) else caption(e, o),
                 otherTemplate = if (other != null) template(e, o, otherUnits).let { joined(it.text, it.unit) } else null,
+                trend = if (e == ReadoutEntry.ELEVATION && trendSlot) trend else null, // T178
+                trendLabel = if (e == ReadoutEntry.ELEVATION && trendSlot && trend != null) trendLabel else null,
+                trendSlot = e == ReadoutEntry.ELEVATION && trendSlot,
             )
         }
         return out

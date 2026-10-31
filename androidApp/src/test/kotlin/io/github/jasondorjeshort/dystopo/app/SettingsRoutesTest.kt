@@ -157,6 +157,16 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun thePressureFallWarning() { // T178: the four choices by code, label or threshold
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.MORE, ok("pressureFallWarning" to "more").pressureFallWarning)
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.FEWER, ok("pressureFallWarning" to "6").pressureFallWarning)
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.OFF, ok("pressureFallWarning" to "off").pressureFallWarning)
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.STANDARD, ok("pressureFallWarning" to "Standard").pressureFallWarning)
+        assertEquals(null, ok("units" to "m").pressureFallWarning)
+        assertTrue(bad("pressureFallWarning" to "5").message.contains("pressureFallWarning"))
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {

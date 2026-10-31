@@ -16,6 +16,9 @@ import android.util.Log
  * process's [Tracking] finds the track still marked as recording in the store (T158 keeps it open with a pending
  * "stopped by the system" gap) and goes on into it. [onTaskRemoved] (the app swiped away from the recent apps) keeps
  * the recording. Foreground-service type `location` (the manifest's and [startForeground]'s).
+ *
+ * T178: the barometer's trend samples while this service runs a recording (`readout/PressureWatch.setRecording`), so
+ * the pressure-fall warning works with the screen off.
  */
 class TrackingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -49,6 +52,7 @@ class TrackingService : Service() {
             return START_NOT_STICKY
         }
         t.onServiceForeground()
+        io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.setRecording(true) // T178: the trend's sampling
         return START_STICKY
     }
 
@@ -60,6 +64,7 @@ class TrackingService : Service() {
     override fun onDestroy() {
         creating = false
         Tracking.of(this).onServiceDestroyed()
+        io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.setRecording(false) // T178
         if (instance === this) instance = null
         super.onDestroy()
     }

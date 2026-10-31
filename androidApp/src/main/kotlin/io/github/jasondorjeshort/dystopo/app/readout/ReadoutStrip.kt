@@ -186,7 +186,7 @@ fun ReadoutStrip(night: Boolean) {
                     BasicText(it.caption, style = captionStyle)
                 }
                 Box {
-                    ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle)
+                    ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle, trendTemplate = it.trendSlot)
                     ValueRow(it.value, it.unit, it.plusMinus, it.trend, Modifier, valueStyle, unitStyle, pmStyle)
                 }
                 it.otherTemplate?.let { t ->
@@ -200,12 +200,16 @@ fun ReadoutStrip(night: Boolean) {
     }
 }
 
-/** One entry's number, unit, the elevation's [trend] arrow (T178's place) and the ±, on one baseline. */
+/**
+ * One entry's number, unit, the elevation's [trend] arrow (T178: the barometer's trend) and the ±, on one baseline.
+ * [trendTemplate]: the invisible template row reserves the widest arrow ([TrendBand.ARROWS] stacked).
+ */
 @Composable
-private fun ValueRow(value: String, unit: String, plusMinus: String?, trend: String?, modifier: Modifier, valueStyle: TextStyle, unitStyle: TextStyle, pmStyle: TextStyle) {
+private fun ValueRow(value: String, unit: String, plusMinus: String?, trend: String?, modifier: Modifier, valueStyle: TextStyle, unitStyle: TextStyle, pmStyle: TextStyle, trendTemplate: Boolean = false) {
     Row(modifier) {
         BasicText(value, Modifier.alignBy(FirstBaseline), style = valueStyle)
         if (unit.isNotEmpty()) BasicText(" $unit", Modifier.alignBy(FirstBaseline), style = unitStyle)
+        if (trendTemplate) Box(Modifier.alignBy(FirstBaseline)) { for (a in io.github.jasondorjeshort.dystopo.readout.TrendBand.ARROWS) BasicText(" $a", style = unitStyle) }
         trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = unitStyle) }
         plusMinus?.let { pm -> BasicText(" $pm", Modifier.alignBy(FirstBaseline), style = pmStyle) }
     }

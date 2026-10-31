@@ -72,6 +72,8 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T177: the readout bar's switch and the climb window (Navigation and tracking, after T161's rows)
     READOUT_BAR("readoutBar", SettingsGroup.NAVIGATION, "Readout bar", "SettingsPages", "T177"),
     CLIMB_WINDOW("climbWindow", SettingsGroup.NAVIGATION, "Readout: Climb window", "SettingsPages", "T177"),
+    // T178: the pressure-fall warning (Navigation and tracking, after T177's rows)
+    PRESSURE_FALL_WARNING("pressureFallWarning", SettingsGroup.NAVIGATION, "Pressure-fall warning", "SettingsPages", "T178"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

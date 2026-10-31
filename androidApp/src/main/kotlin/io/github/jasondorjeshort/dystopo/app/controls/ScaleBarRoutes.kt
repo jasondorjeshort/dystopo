@@ -48,8 +48,23 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * - `POST /readout/reset`: forgets every input (between replays); answers like `GET`.
  * - `POST /readout/stations[?url=<endpoint>]` (T173's test hook): the weather station fetch reads `url` instead of the
  *   registry's (`url=` empty restores it), forgets the stations and fetches at the next refresh; answers the URL.
+ * - T178 `GET /readout` › `trend` ([io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.json]): the barometer's
+ *   trend and the pressure-fall warning: `setting` (`code`, `label`, `thresholdHPa`), `sampling` (`recording`,
+ *   `barometerSwitch`, `present`, `trendWanted`), `synthetic`, `minutes` (one value a minute while a track records),
+ *   `firstMinuteMs`, `lastMinute`, `latestMs`, `arrow` and `label` (as the bar draws them), `result` (`shared`'s
+ *   `TrendResult.json`: `status` ok or notEnoughData, `shown` 3h or 1h, `equivalentHPa`, `band`, `alert`, `temperature`,
+ *   `threeHour` and `oneHour` each with `mode` raw or reduced, `seaLevelChangeHPa`, `fallLowerHPa`, `interval` with its
+ *   `random`, `sensor`, `height` and `temperature` terms, `datumM`, `netClimbM`, `sigmaTK`, `passes`, `reason`; or
+ *   `threeHourMissing` / `oneHourMissing`), `alert` (`active`, `raisedAtMs`, `raisedBand`, `raises`, `clears`), `card`
+ *   (`shown`, `title`, `body`, `station`, `boundsPx`, `dismissedAtMs`), `spoken`, `station`, `stationTendency`,
+ *   `persisted`, `counters`. `barometerSensor` adds `reasons` (`readout`, `trend`), `wakeUp`, `wakeUpAvailable`.
+ * - T178 `POST /readout/trend?fixture=<name>` (`still-fall`, `climb-station`, `climb-standard`, `climb-1000-standard`,
+ *   `last-hour-fall`, `treeline-step`, `forest-noise`, `recovery`; `shared`'s `PressureFixtures`) or a CSV body
+ *   (`time,hPa,heightM,source,speedMps,lat,lon`, `PressureSeries`): replaces the series with the synthetic one moved to
+ *   end now and evaluates it (the card, the spoken line and the arrow follow as live); live input is ignored meanwhile.
+ *   `?clear=1` forgets it and returns to live input. `?dismiss=1` presses the card's Dismiss. Answers `trend`.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`, T177 `readoutBar=0`,
- * `climbWindow=300`; `SettingsRoutes`).
+ * `climbWindow=300`, T178 `pressureFallWarning=more`; `SettingsRoutes`).
  */
 object ScaleBarRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
@@ -59,7 +74,24 @@ object ScaleBarRoutes {
         "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         "POST" to "/readout/reset" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.reset() + io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         "POST" to "/readout/stations" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.PressureSource.configure(r.query["url"])) // T173
+        "POST" to "/readout/trend" -> trend(app, r) // T178
         else -> null
+    }
+
+    /** T178: `POST /readout/trend`. */
+    private fun trend(app: DystopoApp, r: Request): Response {
+        val w = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch
+        if (r.query["dismiss"] == "1") {
+            app.map.onMain { w.dismiss() }
+            return Response.json(w.json())
+        }
+        return try {
+            val body = r.bodyText.takeIf { it.isNotBlank() }
+            Response.json(w.feedSynthetic(r.query["fixture"], body, r.query["clear"] == "1"))
+        } catch (e: Exception) {
+            val cause = (e as? java.util.concurrent.ExecutionException)?.cause ?: e
+            Response.json(mapOf("error" to (cause.message ?: cause.javaClass.simpleName)), 400)
+        }
     }
 
     private fun set(app: DystopoApp, r: Request): Response {

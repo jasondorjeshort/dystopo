@@ -107,6 +107,8 @@ class HelpRegistryTest {
             "settings.readoutBar", "settings.climbWindow",
             // T188: the Shade row of Map options and the long-press card's sun line.
             "map.shade", "longPress.sun",
+            // T178: the pressure-fall warning's row.
+            "settings.pressureFallWarning",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
