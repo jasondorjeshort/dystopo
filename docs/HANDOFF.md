@@ -15,9 +15,8 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   Not yet launched, in order: T177 when slot A frees, T185 after T176 merges, T178 after T177, T187 after T180 and
   T179, T188 after T181, T182 after T181 (phone files after T188), T184 after T187, T183 when a slot frees.
 - The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage at launch: 5-hour 16, 7-day 28.
-- Owner words this session (2026-10-30): "We can probably fit all of that in the budget"; on the storm warning,
-  "we're gaining thousands of feet of elevation so have to use QNH" (T178: the reduction to a local reference height
-  with one fixed temperature per window; the critic's § 1 and 12 corrected the survey's method).
+- Owner words (2026-10-30): "We can probably fit all of that in the budget"; on the storm warning, "we're gaining
+  thousands of feet of elevation so have to use QNH" (T178's reduction; the critic's § 1 and 12 corrected the method).
 
 ## Next
 
