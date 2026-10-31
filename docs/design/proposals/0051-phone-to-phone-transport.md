@@ -1,7 +1,7 @@
 # 0051. The phone-to-phone transport between signed copies
 
 Date: 2026-10-30
-Status: under review
+Status: promoted to ADR 0051
 
 ## Question
 
