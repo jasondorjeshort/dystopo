@@ -16,3 +16,18 @@ model availability per phone (a Settings row that says whether it is there), the
 permission, so the owner's word first), the trigger with the screen off.
 
 Recorded 2026-10-31 at the close of wave 23 from the coordinator's list, moonshots included at the owner's invitation.
+
+Question: this adds the microphone permission (`RECORD_AUDIO`), which the app does not ask for today; do you want voice
+questions at all, and if so with which trigger? Recommendation: yes, as one task once you say so, push to talk only
+(a long press on the position button or a headset media button while navigating or recording; no wake word, nothing
+listening in the background, so no new background data flow). Android's own `SpeechRecognizer` with
+`EXTRA_PREFER_OFFLINE` needs no dependency; where the offline model is missing the Settings row says so and the
+feature stays off rather than sending audio to the system's online recogniser (a privacy rule, so no setting under
+ADR 0044). The answers come from what is already computed: the readout (`readout/Readout.kt`), the turn clock
+(`nav/TurnAround.kt` `TurnClock.spoken`), the water list (`WaterText.spoken` in `app/routing/RouteWater.kt`), the
+peaks in view (`dem/Viewshed.kt`) and the pressure trend, spoken through `app/nav/NavSpeech.kt`; the grammar is a
+`shared` matcher over the recogniser's text with unit tests and a debug route that feeds it text, so the device tour
+needs no audio. The screen-off trigger (the headset button through a media session) is the part to measure on a phone
+first; the survey (ADR 0039) is how the established navigation apps start a voice query and what they answer offline.
+
+Answer:
