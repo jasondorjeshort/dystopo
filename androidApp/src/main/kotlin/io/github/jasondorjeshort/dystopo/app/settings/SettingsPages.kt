@@ -329,6 +329,8 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 for (o in io.github.jasondorjeshort.dystopo.readout.FallWarning.entries) {
                     Option(o.label, w == o) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, pressureFallWarning = o)) }
                 }
+            }
+        }
         // T187: water along the route and its spoken line.
         SettingsRow.WATER_ALONG_ROUTE -> {
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
@@ -609,6 +611,7 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "(sea-level equivalent, your climbing allowed for) brings a card and a spoken line: More warnings at " +
                 (if (inHg) "0.09 inHg, Standard at 0.12, Fewer at 0.18." else "3 hPa, Standard at 4, Fewer at 6.") +
                 " It is a hint to check the weather, not a safety alarm."
+        },
         // T187: water along the route and its spoken line.
         HelpText("settings.waterAlongRoute", "Water along the route", at(SettingsGroup.NAVIGATION, "Water along the route"), show = page(SettingsGroup.NAVIGATION)) {
             "Marks streams a route crosses and springs, taps and lakes beside it. A stream's class is a hint from its map tags " +
