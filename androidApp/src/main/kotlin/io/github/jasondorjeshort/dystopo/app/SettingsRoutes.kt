@@ -421,6 +421,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             val readoutBar = params[rs.BAR]?.let { flag(it) ?: return Parsed.Error("${rs.BAR} must be 1 or 0 (got $it)") }
             val climbWindow = params[rs.CLIMB_WINDOW]?.let {
                 rs.parseClimbWindow(it.toString()) ?: return Parsed.Error("${rs.CLIMB_WINDOW} must be 30, 60, 300 or 600 seconds (got $it)")
+            }
             // T182: the viewshed's range, one of its three choices in km.
             val ranges = io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM
             val viewRange = params["viewRange"]?.let { raw ->

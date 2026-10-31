@@ -13,8 +13,11 @@ import kotlin.math.roundToInt
 object ViewshedText {
     const val TITLE = "What can I see from here"
     const val ACTION = "What can I see from here"
-    const val ACTION_POSITION = "What can I see from where I am"
     const val CLOSE = "Close"
+    /** Map options: the row's hint, its chip and the range row's label. */
+    const val ROW_HINT = "green where the ground is in sight, with the peaks in view"
+    const val FROM_POSITION = "From where I am"
+    const val RANGE_ROW = "View range"
     const val SORT = "Sort:"
     const val NO_PEAKS = "No named peaks in view."
     const val NO_PEAKS_LAYER = "No named peaks: the offline maps here have no peak names."

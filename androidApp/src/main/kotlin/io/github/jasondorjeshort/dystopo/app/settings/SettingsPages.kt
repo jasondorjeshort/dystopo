@@ -615,6 +615,7 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "The climb rate is your average climb over this window. 30 seconds follows each switchback; 5 or 10 minutes " +
                 "gives a steady figure for the whole slope, but takes that long to catch up after a change. Flying keeps a " +
                 "few seconds' lag whatever the window."
+        },
         // T182: the viewshed's range.
         HelpText("settings.viewRange", "View range", at(SettingsGroup.MAP, "View range"), show = page(SettingsGroup.MAP)) { units ->
             val t = io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText

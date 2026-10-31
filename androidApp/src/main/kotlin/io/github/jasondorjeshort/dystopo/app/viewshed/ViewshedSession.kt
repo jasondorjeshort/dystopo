@@ -138,6 +138,17 @@ object ViewshedSession {
 
     fun sortBy(s: PeakSort) = ui { sort = s }
 
+    /** The view range chosen in Map options: through the settings parser, so it is stored and synced like the Settings row. */
+    fun setRange(km: Int) {
+        Thread({
+            try {
+                io.github.jasondorjeshort.dystopo.app.SettingsRoutes(DystopoApp.instance).apply(io.github.jasondorjeshort.dystopo.app.SettingsRoutes.Parsed.Ok(null, false, null, null, viewRange = km))
+            } finally {
+                ui { io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++ }
+            }
+        }, "viewshed-range").start()
+    }
+
     /** Shows [p] on the map: a marker with its name, the camera moved onto it (the zoom kept, at least 11). Main thread. */
     fun select(p: PeakView) {
         selected = p
