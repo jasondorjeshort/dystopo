@@ -7,6 +7,8 @@
 // shown per meter, "(hold 50)" or "(hold 50 stop 90)"; STOP shows only on a meter with a deny line,
 // which the base does not set. "HOLD lifted" replaces HOLD when an override lifts it for this session.
 // The bare email local part names the logged-in account (policy.readAccount) when it is known.
+// The 5h segment is left out when the 7d reading is live and no live 5h reading exists (an account
+// without a 5-hour limit, or a 5h window past its reset); with neither live both read n/a.
 // Spec: docs/hatchery/decisions/0002-hook-specs-usage.md (section 3); the per-session file: ADR 0011.
 //
 // Fields: https://code.claude.com/docs/en/statusline. rate_limits appears only on claude.ai
@@ -158,11 +160,16 @@ process.stdin.on('end', () => {
   const email = label && typeof label.email === 'string' ? label.email : '';
   const local = email.split('@')[0];
 
+  // The 5h segment is omitted when the 7d meter is live and the 5h one is not: an account without a
+  // 5-hour limit sends seven_day alone, and a 5h window past its reset with no new reading looks the
+  // same and binds nothing either. With neither live (before the first response, another account)
+  // both read n/a.
+  const showFive = !!fiveH || !sevenD;
   const parts = [
     (d.model && d.model.display_name) || '?',
     `ctx ${pct(d.context_window && d.context_window.used_percentage)}`,
     ...(local ? [local] : []),
-    `5h ${pct(fiveH && fiveH.used_percentage)}${limits('5h')}${resetAt(fiveH)}`,
+    ...(showFive ? [`5h ${pct(fiveH && fiveH.used_percentage)}${limits('5h')}${resetAt(fiveH)}`] : []),
     `7d ${pct(sevenD && sevenD.used_percentage)}${limits('7d')}${resetAt(sevenD)}${flag}`,
   ];
   // cost.total_cost_usd (API list-price estimate) is deliberately not shown: on a subscription the

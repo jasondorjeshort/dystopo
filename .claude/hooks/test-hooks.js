@@ -1978,12 +1978,42 @@ for (const [id, label, stdin, policy, check] of S) {
   }
   fs.rmSync(slGrants, { recursive: true, force: true });
 }
-// A cached window past its reset reads as n/a rather than its old number.
+// A cached window past its reset never shows its old number: a 5h window beside a live 7d one is
+// omitted (as on an account without a 5-hour limit), and with both past their reset both read n/a.
 if (selected('S08')) {
   fs.mkdirSync(slDir, { recursive: true });
   fs.writeFileSync(slFile, JSON.stringify({ updatedAt: nowSec, five_hour: { used_percentage: 90, resets_at: nowSec - 1 }, seven_day: { used_percentage: 5 } }));
   const r = statusline(bare());
-  report('S08', 'cached window past its reset shows n/a', r.stdout.includes('5h n/a') && !r.stdout.includes('STOP'), r.stdout, r.stdout);
+  report('S08', 'cached 5h window past its reset, 7d live: 5h omitted, old number not shown',
+    !r.stdout.includes('5h ') && !r.stdout.includes('90%') && r.stdout.includes('7d 5%') && !r.stdout.includes('STOP'), r.stdout, r.stdout);
+}
+if (selected('S51')) {
+  fs.mkdirSync(slDir, { recursive: true });
+  fs.writeFileSync(slFile, JSON.stringify({ updatedAt: nowSec, five_hour: { used_percentage: 90, resets_at: nowSec - 1 }, seven_day: { used_percentage: 5, resets_at: nowSec - 1 } }));
+  const r = statusline(bare());
+  report('S51', 'both cached windows past their reset: both read n/a', r.stdout.includes('5h n/a') && r.stdout.includes('7d n/a'), r.stdout, r.stdout);
+}
+// The 5h segment on accounts without a 5-hour limit: the payload carries seven_day alone. Each case
+// starts from no cache file.
+{
+  const S5 = [
+    ['S52', 'payload with only seven_day: the 5h segment is omitted, 7d shown with its thresholds', rl(null, 12),
+      (o) => (!o.includes('5h') && /\| 7d 12% \(hold 50\) ->/.test(o)) || o],
+    ['S53', 'no rate_limits yet: both meters read n/a', bare(),
+      (o) => (o.includes('| 5h n/a (hold 50) | 7d n/a (hold 50)')) || o],
+    ['S54', 'both windows in the payload: both shown', rl(24, 12),
+      (o) => (o.includes('| 5h 24% (hold 50) ->') && o.includes('| 7d 12% (hold 50) ->')) || o],
+    ['S55', 'only seven_day at HOLD: the flag stays on the 7d segment', rl(null, 60),
+      (o) => (!o.includes('5h') && / 7d 60% \(hold 50\) ->.* HOLD$/.test(o)) || o],
+  ];
+  for (const [id, label, stdin, check] of S5) {
+    if (!selected(id)) continue;
+    fs.rmSync(slFile, { recursive: true, force: true });
+    const r = statusline(stdin);
+    const res = check(r.stdout);
+    report(id, label, res === true, res, r.stdout);
+  }
+  fs.rmSync(slFile, { recursive: true, force: true });
 }
 // A rename that fails (the cache path is a directory here) leaves no temporary file behind.
 if (selected('S09')) {

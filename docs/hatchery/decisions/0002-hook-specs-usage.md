@@ -26,10 +26,12 @@ agents run. Line 1 is the working directory exactly as received
 directory); line 1 is omitted only when both are missing, so the output is then the meters line alone,
 with no blank first line. The meters line, after line 1's newline
 when there is one, shows model, context, `<email local part>` (the current label's, else the
-file's; omitted when neither carries an email), both windows with their reset times, and ` HOLD` or ` STOP` by the same per-meter judgement as the gate (the
-helper in `policy.js`; ` STOP` only on a meter with a deny line); a cached window past its
-`resets_at` shows `n/a`, and so do both windows when the file's label and the current one are both
-known and differ. Each window carries its thresholds from `meterThresholds`, `(hold 50)` or
+file's; omitted when neither carries an email), the `7d` window and, except as below, the `5h` window, each with its reset time, and ` HOLD` or ` STOP` by the same per-meter judgement as the gate (the
+helper in `policy.js`; ` STOP` only on a meter with a deny line). A reading is live when present, not past its
+`resets_at`, and the file's label and the current one are not both known and different; a window that is not live shows `n/a`.
+The one exception: when the `7d` reading is live and the `5h` one is not, the `5h` segment is omitted,
+thresholds and all, since an account without a 5-hour limit sends `seven_day` alone, and a `5h` window past its reset looks the same and
+binds nothing. So `5h n/a` shows only beside `7d n/a`, as before the first response. Each window shown carries its thresholds from `meterThresholds`, `(hold 50)` or
 `(hold 50 stop 90)`, also when it reads `n/a`, so a line reads
 `Opus 5.5 | ctx 25% | jdorje | 5h 24% (hold 50) ->12:20 | 7d 72% (hold 50) ->Mon 06:00 HOLD`; a missing or malformed `policy.json`
 falls back to the base values, as the gate does (ADR 0006), and only a `policy.js` that cannot be required drops
