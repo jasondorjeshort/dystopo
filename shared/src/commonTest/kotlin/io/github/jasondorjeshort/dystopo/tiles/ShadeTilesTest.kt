@@ -4,6 +4,7 @@ import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.render.Slope
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -229,5 +230,89 @@ class ShadeTilesTest {
         val byZoom = json["byZoom"] as Map<String, Map<String, Any?>>
         assertEquals(12.0, byZoom["13"]?.get("maxMs"))
         assertContentEquals(listOf("13/$tx/$ty"), (json["recent"] as List<*>).map { (it as Map<*, *>)["tile"] })
+    }
+
+    // T181: sun-and-shade tiles. 2026-10-30 05:00 UTC is mid-morning at the test cone (70 E, 48 N): the sun low in the
+    // south-east.
+    private val morning = SunShadeOptions(1_793_336_400_000L)
+
+    @Test
+    fun sunTileEdgesMatchTheNeighbourExactly() {
+        val dem = pyramid(8, 13)
+        val (tx, ty) = peakTile(13).let { (x, y) -> x - 1 to y - 1 }
+        val sun = ShadeTiles.sunAt(13, tx, ty, morning.minuteMs)
+        assertTrue(sun.apparentAltitudeDeg in 5.0..30.0, "test sun $sun")
+        val a = ShadeTiles.generateSun(dem, 13, tx, ty, morning)
+        val b = ShadeTiles.generateSun(dem, 13, tx + 1, ty, morning)
+        assertTrue(a.shadowPixels > 0 && a.marchSteps > 0)
+        val pa = ShadeTiles.plan(13, tx, ty, dem.maxZoom)
+        val straddle = ShadeTiles.sunPlan(pa.copy(windowX = pa.windowX + 128), morning.minuteMs, sun)
+        val s = ShadeTiles.sunRender(ShadeTiles.sunSample(dem, straddle), straddle, morning)
+        for (j in 0 until 256) {
+            for (i in 0 until 128) assertEquals(a.argb[j * 256 + 128 + i], s.argb[j * 256 + i], "left half ($i,$j)")
+            for (i in 128 until 256) assertEquals(b.argb[j * 256 + i - 128], s.argb[j * 256 + i], "right half ($i,$j)")
+        }
+    }
+
+    @Test
+    fun sunTilesAreShadeOnlyInTheCoolTint() {
+        val dem = pyramid(8, 13)
+        val (tx, ty) = peakTile(13).let { (x, y) -> x - 1 to y - 1 }
+        val tile = ShadeTiles.generateSun(dem, 13, tx, ty, morning)
+        // The tile south-east of the summit faces the sun: far less shade.
+        val sunny = ShadeTiles.generateSun(dem, 13, tx + 1, ty + 1, morning)
+        assertTrue(sunny.shadowPixels * 4 < tile.shadowPixels, "sunward ${sunny.shadowPixels}, far side ${tile.shadowPixels}")
+        val maxAlpha = (255 * ShadeTiles.SUN_SHADE_OPACITY).roundToInt()
+        for (p in tile.argb) {
+            if (p == 0) continue
+            assertEquals(ShadeTiles.SUN_SHADE_RGB, p and 0xFFFFFF)
+            assertTrue((p ushr 24) in 1..maxAlpha)
+        }
+        // The cone's foot ring: ground on the sun's side is clear, the shade lies on the far side of the summit.
+        val sun = ShadeTiles.sunAt(13, tx, ty, morning.minuteMs)
+        val world = 256.0 * (1L shl 13)
+        val px = peakU * world - tx * 256
+        val py = peakV * world - ty * 256
+        var se = 0.0
+        var sn = 0.0
+        for (j in 0 until 256) for (i in 0 until 256) {
+            if (tile.argb[j * 256 + i] == 0) continue
+            val e = i + 0.5 - px
+            val n = -(j + 0.5 - py)
+            val d = hypot(e, n)
+            if (d < 1) continue
+            se += e / d
+            sn += n / d
+        }
+        val bearing = (kotlin.math.atan2(se, sn) * 180 / kotlin.math.PI + 360) % 360
+        val away = (sun.azimuthDeg + 180) % 360
+        val off = kotlin.math.abs(((bearing - away + 540) % 360) - 180)
+        assertTrue(off < 20, "shade centred at bearing $bearing, the sun at ${sun.azimuthDeg}")
+    }
+
+    @Test
+    fun sunKeyIsTheMinuteAndNightIsAllShade() {
+        assertEquals(SunShadeOptions(morning.epochMs + 59_000).key, morning.key)
+        assertNotEquals(SunShadeOptions(morning.epochMs + 60_000).key, morning.key)
+        assertNotEquals(SunShadeOptions(morning.epochMs, 0.3).key, morning.key)
+        assertTrue(morning.key.startsWith(ShadeTiles.SUN_VERSION + "-sun"))
+        val dem = pyramid(8, 13)
+        val (tx, ty) = peakTile(13)
+        // 2026-10-30 20:00 UTC: past midnight at 70 E.
+        val night = SunShadeOptions(1_793_390_400_000L)
+        val tile = ShadeTiles.generateSun(dem, 13, tx, ty, night)
+        val full = ((255 * ShadeTiles.SUN_SHADE_OPACITY).roundToInt() shl 24) or ShadeTiles.SUN_SHADE_RGB
+        assertTrue(tile.argb.all { it == full })
+        assertEquals(0L, tile.marchSteps)
+    }
+
+    @Test
+    fun theStatsTakeASunTile() {
+        val dem = pyramid(8, 13)
+        val (tx, ty) = peakTile(13)
+        val stats = ShadeTileStats()
+        val plan = ShadeTiles.sunPlan(13, tx, ty, 13, morning)
+        stats.add(plan.base, ShadeTiles.sunRender(ShadeTiles.sunSample(dem, plan), plan, morning), 9.0, 2.0, 1.0, 99, morning.key)
+        assertEquals(morning.key, ((stats.json()["recent"] as List<*>).single() as Map<*, *>)["options"])
     }
 }

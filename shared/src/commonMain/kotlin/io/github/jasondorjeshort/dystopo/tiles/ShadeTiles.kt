@@ -1,6 +1,13 @@
 package io.github.jasondorjeshort.dystopo.tiles
 
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.dem.Horizon
+import io.github.jasondorjeshort.dystopo.dem.HorizonProfile
+import io.github.jasondorjeshort.dystopo.dem.Terrain
+import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
+import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.nav.Sun
+import io.github.jasondorjeshort.dystopo.render.CastShadow
 import io.github.jasondorjeshort.dystopo.render.Hillshade
 import io.github.jasondorjeshort.dystopo.render.SlopeBand
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
@@ -72,6 +79,42 @@ data class ShadeTilePlan(
     val windowSize: Int get() = gridTileSize + 2 * halo
 }
 
+/**
+ * T181: what a sun-and-shade tile draws: the terrain's shade (cast and attached, [CastShadow]) for the sun at the
+ * instant [epochMs], as a translucent cool tint of [opacity] (shade only; sunlit ground is transparent; night is all
+ * shade). The instant is the tile's key: [key] changes with the minute ([minuteMs], the instant the pixels are
+ * computed for) and the opacity, so a cache directory or a tile URL per key never shows another time's shadows.
+ */
+data class SunShadeOptions(val epochMs: Long, val opacity: Double = ShadeTiles.SUN_SHADE_OPACITY) {
+    init {
+        require(opacity in 0.0..1.0) { "opacity must be in 0..1" }
+    }
+
+    /** The instant the pixels are for: [epochMs] floored to the minute. */
+    val minuteMs: Long get() = epochMs.floorDiv(60_000L) * 60_000L
+
+    /** Short, stable key for cache directories and tile URLs: `c1-sun<epoch minute>-<opacity percent>`. */
+    val key: String get() = "${ShadeTiles.SUN_VERSION}-sun${epochMs.floorDiv(60_000L)}-${(opacity * 100).roundToInt()}"
+}
+
+/**
+ * T181: how sun-and-shade tile z/x/y is made: the shade tile's [base] plan (the sampled zoom and window, overzoom past
+ * the pack's deepest zoom as for the hillshade), the instant [epochMs] (each cell marches toward its own sun from
+ * [CastShadow.SunField], so tiles agree along their edges exactly), the [sun] at the tile's centre (for reports and
+ * the night test of a whole tile) and the terrain [windows] to read ([CastShadow.windowsFor]: a fine margin toward the
+ * sun and a coarse window out to the range).
+ */
+data class SunShadeTilePlan(val base: ShadeTilePlan, val epochMs: Long, val sun: Sun.Position, val windows: List<Pair<MercatorWindow, Double>>) {
+    /** The cells marched: the base plan's window (the tile's grid plus its halo) at the sampled zoom. */
+    val target: MercatorWindow get() = MercatorWindow(base.sampleZoom, base.windowX, base.windowY, base.windowSize, base.windowSize)
+}
+
+/**
+ * T181: the point answer: the [horizon] around a point and its [day] (terrain sunrise and sunset, the sunlit stretches
+ * and the gaps when a peak blocks the sun, beside the flat-horizon day), with the time the sweep took.
+ */
+class SunPointAnswer(val horizon: HorizonProfile, val day: Sun.TerrainDay, val zoom: Int, val sweepMs: Double)
+
 /** One rendered shade tile: [argb] (non-premultiplied, row-major, [size] square) plus counters. */
 class ShadeTile(
     val size: Int,
@@ -80,9 +123,13 @@ class ShadeTile(
     val noDataPixels: Int,
     /** Pixels tinted by a slope band (of [ShadeOptions.slope]). */
     val slopePixels: Int,
-    /** Gradient, hillshade and slope, one fused pass over the window. */
+    /** Gradient, hillshade and slope, one fused pass over the window (T181: the march, for a sun-and-shade tile). */
     val fieldMs: Double,
     val composeMs: Double,
+    /** T181: pixels with any shade tint (a sun-and-shade tile). */
+    val shadowPixels: Int = 0,
+    /** T181: ray samples taken for a sun-and-shade tile. */
+    val marchSteps: Long = 0,
 )
 
 /**
@@ -113,6 +160,18 @@ object ShadeTiles {
 
     /** Bumped when the pixels for the same options change, so caches and URLs move on. */
     const val VERSION = "s1"
+
+    /** T181: bumped when a sun-and-shade tile's pixels for the same instant change. */
+    const val SUN_VERSION = "c1"
+
+    /** T181: the shade tint, a dark cool blue (the survey's convention: blue shade over the map, sunlit ground clear). */
+    const val SUN_SHADE_RGB = 0x1e3a6e
+
+    /** T181: the shade tint's opacity (the survey: 35 to 45 percent). */
+    const val SUN_SHADE_OPACITY = 0.4
+
+    /** T181: the DEM zoom of the point answer's fine layer (cells of 6.5 m at 47 N), or the pack's deepest when coarser. */
+    const val POINT_ZOOM = 14
 
     /** Opacity of the slope-band tint (the devtool's `--slope-opacity` default is 0.5). */
     const val SLOPE_OPACITY = 0.45
@@ -242,6 +301,118 @@ object ShadeTiles {
             fieldMs = (t2 - t0).inWholeMicroseconds / 1000.0,
             composeMs = (t3 - t2).inWholeMicroseconds / 1000.0,
         )
+    }
+
+    /**
+     * T181: the sun at the centre of tile z/x/y at [epochMs] (what a report or the phone's readout says; the march
+     * itself takes each cell's own sun from [CastShadow.SunField]).
+     */
+    fun sunAt(z: Int, x: Int, y: Int, epochMs: Long): Sun.Position =
+        Sun.position(WebMercator.yToLat(y + 0.5, z), WebMercator.xToLon(x + 0.5, z), epochMs)
+
+    /** T181: the plan for sun-and-shade tile z/x/y over a pack whose deepest zoom is [demMaxZoom]. */
+    fun sunPlan(z: Int, x: Int, y: Int, demMaxZoom: Int, options: SunShadeOptions, tileSize: Int = TILE_SIZE): SunShadeTilePlan =
+        sunPlan(plan(z, x, y, demMaxZoom, tileSize), options.minuteMs, sunAt(z, x, y, options.minuteMs), tileSize)
+
+    /** T181: the sun-and-shade plan over a shade [base] plan at [epochMs] (a straddling window in the tests). */
+    internal fun sunPlan(base: ShadeTilePlan, epochMs: Long, sun: Sun.Position, tileSize: Int = TILE_SIZE): SunShadeTilePlan {
+        val target = MercatorWindow(base.sampleZoom, base.windowX, base.windowY, base.windowSize, base.windowSize, tileSize)
+        // With the sun down over the whole tile no ray is marched: the target alone says where the data is.
+        return SunShadeTilePlan(base, epochMs, sun, CastShadow.windowsFor(target, CastShadow.SunField(epochMs)))
+    }
+
+    /** T181: reads the plan's terrain windows from [dem]. Thread-safe when [dem] is. */
+    fun sunSample(dem: DemPyramid, plan: SunShadeTilePlan): Terrain =
+        Terrain.read(plan.windows) { w -> dem.window(w.zoom, w.x0, w.y0, w.width, w.height) }
+
+    /** T181: samples and renders sun-and-shade tile z/x/y; see [sunRender]. */
+    fun generateSun(dem: DemPyramid, z: Int, x: Int, y: Int, options: SunShadeOptions): ShadeTile {
+        val plan = sunPlan(z, x, y, dem.maxZoom, options)
+        return sunRender(sunSample(dem, plan), plan, options)
+    }
+
+    /**
+     * T181: renders a sun-and-shade tile from [terrain], the windows of [plan]. Pure and thread-safe.
+     *
+     * The pixel convention (what the phone's `ShadeService` draws as a `raster` layer, no further styling needed):
+     * [TILE_SIZE] px, non-premultiplied ARGB, colour [SUN_SHADE_RGB] everywhere a pixel is tinted, alpha
+     * `255 * opacity * f` where `f` is the shade fraction (1 in shade, 0 in sun, between the two along a shadow's
+     * edge when the tile is overzoomed and the shade grid is interpolated up to its pixels); sunlit ground and cells
+     * without data are fully transparent. With the sun at or below the horizon every pixel with data is tinted at the
+     * full [SunShadeOptions.opacity].
+     */
+    fun sunRender(terrain: Terrain, plan: SunShadeTilePlan, options: SunShadeOptions): ShadeTile {
+        val clock = TimeSource.Monotonic
+        val t0 = clock.markNow()
+        val r = CastShadow.compute(terrain, plan.target, CastShadow.SunField(plan.epochMs))
+        val t1 = clock.markNow()
+        val w = plan.base.windowSize
+        val size = plan.base.gridTileSize shl plan.base.reduction
+        val out = IntArray(size * size)
+        val scale = (1 shl plan.base.reduction).toDouble()
+        val h = plan.base.halo
+        val lo = IntArray(size)
+        val frac = DoubleArray(size)
+        for (i in 0 until size) {
+            val c = ((i + 0.5) / scale - 0.5 + h).coerceIn(0.0, (w - 1).toDouble())
+            val a = floor(c).toInt().coerceAtMost(w - 2)
+            lo[i] = a
+            frac[i] = c - a
+        }
+        val shade = r.shade
+        val maxAlpha = 255 * options.opacity
+        var noData = 0
+        var tinted = 0
+        for (j in 0 until size) {
+            val ya = lo[j]
+            val fy = frac[j]
+            for (i in 0 until size) {
+                val xa = lo[i]
+                val fx = frac[i]
+                val k = ya * w + xa
+                val a = shade[k]
+                val b = shade[k + 1]
+                val c = shade[k + w]
+                val d = shade[k + w + 1]
+                if (a.isNaN() || b.isNaN() || c.isNaN() || d.isNaN()) {
+                    noData++
+                    continue
+                }
+                val top = a + (b - a) * fx
+                val f = top + ((c + (d - c) * fx) - top) * fy
+                val alpha = (maxAlpha * f).roundToInt().coerceIn(0, 255)
+                if (alpha == 0) continue
+                tinted++
+                out[j * size + i] = (alpha shl 24) or SUN_SHADE_RGB
+            }
+        }
+        val t2 = clock.markNow()
+        return ShadeTile(
+            size, out, noData, 0,
+            fieldMs = (t1 - t0).inWholeMicroseconds / 1000.0,
+            composeMs = (t2 - t1).inWholeMicroseconds / 1000.0,
+            shadowPixels = tinted,
+            marchSteps = r.steps,
+        )
+    }
+
+    /**
+     * T181: the point answer at [lat], [lon] for the local day of [epochMs] ([Sun.dayAt]) from [dem]: the horizon
+     * ([Horizon.sweep] over a fine layer at [zoom] and a coarse one out to [Horizon.DEFAULT_RANGE_M], from
+     * [observerHeightM] above the ground) crossed with the day's sun path ([Sun.onTerrain]).
+     */
+    fun pointAnswer(
+        dem: DemPyramid, lat: Double, lon: Double, epochMs: Long, zoom: Int = minOf(dem.maxZoom, POINT_ZOOM),
+        observerHeightM: Double = Horizon.EYE_HEIGHT_M,
+    ): SunPointAnswer = pointAnswer(Horizon.terrainAround(lat, lon, zoom, tileSize = dem.tileSize) { w -> dem.window(w.zoom, w.x0, w.y0, w.width, w.height) }, lat, lon, epochMs, observerHeightM)
+
+    /** T181: [pointAnswer] over a terrain already read ([Horizon.terrainAround]). */
+    fun pointAnswer(terrain: Terrain, lat: Double, lon: Double, epochMs: Long, observerHeightM: Double = Horizon.EYE_HEIGHT_M): SunPointAnswer {
+        val t0 = TimeSource.Monotonic.markNow()
+        val horizon = Horizon.sweep(terrain, lat, lon, observerHeightM = observerHeightM)
+        val ms = t0.elapsedNow().inWholeMicroseconds / 1000.0
+        val d = Sun.dayAt(lat, lon, epochMs)
+        return SunPointAnswer(horizon, Sun.onTerrain(lat, lon, d.year, d.month, d.day, horizon::angleAt), terrain.zoom, ms)
     }
 
     /** Per-cell hillshade (0..1) and squared slope tangent of a window; NaN where the grid has no data. */
@@ -386,8 +557,12 @@ class ShadeTileStats(private val keepRecent: Int = 24) {
     private var max = 0.0
 
     /** Records one tile: [totalMs] from start of sampling to encoded bytes, with its parts. */
+    fun add(plan: ShadeTilePlan, tile: ShadeTile, totalMs: Double, sampleMs: Double, encodeMs: Double, bytes: Int, options: ShadeOptions, waitMs: Double = 0.0, readZoom: Int? = null) =
+        add(plan, tile, totalMs, sampleMs, encodeMs, bytes, options.key, waitMs, readZoom)
+
+    /** [add] by the options' key: T181's sun-and-shade tiles ([SunShadeOptions.key]) count here too. */
     @Synchronized
-    fun add(plan: ShadeTilePlan, tile: ShadeTile, totalMs: Double, sampleMs: Double, encodeMs: Double, bytes: Int, options: ShadeOptions, waitMs: Double = 0.0, readZoom: Int? = null) {
+    fun add(plan: ShadeTilePlan, tile: ShadeTile, totalMs: Double, sampleMs: Double, encodeMs: Double, bytes: Int, optionsKey: String, waitMs: Double = 0.0, readZoom: Int? = null) {
         count++
         total += totalMs
         if (totalMs < min) min = totalMs
@@ -402,7 +577,7 @@ class ShadeTileStats(private val keepRecent: Int = 24) {
                 "tile" to "${plan.z}/${plan.x}/${plan.y}", "sampleZoom" to plan.sampleZoom, "readZoom" to (readZoom ?: plan.sampleZoom), "grid" to plan.windowSize,
                 "ms" to round1(totalMs), "waitMs" to round1(waitMs), "sampleMs" to round1(sampleMs),
                 "fieldMs" to round1(tile.fieldMs), "composeMs" to round1(tile.composeMs),
-                "encodeMs" to round1(encodeMs), "bytes" to bytes, "slopePixels" to tile.slopePixels, "options" to options.key,
+                "encodeMs" to round1(encodeMs), "bytes" to bytes, "slopePixels" to tile.slopePixels, "options" to optionsKey,
             ),
         )
         while (recent.size > keepRecent) recent.removeFirst()

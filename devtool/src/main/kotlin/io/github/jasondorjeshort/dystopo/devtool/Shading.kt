@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.render.Hillshade
 import io.github.jasondorjeshort.dystopo.render.Slope
 import io.github.jasondorjeshort.dystopo.render.SlopeBand
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
 import kotlinx.serialization.Serializable
 import kotlin.math.roundToInt
 
@@ -74,6 +75,33 @@ object Shading {
             },
         )
         return pixels to stats
+    }
+
+    /**
+     * T181: the sun-and-shade picture of `devtool shade` and its goldens: the paper tone darkened by the
+     * multidirectional hillshade (as the base map), with the terrain's shade ([shade]: 1 in shade, 0 in sun, NaN without
+     * data, the layout of [grid]) laid over it in the shade tiles' tint ([ShadeTiles.SUN_SHADE_RGB] at [opacity], shade
+     * only, sunlit ground untouched), exactly as the phone composes a shade tile over its map. Magenta where [grid]
+     * has no data.
+     */
+    fun sunShade(grid: ElevationGrid, shade: FloatArray, opacity: Double = ShadeTiles.SUN_SHADE_OPACITY, zFactor: Double = 1.0): IntArray {
+        require(shade.size == grid.values.size) { "shade ${shade.size} cells, grid ${grid.values.size}" }
+        val light = Hillshade.multidirectional(grid, zFactor = zFactor)
+        val tr = (ShadeTiles.SUN_SHADE_RGB shr 16) and 0xFF
+        val tg = (ShadeTiles.SUN_SHADE_RGB shr 8) and 0xFF
+        val tb = ShadeTiles.SUN_SHADE_RGB and 0xFF
+        return IntArray(grid.values.size) { i ->
+            if (grid.values[i].isNaN()) return@IntArray NO_DATA
+            val k = FLOOR + (1.0 - FLOOR) * light[i]
+            var r = paper[0] * k
+            var g = paper[1] * k
+            var b = paper[2] * k
+            val a = opacity * (shade[i].takeUnless { it.isNaN() } ?: 0f)
+            r = r * (1 - a) + tr * a
+            g = g * (1 - a) + tg * a
+            b = b * (1 - a) + tb * a
+            (r.roundToInt().coerceIn(0, 255) shl 16) or (g.roundToInt().coerceIn(0, 255) shl 8) or b.roundToInt().coerceIn(0, 255)
+        }
     }
 
     private fun compose(grid: ElevationGrid, shade: FloatArray?, slope: FloatArray?, bands: List<SlopeBand>, opacity: Double): IntArray {

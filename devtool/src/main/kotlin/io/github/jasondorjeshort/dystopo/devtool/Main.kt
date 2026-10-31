@@ -41,4 +41,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(PaceFitCommand())
     // T179: water along a route, and its truth table against NHD.
     .subcommands(WaterCommand())
+    // T181: sun and shade on the terrain, and the point answer.
+    .subcommands(ShadeCommand())
     .main(args)

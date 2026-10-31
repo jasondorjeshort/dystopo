@@ -88,4 +88,62 @@ class SunTest {
         assertEquals(Triple(1970, 1, 1), Sun.civil(0))
         assertEquals(Triple(2026, 10, 30), Sun.civil(Sun.epochDay(2026, 10, 30)))
     }
+
+    @Test
+    fun sunriseAgainstTheAlmanac() {
+        // T181. USNO, local times (UTC-7): 2026-10-30 rise 07:47; 2026-06-21 rise 05:13.
+        assertWithin(utc(2026, 10, 30, 14, 47), Sun.day(lat, lon, 2026, 10, 30).sunriseMs, 1.0, "sunrise 2026-10-30")
+        assertWithin(utc(2026, 6, 21, 12, 13), Sun.day(lat, lon, 2026, 6, 21).sunriseMs, 1.0, "sunrise 2026-06-21")
+        assertNull(Sun.day(78.2, 15.6, 2026, 6, 21).sunriseMs)
+    }
+
+    @Test
+    fun aFlatTerrainDayIsTheAlmanacs() {
+        val t = Sun.onTerrain(lat, lon, 2026, 10, 30, { 0.0 })
+        assertWithin(t.flat.sunriseMs!!, t.sunriseMs, 0.5, "flat terrain sunrise")
+        assertWithin(t.flat.sunsetMs!!, t.sunsetMs, 0.5, "flat terrain sunset")
+        assertEquals(1, t.sunlit.size)
+        assertTrue(t.gaps.isEmpty())
+        assertTrue(!t.alwaysUp)
+    }
+
+    @Test
+    fun aRidgeDelaysSunriseAndAPeakMakesAGap() {
+        // A 10 degree ridge from north-east to south-east, and a 40 degree peak 6 degrees wide due south (the noon sun
+        // at Paradise in late October stands about 27 degrees up).
+        val horizon = { az: Double ->
+            when {
+                az in 45.0..135.0 -> 10.0
+                abs(az - 180.0) <= 3.0 -> 40.0
+                else -> 0.0
+            }
+        }
+        val t = Sun.onTerrain(lat, lon, 2026, 10, 30, horizon)
+        val flat = t.flat
+        assertTrue(t.sunriseMs!! > flat.sunriseMs!! + 30 * 60_000L, "terrain sunrise later by ${(t.sunriseMs - flat.sunriseMs) / 60_000.0} min")
+        // Where it rises the sun stands 10 degrees up (the ridge) or has passed the ridge's end.
+        val atRise = Sun.position(lat, lon, t.sunriseMs)
+        assertTrue(atRise.apparentAltitudeDeg + Sun.SEMI_DIAMETER_DEG >= 9.9 || atRise.azimuthDeg > 135.0, "rise at $atRise")
+        assertWithin(flat.sunsetMs!!, t.sunsetMs, 0.5, "the west is flat")
+        assertEquals(1, t.gaps.size)
+        val gap = t.gaps[0]
+        assertEquals(180.0, gap.bearingDeg, 1.0)
+        assertEquals(40.0, gap.horizonDeg)
+        // The sun crosses 6 degrees of azimuth near noon in about 20 minutes, around solar noon.
+        assertTrue(gap.span.minutes in 15.0..30.0, "gap ${gap.span.minutes} min")
+        assertTrue(abs((gap.span.startMs + gap.span.endMs) / 2 - flat.noonMs) < 3 * 60_000L)
+        assertEquals((t.sunsetMs!! - t.sunriseMs) / 60_000.0 - gap.span.minutes, t.sunMinutes, 0.01)
+    }
+
+    @Test
+    fun aHollowInWinterNeverSeesTheSunAndAPoleSeesItAllDay() {
+        val hollow = Sun.onTerrain(lat, lon, 2026, 12, 21, { 30.0 })
+        assertNull(hollow.sunriseMs)
+        assertNull(hollow.sunsetMs)
+        assertTrue(hollow.sunlit.isEmpty())
+        val pole = Sun.onTerrain(78.2, 15.6, 2026, 6, 21, { 0.0 })
+        assertTrue(pole.alwaysUp)
+        assertNull(pole.sunriseMs)
+        assertEquals(24 * 60.0, pole.sunMinutes, 0.01)
+    }
 }
