@@ -10,7 +10,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
-    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar"),
+    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar, position button"), // T176: position button
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout"), // T164: route times; T163: turn-back time; T172: recording; T161: readout
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
@@ -65,6 +65,10 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     READOUT_COURSE("readoutCourse", SettingsGroup.NAVIGATION, "Readout: Course", "SettingsPages", "T161"),
     READOUT_ELEVATION("readoutElevation", SettingsGroup.NAVIGATION, "Readout: Elevation", "SettingsPages", "T161"),
     READOUT_BAROMETER("readoutBarometer", SettingsGroup.NAVIGATION, "Readout: Barometer", "SettingsPages", "T161"),
+    // T176: the position button's layout, its close zoom and the orientation lock (the Map page, after Map options)
+    MAP_CONTROLS("mapControls", SettingsGroup.MAP, "Position button", "SettingsPages", "T176"),
+    RECENTER_ZOOM("recenterZoom", SettingsGroup.MAP, "Position button: Close zoom", "SettingsPages", "T176"),
+    ORIENTATION_LOCK("orientationLock", SettingsGroup.MAP, "Keep north up", "SettingsPages", "T176"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

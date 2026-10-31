@@ -41,9 +41,11 @@ Parts:
                posted) and denied (recording still works).
   background   Record, press Home, force doze (`dumpsys deviceidle force-idle`), feed fixes for --bg-seconds,
                leave doze, come back and Stop: the foreground service must have kept recording through doze.
-  recenter     (T105, from T93) the map opens on a fix at Paradise, a slow drag moves the puck away, one tap on the
-               Recenter button brings it back to where it was (within --recenter-tol px, found by the puck's dot colour
-               in raw frames); screenshots on the fix, panned and recentred.
+  recenter     (T105, from T93; T176) the map opens on a fix at Paradise at z13, a slow drag moves the puck away, one tap
+               on the Recenter button brings it back to where it was (within --recenter-tol px, found by the puck's dot
+               colour in raw frames) and zooms in one level to the close zoom 14 (the scale bar's metres per pixel halve);
+               a second tap, centred and close, keeps the zoom (a tap never zooms out); screenshots on the fix, panned,
+               recentred and after the second tap.
   network      the emulator's network throttled (`emu network speed/delay`) and the server killed mid-download
                (Packs > From server, a pack from --server's catalog) and mid-sync (the sync sheet): the app says the
                transfer failed, stays alive, and the retry succeeds once the server is back. Needs --server-cmd
@@ -1518,10 +1520,45 @@ def find_puck(r, cell=8, window=6, tol=28):
     return (round(sum(p[0] for p in inside) / len(inside), 1), round(sum(p[1] for p in inside) / len(inside), 1))
 
 
+SCALE_UNITS_M = {"m": 1.0, "km": 1000.0, "ft": 0.3048, "mi": 1609.344}
+
+
+def scale_metres(desc):
+    """The first length of the scale bar's description ("Scale 500 ft and 200 m", ScaleBar.kt) in metres, or None."""
+    m = re.search(r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*(km|mi|ft|m)\b", desc or "")
+    return float(m.group(1).replace(",", "")) * SCALE_UNITS_M[m.group(2)] if m else None
+
+
+SCALE_PAD_DP = 2  # ScaleBar.kt: the ruler's stroke (the node's bounds lie inside the plate's padding)
+
+
+def scale_mpp(nodes, density=1.0):
+    """Metres per pixel the scale bar shows: its first length over the ruler's width (its node's width less the stroke,
+    [density] px per dp; a label wider than the ruler makes it a few percent off), or None."""
+    n = next((n for n in nodes if (n["desc"] or "").startswith("Scale ") and n["bounds"]), None)
+    metres = scale_metres(n["desc"]) if n else None
+    w = (n["bounds"][2] - n["bounds"][0] - SCALE_PAD_DP * density) if n else 0
+    return metres / w if metres and w > 0 else None
+
+
+def zoom_step(mpp_before, mpp_after):
+    """Zoom levels gained between two scale readings (log2 of the metres per pixel before over after); None if either
+    is missing."""
+    if not mpp_before or not mpp_after:
+        return None
+    return round(math.log2(mpp_before / mpp_after), 2)
+
+
+RECENTER_OPEN_ZOOM = 13  # release_with_pack opens the map at Paradise at z13 (open_map)
+RECENTER_CLOSE_ZOOM = 14  # OrientationRules.DEFAULT_CLOSE_ZOOM, the recenterZoom default (T176)
+
+
 def part_recenter(args):
-    """T93's follow-up: the bullseye button on the release build, by taps. With the Rainier pack and a fix at Paradise,
-    the map opens on the fix; a pan moves the puck away; one tap on Recenter brings it back where it was (within
-    --recenter-tol px), at the zoom the map had. Screenshots of the three moments."""
+    """T93's follow-up, T176's rule: the bullseye button on the release build, by taps. With the Rainier pack and a fix
+    at Paradise, the map opens on the fix at z13; a pan moves the puck away; one tap on Recenter brings it back where it
+    was (within --recenter-tol px) and zooms in to the close zoom 14, one level (the scale bar reads half the metres per
+    pixel, within --zoom-tol levels); a second tap, now centred and close, keeps the zoom (it may turn the map to the
+    heading on a phone with a compass; the scale bar does not care). Screenshots of the four moments."""
     dev = device(args, "")
     run = Run(dev)
     st = {}
@@ -1545,6 +1582,8 @@ def part_recenter(args):
         ras, png = still("on-fix")
         st["p0"] = find_puck(ras)
         st["size"] = (ras.w, ras.h)
+        st["density"] = screen(dev)[2]
+        st["mpp0"] = scale_mpp(dev.nodes(), st["density"])
         return {"ok": st["p0"] is not None, "puck": st["p0"], "screen": f"{ras.w}x{ras.h}", "png": png,
                 **({} if st["p0"] else {"error": "no location puck on the map (#1a66d9 dot)"})}
 
@@ -1555,6 +1594,7 @@ def part_recenter(args):
         ras, png = still("panned")
         p = find_puck(ras)
         st["p1"] = p
+        st["mpp1"] = scale_mpp(dev.nodes(), st["density"])  # a pan keeps the zoom
         moved = math.dist(p, st["p0"]) if p else None
         ok = p is None or moved >= 100  # off screen counts as moved
         return {"ok": ok, "puck": p, "movedPx": round(moved, 1) if moved is not None else None, "png": png,
@@ -1570,15 +1610,39 @@ def part_recenter(args):
         ras, png = still("recentred")
         p = find_puck(ras)
         off = math.dist(p, st["p0"]) if p else None
-        ok = off is not None and off <= args.recenter_tol
-        return {"ok": ok, "puck": p, "offsetPx": round(off, 1) if off is not None else None, "button": n["bounds"], "png": png,
-                **({} if ok else {"error": f"after the tap the puck is {off:.1f} px from where the fix was" if p else "no puck after the tap"})}
+        st["mpp2"] = scale_mpp(dev.nodes(), st["density"])
+        dz = zoom_step(st.get("mpp1") or st.get("mpp0"), st["mpp2"])
+        want = RECENTER_CLOSE_ZOOM - RECENTER_OPEN_ZOOM
+        placed = off is not None and off <= args.recenter_tol
+        zoomed = dz is not None and abs(dz - want) <= args.zoom_tol
+        ok = placed and zoomed
+        err = None
+        if not placed:
+            err = f"after the tap the puck is {off:.1f} px from where the fix was" if p else "no puck after the tap"
+        elif not zoomed:
+            err = f"the tap zoomed in {dz} levels, not {want} (z{RECENTER_OPEN_ZOOM} to the close zoom z{RECENTER_CLOSE_ZOOM})" if dz is not None else "no scale bar to read the zoom"
+        return {"ok": ok, "puck": p, "offsetPx": round(off, 1) if off is not None else None, "button": n["bounds"],
+                "zoomStep": dz, "zoomStepWanted": want, "png": png, **({"error": err} if err else {})}
 
-    for name, fn in (("install-map", setup), ("pan", pan), ("tap", tap)):
+    def tap_again():
+        n, nodes = dev.wait_for("^Recenter$", 10)
+        if not n:
+            return fail("no Recenter button on screen", texts=dev.texts(nodes)[:20])
+        dev.tap(n)
+        time.sleep(1.0)
+        ras, png = still("second-tap")
+        st["mpp3"] = scale_mpp(dev.nodes(), st["density"])
+        dz = zoom_step(st.get("mpp2"), st["mpp3"])
+        ok = dz is not None and abs(dz) <= args.zoom_tol
+        return {"ok": ok, "zoomStep": dz, "png": png,
+                **({} if ok else {"error": f"a tap on a centred, close map changed the zoom by {dz} levels" if dz is not None else "no scale bar to read the zoom"})}
+
+    for name, fn in (("install-map", setup), ("pan", pan), ("tap", tap), ("tap-again", tap_again)):
         if not run.step(name, fn, shot=False):
             break
     run.step("alive", lambda: alive_and_clean(dev), shot=False)
-    return run.report(puckBefore=st.get("p0"), puckPanned=st.get("p1"))
+    return run.report(puckBefore=st.get("p0"), puckPanned=st.get("p1"),
+                      metresPerPx={k: round(st[k], 3) if st.get(k) else None for k in ("mpp0", "mpp1", "mpp2", "mpp3")})
 
 
 # --- network (g) -----------------------------------------------------------------------------------------------------
@@ -2660,6 +2724,7 @@ def main():
     ap.add_argument("--fail-timeout", type=float, default=90, help="network: seconds for the app to show a failure")
     ap.add_argument("--bg-seconds", type=float, default=60)
     ap.add_argument("--recenter-tol", type=float, default=4.0, help="recenter: px between the puck before the pan and after the tap")
+    ap.add_argument("--zoom-tol", type=float, default=0.35, help="recenter: zoom levels the scale bar's reading may be off (T176)")
     ap.add_argument("--font-scale", type=float, default=0)
     ap.add_argument("--dark", action="store_true")
     ap.add_argument("--locale", default="")

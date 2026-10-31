@@ -97,6 +97,10 @@ object AppSettings {
             val (a, e) = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.ofKey(k)!!
             p.getString(k, null)?.let { v -> io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.parseValue(a, e, v)?.let { k to it } }
         }.toMap()
+        // T176
+        mapControls = p.getInt(KEY_MAP_CONTROLS, 1).coerceIn(io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS)
+        recenterZoom = p.getInt(KEY_RECENTER_ZOOM, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM).coerceIn(io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE)
+        orientationLock = p.getBoolean(KEY_ORIENTATION_LOCK, false)
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -203,6 +207,32 @@ object AppSettings {
     /** [a]'s readout options (the remembered activity's by default): its defaults with the stored values and the barometer switch. */
     fun readoutOptions(a: Activity = trackActivity): io.github.jasondorjeshort.dystopo.readout.ReadoutOptions =
         io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.options(a, readoutEntries, readoutBarometer)
+
+    // ---- T176: the position button's layout, its close zoom and the orientation lock (controls/RecenterButton); synced ----
+
+    private const val KEY_MAP_CONTROLS = "mapControls"
+    private const val KEY_RECENTER_ZOOM = "recenterZoom"
+    private const val KEY_ORIENTATION_LOCK = "orientationLock"
+
+    /** The position button's layout: 1 (the default, one button), 2 (plus the orientation button), 3 (plus the lock). */
+    @Volatile var mapControls: Int = 1
+        private set
+
+    /** The zoom a tap on the position button brings the map to (default 14); a tap never zooms out. */
+    @Volatile var recenterZoom: Int = io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM
+        private set
+
+    /** "Keep north up" (default off): no gesture changes the orientation; only the orientation button and the navigation card do. */
+    @Volatile var orientationLock: Boolean = false
+        private set
+
+    fun setMapControls(layout: Int?, closeZoom: Int?, lock: Boolean?) {
+        val e = prefs?.edit()
+        layout?.let { mapControls = it; e?.putInt(KEY_MAP_CONTROLS, it) }
+        closeZoom?.let { recenterZoom = it; e?.putInt(KEY_RECENTER_ZOOM, it) }
+        lock?.let { orientationLock = it; e?.putBoolean(KEY_ORIENTATION_LOCK, it) }
+        e?.apply()
+    }
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
@@ -500,5 +530,6 @@ object AppSettings {
         "readoutBarometer" to readoutBarometer,
         "readout" to readoutOptions().let { o -> io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.entries.associate { e -> e.code to o[e].encode() } },
         "readoutStored" to readoutEntries,
+        "mapControls" to mapControls, "recenterZoom" to recenterZoom, "orientationLock" to orientationLock, // T176
     ) + mapOptions.json(units) // T47
 }

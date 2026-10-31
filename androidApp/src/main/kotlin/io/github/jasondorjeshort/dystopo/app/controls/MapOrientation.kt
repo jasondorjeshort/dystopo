@@ -34,6 +34,10 @@ import org.maplibre.android.maps.MapLibreMap
  *   they keep the fix centred.
  * - In facing, a ticker turns the map to the heading between fixes ([TURN_MS] eases whenever it is
  *   [OrientationRules.TURN_DEG] off), about the fix when following, about the map's centre otherwise.
+ * - T176: [locked] ("Keep north up", [AppSettings.orientationLock]): MapLibre's rotate gesture is off, a bearing found
+ *   off north at rest in north-up turns the camera back to north ([lockReturns]) instead of entering free rotate, free
+ *   rotate is never entered ([set] makes it north-up), and a tap on the position button no longer advances; the
+ *   orientation button and the navigation card still change the mode. A pan never changes the mode, locked or not.
  */
 object MapOrientation {
     /** One follow move per fix, as T61's navigation did. */
@@ -43,6 +47,8 @@ object MapOrientation {
     /** After our own move ends, MapLibre's rest event may come a little later; until then `animating` is still ours. */
     const val OWN_GRACE_MS = 300L
     const val GESTURE_STALE_MS = 5_000L
+    /** T176: a tap that zooms eases over at least this long (a jump of four levels in 300 ms reads as a cut). */
+    const val ZOOM_MS = 600
 
     private val main = Handler(Looper.getMainLooper())
     private val app get() = DystopoApp.instance
@@ -59,6 +65,8 @@ object MapOrientation {
 
     // Our own camera moves: a foreign move cancels ours (its callback ends the flight) and is then seen at rest.
     private var ownSeq = 0L
+    /** T176: the sequence number of the last tap's move; a fix's follow move or a facing turn would cancel its zoom. */
+    private var tapSeq = -1L
     @Volatile private var ownInFlight = false
     @Volatile private var ownEndedAt = 0L
     /** Where our last move put (or, cut short by a gesture, left) the camera's centre; at rest, a centre elsewhere was moved by someone else. */
@@ -84,6 +92,12 @@ object MapOrientation {
         private set
     @Volatile var lastFollowStart: Map<String, Any?>? = null
         private set
+    /** T176: bearings turned back to north at rest under the lock. */
+    @Volatile var lockReturns = 0L
+        private set
+
+    /** T176: "Keep north up" ([AppSettings.orientationLock]). */
+    val locked: Boolean get() = AppSettings.orientationLock
 
     /** The persisted mode, once (main thread, first map). */
     private fun load() {
@@ -115,11 +129,12 @@ object MapOrientation {
             }
         })
         m.addOnFlingListener { stopFollowing("fling") }
+        m.uiSettings.isRotateGesturesEnabled = !locked // T176: the lock ignores two-finger turns outright
         m.addOnRotateListener(object : MapLibreMap.OnRotateListener {
             override fun onRotateBegin(detector: RotateGestureDetector) {
                 gestures++
                 gestureAt = SystemClock.elapsedRealtime()
-                set(Orientation.FREE, "rotateGesture", move = false)
+                if (!locked) set(Orientation.FREE, "rotateGesture", move = false) // T176: the gesture is off then; never free
             }
             override fun onRotate(detector: RotateGestureDetector) {
                 gestureAt = SystemClock.elapsedRealtime()
@@ -160,9 +175,18 @@ object MapOrientation {
         }
         // The icon never lies: a north-up map turned by something else (a deep link, `POST /camera`) is free rotate,
         // and a free-rotated map turned back to north (MapLibre's own compass, top right, snaps it there) is north-up.
+        // T176: under the lock a north-up map turned by something else is turned back to north instead.
         val offNorth = kotlin.math.abs(OrientationRules.rel(bearing))
-        if (orientation == Orientation.NORTH_UP && offNorth > 0.5) set(Orientation.FREE, "bearingChanged", move = false)
-        else if (orientation == Orientation.FREE && offNorth < 0.05) set(Orientation.NORTH_UP, "turnedNorth", move = false)
+        when (OrientationRules.atRestBearing(orientation, offNorth, locked)) {
+            OrientationRules.AtRestBearing.TO_FREE -> set(Orientation.FREE, "bearingChanged", move = false)
+            OrientationRules.AtRestBearing.TO_NORTH_UP -> set(Orientation.NORTH_UP, if (offNorth < 0.05) "turnedNorth" else "lock", move = offNorth >= 0.05)
+            OrientationRules.AtRestBearing.TURN_NORTH -> {
+                val fix = app.map.lastLocation
+                move(if (following && fix != null) LatLng(fix.latitude, fix.longitude) else null, 0.0, null, FOLLOW_MS)
+                lockReturns++
+            }
+            OrientationRules.AtRestBearing.KEEP -> {}
+        }
         focal()
     }
 
@@ -175,7 +199,7 @@ object MapOrientation {
         }
         // A pinch or a rotation in progress, or someone else moving the camera (a route fit, a search result): do
         // not fight it; the next fix catches up, or the move ends away from the fix and following stops at rest.
-        if (busy()) return
+        if (busy() || tapMoving()) return
         move(LatLng(loc.latitude, loc.longitude), targetBearing(), null, FOLLOW_MS)
         followMoves++
     }
@@ -187,8 +211,12 @@ object MapOrientation {
         followMoves++
     }
 
-    /** What a tap on the recentre button does ([OrientationRules.tap]); [done] runs once the camera is there. */
-    fun tap(animateMs: Int, done: () -> Unit): Map<String, Any?> = onMain {
+    /**
+     * What a tap on the position button does ([OrientationRules.tap]); [done] runs once the camera is there. T176:
+     * [closeZoom] (null: navigation keeps its zoom) and [layout] (the buttons shown) feed the rule; a zoom eases over at
+     * least [ZOOM_MS].
+     */
+    fun tap(animateMs: Int, closeZoom: Double?, layout: Int, done: () -> Unit): Map<String, Any?> = onMain {
         val fix = app.map.lastLocation
         if (fix == null) {
             done()
@@ -199,11 +227,14 @@ object MapOrientation {
         val before = orientation
         val compass = Heading.compassAvailable
         val centred = OrientationRules.centred(following, off, tolerancePx())
-        val t = OrientationRules.tap(before, centred, compass)
+        val zoomBefore = app.map.map?.cameraPosition?.zoom
+        val t = OrientationRules.tap(before, centred, compass, zoomBefore, closeZoom, layout, locked)
         if (t.action == OrientationRules.TapAction.ADVANCE) set(t.next, "tap", move = false)
         startFollowing("tap")
         recenters++
-        move(LatLng(fix.latitude, fix.longitude), targetBearing(), null, animateMs, done)
+        val ms = if (t.zoomTo != null && animateMs > 0) maxOf(animateMs, ZOOM_MS) else animateMs
+        tapSeq = ownSeq + 1 // the move's own number (it may end at once)
+        move(LatLng(fix.latitude, fix.longitude), targetBearing(), t.zoomTo, ms, done)
         linkedMapOf(
             "action" to t.action.name.lowercase(),
             "centredBefore" to centred,
@@ -214,11 +245,35 @@ object MapOrientation {
             // ADVANCE that stays north-up: no compass, so facing is not offered.
             "advanced" to (t.action == OrientationRules.TapAction.ADVANCE && t.next != before),
             "compass" to compass,
+            // T176: the zoom rule's inputs and outcome (`zoomAfter`, the camera's zoom once there, is added by [Recenter]).
+            "layout" to layout,
+            "locked" to locked,
+            "closeZoom" to closeZoom,
+            "zoomBefore" to zoomBefore?.let { Math.round(it * 100) / 100.0 },
+            "zoomTo" to t.zoomTo,
         )
     }
 
-    /** Sets the orientation (debug route, the navigation card); the camera turns to it. */
-    fun set(o: Orientation, reason: String, move: Boolean = true) {
+    /** T176: the orientation button (two and three buttons): the next mode ([OrientationRules.next]), also under the lock. */
+    fun advance(reason: String): Map<String, Any?> = onMain {
+        val before = orientation
+        set(OrientationRules.next(before, Heading.compassAvailable), reason)
+        linkedMapOf("orientationBefore" to before.key, "orientation" to orientation.key, "compass" to Heading.compassAvailable)
+    }
+
+    /**
+     * T176: after the position button's settings changed (any thread): the rotate gesture follows the lock, a free-rotated
+     * map turns north-up when the lock comes on ([OrientationRules.onLock]), and the button redraws.
+     */
+    fun onSettings() = onMain {
+        app.map.map?.uiSettings?.isRotateGesturesEnabled = !locked
+        if (locked) OrientationRules.onLock(orientation).let { if (it != orientation) set(it, "lock") }
+        publish()
+    }
+
+    /** Sets the orientation (debug route, the navigation card); the camera turns to it. T176: never free rotate under the lock. */
+    fun set(asked: Orientation, reason: String, move: Boolean = true) {
+        val o = if (locked) OrientationRules.onLock(asked) else asked
         onMain {
             if (o != orientation) {
                 lastChange = linkedMapOf("from" to orientation.key, "to" to o.key, "reason" to reason, "atMs" to System.currentTimeMillis())
@@ -288,7 +343,7 @@ object MapOrientation {
 
     /** Facing: turn to the heading when it is [OrientationRules.TURN_DEG] off the bearing we last set. */
     private fun turn() {
-        if (app.map.map == null || busy()) return
+        if (app.map.map == null || busy() || tapMoving()) return
         val h = Heading.current() ?: return
         if (!OrientationRules.turns(bearing, h.deg)) return
         val fix = app.map.lastLocation
@@ -351,6 +406,13 @@ object MapOrientation {
         return gestures > 0
     }
 
+    /**
+     * T176: the tap's own move (recentre and zoom) is still easing. A new ease cancels the one in flight, so the follow
+     * move of the next fix (the GPS gives one a second) cut the zoom short at once on a device; the next fix after it
+     * catches up instead.
+     */
+    private fun tapMoving(): Boolean = ownInFlight && ownSeq == tapSeq
+
     private fun ended(seq: Long, done: () -> Unit) {
         if (seq == ownSeq) {
             ownInFlight = false
@@ -379,7 +441,7 @@ object MapOrientation {
 
     /** The Compose state the button and the navigation card draw from (main thread only). */
     private fun publish() {
-        val s = OrientationUi.State(orientation, following, Heading.compassAvailable, Math.round(bearing).toInt())
+        val s = OrientationUi.State(orientation, following, Heading.compassAvailable, Math.round(bearing).toInt(), locked, AppSettings.mapControls)
         if (Looper.myLooper() == Looper.getMainLooper()) OrientationUi.state = s else main.post { OrientationUi.state = s }
     }
 
@@ -402,6 +464,8 @@ object MapOrientation {
             "lastFollowEnd" to lastFollowEnd,
             "changes" to changes, "recenters" to recenters, "followMoves" to followMoves, "catchUps" to catchUps, "turns" to turns,
             "gestures" to gestures,
+            "lock" to locked, "lockReturns" to lockReturns, // T176
+            "rotateGestures" to runCatching { app.map.onMain { app.map.map?.uiSettings?.isRotateGesturesEnabled } }.getOrNull(),
             "ownMoveInFlight" to ownInFlight,
             "saved" to AppSettings.mapOrientation,
         )
@@ -414,8 +478,11 @@ object MapOrientation {
  * open cannot be read); [MapOrientation] posts its writes there.
  */
 internal object OrientationUi {
-    /** [bearing]: the map's, whole degrees (the free-rotate icon points to north). */
-    data class State(val orientation: Orientation, val following: Boolean, val compass: Boolean, val bearing: Int = 0)
+    /**
+     * [bearing]: the map's, whole degrees (the free-rotate icon points to north). T176: [locked] ("Keep north up", the
+     * padlock) and [layout] (the position button's buttons as set, 1 to 3).
+     */
+    data class State(val orientation: Orientation, val following: Boolean, val compass: Boolean, val bearing: Int = 0, val locked: Boolean = false, val layout: Int = 1)
 
     var state by mutableStateOf(State(Orientation.NORTH_UP, following = false, compass = false))
 

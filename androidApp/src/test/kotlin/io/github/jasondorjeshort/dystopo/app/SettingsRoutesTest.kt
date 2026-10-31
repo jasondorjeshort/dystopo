@@ -138,6 +138,25 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun thePositionButtonSettings() { // T176: the layout 1, 2 or 3; the close zoom in whole levels; the lock, synced as on or off
+        assertEquals(2, ok("mapControls" to "2").mapControls)
+        assertEquals(3, ok("mapControls" to 3).mapControls)
+        assertEquals(15, ok("recenterZoom" to "15").recenterZoom)
+        assertEquals(true, ok("orientationLock" to "1").orientationLock)
+        assertEquals(false, ok("orientationLock" to "off").orientationLock, "the synced value is on or off")
+        val none = ok("units" to "m")
+        assertNull(none.mapControls)
+        assertNull(none.recenterZoom)
+        assertNull(none.orientationLock)
+        assertTrue(bad("mapControls" to "4").message.contains("mapControls"))
+        bad("mapControls" to "0")
+        bad("recenterZoom" to "9")
+        bad("recenterZoom" to "19")
+        bad("recenterZoom" to "close")
+        bad("orientationLock" to "north")
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {

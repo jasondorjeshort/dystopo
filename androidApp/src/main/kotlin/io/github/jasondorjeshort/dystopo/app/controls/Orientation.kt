@@ -44,19 +44,86 @@ object OrientationRules {
     /** The fix counts as centred within this many dp of the map's centre (the camera may lag a fix by a frame). */
     const val CENTRED_DP = 6f
 
-    enum class TapAction { RECENTER, ADVANCE }
+    /**
+     * T176: what a tap on the position button does. RECENTER brings the fix to the centre (zooming in with it when
+     * [Tap.zoomTo] is set); ZOOM, on a centred map farther out than the close zoom, zooms in to it; ADVANCE, on a
+     * centred map at the close zoom, advances the orientation (the one-button layout only, never under the lock);
+     * NONE keeps everything (two or three buttons, or the lock: the camera only goes on following).
+     */
+    enum class TapAction { RECENTER, ZOOM, ADVANCE, NONE }
 
-    /** What a tap does: [action], and the orientation after it ([next]). */
-    data class Tap(val action: TapAction, val next: Orientation)
+    /** What a tap does: [action], the orientation after it ([next]) and the zoom to ease to ([zoomTo]; null keeps it). */
+    data class Tap(val action: TapAction, val next: Orientation, val zoomTo: Double? = null)
+
+    /** The camera counts as at the close zoom within this many zoom levels below it (a pinch rarely lands on a whole level). */
+    const val CLOSE_EPS = 0.05
+
+    /** T176: the close zoom a tap brings the map to, unless [AppSettings.recenterZoom] says otherwise (the owner's reference). */
+    const val DEFAULT_CLOSE_ZOOM = 14
+
+    /** T176: the close zooms `recenterZoom` accepts, and the ones its row offers. */
+    val CLOSE_ZOOM_RANGE = 10..18
+    val CLOSE_ZOOM_CHOICES = listOf(12, 13, 14, 15, 16)
+
+    /** T176: the layouts of the position button (`mapControls`): one button, two (plus orientation), three (plus the lock). */
+    val LAYOUTS = 1..3
 
     /**
-     * The owner's tap rule (2026-10-13): off centre, a tap only recentres on the fix and keeps the mode; on a
-     * centred map it advances the mode (north-up to facing when there is a compass, facing to north-up, free
-     * rotate to north-up). Free rotate is never entered by a tap.
+     * The tap rule (owner, 2026-10-13; T176, 2026-10-30): off centre a tap recentres on the fix and keeps the mode, and
+     * zooms in to [closeZoom] when the camera is farther out; on a centred map farther out it only zooms in; on a centred
+     * map at or nearer than [closeZoom] it advances the mode on the one-button layout ([layout] 1) unless [locked]
+     * (north-up to facing when there is a compass, facing to north-up, free rotate to north-up), and does nothing on two
+     * or three buttons, where the orientation button owns that. A tap never zooms out. [closeZoom] null (navigation keeps
+     * its own zoom: a tap from the navigation card, or any tap while navigating) never zooms, and a centred map then
+     * counts as close. Free rotate is never entered by a tap.
      */
-    fun tap(current: Orientation, centred: Boolean, compass: Boolean): Tap =
-        if (!centred) Tap(TapAction.RECENTER, current) else Tap(TapAction.ADVANCE, next(current, compass))
+    fun tap(
+        current: Orientation,
+        centred: Boolean,
+        compass: Boolean,
+        zoom: Double? = null,
+        closeZoom: Double? = null,
+        layout: Int = 1,
+        locked: Boolean = false,
+    ): Tap {
+        val farOut = closeZoom != null && zoom != null && zoom < closeZoom - CLOSE_EPS
+        val zoomTo = if (farOut) closeZoom else null
+        return when {
+            !centred -> Tap(TapAction.RECENTER, current, zoomTo)
+            farOut -> Tap(TapAction.ZOOM, current, zoomTo)
+            layout == 1 && !locked -> Tap(TapAction.ADVANCE, next(current, compass))
+            else -> Tap(TapAction.NONE, current)
+        }
+    }
 
+    /**
+     * T176: the lock. Turned on, a free-rotated map goes north-up (free rotate is not a mode one chooses); north-up and
+     * facing stay as chosen. While on, a bearing found off north at rest in north-up turns the camera back to north
+     * ([AtRestBearing.TURN_NORTH]) instead of entering free rotate.
+     */
+    fun onLock(current: Orientation): Orientation = if (current == Orientation.FREE) Orientation.NORTH_UP else current
+
+    enum class AtRestBearing { KEEP, TO_FREE, TO_NORTH_UP, TURN_NORTH }
+
+    /**
+     * At rest, what the bearing does to the mode: a north-up map turned by something else is free rotate (unlocked) or is
+     * turned back to north (locked); a free-rotated map turned back to north is north-up. [offNorthDeg] is the bearing's
+     * distance from north, 0..180.
+     */
+    fun atRestBearing(current: Orientation, offNorthDeg: Double, locked: Boolean): AtRestBearing = when {
+        current == Orientation.NORTH_UP && offNorthDeg > 0.5 -> if (locked) AtRestBearing.TURN_NORTH else AtRestBearing.TO_FREE
+        current == Orientation.FREE && (offNorthDeg < 0.05 || locked) -> AtRestBearing.TO_NORTH_UP
+        else -> AtRestBearing.KEEP
+    }
+
+    /** T176: the layouts the room allows: [want] buttons, fewer while a column of [fits] does not fit (0: none fits). */
+    fun shownButtons(want: Int, fits: (Int) -> Boolean): Int {
+        var n = want.coerceIn(LAYOUTS)
+        while (n > 0 && !fits(n)) n--
+        return n
+    }
+
+    /** The next mode: of a centred tap on one button, and of the orientation button (two and three buttons, also under the lock). */
     fun next(current: Orientation, compass: Boolean): Orientation = when (current) {
         Orientation.NORTH_UP -> if (compass) Orientation.FACING else Orientation.NORTH_UP
         Orientation.FACING -> Orientation.NORTH_UP
