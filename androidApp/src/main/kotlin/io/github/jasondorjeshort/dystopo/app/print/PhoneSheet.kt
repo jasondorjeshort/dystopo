@@ -150,7 +150,7 @@ object PhoneSheet {
         val contour = contourInterval(styleJson, zoom, units)
         val overlay = overlayData(app)
         val b = layout.bbox
-        val attribution = AppCredits.compose(app, PackBounds(b.west, b.south, b.east, b.north)).compact
+        val attribution = sourcesLine(AppCredits.compose(app, PackBounds(b.west, b.south, b.east, b.north)))
         val north = layout.north(spec.epochMs)
         val date = Instant.ofEpochMilli(spec.epochMs).atZone(ZoneId.systemDefault()).toLocalDate().toString()
         val title = spec.title ?: defaultTitle(layout)
@@ -233,6 +233,19 @@ object PhoneSheet {
             "timingsMs" to timings,
         )
         return MadeSheet(pdf, layout, report)
+    }
+
+    /**
+     * The sources line: every credited pack's own attribution in full (the map's compact line abbreviates), then the
+     * app's sources that are not in a pack's text (the label font, bundled data); entities and tags made plain.
+     */
+    fun sourcesLine(credits: io.github.jasondorjeshort.dystopo.attribution.Credits): String {
+        fun plain(s: String) = s.replace(Regex("<[^>]+>"), "").replace("&copy;", "©").replace("&amp;", "&").replace(Regex("\\s+"), " ").trim()
+        val packs = credits.packs.map { plain(it.attribution) }.filter { it.isNotEmpty() }.distinct()
+        val text = packs.joinToString(" ")
+        val extra = credits.sources.filter { c -> c.usedBy.none { it == "osm" || it == "dem" } }
+            .map { plain(it.source.attribution) }.filter { it.isNotEmpty() && it !in text }.distinct()
+        return (packs + extra).joinToString(" ").ifEmpty { credits.compact }
     }
 
     /** "Map sheet 46°47'10"N 121°44'09"W": the centre, as the grid labels' latitude and longitude read. */
@@ -381,9 +394,8 @@ object PhoneSheet {
                             val cropY = (bmp.height - layout.frameHeightPx) / 2.0
                             fun miss(fxPx: Double, fyPx: Double): Double {
                                 val p: PointF = snap.pixelForLatLng(LatLng(layout.latAt(fyPx), layout.lonAt(fxPx)))
-                                val ex = (fxPx + cropX) / ratio
-                                val ey = (fyPx + cropY) / ratio
-                                return maxOf(kotlin.math.abs(p.x - ex), kotlin.math.abs(p.y - ey)) * ratio
+                                // pixelForLatLng answers bitmap (physical) pixels.
+                                return maxOf(kotlin.math.abs(p.x - (fxPx + cropX)), kotlin.math.abs(p.y - (fyPx + cropY)))
                             }
                             val err = runCatching { maxOf(miss(0.0, 0.0), miss(layout.frameWidthPx.toDouble(), layout.frameHeightPx.toDouble())) }.getOrNull()
                             result.set(Shot(bmp, bmp.width, bmp.height, err?.let { (it * 100).roundToLong() / 100.0 }, snap.attributions.toList()))
