@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-30
 
+- T180: The way back on a recording: the clock on screen, the trailhead, and the retrace fix
 - T181: Sun and shade on the terrain in `shared`: the horizon sweep, the cast shadow, the point answer
 - T176: The position button zooms, and grows to two or three controls
 - T179: Water along a route in `shared`: the crossings, their class from the terrain, and the truth table
