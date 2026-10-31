@@ -62,7 +62,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   `last-hour-fall`, `treeline-step`, `forest-noise`, `recovery`; `shared`'s `PressureFixtures`) or a CSV body
  *   (`time,hPa,heightM,source,speedMps,lat,lon`, `PressureSeries`): replaces the series with the synthetic one moved to
  *   end now and evaluates it (the card, the spoken line and the arrow follow as live); live input is ignored meanwhile.
- *   `?clear=1` forgets it and returns to live input. `?dismiss=1` presses the card's Dismiss. Answers `trend`.
+ *   `?clear=1` forgets it and the warning's memory (raised, its band, the 3 h no-repeat) and returns to live input. `?dismiss=1` presses the card's Dismiss. Answers `trend`.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`, T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`; `SettingsRoutes`).
  */

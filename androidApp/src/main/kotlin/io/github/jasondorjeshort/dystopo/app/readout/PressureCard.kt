@@ -14,10 +14,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,8 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.app.Foreground
-import io.github.jasondorjeshort.dystopo.app.controls.ScaleBarLayout
 import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.gpx.GpxFormat
 import io.github.jasondorjeshort.dystopo.readout.FallAlert
@@ -92,7 +88,8 @@ object PressureWatch {
     private val trend = PressureTrend()
     private val alert = FallAlert()
     private var loaded = false
-    private var lastMinutes = -1
+    /** The start of the last closed minute evaluated (the count stays put once the oldest minutes are dropped). */
+    private var lastMinutes = -1L
     private var syntheticStation: StationTemperature? = null
     private var writtenAtMs = 0L
     private var writeFailures = 0
@@ -180,7 +177,7 @@ object PressureWatch {
     private fun take(block: () -> Boolean) {
         load()
         if (!block()) return
-        val n = trend.minutes().size
+        val n = trend.minutes().lastOrNull()?.startMs ?: -1L
         if (n != lastMinutes) {
             lastMinutes = n
             evaluate("minute")
@@ -233,7 +230,8 @@ object PressureWatch {
 
     /**
      * `POST /readout/trend`: [fixture] (one of [PressureFixtures.NAMES]) or a CSV [csv] ([PressureSeries.parseCsv])
-     * replaces the series, moved to end now; [clear] forgets it and returns to live input. Answers [json].
+     * replaces the series, moved to end now; [clear] forgets it and the warning's memory and returns to live input.
+     * Answers [json].
      */
     fun feedSynthetic(fixture: String?, csv: String?, clear: Boolean): Map<String, Any?> = call {
         load()
@@ -241,7 +239,9 @@ object PressureWatch {
             synthetic = null
             syntheticStation = null
             trend.clear()
-            lastMinutes = -1
+            alert.restore(false, null, null) // the warning's memory too, so the next series starts clean
+            main.post { card = null }
+            lastMinutes = -1L
             result = null
             evaluate("clear")
         } else {
@@ -255,12 +255,12 @@ object PressureWatch {
             syntheticStation = series.station
             trend.clear()
             series.feed(trend)
-            lastMinutes = trend.minutes().size
+            lastMinutes = trend.minutes().lastOrNull()?.startMs ?: -1L
             evaluate("synthetic")
         }
         applySampling()
         persist()
-        json()
+        jsonNow() // on the worker already: json() would wait on itself
     }
 
     /** Reads [FILE] once (worker). */
@@ -280,7 +280,7 @@ object PressureWatch {
             }
             val keepFrom = System.currentTimeMillis() - PressureTrend.KEEP_MS
             trend.restore(minutes.filter { it.startMs >= keepFrom })
-            lastMinutes = trend.minutes().size
+            lastMinutes = trend.minutes().lastOrNull()?.startMs ?: -1L
             bump("restoredMinutes")
             Log.i(TAG, "restored ${trend.minutes().size} minutes of pressure")
         }.onFailure { Log.w(TAG, "could not read $FILE", it) }
@@ -350,21 +350,20 @@ object PressureWatch {
 }
 
 /**
- * T178: the pressure-fall warning's card: one quiet card under the search box (and under the navigation card while
- * navigating), the title, what was measured with the hedge, the nearby station's own tendency when known, and Dismiss.
+ * T178: the pressure-fall warning's card: one quiet card under the chrome at the top of the map (the search box, the
+ * chips at the right, the navigation card while navigating), the title, what was measured with the hedge, the nearby
+ * station's own tendency when known, and Dismiss.
  * Nothing when no warning is raised or after Dismiss.
  */
 @Composable
 fun PressureCard() {
     val c = PressureWatch.card ?: return
-    var topDp by remember { mutableStateOf(maxOf(ScaleBarLayout.topLeftBottomDp, ScaleBarLayout.navCardBottomDp)) }
-    LaunchedEffect(c) {
-        while (true) {
-            topDp = maxOf(ScaleBarLayout.topLeftBottomDp, ScaleBarLayout.navCardBottomDp)
-            Foreground.delay(1000)
-        }
-    }
-    Box(Modifier.fillMaxWidth().padding(top = (if (topDp > 0f) topDp else 72f).dp + 8.dp), contentAlignment = Alignment.TopCenter) {
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    // Under everything that floats across the top (the search column, the online indicator, the chips at the right and
+    // the navigation card; Compose state, so the card follows them).
+    val topPx = io.github.jasondorjeshort.dystopo.app.MapInsets.topChromeBottomPx(density)
+    val topDp = if (topPx > 0) topPx / density else 72f
+    Box(Modifier.fillMaxWidth().padding(top = topDp.dp + 8.dp), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
                 .padding(horizontal = 12.dp)

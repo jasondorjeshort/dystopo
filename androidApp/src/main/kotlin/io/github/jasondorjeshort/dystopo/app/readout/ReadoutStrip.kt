@@ -209,8 +209,9 @@ private fun ValueRow(value: String, unit: String, plusMinus: String?, trend: Str
     Row(modifier) {
         BasicText(value, Modifier.alignBy(FirstBaseline), style = valueStyle)
         if (unit.isNotEmpty()) BasicText(" $unit", Modifier.alignBy(FirstBaseline), style = unitStyle)
-        if (trendTemplate) Box(Modifier.alignBy(FirstBaseline)) { for (a in io.github.jasondorjeshort.dystopo.readout.TrendBand.ARROWS) BasicText(" $a", style = unitStyle) }
-        trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = unitStyle) }
+        // T178: the arrow at the number's size, so it reads at a glance.
+        if (trendTemplate) Box(Modifier.alignBy(FirstBaseline)) { for (a in io.github.jasondorjeshort.dystopo.readout.TrendBand.ARROWS) BasicText(" $a", style = valueStyle) }
+        trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = valueStyle) }
         plusMinus?.let { pm -> BasicText(" $pm", Modifier.alignBy(FirstBaseline), style = pmStyle) }
     }
 }
