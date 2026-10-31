@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-31
 
+- T187: Water along the route on the phone (after T179 and T180)
 - T185: Tools: the empty screenshot capture, the merge-log refusal, the forward loss (after T176)
 
 ### 2026-10-30
