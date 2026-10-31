@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.areas
 
+import io.github.jasondorjeshort.dystopo.packs.DerivedFile
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 
 /**
@@ -48,7 +49,7 @@ sealed class ManifestItem {
                     )
                 }
                 KIND_GLYPHS, KIND_SPRITE -> AssetItem(kind, str("url") ?: "", int("files") ?: 0, long("fileBytes") ?: long("bytes") ?: 0L, m["bundled"] == true, (m["names"] as? List<*>).orEmpty().map { it.toString() })
-                KIND_GRAPH, KIND_SEARCH, KIND_CONTOURS -> LocalItem(kind, str("from"), m["available"] != false, str("note"))
+                KIND_GRAPH, KIND_SEARCH, KIND_CONTOURS -> LocalItem(kind, str("from"), m["available"] != false, str("note"), LocalItem.shippedOf(m))
                 else -> throw IllegalArgumentException("unknown manifest item kind '$kind'")
             }
         }
@@ -146,11 +147,34 @@ data class AssetItem(
     override fun json(): Map<String, Any?> = linkedMapOf("kind" to kind, "url" to url, "files" to files, "bytes" to bytes, "fileBytes" to fileBytes, "bundled" to bundled, "names" to names)
 }
 
-/** A product the phone builds from the area's data (`kind: graph|search|contours`): [from] names its input; nothing to transfer. */
-data class LocalItem(override val kind: String, val from: String?, val available: Boolean, val note: String?) : ManifestItem() {
-    override val bytes get() = 0L
+/**
+ * A product the phone builds from the area's data (`kind: graph|search|contours`): [from] names its input; nothing to transfer.
+ *
+ * T189 (ADR 0049's B): a `graph` item may also carry the graph a server built ([shipped]: the [DerivedFile] fields `file`,
+ * `url`, `bytes`, `sha256`, `sidecar`, `format`, `version`, `key`, as in a catalog entry's `derived`), written with
+ * `onDevice: false`; the phone downloads it with the pack when it matches the archives and builds its own otherwise.
+ * A reader before T189 parses the item as before and ignores the extra keys (the correct behaviour: it builds), so the
+ * manifest's version does not move. Not a new item kind: an old parser throws on one and fails the whole manifest.
+ */
+data class LocalItem(
+    override val kind: String,
+    val from: String?,
+    val available: Boolean,
+    val note: String?,
+    /** T189: the file a server derived for this item, to download instead of building; null: the phone makes it. */
+    val shipped: DerivedFile? = null,
+) : ManifestItem() {
+    override val bytes get() = shipped?.bytes ?: 0L
     override val exact get() = true
-    override fun json(): Map<String, Any?> = linkedMapOf("kind" to kind, "onDevice" to true, "from" to from, "available" to available, "note" to note)
+    override fun json(): Map<String, Any?> = linkedMapOf<String, Any?>("kind" to kind, "onDevice" to (shipped == null), "from" to from, "available" to available, "note" to note).apply {
+        shipped?.let { d -> putAll(d.json() - "kind") }
+    }
+
+    companion object {
+        /** T189: the shipped file of a `graph|search|contours` item's JSON (its `url` and `sha256`), or null. */
+        fun shippedOf(m: Map<String, Any?>): DerivedFile? =
+            if (m["url"] == null || m["sha256"] == null) null else DerivedFile.parse(m + ("kind" to m["kind"]))
+    }
 }
 
 /**

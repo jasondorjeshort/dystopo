@@ -1,9 +1,14 @@
 package io.github.jasondorjeshort.dystopo.server
 
 import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
+import io.github.jasondorjeshort.dystopo.packs.DerivedFile
 import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
+import io.github.jasondorjeshort.dystopo.packs.ShippedGraph
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
+import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
+import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import java.io.File
 import java.security.MessageDigest
@@ -35,6 +40,14 @@ import java.util.concurrent.ConcurrentHashMap
  * files it replaces). Bytes changed in place under an unchanged size and time are only found by
  * [refresh] (`POST /catalog/refresh`), which rehashes every file. [warm] fills missing sidecars in the
  * background at startup; [warmState] says how far it got (`/healthz`).
+ *
+ * T189 (ADR 0049's B): a pack whose vector archive has a routing graph beside it (`<vector archive>-graph.idx`, written
+ * by the pack build's `graph` phase or by the first route there) lists it under `derived` ([DerivedFile]: kind, file,
+ * `/out/` URL, bytes, `sha256`, the `sidecar`'s name, `format`, `version` and `key` with the tile zoom and both
+ * fingerprints) only when the file opens as a version 6 graph at the readers' tile zoom whose fingerprints match the
+ * archives beside it ([graph]); a stale or unreadable graph is left out (phones then build their own). The graph is
+ * never in `files`, `bytes`, `builtAt` or `contentHash`. Its SHA-256 sidecar follows the archives' rule (stamped with
+ * the file's time, so any rewrite of the graph makes it stale and it is recomputed); [warm] and [refresh] hash graphs too.
  */
 class PackCatalog(private val outDir: File, private val urlPrefix: String = "/out/") {
     /** One archive's description, cached by (length, modification time). */
@@ -99,6 +112,8 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
         val b = parts.map { it.bounds }
         val bounds = listOf(b.minOf { it[0] }, b.minOf { it[1] }, b.maxOf { it[2] }, b.maxOf { it[3] })
         val files = parts.map { it.json + ("sha256" to sha256(File(outDir, it.json["file"] as String))) }
+        val vector = p.files.firstOrNull { it.first == PackRole.VECTOR }?.second
+        val derived = if (p.single || vector == null) null else graph(vector, p.files.firstOrNull { it.first == PackRole.DEM }?.second)
         return linkedMapOf(
             "id" to p.name,
             "name" to p.name,
@@ -115,7 +130,50 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
             "license" to TileSets.licenseExpression(ids),
             "contentHash" to packHash(files.map { it["role"] as String to it["sha256"] as String }),
             "files" to files,
-        )
+        ).also { m -> if (derived != null) m["derived"] = listOf(derived.json()) } // T189
+    }
+
+    /** One graph file's check against its archives, cached by the three files' (length, time). */
+    private class GraphCheck(val stamp: String, val fingerprint: String?, val demFingerprint: String, val reason: String?)
+
+    private val graphChecks = ConcurrentHashMap<String, GraphCheck>()
+
+    /**
+     * T189: the routing graph beside [vector] (`<archive>-graph.idx`) as a catalog `derived` entry, with its SHA-256 (the
+     * sidecar), when it is a graph this server's readers accept for these archives: version [GraphTileFile.VERSION], the
+     * readers' tile zoom, and both fingerprints those of [vector] and [dem] ([ShippedGraph.mismatch]). Null when there is
+     * none or it does not match ([graphProblem] says why).
+     */
+    fun graph(vector: File, dem: File?): DerivedFile? {
+        val g = graphFile(vector)
+        if (!g.isFile) return null
+        val check = checkGraph(g, vector, dem)
+        if (check.reason != null || check.fingerprint == null) return null
+        return DerivedFile.graph(g.name, urlPrefix + g.name, g.length(), sha256(g), check.fingerprint, check.demFingerprint, sidecar = sidecar(g).name)
+    }
+
+    /** T189: why the graph beside [vector] is not listed (`missing`, a version or fingerprint mismatch, unreadable), or null when it is. */
+    fun graphProblem(vector: File, dem: File?): String? {
+        val g = graphFile(vector)
+        if (!g.isFile) return "missing"
+        return checkGraph(g, vector, dem).reason
+    }
+
+    private fun checkGraph(g: File, vector: File, dem: File?): GraphCheck {
+        val stamp = listOf(g, vector, dem).joinToString("|") { f -> f?.let { "${it.length()}:${it.lastModified()}" } ?: "-" }
+        graphChecks[g.path]?.takeIf { it.stamp == stamp }?.let { return it }
+        val check = try {
+            val fp = RoutingGraphBuilder.fingerprint(PmtilesReader.open(FileRangeSource(vector), Gzip.decompressors).header)
+            val demFp = dem?.let { RoutingGraphBuilder.fingerprint(PmtilesReader.open(FileRangeSource(it), Gzip.decompressors).header) }.orEmpty()
+            val src = FileRangeSource(g)
+            val a = GraphTileFile.open { offset, length -> src.read(offset, length) }
+            val shown = DerivedFile.graph(g.name, g.name, g.length(), "0".repeat(64), a.source.fingerprint, a.source.demFingerprint, tileZoom = a.tileZoom)
+            GraphCheck(stamp, a.source.fingerprint, a.source.demFingerprint, ShippedGraph.mismatch(shown, fp, demFp))
+        } catch (e: Exception) {
+            GraphCheck(stamp, null, "", e.message ?: e.toString())
+        }
+        graphChecks[g.path] = check
+        return check
     }
 
     /** [file]'s header and metadata, cached by (length, time). [role] null: only the tile type is wanted. */
@@ -176,7 +234,7 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
         warmEnded = 0L
         return Thread({
             try {
-                val files = runCatching { packFiles().flatMap { p -> p.files.map { it.second } } }.getOrDefault(emptyList())
+                val files = runCatching { packFiles().flatMap { p -> p.files.map { it.second } + graphsOf(p) } }.getOrDefault(emptyList())
                 warmDone.set(0)
                 warmTotal = files.size
                 for (f in files) {
@@ -213,9 +271,10 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
     fun refresh(): Map<String, Any?> {
         val started = System.nanoTime()
         described.clear()
+        graphChecks.clear()
         val changed = ArrayList<String>()
         var count = 0
-        for (p in packFiles()) for ((_, f) in p.files) {
+        for (p in packFiles()) for (f in p.files.map { it.second } + graphsOf(p)) {
             val side = sidecar(f)
             val old = side.takeIf { it.isFile }?.let { runCatching { it.readText().trim().substringBefore(' ') }.getOrNull() }
             val now = runCatching { sha256(f, force = true) }.getOrNull() ?: continue
@@ -225,8 +284,15 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
         return json() + ("refresh" to linkedMapOf("files" to count, "changed" to changed, "ms" to (System.nanoTime() - started) / 1_000_000))
     }
 
+    /** T189: the graph file of [p] when it has one on disk (hashed by [warm] and [refresh] like the archives). */
+    private fun graphsOf(p: PackFiles): List<File> =
+        if (p.single) emptyList() else p.files.filter { it.first == PackRole.VECTOR }.map { graphFile(it.second) }.filter { it.isFile }
+
     companion object {
         const val VERSION = 1
+
+        /** T189: the routing graph file beside a vector archive (the name every reader opens). */
+        fun graphFile(vector: File): File = File(vector.absoluteFile.parentFile, RoutingGraph.fileNameFor(vector.name))
         private val HEX64 = Regex("[0-9a-f]{64}")
 
         fun sidecar(file: File) = File(file.path + ".sha256")
