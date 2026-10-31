@@ -37,5 +37,4 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Open findings
 
-- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T149, T150 merged; T189 ships
-  the graph; the phone next.
+- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T149, T150 merged; T189 next.
