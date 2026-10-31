@@ -10,7 +10,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
-    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar, position button, view range"), // T176: position button; T182: view range
+    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar, position button, view range, print"), // T176: position button; T182: view range; T183: print
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout"), // T164: route times; T163: turn-back time; T172: recording; T161: readout
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
@@ -79,6 +79,8 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     WATER_SPOKEN("waterSpoken", SettingsGroup.NAVIGATION, "Water: Spoken", "SettingsPages", "T187"),
     // T182: how far "What can I see from here" looks (the Map page, after the position button)
     VIEW_RANGE("viewRange", SettingsGroup.MAP, "View range", "SettingsPages", "T182"),
+    // T183: the printed sheet of the current view (the Map page, last): an action, not a setting
+    PRINT_SHEET("printSheet", SettingsGroup.MAP, "Print a map sheet", "SettingsPages", "T183"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */
