@@ -250,10 +250,10 @@ private fun PointLines() {
  */
 internal val LONG_PRESS_HELP: List<HelpText> = listOf(
     HelpText("longPress.menu", "Long-press menu", "The map: long-press anywhere", show = { LongPressMenu.showAtCentre() }) {
-        "A long-press on the map opens this card. Route to here plans a route from where you are to the point; Change " +
-            "on the route card starts it elsewhere. Waypoint here marks the point with a waypoint you can name. Route " +
+        "A long-press on the map opens this card. Route to here plans a route from where you are to the point. " +
+            "Waypoint here marks the point with a waypoint you can name. Route " +
             "from here starts a route at the point: long-press again where it should end. What can I see from here " +
-            "shades the ground in sight from the point and lists the peaks in view."
+            "shows the ground and peaks in view."
     },
     // T188: the sun line.
     HelpText("longPress.sun", "Sun at this point", "The map: long-press anywhere, the sun line", show = { LongPressMenu.showAtCentre() }) {
