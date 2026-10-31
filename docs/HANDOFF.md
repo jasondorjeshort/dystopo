@@ -13,13 +13,11 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   (c1d54c8); T189 round one (1fa0e30) merged without a log entry (`merge-log.py` runs once, after its device
   round). **Running:** T189 round two (Opus; the planner lines, the device checks, emulator console 5658, host
   8774, its server 8696). Then: a verifier, the merge and log of T189, the sweep, the release, the close.
-- Leftovers: the `dystopo-wt/T178` folder and local `task/T178` (a Java process holds its build jars), `T178v`;
-  the owner's housekeeping row has `verify/T176`, `T185v-local`, local `task/T187` (a pre-rebase copy).
-  The main checkout has three uncommitted files another session edits (`.claude/statusline.js`, its tests, the
-  hatchery ADR 0002 text): left alone. The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`).
-- The sweep will meet the `update` part's "unexpected end of stream" from the mock releases API (T185's verifier,
-  with and without T185): a finding at the close if it recurs. Three rebases dropped closing braces in
-  `SettingsPages.kt` where two tasks appended blocks at one spot: a note for the append rule at the close.
+- Leftovers: `dystopo-wt/T178` and local `task/T178` (a Java process holds its build jars), `T178v`; the owner's
+  row has `verify/T176`, `T185v-local`, local `task/T187`. Three uncommitted files in the main checkout belong to
+  another session (`.claude/statusline.js`, its tests, hatchery ADR 0002): left alone. The live viewer is up on 8765.
+- For the close: the `update` part's "unexpected end of stream" from the mock releases API (T185's verifier, with
+  and without T185); three rebases dropped closing braces in `SettingsPages.kt` where blocks were appended at one spot.
 
 ## Next
 
