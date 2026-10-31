@@ -49,7 +49,7 @@ class WayBackTest {
         return pts
     }
 
-    private fun outAndBack(out: List<NavPoint>) = NavPath("out and back", out + out.reversed().drop(1).map { NavPoint(it.lat, it.lon + 3 / mLon, it.ele) })
+    private fun outAndBack(out: List<NavPoint>) = NavPath("out and back", out + out.reversed().drop(1).map { NavPoint(it.lat, it.lon + 2 / mLon, it.ele) })
 
     private class Walk(val rng: Random?, val sigmaM: Double) {
         val fixes = ArrayList<Triple<Double, Double, Long>>()

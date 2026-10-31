@@ -130,8 +130,9 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
      * same ground twice (the start and end of a loop, both directions of a spur).
      *
      * T180, the ahead tie-break: inside the window, every pass of the line near the position (a local minimum of the
-     * distance along the line, [passes]) within [snapM] is a candidate, and the one nearest [nearAlongM] wins, a pass
-     * behind it counting [BEHIND_WEIGHT] times its distance; so where two legs of an out-and-back lie on the same
+     * distance along the line, [passes]) within [snapM] is a candidate, and the one with the least sum of its distance
+     * from [nearAlongM] along the line (a pass behind counting [BEHIND_WEIGHT] times) and its distance from the position
+     * wins (so a pass much farther off, the other side of a switchback's corner, does not win on nearness alone); so where two legs of an out-and-back lie on the same
      * ground, progress stays on the leg it was on, and at the far end it goes on to the way back rather than running
      * backwards. Only when no pass in the window is within [snapM] (off the line, or the walker is somewhere else
      * after a gap) does the rest of the line count, by the old rule.
@@ -148,7 +149,7 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
         if (nearAlongM != null) {
             val from = nearAlongM - behindM
             val to = nearAlongM + aheadM
-            val best = passes(lat, lon, from, to).filter { it.distanceM <= snapM }.minByOrNull { cost(it.alongM, nearAlongM) }
+            val best = passes(lat, lon, from, to).filter { it.distanceM <= snapM }.minByOrNull { cost(it.alongM, nearAlongM) + it.distanceM }
             if (best != null) return best
         }
         var best: Projection? = null
