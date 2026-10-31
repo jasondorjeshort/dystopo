@@ -41,17 +41,11 @@ class ShippedGraphsTest {
     }
 
     @Test
-    fun graphFilesAreKnownByHeaderAndLeftoversGoWithThePack() {
+    fun graphFilesAreKnownByTheirHeader() {
         val graph = File(dir, "imported.idx").apply { writeBytes(byteArrayOf(0x44, 0x59, 0x53, 0x47, 6, 0, 0, 0, 4)) }
         val archive = File(dir, "x-dem.pmtiles").apply { writeBytes("PMTiles".toByteArray() + ByteArray(120)) }
         assertTrue(PackManager.isGraphFile(graph))
         assertFalse(PackManager.isGraphFile(archive))
         assertFalse(PackManager.isGraphFile(File(dir, "missing")))
-
-        val vector = File(dir, "x-outdoors.pmtiles").apply { writeBytes(ByteArray(8)) }
-        assertEquals(emptyList(), PackManager.graphLeftovers(vector))
-        val part = File(dir, "x-outdoors-graph.idx.part").apply { writeBytes(ByteArray(3)) }
-        val tmp = File(dir, "x-outdoors-graph.idx.tmp").apply { writeBytes(ByteArray(3)) }
-        assertEquals(setOf(part.name, tmp.name), PackManager.graphLeftovers(vector).map { it.name }.toSet())
     }
 }

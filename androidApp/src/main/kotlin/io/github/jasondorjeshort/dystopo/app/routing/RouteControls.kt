@@ -366,7 +366,9 @@ private fun BuildProgress() {
             val s = RoutePlanner.current
             text = when (s?.status) {
                 "building" -> "Building the trail network" + (if (s.total > 0) " ${s.done * 100 / s.total}%" else "") + " (first use of this pack)"
-                "loading" -> "Loading the trail network"
+                // T189: a graph that came with the map says so while it opens.
+                "loading" -> if (runCatching { RouteSession.shippedGraphs.source(s.pack, s.file)?.get("source") == "shipped" }.getOrDefault(false)) GRAPH_SHIPPED else "Loading the trail network"
+                "downloading" -> GRAPH_DOWNLOADING // T189: the graph shipped with the map is arriving
                 "waiting" -> GRAPH_WAITING // T149: the heap guard's trim and wait before the build
                 else -> null
             }
