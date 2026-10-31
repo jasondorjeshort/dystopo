@@ -49,6 +49,17 @@ tasks.named<Test>("test") {
     }
 }
 
+// T183: the PDF rasteriser (src/test/kotlin/.../PdfRaster.kt), to view a sheet the phone made:
+// ./gradlew :devtool:rasterisePdf --args="out/sheet.pdf out/sheet.png 150"  (paths from the repo root)
+tasks.register<JavaExec>("rasterisePdf") {
+    group = "verification"
+    description = "Rasterises a PDF page to a PNG: <in.pdf> <out.png> [dpi=150] [page=0]."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass = "io.github.jasondorjeshort.dystopo.devtool.PdfRasterKt"
+    workingDir = rootDir
+    systemProperty("java.awt.headless", "true")
+}
+
 // Regenerates the approved golden images from the current renderer. View them before committing.
 tasks.register<JavaExec>("updateGoldens") {
     group = "verification"

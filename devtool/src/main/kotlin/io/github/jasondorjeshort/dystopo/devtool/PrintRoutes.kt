@@ -10,6 +10,7 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.PageLayout
 import io.github.jasondorjeshort.dystopo.render.Paper
 import io.github.jasondorjeshort.dystopo.render.SheetGrid
+import io.github.jasondorjeshort.dystopo.render.SheetQuery
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.net.URLDecoder
@@ -116,16 +117,11 @@ class PrintRoutes(private val outDir: File = File("out")) : HttpHandler {
                 lon = q["lon"]?.toDoubleOrNull()?.takeIf { it.isFinite() } ?: throw IllegalArgumentException("lat and lon are needed")
             }
         }
-        val scaleText = (q["scale"] ?: PageLayout.DEFAULT_SCALE.toLong().toString()).trim().lowercase()
-        val scale = if (scaleText == "fit") null else scaleText.toDoubleOrNull()?.takeIf { it >= 500 && it.isFinite() }
-            ?: throw IllegalArgumentException("scale must be a denominator of at least 500 or fit (got '$scaleText')")
+        val (scale, paper, landscape, grid) = SheetQuery.parse(q) // T183: shared with the phone's POST /print
         require(scale != null || box != null) { "scale=fit needs bbox or area" }
-        val paper = q["paper"]?.let { Paper.parse(it) ?: throw IllegalArgumentException("paper must be a4, letter or a3") }
-        val grid = q["grid"]?.let { SheetGrid.parse(it) ?: throw IllegalArgumentException("grid must be utm, latlon, both or none") } ?: SheetGrid.UTM
         val units = q["units"]?.let { u -> ContourUnits.entries.firstOrNull { it.symbol == u.trim() } ?: throw IllegalArgumentException("units must be ft or m") }
         val dpi = q["dpi"]?.let { d -> d.toDoubleOrNull()?.takeIf { it in 50.0..300.0 } ?: throw IllegalArgumentException("dpi must be 50 to 300") }
             ?: PageLayout.DEFAULT_DPI
-        val landscape = q["landscape"]?.trim()?.lowercase() in listOf("1", "true", "on", "yes")
         q["title"]?.trim()?.takeIf { it.isNotEmpty() }?.let { title = it.take(80) }
         val packs = LiveTiles.findPacks(emptyList(), outDir).second
         val req = SheetRequest(

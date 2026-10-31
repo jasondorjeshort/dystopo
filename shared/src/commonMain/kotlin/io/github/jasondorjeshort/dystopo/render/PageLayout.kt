@@ -11,10 +11,14 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.ln
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlin.math.sign
+import kotlin.math.sin
 
 /** T167: the paper sizes a printed sheet offers, in millimetres, portrait. */
 enum class Paper(val key: String, val label: String, val widthMm: Double, val heightMm: Double) {
@@ -145,6 +149,16 @@ data class PageLayout(
 
     /** "1:25,000". */
     val ratioText: String get() = ratio(scale)
+
+    /** T183: the frame's centre (latitude, longitude): the requested centre within a pixel. */
+    val frameCenter: Pair<Double, Double> get() = latAt(frameHeightPx / 2.0) to lonAt(frameWidthPx / 2.0)
+
+    /**
+     * T183: the MapLibre camera zoom (512 px tiles) that draws the frame at exactly this scale when the map is
+     * rendered at [pixelRatio] physical pixels per style pixel, one physical pixel being one frame pixel. The
+     * phone's sheet snapshots at `dpi / STYLE_DPI`, so lines and text are as thick on paper as on a 150 dpi screen.
+     */
+    fun mapLibreZoom(pixelRatio: Double): Double = zoom + ln(tileSize / (512.0 * pixelRatio)) / ln(2.0)
 
     /** The UTM grid over the frame, in the zone of the centre; [spacingM] defaults to [gridSpacingMeters]. */
     fun utmGrid(spacingM: Double = gridSpacingMeters(scale)): UtmGrid {
@@ -362,5 +376,383 @@ data class PageLayout(
         }
 
         private data class Six(val a0: Double, val a1: Double, val b0: Double, val b1: Double, val c: Double, val limit: Double)
+    }
+}
+
+/**
+ * T183: the sheet options a print request carries (devtool's `GET /print`, the phone's `POST /print`): `scale`
+ * (a denominator from 500, default 25000, or `fit`: [scale] null), `paper` (`a4|letter|a3`; null: by region),
+ * `landscape=1` and `grid` (`utm|latlon|both|none`, default utm). [parse] throws [IllegalArgumentException] with
+ * the message a 400 carries.
+ */
+data class SheetQuery(val scale: Double?, val paper: Paper?, val landscape: Boolean, val grid: SheetGrid) {
+    companion object {
+        fun parse(q: Map<String, String>): SheetQuery {
+            val scaleText = (q["scale"] ?: PageLayout.DEFAULT_SCALE.toLong().toString()).trim().lowercase()
+            val scale = if (scaleText == "fit") null else scaleText.toDoubleOrNull()?.takeIf { it >= 500 && it.isFinite() }
+                ?: throw IllegalArgumentException("scale must be a denominator of at least 500 or fit (got '$scaleText')")
+            val paper = q["paper"]?.let { Paper.parse(it) ?: throw IllegalArgumentException("paper must be a4, letter or a3") }
+            val grid = q["grid"]?.let { SheetGrid.parse(it) ?: throw IllegalArgumentException("grid must be utm, latlon, both or none") } ?: SheetGrid.UTM
+            val landscape = q["landscape"]?.trim()?.lowercase() in listOf("1", "true", "on", "yes")
+            return SheetQuery(scale, paper, landscape, grid)
+        }
+    }
+}
+
+/** T183: a margin font: [sizePt] points on paper, bold or regular (Noto Sans in devtool, the phone's sans serif). */
+data class SheetFont(val sizePt: Double, val bold: Boolean)
+
+/** T183: a box in page pixels: [x], [y] its top-left corner, [w] and [h] its size. */
+data class BoxPx(val x: Double, val y: Double, val w: Double, val h: Double) {
+    val maxX: Double get() = x + w
+    val maxY: Double get() = y + h
+
+    /** Whether [o] overlaps this box (touching edges do not count; an empty box overlaps nothing). */
+    fun intersects(o: BoxPx): Boolean {
+        if (w <= 0 || h <= 0 || o.w <= 0 || o.h <= 0) return false
+        return o.x + o.w > x && o.y + o.h > y && o.x < x + w && o.y < y + h
+    }
+}
+
+/**
+ * T183: where [SheetMargin] draws: page pixels from the page's top-left corner, y down, colours as ARGB. devtool
+ * draws through AWT, the phone through `android.graphics.Canvas`; text measuring is the platform's, everything
+ * else (positions, sizes, texts, the north diagram) is [SheetMargin]'s.
+ */
+interface SheetCanvas {
+    /** [font]'s size in page pixels as the platform holds it (a line of a paragraph is 1.3 of it). */
+    fun fontPx(font: SheetFont): Double
+
+    /** The advance width of [text] in [font], page pixels: what a paragraph wraps by. */
+    fun advance(text: String, font: SheetFont): Double
+
+    /** Where [text] would be drawn by [text] with these arguments: its ink bounds, unpadded. */
+    fun measure(text: String, font: SheetFont, x: Double, y: Double, align: Double, rotate: Boolean): BoxPx
+
+    /**
+     * Fills [text] with its baseline at [y]; [align] 0 puts its left edge at [x], 0.5 its middle, 1 its right edge;
+     * [rotate] turns it a quarter left about ([x], [y]) (reading upward). Returns its ink bounds padded by 2 px.
+     */
+    fun text(text: String, font: SheetFont, x: Double, y: Double, align: Double, rotate: Boolean, color: Int): BoxPx
+
+    /** [text] unrotated with a [halo] outline under its [color] fill (labels inside the map). */
+    fun haloText(text: String, font: SheetFont, x: Double, y: Double, align: Double, color: Int, halo: Int)
+
+    fun line(x0: Double, y0: Double, x1: Double, y1: Double, color: Int, width: Double)
+
+    /** The polyline [xy] (x, y pairs) moved by [dx], [dy]. */
+    fun polyline(xy: DoubleArray, dx: Double, dy: Double, color: Int, width: Double)
+
+    /** A rectangle filled with [fill] and then outlined with [stroke] at [width], either null to skip it. */
+    fun rect(x: Double, y: Double, w: Double, h: Double, fill: Int?, stroke: Int?, width: Double)
+
+    /** The closed polygon [xy] (x, y pairs) filled. */
+    fun polygon(xy: DoubleArray, color: Int)
+
+    /** Drawing is clipped to this rectangle until [unclip]. */
+    fun clip(x: Double, y: Double, w: Double, h: Double)
+    fun unclip()
+}
+
+/**
+ * T183 (moved from devtool's `SheetComposer`, T167): the margins of a printed sheet around its map: the title band
+ * (the title and the ratio), the grid over the map with its labels in the band around the frame (UTM lines, or
+ * latitude and longitude ticks inside the frame), the frame, and the footer in three columns: the scale bars with
+ * the ratio under them and the contour interval; the true, grid and magnetic north diagram with the angles to a
+ * degree; the datum, zone, heights, date, sources and the "print at 100 percent" note. devtool draws it over
+ * its rendered map, the phone over a MapLibre snapshot; [texts] lists every margin text in drawing order.
+ * [contourInterval] and [contourUnits] ("ft" or "m") are the map's; [units] picks the scale bars (feet adds
+ * a kilometre bar) and the heights line.
+ */
+class SheetMargin(
+    val layout: PageLayout,
+    val title: String,
+    val grid: SheetGrid,
+    val units: ContourUnits,
+    val contourInterval: Double,
+    val contourUnits: String,
+    val north: NorthAngles,
+    /** The print date as printed, YYYY-MM-DD. */
+    val date: String,
+    val attribution: String,
+) {
+    val utm: UtmGrid? = if (grid.utm) layout.utmGrid() else null
+    val graticule: Graticule? = if (grid.latLon) layout.graticule() else null
+
+    /** Every margin text in drawing order (a paragraph whole), filled by [paint]. */
+    val texts = ArrayList<String>()
+
+    private fun mm(v: Double) = layout.px(v)
+    private fun pt(v: Double) = v * layout.dpi / 72
+    private fun regular(sizePt: Double) = SheetFont(sizePt, false)
+    private fun bold(sizePt: Double) = SheetFont(sizePt, true)
+
+    /** Draws the margins and the grid on [c]; the map is already in the frame. */
+    fun paint(c: SheetCanvas) {
+        texts.clear()
+        val fx = layout.frameXPx.toDouble()
+        val fy = layout.frameYPx.toDouble()
+        val fw = layout.frameWidthPx.toDouble()
+        val fh = layout.frameHeightPx.toDouble()
+
+        // Title band: the title on the left, the ratio on the right.
+        val titleBase = mm(PageLayout.MARGIN_MM + 7.0)
+        text(c, title, bold(14.0), fx, titleBase)
+        text(c, layout.ratioText, bold(11.0), fx + fw, titleBase, align = 1.0)
+
+        drawGrid(c, fx, fy, fw, fh)
+        c.rect(fx, fy, fw, fh, null, INK, mm(0.35))
+
+        val top = fy + fh + mm(PageLayout.LABEL_BAND_MM + 1.0)
+        val colW = fw / 3
+        scaleColumn(c, fx, top, colW - mm(4.0))
+        northColumn(c, fx + colW, top, colW - mm(3.0))
+        notesColumn(c, fx + 2 * colW, top, colW)
+    }
+
+    private fun drawGrid(c: SheetCanvas, fx: Double, fy: Double, fw: Double, fh: Double) {
+        val labelFont = regular(6.0)
+        utm?.let { grid ->
+            c.clip(fx, fy, fw, fh)
+            for (l in grid.eastings + grid.northings) c.polyline(l.xy, fx, fy, GRID_INK, mm(0.15))
+            c.unclip()
+            val gap = mm(1.0)
+            val last = HashMap<FrameEdge, BoxPx>()
+            for (lbl in grid.labels) {
+                val (x, y, rotate, align) = when (lbl.edge) {
+                    FrameEdge.TOP -> Quad(fx + lbl.at, fy - gap, false, 0.5)
+                    FrameEdge.BOTTOM -> Quad(fx + lbl.at, fy + fh + gap + pt(6.0) * 0.72, false, 0.5)
+                    FrameEdge.LEFT -> Quad(fx - gap, fy + lbl.at, true, 0.5)
+                    FrameEdge.RIGHT -> Quad(fx + fw + gap + pt(6.0) * 0.72, fy + lbl.at, true, 0.5)
+                }
+                val box = c.measure(lbl.text, labelFont, x, y, align, rotate)
+                if (last[lbl.edge]?.intersects(box) == true) continue
+                last[lbl.edge] = box
+                text(c, lbl.text, labelFont, x, y, align, rotate, record = false)
+            }
+            texts += grid.labels.map { it.text }.distinct()
+        }
+        graticule?.let { gr ->
+            val w = mm(0.2)
+            val tick = mm(2.5)
+            for (lon in gr.lons) {
+                val x = fx + layout.frameX(lon)
+                c.line(x, fy, x, fy + tick, LATLON_INK, w)
+                c.line(x, fy + fh, x, fy + fh - tick, LATLON_INK, w)
+            }
+            for (lat in gr.lats) {
+                val y = fy + layout.frameY(lat)
+                c.line(fx, y, fx + tick, y, LATLON_INK, w)
+                c.line(fx + fw, y, fx + fw - tick, y, LATLON_INK, w)
+            }
+            // Small crosses where meridians and parallels meet inside the map.
+            val arm = mm(1.2)
+            for (lon in gr.lons) for (lat in gr.lats) {
+                val x = fx + layout.frameX(lon)
+                val y = fy + layout.frameY(lat)
+                c.line(x - arm, y, x + arm, y, LATLON_INK, w)
+                c.line(x, y - arm, x, y + arm, LATLON_INK, w)
+            }
+            // Labels just inside the frame beside each tick, haloed, so they share no band with UTM labels.
+            val font = regular(5.5)
+            val inset = tick + mm(0.6)
+            for (lbl in gr.labels) {
+                when (lbl.edge) {
+                    FrameEdge.TOP -> c.haloText(lbl.text, font, fx + lbl.at, fy + inset + pt(5.5) * 0.72, 0.5, LATLON_INK, HALO)
+                    FrameEdge.BOTTOM -> c.haloText(lbl.text, font, fx + lbl.at, fy + fh - inset, 0.5, LATLON_INK, HALO)
+                    FrameEdge.LEFT -> c.haloText(lbl.text, font, fx + inset, fy + lbl.at + pt(5.5) * 0.36, 0.0, LATLON_INK, HALO)
+                    FrameEdge.RIGHT -> c.haloText(lbl.text, font, fx + fw - inset, fy + lbl.at + pt(5.5) * 0.36, 1.0, LATLON_INK, HALO)
+                }
+            }
+            texts += gr.labels.map { it.text }.distinct()
+        }
+    }
+
+    private data class Quad(val x: Double, val y: Double, val rotate: Boolean, val align: Double)
+
+    /** Scale bars (the sheet's units first, kilometres too on a feet sheet), the ratio under them, the contour interval. */
+    private fun scaleColumn(c: SheetCanvas, x: Double, top: Double, width: Double) {
+        val metersPerMm = layout.scale / 1000
+        val maxMm = width / layout.px(1.0)
+        val bars = if (units == ContourUnits.FEET) listOf(ContourUnits.FEET, ContourUnits.METERS) else listOf(ContourUnits.METERS)
+        var y = top + mm(2.5)
+        for (u in bars) {
+            val bar = UnitFormat.scaleBar(metersPerMm, maxMm - 12, u) ?: continue
+            scaleBar(c, x, y, mm(bar.px), bar.value, bar.label)
+            y += mm(7.0)
+        }
+        y += pt(12.0) * 0.72 - mm(1.0)
+        text(c, layout.ratioText, bold(12.0), x, y)
+        y += mm(4.5)
+        text(c, contourLine(contourInterval, contourUnits), regular(7.0), x, y)
+    }
+
+    /** One bar: alternating black and white blocks, "0" under its start and the length under its end. */
+    private fun scaleBar(c: SheetCanvas, x: Double, y: Double, length: Double, value: Double, label: String) {
+        val lead = (value / 10.0.pow(floor(log10(value)))).roundToInt()
+        val parts = when (lead) { 2 -> 4; else -> 5 }
+        val h = mm(1.6)
+        for (i in 0 until parts) c.rect(x + length * i / parts, y, length / parts, h, if (i % 2 == 0) INK else WHITE, INK, mm(0.15))
+        val f = regular(6.5)
+        val base = y + h + mm(0.8) + pt(6.5) * 0.72
+        text(c, "0", f, x, base, align = 0.5)
+        text(c, label, f, x + length, base, align = 0.5)
+    }
+
+    /** True north up, grid north (with a UTM grid) and magnetic north at their angles, small ones opened up to be seen, and the numbers. */
+    private fun northColumn(c: SheetCanvas, x: Double, top: Double, width: Double) {
+        // The diagram is not to scale, as on printed sheets (the text gives the real angles): grid north opens to at
+        // least 10 degrees and magnetic north to at least 3, and 8 more than grid north when both lean the same way,
+        // so the labels clear the star, each other's rays and the text.
+        val gn = if (utm != null) max(abs(north.convergenceDeg), 10.0) * (if (north.convergenceDeg < 0) -1.0 else 1.0) else null
+        var mn = max(abs(north.declinationDeg), 3.0) * (if (north.declinationDeg < 0) -1.0 else 1.0)
+        if (gn != null && sign(gn) == sign(mn) && abs(mn) < abs(gn) + 8) mn = (abs(gn) + 8) * sign(mn)
+        val baseX = x + mm(if (mn < 0 || (gn ?: 0.0) < 0) 13.0 else 5.0)
+        val baseY = top + mm(25.0)
+        val len = mm(22.0)
+        val stroke = mm(0.25)
+        fun ray(angleDeg: Double, length: Double = len): Pair<Double, Double> {
+            val a = angleDeg * DEG
+            val tx = baseX + length * sin(a)
+            val ty = baseY - length * cos(a)
+            c.line(baseX, baseY, tx, ty, INK, stroke)
+            return tx to ty
+        }
+        // True north: a star at the tip.
+        val (tx, ty) = ray(0.0)
+        c.polygon(star(tx, ty - mm(1.6), mm(1.5)), INK)
+        val f = bold(6.0)
+        var right = baseX + mm(2.0)
+        if (gn != null) {
+            // Shorter than the others, labelled above its tip.
+            val (gx, gy) = ray(gn, mm(15.0))
+            right = max(right, text(c, "GN", f, gx, gy - mm(0.8), align = 0.5).maxX)
+        }
+        val (mx, my) = ray(mn)
+        // A half arrowhead on magnetic north.
+        val a = mn * DEG
+        c.polygon(
+            doubleArrayOf(
+                mx, my,
+                mx - mm(2.2) * sin(a) + mm(0.9) * cos(a), my + mm(2.2) * cos(a) + mm(0.9) * sin(a),
+                mx - mm(2.2) * sin(a), my + mm(2.2) * cos(a),
+            ),
+            INK,
+        )
+        val mnBox = text(c, "MN", f, mx + mm(0.9) * sign(mn), my + pt(6.0) * 0.36, align = if (mn >= 0) 0.0 else 1.0)
+        right = maxOf(right, mnBox.maxX, mx)
+
+        var y = top + mm(1.0) + pt(6.5) * 0.72
+        val textX = max(x + mm(17.0), right + mm(2.0))
+        for (l in northLines(north, utm != null)) y = paragraph(c, l, regular(6.5), textX, y, x + width - textX)
+    }
+
+    private fun star(cx: Double, cy: Double, r: Double): DoubleArray {
+        val xy = DoubleArray(20)
+        for (i in 0 until 10) {
+            val rr = if (i % 2 == 0) r else r * 0.42
+            val a = PI / 5 * i
+            xy[2 * i] = cx + rr * sin(a)
+            xy[2 * i + 1] = cy - rr * cos(a)
+        }
+        return xy
+    }
+
+    /** Datum and zone, heights, the date, the sources, and the note to print at actual size. */
+    private fun notesColumn(c: SheetCanvas, x: Double, top: Double, width: Double) {
+        val f = regular(6.5)
+        var y = top + mm(1.0) + pt(6.5) * 0.72
+        y = paragraph(c, gridLine(), f, x, y, width)
+        y = paragraph(c, "Heights in ${if (units == ContourUnits.FEET) "feet" else "metres"} above sea level (EGM2008).", f, x, y, width)
+        y = paragraph(c, "Printed $date.", f, x, y, width)
+        y = paragraph(c, "Sources: $attribution", regular(5.5), x, y, width)
+        paragraph(c, PRINT_NOTE, bold(6.5), x, y + mm(0.5), width)
+    }
+
+    /** The grid, datum and zone line of the notes. */
+    fun gridLine(): String {
+        val u = utm
+        val g = graticule
+        return when {
+            u != null && g != null -> "UTM zone ${u.zoneName}, ${spacing(u.spacingM)} grid; latitude and longitude every ${arc(g.spacingArcSec)}. Datum WGS84."
+            u != null -> "UTM zone ${u.zoneName}, ${spacing(u.spacingM)} grid. Datum WGS84."
+            g != null -> "Latitude and longitude every ${arc(g.spacingArcSec)}. Datum WGS84. UTM zone ${Utm.zoneFor(layout.centerLon)}."
+            else -> "Datum WGS84. UTM zone ${Utm.zoneFor(layout.centerLon)}."
+        }
+    }
+
+    /** Word-wrapped text from baseline [y]; returns the baseline after it. */
+    private fun paragraph(c: SheetCanvas, text: String, font: SheetFont, x: Double, y: Double, width: Double): Double {
+        val lineH = c.fontPx(font) * 1.3
+        var line = ""
+        var base = y
+        for (word in text.split(' ')) {
+            val next = if (line.isEmpty()) word else "$line $word"
+            if (line.isNotEmpty() && c.advance(next, font) > width) {
+                text(c, line, font, x, base, record = false)
+                base += lineH
+                line = word
+            } else {
+                line = next
+            }
+        }
+        if (line.isNotEmpty()) { text(c, line, font, x, base, record = false); base += lineH }
+        texts += text
+        return base
+    }
+
+    private fun text(
+        c: SheetCanvas, s: String, font: SheetFont, x: Double, y: Double, align: Double = 0.0, rotate: Boolean = false, record: Boolean = true,
+    ): BoxPx {
+        val box = c.text(s, font, x, y, align, rotate, INK)
+        if (record) texts += s
+        return box
+    }
+
+    companion object {
+        const val INK = 0xFF1F1A17.toInt()
+        const val WHITE = 0xFFFFFFFF.toInt()
+        /** UTM lines: near-black at two thirds. */
+        const val GRID_INK = 0xAA101010.toInt()
+        /** Latitude and longitude ticks and labels. */
+        const val LATLON_INK = 0xFF0B2E6B.toInt()
+        const val HALO = 0xDCFFFFFF.toInt()
+        private const val DEG = PI / 180.0
+
+        const val PRINT_NOTE = "Print at 100 percent (actual size), not fit to page, or the scale is wrong."
+
+        /** "Contour interval 40 feet". */
+        fun contourLine(interval: Double, units: String): String {
+            val text = if (interval == interval.roundToLong().toDouble()) interval.roundToLong().toString() else interval.toString()
+            return "Contour interval $text ${if (units == "ft") "feet" else "metres"}"
+        }
+
+        /** The north diagram's text: magnetic north, and with a UTM grid grid north and the angle between them. */
+        fun northLines(north: NorthAngles, utm: Boolean): List<String> {
+            val lines = ArrayList<String>()
+            lines += "Magnetic north (MN) is ${degrees(north.declinationDeg)} of true north (star)."
+            if (utm) {
+                lines += "Grid north (GN) is ${degrees(north.convergenceDeg)} of true north."
+                lines += "Magnetic north is ${degrees(north.magneticFromGridDeg)} of grid north."
+            }
+            lines += "At the sheet's centre in ${north.year.toInt()}; the declination changes every year. The diagram is not to scale."
+            return lines
+        }
+
+        /** "15° east", "1° west", "less than 1° east" (to a degree). */
+        fun degrees(v: Double): String {
+            val d = v.roundToInt()
+            return if (d == 0) "less than 1°" + (if (v >= 0) " east" else " west") else "${abs(d)}° ${if (d > 0) "east" else "west"}"
+        }
+
+        /** "1 km", "500 m", "2.5 km": a grid spacing. */
+        fun spacing(m: Double) = if (m >= 1000) "${UnitFormat.fixed(m / 1000, if (m % 1000 == 0.0) 0 else 1)} km" else "${m.roundToInt()} m"
+
+        /** "30\"", "1'", "1°": a graticule step. */
+        fun arc(s: Int) = when {
+            s % 3600 == 0 -> "${s / 3600}°"
+            s % 60 == 0 -> "${s / 60}'"
+            else -> "$s\""
+        }
     }
 }

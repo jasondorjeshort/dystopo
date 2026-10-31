@@ -20,11 +20,13 @@ import io.github.jasondorjeshort.dystopo.gpx.GpxDocument
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.render.ContourLabel
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
-import io.github.jasondorjeshort.dystopo.render.FrameEdge
 import io.github.jasondorjeshort.dystopo.render.PageLayout
 import io.github.jasondorjeshort.dystopo.render.Paper
+import io.github.jasondorjeshort.dystopo.render.BoxPx
+import io.github.jasondorjeshort.dystopo.render.SheetCanvas
+import io.github.jasondorjeshort.dystopo.render.SheetFont
 import io.github.jasondorjeshort.dystopo.render.SheetGrid
-import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import io.github.jasondorjeshort.dystopo.render.SheetMargin
 import io.github.jasondorjeshort.dystopo.render.UnitRegions
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import kotlinx.serialization.Serializable
@@ -42,7 +44,6 @@ import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.RenderingHints
-import java.awt.Shape
 import java.awt.geom.AffineTransform
 import java.awt.geom.Ellipse2D
 import java.awt.geom.Line2D
@@ -56,10 +57,8 @@ import java.time.ZoneId
 import java.util.GregorianCalendar
 import java.util.TimeZone
 import javax.imageio.ImageIO
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
-import kotlin.math.sign
 
 /**
  * T167: one printed map sheet, as asked for on the command line (`devtool print`) or by `GET /print`
@@ -383,31 +382,24 @@ internal fun hints(g: Graphics2D) {
 }
 
 /**
- * Draws a sheet's page around its rendered map: the title band, the grid over the map with its labels in the
- * band around the frame, the frame, and the footer: the scale bars with the ratio under them and the contour
- * interval; the true, grid and magnetic north diagram with the angles to a degree; the datum, zone, date,
- * sources and the "print at 100 percent" note. [texts] lists every margin text in drawing order.
+ * Draws a sheet's page around its rendered map: the map in the frame, then the margins `shared`'s [SheetMargin]
+ * lays out (T183: moved there from here so the phone draws the same sheet), through [AwtSheetCanvas]. [texts]
+ * lists every margin text in drawing order, [boxes] where text was drawn (the golden compares them loosely).
  */
 class SheetComposer(
     private val layout: PageLayout,
-    private val req: SheetRequest,
-    private val units: ContourUnits,
-    private val contours: ContourStats,
-    private val north: io.github.jasondorjeshort.dystopo.render.NorthAngles,
-    private val date: String,
-    private val attribution: String,
+    req: SheetRequest,
+    units: ContourUnits,
+    contours: ContourStats,
+    north: io.github.jasondorjeshort.dystopo.render.NorthAngles,
+    date: String,
+    attribution: String,
 ) {
-    val utm = if (req.grid.utm) layout.utmGrid() else null
-    val graticule = if (req.grid.latLon) layout.graticule() else null
-    val texts = ArrayList<String>()
+    private val margin = SheetMargin(layout, req.title, req.grid, units, contours.interval, contours.units, north, date, attribution)
+    val utm get() = margin.utm
+    val graticule get() = margin.graticule
+    val texts: List<String> get() = margin.texts
     val boxes = ArrayList<Rectangle2D>()
-
-    private val ink = Color(0x1f, 0x1a, 0x17)
-    private val gridInk = Color(0x10, 0x10, 0x10, 170)
-    private fun mm(v: Double) = layout.px(v)
-    private fun pt(v: Double) = v * layout.dpi / 72
-    private fun regular(sizePt: Double): Font = RenderFonts.regular(pt(sizePt))
-    private fun bold(sizePt: Double): Font = RenderFonts.bold(pt(sizePt))
 
     fun compose(map: BufferedImage): BufferedImage {
         val page = BufferedImage(layout.pageWidthPx, layout.pageHeightPx, BufferedImage.TYPE_INT_RGB)
@@ -415,291 +407,105 @@ class SheetComposer(
         hints(g)
         g.color = Color.WHITE
         g.fillRect(0, 0, page.width, page.height)
-        val fx = layout.frameXPx.toDouble()
-        val fy = layout.frameYPx.toDouble()
-        val fw = layout.frameWidthPx.toDouble()
-        val fh = layout.frameHeightPx.toDouble()
         g.drawImage(map, layout.frameXPx, layout.frameYPx, null)
-
-        // Title band: the title on the left, the ratio on the right.
-        val titleBase = mm(PageLayout.MARGIN_MM + 7.0)
-        text(g, req.title, bold(14.0), fx, titleBase)
-        text(g, layout.ratioText, bold(11.0), fx + fw, titleBase, align = 1.0)
-
-        drawGrid(g, fx, fy, fw, fh)
-        g.color = ink
-        g.stroke = BasicStroke(mm(0.35).toFloat())
-        g.draw(Rectangle2D.Double(fx, fy, fw, fh))
-
-        val top = fy + fh + mm(PageLayout.LABEL_BAND_MM + 1.0)
-        val colW = fw / 3
-        scaleColumn(g, fx, top, colW - mm(4.0))
-        northColumn(g, fx + colW, top, colW - mm(3.0))
-        notesColumn(g, fx + 2 * colW, top, colW)
+        margin.paint(AwtSheetCanvas(g, layout, boxes))
         g.dispose()
         return page
     }
+}
 
-    private fun drawGrid(g: Graphics2D, fx: Double, fy: Double, fw: Double, fh: Double) {
-        val frame = Rectangle2D.Double(fx, fy, fw, fh)
-        val labelFont = regular(6.0)
-        utm?.let { grid ->
-            g.clip = frame
-            g.color = gridInk
-            g.stroke = BasicStroke(mm(0.15).toFloat())
-            for (l in grid.eastings + grid.northings) {
-                val p = Path2D.Double()
-                for (i in 0 until l.xy.size / 2) if (i == 0) p.moveTo(fx + l.xy[0], fy + l.xy[1]) else p.lineTo(fx + l.xy[2 * i], fy + l.xy[2 * i + 1])
-                g.draw(p)
-            }
-            g.clip = null
-            g.color = ink
-            val gap = mm(1.0)
-            val last = HashMap<FrameEdge, Rectangle2D>()
-            for (lbl in grid.labels) {
-                val (x, y, rotate, align) = when (lbl.edge) {
-                    FrameEdge.TOP -> Quad(fx + lbl.at, fy - gap, false, 0.5)
-                    FrameEdge.BOTTOM -> Quad(fx + lbl.at, fy + fh + gap + pt(6.0) * 0.72, false, 0.5)
-                    FrameEdge.LEFT -> Quad(fx - gap, fy + lbl.at, true, 0.5)
-                    FrameEdge.RIGHT -> Quad(fx + fw + gap + pt(6.0) * 0.72, fy + lbl.at, true, 0.5)
-                }
-                val box = measure(g, lbl.text, labelFont, x, y, align, rotate)
-                if (last[lbl.edge]?.intersects(box) == true) continue
-                last[lbl.edge] = box
-                text(g, lbl.text, labelFont, x, y, align, rotate, record = false)
-            }
-            texts += grid.labels.map { it.text }.distinct()
-        }
-        graticule?.let { gr ->
-            g.color = Color(0x0b, 0x2e, 0x6b)
-            g.stroke = BasicStroke(mm(0.2).toFloat())
-            val tick = mm(2.5)
-            for (lon in gr.lons) {
-                val x = fx + layout.frameX(lon)
-                g.draw(Line2D.Double(x, fy, x, fy + tick))
-                g.draw(Line2D.Double(x, fy + fh, x, fy + fh - tick))
-            }
-            for (lat in gr.lats) {
-                val y = fy + layout.frameY(lat)
-                g.draw(Line2D.Double(fx, y, fx + tick, y))
-                g.draw(Line2D.Double(fx + fw, y, fx + fw - tick, y))
-            }
-            // Small crosses where meridians and parallels meet inside the map.
-            val arm = mm(1.2)
-            for (lon in gr.lons) for (lat in gr.lats) {
-                val x = fx + layout.frameX(lon)
-                val y = fy + layout.frameY(lat)
-                g.draw(Line2D.Double(x - arm, y, x + arm, y))
-                g.draw(Line2D.Double(x, y - arm, x, y + arm))
-            }
-            // Labels just inside the frame beside each tick, haloed, so they share no band with UTM labels.
-            val font = regular(5.5)
-            val inset = tick + mm(0.6)
-            for (lbl in gr.labels) {
-                when (lbl.edge) {
-                    FrameEdge.TOP -> haloText(g, lbl.text, font, fx + lbl.at, fy + inset + pt(5.5) * 0.72, 0.5)
-                    FrameEdge.BOTTOM -> haloText(g, lbl.text, font, fx + lbl.at, fy + fh - inset, 0.5)
-                    FrameEdge.LEFT -> haloText(g, lbl.text, font, fx + inset, fy + lbl.at + pt(5.5) * 0.36, 0.0)
-                    FrameEdge.RIGHT -> haloText(g, lbl.text, font, fx + fw - inset, fy + lbl.at + pt(5.5) * 0.36, 1.0)
-                }
-            }
-            texts += gr.labels.map { it.text }.distinct()
-        }
+/**
+ * T183: [SheetCanvas] on AWT, with the bundled Noto Sans ([RenderFonts]) at the page's dpi. Records every text's
+ * box (padded by 2 px, 3 px with a halo) in [boxes].
+ */
+class AwtSheetCanvas(private val g: Graphics2D, private val layout: PageLayout, private val boxes: MutableList<Rectangle2D>) : SheetCanvas {
+    private val fonts = HashMap<SheetFont, Font>()
+
+    private fun font(f: SheetFont): Font = fonts.getOrPut(f) {
+        val px = f.sizePt * layout.dpi / 72
+        if (f.bold) RenderFonts.bold(px) else RenderFonts.regular(px)
     }
 
-    private data class Quad(val x: Double, val y: Double, val rotate: Boolean, val align: Double)
+    private fun color(argb: Int) = Color(argb, true)
 
-    /** Scale bars (the sheet's units first, kilometres too on a feet sheet), the ratio under them, the contour interval. */
-    private fun scaleColumn(g: Graphics2D, x: Double, top: Double, width: Double) {
-        val metersPerMm = layout.scale / 1000
-        val maxMm = width / layout.px(1.0)
-        val bars = if (units == ContourUnits.FEET) listOf(ContourUnits.FEET, ContourUnits.METERS) else listOf(ContourUnits.METERS)
-        var y = top + mm(2.5)
-        for (u in bars) {
-            val bar = UnitFormat.scaleBar(metersPerMm, maxMm - 12, u) ?: continue
-            scaleBar(g, x, y, mm(bar.px), bar.value, bar.label)
-            y += mm(7.0)
-        }
-        y += pt(12.0) * 0.72 - mm(1.0)
-        text(g, layout.ratioText, bold(12.0), x, y)
-        y += mm(4.5)
-        val interval = contours.interval.let { if (it == it.roundToLong().toDouble()) it.roundToLong().toString() else it.toString() }
-        val word = if (contours.units == "ft") "feet" else "metres"
-        text(g, "Contour interval $interval $word", regular(7.0), x, y)
+    override fun fontPx(font: SheetFont): Double = font(font).size2D.toDouble()
+
+    override fun advance(text: String, font: SheetFont): Double = font(font).getStringBounds(text, g.fontRenderContext).width
+
+    override fun measure(text: String, font: SheetFont, x: Double, y: Double, align: Double, rotate: Boolean): BoxPx {
+        val b = font(font).createGlyphVector(g.fontRenderContext, text).visualBounds
+        return box(transform(x, y, b.width, align, rotate).createTransformedShape(b).bounds2D)
     }
 
-    /** One bar: alternating black and white blocks, "0" under its start and the length under its end. */
-    private fun scaleBar(g: Graphics2D, x: Double, y: Double, length: Double, value: Double, label: String) {
-        val lead = (value / Math.pow(10.0, Math.floor(Math.log10(value)))).roundToInt()
-        val parts = when (lead) { 2 -> 4; else -> 5 }
-        val h = mm(1.6)
-        g.stroke = BasicStroke(mm(0.15).toFloat())
-        for (i in 0 until parts) {
-            val r = Rectangle2D.Double(x + length * i / parts, y, length / parts, h)
-            g.color = if (i % 2 == 0) ink else Color.WHITE
-            g.fill(r)
-            g.color = ink
+    override fun text(text: String, font: SheetFont, x: Double, y: Double, align: Double, rotate: Boolean, color: Int): BoxPx {
+        val gv = font(font).createGlyphVector(g.fontRenderContext, text)
+        val width = gv.logicalBounds.width
+        val shape = transform(x, y, width, align, rotate).createTransformedShape(gv.getOutline(0f, 0f))
+        g.color = color(color)
+        g.fill(shape)
+        val r = shape.bounds2D.let { Rectangle2D.Double(it.x - 2, it.y - 2, it.width + 4, it.height + 4) }
+        boxes += r
+        return box(r)
+    }
+
+    override fun haloText(text: String, font: SheetFont, x: Double, y: Double, align: Double, color: Int, halo: Int) {
+        val f = font(font)
+        val gv = f.createGlyphVector(g.fontRenderContext, text)
+        val shape = transform(x, y, gv.logicalBounds.width, align, false).createTransformedShape(gv.getOutline(0f, 0f))
+        g.color = color(halo)
+        g.stroke = BasicStroke((f.size2D * 0.25).toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g.draw(shape)
+        g.color = color(color)
+        g.fill(shape)
+        boxes += shape.bounds2D.let { Rectangle2D.Double(it.x - 3, it.y - 3, it.width + 6, it.height + 6) }
+    }
+
+    override fun line(x0: Double, y0: Double, x1: Double, y1: Double, color: Int, width: Double) {
+        g.color = color(color)
+        g.stroke = BasicStroke(width.toFloat())
+        g.draw(Line2D.Double(x0, y0, x1, y1))
+    }
+
+    override fun polyline(xy: DoubleArray, dx: Double, dy: Double, color: Int, width: Double) {
+        val p = Path2D.Double()
+        for (i in 0 until xy.size / 2) if (i == 0) p.moveTo(dx + xy[0], dy + xy[1]) else p.lineTo(dx + xy[2 * i], dy + xy[2 * i + 1])
+        g.color = color(color)
+        g.stroke = BasicStroke(width.toFloat())
+        g.draw(p)
+    }
+
+    override fun rect(x: Double, y: Double, w: Double, h: Double, fill: Int?, stroke: Int?, width: Double) {
+        val r = Rectangle2D.Double(x, y, w, h)
+        fill?.let { g.color = color(it); g.fill(r) }
+        stroke?.let {
+            g.color = color(it)
+            g.stroke = BasicStroke(width.toFloat())
             g.draw(r)
         }
-        val f = regular(6.5)
-        val base = y + h + mm(0.8) + pt(6.5) * 0.72
-        text(g, "0", f, x, base, align = 0.5)
-        text(g, label, f, x + length, base, align = 0.5)
     }
 
-    /** True north up, grid north (with a UTM grid) and magnetic north at their angles, small ones opened up to be seen, and the numbers. */
-    private fun northColumn(g: Graphics2D, x: Double, top: Double, width: Double) {
-        // The diagram is not to scale, as on printed sheets (the text gives the real angles): grid north opens to at
-        // least 10 degrees and magnetic north to at least 3, and 8 more than grid north when both lean the same way,
-        // so the labels clear the star, each other's rays and the text.
-        val gn = if (utm != null) maxOf(abs(north.convergenceDeg), 10.0) * (if (north.convergenceDeg < 0) -1.0 else 1.0) else null
-        var mn = maxOf(abs(north.declinationDeg), 3.0) * (if (north.declinationDeg < 0) -1.0 else 1.0)
-        if (gn != null && sign(gn) == sign(mn) && abs(mn) < abs(gn) + 8) mn = (abs(gn) + 8) * sign(mn)
-        val baseX = x + mm(if (mn < 0 || (gn ?: 0.0) < 0) 13.0 else 5.0)
-        val baseY = top + mm(25.0)
-        val len = mm(22.0)
-        g.color = ink
-        g.stroke = BasicStroke(mm(0.25).toFloat())
-        fun ray(angleDeg: Double, length: Double = len): Pair<Double, Double> {
-            val a = Math.toRadians(angleDeg)
-            val tx = baseX + length * Math.sin(a)
-            val ty = baseY - length * Math.cos(a)
-            g.draw(Line2D.Double(baseX, baseY, tx, ty))
-            return tx to ty
-        }
-        // True north: a star at the tip.
-        val (tx, ty) = ray(0.0)
-        g.fill(star(tx, ty - mm(1.6), mm(1.5)))
-        val f = bold(6.0)
-        var right = baseX + mm(2.0)
-        if (gn != null) {
-            // Shorter than the others, labelled above its tip.
-            val (gx, gy) = ray(gn, mm(15.0))
-            text(g, "GN", f, gx, gy - mm(0.8), align = 0.5)
-            right = maxOf(right, boxes.last().maxX)
-        }
-        val (mx, my) = ray(mn)
-        // A half arrowhead on magnetic north.
-        val a = Math.toRadians(mn)
-        val head = Path2D.Double().apply {
-            moveTo(mx, my)
-            lineTo(mx - mm(2.2) * Math.sin(a) + mm(0.9) * Math.cos(a), my + mm(2.2) * Math.cos(a) + mm(0.9) * Math.sin(a))
-            lineTo(mx - mm(2.2) * Math.sin(a), my + mm(2.2) * Math.cos(a))
-            closePath()
-        }
-        g.fill(head)
-        text(g, "MN", f, mx + mm(0.9) * sign(mn), my + pt(6.0) * 0.36, align = if (mn >= 0) 0.0 else 1.0)
-        right = maxOf(right, boxes.last().maxX, mx)
-
-        val year = north.year.toInt()
-        val lines = ArrayList<String>()
-        lines += "Magnetic north (MN) is ${degrees(north.declinationDeg)} of true north (star)."
-        if (utm != null) {
-            lines += "Grid north (GN) is ${degrees(north.convergenceDeg)} of true north."
-            lines += "Magnetic north is ${degrees(north.magneticFromGridDeg)} of grid north."
-        }
-        lines += "At the sheet's centre in $year; the declination changes every year. The diagram is not to scale."
-        var y = top + mm(1.0) + pt(6.5) * 0.72
-        val textX = maxOf(x + mm(17.0), right + mm(2.0))
-        for (l in lines) y = paragraph(g, l, regular(6.5), textX, y, x + width - textX)
+    override fun polygon(xy: DoubleArray, color: Int) {
+        val p = Path2D.Double()
+        for (i in 0 until xy.size / 2) if (i == 0) p.moveTo(xy[0], xy[1]) else p.lineTo(xy[2 * i], xy[2 * i + 1])
+        p.closePath()
+        g.color = color(color)
+        g.fill(p)
     }
 
-    /** "15° east", "1° west", "0°" (to a degree). */
-    private fun degrees(v: Double): String {
-        val d = v.roundToInt()
-        return if (d == 0) "less than 1°" + (if (v >= 0) " east" else " west") else "${abs(d)}° ${if (d > 0) "east" else "west"}"
+    override fun clip(x: Double, y: Double, w: Double, h: Double) {
+        g.clip = Rectangle2D.Double(x, y, w, h)
     }
 
-    private fun star(cx: Double, cy: Double, r: Double): Shape = Path2D.Double().apply {
-        for (i in 0 until 10) {
-            val rr = if (i % 2 == 0) r else r * 0.42
-            val a = Math.PI / 5 * i
-            val px = cx + rr * Math.sin(a)
-            val py = cy - rr * Math.cos(a)
-            if (i == 0) moveTo(px, py) else lineTo(px, py)
-        }
-        closePath()
+    override fun unclip() {
+        g.clip = null
     }
 
-    /** Datum and zone, heights, the date, the sources, and the note to print at actual size. */
-    private fun notesColumn(g: Graphics2D, x: Double, top: Double, width: Double) {
-        val f = regular(6.5)
-        var y = top + mm(1.0) + pt(6.5) * 0.72
-        val gridLine = when {
-            utm != null && graticule != null -> "UTM zone ${utm.zoneName}, ${spacing(utm.spacingM)} grid; latitude and longitude every ${arc(graticule.spacingArcSec)}. Datum WGS84."
-            utm != null -> "UTM zone ${utm.zoneName}, ${spacing(utm.spacingM)} grid. Datum WGS84."
-            graticule != null -> "Latitude and longitude every ${arc(graticule.spacingArcSec)}. Datum WGS84. UTM zone ${io.github.jasondorjeshort.dystopo.geo.Utm.zoneFor(layout.centerLon)}."
-            else -> "Datum WGS84. UTM zone ${io.github.jasondorjeshort.dystopo.geo.Utm.zoneFor(layout.centerLon)}."
-        }
-        y = paragraph(g, gridLine, f, x, y, width)
-        y = paragraph(g, "Heights in ${if (units == ContourUnits.FEET) "feet" else "metres"} above sea level (EGM2008).", f, x, y, width)
-        y = paragraph(g, "Printed $date.", f, x, y, width)
-        y = paragraph(g, "Sources: $attribution", regular(5.5), x, y, width)
-        paragraph(g, "Print at 100 percent (actual size), not fit to page, or the scale is wrong.", bold(6.5), x, y + mm(0.5), width)
-    }
-
-    private fun spacing(m: Double) = if (m >= 1000) "${UnitFormat.fixed(m / 1000, if (m % 1000 == 0.0) 0 else 1)} km" else "${m.roundToInt()} m"
-    private fun arc(s: Int) = when {
-        s % 3600 == 0 -> "${s / 3600}°"
-        s % 60 == 0 -> "${s / 60}'"
-        else -> "$s\""
-    }
-
-    /** Word-wrapped text from baseline [y]; returns the baseline after it. */
-    private fun paragraph(g: Graphics2D, text: String, font: Font, x: Double, y: Double, width: Double): Double {
-        val frc = g.fontRenderContext
-        val lineH = font.size2D * 1.3
-        var line = ""
-        var base = y
-        for (word in text.split(' ')) {
-            val next = if (line.isEmpty()) word else "$line $word"
-            if (line.isNotEmpty() && font.getStringBounds(next, frc).width > width) {
-                drawLine(g, line, font, x, base)
-                base += lineH
-                line = word
-            } else {
-                line = next
-            }
-        }
-        if (line.isNotEmpty()) { drawLine(g, line, font, x, base); base += lineH }
-        texts += text
-        return base
-    }
-
-    private fun drawLine(g: Graphics2D, s: String, font: Font, x: Double, y: Double) = text(g, s, font, x, y, record = false)
-
-    private fun measure(g: Graphics2D, s: String, font: Font, x: Double, y: Double, align: Double, rotate: Boolean): Rectangle2D {
-        val b = font.createGlyphVector(g.fontRenderContext, s).visualBounds
-        val t = transform(x, y, b.width, align, rotate)
-        return t.createTransformedShape(b).bounds2D
-    }
+    private fun box(r: Rectangle2D) = BoxPx(r.x, r.y, r.width, r.height)
 
     private fun transform(x: Double, y: Double, width: Double, align: Double, rotate: Boolean) = AffineTransform().apply {
         translate(x, y)
         if (rotate) rotate(-Math.PI / 2)
         translate(-width * align, 0.0)
-    }
-
-    /** Draws [s] with its baseline at [y]; [align] 0 puts its left edge at [x], 0.5 its middle, 1 its right edge. */
-    private fun text(g: Graphics2D, s: String, font: Font, x: Double, y: Double, align: Double = 0.0, rotate: Boolean = false, record: Boolean = true) {
-        val gv = font.createGlyphVector(g.fontRenderContext, s)
-        val width = gv.logicalBounds.width
-        val shape = transform(x, y, width, align, rotate).createTransformedShape(gv.getOutline(0f, 0f))
-        g.color = ink
-        g.fill(shape)
-        boxes += shape.bounds2D.let { Rectangle2D.Double(it.x - 2, it.y - 2, it.width + 4, it.height + 4) }
-        if (record) texts += s
-    }
-
-    private fun haloText(g: Graphics2D, s: String, font: Font, x: Double, y: Double, align: Double) {
-        val gv = font.createGlyphVector(g.fontRenderContext, s)
-        val shape = transform(x, y, gv.logicalBounds.width, align, false).createTransformedShape(gv.getOutline(0f, 0f))
-        g.color = Color(255, 255, 255, 220)
-        g.stroke = BasicStroke((font.size2D * 0.25).toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-        g.draw(shape)
-        g.color = Color(0x0b, 0x2e, 0x6b)
-        g.fill(shape)
-        boxes += shape.bounds2D.let { Rectangle2D.Double(it.x - 3, it.y - 3, it.width + 6, it.height + 6) }
     }
 }
 
