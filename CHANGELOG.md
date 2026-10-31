@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-31
+
+- T185: Tools: the empty screenshot capture, the merge-log refusal, the forward loss (after T176)
+
 ### 2026-10-30
 
 - T178: The storm warning from the barometer's trend (after T177)
