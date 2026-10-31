@@ -536,9 +536,8 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         HelpText("settings.readoutClimb", "Climb", at(SettingsGroup.NAVIGATION, "Readout: Climb"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "How fast you are going up or down, per hour on the ground (${if (units == ContourUnits.FEET) "ft/h" else "m/h"}) and per " +
-                "minute when flying. On the ground it is your average over the climb window (1 minute unless you change it); " +
-                "flying, it lags a few seconds. It reads 0 when you walk on the level or the reading is too uncertain to tell, " +
-                "and a dash while you stand still or before it has enough to go on."
+                "minute when flying. On the ground it is your average over the climb window; flying, it lags a few seconds. " +
+                "It reads 0 when you walk on the level or it is too uncertain to tell, and a dash while you stand still."
         },
         HelpText("settings.readoutCourse", "Course", at(SettingsGroup.NAVIGATION, "Readout: Course"), show = page(SettingsGroup.NAVIGATION)) {
             "The direction you are moving over the ground, in degrees from true north, from the GPS. It stays at the last " +
