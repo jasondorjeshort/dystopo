@@ -128,6 +128,13 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
      * [behindM] behind to [aheadM] ahead of it wins unless the best point elsewhere is more than
      * [jumpM] closer. That keeps progress on the right leg where a loop or an out-and-back passes the
      * same ground twice (the start and end of a loop, both directions of a spur).
+     *
+     * T180, the ahead tie-break: inside the window, every pass of the line near the position (a local minimum of the
+     * distance along the line, [passes]) within [snapM] is a candidate, and the one nearest [nearAlongM] wins, a pass
+     * behind it counting [BEHIND_WEIGHT] times its distance; so where two legs of an out-and-back lie on the same
+     * ground, progress stays on the leg it was on, and at the far end it goes on to the way back rather than running
+     * backwards. Only when no pass in the window is within [snapM] (off the line, or the walker is somewhere else
+     * after a gap) does the rest of the line count, by the old rule.
      */
     fun project(
         lat: Double,
@@ -136,7 +143,14 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
         behindM: Double = 150.0,
         aheadM: Double = 2000.0,
         jumpM: Double = 50.0,
+        snapM: Double = SNAP_M,
     ): Projection {
+        if (nearAlongM != null) {
+            val from = nearAlongM - behindM
+            val to = nearAlongM + aheadM
+            val best = passes(lat, lon, from, to).filter { it.distanceM <= snapM }.minByOrNull { cost(it.alongM, nearAlongM) }
+            if (best != null) return best
+        }
         var best: Projection? = null
         var bestNear: Projection? = null
         for (i in 0 until points.size - 1) {
@@ -156,6 +170,37 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
         return if (bestNear != null && bestNear.distanceM <= b.distanceM + jumpM) bestNear else b
     }
 
+    /**
+     * T180: the passes of the line by a position between [fromM] and [toM] along it: each local minimum of the distance
+     * to the line (a segment's inner closest point, or a vertex closer than both neighbouring segments' insides, or an
+     * end of the line), one [Projection] each, in order along the line. An out-and-back's two legs give two passes;
+     * a walker beyond the far end gives one (the far vertex). Only the segments over the window are looked at.
+     */
+    fun passes(lat: Double, lon: Double, fromM: Double = 0.0, toM: Double = totalM): List<Projection> {
+        if (toM < 0 || fromM > totalM || toM < fromM) return emptyList()
+        val first = segmentAt(fromM.coerceAtLeast(0.0))
+        val last = segmentAt(toM.coerceAtMost(totalM))
+        val out = ArrayList<Projection>(4)
+        var prev: Projection? = if (first > 0) projectOnSegment(first - 1, lat, lon) else null
+        var cur = projectOnSegment(first, lat, lon)
+        for (i in first..last) {
+            val next = if (i + 1 < points.size - 1) projectOnSegment(i + 1, lat, lon) else null
+            val len = cumM[i + 1] - cumM[i]
+            val t = if (len <= 0) 0.0 else (cur.alongM - cumM[i]) / len
+            val inner = t > T_EPS && t < 1 - T_EPS
+            // A vertex is a pass once, from the segment that starts at it: the one before ends at it.
+            val atStart = t <= T_EPS && (prev == null || prev.distanceM >= cur.distanceM - 1e-6) && (prev == null || prev.alongM >= cumM[i] - 1e-6)
+            val atEnd = t >= 1 - T_EPS && next == null
+            if ((inner || atStart || atEnd) && cur.alongM in fromM..toM) out += cur
+            prev = cur
+            cur = next ?: break
+        }
+        return out
+    }
+
+    /** T180: the ahead tie-break's cost of a pass at [alongM] from progress [nearM]: its distance, behind counting double. */
+    private fun cost(alongM: Double, nearM: Double): Double = if (alongM >= nearM) alongM - nearM else BEHIND_WEIGHT * (nearM - alongM)
+
     private fun clampToWindow(i: Int, lat: Double, lon: Double, from: Double, to: Double): Projection {
         val p = projectOnSegment(i, lat, lon)
         val along = p.alongM.coerceIn(max(from, cumM[i]), minOf(to, cumM[i + 1]))
@@ -166,6 +211,16 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
     companion object {
         private const val DEG = PI / 180
         private const val M_PER_DEG = TrackStats.EARTH_RADIUS_M * DEG
+        private const val T_EPS = 1e-9
+
+        /**
+         * T180: a pass of the line this close to the position is on it for the tie-break and the trackers (GPS on two
+         * walks of one trail is a few metres apart, 15 to 20 under trees; switchback legs are rarely closer than this).
+         */
+        const val SNAP_M = 25.0
+
+        /** T180: a pass behind the last progress counts this many times its distance against one ahead. */
+        const val BEHIND_WEIGHT = 2.0
 
         /** A planned route: its points; named points become waypoints. */
         fun of(route: Route, extraWaypoints: List<Waypoint> = emptyList()): NavPath = NavPath(
@@ -181,5 +236,96 @@ class NavPath(val name: String, points: List<NavPoint>, waypoints: List<Pair<Str
             track.points.map { NavPoint(it.lat, it.lon, it.ele) },
             waypoints.map { it.name to NavPoint(it.lat, it.lon, it.ele) },
         )
+    }
+}
+
+/**
+ * T180: progress along a [NavPath] fix by fix, the retrace fix of T163's follow-up (a line that passes the same ground
+ * twice, an out-and-back, made progress run backwards on the way back and never reach "arrived").
+ *
+ * - **Sequential:** each fix is placed by [NavPath.project] near the last progress (the window, the ahead tie-break),
+ *   so on two legs over the same ground progress stays on its leg and at the far end goes on to the way back.
+ * - **The turn (hysteresis):** a walker who turns back before the far end first runs backwards on the leg out; once
+ *   that backward stretch reaches [turnBackM] (an unbroken run, a forward step of more than [RUN_SLACK_M] ends it), a
+ *   pass of the line ahead of where it began, within [snapM], takes over: progress jumps to the way back ([jumps]).
+ *   Shorter steps back (a dropped glove, a look at the junction) never jump.
+ * - **The near-start guard:** no jump while the backward run began within [nearStartM] of the start.
+ * - **The full search** (the whole line, still the pass nearest the last progress) only after a gap of [longGapMs]
+ *   between fixes or when nothing in the window is within [snapM] (off the line); else only the window is read.
+ */
+class PathTracker(
+    val path: NavPath,
+    val snapM: Double = NavPath.SNAP_M,
+    val turnBackM: Double = TurnAround.TURNED_BACK_M,
+    val nearStartM: Double = TurnAround.NEAR_START_M,
+    val longGapMs: Long = LONG_GAP_MS,
+) {
+    /** The progress after the last fix; null before the first. */
+    var alongM: Double? = null
+        private set
+    private var lastTimeMs: Long? = null
+    private var runStartM: Double? = null
+    private var runMinM = 0.0
+
+    /** Jumps to the way back after a sustained backward stretch, and full-line searches made. */
+    var jumps = 0
+        private set
+    var fullSearches = 0
+        private set
+
+    /** The last jump: from where (the backward run's start and its end) to where. */
+    var lastJump: Triple<Double, Double, Double>? = null
+        private set
+
+    fun place(lat: Double, lon: Double, timeMs: Long): Projection {
+        val near = alongM
+        val gap = lastTimeMs?.let { timeMs - it > longGapMs } ?: false
+        lastTimeMs = timeMs
+        // Before any progress, look from the start: on a loop the start and the end are the same place.
+        var p = if (gap && near != null) full(lat, lon, near) else path.project(lat, lon, near ?: 0.0, snapM = snapM)
+        if (p.distanceM > snapM && !gap) {
+            val f = full(lat, lon, near ?: 0.0)
+            if (f.distanceM <= snapM) p = f
+        }
+        if (near != null && p.distanceM <= snapM) {
+            if (p.alongM < near) {
+                val start = runStartM ?: near.also { runStartM = it; runMinM = it }
+                runMinM = minOf(runMinM, p.alongM)
+                if (start - p.alongM >= turnBackM && start >= nearStartM) {
+                    val ahead = path.passes(lat, lon, start + snapM, path.totalM).filter { it.distanceM <= snapM }.minByOrNull { it.alongM }
+                    if (ahead != null) {
+                        jumps++
+                        lastJump = Triple(start, p.alongM, ahead.alongM)
+                        p = ahead
+                        runStartM = null
+                    }
+                }
+            } else if (runStartM != null && p.alongM > runMinM + RUN_SLACK_M) {
+                runStartM = null
+            }
+        } else if (p.distanceM > snapM) {
+            runStartM = null
+        }
+        alongM = p.alongM
+        return p
+    }
+
+    private fun full(lat: Double, lon: Double, near: Double): Projection {
+        fullSearches++
+        return path.project(lat, lon, near, behindM = path.totalM + 1, aheadM = path.totalM + 1, snapM = snapM)
+    }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "alongM" to alongM?.let(::r1), "jumps" to jumps, "fullSearches" to fullSearches,
+        "lastJump" to lastJump?.let { (a, b, c) -> linkedMapOf("runFromM" to r1(a), "runToM" to r1(b), "toM" to r1(c)) },
+        "snapM" to snapM, "turnBackM" to turnBackM, "nearStartM" to nearStartM,
+    )
+
+    companion object {
+        /** A gap between fixes this long (a tunnel, the phone off) reads the whole line again. */
+        const val LONG_GAP_MS = 120_000L
+
+        /** A backward run survives forward noise of this much (4 m of GPS noise moves progress up to 20 m between fixes). */
+        const val RUN_SLACK_M = 25.0
     }
 }

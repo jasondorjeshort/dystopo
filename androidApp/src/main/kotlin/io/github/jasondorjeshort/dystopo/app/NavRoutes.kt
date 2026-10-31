@@ -71,7 +71,13 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `spoken`, `farthestM` (more than 100 m short of it the walker has turned back: `returning`); `alerts.turnAround` counts the alert path's tones. The clock reads the wall clock (a replay's old fix times
  *   do not move it) and the settings `turnDeadline` and `turnMarginMin` (`POST /settings`) at every reading.
  *   `GET /nav/turnaround`: the same while navigating; else, in free tracking, the clock along the track being recorded
- *   (the way out back along it to its start; `source` `recording`), or `{"active": false}`.
+ *   (the way out back along it to its start; `source` `recording`), or `{"active": false}`. T180: navigating, also
+ *   `headingBack` and `wayBackStretches` (where the line runs back over itself, from the flip on); `GET /nav/status` has
+ *   `headingBack` and `tracker` (the retrace fix's `jumps` to the way back after a sustained backward stretch,
+ *   `fullSearches`, `lastJump`) and its events a `headingBack` per flip. In free tracking the reading is
+ *   `WayBackClock`'s: the way back's `anchor` (`source` `start`, `walk` or `here`), `retrace` (`returning`, `headingBack`,
+ *   `flips`), the clock, the card's `ui`, `shownOnCard`, `layout.cardPx`, and the `alerts` and `spoken` line of this
+ *   recording (`POST /tracks/wayback` moves the anchor; `TrackRoutes.kt`).
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate; T146: `?route=current&kmh=<n>` replays the current route timed in the app, no
  * body) and the device GPS while navigating.
@@ -88,7 +94,7 @@ object NavRoutes {
             "GET" to "/nav/status" -> Response.json(NavSession.status())
             "GET" to "/nav/turnaround" -> Response.json( // T163
                 NavSession.turnJson()?.let { mapOf("active" to true) + it }
-                    ?: NavSession.freeTrackingTurnJson()?.let { mapOf("active" to true) + it }
+                    ?: NavSession.freeTrackingTurnJson()?.let { mapOf("active" to true) + it + mapOf("layout" to mapOf("cardPx" to io.github.jasondorjeshort.dystopo.app.nav.WayBackLayout.boundsPx?.toList())) }
                     ?: mapOf("active" to false, "reason" to "not navigating and not recording"),
             )
             "POST" to "/nav/stop" -> Response.json(NavSession.stop() + NavSession.json())

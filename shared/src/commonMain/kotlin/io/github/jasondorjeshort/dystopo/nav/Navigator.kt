@@ -49,6 +49,9 @@ data class NavEvent(
         const val BACK_ON_ROUTE = "backOnRoute"
         const val ARRIVED = "arrived"
         const val WAYPOINT = "waypoint"
+
+        /** T180: the direction flipped to the way back (once per flip; the card's "Heading back"). */
+        const val HEADING_BACK = "headingBack"
     }
 }
 
@@ -108,6 +111,8 @@ data class NavState(
     val rejoin: RejoinHint?,
     val arrived: Boolean,
     val headingDeg: Double?,
+    /** T180: on the way back of a loop or out-and-back line ([Navigator]'s flip, with its hysteresis): "Heading back". */
+    val headingBack: Boolean = false,
 ) {
     val progress: Double get() = projection.alongM
 }
@@ -125,6 +130,12 @@ data class NavState(
  * - Time: the routing hike (or bike) model ([CostModel.timeS], Naismith for hiking) over the
  *   remaining distance and remaining climb of the line, so the ETA at the start is the planned time.
  *   Off route, the straight-line way back is added.
+ * - T180, the retrace fix: progress comes from a [PathTracker] (sequential, the ahead tie-break, the jump to the way
+ *   back after a sustained backward stretch, the full search only after a long gap or off route), so an out-and-back
+ *   line's progress runs forward on both legs and "arrived" fires at its end. On a loop or out-and-back line ([loop])
+ *   the walker is heading back ([NavState.headingBack], one [NavEvent.HEADING_BACK] per flip) on a stretch where the
+ *   line runs back over itself, from [TurnAround.TURNED_BACK_M] into it ([wayBackFrom], the line read once by
+ *   [Retrace] at start), or when progress has run back that far short of the farthest reached.
  */
 class Navigator(val path: NavPath, val options: NavOptions = NavOptions()) {
     private val model = CostModel(options.mode)
@@ -133,7 +144,19 @@ class Navigator(val path: NavPath, val options: NavOptions = NavOptions()) {
 
     var state: NavState? = null
         private set
-    private var lastAlong: Double? = null
+    /** T180: progress along the line, fix by fix. */
+    val tracker = PathTracker(path)
+
+    /** T180: a line whose ends are within [TurnAround.LOOP_M]: a loop or an out-and-back, which has a way back. */
+    val loop: Boolean = path.points.let { p -> TrackStats.distanceM(p.first().lat, p.first().lon, p.last().lat, p.last().lon) <= TurnAround.LOOP_M }
+
+    /**
+     * T180: where the line runs back over itself, as (from, to) along it: [Retrace] read over the line's points every
+     * [WAY_BACK_STEP_M], each interval from the flip (the hysteresis into the stretch) to where the line leaves it.
+     */
+    val wayBackFrom: List<Pair<Double, Double>> = if (!loop) emptyList() else wayBackStretches(path)
+
+    private var headingBack = false
     private var offCandidateSince: Long? = null
     private var offSince: Long? = null
     private var offMax = 0.0
@@ -167,10 +190,8 @@ class Navigator(val path: NavPath, val options: NavOptions = NavOptions()) {
     fun onFix(lat: Double, lon: Double, timeMs: Long, accuracyM: Double? = null, headingDeg: Double? = null): NavState {
         fixes++
         if (firstFixMs == null) firstFixMs = timeMs
-        // Before any progress, look from the start: on a loop the start and the end are the same place.
-        val p = path.project(lat, lon, lastAlong ?: 0.0)
+        val p = tracker.place(lat, lon, timeMs)
         val before = maxAlong
-        lastAlong = p.alongM
         if (p.distanceM <= options.offRouteM) maxAlong = max(maxAlong, p.alongM)
         // A fix older than the last one (a replay after live fixes, a clock change) starts the off-route clock over.
         lastTime?.let { if (timeMs < it) restartClock(timeMs) }
@@ -197,10 +218,18 @@ class Navigator(val path: NavPath, val options: NavOptions = NavOptions()) {
             val b = TrackStats.bearingDeg(lat, lon, p.lat, p.lon)
             RejoinHint(p.lat, p.lon, b, p.distanceM, headingDeg?.let { rel(b - it) })
         } else null
+        // T180: the direction, on loops and out-and-backs; once on, it stays within [PathTracker.RUN_SLACK_M] of the
+        // stretch (progress jitters a few metres either way at its start).
+        if (loop && !offRoute) {
+            val slack = if (headingBack) PathTracker.RUN_SLACK_M else 0.0
+            val back = wayBackFrom.any { (a, b) -> p.alongM >= a - slack && p.alongM <= b + slack } || maxAlong - p.alongM > TurnAround.TURNED_BACK_M - slack
+            if (back && !headingBack) _events += NavEvent(NavEvent.HEADING_BACK, timeMs, lat, lon, p.distanceM, p.alongM)
+            headingBack = back
+        }
         val s = NavState(
             fixes = fixes, timeMs = timeMs, lat = lat, lon = lon, projection = p, offRoute = offRoute,
             offForS = offSince?.let { (timeMs - it) / 1000.0 } ?: 0.0,
-            next = next, end = end, rejoin = rejoin, arrived = arrived, headingDeg = headingDeg,
+            next = next, end = end, rejoin = rejoin, arrived = arrived, headingDeg = headingDeg, headingBack = headingBack,
         )
         state = s
         return s
@@ -247,6 +276,28 @@ class Navigator(val path: NavPath, val options: NavOptions = NavOptions()) {
         /** A waypoint counts as reached (and the next one becomes "next") this far before it. */
         const val WAYPOINT_REACHED_M = 15.0
         private const val ARRIVE_IGNORE_START_M = 1.0
+
+        /** T180: the line is read for its way back at points this far apart. */
+        const val WAY_BACK_STEP_M = 10.0
+
+        /** T180: [wayBackFrom] of [path]. */
+        fun wayBackStretches(path: NavPath): List<Pair<Double, Double>> {
+            val r = Retrace()
+            val out = ArrayList<Pair<Double, Double>>()
+            var from: Double? = null
+            var s = 0.0
+            while (true) {
+                val q = path.pointAt(s)
+                r.add(q.lat, q.lon)
+                val back = r.headingBack
+                if (back && from == null) from = s
+                if (!back && from != null) { out += from to s; from = null }
+                if (s >= path.totalM) break
+                s = minOf(path.totalM, s + WAY_BACK_STEP_M)
+            }
+            from?.let { out += it to path.totalM }
+            return out
+        }
 
         /** An angle in -180..180. */
         fun rel(deg: Double): Double {

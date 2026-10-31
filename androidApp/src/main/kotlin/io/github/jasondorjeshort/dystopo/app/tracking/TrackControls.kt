@@ -61,7 +61,8 @@ private val Magenta = Color(0xFFD01C8B)
  * on the map offers one too, [LongPressMenu]); a "Tracks" list (tap a track to show it, "Profile" for its
  * elevation profile, "GPX" to export it to the files dir, "Import" for a GPX from the files dir or
  * the system file picker); the waypoint sheet (rename or delete; opened by tapping a waypoint on the
- * map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view.
+ * map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view. T180: the recording panel has
+ * the way back ([WayBackLine]): the turn-around clock, where the way back goes, and "The way back starts here".
  */
 @Composable
 fun TrackControls() {
@@ -156,6 +157,7 @@ private fun BoxScope.Controls() {
                         style = TextStyle(color = Ink, fontSize = 13.sp),
                     )
                     RecordingStateLine(ui)
+                    WayBackLine(tracking) // T180
                 }
             }
             if (barOpen && listOpen) {
@@ -227,6 +229,41 @@ private fun RecordingStateLine(ui: Tracking.UiState) {
     val line = ui.stateLine ?: return
     BasicText(line, style = TextStyle(color = if (ui.state == RecState.PAUSED || ui.state == RecState.AUTO_PAUSED) Ink else RecordRed, fontSize = 12.sp))
 }
+
+/**
+ * T180: the way back on the recording panel ([io.github.jasondorjeshort.dystopo.app.nav.WayBackClock]): the clock's line
+ * in its colour with "Heading back" after the flip, where the way back goes ("Way back to the recording's start", "...
+ * to where the drive ended", "... to where you set it"), and the one override, "The way back starts here", which
+ * re-anchors it at the current position (per device). Nothing while navigating (the navigation card has its own clock)
+ * or before the first fix.
+ */
+@Composable
+private fun WayBackLine(tracking: Tracking) {
+    val w = io.github.jasondorjeshort.dystopo.app.nav.NavUiState.wayBack ?: return
+    val (bg, ink) = when (w.colour) {
+        "red" -> RecordRed to Color.White
+        "amber" -> Color(0xFFFDAE61) to Ink
+        else -> Color.Transparent to Ink
+    }
+    BasicText(
+        w.text + if (w.headingBack) "  ·  " + io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.HEADING_BACK else "",
+        style = TextStyle(color = ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+        modifier = Modifier.background(bg, RoundedCornerShape(4.dp)).padding(horizontal = if (bg == Color.Transparent) 0.dp else 4.dp),
+    )
+    BasicText(w.sourceLine, style = TextStyle(color = Ink, fontSize = 12.sp))
+    Action(io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.STARTS_HERE) {
+        Thread {
+            val ok = tracking.wayBackHere()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(DystopoApp.instance, if (ok) WAY_BACK_SET else WAY_BACK_NO_POINT, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }.start()
+    }
+}
+
+/** T180: the toasts of "The way back starts here" (ADR 0031: the owner's to adjust). */
+internal const val WAY_BACK_SET = "The way back now starts here"
+internal const val WAY_BACK_NO_POINT = "No position recorded yet"
 
 @Composable
 private fun ImportList(tracking: Tracking, onDone: () -> Unit) {

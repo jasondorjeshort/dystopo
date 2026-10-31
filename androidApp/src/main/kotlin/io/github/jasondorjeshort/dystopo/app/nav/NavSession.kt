@@ -58,6 +58,10 @@ import java.util.concurrent.Executors
  * T163: the turn-around clock ([TurnAround]) on the card under the end ("Turn back by 14:10", amber at the margin, red at
  * the time, then the arrival clock), read on every fix and every tick of the wall clock; one alert at the margin and one
  * at the time ([NavAlerts.turnAround]) and one spoken line ([NavSpeech.sayTurnAround]); `GET /nav` `turnAround`.
+ * T180: progress from the navigator's [io.github.jasondorjeshort.dystopo.nav.PathTracker] (the retrace fix: an
+ * out-and-back's way back runs forward and "arrived" fires at its end) and "Heading back" on the card when the direction
+ * flips ([NavState.headingBack], which the clock reads as the way back). Without navigation, a recording's clock is
+ * [WayBackClock]'s (`GET /nav/turnaround` reads it).
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -99,6 +103,8 @@ object NavSession {
         val turnBackLabel: String? = null,
         /** T163: `normal`, `amber` or `red`. */
         val turnBackColour: String = TurnAround.NORMAL,
+        /** T180: the direction flipped to the way back of a loop or out-and-back: "Heading back" on the card. */
+        val headingBack: Boolean = false,
     )
 
     /** T86: backed by [NavUiState], so touching [NavSession] from a background thread never creates Compose state. */
@@ -156,6 +162,9 @@ object NavSession {
     private var gpsListener: LocationListener? = null
 
     val active: Boolean get() = navigator != null
+
+    /** T180: the turn-around clock's tone and buzz for free tracking ([WayBackClock]), on navigation's alert path. */
+    fun turnAroundAlert(kind: String) = alerts.turnAround(kind, sound, vibrate)
 
     /** T86: creates the Compose state now; call on the main thread from `Application.onCreate`. */
     fun prepare() = NavUiState.prepare()
@@ -463,7 +472,7 @@ object NavSession {
         val deadline = Deadline.resolve(setting, end.lat, end.lon, now, localMidnight(now))
         val off = if (s.offRoute) s.projection.distanceM else 0.0
         if (!s.offRoute) turnFarthestM = maxOf(turnFarthestM, s.progress)
-        return runCatching { t.clock(s.progress, now, deadline, AppSettings.turnMarginMin, off, farthestM = turnFarthestM) }
+        return runCatching { t.clock(s.progress, now, deadline, AppSettings.turnMarginMin, off, farthestM = turnFarthestM, headingBack = s.headingBack) }
             .onFailure { Log.w(TAG, "turn-around clock", it) }.getOrNull().also { turnClock = it }
     }
 
@@ -496,6 +505,8 @@ object NavSession {
         return linkedMapOf<String, Any?>(
             "source" to "navigation", "loop" to t.loop, "deadlineSetting" to AppSettings.turnDeadline, "marginMin" to AppSettings.turnMarginMin,
             "pace" to t.pace.label, "totalTimeS" to Math.round(t.totalS), "farthestM" to r1(turnFarthestM),
+            "headingBack" to (navigator?.state?.headingBack ?: false), // T180
+            "wayBackStretches" to navigator?.wayBackFrom?.map { (a, b) -> linkedMapOf("fromM" to r1(a), "toM" to r1(b)) },
             "text" to c?.text(::clock), "label" to c?.label(::clock), "clock" to c?.json(),
             "turnBack" to c?.turnBackMs?.let(::clock), "arrival" to c?.arrivalMs?.let(::clock),
             "deadline" to c?.deadline?.atMs?.let(::clock),
@@ -506,25 +517,10 @@ object NavSession {
     }
 
     /**
-     * T163, free tracking: the clock along the track being recorded, the way out back along it to its start (T159's track
-     * controls show it later; this wave it is read on `GET /nav/turnaround` only). Null when nothing is recording.
+     * T163, free tracking: the clock along the track being recorded. T180: [WayBackClock]'s (the way back's start and its
+     * source, the direction, the alerts, what the card shows). Null when nothing is recording.
      */
-    fun freeTrackingTurnJson(): Map<String, Any?>? {
-        val t = Tracking.of(app)
-        val track = runCatching { t.call { t.recorder.activeId?.let { t.store.track(it) } } }.getOrNull() ?: return null
-        val path = runCatching { NavPath.of(track) }.getOrElse { return linkedMapOf("source" to "recording", "id" to track.id, "error" to "fewer than two points recorded yet") }
-        val ta = TurnAround(path, TurnPace.of(CostModel(TravelMode.HIKE)), retraceOnly = true)
-        val now = System.currentTimeMillis()
-        val start = path.points.first()
-        val deadline = Deadline.resolve(DeadlineSetting.parse(AppSettings.turnDeadline) ?: DeadlineSetting.SUNSET, start.lat, start.lon, now, localMidnight(now))
-        val c = ta.clock(path.totalM, now, deadline, AppSettings.turnMarginMin)
-        return linkedMapOf(
-            "source" to "recording", "id" to track.id, "points" to path.points.size, "totalM" to Math.round(path.totalM),
-            "deadlineSetting" to AppSettings.turnDeadline, "marginMin" to AppSettings.turnMarginMin, "pace" to ta.pace.label,
-            "text" to c.text(::clock), "label" to c.label(::clock), "clock" to c.json(),
-            "turnBack" to c.turnBackMs?.let(::clock), "arrival" to clock(c.arrivalMs), "deadline" to c.deadline.atMs?.let(::clock),
-        )
-    }
+    fun freeTrackingTurnJson(): Map<String, Any?>? = WayBackClock.json()
 
     private fun uiOf(nav: Navigator, s: NavState): Ui {
         val u = AppSettings.units
@@ -550,6 +546,7 @@ object NavSession {
             fixAge = fixAgeText(System.currentTimeMillis()),
             snoozed = snoozedText(System.currentTimeMillis()),
             turnBack = tc?.text(::clock), turnBackLabel = tc?.label(::clock), turnBackColour = tc?.colour ?: TurnAround.NORMAL, // T163
+            headingBack = s.headingBack, // T180
         ).let { ui ->
             // T102: the next turn direction and how far ahead it is.
             val k = if (s.arrived) -1 else nextTurn(s.progress)
@@ -630,6 +627,8 @@ object NavSession {
             "distanceM" to s?.projection?.distanceM?.let(::r1),
             "progressM" to s?.progress?.let(::r1),
             "arrived" to (s?.arrived ?: false),
+            "headingBack" to (s?.headingBack ?: false), // T180
+            "tracker" to nav.tracker.json(), // T180: the retrace fix's jumps and full searches
             "counts" to ev.groupingBy { it.type.substringBefore(':') }.eachCount(),
             "events" to ev.map { it.json() },
             "alerts" to alerts.json(),
@@ -665,6 +664,7 @@ object NavSession {
         "fixes" to s.fixes, "timeMs" to s.timeMs, "lat" to s.lat, "lon" to s.lon,
         "progressM" to r1(s.progress), "distanceM" to r1(s.projection.distanceM), "offRoute" to s.offRoute, "offForS" to r1(s.offForS),
         "arrived" to s.arrived, "next" to s.next?.json(), "end" to s.end.json(), "rejoin" to s.rejoin?.json(),
+        "headingBack" to s.headingBack, // T180
     )
 
     private fun keepScreenOn(): Map<String, Any?> = runCatching {
