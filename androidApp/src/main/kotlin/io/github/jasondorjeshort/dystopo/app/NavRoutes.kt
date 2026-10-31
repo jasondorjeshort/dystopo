@@ -78,6 +78,12 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `WayBackClock`'s: the way back's `anchor` (`source` `start`, `walk` or `here`), `retrace` (`returning`, `headingBack`,
  *   `flips`), the clock, the card's `ui`, `shownOnCard`, `layout.cardPx`, and the `alerts` and `spoken` line of this
  *   recording (`POST /tracks/wayback` moves the anchor; `TrackRoutes.kt`).
+ * - T187, water along the line (`routing/RouteWater`, computed at the start): `GET /nav` `water`: `enabled` and
+ *   `spokenSetting` (the `waterAlongRoute` and `waterSpoken` settings), `state` `ready|computing|off|error`, `count`,
+ *   `lengthM`, `longestGapM`, `next` (the item the card names: `n`, `alongM`, `aheadM`, `label`, `kind`, `class`, `basis`,
+ *   `name`), `card` (its line), `leadM` and `longM` (the spoken line's lead and the 5 km stretch), `beforeLongStretch`
+ *   (the sources a stretch of more than `longM` follows: `n`, `alongM`, `gapM`) and `spoken` (each line said: `n`, `atMs`,
+ *   `progressM`, `aheadM`, `gapM`, `text`, `speech` engine, `muted` or `off`); `GET /nav/speech` lists it with index -4.
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate; T146: `?route=current&kmh=<n>` replays the current route timed in the app, no
  * body) and the device GPS while navigating.

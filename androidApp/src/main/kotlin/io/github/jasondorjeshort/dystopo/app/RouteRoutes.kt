@@ -60,6 +60,14 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * `recorder` or `device`, `fixTime`, `ageS` when planned and `stale`, older than [io.github.jasondorjeshort.dystopo.app.routing.RouteOrigin.STALE_S]),
  * `fromOpen`, `fromChoices`, `location` (`on`, `off`, `noPermission`), `waitingForFix` and `routeTo` (the last route to
  * here: `at`, `origin`, `waited`, and once a fix came `fixAfterMs` and `polls`).
+ * T187, water along the route ([io.github.jasondorjeshort.dystopo.app.routing.RouteWater]; computed, never stored):
+ * `POST /route` and `GET /route` gain `water` (waits up to 10 s for it): `enabled` (the `waterAlongRoute` setting),
+ * `state` `ready|computing|noRoute|error`, the card's `card` and `longest` lines and the list's `hint`, `lengthM`,
+ * `count`, `sources`, `longestGapM` and `longestGap` (`fromM`, `toM`; as `devtool water`'s `longestGapM`), `zoom`,
+ * `packs`, `ms`, `stats` (`WaterStats`: tiles, `drainageLayer`, crossings, merged, dropped), `open` (the list is shown),
+ * and `items` in route order (`devtool water`'s fields plus `source`, `gapToNextM` and the list's `row`).
+ * - `GET /route/water[?trip=1]`: the same for the route on the map, or (`trip=1`) the trip open in the editor; 404 with none.
+ * - `POST /route/water?open=1|0[&trip=1]`: opens or closes the list under the card's water line (a tap on it); answers like the GET.
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -81,11 +89,13 @@ object RouteRoutes {
                 }
                 val ms = (System.nanoTime() - t0) / 1_000_000
                 when (result) {
-                    is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app)))
+                    is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
+                        "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)))) // T187
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
             "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1"))
+"GET" to "/route/water", "POST" to "/route/water" -> water(app, r) // T187
             "GET" to "/route/status" -> Response.json(RoutePlanner.json(app) ?: mapOf("error" to "active pack has no vector archive"))
             "POST" to "/route/build" -> {
                 // T149: answers once the build is admitted, refused or failed (at most 30 s); force=1 skips the heap guard.
@@ -175,7 +185,23 @@ object RouteRoutes {
         "route" to RouteSession.plan?.let { RouteSession.routeJson(it, profile) },
         "failure" to RouteSession.failure?.json(),
         "graph" to RoutePlanner.json(app),
+        "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false)), // T187
     )
+
+    /** T187: `GET|POST /route/water[?trip=1][&open=1|0]`: the water of the route on the map or of the trip being edited. */
+    private fun water(app: DystopoApp, r: Request): Response {
+        val trip = r.query["trip"] == "1"
+        val points = (if (trip) io.github.jasondorjeshort.dystopo.app.trips.Trips.editing?.path?.points else RouteSession.plan?.route?.points)
+            ?: return Response.json(mapOf("error" to if (trip) "no trip open" else "no route"), 404)
+        if (r.method == "POST") {
+            val open = when (r.query["open"]) { "1", "true" -> true; "0", "false" -> false; else -> return bad("open=1|0 required") }
+            app.map.onMain { if (trip) io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen = open else io.github.jasondorjeshort.dystopo.app.routing.WaterUi.routeOpen = open }
+        }
+        return Response.json(io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(points, waterOpen(app, trip)) + mapOf("of" to if (trip) "trip" else "route"))
+    }
+
+    private fun waterOpen(app: DystopoApp, trip: Boolean): Boolean =
+        runCatching { app.map.onMain { if (trip) io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen else io.github.jasondorjeshort.dystopo.app.routing.WaterUi.routeOpen } }.getOrDefault(false)
 
     private fun latLon(s: String?): Pair<Double, Double>? {
         val p = s?.split(',')?.map { it.trim().toDoubleOrNull() } ?: return null

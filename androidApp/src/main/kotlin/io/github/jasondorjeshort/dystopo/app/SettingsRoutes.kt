@@ -66,6 +66,10 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   T178, the pressure-fall warning (Settings › Navigation and tracking): `pressureFallWarning=off|more|standard|fewer`
  *   (also `0`, `3`, `4`, `6`, the fall in hPa over 3 hours, sea-level equivalent; default `standard`, 4), synced as
  *   `app.pressureFallWarning`. `GET /settings` reports it; `GET /readout` › `trend` shows its effect.
+ *   T187, water along the route (Settings › Navigation and tracking, `routing/RouteWater`): `waterAlongRoute=1|0`
+ *   (default on: the route card's and the trip card's water line and list, the markers, the navigation card's next water)
+ *   and `waterSpoken=1|0` (default off: navigating, the last water before a stretch of more than 5 km without any is
+ *   said once), synced as `app.waterAlongRoute` and `app.waterSpoken` `on`/`off`. The markers and cards follow at once.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -188,6 +192,11 @@ class SettingsRoutes(private val app: DystopoApp) {
         // T178: the pressure-fall warning (the trend is evaluated again at once); the barometer switch also starts or stops its sampling.
         parsed.pressureFallWarning?.let { AppSettings.setPressureFallWarning(it) }
         if (parsed.pressureFallWarning != null || parsed.readoutBarometer != null) io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.onSettings()
+        // T187: water along the route; the route and trip markers redraw (or go) at once.
+        if (parsed.waterAlongRoute != null || parsed.waterSpoken != null) {
+            AppSettings.setWater(parsed.waterAlongRoute, parsed.waterSpoken)
+            io.github.jasondorjeshort.dystopo.app.routing.RouteWater.onSettings()
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -234,6 +243,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val readoutBar: Boolean? = null, val climbWindow: Int? = null,
             // T178: the pressure-fall warning.
             val pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning? = null,
+            // T187: water along the route and its spoken line.
+            val waterAlongRoute: Boolean? = null, val waterSpoken: Boolean? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -256,7 +267,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS +
             setOf("mapControls", "recenterZoom", "orientationLock") + // T176
             setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW) + // T177
-            setOf(AppSettings.KEY_PRESSURE_FALL_WARNING) // T178
+            setOf(AppSettings.KEY_PRESSURE_FALL_WARNING) + // T178
+            setOf("waterAlongRoute", "waterSpoken") // T187
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -409,12 +421,16 @@ class SettingsRoutes(private val app: DystopoApp) {
                 io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it.toString())
                     ?: return Parsed.Error("${AppSettings.KEY_PRESSURE_FALL_WARNING} must be off, more, standard or fewer (or 0, 3, 4, 6) (got $it)")
             }
+            // T187: water along the route and its spoken line.
+            val waterAlongRoute = params["waterAlongRoute"]?.let { flag(it) ?: return Parsed.Error("waterAlongRoute must be 1 or 0 (got $it)") }
+            val waterSpoken = params["waterSpoken"]?.let { flag(it) ?: return Parsed.Error("waterSpoken must be 1 or 0 (got $it)") }
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
                 mapControls = mapControls, recenterZoom = recenterZoom, orientationLock = orientationLock,
                 readoutBar = readoutBar, climbWindow = climbWindow,
-                pressureFallWarning = pressureFallWarning)
+                pressureFallWarning = pressureFallWarning,
+                waterAlongRoute = waterAlongRoute, waterSpoken = waterSpoken)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

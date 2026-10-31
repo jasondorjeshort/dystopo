@@ -74,6 +74,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     CLIMB_WINDOW("climbWindow", SettingsGroup.NAVIGATION, "Readout: Climb window", "SettingsPages", "T177"),
     // T178: the pressure-fall warning (Navigation and tracking, after T177's rows)
     PRESSURE_FALL_WARNING("pressureFallWarning", SettingsGroup.NAVIGATION, "Pressure-fall warning", "SettingsPages", "T178"),
+    // T187: water along the route and its spoken line (Navigation and tracking, after T177's rows)
+    WATER_ALONG_ROUTE("waterAlongRoute", SettingsGroup.NAVIGATION, "Water along the route", "SettingsPages", "T187"),
+    WATER_SPOKEN("waterSpoken", SettingsGroup.NAVIGATION, "Water: Spoken", "SettingsPages", "T187"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

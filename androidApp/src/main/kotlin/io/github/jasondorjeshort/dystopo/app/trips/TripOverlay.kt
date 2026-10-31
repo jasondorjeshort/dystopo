@@ -33,7 +33,9 @@ import org.maplibre.geojson.Point
  * yellow flags with their names. While a route is open, a touch that starts on a via point drags it
  * (the map does not pan) and [onDragEnd] reroutes on release; a tap elsewhere goes to [onTap] (add a via
  * point or a waypoint, depending on the tool). Survives style reloads like the track overlay. [show]
- * can be called from any thread; the touch handling runs on the main thread.
+ * can be called from any thread; the touch handling runs on the main thread. T187: the water along the route
+ * ([io.github.jasondorjeshort.dystopo.app.routing.RouteWater]) as markers, one symbol per kind, once computed (not while
+ * a via point is dragged; none with the `waterAlongRoute` setting off).
  */
 class TripOverlay {
     private val main = Handler(Looper.getMainLooper())
@@ -54,6 +56,10 @@ class TripOverlay {
         private set
     @Volatile var installedOnStyle = false
         private set
+
+    /** T187: the water markers of the route shown, and that route's points (a late result for an older line is dropped). */
+    val water = io.github.jasondorjeshort.dystopo.app.routing.WaterMarkers("dystopo-trip")
+    @Volatile private var shownPoints: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>? = null
 
     /** The drag in progress: via index and where it is now. */
     @Volatile private var drag: Pair<Int, LatLng>? = null
@@ -90,6 +96,21 @@ class TripOverlay {
     fun show(p: RoutePlan?) {
         plan = p
         rebuild()
+        val pts = p?.path?.points?.takeIf { it.size >= 2 }
+        if (pts != shownPoints) { shownPoints = pts; refreshWater() } // T187: a new line (a reroute, another trip)
+    }
+
+    /** T187: the markers for the route shown, from [io.github.jasondorjeshort.dystopo.app.routing.RouteWater]; any thread. */
+    fun refreshWater() {
+        val pts = shownPoints
+        water.set(null)
+        main.post { apply() }
+        if (pts == null) return
+        io.github.jasondorjeshort.dystopo.app.routing.RouteWater.async(pts) { r ->
+            if (shownPoints !== pts || !AppSettings.waterAlongRoute) return@async
+            water.set(r.items)
+            main.post { apply() }
+        }
     }
 
     private fun rebuild() {
@@ -279,6 +300,7 @@ class TripOverlay {
                 ),
             )
         }
+        water.addTo(style, view?.resources?.displayMetrics?.density ?: 2f) // T187
         installedOnStyle = true
         apply()
     }
@@ -289,11 +311,13 @@ class TripOverlay {
             val style = map.style ?: return@getMapAsync
             if (!style.isFullyLoaded) return@getMapAsync
             (style.getSource(SOURCE) as? GeoJsonSource)?.setGeoJson(data)
+            water.apply(style) // T187
         }
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "features" to features, "installedOnStyle" to installedOnStyle, "dragging" to drag?.first, "drags" to drags, "lastDrag" to lastDrag,
+        "waterMarkers" to water.count, // T187
     )
 
     companion object {

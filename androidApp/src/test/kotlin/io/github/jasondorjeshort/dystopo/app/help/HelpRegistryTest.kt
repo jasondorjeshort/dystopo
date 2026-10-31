@@ -109,6 +109,8 @@ class HelpRegistryTest {
             "map.shade", "longPress.sun",
             // T178: the pressure-fall warning's row.
             "settings.pressureFallWarning",
+            // T187: water along the route and its spoken line.
+            "settings.waterAlongRoute", "settings.waterSpoken",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

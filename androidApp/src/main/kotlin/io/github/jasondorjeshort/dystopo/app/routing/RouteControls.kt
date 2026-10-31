@@ -92,6 +92,10 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * ([RouteSession.fromChoices]). While a route to here waits for its origin the card says so, and with location off it
  * offers Turn on location (the permission prompt, or the phone's location settings). When no path is found it offers
  * Try Crow (the straight line, with its notice under the chips). Go comes first among the actions.
+ *
+ * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, next likely flowing in
+ * 1.2 km" and the longest stretch without water, the first line opening the list ([WaterText.row]); the next card line
+ * (T184) sits under that one composable.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -168,6 +172,7 @@ fun RouteControls() {
                     )
                 }
                 Directions(plan)
+                WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
@@ -275,6 +280,48 @@ private fun Directions(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRo
             val text = io.github.jasondorjeshort.dystopo.routing.DirectionsText.of(ins, plan.mode)
             val then = if (ins.stretchM > 0) "  " + io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(ins.stretchM, units) else ""
             BasicText("${k + 1}. $text$then", style = TextStyle(color = Ink, fontSize = 13.sp))
+        }
+    }
+}
+
+/**
+ * T187: whether the water lists are open (the route card's and the trip card's; Compose state, touched only from the UI and
+ * through `app.map.onMain` by `POST /route/water`).
+ */
+internal object WaterUi {
+    var routeOpen by mutableStateOf(false)
+    var tripOpen by mutableStateOf(false)
+}
+
+/**
+ * T187: water along a route on a card ([RouteWater], [WaterText]): the line "Water: 3 crossings, next likely flowing in
+ * 1.2 km", which opens and closes the list ([onToggle]), and "Longest stretch without water: 6.2 km" under it; open, each
+ * item in route order with its distance along the route, its class and basis, and the gap to the next (scrolls past a
+ * few rows), then where the words come from. Nothing until the water is computed, nor with the `waterAlongRoute` setting
+ * off. One composable, shared by the route card and the trip card.
+ */
+@Composable
+internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, open: Boolean, onToggle: () -> Unit) {
+    val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // the setting's row recomposes the card
+    if (!io.github.jasondorjeshort.dystopo.app.AppSettings.waterAlongRoute) return
+    var water by remember(points, rev) { mutableStateOf(RouteWater.cached(points)) }
+    LaunchedEffect(points, rev) {
+        if (water == null) water = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteWater.await(points, 60_000) }
+    }
+    val r = water ?: return
+    val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        BasicText(
+            WaterText.cardLine(r.items, units),
+            style = TextStyle(color = if (r.items.isEmpty()) Ink else Link, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+            modifier = if (r.items.isEmpty()) Modifier else Modifier.clickable(onClick = onToggle).padding(vertical = 2.dp),
+        )
+        WaterText.longestLine(r.items, r.lengthM, units)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+        if (open && r.items.isNotEmpty()) {
+            Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                for (i in r.items.indices) BasicText(WaterText.row(r.items, i, r.lengthM, units), style = TextStyle(color = Ink, fontSize = 12.sp))
+            }
+            BasicText(WaterText.HINT, style = TextStyle(color = Ink.copy(alpha = 0.75f), fontSize = 11.sp))
         }
     }
 }

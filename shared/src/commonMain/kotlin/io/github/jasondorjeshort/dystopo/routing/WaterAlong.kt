@@ -620,3 +620,42 @@ object WaterAlong {
         else -> (v.asDouble() ?: 0.0) != 0.0
     }
 }
+
+// ---- T187: the stretches between sources, for the phone's route card, trip list and spoken line ----
+
+/**
+ * T187: an item likely to hold water when reached: a likely flowing stream, a mapped spring or tap, or a lake (the
+ * items `devtool water`'s `longestGapM` counts). A stream that may run dry and a gully do not end a dry stretch.
+ */
+val WaterItem.isSource: Boolean get() = kind != WaterKind.STREAM || waterClass == WaterClass.LIKELY_FLOWING
+
+/**
+ * T187: the stretches of a route with no source ([isSource]) on them, measured along it like [WaterItem.alongM]: from
+ * the start or a source to the next source or the end (pure; `WaterGapsTest`).
+ */
+object WaterGaps {
+    /** A stretch longer than this after a source is a long dry stretch: the spoken line names the source before it, metres. */
+    const val LONG_M = 5_000.0
+
+    /** The longest stretch of a route [lengthM] long with no source: (from, to) metres along it. */
+    fun longest(items: List<WaterItem>, lengthM: Double): Pair<Double, Double> {
+        var last = 0.0
+        var best = 0.0 to 0.0
+        for (a in items.filter { it.isSource }.map { it.alongM } + lengthM) {
+            if (a - last > best.second - best.first) best = last to a
+            last = maxOf(last, a)
+        }
+        return best
+    }
+
+    /** From item [index] to the next source after it, or to the end of a route [lengthM] long, metres. */
+    fun after(items: List<WaterItem>, index: Int, lengthM: Double): Double {
+        val at = items[index].alongM
+        val next = items.drop(index + 1).firstOrNull { it.isSource && it.alongM > at }?.alongM ?: lengthM
+        return (next - at).coerceAtLeast(0.0)
+    }
+
+    /** True when the stretch after item [index] runs to the route's end with no source on it. */
+    fun lastSource(items: List<WaterItem>, index: Int): Boolean =
+        items.drop(index + 1).none { it.isSource && it.alongM > items[index].alongM }
+}

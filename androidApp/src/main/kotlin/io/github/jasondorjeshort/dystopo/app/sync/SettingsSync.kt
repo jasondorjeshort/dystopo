@@ -37,6 +37,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T177: the readout bar's switch (`app.readoutBar`, `on` or `off`) and the climb window (`app.climbWindow`, seconds);
  * [SettingsRoutes] keys.
  * T178: the pressure-fall warning (`app.pressureFallWarning`: `off`, `more`, `standard` or `fewer`); a [SettingsRoutes] key.
+ * T187: water along the route (`app.waterAlongRoute`) and its spoken line (`app.waterSpoken`), `on` or `off`;
+ * [SettingsRoutes] keys.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -80,6 +82,9 @@ object SettingsSync {
     const val CLIMB_WINDOW = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW
     /** T178: the pressure-fall warning (`off`, `more`, `standard`, `fewer`), a [SettingsRoutes] key. */
     const val PRESSURE_FALL_WARNING = AppSettings.KEY_PRESSURE_FALL_WARNING
+    /** T187: water along the route and its spoken line (`on`/`off`), [SettingsRoutes] keys. */
+    const val WATER_ALONG_ROUTE = "waterAlongRoute"
+    const val WATER_SPOKEN = "waterSpoken"
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -135,6 +140,8 @@ object SettingsSync {
         m[syncedKey(READOUT_BAR)] = onOff(AppSettings.readoutBar) // T177
         m[syncedKey(CLIMB_WINDOW)] = AppSettings.climbWindowS.toString()
         m[syncedKey(PRESSURE_FALL_WARNING)] = AppSettings.pressureFallWarning.code // T178
+        m[syncedKey(WATER_ALONG_ROUTE)] = onOff(AppSettings.waterAlongRoute) // T187
+        m[syncedKey(WATER_SPOKEN)] = onOff(AppSettings.waterSpoken)
         return m
     }
 
@@ -203,6 +210,8 @@ object SettingsSync {
         if (parsed.readoutBar != null) keys += syncedKey(READOUT_BAR) // T177
         if (parsed.climbWindow != null) keys += syncedKey(CLIMB_WINDOW)
         if (parsed.pressureFallWarning != null) keys += syncedKey(PRESSURE_FALL_WARNING) // T178
+        if (parsed.waterAlongRoute != null) keys += syncedKey(WATER_ALONG_ROUTE) // T187
+        if (parsed.waterSpoken != null) keys += syncedKey(WATER_SPOKEN)
         publishKeys(app, keys)
     }
 

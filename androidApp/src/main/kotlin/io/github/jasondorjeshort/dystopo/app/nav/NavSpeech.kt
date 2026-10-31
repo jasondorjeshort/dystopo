@@ -461,6 +461,39 @@ object NavSpeech {
             return line
         }
     }
+
+    // ---- T187: the water line (navigation's NavSession.speakWater; one line per long dry stretch) ----
+
+    /** T187: the index the water line is listed under in `GET /nav/speech` (not a direction's). */
+    const val WATER_INDEX = -4
+
+    /**
+     * T187: the last water before a stretch of more than 5 km without any ("In 400 m, water: stream, likely flowing. Then
+     * none for 6.2 km."), said once per such stretch by the caller, under the `waterSpoken` setting (not `navSpeech`) and
+     * this navigation's mute; listed in `GET /nav/speech` with index -4 and direction `water`. Queued behind any line being
+     * said (the engine's QUEUE_ADD, no priority). Returns the line, or null when the setting is off.
+     */
+    fun sayWater(text: String): Line? {
+        synchronized(this) {
+            if (!AppSettings.waterSpoken) return null
+            val now = System.currentTimeMillis()
+            val voice = SpokenText.forVoice(text)
+            if (muted) {
+                val line = Line(now, WATER_INDEX, text, "water", voice, engine?.name ?: "none", muted = true)
+                if (lines.size >= MAX_LINES) lines.removeAt(0)
+                lines += line
+                mutedCount++
+                return line
+            }
+            val e = engine ?: makeEngine().also { engine = it; it.open() }
+            val line = Line(now, WATER_INDEX, text, "water", voice, e.name)
+            if (lines.size >= MAX_LINES) lines.removeAt(0)
+            lines += line
+            runCatching { e.speak(line.voice, "dystopo-water-$now") }.onFailure { Log.w(NavSession.TAG, "speaking failed", it) }
+            Log.i(NavSession.TAG, "spoke the water line: $text")
+            return line
+        }
+    }
 }
 
 /**
