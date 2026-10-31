@@ -81,6 +81,8 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     VIEW_RANGE("viewRange", SettingsGroup.MAP, "View range", "SettingsPages", "T182"),
     // T183: the printed sheet of the current view (the Map page, last): an action, not a setting
     PRINT_SHEET("printSheet", SettingsGroup.MAP, "Print a map sheet", "SettingsPages", "T183"),
+    // T184: the route card's time as a range or one number (Navigation and tracking, after T187's rows)
+    TIME_ESTIMATE_FORM("timeEstimateForm", SettingsGroup.NAVIGATION, "Route times: Show as", "SettingsPages", "T184"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

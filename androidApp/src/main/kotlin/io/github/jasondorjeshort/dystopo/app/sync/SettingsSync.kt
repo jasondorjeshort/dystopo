@@ -40,6 +40,7 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T187: water along the route (`app.waterAlongRoute`) and its spoken line (`app.waterSpoken`), `on` or `off`;
  * [SettingsRoutes] keys.
  * T182: the viewshed's range (`app.viewRange`, km: `10`, `30` or `100`); a [SettingsRoutes] key.
+ * T184: the route card's time (`app.timeEstimateForm`, `range` or `one`); a [SettingsRoutes] key.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -88,6 +89,8 @@ object SettingsSync {
     const val WATER_SPOKEN = "waterSpoken"
     /** T182: the viewshed's range in km, a [SettingsRoutes] key. */
     const val VIEW_RANGE = "viewRange"
+    /** T184: the route card's time as a range or one number (`range`/`one`), a [SettingsRoutes] key. */
+    const val TIME_ESTIMATE_FORM = AppSettings.KEY_TIME_ESTIMATE_FORM
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -146,6 +149,7 @@ object SettingsSync {
         m[syncedKey(WATER_ALONG_ROUTE)] = onOff(AppSettings.waterAlongRoute) // T187
         m[syncedKey(WATER_SPOKEN)] = onOff(AppSettings.waterSpoken)
         m[syncedKey(VIEW_RANGE)] = AppSettings.viewRangeKm.toString() // T182
+        m[syncedKey(TIME_ESTIMATE_FORM)] = AppSettings.timeEstimateForm // T184
         return m
     }
 
@@ -217,6 +221,7 @@ object SettingsSync {
         if (parsed.waterAlongRoute != null) keys += syncedKey(WATER_ALONG_ROUTE) // T187
         if (parsed.waterSpoken != null) keys += syncedKey(WATER_SPOKEN)
         if (parsed.viewRange != null) keys += syncedKey(VIEW_RANGE) // T182
+        if (parsed.timeEstimateForm != null) keys += syncedKey(TIME_ESTIMATE_FORM) // T184
         publishKeys(app, keys)
     }
 

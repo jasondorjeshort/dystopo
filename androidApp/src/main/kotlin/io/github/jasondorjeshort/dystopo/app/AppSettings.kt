@@ -113,6 +113,8 @@ object AppSettings {
         // T182
         viewRangeKm = p.getInt(KEY_VIEW_RANGE, io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM).takeIf { it in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM }
             ?: io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM
+        // T184
+        timeEstimateForm = p.getString(KEY_TIME_ESTIMATE_FORM, null)?.takeIf { it in TIME_FORMS } ?: TIME_RANGE
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -307,6 +309,22 @@ object AppSettings {
     fun setViewRange(km: Int) {
         viewRangeKm = km
         prefs?.edit()?.putInt(KEY_VIEW_RANGE, km)?.apply()
+    }
+
+    // ---- T184: the route card's time as a range or one number (routing/PaceSettings); synced ----
+
+    const val KEY_TIME_ESTIMATE_FORM = "timeEstimateForm"
+    const val TIME_RANGE = "range"
+    const val TIME_ONE = "one"
+    val TIME_FORMS = listOf(TIME_RANGE, TIME_ONE)
+
+    /** The route card's time: `range` ("about 4:30" over "4:10 to 4:50", the default) or `one` (the single number). */
+    @Volatile var timeEstimateForm: String = TIME_RANGE
+        private set
+
+    fun setTimeEstimateForm(form: String) {
+        timeEstimateForm = form
+        prefs?.edit()?.putString(KEY_TIME_ESTIMATE_FORM, form)?.apply()
     }
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
@@ -610,5 +628,6 @@ object AppSettings {
         "pressureFallWarning" to pressureFallWarning.code, // T178
         "waterAlongRoute" to waterAlongRoute, "waterSpoken" to waterSpoken, // T187
         "viewRange" to viewRangeKm, // T182
+        "timeEstimateForm" to timeEstimateForm, // T184
     ) + mapOptions.json(units) // T47
 }

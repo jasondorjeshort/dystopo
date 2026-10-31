@@ -10,9 +10,21 @@ import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.routing.PaceFit
 import io.github.jasondorjeshort.dystopo.routing.PaceFits
+import io.github.jasondorjeshort.dystopo.routing.PaceRange
+import io.github.jasondorjeshort.dystopo.routing.PastEfforts
+import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
+import io.github.jasondorjeshort.dystopo.routing.TimeEstimate
+import io.github.jasondorjeshort.dystopo.model.RoutePoint
+import io.github.jasondorjeshort.dystopo.store.TrackSummary
+import java.util.TimeZone
+import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import io.github.jasondorjeshort.dystopo.routing.TrackMatch
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import java.util.Locale
@@ -39,6 +51,15 @@ import kotlin.math.roundToLong
  *   needed); with `wait` answers with the result.
  * - `POST /pace/reset`: the row's Reset (the same as `POST /settings?paceFit=&paceSince=<now>`, then a refit).
  * The switch is `POST /settings?paceStandard=1|0`.
+ *
+ * T184, the route card's time as a range and "you did this trail in": [estimate] is [PaceRange.estimate] over the active
+ * fit's whole-track statistic (stored with the fit), shown as the headline "about 4:30" ([headline]) and the second line
+ * "4:10 to 4:50, based on your last 5 hikes" ([secondLine]); a "typical" time without a range under five measured tracks,
+ * past the +-25 % cap or on the standard estimate. The setting `timeEstimateForm` (`range`, the default, or `one`:
+ * today's single exact number and line). [pastEffort] matches the planned route against the recorded tracks
+ * ([PastEfforts], on its own worker, the last [EFFORT_CACHE] results kept by the route's points and the track list; a
+ * track whose box is nowhere near the route is not read again) for the line under the water line ([pastEffortLine]).
+ * `GET /route` and `POST /route` carry both ([rangeJson], [pastEffortJson]).
  */
 object PaceSettings {
     private const val TAG = "DystopoPace"
@@ -201,6 +222,147 @@ object PaceSettings {
             }
             else -> Response.json(mapOf("error" to "GET /pace, POST /pace/refit[?wait=1] or POST /pace/reset"), 404)
         }
+    }
+
+    // ---- T184: the time as a range, and past efforts on the route ----
+
+    /** The card's estimate for [plan] (hike and bike; null for drive and crow, which keep their plain time). */
+    fun estimate(plan: PlannedRoute): TimeEstimate? {
+        if (plan.mode !in PaceFits.FITTED) return null
+        return PaceRange.estimate(RouteSession.summaryOf(plan).timeS, PaceFits.active[plan.mode])
+    }
+
+    /** True when the card shows the estimate's form ("about", "typical", the range); false for the single exact number. */
+    fun rangeForm(): Boolean = AppSettings.timeEstimateForm == AppSettings.TIME_RANGE
+
+    /** The card's headline: distance, climb and time, the time "about 4:30" or "typical 4:30" in the range form. */
+    fun headline(plan: PlannedRoute): String {
+        val e = estimate(plan)?.takeIf { rangeForm() } ?: return RouteSession.summary(plan)
+        val u = AppSettings.units
+        val s = RouteSession.summaryOf(plan)
+        val climb = s.ascentM?.let { " · +${UnitFormat.elevation(it, u)} −${UnitFormat.elevation(s.descentM ?: 0.0, u)}" } ?: ""
+        return "${UnitFormat.distance(s.distanceM, u)}$climb · ${e.headline} ${plan.mode.label}"
+    }
+
+    /** The line under it: "4:10 to 4:50, based on your last 5 hikes" with a range, else whose pace it is ([cardLine]). */
+    fun secondLine(plan: PlannedRoute): String? {
+        val e = estimate(plan)?.takeIf { rangeForm() }
+        val fit = PaceFits.active[plan.mode]
+        if (e != null && e.isRange && fit != null) return "${e.rangeText}, ${basedOn(fit).replaceFirstChar { it.lowercase() }}"
+        return cardLine(plan.mode)
+    }
+
+    /** `range` in `GET /route` and `POST /route`: the setting, the card's two lines and the estimate behind them. */
+    fun rangeJson(plan: PlannedRoute?): Map<String, Any?>? {
+        plan ?: return null
+        val e = estimate(plan)
+        return linkedMapOf<String, Any?>(
+            "setting" to AppSettings.timeEstimateForm, "shown" to (e != null && rangeForm()),
+            "headline" to headline(plan), "line" to secondLine(plan),
+            "fit" to PaceFits.active[plan.mode]?.let { linkedMapOf("low" to PaceFit.r3(it.rangeLow), "high" to PaceFit.r3(it.rangeHigh), "tracks" to it.rangeTracks) },
+        ) + (e?.json() ?: mapOf("form" to "plain", "reason" to "mode"))
+    }
+
+    private const val EFFORT_CACHE = 6
+    private val effortWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "past-effort").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+    private val effortCache = object : LinkedHashMap<Pair<List<RoutePoint>, String>, Future<EffortResult>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<List<RoutePoint>, String>, Future<EffortResult>>?) = size > EFFORT_CACHE
+    }
+
+    /** Each track's box (south, west, north, east) by `id:updatedAt`, so a track far from the route is not read again. */
+    private val boxes = ConcurrentHashMap<String, DoubleArray>()
+
+    /** One route's past efforts, with what it cost: tracks read from the store, and skipped (another mode, far away). */
+    class EffortResult(val summary: PastEfforts.Summary, val ms: Long, val read: Int, val skipped: Int, val error: String? = null)
+
+    private fun trackList(app: DystopoApp): List<TrackSummary> =
+        Tracking.of(app).let { t -> t.call { t.store.list() }.filter { !it.recording }.sortedByDescending { it.createdAt }.take(READ_TRACKS) }
+
+    /** The computation for [points] (started when new); null for fewer than two points or no track store. */
+    private fun startEffort(app: DystopoApp, points: List<RoutePoint>, mode: TravelMode): Future<EffortResult>? {
+        if (points.size < 2) return null
+        val list = runCatching { trackList(app) }.getOrElse { return null }
+        val key = points to (mode.label + "#" + list.joinToString("|") { "${it.id}:${it.updatedAt}" })
+        synchronized(effortCache) {
+            effortCache[key]?.let { return it }
+            val f = effortWorker.submit(Callable { computeEffort(app, points, mode, list) })
+            effortCache[key] = f
+            return f
+        }
+    }
+
+    private fun computeEffort(app: DystopoApp, points: List<RoutePoint>, mode: TravelMode, list: List<TrackSummary>): EffortResult {
+        val t0 = System.currentTimeMillis()
+        val pad = 0.003 // about 300 m
+        val s = points.minOf { it.lat } - pad
+        val n = points.maxOf { it.lat } + pad
+        val w = points.minOf { it.lon } - pad * 1.5
+        val e = points.maxOf { it.lon } + pad * 1.5
+        fun overlaps(b: DoubleArray) = b[0] <= n && b[2] >= s && b[1] <= e && b[3] >= w
+        var read = 0
+        var skipped = 0
+        return try {
+            val t = Tracking.of(app)
+            val near = ArrayList<Track>()
+            for (sum in list) {
+                // The track's own mode, where it says one: a ride is not "this trail" for a hike.
+                val m = sum.activity?.let { PaceFits.modeOf(it) }
+                if (m != null && m != mode) { skipped++; continue }
+                val bkey = "${sum.id}:${sum.updatedAt}"
+                val known = boxes[bkey]
+                if (known != null && !overlaps(known)) { skipped++; continue }
+                val track = t.call { t.store.track(sum.id) } ?: continue
+                read++
+                val pts = track.points
+                if (pts.isEmpty()) continue
+                val box = doubleArrayOf(pts.minOf { it.lat }, pts.minOf { it.lon }, pts.maxOf { it.lat }, pts.maxOf { it.lon })
+                boxes[bkey] = box
+                if (!overlaps(box)) continue
+                if (PaceFits.modeOf(track, null).let { it != null && it != mode }) continue
+                near += track
+            }
+            val summary = PastEfforts.summary(points, near)
+            Log.i(TAG, "past efforts: ${near.size} tracks near the route of ${list.size} (read $read), ${summary.matches.size} overlapping in ${System.currentTimeMillis() - t0} ms")
+            EffortResult(summary, System.currentTimeMillis() - t0, read, skipped)
+        } catch (ex: Exception) {
+            Log.w(TAG, "past efforts failed", ex)
+            EffortResult(PastEfforts.Summary(null, null, null, emptyList()), System.currentTimeMillis() - t0, read, skipped, "${ex.javaClass.simpleName}: ${ex.message}")
+        }
+    }
+
+    /** The result for [points] when it is ready now, else null (and the computation runs); for the card's first frame. */
+    fun pastEffortCached(points: List<RoutePoint>, mode: TravelMode, app: DystopoApp = DystopoApp.instance): EffortResult? {
+        if (mode !in PaceFits.FITTED) return null
+        return startEffort(app, points, mode)?.takeIf { it.isDone }?.let { runCatching { it.get() }.getOrNull() }
+    }
+
+    /** Waits up to [ms] for [points]' past efforts (off the main thread); null for drive and crow, or on a timeout. */
+    fun pastEffort(points: List<RoutePoint>, mode: TravelMode, ms: Long = 10_000, app: DystopoApp = DystopoApp.instance): EffortResult? {
+        if (mode !in PaceFits.FITTED) return null
+        return runCatching { startEffort(app, points, mode)?.get(ms, TimeUnit.MILLISECONDS) }.getOrNull()
+    }
+
+    private fun utcOffset(now: Long): Long = TimeZone.getDefault().getOffset(now).toLong()
+
+    /** The card's line: "You did this trail in 3:52, June", "Part of this trail was recorded", or null. */
+    fun pastEffortLine(r: EffortResult?): String? {
+        val now = System.currentTimeMillis()
+        return r?.summary?.line(now, utcOffset(now))
+    }
+
+    /** `pastEffort` in `GET /route` and `POST /route` (waits up to [waitMs] for it). */
+    fun pastEffortJson(plan: PlannedRoute?, waitMs: Long = 10_000): Map<String, Any?>? {
+        plan ?: return null
+        if (plan.mode !in PaceFits.FITTED) return linkedMapOf("state" to "mode")
+        val r = pastEffort(plan.route.points, plan.mode, waitMs) ?: return linkedMapOf("state" to "computing")
+        val now = System.currentTimeMillis()
+        return r.summary.json(now, utcOffset(now)) + linkedMapOf(
+            "ms" to r.ms, "read" to r.read, "skipped" to r.skipped, "error" to r.error,
+            "rule" to linkedMapOf(
+                "toleranceM" to PastEfforts.TOLERANCE_M, "lowAccuracyToleranceM" to PastEfforts.LOW_ACCURACY_TOLERANCE_M,
+                "match" to PastEfforts.MATCH_SHARE, "partial" to PastEfforts.PARTIAL_SHARE, "onRoute" to PastEfforts.ON_ROUTE_SHARE,
+            ),
+        )
     }
 
     /** The card's lines (ADR 0031 strings). */

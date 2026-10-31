@@ -179,6 +179,15 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun theTimeEstimateForm() { // T184: range (the default) or one number
+        assertEquals("range", ok("timeEstimateForm" to "range").timeEstimateForm)
+        assertEquals("one", ok("timeEstimateForm" to "One").timeEstimateForm)
+        assertEquals(null, ok("units" to "m").timeEstimateForm)
+        assertTrue(bad("timeEstimateForm" to "both").message.contains("timeEstimateForm"))
+        assertTrue("timeEstimateForm" in SettingsRoutes.KEYS)
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {

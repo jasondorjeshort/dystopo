@@ -372,8 +372,21 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        // T184: the route card's time as a range or one number.
+        SettingsRow.TIME_ESTIMATE_FORM -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val form = AppSettings.timeEstimateForm
+            Setting(row.label, "a route's time as a range from your recorded hikes, or one number", help = "settings.timeEstimateForm") {
+                Option(TIME_FORM_RANGE, form == AppSettings.TIME_RANGE) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, timeEstimateForm = AppSettings.TIME_RANGE)) }
+                Option(TIME_FORM_ONE, form == AppSettings.TIME_ONE) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, timeEstimateForm = AppSettings.TIME_ONE)) }
+            }
+        }
     }
 }
+
+/** T184: the Route times: Show as row's choices (ADR 0031 strings). */
+internal const val TIME_FORM_RANGE = "Range"
+internal const val TIME_FORM_ONE = "One number"
 
 /**
  * T161: one readout entry's row for the remembered activity (T172's, named in the hint): shown or not, then for a
@@ -659,6 +672,12 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 (if (units == ContourUnits.FEET) "about 2.5 inches to the mile" else "4 cm to the kilometre") +
                 ", as on printed topographic maps. It has a UTM grid, scale bars, the north diagram, the contour interval, " +
                 "the sources, and your route and track. Pick the paper in the print dialog and print at 100 percent, not fit to page."
+        },
+        // T184: the route card's time as a range or one number.
+        HelpText("settings.timeEstimateForm", "Range or one number", at(SettingsGroup.NAVIGATION, "Route times: Show as"), show = page(SettingsGroup.NAVIGATION)) {
+            "Range shows about one time with a range under it: how much faster or slower your recorded hikes ran than your " +
+                "pace predicted. It needs ${io.github.jasondorjeshort.dystopo.routing.PaceRange.MIN_TRACKS} hikes; until then, or when " +
+                "they vary too much, one typical time shows. One number shows the estimate alone."
         },
     )
 }
