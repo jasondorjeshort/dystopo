@@ -43,4 +43,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(WaterCommand())
     // T181: sun and shade on the terrain, and the point answer.
     .subcommands(ShadeCommand())
+    // T182: what can I see from here, the viewshed and the peaks in view.
+    .subcommands(ViewshedCommand())
     .main(args)

@@ -98,6 +98,7 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         if (o.slope != SlopeShading.OFF) SlopeLegend(o.slope)
         // Terrain overlays worked out on the phone for a moment or a point: T188's shade first (the viewshed, T182, after it).
         SunShadeRow()
+        ViewshedRows() // T182
         val choices = MapOptions.intervals(units)
         OptionRow("Contours", "fixed interval from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM}; coarser below", help = "map.contours") {
             Chip("Auto", o.contourInterval == null) { change(mapOf("contourInterval" to "auto")) }
@@ -179,6 +180,28 @@ private fun SunShadeRow() {
         Row(Modifier.fillMaxWidth()) {
             BasicText(SunClock.clock(range.startMs, zone), Modifier.weight(1f), style = TextStyle(color = Muted, fontSize = 11.sp))
             BasicText(SunClock.clock(range.endMs, zone), style = TextStyle(color = Muted, fontSize = 11.sp))
+        }
+    }
+}
+
+/**
+ * T182: "What can I see from where I am" (the viewshed from the position, [ViewshedSession.startAtPosition]; the settings
+ * sheet closes so the map shows it) and the view range (the synced `viewRange`, the same as Settings › Map › View range).
+ */
+@Composable
+private fun ViewshedRows() {
+    @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+    val t = io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText
+    OptionRow(t.TITLE, t.ROW_HINT, help = "map.viewshed") {
+        Chip(t.FROM_POSITION, false) {
+            SettingsUi.visible = false
+            io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.startAtPosition("options")
+        }
+    }
+    OptionRow(t.RANGE_ROW, null) {
+        val km = io.github.jasondorjeshort.dystopo.app.AppSettings.viewRangeKm
+        for (k in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM) {
+            Chip(t.range(k, io.github.jasondorjeshort.dystopo.app.AppSettings.units), km == k) { io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.setRange(k) }
         }
     }
 }
@@ -350,6 +373,11 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
             "Tints the ground blue where the terrain keeps the sun off it at the time shown, ridges far away included, " +
                 "worked out on this phone from the elevation data; at night it is all shade. It opens at now while the " +
                 "sun is up today, else two hours before sunset; pick another date, or drag the time. Shown from map zoom 10 in."
+        },
+        HelpText("map.viewshed", "What can I see from here", "$place › What can I see from here", show = show) { // T182
+            "Shades green the ground you could see from where you are, at eye height, out to the view range, and lists " +
+                "the named peaks in view. Long-press the map for the same from any point. It uses the offline elevation " +
+                "data; past its edge the ground is hatched."
         },
         HelpText("map.contours", "Contours", "$place › Contours", show = show) {
             "Lines of equal elevation, in your units. Auto picks the interval from the zoom. A fixed interval applies " +

@@ -111,6 +111,8 @@ class HelpRegistryTest {
             "settings.pressureFallWarning",
             // T187: water along the route and its spoken line.
             "settings.waterAlongRoute", "settings.waterSpoken",
+            // T182: the viewshed's range, and its Map options row.
+            "settings.viewRange", "map.viewshed",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

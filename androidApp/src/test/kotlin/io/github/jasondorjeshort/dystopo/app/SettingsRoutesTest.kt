@@ -167,6 +167,18 @@ class SettingsRoutesTest {
     }
 
     @Test
+    fun theViewRange() { // T182: 10, 30 or 100 km, synced as the number
+        assertEquals(10, ok("viewRange" to "10").viewRange)
+        assertEquals(100, ok("viewRange" to 100).viewRange)
+        assertEquals(30, ok("viewRange" to "30 km").viewRange)
+        assertNull(ok("units" to "m").viewRange)
+        assertTrue(bad("viewRange" to "20").message.contains("viewRange"))
+        bad("viewRange" to "30.5")
+        bad("viewRange" to "far")
+        assertTrue("viewRange" in SettingsRoutes.KEYS)
+    }
+
+    @Test
     fun mapRequestsAndDebugRequestsGoToDifferentPools() {
         fun req(path: String) = Request("GET", path, emptyMap(), ByteArray(0))
         for (p in listOf("/dem/12/1/2.png", "/osm/1/0/0.pbf", "/contours/3/1/1.pbf", "/glyphs/Noto Sans Regular/0-255.pbf", "/style.json", "/sprite@2x.png", "/shade/12/1/2.png")) {

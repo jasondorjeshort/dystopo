@@ -70,6 +70,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   (default on: the route card's and the trip card's water line and list, the markers, the navigation card's next water)
  *   and `waterSpoken=1|0` (default off: navigating, the last water before a stretch of more than 5 km without any is
  *   said once), synced as `app.waterAlongRoute` and `app.waterSpoken` `on`/`off`. The markers and cards follow at once.
+ *   T182, the viewshed's range (Settings › Map, `viewshed/ViewshedSession`): `viewRange=10|30|100` (km, default 30: how far
+ *   "What can I see from here" looks), synced (`app.viewRange`); the next viewshed takes it.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -197,6 +199,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             AppSettings.setWater(parsed.waterAlongRoute, parsed.waterSpoken)
             io.github.jasondorjeshort.dystopo.app.routing.RouteWater.onSettings()
         }
+        parsed.viewRange?.let { AppSettings.setViewRange(it) } // T182: the next viewshed reads it
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -245,6 +248,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning? = null,
             // T187: water along the route and its spoken line.
             val waterAlongRoute: Boolean? = null, val waterSpoken: Boolean? = null,
+            // T182: the viewshed's range, km.
+            val viewRange: Int? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -268,7 +273,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf("mapControls", "recenterZoom", "orientationLock") + // T176
             setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW) + // T177
             setOf(AppSettings.KEY_PRESSURE_FALL_WARNING) + // T178
-            setOf("waterAlongRoute", "waterSpoken") // T187
+            setOf("waterAlongRoute", "waterSpoken") + // T187
+            setOf("viewRange") // T182
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -416,6 +422,12 @@ class SettingsRoutes(private val app: DystopoApp) {
             val climbWindow = params[rs.CLIMB_WINDOW]?.let {
                 rs.parseClimbWindow(it.toString()) ?: return Parsed.Error("${rs.CLIMB_WINDOW} must be 30, 60, 300 or 600 seconds (got $it)")
             }
+            // T182: the viewshed's range, one of its three choices in km.
+            val ranges = io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM
+            val viewRange = params["viewRange"]?.let { raw ->
+                ((raw as? Number)?.toDouble() ?: raw.toString().trim().removeSuffix("km").trim().toDoubleOrNull())?.takeIf { it.isFinite() && it.toInt().toDouble() == it && it.toInt() in ranges }?.toInt()
+                    ?: return Parsed.Error("viewRange must be one of ${ranges.joinToString(", ")} km (got $raw)")
+            }
             // T178: the pressure-fall warning.
             val pressureFallWarning = params[AppSettings.KEY_PRESSURE_FALL_WARNING]?.let {
                 io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it.toString())
@@ -430,7 +442,8 @@ class SettingsRoutes(private val app: DystopoApp) {
                 mapControls = mapControls, recenterZoom = recenterZoom, orientationLock = orientationLock,
                 readoutBar = readoutBar, climbWindow = climbWindow,
                 pressureFallWarning = pressureFallWarning,
-                waterAlongRoute = waterAlongRoute, waterSpoken = waterSpoken)
+                waterAlongRoute = waterAlongRoute, waterSpoken = waterSpoken,
+                viewRange = viewRange)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

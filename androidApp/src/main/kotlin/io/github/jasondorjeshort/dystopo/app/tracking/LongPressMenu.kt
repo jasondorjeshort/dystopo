@@ -102,7 +102,7 @@ object LongPressMenu {
         private set
 
     /** T114: the card's actions in their order (`GET /map/longpress` `actions`). */
-    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE, "Cancel")
+    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE, io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION, "Cancel") // T182: the viewshed
 
     /** Takes the map's long-press from the route session (idempotent). */
     fun install() {
@@ -156,6 +156,14 @@ object LongPressMenu {
         point = null
         lastAction = "around"
         io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.startAround(lat, lon, null)
+    }
+
+    /** T182, "What can I see from here": the viewshed from the pressed point, its sheet opened. Main thread. */
+    fun viewshed() {
+        val (lat, lon) = point ?: return
+        point = null
+        lastAction = "viewshed"
+        io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.start(lat, lon, "longpress")
     }
 
     fun cancel() {
@@ -213,6 +221,7 @@ internal fun LongPressCard() {
             MenuAction("Waypoint here") { LongPressMenu.waypoint() }
             MenuAction("Route from here") { LongPressMenu.route() }
             MenuAction(io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE) { LongPressMenu.aroundHere() } // T142
+            MenuAction(io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION) { LongPressMenu.viewshed() } // T182
             MenuAction("Cancel") { LongPressMenu.cancel() }
         }
     }
@@ -241,9 +250,10 @@ private fun PointLines() {
  */
 internal val LONG_PRESS_HELP: List<HelpText> = listOf(
     HelpText("longPress.menu", "Long-press menu", "The map: long-press anywhere", show = { LongPressMenu.showAtCentre() }) {
-        "A long-press on the map opens this card. Route to here plans a route from where you are to the point; Change " +
-            "on the route card starts it elsewhere. Waypoint here marks the point with a waypoint you can name. Route " +
-            "from here starts a route at the point: long-press again where it should end."
+        "A long-press on the map opens this card. Route to here plans a route from where you are to the point. " +
+            "Waypoint here marks the point with a waypoint you can name. Route " +
+            "from here starts a route at the point: long-press again where it should end. What can I see from here " +
+            "shows the ground and peaks in view."
     },
     // T188: the sun line.
     HelpText("longPress.sun", "Sun at this point", "The map: long-press anywhere, the sun line", show = { LongPressMenu.showAtCentre() }) {

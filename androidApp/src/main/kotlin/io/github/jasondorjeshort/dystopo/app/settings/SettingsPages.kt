@@ -348,6 +348,18 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterSpoken = false)) }
             }
         }
+        // T182: how far "What can I see from here" looks (viewshed/ViewshedSession).
+        SettingsRow.VIEW_RANGE -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val km = AppSettings.viewRangeKm
+            Setting(row.label, "how far What can I see from here looks; farther takes longer", help = "settings.viewRange") {
+                for (k in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM) {
+                    Option(io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.range(k, AppSettings.units), km == k) {
+                        change(SettingsRoutes.Parsed.Ok(null, false, null, null, viewRange = k))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -603,6 +615,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "The climb rate is your average climb over this window. 30 seconds follows each switchback; 5 or 10 minutes " +
                 "gives a steady figure for the whole slope, but takes that long to catch up after a change. Flying keeps a " +
                 "few seconds' lag whatever the window."
+        },
+        // T182: the viewshed's range.
+        HelpText("settings.viewRange", "View range", at(SettingsGroup.MAP, "View range"), show = page(SettingsGroup.MAP)) { units ->
+            val t = io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText
+            "How far What can I see from here looks, from a long-pressed point or from you. ${t.range(30, units)} covers the ridges and " +
+                "summits around a valley; ${t.range(100, units)} reaches distant peaks but takes longer on the phone. Ground past the edge of " +
+                "your offline maps is hatched: there is no elevation data there to look across."
         },
         // T178: the pressure-fall warning's row.
         HelpText("settings.pressureFallWarning", "Pressure-fall warning", at(SettingsGroup.NAVIGATION, "Pressure-fall warning"), show = page(SettingsGroup.NAVIGATION)) { units ->

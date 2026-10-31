@@ -214,6 +214,7 @@ private fun BoxScope.Controls() {
     ) {
         BatteryExemptionCard() // T172: once, on the first Record
         LongPressCard() // T91
+        io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSheet() // T182: what can I see from here
         ui.selectedWaypoint?.let { WaypointSheet(tracking, it) }
         ui.profile?.let { ProfilePanel(tracking, it) }
     }
