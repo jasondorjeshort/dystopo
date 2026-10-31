@@ -1914,6 +1914,18 @@ const S = [
     (r) => (r.stdout.split('\n')[0] === 'C:/old' && r.stdout.split('\n').length === 2 && r.stdout.split('\n')[1].startsWith('M | ctx')) || r.stdout],
   ['S14', 'neither directory field: the meters line alone, no blank first line', JSON.stringify({ model: { display_name: 'M' } }), null,
     (r) => (!r.stdout.includes('\n') && r.stdout.startsWith('M | ctx')) || r.stdout],
+  ['S45', 'directory and session_name: line 1 is "dir | name"', JSON.stringify({ model: { display_name: 'M' }, cwd: 'C:/old', session_name: 'my-session' }), null,
+    (r) => (r.stdout.split('\n')[0] === 'C:/old | my-session' && r.stdout.split('\n').length === 2 && r.stdout.split('\n')[1].startsWith('M | ctx')) || r.stdout],
+  ['S46', 'session_name without a directory: line 1 is the name alone', JSON.stringify({ model: { display_name: 'M' }, session_name: 'my-session' }), null,
+    (r) => (r.stdout.split('\n')[0] === 'my-session' && r.stdout.split('\n').length === 2 && r.stdout.split('\n')[1].startsWith('M | ctx')) || r.stdout],
+  ['S47', 'empty session_name: the plain directory output', JSON.stringify({ model: { display_name: 'M' }, cwd: 'C:/old', session_name: '' }), null,
+    (r) => r.stdout === 'C:/old\n' + statusline(JSON.stringify({ model: { display_name: 'M' } })).stdout || r.stdout],
+  ['S48', 'non-string session_name: the plain directory output', JSON.stringify({ model: { display_name: 'M' }, cwd: 'C:/old', session_name: 42 }), null,
+    (r) => r.stdout === 'C:/old\n' + statusline(JSON.stringify({ model: { display_name: 'M' } })).stdout || r.stdout],
+  ['S49', 'control characters in session_name become a space and keep the two-line layout', JSON.stringify({ model: { display_name: 'M' }, cwd: 'C:/old', session_name: 'a\nb\u001b[31mc' }), null,
+    (r) => (r.stdout.split('\n')[0] === 'C:/old | a b [31mc' && r.stdout.split('\n').length === 2 && !r.stdout.includes('\u001b')) || r.stdout],
+  ['S50', 'session_name of only control characters counts as no name', JSON.stringify({ model: { display_name: 'M' }, cwd: 'C:/old', session_name: '\n\u001b ' }), null,
+    (r) => r.stdout === 'C:/old\n' + statusline(JSON.stringify({ model: { display_name: 'M' } })).stdout || r.stdout],
 ];
 fs.rmSync(slFile, { force: true });
 for (const [id, label, stdin, policy, check] of S) {

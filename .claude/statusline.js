@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Status line for Claude Code. Reads the JSON Claude pipes on stdin, prints the working directory (when known)
-// and then the meters line, and keeps this session's usage file, ~/.claude/usage-state/<session_id>.json,
-// current for the usage-gate hook (.claude/hooks/usage-gate.js).
+// and the session name (when set), then the meters line, and keeps this session's usage file,
+// ~/.claude/usage-state/<session_id>.json, current for the usage-gate hook (.claude/hooks/usage-gate.js).
 // Thresholds for the HOLD and STOP flags come from .claude/hooks/policy.json (usage block) and are
 // shown per meter, "(hold 50)" or "(hold 50 stop 90)"; STOP shows only on a meter with a deny line,
 // which the base does not set. "HOLD lifted" replaces HOLD when an override lifts it for this session.
@@ -168,7 +168,12 @@ process.stdin.on('end', () => {
   // cost.total_cost_usd (API list-price estimate) is deliberately not shown: on a subscription the
   // meters and their reset times are what matter. Run /usage for the figure.
   // Line 1 is the working directory as received, so a wrong-checkout mistake shows; omitted (no blank
-  // line) when the payload carries neither workspace.current_dir nor the older cwd.
+  // line) when the payload carries neither a directory (workspace.current_dir, else the older cwd)
+  // nor a session name.
   const dir = [d.workspace && d.workspace.current_dir, d.cwd].find((v) => typeof v === 'string' && v !== '');
-  process.stdout.write((dir ? dir + '\n' : '') + parts.join(' | '));
+  // The session name (session_name, absent when the session has none) follows the directory on line 1.
+  // Control characters become a space, so a newline or escape cannot break the two-line layout.
+  const name = typeof d.session_name === 'string' ? d.session_name.replace(/[\x00-\x1f\x7f]+/g, ' ').trim() : '';
+  const first = [dir, name].filter(Boolean).join(' | ');
+  process.stdout.write((first ? first + '\n' : '') + parts.join(' | '));
 });
