@@ -203,7 +203,7 @@ class ViewshedTest {
         val z = 12
         val extent = 4096
         val tiles = HashMap<Triple<Int, Int, Int>, MutableList<Feature>>()
-        fun point(plat: Double, plon: Double, vararg kv: Pair<String, Any>) {
+        fun point(plat: Double, plon: Double, vararg kv: Pair<String, Any>, z: Int = 12) {
             val fx = WebMercator.lonToX(plon, z)
             val fy = WebMercator.latToY(plat, z)
             val x = floor(fx).toInt()
@@ -217,6 +217,9 @@ class ViewshedTest {
         point(46.7900, -121.7000, "class" to "saddle", "name" to "A Saddle", "ele" to 2000) // not a peak
         point(46.7950, -121.7100, "class" to "peak", "ele" to 1900) // unnamed
         point(47.3000, -121.7500, "class" to "peak", "name" to "Too Far", "ele" to 1500)
+        // Farther ones come from coarser zooms (the layer is thinned below z13): one only in a z10 tile, and Rainier again there.
+        point(47.3000, -121.7500, "class" to "peak", "name" to "Too Far", "ele" to 1500, z = 10)
+        point(46.8529, -121.7603, "class" to "volcano", "name" to "Mount Rainier", "ele" to 4392, z = 10)
         val encoded = tiles.mapValues { (_, fs) -> VectorTile(listOf(Layer("mountain_peak", fs, extent), Layer("water", emptyList(), extent))).encode() }
         val peaks = Viewshed.readPeaks({ tz, tx, ty -> encoded[Triple(tz, tx, ty)] }, lat, lon, 10_000.0, zoom = z)
         assertEquals(setOf("Mount Rainier", "Panorama Point"), peaks.map { it.name }.toSet())
@@ -224,6 +227,8 @@ class ViewshedTest {
         assertEquals("volcano", rainier.kind)
         assertEquals(4392.0, rainier.eleM)
         assertEquals(46.8529, rainier.lat, 1e-3)
+        val far = Viewshed.readPeaks({ tz, tx, ty -> encoded[Triple(tz, tx, ty)] }, lat, lon, 100_000.0, zoom = 10)
+        assertEquals(listOf("Mount Rainier", "Panorama Point", "Too Far"), far.map { it.name }.sorted(), "z12 near, z10 far, one Rainier")
         assertEquals(12, Viewshed.peakZoom(lat, 10_000.0))
         assertEquals(11, Viewshed.peakZoom(lat, 30_000.0))
         assertEquals(10, Viewshed.peakZoom(lat, 100_000.0))

@@ -133,7 +133,7 @@ class ViewshedCommand : CliktCommand(name = "viewshed") {
     /**
      * The terrain layer [index]'s window: paper toned by the multidirectional hillshade, light grey without data, the
      * viewshed's state of each pixel's centre over it as the phone draws it ([Viewshed.overlayArgb]'s colours), the range
-     * circle, the observer and the peaks (in view: dark triangle and name; hidden: grey).
+     * circle, the observer and the peaks (in view: dark triangle and name; hidden: a small grey triangle).
      */
     private fun draw(terrain: Terrain, index: Int, r: ViewshedResult, peaks: List<PeakView>): BufferedImage {
         val layer = terrain.layers[index]
@@ -193,9 +193,11 @@ class ViewshedCommand : CliktCommand(name = "viewshed") {
             val pxx = x(p.peak.lon)
             val pyy = y(p.peak.lat)
             if (pxx < 0 || pyy < 0 || pxx >= w.width || pyy >= w.height) continue
-            val tri = Path2D.Double().apply { moveTo(pxx, pyy - 7); lineTo(pxx - 6, pyy + 5); lineTo(pxx + 6, pyy + 5); closePath() }
+            val sz = if (p.visible) 1.0 else 0.6
+            val tri = Path2D.Double().apply { moveTo(pxx, pyy - 7 * sz); lineTo(pxx - 6 * sz, pyy + 5 * sz); lineTo(pxx + 6 * sz, pyy + 5 * sz); closePath() }
             g.color = if (p.visible) Color(30, 20, 10) else Color(140, 140, 140)
             g.fill(tri)
+            if (!p.visible) continue // hidden peaks unlabelled: the names in view stay readable
             val label = "${p.peak.name} ${p.eleM.roundToLong()} m" + if (p.visible && p.skyline) " *" else ""
             g.color = Color(255, 255, 255, 190)
             g.fillRect((pxx + 8).toInt(), (pyy - 6).toInt(), g.fontMetrics.stringWidth(label) + 4, 14)
@@ -204,7 +206,7 @@ class ViewshedCommand : CliktCommand(name = "viewshed") {
         }
         g.font = RenderFonts.regular(12.0)
         val caption = "viewshed z${w.zoom} (${"%.0f".format(cellM)} m cells), range ${"%.0f".format(r.rangeM / 1000)} km, eye ${r.eyeM} m: " +
-            "green visible, clear hidden, hatched no data; * on the skyline"
+            "green visible, clear hidden, hatched no data; named peaks in view (* on the skyline), grey: hidden"
         g.color = Color(255, 255, 255, 215)
         g.fillRect(6, w.height - 24, g.fontMetrics.stringWidth(caption) + 10, 18)
         g.color = Color(30, 30, 30)

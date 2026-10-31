@@ -462,18 +462,31 @@ object Viewshed {
         return floor(ln(world / (rangeM / 4)) / ln(2.0)).toInt().coerceIn(9, 12)
     }
 
+    /** The farthest distance [peakZoom] reads at [zoom] or finer (tiles a quarter of it wide). */
+    fun peakBandM(lat: Double, zoom: Int): Double = 2 * PI * Horizon.EARTH_RADIUS_M * cos(lat * DEG) / (1L shl zoom) * 4
+
     /**
-     * The named peaks (classes [PEAK_CLASSES]) of the `mountain_peak` layer within [rangeM] of ([lat], [lon]), read at
-     * [zoom] from [tiles] (a vector pack's `tile(z, x, y)`, null where it has none). A point counts in its own tile
-     * only (tiles carry a buffer); the same name within 200 m is one peak.
+     * The named peaks (classes [PEAK_CLASSES]) of the `mountain_peak` layer within [rangeM] of ([lat], [lon]) from
+     * [tiles] (a vector pack's `tile(z, x, y)`, null where it has none). The layer is thinned below z13 (two a 64 px
+     * cell), so near peaks are read at z12 and farther ones at coarser zooms down to [zoom]: each zoom out to
+     * [peakBandM] (the last to the range). A point counts in its own tile only (tiles carry a buffer); the same name
+     * within 200 m is one peak.
      */
     fun readPeaks(tiles: (Int, Int, Int) -> ByteArray?, lat: Double, lon: Double, rangeM: Double, zoom: Int = peakZoom(lat, rangeM)): List<Peak> {
+        val out = ArrayList<Peak>()
+        for (z in maxOf(zoom, 12) downTo zoom) {
+            val r = if (z == zoom) rangeM else minOf(rangeM, peakBandM(lat, z))
+            readPeaksAt(tiles, lat, lon, r, z, out)
+        }
+        return out
+    }
+
+    private fun readPeaksAt(tiles: (Int, Int, Int) -> ByteArray?, lat: Double, lon: Double, rangeM: Double, zoom: Int, out: MutableList<Peak>) {
         val n = 1 shl zoom
         val mpp = WebMercator.metersPerPixel(lat, zoom, 1)
         val cx = WebMercator.lonToX(lon, zoom)
         val cy = WebMercator.latToY(lat, zoom)
         val r = rangeM / mpp
-        val out = ArrayList<Peak>()
         for (ty in floor(cy - r).toInt().coerceAtLeast(0)..floor(cy + r).toInt().coerceAtMost(n - 1)) {
             for (tx in floor(cx - r).toInt()..floor(cx + r).toInt()) {
                 val bytes = tiles(zoom, tx.mod(n), ty) ?: continue
@@ -494,7 +507,6 @@ object Viewshed {
                 }
             }
         }
-        return out
     }
 
     /**
