@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-31
 
+- T189: ADR 0049's B: the routing graph ships with a server-built pack
 - T184: The arrival time as a range, and "you did this trail in" (after T187)
 - T183: The phone's printed sheet (after T167)
 - T182: The viewshed: what can I see from here, and the peaks in view (after T181; its phone files after T188)
