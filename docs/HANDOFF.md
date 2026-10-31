@@ -16,10 +16,8 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   the `dystopo-wt/T178` folder (a process held `R.jar`), `task/T178` local, `T178v`; the owner's housekeeping row has
   `verify/T176`, `T185v-local`.
 - The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage at launch: 5-hour 16, 7-day 28.
-- Owner words (2026-10-30): "We can probably fit all of that in the budget"; on the storm warning, "we're gaining
-  thousands of feet of elevation so have to use QNH" (T178's reduction; the critic's § 1 and 12 corrected the method).
-- The sweep will meet the `update` part's "unexpected end of stream" from the mock releases API on this host (T185's
-  verifier, with and without T185): a finding to write at the close if it recurs.
+- The sweep will meet the `update` part's "unexpected end of stream" from the mock releases API (T185's verifier,
+  with and without T185): a finding at the close if it recurs.
 
 ## Next
 
