@@ -1529,12 +1529,12 @@ def scale_metres(desc):
     return float(m.group(1).replace(",", "")) * SCALE_UNITS_M[m.group(2)] if m else None
 
 
-SCALE_PAD_DP = 6 + 6 + 2  # ScaleBar.kt: the plate's horizontal padding each side and the ruler's stroke
+SCALE_PAD_DP = 2  # ScaleBar.kt: the ruler's stroke (the node's bounds lie inside the plate's padding)
 
 
 def scale_mpp(nodes, density=1.0):
-    """Metres per pixel the scale bar shows: its first length over the ruler's width (its node's width less the plate's
-    padding and the stroke, [density] px per dp; a label wider than the ruler makes it a few percent off), or None."""
+    """Metres per pixel the scale bar shows: its first length over the ruler's width (its node's width less the stroke,
+    [density] px per dp; a label wider than the ruler makes it a few percent off), or None."""
     n = next((n for n in nodes if (n["desc"] or "").startswith("Scale ") and n["bounds"]), None)
     metres = scale_metres(n["desc"]) if n else None
     w = (n["bounds"][2] - n["bounds"][0] - SCALE_PAD_DP * density) if n else 0
