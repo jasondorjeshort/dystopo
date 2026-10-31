@@ -16,6 +16,9 @@ import androidx.compose.runtime.setValue
 internal object NavUiState {
     var ui: NavSession.Ui? by mutableStateOf(null)
 
+    /** T180: the free-tracking turn-around clock ([WayBackClock]); null when nothing records or while navigating. */
+    var wayBack: WayBackClock.Ui? by mutableStateOf(null)
+
     /** Forces creation now (call from the main thread, before the first composition). */
     fun prepare() {}
 }

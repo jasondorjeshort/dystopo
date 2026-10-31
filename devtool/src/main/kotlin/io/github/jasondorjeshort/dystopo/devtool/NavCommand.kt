@@ -22,6 +22,11 @@ import io.github.jasondorjeshort.dystopo.nav.NavOptions
 import io.github.jasondorjeshort.dystopo.nav.Sun
 import io.github.jasondorjeshort.dystopo.nav.TurnAround
 import io.github.jasondorjeshort.dystopo.nav.TurnPace
+import io.github.jasondorjeshort.dystopo.nav.TurnClock
+import io.github.jasondorjeshort.dystopo.nav.WayBack
+import io.github.jasondorjeshort.dystopo.nav.WayPoint
+import io.github.jasondorjeshort.dystopo.nav.Navigator
+import io.github.jasondorjeshort.dystopo.nav.NavEvent
 import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.nav.NavPath
 import io.github.jasondorjeshort.dystopo.nav.NavReplay
@@ -57,6 +62,13 @@ import kotlin.math.roundToLong
  * prints the turn-around clock ([TurnAround]) at readings along the line (`--along-m` for one), at `--now` (default the
  * line's first track time): the day's sun times at the line's end, and per reading the state, the turn-back time, the
  * return time each way and the arrival. `--retrace` times the way out back along the line only (free tracking).
+ *
+ * T180, the clock series and the direction flips: `nav --turn-around --path <gpx> --path-track --retrace --replay` feeds
+ * the track's points to the phone's free-tracking way back ([WayBack]: the anchor by the speed rule, the [Retrace] flips)
+ * and prints a reading every `--every-s` seconds of fix time (and at each flip), the anchor and the flips;
+ * `nav --turn-around --path <route gpx> --fixes <walk gpx>` navigates the route with the walk's points ([Navigator]: the
+ * [PathTracker]'s progress and jumps, "Heading back") and prints the same series, the flips and whether it arrived.
+ * `--expect-flips N` exits 1 unless N flips happen.
  */
 class NavCommand : CliktCommand(name = "nav") {
     init {
@@ -80,6 +92,10 @@ class NavCommand : CliktCommand(name = "nav") {
     private val samples by option("--samples", help = "T163: readings along the line (default 11: every tenth)").int().default(11)
     private val mode by option("--mode", help = "T163: hike (default) or bike: the time model").choice("hike", "bike").default("hike")
     private val retrace by option("--retrace", help = "T163: free tracking: the way out is always back along the line (the recorded track)").flag()
+    private val replay by option("--replay", help = "T180: with --retrace, feed the track's points one by one as a recording (the anchor, the flips) and print the clock series").flag()
+    private val fixesFile by option("--fixes", help = "T180: navigate --path with this GPX's track points as fixes and print the clock series and the flips").file(mustExist = true, canBeDir = false)
+    private val everyS by option("--every-s", help = "T180: seconds of fix time between readings of the series (default 300)").int().default(300)
+    private val expectFlips by option("--expect-flips", help = "T180: exit 1 unless the series has this many flips to heading back").int()
 
     override fun run() {
         if (currentContext.invokedSubcommand != null) return
@@ -103,6 +119,10 @@ class NavCommand : CliktCommand(name = "nav") {
             else -> Deadline(DeadlineKind.TIME, parseInstant(deadline) ?: throw UsageError("--deadline must be sunset, civil or an ISO 8601 instant (got $deadline)"), DeadlineKind.TIME.label)
         }
         if (marginMin !in TurnAround.MARGIN_RANGE) throw UsageError("--margin-min must be ${TurnAround.MARGIN_RANGE.first} to ${TurnAround.MARGIN_RANGE.last}")
+        if (replay || fixesFile != null) {
+            if (replay && !retrace) throw UsageError("--replay needs --retrace (free tracking)")
+            return series(f, doc, path, dl, nowMs, t0)
+        }
         val ta = TurnAround(path, TurnPace.of(CostModel(TravelMode.of(mode)!!)), retraceOnly = retrace)
         val day = Sun.dayAt(end.lat, end.lon, nowMs)
         // Clock times in the line's mean solar time (the JSON's ISO instants are UTC); whole minutes of offset.
@@ -132,6 +152,76 @@ class NavCommand : CliktCommand(name = "nav") {
             "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,
         )
         echo(pretty(report))
+    }
+
+    /** T180: the clock fix by fix, through the phone's free-tracking way back (`--replay`) or navigation (`--fixes`). */
+    private fun series(f: File, doc: GpxDocument, path: NavPath, dl: Deadline, nowMs: Long, t0: Long) {
+        val pace = TurnPace.of(CostModel(TravelMode.of(mode)!!))
+        val end = path.points.last()
+        val zone = java.time.ZoneOffset.ofTotalSeconds(((end.lon / 15) * 60).roundToLong().toInt() * 60)
+        val clock: (Long) -> String = { ms -> java.time.Instant.ofEpochMilli(ms).atOffset(zone).toLocalTime().withSecond(0).withNano(0).toString() }
+        val readings = ArrayList<Map<String, Any?>>()
+        val flips = ArrayList<Map<String, Any?>>()
+        var lastAt = Long.MIN_VALUE
+        var wasBack = false
+        fun reading(i: Int, t: Long, c: TurnClock, back: Boolean, extra: Map<String, Any?>) {
+            val flip = back && !wasBack
+            if (flip) flips += linkedMapOf<String, Any?>("fix" to i, "time" to java.time.Instant.ofEpochMilli(t).toString(), "alongM" to Math.round(c.alongM)) + extra
+            if (flip || lastAt == Long.MIN_VALUE || t - lastAt >= everyS * 1000L) {
+                lastAt = t
+                readings += linkedMapOf<String, Any?>(
+                    "fix" to i, "time" to clock(t), "text" to c.text(clock), "state" to c.state.key, "colour" to c.colour,
+                    "headingBack" to back, "alongM" to Math.round(c.alongM), "retraceS" to c.retraceS.roundToLong(), "returnS" to c.returnS.roundToLong(),
+                ) + extra
+            }
+            wasBack = back
+        }
+        val report = linkedMapOf<String, Any?>("command" to "nav --turn-around", "pathFile" to f.path, "name" to path.name)
+        if (replay) {
+            val pts = doc.tracks.flatMap { it.points }
+            if (pts.any { it.time == null }) throw UsageError("--replay needs a <time> on every point")
+            val wb = WayBack(pace)
+            pts.forEachIndexed { i, p ->
+                wb.add(WayPoint(p.lat, p.lon, p.ele, p.time, p.speedMps, p.flags != 0))
+                val c = wb.clock(p.time!!, dl, marginMin) ?: return@forEachIndexed
+                reading(i, p.time!!, c, wb.retrace.headingBack, linkedMapOf("anchor" to wb.anchorSource.key))
+            }
+            report += linkedMapOf(
+                "mode" to "recording", "fixes" to pts.size, "anchor" to wb.json()["anchor"], "retrace" to wb.retrace.json(),
+                "flips" to flips, "flipCount" to wb.retrace.flips,
+            )
+        } else {
+            val walk = Gpx.parse(fixesFile!!.readText(Charsets.UTF_8)).tracks.flatMap { it.points }
+            if (walk.isEmpty() || walk.any { it.time == null }) throw UsageError("--fixes needs track points with a <time> each")
+            val nav = Navigator(path, NavOptions(mode = TravelMode.of(mode)!!))
+            val ta = TurnAround(path, pace)
+            var farthest = 0.0
+            walk.forEachIndexed { i, p ->
+                val s = nav.onFix(p.lat, p.lon, p.time!!, p.accuracyM)
+                if (!s.offRoute) farthest = maxOf(farthest, s.progress)
+                if (s.arrived) return@forEachIndexed
+                val c = ta.clock(s.progress, p.time!!, dl, marginMin, if (s.offRoute) s.projection.distanceM else 0.0, farthest, s.headingBack)
+                reading(i, p.time!!, c, s.headingBack, linkedMapOf("progressM" to Math.round(s.progress), "offRoute" to s.offRoute))
+            }
+            report += linkedMapOf(
+                "mode" to "navigation", "fixesFile" to fixesFile!!.path, "fixes" to walk.size, "totalM" to Math.round(path.totalM), "loop" to nav.loop,
+                "wayBackStretches" to nav.wayBackFrom.map { (a, b) -> linkedMapOf("fromM" to Math.round(a), "toM" to Math.round(b)) },
+                "tracker" to nav.tracker.json(), "arrived" to (nav.state?.arrived ?: false),
+                "events" to nav.events.groupingBy { it.type.substringBefore(':') }.eachCount(),
+                "flips" to flips, "flipCount" to nav.events.count { it.type == NavEvent.HEADING_BACK },
+            )
+        }
+        report += linkedMapOf(
+            "deadline" to linkedMapOf("kind" to dl.kind.key, "at" to dl.atMs?.let { java.time.Instant.ofEpochMilli(it).toString() }, "label" to dl.label),
+            "marginMin" to marginMin, "pace" to pace.label, "everyS" to everyS, "clockZone" to zone.id, "now" to java.time.Instant.ofEpochMilli(nowMs).toString(),
+            "readings" to readings, "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,
+        )
+        val got = report["flipCount"] as Int
+        val failures = expectFlips?.let { if (got != it) listOf("expected $it flips, got $got") else emptyList() } ?: emptyList()
+        report["ok"] = failures.isEmpty()
+        report["failures"] = failures
+        echo(pretty(report))
+        if (failures.isNotEmpty()) throw ProgramResult(1)
     }
 
     private fun parseInstant(s: String): Long? = runCatching { java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli() }.getOrNull()

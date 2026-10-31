@@ -67,6 +67,9 @@ import kotlinx.coroutines.launch
  *   coming to the foreground ([Foreground]) starts it.
  * - **The last fix**: every fix that reaches the recorder goes to [LastFix] too (T162's open view), so a recording in the
  *   background, with the map's own listener off (T150), still moves the place the map opens at.
+ * - T180, **the way back**: every point the recorder keeps goes to the free-tracking turn-around clock
+ *   ([io.github.jasondorjeshort.dystopo.app.nav.WayBackClock]), which starts and stops with the recording; [wayBackHere] is
+ *   the recording card's "The way back starts here" (per-device state, [WayBackAnchor]).
  *
  * Fix sources while recording ([Mode]): `gps`, `injected` (debug `POST /location` and replays), or
  * `all`. In `all`, injected fixes take precedence: GPS fixes are ignored while a replay runs and for
@@ -194,6 +197,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         refreshOverlay(force = true)
         if (resumed != null) {
             post { watch.begin(SystemClock.elapsedRealtime()); startTicker() }
+            // T180: the way back of the resumed recording, from what it holds (its override is per device, kept).
+            post { runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.rebuild(resumed, recordedPoints()) } }
             // The system restarting the service creates this object from its onStartCommand, which goes on by itself.
             if (!TrackingService.creating) startService()
         }
@@ -228,6 +233,31 @@ class Tracking private constructor(private val app: DystopoApp) {
     /** T159: called with every fallback (network or passive) fix while its listener runs. */
     fun onFallbackDeviceFix(fix: LocationFix): Unit = post { onFallbackFix(fix, device = true) }
 
+    /** T180: the recording's points in order (tracking thread). */
+    private fun recordedPoints(): List<io.github.jasondorjeshort.dystopo.model.TrackPoint> = recorder.livePoints().flatten()
+
+    /** T180: a fix the recorder kept goes to the way back; flagged as the recorder flags it (over the bound, or a network fix). */
+    private fun wayBackPoint(fix: LocationFix) {
+        val id = recorder.activeId ?: return
+        val bound = recorder.profile.accuracyBoundM
+        val flagged = fix.source == "network" || fix.source == "passive" || (bound != null && (fix.accuracyM ?: 0.0) > bound)
+        runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onPoint(id, fix, flagged) { recordedPoints() } }
+            .onFailure { Log.w(TAG, "way back", it) }
+    }
+
+    /** T180: "The way back starts here": the recording's way back starts at its last point. False when nothing records. */
+    fun wayBackHere(): Boolean = call {
+        val id = recorder.activeId ?: return@call false
+        io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.here(id, recordedPoints())
+    }
+
+    /** T180: the way back's start back to the rule (`POST /tracks/wayback?reset=1`). False when nothing records. */
+    fun wayBackReset(): Boolean = call {
+        val id = recorder.activeId ?: return@call false
+        io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.reset(id, recordedPoints())
+        true
+    }
+
     private fun onFix(fix: LocationFix, fromGps: Boolean) {
         if (fromGps) {
             if (!mode.gps) return
@@ -247,6 +277,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         }
         val before = state
         if (recorder.onFix(fix)) {
+            wayBackPoint(fix) // T180
             if (recorder.accepted % 10 == 1L || stateNow() != before) refreshUi() else refreshUiThrottled()
             refreshOverlay()
         } else if (recorder.recording && stateNow() != before) refreshUi()
@@ -267,6 +298,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         runCatching { LastFix.record(fix) }
         watch.fallback(now, fix.accuracyM)
         if (recorder.onFix(fix)) {
+            wayBackPoint(fix) // T180
             refreshUi()
             refreshOverlay()
         }
@@ -436,7 +468,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             prefs.edit().putString(KEY_REC_MODE, mode.name).apply()
             stoppedBySystemAt = null
             watch.begin(SystemClock.elapsedRealtime())
-            recorder.start(n, profile).also { shownId = it.id }
+            recorder.start(n, profile).also { shownId = it.id; io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180
         }
         startService()
         refreshUi()
@@ -456,6 +488,7 @@ class Tracking private constructor(private val app: DystopoApp) {
                 notification.cancel()
             }
         }
+        io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStop() // T180
         stopService()
         refreshUi()
         refreshOverlay(force = true)
@@ -533,7 +566,7 @@ class Tracking private constructor(private val app: DystopoApp) {
 
     fun delete(id: String): Boolean {
         val deleted = call {
-            if (recorder.activeId == id) recorder.stop()
+            if (recorder.activeId == id) { recorder.stop(); io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStop() } // T180
             store.delete(id)
         }
         if (shownId == id) shownId = null

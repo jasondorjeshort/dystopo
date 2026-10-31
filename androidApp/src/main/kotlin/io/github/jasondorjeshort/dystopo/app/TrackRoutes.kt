@@ -31,6 +31,12 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   encoded `value`). The activity picker's and the battery card's routes: [io.github.jasondorjeshort.dystopo.app.tracking.ActivityPicker.handle],
  *   [io.github.jasondorjeshort.dystopo.app.tracking.BatteryExemption.handle].
  * - `POST /tracks/stop`, `POST /tracks/pause`, `POST /tracks/resume`.
+ * - T180, the way back of the recording ([io.github.jasondorjeshort.dystopo.app.nav.WayBackClock]): `GET /tracks` `wayBack`
+ *   (null when nothing records) is `GET /nav/turnaround`'s free-tracking reading: `anchor` (`source` `start` | `walk` |
+ *   `here`, `index` of the recording's point, `lat`, `lon`, `timeMs`, the card's `line`, `override`), `retrace`
+ *   (`returning`, `headingBack`, `flips`, `flipsAt`, `alongM`, `totalM`, `offM`), the `clock`, `text`, `label`, `ui`.
+ *   `POST /tracks/wayback?here=1` is the recording card's "The way back starts here" (the recording's last point; kept per
+ *   device, never synced); `POST /tracks/wayback?reset=1` goes back to the rule. 409 when nothing records.
  * - `GET /tracks/settings`; `POST /tracks/settings?gapS=600`: the automatic new-segment gap in
  *   seconds (0 = never split on time), persisted.
  * - `GET /tracks/{id}` (summary, stats, waypoints, T159 `gaps`), `GET /tracks/{id}.gpx` (the GPX export, ids in
@@ -148,6 +154,15 @@ object TrackRoutes {
             "POST" to "/tracks/resume" -> {
                 if (!t.resume()) return Response.json(mapOf("error" to "not recording"), 409)
                 return Response.json(recorderJson(t))
+            }
+            "POST" to "/tracks/wayback" -> { // T180
+                val ok = when {
+                    p.s("here") == "1" -> t.wayBackHere()
+                    p.s("reset") == "1" -> t.wayBackReset()
+                    else -> return Response.json(mapOf("error" to "here=1 or reset=1"), 400)
+                }
+                if (!ok) return Response.json(mapOf("error" to "not recording, or no point recorded yet"), 409)
+                return Response.json(mapOf("wayBack" to io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.json()))
             }
             "GET" to "/tracks/settings" -> return Response.json(settingsJson(t))
             "POST" to "/tracks/settings" -> {
@@ -342,6 +357,7 @@ object TrackRoutes {
 
     private fun overview(t: Tracking): Map<String, Any?> {
         val recording = if (t.recorder.recording) recorderJson(t) else null
+        val wayBack = runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.json() }.getOrElse { mapOf("error" to it.message) } // T180
         return t.call {
             val rec = t.recorder
             val tracks = t.store.list()
@@ -349,6 +365,7 @@ object TrackRoutes {
             mapOf(
                 "state" to t.state.code, // T159
                 "recording" to recording,
+                "wayBack" to wayBack, // T180
                 "freeWaypoints" to t.store.waypoints(null).map(::waypointJson), // T91
                 "lastDrop" to t.lastDrop,
                 "lastFix" to rec.lastFix?.let {

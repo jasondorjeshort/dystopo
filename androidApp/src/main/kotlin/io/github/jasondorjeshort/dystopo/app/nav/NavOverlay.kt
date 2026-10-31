@@ -66,14 +66,25 @@ private val Link = Color(0xFF2C7BB6)
  * banner (Unsnooze while snoozed), "No GPS fix for N s" when the position is old, and the card's bottom
  * edge goes to [io.github.jasondorjeshort.dystopo.app.TopChips] so the Tracks and Routes chips stack below it.
  * T102: the next turn direction first, in large type with its distance and an arrow for the turn, in the alert
- * colour once it is within its lead distance. T163: the turn-around clock under the end ([TurnBack]).
+ * colour once it is within its lead distance. T163: the turn-around clock under the end ([TurnBack]). T180: "Heading
+ * back" under it once the direction flips; and while a track records with no route navigated, the free-tracking clock
+ * in the card's place ([WayBackCard], [WayBackClock]).
  */
 @Composable
 fun NavOverlay() {
     val chips = io.github.jasondorjeshort.dystopo.app.TopChips
     val u = NavSession.ui
     if (u == null) {
-        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f; chips.navCardPx = null; SpeakerLayout.boundsPx = null }
+        val wb = NavUiState.wayBack
+        if (wb != null) {
+            val sys = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides if (sys.fontScale <= NAV_MAX_FONT_SCALE) sys else Density(sys.density, NAV_MAX_FONT_SCALE)) {
+                WayBackCard(wb, chips)
+            }
+            SideEffect { chips.navHeaderDp = 0f; SpeakerLayout.boundsPx = null }
+            return
+        }
+        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f; chips.navCardPx = null; SpeakerLayout.boundsPx = null; WayBackLayout.boundsPx = null }
         return
     }
     // T122: the card's type is large already (28 sp numbers); at the system's font scale 2.0 the card with the off-route
@@ -154,6 +165,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             }
             Stat("End", null, u.endDistance, u.endTime + if (u.endClock.isNotEmpty()) "  (${u.endClock})" else "")
             u.turnBack?.let { TurnBack(it, u.turnBackLabel, u.turnBackColour) } // T163
+            if (u.headingBack && !u.arrived) HeadingBack() // T180
             if (u.rejoin != null) {
                 Row(
                     Modifier.fillMaxWidth().background(if (u.offRoute) Alert else Color(0xFFFDAE61), RoundedCornerShape(8.dp))
@@ -199,6 +211,43 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             }
         }
     }
+}
+
+/**
+ * T180: the free-tracking turn-around clock in the navigation card's place, while a track records and no route is
+ * navigated: the clock's line and its label in [TurnBack]'s colours, and "Heading back" once the direction flips. The
+ * chips below move under it as under the navigation card ([TopChips]); `GET /nav/turnaround` `ui` and `layout`.
+ */
+@Composable
+private fun WayBackCard(w: WayBackClock.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
+    val density = LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 60.dp)
+                .widthIn(max = 520.dp).fillMaxWidth()
+                .navCardEdge()
+                .onGloballyPositioned { c ->
+                    chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
+                    c.boundsInRoot().let { b -> floatArrayOf(b.left, b.top, b.right, b.bottom).let { px -> chips.navCardPx = px; WayBackLayout.boundsPx = px } }
+                }
+                .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TurnBack(w.text, w.label, w.colour)
+            if (w.headingBack) HeadingBack()
+        }
+    }
+}
+
+/** T180: where the free-tracking card was last laid out (px; `GET /nav/turnaround` `layout`), null while hidden. */
+internal object WayBackLayout {
+    @Volatile var boundsPx: FloatArray? = null
+}
+
+/** T180: the direction flipped to the way back (the notice the survey's users ask for). */
+@Composable
+private fun HeadingBack() {
+    BasicText(WayBackClock.HEADING_BACK, style = TextStyle(color = Purple, fontSize = 16.sp, fontWeight = FontWeight.Bold))
 }
 
 /**
@@ -288,9 +337,9 @@ internal val NAV_HELP: List<HelpText> = listOf(
     },
     // T163: the turn-around clock's line.
     HelpText("nav.turnAround", "Turn back by", "The map: navigation card, turn-back time", needs = "navigating, after a fix") {
-        "The latest time to turn back and still be out by sunset, or the deadline you chose, with your margin to spare. " +
-            "It turns amber the margin before that time and red at it; on the way out it shows when you will be out. " +
-            "Sunset is for a level horizon, so a deep valley darkens sooner."
+        "The latest time to turn back and still be out by sunset, or your deadline, with your margin to spare: amber " +
+            "the margin before, red at it, then when you will be out. Recording without a route, it times the way back " +
+            "along your track. Sunset is for a level horizon."
     },
     HelpText("nav.offRoute", "Off route", "The map: navigation card, off the route", needs = "navigating, off the route") {
         "You have left the route. The arrow points the shortest way back to it, with the direction and distance below. " +

@@ -3,7 +3,10 @@ package io.github.jasondorjeshort.dystopo.nav
 import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.routing.CostModel
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToLong
+import kotlin.math.sqrt
 
 /**
  * The pace the turn-around clock times the way back with (T163): seconds for a stretch of [lengthM] that climbs
@@ -250,16 +253,26 @@ class TurnAround(val path: NavPath, val pace: TurnPace, val loopM: Double = LOOP
      * The clock at [alongM] along the line, [offLineM] from it (its straight way back is added, as navigation adds it
      * to the ETA), at [nowMs], for [deadline] and [marginMin]. [farthestM] is the farthest the walker got along the line:
      * more than [TURNED_BACK_M] short of it, the walker has turned back already and the clock gives the arrival (a walk
-     * back along the way out projects onto the way out, so its progress runs backwards).
+     * back along the way out projects onto the way out, so its progress runs backwards). T180: [headingBack], the
+     * direction flip, is on the way back too (the arrival clock), and the only way a retrace-only clock gets there.
      */
-    fun clock(alongM: Double, nowMs: Long, deadline: Deadline, marginMin: Int, offLineM: Double = 0.0, farthestM: Double = alongM): TurnClock {
+    fun clock(
+        alongM: Double,
+        nowMs: Long,
+        deadline: Deadline,
+        marginMin: Int,
+        offLineM: Double = 0.0,
+        farthestM: Double = alongM,
+        headingBack: Boolean = false,
+    ): TurnClock {
         require(marginMin >= 0) { "the margin is minutes, 0 or more" }
         val rejoin = if (offLineM > 0) pace.timeS(offLineM, 0.0, 0.0) else 0.0
         val retrace = retraceS(alongM) + rejoin
         val onward = if (retraceOnly) Double.POSITIVE_INFINITY else onwardS(alongM) + rejoin
         val turnable = retraceOnly || loop
         val onwardShorter = !retraceOnly && onward <= retrace
-        val turnedBack = !retraceOnly && loop && farthestM - alongM > TURNED_BACK_M
+        // T180: [headingBack] is the direction flip (free tracking's [Retrace], navigation's [Navigator]).
+        val turnedBack = (turnable && headingBack) || (!retraceOnly && loop && farthestM - alongM > TURNED_BACK_M)
         val returnS = if (!turnable) onward else minOf(retrace, onward)
         val arrival = nowMs + (returnS * 1000).roundToLong()
         val marginMs = marginMin * 60_000L
@@ -297,8 +310,18 @@ class TurnAround(val path: NavPath, val pace: TurnPace, val loopM: Double = LOOP
     companion object {
         /** A line whose start and end are this close is a loop or an out-and-back: it has a turn. */
         const val LOOP_M = 250.0
-        /** Progress this far short of the farthest reached: the walker has turned back. */
-        const val TURNED_BACK_M = 100.0
+        /**
+         * Progress this far short of the farthest reached: the walker has turned back. T180: also the hysteresis of the
+         * direction flip ([PathTracker], [Retrace], [Navigator]): a turn is accepted only after a backward stretch this
+         * long. 200 m, measured on the out-and-back fixtures (`WayBackTest.theHysteresisOnTheFixtures`: a walk out with a
+         * 50 m step back, a three-minute stop and three switchback legs of 120 m 20 m apart, 5 m of GPS noise a fix, 40
+         * seeds): 100 m flipped falsely 9 times, 150 m once, 200 m never; it is also what the survey's users ask for.
+         * It was 100 m (T163).
+         */
+        const val TURNED_BACK_M = 200.0
+
+        /** T180: the near-start guard: no flip while the backward stretch began this close to the start (as [LOOP_M]). */
+        const val NEAR_START_M = 250.0
         const val DEFAULT_MARGIN_MIN = 30
         /** The margin presets the setting offers (any whole minute in [MARGIN_RANGE] can be typed). */
         val MARGIN_PRESETS = listOf(0, 15, 30, 60, 90)
@@ -341,4 +364,451 @@ class TurnAlerts {
     }
 
     fun json(): Map<String, Any?> = linkedMapOf("marginGiven" to marginGiven, "turnGiven" to turnGiven)
+}
+
+/**
+ * T180: one recorded fix as the way back reads it: the position, the fix time, the recorder's per-fix speed (T158; null
+ * when the source gave none) and whether the recorder flagged it (inaccurate or a network fix).
+ */
+data class WayPoint(val lat: Double, val lon: Double, val ele: Double? = null, val timeMs: Long? = null, val speedMps: Double? = null, val flagged: Boolean = false)
+
+/** T180: where the way back of a recording starts, and why. */
+enum class AnchorSource(val key: String) {
+    /** The recording's first good fix (every watch's "back to start"). */
+    START("start"),
+
+    /** The first point of the walk after a vehicle stretch, by the speed rule ([WalkStart]). */
+    WALK("walk"),
+
+    /** "The way back starts here" on the recording card. */
+    HERE("here");
+}
+
+/**
+ * T180: the speed rule for the way back's start. The recorder keeps one activity per track and detects no transition,
+ * so a drive to the trailhead recorded in the same track would put the way back at home. Over the per-fix speeds (the
+ * fix's own, else the straight-line speed over the last [WINDOW_MS]): a vehicle stretch, faster than [VEHICLE_MPS] for
+ * [VEHICLE_MS] in all and not broken by a walk, followed by walking, under [WALK_MPS] for [WALK_MS] without a break of
+ * [BREAK_MS], puts the start at the walk's first point; the last such walk wins (a queue on the way in is passed by the
+ * drive after it). The only prior art is the phones' parked-car marker; no outdoor app or watch moves its start.
+ */
+object WalkStart {
+    const val VEHICLE_MPS = 8.0
+    const val WALK_MPS = 2.5
+
+    /** N of the task: two minutes over 8 m/s is a kilometre or more of driving, which no walk or GPS jump makes. */
+    const val VEHICLE_MS = 120_000L
+
+    /** M of the task: three minutes under 2.5 m/s outlasts a stop at a junction; a longer queue is passed by the drive after it. */
+    const val WALK_MS = 180_000L
+
+    /** Faster than [WALK_MPS] this long ends a walk (a single fast fix does not). */
+    const val BREAK_MS = 15_000L
+    const val WINDOW_MS = 30_000L
+
+    /** A gap between fixes counts at most this long (a tunnel or the phone off is neither driving nor walking). */
+    const val MAX_STEP_MS = 60_000L
+
+    /** The index of the walk's first point, or null when the points show no vehicle stretch followed by a walk. */
+    fun find(points: List<WayPoint>): Int? = Scanner(points).apply { while (next()) Unit }.anchor
+
+    /**
+     * The rule read point by point over [points] (a list that may grow between calls): [next] reads one more point,
+     * false when none is left; [anchor] is the walk's first point so far.
+     */
+    class Scanner(private val points: List<WayPoint>) {
+        var anchor: Int? = null
+            private set
+        private var i = 0
+        private var vehicleMs = 0L
+        private var walkStart = -1
+        private var walkMs = 0L
+        private var breakMs = 0L
+        private var windowFrom = 0
+
+        fun next(): Boolean {
+            if (i + 1 >= points.size) return false
+            i++
+            val t = points[i].timeMs ?: return true
+            val t0 = points[i - 1].timeMs ?: return true
+            val dt = (t - t0).coerceIn(0, MAX_STEP_MS)
+            while (windowFrom < i - 1 && (points[windowFrom].timeMs ?: t) < t - WINDOW_MS) windowFrom++
+            val v = points[i].speedMps ?: run {
+                val a = points[windowFrom]
+                val span = (t - (a.timeMs ?: t)).coerceAtLeast(1)
+                TrackStats.distanceM(a.lat, a.lon, points[i].lat, points[i].lon) / (span / 1000.0)
+            }
+            if (v > VEHICLE_MPS) vehicleMs += dt
+            if (v < WALK_MPS) {
+                if (walkStart < 0) {
+                    walkStart = i
+                    walkMs = 0
+                }
+                walkMs += dt
+                breakMs = 0
+            } else if (walkStart >= 0) {
+                breakMs += dt
+                if (breakMs >= BREAK_MS) {
+                    walkStart = -1
+                    walkMs = 0
+                    breakMs = 0
+                }
+            }
+            if (walkStart >= 0 && walkMs >= WALK_MS) {
+                if (vehicleMs >= VEHICLE_MS) anchor = walkStart
+                vehicleMs = 0
+            }
+            return true
+        }
+    }
+
+    /** The recording's first good fix: the first point the recorder did not flag, else the first. */
+    fun firstGood(points: List<WayPoint>): Int = points.indexOfFirst { !it.flagged }.takeIf { it >= 0 } ?: 0
+}
+
+/**
+ * T180: the way back of a recording, fix by fix: the recorded line from its start ([AnchorSource]) thinned to vertices
+ * [thinM] apart (a stop's GPS jitter would otherwise add line and phantom time), and the direction.
+ *
+ * - **Out** (the default): the way back is the whole line from its newest point to the start, as T163 read it.
+ * - **The turn:** each new vertex is matched to the line recorded before it (more than [exclM] of line back, so not to
+ *   itself). An unbroken run of matches within [snapM] whose matched place moves back along the old line by
+ *   [turnBackM], while the walker moved at least half that in a straight line (a stop's jitter never does), begun more
+ *   than [nearStartM] from the start (the near-start guard), is a turn: [returning] and [headingBack] go on ([flips]
+ *   counts the flips) and the way back is the old line from the matched place ([alongM]) to the start.
+ * - **Returning:** each vertex is matched near the last match on the old line up to the turn ([farM]). A walker who
+ *   heads out again on it for [turnBackM] is no longer heading back (the clock still times back from the match), and
+ *   heading back again for [turnBackM] flips once more. Off the old line by more than [snapM] the straight way back to
+ *   it is added ([offM]); after [LEAVE_M] of walking more than [OFF_M] off it the recording is out again (new ground).
+ */
+class Retrace(
+    val snapM: Double = NavPath.SNAP_M,
+    val turnBackM: Double = TurnAround.TURNED_BACK_M,
+    val nearStartM: Double = TurnAround.NEAR_START_M,
+    val thinM: Double = THIN_M,
+    val exclM: Double = 2 * NavPath.SNAP_M,
+) {
+    private val pts = ArrayList<NavPoint>()
+    private var cum = DoubleArray(64)
+
+    /** The kept vertices: the line the clock times. */
+    val points: List<NavPoint> get() = pts
+    val totalM: Double get() = if (pts.isEmpty()) 0.0 else cum[pts.size - 1]
+
+    var returning = false
+        private set
+    var headingBack = false
+        private set
+    var flips = 0
+        private set
+
+    /** Where the way back starts from along the line: its end while out, the matched place on the old line while returning. */
+    var alongM = 0.0
+        private set
+
+    /** While returning and off the old line by more than [snapM], the straight distance back to it; else 0. */
+    var offM = 0.0
+        private set
+
+    /** While returning, the turn's place along the line (the old line is matched up to here). */
+    var farM = 0.0
+        private set
+
+    /** Each flip to heading back: the line's length then and the matched place on the old line. */
+    val flipsAt = ArrayList<Pair<Double, Double>>()
+
+    private var stS = Double.NaN
+    private var stM = 0.0
+    private var stMin = 0.0
+    private var stLat = 0.0
+    private var stLon = 0.0
+    private var retMin = 0.0
+    private var retMax = 0.0
+    private var offFromS = Double.NaN
+
+    private var sumLat = 0.0
+    private var sumLon = 0.0
+    private var sumEle = 0.0
+    private var nEle = 0
+    private var pending = 0
+
+    /**
+     * Adds the next recorded point. The first point is the first vertex; after it the points gather until their mean is
+     * [thinM] from the last vertex, and the mean becomes the next one (see [THIN_M]). True when a vertex was added.
+     */
+    fun add(lat: Double, lon: Double, ele: Double? = null): Boolean {
+        val n = pts.size
+        if (n == 0) {
+            cum[0] = 0.0
+            pts += NavPoint(lat, lon, ele)
+            return true
+        }
+        sumLat += lat
+        sumLon += lon
+        if (ele != null) { sumEle += ele; nEle++ }
+        pending++
+        val mLat = sumLat / pending
+        val mLon = sumLon / pending
+        val last = pts[n - 1]
+        val d = TrackStats.distanceM(last.lat, last.lon, mLat, mLon)
+        if (d < thinM) return false
+        if (n == cum.size) cum = cum.copyOf(n * 2)
+        cum[n] = cum[n - 1] + d
+        pts += NavPoint(mLat, mLon, if (nEle > 0) sumEle / nEle else null)
+        sumLat = 0.0; sumLon = 0.0; sumEle = 0.0; nEle = 0; pending = 0
+        update(mLat, mLon)
+        return true
+    }
+
+    private fun update(lat: Double, lon: Double) {
+        val s = totalM
+        if (!returning) {
+            alongM = s
+            offM = 0.0
+            val m = match(lat, lon, s - exclM, if (stS.isNaN()) null else stMin)
+            if (m == null || m.second > snapM) {
+                stS = Double.NaN
+                return
+            }
+            val along = m.first
+            if (!stS.isNaN() && along <= stMin + PathTracker.RUN_SLACK_M) {
+                stMin = minOf(stMin, along)
+            } else {
+                stS = s
+                stM = along
+                stMin = along
+                stLat = lat
+                stLon = lon
+            }
+            val moved = TrackStats.distanceM(stLat, stLon, lat, lon)
+            if (stM - along >= turnBackM && moved >= turnBackM / 2 && stM >= nearStartM) {
+                returning = true
+                headingBack = true
+                flips++
+                flipsAt += s to along
+                farM = (stS + stM) / 2
+                alongM = along
+                retMin = along
+                retMax = along
+                offFromS = Double.NaN
+                stS = Double.NaN
+            }
+            return
+        }
+        val m = match(lat, lon, farM, alongM)
+        if (m != null && m.second <= OFF_M) {
+            alongM = m.first
+            offM = if (m.second <= snapM) 0.0 else m.second
+            offFromS = Double.NaN
+            if (headingBack) {
+                retMin = minOf(retMin, m.first)
+                if (m.first - retMin >= turnBackM) {
+                    headingBack = false
+                    retMax = m.first
+                }
+            } else {
+                retMax = maxOf(retMax, m.first)
+                if (retMax - m.first >= turnBackM) {
+                    headingBack = true
+                    flips++
+                    flipsAt += s to m.first
+                    retMin = m.first
+                }
+            }
+            return
+        }
+        if (offFromS.isNaN()) offFromS = s
+        if (m != null) {
+            alongM = m.first
+            offM = m.second
+        }
+        if (s - offFromS >= LEAVE_M) {
+            returning = false
+            headingBack = false
+            alongM = s
+            offM = 0.0
+            stS = Double.NaN
+        }
+    }
+
+    /**
+     * The place of ([lat], [lon]) on the line up to [maxAlongM], as (along, distance). Near [nearM] (within [WINDOW_M]
+     * either side) first: of the passes there within [snapM] (local minima of the distance), the one nearest [nearM],
+     * one ahead of it counting double (the walker comes back toward the start); else the closest point of the prefix.
+     */
+    private fun match(lat: Double, lon: Double, maxAlongM: Double, nearM: Double?): Pair<Double, Double>? {
+        if (maxAlongM <= 0) return null
+        if (nearM != null) {
+            val w = near(lat, lon, nearM - WINDOW_M, minOf(maxAlongM, nearM + WINDOW_M), maxAlongM, nearM)
+            if (w != null) return w
+        }
+        return near(lat, lon, 0.0, maxAlongM, maxAlongM, null)
+    }
+
+    /** With [nearM], the best pass within [snapM] (null when none); without, the closest point between [fromM] and [toM]. */
+    private fun near(lat: Double, lon: Double, fromM: Double, toM: Double, maxAlongM: Double, nearM: Double?): Pair<Double, Double>? {
+        val n = pts.size
+        if (n < 2 || toM < fromM) return null
+        var lo = 0
+        var hi = n - 1
+        val f = fromM.coerceAtLeast(0.0)
+        while (hi - lo > 1) {
+            val mid = (lo + hi) ushr 1
+            if (cum[mid] <= f) lo = mid else hi = mid
+        }
+        val kx = cos(lat * PI / 180) * M_PER_DEG
+        var best: Pair<Double, Double>? = null
+        var bestCost = Double.POSITIVE_INFINITY
+        var prevT = 2.0
+        var i = lo
+        while (i < n - 1 && cum[i] <= toM && cum[i] < maxAlongM) {
+            val a = pts[i]
+            val b = pts[i + 1]
+            val bx = (b.lon - a.lon) * kx
+            val by = (b.lat - a.lat) * M_PER_DEG
+            val px = (lon - a.lon) * kx
+            val py = (lat - a.lat) * M_PER_DEG
+            val len2 = bx * bx + by * by
+            val segLen = cum[i + 1] - cum[i]
+            val tMax = if (segLen <= 0) 0.0 else ((maxAlongM - cum[i]) / segLen).coerceIn(0.0, 1.0)
+            val t = if (len2 <= 0) 0.0 else ((px * bx + py * by) / len2).coerceIn(0.0, tMax)
+            val dx = px - bx * t
+            val dy = py - by * t
+            val d = sqrt(dx * dx + dy * dy)
+            val along = cum[i] + segLen * t
+            if (nearM == null) {
+                if (best == null || d < best.second) best = along to d
+            } else {
+                // A pass: the segment's inside, or a vertex both neighbours end at, or the prefix's own end.
+                val inner = t > 1e-9 && t < tMax - 1e-9
+                val vertex = t <= 1e-9 && (i == lo || prevT >= 1 - 1e-9)
+                val end = t >= tMax - 1e-9 && (i + 1 >= n - 1 || cum[i + 1] >= maxAlongM || cum[i + 1] > toM)
+                if ((inner || vertex || end) && d <= snapM) {
+                    val c = if (along <= nearM) nearM - along else 2 * (along - nearM)
+                    if (c < bestCost) { bestCost = c; best = along to d }
+                }
+            }
+            prevT = t
+            i++
+        }
+        return best
+    }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "vertices" to pts.size, "totalM" to r1(totalM), "returning" to returning, "headingBack" to headingBack, "flips" to flips,
+        "alongM" to r1(alongM), "offM" to r1(offM), "farM" to if (returning) r1(farM) else null,
+        "flipsAt" to flipsAt.map { (s, m) -> linkedMapOf("lineM" to r1(s), "matchedM" to r1(m)) },
+        "snapM" to snapM, "turnBackM" to turnBackM, "nearStartM" to nearStartM, "thinM" to thinM,
+    )
+
+    companion object {
+        /**
+         * The vertices' spacing: the mean of the fixes since the last vertex becomes the next one when it is this far
+         * from it (about six walking fixes at one a second, which shrinks 4 m of GPS noise to 1.6 m and lengthens the
+         * line by about 1 percent; at 5 m the same noise lengthened it by 28 percent).
+         */
+        const val THIN_M = 15.0
+
+        /** Returning, a match farther than this is off the old line. */
+        const val OFF_M = 50.0
+
+        /** Walked this far off the old line while returning: new ground, the recording is out again. */
+        const val LEAVE_M = 150.0
+
+        /** The sequential match looks this far either side of the last match first. */
+        const val WINDOW_M = 300.0
+
+        private const val M_PER_DEG = TrackStats.EARTH_RADIUS_M * PI / 180
+    }
+}
+
+/**
+ * T180: the turn-around clock of a recording in free tracking: the points in order from the recording's start, the way
+ * back's start ([anchorIndex], [anchorSource]: the first good fix, the speed rule's walk, or an override), the [Retrace]
+ * from it, and the clock (`retraceOnly`, the arrival clock once heading back). Pure; the phone feeds it the recorder's
+ * fixes, `devtool nav --turn-around --replay` a GPX's points.
+ */
+class WayBack(val pace: TurnPace, private val override: Int? = null) {
+    private val all = ArrayList<WayPoint>()
+    private val scanner = WalkStart.Scanner(all)
+    var retrace = Retrace()
+        private set
+    var anchorIndex = 0
+        private set
+    var anchorSource = AnchorSource.START
+        private set
+    private var fed = 0
+    private var turn: TurnAround? = null
+    private var turnAt = -1
+
+    val points: List<WayPoint> get() = all
+
+    /** Adds the recording's next point; re-anchors (and rebuilds the retrace) when the speed rule moves the start. */
+    fun add(p: WayPoint) {
+        all += p
+        val (i, src) = anchor()
+        if (i != anchorIndex || src != anchorSource) {
+            anchorIndex = i
+            anchorSource = src
+            rebuild()
+        } else {
+            feed()
+        }
+    }
+
+    private fun anchor(): Pair<Int, AnchorSource> {
+        override?.let { if (it in all.indices) return it to AnchorSource.HERE }
+        while (scanner.next()) Unit
+        val walk = scanner.anchor
+        return if (walk != null) walk to AnchorSource.WALK else WalkStart.firstGood(all) to AnchorSource.START
+    }
+
+    private fun rebuild() {
+        retrace = Retrace()
+        fed = anchorIndex
+        turn = null
+        turnAt = -1
+        feed()
+    }
+
+    private fun feed() {
+        while (fed < all.size) {
+            val p = all[fed++]
+            if (fed - 1 >= anchorIndex) retrace.add(p.lat, p.lon, p.ele)
+        }
+    }
+
+    /** The anchor point. */
+    val anchor: WayPoint? get() = all.getOrNull(anchorIndex)
+
+    /**
+     * The clock at [nowMs] for [deadline] and [marginMin]: back along the line from where the [retrace] places the way
+     * back's start; null before the first point.
+     */
+    fun clock(nowMs: Long, deadline: Deadline, marginMin: Int): TurnClock? {
+        val r = retrace
+        val pts = r.points
+        if (pts.isEmpty()) return null
+        val t = if (pts.size >= 2) {
+            if (turnAt != pts.size) {
+                turn = TurnAround(NavPath("way back", pts), pace, retraceOnly = true)
+                turnAt = pts.size
+            }
+            turn!!
+        } else {
+            // One vertex (at the start, or just re-anchored here): nothing to walk back; a metre-long line read at 0.
+            val p = pts[0]
+            TurnAround(NavPath("way back", listOf(p, NavPoint(p.lat + 1e-5, p.lon, p.ele))), pace, retraceOnly = true)
+        }
+        val along = if (pts.size >= 2) r.alongM else 0.0
+        return t.clock(along, nowMs, deadline, marginMin, offLineM = r.offM, headingBack = r.headingBack)
+    }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "points" to all.size, "anchor" to linkedMapOf(
+            "index" to anchorIndex, "source" to anchorSource.key,
+            "lat" to anchor?.lat?.let(::r6), "lon" to anchor?.lon?.let(::r6), "timeMs" to anchor?.timeMs,
+        ),
+        "retrace" to retrace.json(),
+    )
 }
