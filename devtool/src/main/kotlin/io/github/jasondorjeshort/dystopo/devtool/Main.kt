@@ -39,4 +39,6 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(DrainagePackCommand())
     // T164: the pace fitted to a directory of tracks.
     .subcommands(PaceFitCommand())
+    // T179: water along a route, and its truth table against NHD.
+    .subcommands(WaterCommand())
     .main(args)
