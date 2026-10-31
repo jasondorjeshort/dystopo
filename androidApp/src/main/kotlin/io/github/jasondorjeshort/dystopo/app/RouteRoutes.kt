@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.routing.PaceSettings
 import io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
@@ -68,6 +69,12 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * and `items` in route order (`devtool water`'s fields plus `source`, `gapToNextM` and the list's `row`).
  * - `GET /route/water[?trip=1]`: the same for the route on the map, or (`trip=1`) the trip open in the editor; 404 with none.
  * - `POST /route/water?open=1|0[&trip=1]`: opens or closes the list under the card's water line (a tap on it); answers like the GET.
+ * T184 ([io.github.jasondorjeshort.dystopo.app.routing.PaceSettings]): `POST /route` and `GET /route` gain `range` (the
+ * `timeEstimateForm` setting, `shown`, the card's `headline` and `line`, the active fit's statistic under `fit`, and
+ * `PaceRange.estimate`: `form` `range|typical` (`plain` for drive and crow), `reason`, `timeS`, `aboutS`, `lowS`, `highS`,
+ * `lowFactor`, `highFactor`) and `pastEffort` (waits up to 10 s: `state` `matched|partial|none|computing|mode`, the card's
+ * `line`, `best`, `latest` and `partial` with `trackId`, `coverage`, `ordered`, `toleranceM`, `direction`, `startMs`,
+ * `elapsedS`, `onRoute`; the counts, `ms`, `read`, `skipped` and the `rule`).
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -90,7 +97,8 @@ object RouteRoutes {
                 val ms = (System.nanoTime() - t0) / 1_000_000
                 when (result) {
                     is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
-                        "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)))) // T187
+                        "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)), // T187
+                        "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to PaceSettings.pastEffortJson(result.plan))) // T184
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
@@ -186,6 +194,7 @@ object RouteRoutes {
         "failure" to RouteSession.failure?.json(),
         "graph" to RoutePlanner.json(app),
         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false)), // T187
+        "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to PaceSettings.pastEffortJson(RouteSession.plan), // T184
     )
 
     /** T187: `GET|POST /route/water[?trip=1][&open=1|0]`: the water of the route on the map or of the trip being edited. */

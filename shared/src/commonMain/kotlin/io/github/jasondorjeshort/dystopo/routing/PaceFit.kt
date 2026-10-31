@@ -30,6 +30,14 @@ data class PaceFit(
     val metres: Double,
     /** The robust spread of the pieces about the curve, as a factor on speed (0.12: a typical piece 12 % off). */
     val spread: Double = 0.0,
+    /**
+     * T184: the whole-track statistic behind the route card's range ([PaceRange]): the [PaceRange.LOW_PERCENTILE] and
+     * [PaceRange.HIGH_PERCENTILE] of each track's moving time over this fit's prediction for the same pieces
+     * ([PaceFits.wholeTrackRatios]), over [rangeTracks] tracks; 0 when not measured (a fit stored by an older build).
+     */
+    val rangeLow: Double = 0.0,
+    val rangeHigh: Double = 0.0,
+    val rangeTracks: Int = 0,
 ) {
     val ready: Boolean get() = tracks >= PaceFits.MIN_TRACKS && metres >= PaceFits.MIN_METRES
 
@@ -93,6 +101,7 @@ data class PaceFit(
         "mode" to mode.label, "peakKmh" to r3(peakMps * 3.6), "width" to r3(width), "peakGrade" to r3(peakGrade),
         "flatKmh" to r3(flatMps * 3.6), "flatPaceMinPerKm" to r3(flatPaceSPerKm / 60), "climbRateMph" to climbRateMph.roundToLong(),
         "tracks" to tracks, "km" to r3(metres / 1000), "spread" to r3(spread), "ready" to ready,
+        "range" to linkedMapOf("low" to r3(rangeLow), "high" to r3(rangeHigh), "tracks" to rangeTracks), // T184
     )
 
     companion object {
@@ -197,7 +206,7 @@ object PaceFits {
      */
     fun fit(samples: List<PaceSample>, mode: TravelMode): PaceFit? {
         val range = plausible(mode)
-        val s = samples.filter { it.lengthM > 0 && it.timeS > 0 && abs(it.grade) <= MAX_FIT_GRADE && (it.lengthM / it.timeS) in range }
+        val s = usable(samples, mode)
         if (s.size < MIN_PIECES) return null
         val n = s.size
         val g = DoubleArray(n) { s[it].grade }
@@ -222,6 +231,52 @@ object PaceFits {
         val k = best.k.coerceIn(0.3, 20.0)
         val peak = exp(best.a).coerceIn(range.start, range.endInclusive)
         return PaceFit(mode, peak, k, best.g0, tracks, s.sumOf { it.lengthM }, exp(sigma) - 1)
+    }
+
+    /** The pieces [fit] reads: a length and a time, within [MAX_FIT_GRADE] and at a speed [plausible] for [mode]. */
+    fun usable(samples: List<PaceSample>, mode: TravelMode): List<PaceSample> {
+        val range = plausible(mode)
+        return samples.filter { it.lengthM > 0 && it.timeS > 0 && abs(it.grade) <= MAX_FIT_GRADE && (it.lengthM / it.timeS) in range }
+    }
+
+    /** T184: one track's whole-track ratio: its pieces' moving time over [fit]'s time for the same pieces, and their metres. */
+    data class TrackRatio(val track: Int, val ratio: Double, val metres: Double, val actualS: Double, val predictedS: Double) {
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "rank" to track, "ratio" to PaceFit.r3(ratio), "km" to PaceFit.r3(metres / 1000),
+            "actualMin" to PaceFit.r3(actualS / 60), "predictedMin" to PaceFit.r3(predictedS / 60),
+        )
+    }
+
+    /**
+     * T184: the whole-track statistic: for each track (by the `track` rank of [samples]) with at least
+     * [PaceRange.MIN_TRACK_M] of usable pieces, its moving time over the time [fit] predicts for the same pieces (each at
+     * the speed of its grade). Over a whole track the scatter of single pieces ([PaceFit.spread]) averages out; what is
+     * left is how one day differs from another, which is what a route's range is about. With [leaveOneOut] each track is
+     * compared with a fit of the others (null when they fit nothing), the honest form with few tracks; the phone stores
+     * the in-sample form ([fromTracks]), `devtool pace-fit --range` prints both.
+     */
+    fun wholeTrackRatios(samples: List<PaceSample>, fit: PaceFit, leaveOneOut: Boolean = false): List<TrackRatio> {
+        val s = usable(samples, fit.mode)
+        val out = ArrayList<TrackRatio>()
+        for ((track, pieces) in s.groupBy { it.track }.toSortedMap()) {
+            val metres = pieces.sumOf { it.lengthM }
+            if (metres < PaceRange.MIN_TRACK_M) continue
+            val f = if (leaveOneOut) this.fit(s.filter { it.track != track }, fit.mode) ?: continue else fit
+            val actual = pieces.sumOf { it.timeS }
+            val predicted = pieces.sumOf { it.lengthM / f.speedMps(it.grade) }
+            if (predicted > 0) out += TrackRatio(track, actual / predicted, metres, actual, predicted)
+        }
+        return out
+    }
+
+    /** T184: [fit] with its whole-track statistic ([wholeTrackRatios]'s percentiles) filled in. */
+    fun withRange(fit: PaceFit, ratios: List<TrackRatio>): PaceFit {
+        if (ratios.isEmpty()) return fit.copy(rangeLow = 0.0, rangeHigh = 0.0, rangeTracks = 0)
+        val sorted = ratios.map { it.ratio }.sorted()
+        return fit.copy(
+            rangeLow = PaceRange.percentile(sorted, PaceRange.LOW_PERCENTILE), rangeHigh = PaceRange.percentile(sorted, PaceRange.HIGH_PERCENTILE),
+            rangeTracks = sorted.size,
+        )
     }
 
     private class Solve(val a: Double, val k: Double, val g0: Double, val sse: Double)
@@ -289,6 +344,10 @@ object PaceFits {
             rows.filter { r -> r.mode == m && (r.rank ?: Int.MAX_VALUE) < MAX_TRACKS }.let { used -> used.size to used.sumOf { it.match?.metres ?: 0.0 } }
         }.filterValues { it.first > 0 }
 
+        /** T184: the pieces the mode's fit read, each with its track's recency rank (for [wholeTrackRatios]). */
+        fun samples(mode: TravelMode): List<PaceSample> = rows.filter { r -> r.mode == mode && (r.rank ?: Int.MAX_VALUE) < MAX_TRACKS && r.match != null }
+            .sortedBy { it.rank }.flatMap { r -> r.match!!.pieces.map { it.copy(track = r.rank!!) } }
+
         /** The synced setting value of this report ([encode]). */
         fun setting(): String = encode(fits.values, counts())
 
@@ -323,7 +382,7 @@ object PaceFits {
             ranked.forEachIndexed { i, t -> ranks[t.id] = i }
             if (mode !in FITTED) continue
             val samples = ranked.take(MAX_TRACKS).flatMapIndexed { i, t -> matches[t.id]!!.pieces.map { it.copy(track = i) } }
-            fits[mode] = fit(samples, mode)
+            fits[mode] = fit(samples, mode)?.let { f -> withRange(f, wholeTrackRatios(samples, f)) } // T184: the range's statistic
         }
         for (m in FITTED) if (m !in fits) fits[m] = null
         for (t in tracks) rows += TrackRow(t.id, t.name, start[t.id], modes[t.id], ranks[t.id], matches[t.id])
@@ -333,15 +392,17 @@ object PaceFits {
     // ---- the synced setting value (app.paceFit) ----
 
     /**
-     * The fits as one setting value: `1;hike:<peak m/s>,<width>,<peak grade>,<tracks>,<metres>,<spread>;bike:...`, the
-     * version first. A mode with too little to fit has empty curve fields (`hike:,,,2,8000,`): its counts still show.
+     * The fits as one setting value: `1;hike:<peak m/s>,<width>,<peak grade>,<tracks>,<metres>,<spread>,<range low>,<range
+     * high>,<range tracks>;bike:...`, the version first (T184 appended the three range fields; a build before it reads the
+     * first six and ignores them, and this one reads a six-field value as a fit with no range). A mode with too little to fit has empty curve fields (`hike:,,,2,8000,`): its counts still show.
      */
     fun encode(fits: Collection<PaceFit?>, counts: Map<TravelMode, Pair<Int, Double>> = emptyMap()): String {
         val parts = arrayListOf(VERSION.toString())
         val seen = HashSet<TravelMode>()
         for (f in fits.filterNotNull()) {
             seen += f.mode
-            parts += "${f.mode.label}:${d(f.peakMps, 4)},${d(f.width, 4)},${d(f.peakGrade, 4)},${f.tracks},${f.metres.roundToLong()},${d(f.spread, 3)}"
+            parts += "${f.mode.label}:${d(f.peakMps, 4)},${d(f.width, 4)},${d(f.peakGrade, 4)},${f.tracks},${f.metres.roundToLong()},${d(f.spread, 3)}" +
+                ",${d(f.rangeLow, 3)},${d(f.rangeHigh, 3)},${f.rangeTracks}" // T184: read by older builds unchanged (they stop at the sixth)
         }
         for ((m, c) in counts) if (m !in seen) parts += "${m.label}:,,,${c.first},${c.second.roundToLong()},"
         return parts.joinToString(";")
@@ -375,7 +436,11 @@ object PaceFits {
             val width = f[1].toDoubleOrNull() ?: return null
             val g0 = f[2].toDoubleOrNull() ?: return null
             if (!(peak > 0 && peak < 100 && width > 0 && width < 100 && abs(g0) < 1)) return null
-            fits += PaceFit(mode, peak, width, g0, tracks, metres, f.getOrNull(5)?.toDoubleOrNull() ?: 0.0)
+            // T184: the whole-track statistic, absent from a value an older build wrote (no range until the next refit).
+            val low = f.getOrNull(6)?.toDoubleOrNull()?.takeIf { it > 0 && it < 10 } ?: 0.0
+            val high = f.getOrNull(7)?.toDoubleOrNull()?.takeIf { it >= low && it < 10 } ?: 0.0
+            val n = f.getOrNull(8)?.toIntOrNull()?.takeIf { it >= 0 && low > 0 && high > 0 } ?: 0
+            fits += PaceFit(mode, peak, width, g0, tracks, metres, f.getOrNull(5)?.toDoubleOrNull() ?: 0.0, if (n > 0) low else 0.0, if (n > 0) high else 0.0, n)
         }
         return Stored(fits, counts)
     }
@@ -384,5 +449,96 @@ object PaceFits {
         val m = 10.0.pow(places)
         val r = (v * m).roundToLong() / m
         return r.toString()
+    }
+}
+
+/**
+ * T184: a route's time as the route card shows it: one number, or that number and a range from the user's recorded
+ * tracks. The width comes from the fit's whole-track statistic ([PaceFit.rangeLow], [PaceFit.rangeHigh]: the 10th and
+ * 90th percentile of each track's real time over the fit's prediction), not from [PaceFit.spread] (the scatter of short
+ * pieces, which averages out over a route). The rule is the survey's proposal (`out/wave23-research/arrival-time-range.md`;
+ * no app publishes one, the owner adjusts it): the range is at least +-[FLOOR] (a lucky fit never shows false certainty)
+ * and the low and high ends are rounded outwards to [stepS] (5 min under 3 h, 10 min above); past +-[CAP] (a range that
+ * wide reads as vague), with fewer than [MIN_TRACKS] measured tracks, or without a fit at all, the card shows the single
+ * "typical" time. The headline is the router's own time (the fit's central pace), rounded to the same step.
+ */
+object PaceRange {
+    const val LOW_PERCENTILE = 0.10
+    const val HIGH_PERCENTILE = 0.90
+    const val FLOOR = 0.05
+    const val CAP = 0.25
+    /** Fewer measured tracks than this give no range ("under a few tracks"); the fit itself waits for [PaceFits.MIN_TRACKS]. */
+    const val MIN_TRACKS = 5
+    /** A track with less than this of matched pieces gives no whole-track ratio (too short to tell a day from a piece). */
+    const val MIN_TRACK_M = 1000.0
+
+    /** The [p] quantile of [sorted] (ascending), linear between order statistics (the common "type 7"). */
+    fun percentile(sorted: List<Double>, p: Double): Double {
+        if (sorted.isEmpty()) return Double.NaN
+        val h = (sorted.size - 1) * p.coerceIn(0.0, 1.0)
+        val lo = kotlin.math.floor(h).toInt()
+        val hi = kotlin.math.ceil(h).toInt()
+        return sorted[lo] + (h - lo) * (sorted[hi] - sorted[lo])
+    }
+
+    /** The rounding step for a time of [timeS]: 5 minutes under 3 hours, 10 minutes from there. */
+    fun stepS(timeS: Double): Double = if (timeS < 3 * 3600) 300.0 else 600.0
+
+    /**
+     * The estimate for a route the router timed at [timeS] with [fit] (null: the standard estimate, or a mode without a fit).
+     * [TimeEstimate.form] is `range` or `typical`; [TimeEstimate.reason] says why a typical time has no range.
+     */
+    fun estimate(timeS: Double, fit: PaceFit?): TimeEstimate {
+        val step = stepS(timeS)
+        val about = (kotlin.math.round(timeS / step) * step).coerceAtLeast(step)
+        fun typical(reason: String, lowF: Double? = null, highF: Double? = null) = TimeEstimate(timeS, about, null, null, lowF, highF, reason)
+        if (fit == null) return typical(STANDARD)
+        if (fit.rangeTracks <= 0 || fit.rangeLow <= 0 || fit.rangeHigh <= 0) return typical(NOT_MEASURED)
+        if (fit.rangeTracks < MIN_TRACKS) return typical(FEW_TRACKS)
+        val lowF = minOf(fit.rangeLow, 1 - FLOOR)
+        val highF = maxOf(fit.rangeHigh, 1 + FLOOR)
+        if (lowF < 1 - CAP || highF > 1 + CAP) return typical(WIDE, lowF, highF)
+        val low = (kotlin.math.floor(timeS * lowF / step) * step).coerceAtLeast(step)
+        val high = (kotlin.math.ceil(timeS * highF / step) * step).coerceAtLeast(low + step)
+        return TimeEstimate(timeS, about, low, high, lowF, highF, RANGE)
+    }
+
+    const val RANGE = "range"
+    const val STANDARD = "standardEstimate"
+    const val NOT_MEASURED = "notMeasured"
+    const val FEW_TRACKS = "fewTracks"
+    const val WIDE = "pastTheCap"
+}
+
+/**
+ * T184: [PaceRange.estimate]'s answer: the router's [timeS], the headline [aboutS] (rounded), the range [lowS] to
+ * [highS] (null for a typical time) and the factors behind it ([lowFactor], [highFactor]: after the floor; set too
+ * when the cap refused them), and [reason] (`range`, or why there is none).
+ */
+data class TimeEstimate(
+    val timeS: Double, val aboutS: Double, val lowS: Double?, val highS: Double?,
+    val lowFactor: Double?, val highFactor: Double?, val reason: String,
+) {
+    val isRange: Boolean get() = lowS != null && highS != null
+    val form: String get() = if (isRange) "range" else "typical"
+
+    /** The card's headline time: "about 4:30" with a range, "typical 4:30" without (ADR 0031 strings). */
+    val headline: String get() = (if (isRange) "about " else "typical ") + hm(aboutS)
+
+    /** The card's second line's range: "4:10 to 4:50"; null for a typical time. */
+    val rangeText: String? get() = if (isRange) "${hm(lowS!!)} to ${hm(highS!!)}" else null
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "form" to form, "reason" to reason, "timeS" to timeS.roundToLong(), "aboutS" to aboutS.roundToLong(),
+        "lowS" to lowS?.roundToLong(), "highS" to highS?.roundToLong(),
+        "lowFactor" to lowFactor?.let { PaceFit.r3(it) }, "highFactor" to highFactor?.let { PaceFit.r3(it) },
+        "headline" to headline, "range" to rangeText,
+    )
+
+    companion object {
+        fun hm(s: Double): String {
+            val m = (s / 60).roundToLong()
+            return "${m / 60}:${(m % 60).toString().padStart(2, '0')}"
+        }
     }
 }

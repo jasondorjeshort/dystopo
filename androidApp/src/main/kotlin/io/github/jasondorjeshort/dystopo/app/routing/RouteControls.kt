@@ -96,6 +96,10 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, next likely flowing in
  * 1.2 km" and the longest stretch without water, the first line opening the list ([WaterText.row]); the next card line
  * (T184) sits under that one composable.
+ *
+ * T184: the time in the range form (the `timeEstimateForm` setting, default): the headline's time "about 4:30" and the
+ * line under it "4:10 to 4:50, based on your last 5 hikes" ([PaceSettings.headline], [PaceSettings.secondLine]), or
+ * "typical 4:30" without a range; under the water line, [PastEffortLine]: "You did this trail in 3:52, June".
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -155,9 +159,12 @@ fun RouteControls() {
             BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
             Ends(phase) // T114: From and To
             if (plan != null && phase == "route") {
-                BasicText(RouteSession.summary(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                @Suppress("UNUSED_VARIABLE") val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // T184: the form's row recomposes the card
+                // T184: "about 4:30" in the range form (PaceSettings.headline), the single number in the other.
+                BasicText(PaceSettings.headline(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
                 // T164: whose pace the time is ("Based on your last 5 hikes", or the standard estimate); a refit when the tracks changed.
-                PaceSettings.cardLine(plan.mode)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+                // T184: with a range, the range first ("4:10 to 4:50, based on your last 5 hikes").
+                PaceSettings.secondLine(plan)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
                 LaunchedEffect(plan) { PaceSettings.refitSoon(app, "route") }
                 // T108: a crow line's bearing (it follows no trail).
                 if (plan.mode == TravelMode.CROW) {
@@ -173,6 +180,7 @@ fun RouteControls() {
                 }
                 Directions(plan)
                 WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
+                PastEffortLine(plan) // T184
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
@@ -324,6 +332,22 @@ internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model
             BasicText(WaterText.HINT, style = TextStyle(color = Ink.copy(alpha = 0.75f), fontSize = 11.sp))
         }
     }
+}
+
+/**
+ * T184: what the recorded tracks say about the route ([PaceSettings.pastEffort], off the main thread): "You did this
+ * trail in 3:52, June" (the best and the latest), "(other direction)", or "Part of this trail was recorded"; nothing
+ * until it is computed, nor for drive and crow.
+ */
+@Composable
+private fun PastEffortLine(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute) {
+    val points = plan.route.points
+    var r by remember(points, plan.mode) { mutableStateOf<PaceSettings.EffortResult?>(null) }
+    LaunchedEffect(points, plan.mode) {
+        r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { PaceSettings.pastEffort(points, plan.mode, 60_000) }
+    }
+    val text = PaceSettings.pastEffortLine(r) ?: return
+    BasicText(text, style = TextStyle(color = Ink, fontSize = 12.sp))
 }
 
 /** T108: the mode chips' row, wrapping onto a second line when they do not fit (font scale 2.0, four modes). */

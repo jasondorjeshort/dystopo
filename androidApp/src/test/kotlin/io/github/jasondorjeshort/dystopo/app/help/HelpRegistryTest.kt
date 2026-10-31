@@ -115,6 +115,8 @@ class HelpRegistryTest {
             "settings.viewRange", "map.viewshed",
             // T183: the printed sheet's row.
             "settings.printSheet",
+            // T184: the route card's time as a range or one number.
+            "settings.timeEstimateForm",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

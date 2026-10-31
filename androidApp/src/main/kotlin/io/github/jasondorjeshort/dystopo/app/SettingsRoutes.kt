@@ -72,6 +72,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   said once), synced as `app.waterAlongRoute` and `app.waterSpoken` `on`/`off`. The markers and cards follow at once.
  *   T182, the viewshed's range (Settings › Map, `viewshed/ViewshedSession`): `viewRange=10|30|100` (km, default 30: how far
  *   "What can I see from here" looks), synced (`app.viewRange`); the next viewshed takes it.
+ *   T184, the route card's time (Settings › Navigation and tracking, `routing/PaceSettings`): `timeEstimateForm=range|one`
+ *   (default `range`: "about 4:30" with "4:10 to 4:50" from the recorded hikes under it; `one`: the single number),
+ *   synced as `app.timeEstimateForm`. The card follows at once.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -200,6 +203,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             io.github.jasondorjeshort.dystopo.app.routing.RouteWater.onSettings()
         }
         parsed.viewRange?.let { AppSettings.setViewRange(it) } // T182: the next viewshed reads it
+        // T184: the route card's time; the card recomposes at once (also after POST /settings, which bumps no revision itself).
+        parsed.timeEstimateForm?.let { AppSettings.setTimeEstimateForm(it); runCatching { app.map.onMain { SettingsUi.revision++ } } }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -250,6 +255,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val waterAlongRoute: Boolean? = null, val waterSpoken: Boolean? = null,
             // T182: the viewshed's range, km.
             val viewRange: Int? = null,
+            // T184: the route card's time as a range or one number.
+            val timeEstimateForm: String? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -274,7 +281,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW) + // T177
             setOf(AppSettings.KEY_PRESSURE_FALL_WARNING) + // T178
             setOf("waterAlongRoute", "waterSpoken") + // T187
-            setOf("viewRange") // T182
+            setOf("viewRange") + // T182
+            setOf(AppSettings.KEY_TIME_ESTIMATE_FORM) // T184
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -436,6 +444,11 @@ class SettingsRoutes(private val app: DystopoApp) {
             // T187: water along the route and its spoken line.
             val waterAlongRoute = params["waterAlongRoute"]?.let { flag(it) ?: return Parsed.Error("waterAlongRoute must be 1 or 0 (got $it)") }
             val waterSpoken = params["waterSpoken"]?.let { flag(it) ?: return Parsed.Error("waterSpoken must be 1 or 0 (got $it)") }
+            // T184: the route card's time.
+            val timeEstimateForm = params[AppSettings.KEY_TIME_ESTIMATE_FORM]?.let { v ->
+                v.toString().trim().lowercase().takeIf { it in AppSettings.TIME_FORMS }
+                    ?: return Parsed.Error("${AppSettings.KEY_TIME_ESTIMATE_FORM} must be range or one (got $v)")
+            }
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
@@ -443,7 +456,8 @@ class SettingsRoutes(private val app: DystopoApp) {
                 readoutBar = readoutBar, climbWindow = climbWindow,
                 pressureFallWarning = pressureFallWarning,
                 waterAlongRoute = waterAlongRoute, waterSpoken = waterSpoken,
-                viewRange = viewRange)
+                viewRange = viewRange,
+                timeEstimateForm = timeEstimateForm)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {
