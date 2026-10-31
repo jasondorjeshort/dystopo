@@ -83,6 +83,9 @@ with a device (--serial, or the serial that owns --port) the script reads that l
 it (again after a relaunch or a 401); without adb it falls back to GET /health without a token, which
 answers {"token": ...} when the app runs with the setting debugFixedPort=1. setup.token in the summary
 records the device port and that a request without the token got 401.
+T185: a request refused on the host port (adb on the second PC drops a forward now and then) forwards it again to
+the app's device port and is sent once more; a GET whose body arrives cut short (IncompleteRead) is asked once more,
+a POST never. The summary's `connection` counts both (forwardRestores, incompleteReadRetries, tokenRefreshes, events).
 
 Device selection: --port is the host port forwarded to the app (tools/android-emu.ps1 -Port). With
 --serial (or ANDROID_SERIAL) the script refuses a port that `adb forward --list` maps to another serial
@@ -160,7 +163,15 @@ class Server:
     """The app's debug server. Every request carries the app's per-launch loopback token (T49). T57: with adb and
     a serial the port and token come from the app's logcat line and --port is forwarded to that port; read again
     after a 401 or a refused connection, since a relaunch makes new ones. Without adb: GET /health without a
-    token (the app's debugFixedPort=1 mode)."""
+    token (the app's debugFixedPort=1 mode).
+
+    T185: a refused connection means nothing listens on the host port any more: adb on the second PC drops a forward
+    now and then (T155's and T170's follow-up), while an app that died behind a live forward resets the connection
+    instead. So a refused request forwards the port again to the app's known device port (`adb forward --no-rebind`,
+    never taking a port another device holds; the logcat read again when the port is not known) and is sent once more,
+    counted in `counters["forwardRestores"]`. A GET whose body arrives cut short (http.client.IncompleteRead, seen on a
+    screenshot under a parallel build) is asked once more (`incompleteReadRetries`); a POST is never repeated for it.
+    The tour's summary carries the counters as `connection`."""
 
     def __init__(self, port, exe=None, serial=None):
         self.port = port
@@ -169,6 +180,24 @@ class Server:
         self.serial = serial
         self.token = None
         self.device_port = None
+        self.counters = {"forwardRestores": 0, "incompleteReadRetries": 0, "tokenRefreshes": 0}
+        self.events = []  # the first few retries: what failed and what was done
+
+    def note(self, what):
+        if len(self.events) < 20:
+            self.events.append(f"{time.strftime('%H:%M:%S')} {what}")
+        print(f"[server] {what}", file=sys.stderr)
+
+    def restore_forward(self):
+        """T185: forward the host port again to the app's device port; False when that is not possible (no adb, the port
+        not known yet, or adb refused, such as another device holding the port), so the caller reads logcat again."""
+        if not (self.exe and self.serial and self.device_port):
+            return False
+        code, out = android_debug.adb(self.exe, self.serial, "forward", "--no-rebind", f"tcp:{self.port}",
+                                      f"tcp:{self.device_port}", timeout=30)
+        if code != 0:
+            self.note(f"adb forward tcp:{self.port} tcp:{self.device_port} failed: {out.strip()[:200]}")
+        return code == 0
 
     def fetch_token(self, timeout=10.0):
         if self.exe and self.serial:
@@ -182,7 +211,8 @@ class Server:
         self.token = None
 
     def _open(self, path, method="GET", timeout=30.0):
-        for attempt in (0, 1):
+        attempt, reread, restored = 0, False, False
+        while True:
             if self.token is None:
                 self.fetch_token(min(timeout, 10.0))
             req = urllib.request.Request(self.base + path, method=method, data=b"" if method == "POST" else None,
@@ -193,11 +223,27 @@ class Server:
             except urllib.error.HTTPError as e:
                 if e.code != 401 or attempt:
                     raise
+                self.counters["tokenRefreshes"] += 1
                 self.token = None  # the app was relaunched: fetch its new token and retry once
-            except (urllib.error.URLError, ConnectionError, http.client.RemoteDisconnected):
+            except http.client.IncompleteRead as e:
+                if method != "GET" or reread:
+                    raise  # T185: a POST is never sent twice
+                reread = True
+                self.counters["incompleteReadRetries"] += 1
+                self.note(f"GET {path.split('?')[0]}: {len(e.partial)} bytes of the body arrived; asked again")
+                continue  # does not use up the retry below
+            except (urllib.error.URLError, ConnectionError, http.client.RemoteDisconnected) as e:
                 if attempt or not self.serial:
                     raise
+                if refused(e):
+                    self.counters["forwardRestores"] += 1
+                    if not restored and self.restore_forward():
+                        restored = True  # a forward to a port the app has since left still gets the logcat path below
+                        self.note(f"{method} {path.split('?')[0]}: connection refused; forwarded tcp:{self.port} again")
+                        continue
+                    self.note(f"{method} {path.split('?')[0]}: connection refused; reading logcat and forwarding again")
                 self.token = None  # T57: relaunched on a new port: read logcat again and re-forward
+            attempt += 1
 
     def get(self, path, timeout=30.0):
         return self._open(path, timeout=timeout)
@@ -212,6 +258,11 @@ class Server:
                 return r.status
         except urllib.error.HTTPError as e:
             return e.code
+
+
+def refused(e):
+    """True for a refused connection, bare or inside a URLError (nothing listening on the host port)."""
+    return isinstance(e, ConnectionRefusedError) or isinstance(getattr(e, "reason", None), ConnectionRefusedError)
 
 
 adb_path = android_debug.adb_path
@@ -1173,6 +1224,7 @@ def main():
         fonts = info["fonts"]
     except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
         summary["error"] = f"cannot reach the app on port {args.port}: {e}"
+        summary["connection"] = {**server.counters, "events": server.events}  # T185
         print(json.dumps(summary, indent=2))
         return 2
 
@@ -1381,6 +1433,7 @@ def main():
     summary["viewsOk"] = sum(1 for r in reports if r["ok"])
     summary["viewsTotal"] = len(reports)
     summary["sheet"] = contact_sheet(reports, rasters, f"{stem}-sheet{ext}")
+    summary["connection"] = {**server.counters, "events": server.events}  # T185: forwards restored, cut reads asked again
     summary["ok"] = (summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
                      and summary["directStep"].get("ok", True) is not False)
     with open(stem + ".json", "w", encoding="utf-8") as f:

@@ -296,6 +296,12 @@ function Part([string]$name, [scriptblock]$body) {
     } catch {
         $code = 'error'; $note = "$($_.Exception.Message)"
     }
+    # T185: the retries the part's reports counted (screen captures, adb forwards restored, cut reads) on its steps.tsv line.
+    $n = @{}; foreach ($f in @(Get-ChildItem $Out -Recurse -File -Include "$name.json", '*.stdout.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 })) {
+        foreach ($m in [regex]::Matches((Get-Content -Raw $f.FullName), '"(captureRetries|forwardRestores|incompleteReadRetries)":\s*(\d+)')) { $n[$m.Groups[1].Value] += [int]$m.Groups[2].Value } }
+    $counts = @($n.Keys | Sort-Object | Where-Object { $n[$_] } | ForEach-Object { '{0} {1}' -f $_, $n[$_] })
+    $counts = $counts -join ', '
+    if ($counts) { $script:partNote = (@($script:partNote, $counts) | Where-Object { $_ }) -join '; ' }
     if ($script:partNote) { $note = (@($script:partNote, $note) | Where-Object { $_ }) -join '; ' }
     Step $name $code ((Get-Date) - $t0).TotalSeconds $note
     "$code" -eq '0'

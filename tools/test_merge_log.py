@@ -1,6 +1,7 @@
 """T154: merge-log.py offline, on a two-task board: the Status line after a middle task's Done-when and after the last
 task's, with the file ending in a blank line, in one newline and in none; the log entry and the changelog line; and the
-whole script in a scratch git repository, where a refused task leaves every file as it was.
+whole script in a scratch git repository, where a refused task leaves every file as it was. T185: an entry that does not start
+with the bold date and the task (wave 22's dash entries) is refused with the stated message, every file left as it was.
 
     python -I tools/test_merge_log.py
 """
@@ -59,6 +60,21 @@ assert "## Unreleased\n\n### 2026-10-27\n\n- T2: Second task\n\n## v0.1.0" in cl
 cl, _ = ml.add_changelog(cl, "T1", "T1. First task", "**2026-10-27: T1 merged: first.** x", "12")
 assert "### 2026-10-27\n\n- T1: First task (#12)\n- T2: Second task\n" in cl, cl
 
+# T185: the opening checked; a dash entry, an undated one, another task's and one with no closing bold are refused.
+assert ml.check_entry("T2", entry) == "2026-10-27"
+assert ml.check_entry("T126", "**2026-10-23: T126 merged (PR #19): spoken turn directions, off by default.** x") == "2026-10-23"
+assert ml.check_entry("T2", "**2026-10-27: T2 merged: `shared`'s v0.1.15 part, done.** More.") == "2026-10-27"
+for bad, says in (("- 2026-10-27: T2 merged: second task. Did it.", "must start with the bold date"),
+                  ("- **2026-10-27: T2 merged: second task.** Did it.", "must start with the bold date"),
+                  ("**T2 merged: second task.** Did it.", "must start with the bold date"),
+                  ("**2026-10-27: T2 merged: second task. Did it.", "must start with the bold date"),
+                  ("**2026-10-27: T3 merged: third task.** Did it.", "is for T3, not T2")):
+    try:
+        ml.check_entry("T2", bad)
+        raise SystemExit(f"{bad!r} was not refused")
+    except ValueError as e:
+        assert says in str(e) and "nothing was written" in str(e), str(e)
+
 # The script end to end in a scratch repository, on the last task of a board that ends without a blank line.
 d = tempfile.mkdtemp(prefix="t154-merge-log-")
 try:
@@ -89,6 +105,13 @@ try:
     before = [read(p) for p in ("docs/TASKS.md", "docs/PLANNING.md", "CHANGELOG.md")]
     r = subprocess.run([sys.executable, "-I", script, "T2", ef, sf], cwd=d, capture_output=True, text=True)
     assert r.returncode != 0 and "already logged" in r.stderr, (r.returncode, r.stderr[-300:])
+    assert before == [read(p) for p in ("docs/TASKS.md", "docs/PLANNING.md", "CHANGELOG.md")]
+    # T185: a dash entry for the board's other task is refused with the message, and still no file changes.
+    df, sf1 = write("dash.txt", "- 2026-10-27: T1 merged: first task. Did it.\n"), write("status1.txt", S1 + "\n")
+    r = subprocess.run([sys.executable, "-I", script, "T1", df, sf1], cwd=d, capture_output=True, text=True)
+    assert r.returncode != 0 and "refused: the entry must start with the bold date, **YYYY-MM-DD: T1 merged: <title>.**" in r.stderr, \
+        (r.returncode, r.stderr[-300:])
+    assert r.stdout == "", r.stdout  # no changelog line printed for a line never written
     assert before == [read(p) for p in ("docs/TASKS.md", "docs/PLANNING.md", "CHANGELOG.md")]
 finally:
     shutil.rmtree(d, ignore_errors=True)

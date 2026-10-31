@@ -5,7 +5,9 @@
 Every device part except `routes`, `search` and `bothunits` drives the RELEASE build the way a person would: taps and typing
 through adb (`input tap|swipe|text`), on-screen text from `uiautomator dump` (Compose text is in the accessibility
 tree), the screen from `adb exec-out screencap`. No debug route is used. Screenshots go under --out: look at them.
-The tap helpers are tools/android-firstrun.py's (`Device`), loaded by path.
+The tap helpers are tools/android-firstrun.py's (`Device`), loaded by path. T185: so is the checked capture
+(Device.capture: an empty, cut or failed `screencap` is retried after 0.5, 1, 2 and 4 s, never saved as an empty PNG);
+every device part's report carries `captureRetries`, the retries that fired in that part (and `captureRetryReasons`).
 
 Parts:
   strings      (no device) every string in the APK (dex string tables, plus printable runs of every other entry:
@@ -412,6 +414,9 @@ def part_strings(args):
 
 # --- routes and search tours (h): debug build, debug port ------------------------------------------------------
 
+FORWARD_RESTORES = []  # T185: the debug parts' forwards set up again after a refused connection (reported in main)
+
+
 class DebugServer:
     def __init__(self, port, serial):
         self.base = f"http://127.0.0.1:{port}"
@@ -421,16 +426,25 @@ class DebugServer:
         _, self.token = debug.bootstrap(self.exe, serial, port)
 
     def call(self, method, path, timeout=180):
-        req = urllib.request.Request(self.base + path, method=method, headers={"X-Dystopo-Token": self.token})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, json.loads(r.read().decode("utf-8") or "null")
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
+        for attempt in (0, 1):
+            req = urllib.request.Request(self.base + path, method=method, headers={"X-Dystopo-Token": self.token})
             try:
-                return e.code, json.loads(body)
-            except ValueError:
-                return e.code, {"raw": body[:300]}
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return r.status, json.loads(r.read().decode("utf-8") or "null")
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                try:
+                    return e.code, json.loads(body)
+                except ValueError:
+                    return e.code, {"raw": body[:300]}
+            except (urllib.error.URLError, ConnectionRefusedError) as e:
+                # T185: refused on the host port, the forward is gone (adb on the second PC drops one now and then):
+                # read the endpoint and forward again, once; a refused request never reached the app, so even a POST is safe.
+                if attempt or not check.refused(e):
+                    raise
+                FORWARD_RESTORES.append(f"{time.strftime('%H:%M:%S')} {method} {path.split('?')[0]} on tcp:{self.port}")
+                print(f"[ui] {method} {path.split('?')[0]}: connection refused; forwarding tcp:{self.port} again", file=sys.stderr)
+                _, self.token = debug.bootstrap(self.exe, self.serial, self.port)
 
 
 def read_tour(path):
@@ -2751,6 +2765,10 @@ def main():
         if crash:
             report = {**report, "launchCrash": crash, "error": f"the app crashed: {crash}; " + str(report.get("error", ""))}
     report = {"part": args.part, **({"label": args.label} if args.label else {}), "seconds": round(time.time() - t0, 1), **report}
+    if args.serial:
+        report.update(firstrun.capture_report())  # T185
+        if FORWARD_RESTORES:
+            report.update(forwardRestores=len(FORWARD_RESTORES), forwardRestoreEvents=FORWARD_RESTORES[:20])
     print(json.dumps(report, indent=1))
     sys.exit(0 if report.get("ok") else 1)
 

@@ -62,6 +62,10 @@ What holds on the development machine for every agent. The rules these facts sup
   process through ShellExecute (`Start-Process` without `-NoNewWindow` or redirection, `cmd /c` writing
   the output to a log), as `Start-Detached` in `tools/android-emu.ps1` and `tools/android-push-pack.ps1`
   does (finding `../findings/2026-10-13-inherited-pipe-handles.md`).
+- adb on this machine loses a host `adb forward` now and then, and under load a screen capture comes back
+  empty or cut short; the device scripts retry both and count them (`captureRetries`, `forwardRestores`,
+  `incompleteReadRetries`; `android-emulator.md` › Known quirks, T185). On Windows a refused connection to
+  127.0.0.1 takes about 2 s to fail, so a re-forward costs that much more.
 
 ## Shared state
 

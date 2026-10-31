@@ -7,6 +7,9 @@ Usage (from anywhere inside the repo, after the coordinator's merge; the `wave` 
   **YYYY-MM-DD: Tnn merged: title.** (older entries carry `(PR #n)`) and is inserted at the end of the development log.
 - <status-file>: the **Status: merged.** line with follow-ups, appended to the task in docs/TASKS.md (a task is on the board until its wave closes).
 - CHANGELOG.md gets one line under the entry's date in the Unreleased section (newest first).
+T185 (the wave 22 close): an entry that does not start with the bold date and the task, `**YYYY-MM-DD: Tnn merged: <title>.**`
+(or the older `**YYYY-MM-DD: Tnn merged (PR #n): <title>.**`), is refused before any file is written: wave 22's entries
+began with a dash and the script printed a changelog line it never wrote.
 Then `git add docs CHANGELOG.md && git commit -m "Planning log: Tnn merged"`. See the wave skill, .claude/skills/wave/SKILL.md (merge sequence).
 Tested offline by tools/test_merge_log.py (T154).
 """
@@ -16,6 +19,20 @@ import subprocess
 import sys
 
 LOG_ANCHOR = 'Phase-0 algorithms live in `shared` from the start'
+ENTRY_HEAD = re.compile(r'\*\*(\d{4}-\d{2}-\d{2}): (T\d+) merged(?: \(PR #\d+\))?: \S.*?\.\*\*')
+
+
+def check_entry(task, entry):
+    """T185: the entry's opening, `**YYYY-MM-DD: Tnn merged: <title>.**` for this task, or a ValueError that says what
+    was found. The bold date is what the changelog line keys on."""
+    e = entry.strip()
+    m = ENTRY_HEAD.match(e)
+    if not m:
+        raise ValueError(f"the entry must start with the bold date, **YYYY-MM-DD: {task} merged: <title>.** "
+                         f"(it starts {e[:60]!r}); nothing was written")
+    if m.group(2) != task:
+        raise ValueError(f"the entry is for {m.group(2)}, not {task}; nothing was written")
+    return m.group(1)
 
 
 def add_log(s, task, entry):
@@ -76,6 +93,10 @@ def main(argv):
     pr = argv[4] if len(argv) > 4 else None
     entry = open(entry_file, encoding='utf-8').read().strip()
     status = open(status_file, encoding='utf-8').read().strip()
+    try:
+        check_entry(task, entry)
+    except ValueError as e:
+        sys.exit(f'merge-log: refused: {e}')
     # All three are computed before any is written, so a failed assertion leaves every file as it was.
     planning = add_log(open('docs/PLANNING.md', encoding='utf-8').read(), task, entry)
     tasks, title = add_status(open('docs/TASKS.md', encoding='utf-8').read(), task, status)

@@ -8,6 +8,9 @@ The release build has no debug routes, so this script only uses what a person on
 on-screen text with `uiautomator dump` (Compose text is in the accessibility tree), taps with `adb shell
 input tap`, types with `adb shell input text`, and judges the map from `adb exec-out screencap` PNGs.
 Every screenshot is saved under --out: look at them.
+T185: every capture goes through Device.capture, which checks the exit code and the bytes (a whole PNG, or a raw
+frame whose length matches its header), retries a bad one after 0.5, 1, 2 and 4 s and never writes an empty file;
+the report's `captureRetries` says how many retries fired (with `captureRetryReasons`).
 
 Flow (each step is one entry in the JSON report, with the screenshot it took):
   install     uninstall the app, install --apk (default: the release split for the device's ABI), no pack,
@@ -68,15 +71,66 @@ debug = _load("android_debug", "android_debug.py")
 check = _load("android_check", "android-check.py")  # decode_png, changed_share
 
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+CAPTURE_WAITS = (0.5, 1, 2, 4)  # T185: seconds before each retry of a capture that came back empty, cut short or failed
+RAW_BYTES_PER_PIXEL = {1: 4, 2: 4, 3: 3, 4: 2}  # Android PixelFormat: RGBA_8888, RGBX_8888, RGB_888, RGB_565
+# T185: every capture of this process (a part of android-ui.py is one process): how many retries fired and why.
+CAPTURE_STATS = {"captures": 0, "retries": 0, "failures": 0, "reasons": []}
+
+
+def capture_report():
+    """T185: the report fields of CAPTURE_STATS: `captureRetries` always, the reasons and failures when there were any."""
+    st = CAPTURE_STATS
+    return {"captureRetries": st["retries"], **({"captureRetryReasons": st["reasons"]} if st["reasons"] else {}),
+            **({"captureFailures": st["failures"]} if st["failures"] else {})}
+
+
+class CaptureError(RuntimeError):
+    """A screen capture that was still empty, short or failing after every retry (the message names each attempt)."""
+
+
+def png_problem(raw):
+    """None for a whole PNG; otherwise what is wrong: empty, not a PNG, or cut short (no IEND chunk at the end)."""
+    if not raw:
+        return "empty"
+    if raw[:8] != PNG_SIGNATURE:
+        return f"not a PNG ({len(raw)} bytes, starting {raw[:8]!r})"
+    if len(raw) < 20 or raw[-8:-4] != b"IEND":
+        return f"cut short ({len(raw)} bytes, no IEND chunk at the end)"
+    return None
+
+
+def raw_problem(raw):
+    """None for a raw `screencap` whose length matches its header (width x height x bytes per pixel plus a 12 or 16 byte
+    header); otherwise what is wrong. A pixel format this table does not know passes: raw_raster refuses it and
+    Device.frame falls back to PNG frames, without retrying a capture that was fine."""
+    if not raw:
+        return "empty"
+    if len(raw) < 16:
+        return f"short ({len(raw)} bytes, less than a header)"
+    w, h, fmt = struct.unpack_from("<III", raw, 0)
+    if not (0 < w <= 20000 and 0 < h <= 20000):
+        return f"bad header ({w}x{h}, format {fmt}, {len(raw)} bytes)"
+    bpp = RAW_BYTES_PER_PIXEL.get(fmt)
+    if bpp and len(raw) - w * h * bpp not in (12, 16):
+        return f"cut short ({len(raw)} bytes for {w}x{h} at {bpp} bytes a pixel)"
+    return None
+
+
 class Device:
-    def __init__(self, serial, out):
-        self.exe = debug.adb_path()
+    def __init__(self, serial, out, exe=None, run=None, sleep=None):
+        self.exe = exe or debug.adb_path()
         if not self.exe:
             raise SystemExit("adb not found (ANDROID_HOME)")
         self.serial = serial
         self.out = out
         self.shots = 0
         self.dismissed = []  # other apps' ANR dialogs closed (close_other_anr)
+        self.run = run or subprocess.run  # T185: the tests pass a fake adb here
+        self.sleep = sleep or time.sleep
+        self.raw_frames = True  # False once the device's raw format turned out to be one raw_raster cannot read
+        self.capture_retries = 0
+        self.captured_at = None  # time.time() when the last good capture was started
 
     def adb(self, *args, timeout=120, check_ok=True):
         code, text = debug.adb(self.exe, self.serial, *args, timeout=timeout)
@@ -87,9 +141,43 @@ class Device:
     def shell(self, *args, **kw):
         return self.adb("shell", *args, **kw)
 
+    def capture(self, png=True, timeout=60):
+        """T185: the bytes of one `adb exec-out screencap` (`-p` for a PNG, else raw), checked: the exit code, then the PNG
+        signature and IEND (png_problem) or the raw header against the length (raw_problem). On the second PC a capture
+        right after a fresh install came back empty, and one under a parallel build cut short, so a bad capture is
+        retried after 0.5, 1, 2 and 4 s (CAPTURE_WAITS), each attempt's code and stderr logged to stderr, and counted in
+        CAPTURE_STATS (the parts' `captureRetries`). When every attempt failed, raises CaptureError naming them all."""
+        cmd = [self.exe, "-s", self.serial, "exec-out", "screencap"] + (["-p"] if png else [])
+        kind = "screencap -p" if png else "screencap (raw)"
+        attempts = []
+        CAPTURE_STATS["captures"] += 1
+        for i, wait in enumerate((0,) + CAPTURE_WAITS):
+            if wait:
+                self.capture_retries += 1
+                CAPTURE_STATS["retries"] += 1
+                self.sleep(wait)
+            t = time.time()
+            try:
+                p = self.run(cmd, capture_output=True, timeout=timeout)
+                code, raw, err = p.returncode, p.stdout or b"", p.stderr or b""
+            except subprocess.TimeoutExpired:
+                code, raw, err = None, b"", f"no answer within {timeout} s".encode()
+            problem = (f"exit {code}" if code != 0 else None) or (png_problem(raw) if png else raw_problem(raw))
+            if problem is None:
+                self.captured_at = t
+                return raw
+            stderr = err.decode("utf-8", "replace").strip()[:200]
+            attempts.append(f"{i + 1}: {problem}" + (f" ({stderr})" if stderr else ""))
+            if len(CAPTURE_STATS["reasons"]) < 20:
+                CAPTURE_STATS["reasons"].append(f"{kind} {attempts[-1]}")
+            print(f"[capture] {self.serial} {kind} attempt {attempts[-1]}", file=sys.stderr)
+        CAPTURE_STATS["failures"] += 1
+        raise CaptureError(f"{kind} on {self.serial} failed {len(attempts)} times: " + "; ".join(attempts))
+
     def screencap(self, name):
-        p = subprocess.run([self.exe, "-s", self.serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
-        raw = p.stdout
+        """The screen as the next numbered PNG under --out; (path, bytes). Never writes an empty or partial file: the
+        capture is checked (and retried) first, and a capture that never came good raises CaptureError instead."""
+        raw = self.capture(png=True)
         self.shots += 1
         path = os.path.join(self.out, f"{self.shots:02d}-{name}.png")
         with open(path, "wb") as f:
@@ -99,15 +187,16 @@ class Device:
     def frame(self):
         """T105 (T88's follow-up): (time grabbed, Raster) from a raw `screencap` (no -p): no PNG encoding on the device
         and none to decode here, so a frame takes a fraction of a second instead of 1 to 4 s and its time is the
-        moment it was grabbed. Falls back to a PNG frame when the raw format is not RGBA or RGBX."""
-        t = time.time()
-        p = subprocess.run([self.exe, "-s", self.serial, "exec-out", "screencap"], capture_output=True, timeout=60)
-        try:
-            return t, raw_raster(p.stdout)
-        except ValueError:
-            t = time.time()
-            p = subprocess.run([self.exe, "-s", self.serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
-            return t, check.decode_png(p.stdout)
+        moment it was grabbed. Falls back to PNG frames when the raw format is not RGBA or RGBX. T185: both through
+        capture(), so an empty or cut capture is retried there instead of failing the step."""
+        if self.raw_frames:
+            raw = self.capture(png=False)
+            try:
+                return self.captured_at, raw_raster(raw)
+            except ValueError:
+                self.raw_frames = False  # the device's format: PNG frames from now on
+        raw = self.capture(png=True)
+        return self.captured_at, check.decode_png(raw)
 
     def save(self, name, raster):
         """A frame from frame() as the next numbered PNG under --out."""
@@ -649,6 +738,7 @@ def main():
     if not args.direct and not args.server:
         ap.error("--server is required unless --direct")
     report = run_direct(args) if args.direct else run(args)
+    report.update(capture_report())
     print(json.dumps(report, indent=1))
     sys.exit(0 if report["ok"] else 1)
 
