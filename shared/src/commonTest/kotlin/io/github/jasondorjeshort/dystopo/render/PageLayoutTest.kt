@@ -7,13 +7,14 @@ import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** T167: the printed sheet's page maths: frame, true scale, fit, UTM grid and graticule, the three norths. */
+/** T167: the printed sheet's page maths: frame, true scale, fit, UTM grid and graticule, the three norths; T183: the phone's sheet and the shared margins. */
 class PageLayoutTest {
     // Mount Rainier's summit and Mont Blanc's: public places.
     private val rainierLat = 46.853
@@ -176,5 +177,161 @@ class PageLayoutTest {
         assertEquals("01", PageLayout.utmLabel(5_201_000.0, 1000.0, full = false, suffix = "mN"))
         assertEquals("94.5", PageLayout.utmLabel(594_500.0, 500.0, full = false, suffix = "mE"))
         assertEquals("04.5", PageLayout.utmLabel(504_500.0, 500.0, full = false, suffix = "mE"))
+    }
+
+    // T183: the phone's sheet (a MapLibre snapshot at dpi / STYLE_DPI placed by the layout) and the shared margins.
+
+    /** Paradise on Mount Rainier, the device tour's view. */
+    private val paradiseLat = 46.786
+    private val paradiseLon = -121.736
+
+    /** The ground metres one MapLibre physical pixel covers at [zoom] and [ratio] (512 px tiles). */
+    private fun mapLibreMetersPerPixel(lat: Double, zoom: Double, ratio: Double): Double =
+        40_075_016.686 * cos(lat * PI / 180) / (512.0 * 2.0.pow(zoom) * ratio)
+
+    @Test
+    fun phoneSheetAtParadiseIsLetterAt25000AndTheSnapshotZoomKeepsTheScale() {
+        val paper = Paper.defaultAt(paradiseLat, paradiseLon)
+        assertEquals(Paper.LETTER, paper)
+        val l = PageLayout.plan(paper, landscape = false, scale = PageLayout.DEFAULT_SCALE, centerLat = paradiseLat, centerLon = paradiseLon, dpi = 200.0)
+        assertTrue(abs(l.dpi - 200.0) < 0.2, "dpi ${l.dpi}")
+        // Letter's frame (185.9 x 199.4 mm) at about 200 dpi.
+        assertEquals(1464.0, l.frameWidthPx.toDouble(), 2.0)
+        assertEquals(1570.0, l.frameHeightPx.toDouble(), 2.0)
+        val ratio = l.dpi / PageLayout.STYLE_DPI
+        val zoom = l.mapLibreZoom(ratio)
+        assertEquals(13.6, zoom, 0.1)
+        // One snapshot pixel is one page pixel: the scale on paper is exactly 1:25,000.
+        val mpp = mapLibreMetersPerPixel(paradiseLat, zoom, ratio)
+        assertEquals(l.metersPerPixel, mpp, l.metersPerPixel * 1e-9)
+        assertEquals(25_000.0, mpp / (PageLayout.METERS_PER_INCH / l.dpi), 1e-6)
+        // The frame's centre is the asked-for centre within a page pixel (the window starts on a whole pixel).
+        val (cLat, cLon) = l.frameCenter
+        assertTrue(abs(l.frameX(cLon) - l.frameWidthPx / 2.0) < 1e-5 && abs(l.frameX(paradiseLon) - l.frameWidthPx / 2.0) < 1.0)
+        assertTrue(abs(l.frameY(cLat) - l.frameHeightPx / 2.0) < 1e-5 && abs(l.frameY(paradiseLat) - l.frameHeightPx / 2.0) < 1.0)
+        // 1:25,000 on Letter covers about 4.6 by 5 km of ground.
+        assertEquals(4648.0, l.groundWidthM, 10.0)
+        assertEquals(4985.0, l.groundHeightM, 10.0)
+    }
+
+    @Test
+    fun phoneSheetScalesAndPapersKeepTheScaleExact() {
+        for (scale in PageLayout.SCALES) for (paper in Paper.entries) for (landscape in listOf(false, true)) {
+            for ((lat, lon) in listOf(paradiseLat to paradiseLon, montBlancLat to montBlancLon)) {
+                val l = PageLayout.plan(paper, landscape, scale.toDouble(), lat, lon, dpi = 200.0)
+                val ratio = l.dpi / PageLayout.STYLE_DPI
+                val mpp = mapLibreMetersPerPixel(lat, l.mapLibreZoom(ratio), ratio)
+                assertEquals(l.metersPerPixel, mpp, l.metersPerPixel * 1e-9, "1:$scale ${paper.key} landscape=$landscape")
+                assertTrue(abs(l.dpi - 200.0) / 200.0 < 0.01, "dpi ${l.dpi} at 1:$scale")
+                assertEquals(if (landscape) paper.heightMm else paper.widthMm, l.pageWidthMm)
+            }
+        }
+        // Mont Blanc: A4; 1:50,000 shows four times the ground of 1:25,000 in the same frame, one zoom out.
+        assertEquals(Paper.A4, Paper.defaultAt(montBlancLat, montBlancLon))
+        val a = PageLayout.plan(Paper.A4, false, 25_000.0, montBlancLat, montBlancLon, 200.0)
+        val b = PageLayout.plan(Paper.A4, false, 50_000.0, montBlancLat, montBlancLon, 200.0)
+        assertEquals(4.0, b.groundWidthM * b.groundHeightM / (a.groundWidthM * a.groundHeightM), 0.02)
+        assertEquals(a.mapLibreZoom(a.dpi / 150) - 1, b.mapLibreZoom(b.dpi / 150), 0.01)
+    }
+
+    @Test
+    fun phoneFitTheViewTakesAllOfTheView() {
+        // A phone's view around Paradise, about 6 by 8 km: fitted on Letter it needs a smaller scale than 1:25,000.
+        val view = BoundingBox(-121.775, 46.75, -121.695, 46.82)
+        val scale = PageLayout.fitScale(view, Paper.LETTER, landscape = false)
+        assertTrue(scale > 25_000 && scale < 60_000, "scale $scale")
+        val (lat, lon) = PageLayout.center(view)
+        val l = PageLayout.plan(Paper.LETTER, false, scale, lat, lon, 200.0)
+        val b = l.bbox
+        assertTrue(b.west <= view.west + 1e-4 && b.east >= view.east - 1e-4 && b.south <= view.south + 1e-4 && b.north >= view.north - 1e-4, "$b against $view")
+        assertEquals(PageLayout.ratio(scale), l.ratioText)
+    }
+
+    @Test
+    fun sheetQueryParsesThePrintOptions() {
+        assertEquals(SheetQuery(25_000.0, null, false, SheetGrid.UTM), SheetQuery.parse(emptyMap()))
+        assertEquals(SheetQuery(null, Paper.A3, true, SheetGrid.BOTH), SheetQuery.parse(mapOf("scale" to "fit", "paper" to "A3", "landscape" to "1", "grid" to "both")))
+        assertEquals(10_000.0, SheetQuery.parse(mapOf("scale" to "10000")).scale)
+        for (bad in listOf(mapOf("scale" to "100"), mapOf("scale" to "x"), mapOf("paper" to "b5"), mapOf("grid" to "mgrs"))) {
+            val e = runCatching { SheetQuery.parse(bad) }.exceptionOrNull()
+            assertTrue(e is IllegalArgumentException, "$bad gave $e")
+        }
+    }
+
+    /** A canvas that records what the margins draw, measuring text as half an em per character. */
+    private class RecordingCanvas : SheetCanvas {
+        val texts = ArrayList<Pair<String, BoxPx>>()
+        var lines = 0
+        var polylines = 0
+        var rects = 0
+        var polygons = 0
+        var clips = 0
+        override fun fontPx(font: SheetFont) = font.sizePt * 200 / 72
+        override fun advance(text: String, font: SheetFont) = text.length * fontPx(font) * 0.5
+        override fun measure(text: String, font: SheetFont, x: Double, y: Double, align: Double, rotate: Boolean): BoxPx {
+            val w = advance(text, font)
+            val h = fontPx(font) * 0.7
+            return if (!rotate) BoxPx(x - w * align, y - h, w, h) else BoxPx(x - h, y - w * (1 - align), h, w)
+        }
+        override fun text(text: String, font: SheetFont, x: Double, y: Double, align: Double, rotate: Boolean, color: Int): BoxPx {
+            val b = measure(text, font, x, y, align, rotate)
+            texts += text to b
+            return BoxPx(b.x - 2, b.y - 2, b.w + 4, b.h + 4)
+        }
+        override fun haloText(text: String, font: SheetFont, x: Double, y: Double, align: Double, color: Int, halo: Int) {
+            texts += text to measure(text, font, x, y, align, false)
+        }
+        override fun line(x0: Double, y0: Double, x1: Double, y1: Double, color: Int, width: Double) { lines++ }
+        override fun polyline(xy: DoubleArray, dx: Double, dy: Double, color: Int, width: Double) { polylines++ }
+        override fun rect(x: Double, y: Double, w: Double, h: Double, fill: Int?, stroke: Int?, width: Double) { rects++ }
+        override fun polygon(xy: DoubleArray, color: Int) { polygons++ }
+        override fun clip(x: Double, y: Double, w: Double, h: Double) { clips++ }
+        override fun unclip() { clips-- }
+    }
+
+    @Test
+    fun sheetMarginDrawsEveryItemOnThePhonesPage() {
+        val l = PageLayout.plan(Paper.LETTER, false, 25_000.0, paradiseLat, paradiseLon, 200.0)
+        val m = SheetMargin(l, "Paradise", SheetGrid.UTM, ContourUnits.FEET, 80.0, "ft", l.north(jan2026), "2026-01-01", "Elevation: USGS 3DEP.")
+        val c = RecordingCanvas()
+        m.paint(c)
+        val all = m.texts.joinToString("\n")
+        for (item in listOf(
+            "Paradise", "1:25,000", "Contour interval 80 feet", "Magnetic north (MN) is 15° east of true north (star).",
+            "Grid north (GN) is", "UTM zone 10N, 1 km grid. Datum WGS84.", "Heights in feet above sea level (EGM2008).",
+            "Printed 2026-01-01.", "Sources: Elevation: USGS 3DEP.", SheetMargin.PRINT_NOTE, "mE", "mN", "0", " mi", " km",
+        )) assertTrue(item in all, "margin lacks '$item':\n$all")
+        assertEquals(0, c.clips, "every clip is undone")
+        // The scale bars (a feet sheet has a mile bar and a kilometre bar, four or five blocks each) and the frame.
+        assertTrue(c.rects in 9..11, "rects ${c.rects}")
+        assertEquals(l.utmGrid().let { it.eastings.size + it.northings.size }, c.polylines)
+        assertEquals(2, c.polygons) // the star and magnetic north's arrowhead
+        // Every text is on the page; the print note is below the frame.
+        val pageW = l.pageWidthPx.toDouble()
+        val pageH = l.pageHeightPx.toDouble()
+        for ((t, b) in c.texts) assertTrue(b.x >= 0 && b.maxX <= pageW && b.y >= 0 && b.maxY <= pageH, "'$t' at $b off the ${pageW}x$pageH page")
+        val frameBottom = (l.frameYPx + l.frameHeightPx).toDouble()
+        assertTrue(c.texts.first { it.first.startsWith("Print at") }.second.y > frameBottom)
+        // UTM labels drawn above the frame never overlap.
+        val top = c.texts.map { it.second }.filter { it.maxY < l.frameYPx && it.y > PageLayout.MARGIN_MM * l.dpi / 25.4 + 30 }
+        assertTrue(top.size >= 3, "top labels $top")
+        for (i in top.indices) for (j in i + 1 until top.size) assertTrue(!top[i].intersects(top[j]), "${top[i]} and ${top[j]}")
+    }
+
+    @Test
+    fun sheetMarginLinesForMetresAndLatLon() {
+        val l = PageLayout.plan(Paper.A4, true, 50_000.0, montBlancLat, montBlancLon, 200.0)
+        val m = SheetMargin(l, "Mont Blanc", SheetGrid.LATLON, ContourUnits.METERS, 20.0, "m", l.north(jan2026), "2026-01-01", "x")
+        m.paint(RecordingCanvas())
+        assertEquals(null, m.utm)
+        assertTrue(m.gridLine().startsWith("Latitude and longitude every ") && m.gridLine().endsWith("Datum WGS84. UTM zone 32."), m.gridLine())
+        assertTrue("Contour interval 20 metres" in m.texts)
+        assertTrue(m.texts.none { it.startsWith("Grid north") })
+        assertEquals("Contour interval 12.5 metres", SheetMargin.contourLine(12.5, "m"))
+        assertEquals("less than 1° west", SheetMargin.degrees(-0.4))
+        assertEquals("2.5 km", SheetMargin.spacing(2500.0))
+        assertEquals("30\"", SheetMargin.arc(30))
+        assertTrue(BoxPx(0.0, 0.0, 10.0, 10.0).intersects(BoxPx(5.0, 5.0, 10.0, 10.0)))
+        assertTrue(!BoxPx(0.0, 0.0, 10.0, 10.0).intersects(BoxPx(10.0, 0.0, 10.0, 10.0)))
     }
 }

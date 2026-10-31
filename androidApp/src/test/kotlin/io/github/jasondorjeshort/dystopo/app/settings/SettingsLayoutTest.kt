@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  */
 class SettingsLayoutTest {
     /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics; T145: problem reports; T164: route times; T163: the turn-around clock's two rows; T172: recording). */
-    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161", "T176", "T177", "T178", "T187", "T182") // T161: the readout rows; T176: the position button rows; T177: the readout bar rows; T178: the pressure-fall warning; T187: the water rows; T182: the view range
+    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161", "T176", "T177", "T178", "T187", "T182", "T183") // T161: the readout rows; T176: the position button rows; T177: the readout bar rows; T178: the pressure-fall warning; T187: the water rows; T182: the view range; T183: the printed sheet
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -50,6 +50,7 @@ class SettingsLayoutTest {
             listOf(
                 "Position button", "Position button: Close zoom", "Keep north up", // T176 (the Map page, second in list order)
                 "View range", // T182 (the Map page, after the position button)
+                "Print a map sheet", // T183 (the Map page, after T182's row)
                 "Navigation: Spoken directions",
                 "Route times", // T164
                 "Navigation: Turn back by", "Navigation: Turn-back margin", // T163

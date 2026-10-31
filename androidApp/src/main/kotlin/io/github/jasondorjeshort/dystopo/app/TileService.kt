@@ -507,7 +507,7 @@ class TileService(
         "warmup" to (warmup?.json()?.plus("generation" to warmupGen.json()) ?: mapOf("state" to "off", "enabled" to AppSettings.warmup)),
     )
 
-    fun style(): String {
+    fun style(options: MapOptions = AppSettings.mapOptions): String { // T183: the printed sheet passes the day style
         val base = "http://127.0.0.1:$port"
         // T41: every pack's archives (vector credits first, as before); the zooms span all of them.
         val osmPacks = packs.osmPacks
@@ -546,7 +546,7 @@ class TileService(
             ),
             units = contourOptions.units, // T33: labels and peak elevations in the contour unit
             textScale = AppSettings.textScale,
-            options = AppSettings.mapOptions, // T47
+            options = options, // T47
         ).json()
     }
 

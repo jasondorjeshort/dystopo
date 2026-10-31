@@ -360,6 +360,18 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        // T183: the printed sheet: each scale opens the system print dialog for the current view (paper in the dialog).
+        SettingsRow.PRINT_SHEET -> Setting(row.label, "the map you see as a page at a true scale, with a grid and the north diagram", help = "settings.printSheet") {
+            val context = LocalContext.current
+            for ((label, scale) in io.github.jasondorjeshort.dystopo.app.print.PRINT_SCALES) {
+                Option(label, false) {
+                    leaveFor {
+                        io.github.jasondorjeshort.dystopo.app.print.SheetPrint.printCurrentView(io.github.jasondorjeshort.dystopo.app.DystopoApp.instance, scale)
+                            ?.let { android.widget.Toast.makeText(context, "Could not print: $it", android.widget.Toast.LENGTH_LONG).show() }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -640,6 +652,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "While you navigate, the phone says the last water before a stretch of more than " +
                 "${if (units == ContourUnits.FEET) "3 mi" else "5 km"} without any, once, as you near it, so you can fill up. It uses " +
                 "the phone's text-to-speech voice, as spoken directions do."
+        },
+        // T183: the printed sheet's row.
+        HelpText("settings.printSheet", "Print a map sheet", at(SettingsGroup.MAP, "Print a map sheet"), show = page(SettingsGroup.MAP)) { units ->
+            "One page of the map you see at a true scale: 1:25,000 is " +
+                (if (units == ContourUnits.FEET) "about 2.5 inches to the mile" else "4 cm to the kilometre") +
+                ", as on printed topographic maps. It has a UTM grid, scale bars, the north diagram, the contour interval, " +
+                "the sources, and your route and track. Pick the paper in the print dialog and print at 100 percent, not fit to page."
         },
     )
 }
