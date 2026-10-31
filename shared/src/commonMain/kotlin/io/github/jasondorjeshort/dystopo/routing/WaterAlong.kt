@@ -115,8 +115,12 @@ data class WaterItem(
 data class WaterParams(
     /** A derived line with a smaller catchment is "Gully, usually dry", km². */
     val dryBelowKm2: Double = 0.5,
-    /** A derived line with at least this catchment is "Stream, likely flowing", km². */
-    val flowingFromKm2: Double = 5.0,
+    /**
+     * A derived line with at least this catchment is "Stream, likely flowing", km². The survey started at 5; the truth
+     * table kept the largest recall with at least 0.8 of "likely flowing" points coded perennial in all three samples
+     * (1.5 km²) and rounded up for the layer's downstream-end catchment, which reads high at a crossing.
+     */
+    val flowingFromKm2: Double = 2.0,
     /** A derived crossing with a smaller catchment (and no mapped line beside it) is left out: under channel size, km². */
     val dropBelowKm2: Double = 0.1,
     /** A derived crossing this close along the route to a mapped one is the same water, metres. */

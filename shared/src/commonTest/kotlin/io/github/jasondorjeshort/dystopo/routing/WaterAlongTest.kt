@@ -51,7 +51,7 @@ class WaterAlongTest {
         listOf(
             vline(2300, mapOf("class" to s("likely_dry"), "catchment_km2" to Value.DoubleValue(0.3))), // a gully
             vline(2600, mapOf("class" to s("likely_dry"), "catchment_km2" to Value.DoubleValue(0.05))), // under channel size
-            vline(3050, mapOf("class" to s("seasonal"), "catchment_km2" to Value.DoubleValue(2.0))), // 20 m from Test Creek
+            vline(3050, mapOf("class" to s("seasonal"), "catchment_km2" to Value.DoubleValue(1.2))), // 20 m from Test Creek
             vline(3640, mapOf("class" to s("likely_running"), "catchment_km2" to Value.DoubleValue(8.0))), // 16 m from Dry Fork
         ),
     )
@@ -105,11 +105,11 @@ class WaterAlongTest {
         assertEquals(0.3, gully.catchmentKm2)
         assertNull(gully.name)
 
-        // Mapped without the intermittent tag, 2 km² from the terrain: the terrain's class stands (the map does not raise it).
+        // Mapped without the intermittent tag, 1.2 km² from the terrain: the terrain's class stands (the map does not raise it).
         val creek = streams[3]
         assertEquals("Test Creek", creek.name)
         assertTrue(creek.merged)
-        assertEquals(2.0, creek.catchmentKm2)
+        assertEquals(1.2, creek.catchmentKm2)
         assertEquals(WaterClass.MAY_RUN_DRY, creek.waterClass)
         assertEquals(WaterBasis.TERRAIN, creek.basis)
 
@@ -188,7 +188,8 @@ class WaterAlongTest {
         assertNull(WaterAlong.classOf(0.09))
         assertEquals(WaterClass.USUALLY_DRY, WaterAlong.classOf(0.1))
         assertEquals(WaterClass.MAY_RUN_DRY, WaterAlong.classOf(0.5))
-        assertEquals(WaterClass.LIKELY_FLOWING, WaterAlong.classOf(5.0))
+        assertEquals(WaterClass.MAY_RUN_DRY, WaterAlong.classOf(1.99))
+        assertEquals(WaterClass.LIKELY_FLOWING, WaterAlong.classOf(2.0))
         assertEquals(WaterClass.MAY_RUN_DRY, WaterAlong.mappedClassOf("ditch", false))
         assertEquals(WaterClass.LIKELY_FLOWING, WaterAlong.mappedClassOf("stream", false))
     }
