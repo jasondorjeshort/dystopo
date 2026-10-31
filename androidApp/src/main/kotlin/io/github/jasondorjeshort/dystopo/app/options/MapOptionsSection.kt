@@ -349,7 +349,7 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
         HelpText("map.shade", "Shade", "$place › Shade", show = show) { // T188
             "Tints the ground blue where the terrain keeps the sun off it at the time shown, ridges far away included, " +
                 "worked out on this phone from the elevation data; at night it is all shade. It opens at now while the " +
-                "sun is up today, else two hours before sunset; pick another date, or drag the time."
+                "sun is up today, else two hours before sunset; pick another date, or drag the time. Shown from map zoom 10 in."
         },
         HelpText("map.contours", "Contours", "$place › Contours", show = show) {
             "Lines of equal elevation, in your units. Auto picks the interval from the zoom. A fixed interval applies " +

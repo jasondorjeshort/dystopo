@@ -276,11 +276,19 @@ object SunShadeLayer {
     const val SOURCE = "sun-shade"
     const val LAYER = "sun-shade"
 
-    /** Tiles are made to this zoom; MapLibre stretches the deepest past it (the phone's tile times, T188's report). */
+    /**
+     * Tiles are made to this zoom; MapLibre stretches the deepest past it. On the emulator a z12 to z14 tile took 0.46 to
+     * 0.94 s with the sun 10 to 29 degrees up, 1.1 to 1.3 s at 3 degrees (the march's range grows as the sun drops, at
+     * every zoom alike, so no zoom cap helps there).
+     */
     const val MAX_ZOOM = 14
 
-    /** Below this zoom a tile spans too much ground for its shadows to mean anything. */
-    const val MIN_ZOOM = 8
+    /**
+     * No shade below map zoom 10: a z9 tile took 1.3 s on the emulator at 10 degrees (3.7 million ray samples against
+     * about 0.3 million at z10 to z14, the coarse layer too coarse for block skipping), and the shadows of a 300 m pixel
+     * mean little.
+     */
+    const val MIN_ZOOM = 10
 
     private val main = Handler(Looper.getMainLooper())
     private var view: MapView? = null
@@ -328,7 +336,12 @@ object SunShadeLayer {
             setMinZoom(MIN_ZOOM.toFloat())
             setMaxZoom(MAX_ZOOM.toFloat())
         }
-        style.addSource(RasterSource(SOURCE, tiles, 256))
+        // Each 256 px tile drawn over 512 px of screen: MapLibre asks for the view's own zoom, not one deeper, so a screen
+        // takes a quarter of the tiles. At 256 a z13 view asked for some 30 z14 tiles, each 1.4 to 3 s in the app beside
+        // the contours, and MapLibre gave up on the last ones (a request times out), leaving holes in the shade.
+        // No coarser tiles fetched ahead as stand-ins (MapLibre's default reaches four zooms out): each costs as much as a
+        // tile of the view, and a z10 one took 2.3 to 3.1 s beside a z13 view's six.
+        style.addSource(RasterSource(SOURCE, tiles, TILE_SIZE_DP).apply { setPrefetchZoomDelta(0) })
         val layer = RasterLayer(LAYER, SOURCE).withProperties(
             PropertyFactory.rasterFadeDuration(0f),
             PropertyFactory.rasterResampling(Property.RASTER_RESAMPLING_LINEAR),
@@ -338,11 +351,14 @@ object SunShadeLayer {
         installs++
     }
 
+    /** The size MapLibre draws a tile at (see [applyTo]). */
+    const val TILE_SIZE_DP = 512
+
     /** The contour lines' bottom layer: the shade goes right under it, over the land cover and the hillshade. */
     private const val BELOW = "contour-minor"
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "bound" to (view != null), "installed" to (installedUrl != null), "installs" to installs, "removals" to removals,
-        "minZoom" to MIN_ZOOM, "maxZoom" to MAX_ZOOM,
+        "minZoom" to MIN_ZOOM, "maxZoom" to MAX_ZOOM, "tileSize" to TILE_SIZE_DP,
     )
 }
