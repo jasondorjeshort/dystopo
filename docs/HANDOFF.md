@@ -14,8 +14,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   5646, host 8762), T183 (code first, asks for a slot, console 5648, host 8764), T187's verifier (Sonnet, console
   5662). **Not yet launched:** T184 after T187 merges, T189's device round after T184. Leftovers for the next chore:
   the `dystopo-wt/T178` folder (a process held `R.jar`), `task/T178` local, `T178v`; the owner's housekeeping row has
-  `verify/T176`, `T185v-local`.
-- The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`). Usage at launch: 5-hour 16, 7-day 28.
+  `verify/T176`, `T185v-local`. The live viewer is up on 8765 (PID 31104, `out/coordinator-pids.txt`).
 - The sweep will meet the `update` part's "unexpected end of stream" from the mock releases API (T185's verifier,
   with and without T185): a finding at the close if it recurs.
 
