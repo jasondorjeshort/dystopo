@@ -149,13 +149,26 @@ object ViewshedSession {
         }, "viewshed-range").start()
     }
 
-    /** Shows [p] on the map: a marker with its name, the camera moved onto it (the zoom kept, at least 11). Main thread. */
+    /** The sheet's top edge in window pixels (0: not drawn), so a shown peak lands in the map above it. */
+    @Volatile var sheetTopPx = 0f
+
+    /**
+     * Shows [p] on the map: a marker with its name, the camera moved onto it (the zoom kept, at least 11), the peak in the
+     * middle of the map above the sheet rather than under it. Main thread.
+     */
     fun select(p: PeakView) {
         selected = p
         overlay.mark(p)
-        val map = DystopoApp.instance.map.map ?: return
+        val app = DystopoApp.instance
+        val map = app.map.map ?: return
         val zoom = maxOf(map.cameraPosition.zoom, 11.0)
-        map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(p.peak.lat, p.peak.lon), zoom), 600)
+        val view = app.map.mapView
+        val density = view?.resources?.displayMetrics?.density ?: 1f
+        val heightPx = view?.height?.toFloat() ?: 0f
+        val shiftDp = if (sheetTopPx > 0 && heightPx > sheetTopPx) (heightPx / 2 - sheetTopPx / 2) / density else 0f
+        val mpp = map.projection.getMetersPerPixelAtLatitude(p.peak.lat) * Math.pow(2.0, map.cameraPosition.zoom - zoom)
+        val centreLat = p.peak.lat - shiftDp * mpp / 111_320.0
+        map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(centreLat, p.peak.lon), zoom), 600)
     }
 
     /** The peaks in view in the sheet's order. */
