@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-30
 
+- T188: Sun and shade on the phone: the chip, the slider, the point answer (after T181)
 - T177: The readout bar: always drawn beside the scale, elevation and climb side by side
 - T180: The way back on a recording: the clock on screen, the trailhead, and the retrace fix
 - T181: Sun and shade on the terrain in `shared`: the horizon sweep, the cast shadow, the point answer
