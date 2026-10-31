@@ -337,11 +337,9 @@ internal val NAV_HELP: List<HelpText> = listOf(
     },
     // T163: the turn-around clock's line.
     HelpText("nav.turnAround", "Turn back by", "The map: navigation card, turn-back time", needs = "navigating, after a fix") {
-        "The latest time to turn back and still be out by sunset, or the deadline you chose, with your margin to spare. " +
-            "It turns amber the margin before that time and red at it; on the way out it shows when you will be out. " +
-            "Sunset is for a level horizon, so a deep valley darkens sooner. While you record a track without a route it " +
-            "times the way back along your track to its start, or to where a drive ended; Heading back shows once you " +
-            "have turned around."
+        "The latest time to turn back and still be out by sunset, or your deadline, with your margin to spare: amber " +
+            "the margin before, red at it, then when you will be out. Recording without a route, it times the way back " +
+            "along your track. Sunset is for a level horizon."
     },
     HelpText("nav.offRoute", "Off route", "The map: navigation card, off the route", needs = "navigating, off the route") {
         "You have left the route. The arrow points the shortest way back to it, with the direction and distance below. " +
