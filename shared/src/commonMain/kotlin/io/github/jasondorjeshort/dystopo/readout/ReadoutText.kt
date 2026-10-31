@@ -58,6 +58,17 @@ object ReadoutText {
         ReadoutEntry.ELEVATION -> if (units == ContourUnits.FEET) v * UnitFormat.FEET_PER_METER else v
     }
 
+    /**
+     * T177 (T161's follow-up, the scale bar's both-units mode): the other unit system's text for [value] ("5414 ft"
+     * under "1650 m"), or null where there is none: course, speed in knots, a hidden value. A dash or a zero reads so in
+     * the other unit too.
+     */
+    fun other(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits): ReadoutLabel? {
+        if (value.entry == ReadoutEntry.COURSE) return null
+        if (value.entry == ReadoutEntry.SPEED && options.knots && !options.speed.pace) return null
+        return of(value, options, if (units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET)
+    }
+
     /** [value] as text, or null when it is [ValueState.HIDDEN]. */
     fun of(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits): ReadoutLabel? {
         val e = value.entry
@@ -68,6 +79,7 @@ object ReadoutText {
             ReadoutEntry.ELEVATION -> if (units == ContourUnits.FEET) "ft" else "m"
         }
         if (value.state == ValueState.HIDDEN) return null
+        if (value.state == ValueState.ZERO) return ReadoutLabel("0", unit, null) // T177: a climb near zero while moving
         val v = value.value
         if (value.state == ValueState.DASH || v == null) return ReadoutLabel(DASH, unit, null)
         val x = convert(e, v, options, units)

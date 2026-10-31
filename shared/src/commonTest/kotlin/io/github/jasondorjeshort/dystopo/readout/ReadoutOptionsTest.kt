@@ -77,4 +77,25 @@ class ReadoutOptionsTest {
         assertEquals("245°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 244.6, 5.0), foot, ContourUnits.METERS)!!.full)
         assertEquals("0°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 359.7, 5.0), foot, ContourUnits.METERS)!!.full)
     }
+
+    @Test
+    fun theBarsDefaultsTheWindowZeroAndTheOtherUnits() { // T177
+        fun shown(o: ReadoutOptions) = ReadoutEntry.entries.filter { o[it].shown }.map { it.code }
+        assertEquals(listOf("climb", "elevation"), shown(ReadoutOptions.phoneDefaults(Activity.FOOT)), "the bar on foot: elevation and climb")
+        for (a in Activity.entries - Activity.FOOT) assertEquals(ReadoutOptions.defaults(a), ReadoutOptions.phoneDefaults(a))
+        assertEquals(60, ReadoutOptions.defaults(Activity.FOOT).climbWindowS)
+        assertEquals(listOf("30 s", "1 min", "5 min", "10 min"), ReadoutOptions.CLIMB_WINDOWS_S.map(ReadoutOptions::windowLabel))
+
+        val foot = ReadoutOptions.defaults(Activity.FOOT)
+        val zero = ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, 0.004, 0.01)
+        assertEquals("0 m/h", ReadoutText.of(zero, foot, ContourUnits.METERS)!!.full)
+        assertEquals("0 ft/h", ReadoutText.other(zero, foot, ContourUnits.METERS)!!.full)
+        val ele = ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, 1650.2, 3.0)
+        assertEquals("5414 ft", ReadoutText.other(ele, foot, ContourUnits.METERS)!!.full)
+        assertEquals("1650 m", ReadoutText.other(ele, foot, ContourUnits.FEET)!!.full)
+        assertNull(ReadoutText.other(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 90.0), foot, ContourUnits.METERS))
+        val boat = ReadoutOptions.defaults(Activity.BOAT).let { it.with(ReadoutEntry.SPEED, it.speed.copy(knots = true)) }
+        assertNull(ReadoutText.other(ReadoutValue(ReadoutEntry.SPEED, ValueState.SHOWN, 5.0), boat, ContourUnits.METERS), "knots are neither system")
+        assertEquals("– mph", ReadoutText.other(ReadoutValue(ReadoutEntry.SPEED, ValueState.DASH), foot, ContourUnits.METERS)!!.full)
+    }
 }

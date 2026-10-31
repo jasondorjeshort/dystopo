@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 class ReadoutSettingsTest {
     @Test
     fun unsetIsTheDefaultsOfEachActivity() {
-        for (a in Activity.entries) assertEquals(ReadoutOptions.defaults(a), ReadoutSettings.options(a, emptyMap(), barometer = true))
+        for (a in Activity.entries) assertEquals(ReadoutOptions.phoneDefaults(a), ReadoutSettings.options(a, emptyMap(), barometer = true)) // T177: the bar's defaults
         assertFalse(ReadoutSettings.options(Activity.FOOT, emptyMap(), barometer = false).barometer)
         assertEquals(24, ReadoutSettings.KEYS.size)
         assertEquals("readout.boat.speed", ReadoutSettings.key(Activity.BOAT, ReadoutEntry.SPEED))
@@ -73,6 +73,38 @@ class ReadoutSettingsTest {
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
         assertEquals(false, parsed.readoutBarometer)
         assertTrue(ReadoutSettings.options(Activity.FOOT, parsed.readoutValues, barometer = true).speed.pace)
+    }
+
+    @Test
+    fun theBarSwitchAndTheClimbWindow() { // T177
+        assertEquals(listOf(30, 60, 300, 600, 60, 300, 600, 30), listOf("30", "60", "300", "600", "1min", "5 min", "10min", "30s").map { ReadoutSettings.parseClimbWindow(it) })
+        for (bad in listOf(null, "", "45", "2min", "fast", "0")) assertNull(ReadoutSettings.parseClimbWindow(bad), "$bad")
+        assertEquals(300, ReadoutSettings.options(Activity.FOOT, emptyMap(), barometer = true, climbWindowS = 300).climbWindowS)
+        assertEquals(60, ReadoutSettings.options(Activity.FOOT, emptyMap(), barometer = true).climbWindowS)
+        val p = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("readoutBar" to "0", "climbWindow" to "5min")))
+        assertEquals(false, p.readoutBar)
+        assertEquals(300, p.climbWindow)
+        assertEquals(true, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("readoutBar" to "on"))).readoutBar, "the synced value is on or off")
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("climbWindow" to "120")))
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("readoutBar" to "maybe")))
+        val none = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("units" to "m")))
+        assertNull(none.readoutBar)
+        assertNull(none.climbWindow)
+        assertTrue(ReadoutSettings.BAR in SettingsRoutes.KEYS && ReadoutSettings.CLIMB_WINDOW in SettingsRoutes.KEYS)
+        // Synced: app.readoutBar on/off, app.climbWindow in seconds, applied on the other phone through the same parse.
+        var clock = 1_000L
+        val a = InMemoryTrackStore("aaaa", wallClock = { clock })
+        val b = InMemoryTrackStore("bbbb", wallClock = { clock })
+        val barKey = SettingsSync.syncedKey(SettingsSync.READOUT_BAR)
+        val winKey = SettingsSync.syncedKey(SettingsSync.CLIMB_WINDOW)
+        assertEquals(listOf("app.readoutBar", "app.climbWindow"), listOf(barKey, winKey))
+        assertEquals(2, SettingsSync.write(a, listOf(barKey, winKey), mapOf(barKey to "off", winKey to "300"), clock))
+        clock += 1_000
+        b.apply(a.bundle(b.vector()), clock)
+        val plan = SettingsSync.plan(b.settings(), mapOf(barKey to "on", winKey to "60"), SettingsRoutes.KEYS)
+        val synced = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
+        assertEquals(false, synced.readoutBar)
+        assertEquals(300, synced.climbWindow)
     }
 
     @Test

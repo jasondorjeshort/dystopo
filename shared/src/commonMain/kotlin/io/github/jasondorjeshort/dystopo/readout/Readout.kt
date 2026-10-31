@@ -27,10 +27,16 @@ enum class ValueState(val code: String) {
     /** A number. */
     SHOWN("shown"),
 
-    /** A dash in place of the number: standing still (speed). */
+    /**
+     * A dash in place of the number: standing still (speed; T177: climb near zero while standing), or the climb's
+     * window not yet filled (`filling`).
+     */
     DASH("dash"),
 
-    /** Not drawn: switched off, no data yet, or a climb rate near zero ([ReadoutValue.reason] says which). */
+    /** T177: "0" in place of the number: a climb rate inside the near-zero band while moving ([ReadoutValue.value] keeps the small figure). */
+    ZERO("zero"),
+
+    /** Not drawn by the estimator's own rule: switched off or no data yet ([ReadoutValue.reason] says which; the phone's bar draws a dash unless off). */
     HIDDEN("hidden"),
 }
 
@@ -107,6 +113,9 @@ data class Readout(
     val counters: Map<String, Long>,
     /** Registry ids (`sources.json`) of the data sources that contributed: [STATION_SOURCE_ID] once a weather station's pressure was used. */
     val provenance: List<String> = emptyList(),
+    /** T177: the climb window in seconds and how much of it the mean covers so far; null in the air (a lag, no window). */
+    val climbWindowS: Int? = null,
+    val climbFilledS: Double? = null,
 ) {
     operator fun get(entry: ReadoutEntry): ReadoutValue = when (entry) {
         ReadoutEntry.SPEED -> speed
@@ -121,6 +130,7 @@ data class Readout(
         "gapS" to gapS?.let { r3(it) }, "heights" to heights.json(), "barometer" to barometer.json(),
         "fixSpeedMps" to fixSpeedMps?.let { r3(it) }, "routeSpeedMps" to routeSpeedMps?.let { r3(it) },
         "counters" to counters, "provenance" to provenance,
+        "climbWindowS" to climbWindowS, "climbFilledS" to climbFilledS?.let { r3(it) },
     )
 }
 
@@ -143,8 +153,12 @@ data class Readout(
  *   foot (slope under 20°, no structure near, one update per 150 m moved); a weather station's pressure as a prior
  *   ([onStationPressure]). The barometer is dropped while suspect: GNSS speed over 7 m/s; its 60 s climb and the GNSS
  *   one differing by over 1 m/s in two windows in a row; jitter over 1.5 m peak to peak (0.75 m RMS about a line) in
- *   10 s on foot. It reopens 60 s after the last trigger, its offset taken afresh from the height. The climb rate is
- *   lagged 5 to 10 s ([ReadoutTuning.climbLagS]) and hidden near zero ([ReadoutTuning.climbGate]).
+ *   10 s on foot. It reopens 60 s after the last trigger, its offset taken afresh from the height.
+ * - **The climb rate** (T177) on the ground is the filter's vertical speed averaged over the climb window
+ *   ([ReadoutOptions.climbWindowS], 30 s to 10 min, 1 min by default; a dash `filling` until
+ *   [ReadoutTuning.CLIMB_MIN_FILL_S] or the window is covered, then the mean over what is held); in the air it is
+ *   lagged 5 to 10 s ([ReadoutTuning.climbLagS]). Near zero ([ReadoutTuning.climbGate], its band and the uncertainty
+ *   test scaled with the window) it reads 0 while moving ([ValueState.ZERO]) and a dash while standing still.
  * - **A gap** in the fixes (over 5 s or three intervals) dims the values and [Readout.gapS] counts it.
  *
  * @param dem the terrain height at a point (NaN for none), or null for no DEM.
@@ -191,6 +205,15 @@ class ReadoutEstimator(
     private var climbShown = false
     private var smoothV = 0.0
     private var smoothAt: Long? = null
+
+    // T177: the climb window: the running integral of the vertical speed (m), sampled at most once a second, the last
+    // ReadoutTuning.CLIMB_KEEP_MS of it whatever the window, so a change of the window takes effect at once.
+    private val climbHist = ArrayDeque<Pair<Long, Double>>()
+    private var climbIntegralM = 0.0
+    private var lastVerticalMps = 0.0
+    private var climbMeanMps = 0.0
+    private var climbSpanS = 0.0
+    private var climbSigmaMps: Double? = null
 
     private val counts = linkedMapOf(
         "fixes" to 0L, "pressureSamples" to 0L, "lateInputs" to 0L, "spikesDropped" to 0L,
@@ -352,11 +375,17 @@ class ReadoutEstimator(
             else -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, filter.heightM, filter.heightSigmaM, heightSource, heightDim)
         }
         val climbSource = if (fused) "barometer" else "gnss"
+        val windowed = climbWindowed
+        val climbV = if (windowed) climbMeanMps else smoothV
+        val climbSigma = if (windowed) climbSigmaMps ?: filter.verticalSigmaMps else filter.verticalSigmaMps
         val climb = when {
             !options.climb.shown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "off")
             !filter.heightKnown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "no height yet")
-            !climbShown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, smoothV, filter.verticalSigmaMps, climbSource, heightDim, reason = "near zero")
-            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.SHOWN, smoothV, filter.verticalSigmaMps, climbSource, heightDim)
+            windowed && climbSpanS < minOf(ReadoutTuning.CLIMB_MIN_FILL_S, options.climbWindowS.toDouble()) ->
+                ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "filling")
+            climbShown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.SHOWN, climbV, climbSigma, climbSource, heightDim)
+            moving -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "near zero")
+            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "still")
         }
 
         val baroState = when {
@@ -381,7 +410,9 @@ class ReadoutEstimator(
         c["recalibrations"] = filter.recalibrations.toLong()
         c["priors"] = filter.priors.toLong()
         return Readout(nowMs, activity, speed, climb, course, elevation, gapS, heights, baroState, fixSpeed?.first ?: pos?.first, route?.first, c,
-            if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList())
+            if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList(),
+            climbWindowS = if (windowed) options.climbWindowS else null,
+            climbFilledS = if (windowed) minOf(climbSpanS, options.climbWindowS.toDouble()) else null)
     }
 
     private val gapMs: Long get() = max((ReadoutTuning.GAP_S * 1000).toLong(), 3 * profile.intervalMs)
@@ -573,13 +604,26 @@ class ReadoutEstimator(
         smoothAt = null
         smoothV = 0.0
         climbShown = false
+        clearClimbWindow()
         suspectUntilMs = null
         suspectReason = null
         filter = ElevationFilter(activity)
         applyBarometerSwitch(tMs)
     }
 
-    /** The climb rate's display lag and its near-zero gate, after each filter step. */
+    /** T177: the climb is a window mean on the ground, a lagged value in the air. */
+    private val climbWindowed: Boolean get() = activity != Activity.AIR
+
+    private fun clearClimbWindow() {
+        climbHist.clear()
+        climbIntegralM = 0.0
+        lastVerticalMps = 0.0
+        climbMeanMps = 0.0
+        climbSpanS = 0.0
+        climbSigmaMps = null
+    }
+
+    /** The climb rate's display lag (the air), its window mean (T177, the ground) and its near-zero gate, after each filter step. */
     private fun smooth(tMs: Long) {
         if (!filter.heightKnown) return
         val at = smoothAt
@@ -588,11 +632,28 @@ class ReadoutEstimator(
         else if (tMs > at) {
             val tau = ReadoutTuning.climbLagS(options.climb.damping)
             smoothV += (v - smoothV) * (1 - exp(-(tMs - at) / 1000.0 / tau))
+            climbIntegralM += (v + lastVerticalMps) / 2 * ((tMs - at) / 1000.0)
         }
-        if (at == null || tMs > at) smoothAt = tMs
-        val gate = ReadoutTuning.climbGate(activity)
-        val a = abs(smoothV)
-        val sure = a >= 2 * filter.verticalSigmaMps
+        if (at == null || tMs > at) {
+            smoothAt = tMs
+            lastVerticalMps = v
+            if (climbHist.isEmpty() || tMs - climbHist.last().first >= 1_000) climbHist.addLast(tMs to climbIntegralM)
+            while (climbHist.size > 2 && tMs - climbHist[1].first >= ReadoutTuning.CLIMB_KEEP_MS) climbHist.removeFirst()
+        }
+        // The window mean: the integral now less the integral at the last entry at least the window back (else the first).
+        val windowMs = options.climbWindowS * 1000L
+        var start = climbHist.first()
+        for (e in climbHist) if (e.first <= tMs - windowMs) start = e else break
+        climbSpanS = (tMs - start.first) / 1000.0
+        climbMeanMps = if (climbSpanS > 0) (climbIntegralM - start.second) / climbSpanS else v
+        // A mean over the window is surer than one value: the filter's errors decorrelate over its own time constant.
+        val tc = if (filter.fused(tMs)) ReadoutTuning.CLIMB_CORRELATION_FUSED_S else ReadoutTuning.gnssCorrelationS(activity)
+        val sigmaW = filter.verticalSigmaMps * sqrt(minOf(1.0, tc / maxOf(climbSpanS, 1.0)))
+        climbSigmaMps = sigmaW
+        val windowed = climbWindowed
+        val gate = ReadoutTuning.climbGate(activity, if (windowed) options.climbWindowS else null)
+        val a = abs(if (windowed) climbMeanMps else smoothV)
+        val sure = a >= 2 * (if (windowed) sigmaW else filter.verticalSigmaMps)
         climbShown = if (climbShown) a >= gate.hideMps && sure else a > gate.showMps && sure
     }
 

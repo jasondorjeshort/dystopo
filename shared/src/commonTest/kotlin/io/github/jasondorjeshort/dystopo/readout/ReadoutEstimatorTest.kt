@@ -263,7 +263,7 @@ class ReadoutEstimatorTest {
                 assertEquals("ft/min", label.unit)
                 worst = maxOf(worst, abs(label.text.toDouble() - 1000))
             }
-            if (i >= 360) { levelChecked++; if (r.climb.state == ValueState.HIDDEN) levelHidden++ }
+            if (i >= 360) { levelChecked++; if (r.climb.state != ValueState.SHOWN) levelHidden++ } // T177: near zero reads 0 (moving), no longer hidden
         }
         val end = est.readout(ReadoutSim.T0 + 600_000)
         println("T160 flight: worst climb error $worst ft/min while climbing; climb hidden in $levelHidden of $levelChecked level readouts; counters ${end.counters}")

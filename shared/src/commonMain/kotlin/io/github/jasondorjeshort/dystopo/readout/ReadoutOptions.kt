@@ -97,6 +97,12 @@ data class ReadoutOptions(
     val course: EntryOptions,
     val elevation: EntryOptions,
     val barometer: Boolean = true,
+    /**
+     * T177: the climb rate's window in seconds, one of [CLIMB_WINDOWS_S] (default [DEFAULT_CLIMB_WINDOW_S]): on the
+     * ground the climb shown is the mean vertical speed over the last this many seconds ([ReadoutEstimator]); the air
+     * keeps its few seconds' lag (a vertical speed indicator, not a hiker's average).
+     */
+    val climbWindowS: Int = DEFAULT_CLIMB_WINDOW_S,
 ) {
     operator fun get(entry: ReadoutEntry): EntryOptions = when (entry) {
         ReadoutEntry.SPEED -> speed
@@ -117,6 +123,17 @@ data class ReadoutOptions(
     val knots: Boolean get() = speed.knots && knotsAllowed(activity)
 
     companion object {
+        /**
+         * T177: the climb windows offered (ADR 0044; the survey of 2026-10-30: Polar's 30 s field is the only published
+         * window, Garmin and Suunto users call the instant value jumpy and ask for 1 to 5 minutes, no app offers the
+         * choice), 1 minute the default.
+         */
+        val CLIMB_WINDOWS_S = listOf(30, 60, 300, 600)
+        const val DEFAULT_CLIMB_WINDOW_S = 60
+
+        /** "30 s", "1 min", "5 min": a window as the row and `GET /readout` say it. */
+        fun windowLabel(seconds: Int): String = if (seconds < 60) "$seconds s" else "${seconds / 60} min"
+
         /** Knots is offered only for these (the owner's answer of 2026-10-25). */
         fun knotsAllowed(activity: Activity): Boolean = activity == Activity.BOAT || activity == Activity.AIR
 
@@ -131,6 +148,17 @@ data class ReadoutOptions(
                 Activity.BOAT -> ReadoutOptions(activity, speed = on, climb = off, course = on, elevation = off)
                 Activity.AIR -> ReadoutOptions(activity, speed = on, climb = on, course = on, elevation = on)
             }
+        }
+
+        /**
+         * T177: the phone's readout bar defaults: on foot elevation and climb only, side by side (the owner, 2026-10-30:
+         * the bar beside the scale for the mountain hike; the survey: elevation and climb as the default fields, speed or
+         * pace and course per-entry options), every other activity as [defaults]. [defaults] stays what the estimator
+         * and `devtool readout` compute and report.
+         */
+        fun phoneDefaults(activity: Activity): ReadoutOptions {
+            val d = defaults(activity)
+            return if (activity != Activity.FOOT) d else d.copy(speed = d.speed.copy(shown = false), course = d.course.copy(shown = false))
         }
     }
 }

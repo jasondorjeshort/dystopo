@@ -101,6 +101,10 @@ object AppSettings {
         mapControls = p.getInt(KEY_MAP_CONTROLS, 1).coerceIn(io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS)
         recenterZoom = p.getInt(KEY_RECENTER_ZOOM, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM).coerceIn(io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE)
         orientationLock = p.getBoolean(KEY_ORIENTATION_LOCK, false)
+        // T177
+        readoutBar = p.getBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, true)
+        climbWindowS = p.getInt(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S)
+            .takeIf { it in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S } ?: io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -206,7 +210,24 @@ object AppSettings {
 
     /** [a]'s readout options (the remembered activity's by default): its defaults with the stored values and the barometer switch. */
     fun readoutOptions(a: Activity = trackActivity): io.github.jasondorjeshort.dystopo.readout.ReadoutOptions =
-        io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.options(a, readoutEntries, readoutBarometer)
+        io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.options(a, readoutEntries, readoutBarometer, climbWindowS)
+
+    // ---- T177: the readout bar's switch and the climb window (readout/ReadoutSettings); synced ----
+
+    /** The bar beside the scale bar (default on); off draws the scale bar alone and stops the barometer. */
+    @Volatile var readoutBar: Boolean = true
+        private set
+
+    /** The climb rate's window in seconds: 30, 60 (default), 300 or 600. */
+    @Volatile var climbWindowS: Int = io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S
+        private set
+
+    fun setReadoutBar(bar: Boolean?, windowS: Int?) {
+        val e = prefs?.edit()
+        bar?.let { readoutBar = it; e?.putBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, it) }
+        windowS?.let { climbWindowS = it; e?.putInt(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, it) }
+        e?.apply()
+    }
 
     // ---- T176: the position button's layout, its close zoom and the orientation lock (controls/RecenterButton); synced ----
 
@@ -531,5 +552,6 @@ object AppSettings {
         "readout" to readoutOptions().let { o -> io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.entries.associate { e -> e.code to o[e].encode() } },
         "readoutStored" to readoutEntries,
         "mapControls" to mapControls, "recenterZoom" to recenterZoom, "orientationLock" to orientationLock, // T176
+        "readoutBar" to readoutBar, "climbWindow" to climbWindowS, // T177
     ) + mapOptions.json(units) // T47
 }

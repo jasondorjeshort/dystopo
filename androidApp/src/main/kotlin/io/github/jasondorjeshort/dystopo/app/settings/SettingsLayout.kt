@@ -69,6 +69,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     MAP_CONTROLS("mapControls", SettingsGroup.MAP, "Position button", "SettingsPages", "T176"),
     RECENTER_ZOOM("recenterZoom", SettingsGroup.MAP, "Position button: Close zoom", "SettingsPages", "T176"),
     ORIENTATION_LOCK("orientationLock", SettingsGroup.MAP, "Keep north up", "SettingsPages", "T176"),
+    // T177: the readout bar's switch and the climb window (Navigation and tracking, after T161's rows)
+    READOUT_BAR("readoutBar", SettingsGroup.NAVIGATION, "Readout bar", "SettingsPages", "T177"),
+    CLIMB_WINDOW("climbWindow", SettingsGroup.NAVIGATION, "Readout: Climb window", "SettingsPages", "T177"),
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

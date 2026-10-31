@@ -59,6 +59,10 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   a tap never zooms out) and `orientationLock=1|0` ("Keep north up", default off: no gesture turns the map; the
  *   orientation button and the navigation card still change the mode), all three synced (`app.mapControls`,
  *   `app.recenterZoom`, `app.orientationLock` `on`/`off`). The button and the lock take a change at once.
+ *   T177, the readout bar (Settings › Navigation and tracking): `readoutBar=1|0` (default on: the bar beside the scale
+ *   bar; off draws the scale bar alone) and `climbWindow=30|60|300|600` (seconds, also `30s`, `1min`, `5min`, `10min`;
+ *   default 60: the climb rate's averaging window on the ground), synced as `app.readoutBar` `on`/`off` and
+ *   `app.climbWindow` in seconds. `GET /settings` reports `readoutBar` and `climbWindow`.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -173,6 +177,11 @@ class SettingsRoutes(private val app: DystopoApp) {
             AppSettings.setMapControls(parsed.mapControls, parsed.recenterZoom, parsed.orientationLock)
             io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.onSettings()
         }
+        // T177: the bar switch (the scale bar draws or leaves out the bar within half a second) and the climb window.
+        if (parsed.readoutBar != null || parsed.climbWindow != null) {
+            AppSettings.setReadoutBar(parsed.readoutBar, parsed.climbWindow)
+            io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh()
+        }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -215,6 +224,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val readoutEdits: Map<io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, String> = emptyMap(),
             // T176: the position button's layout, its close zoom and "Keep north up".
             val mapControls: Int? = null, val recenterZoom: Int? = null, val orientationLock: Boolean? = null,
+            // T177: the readout bar's switch and the climb window (seconds).
+            val readoutBar: Boolean? = null, val climbWindow: Int? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -235,7 +246,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             // T161
             setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER) + io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS +
             io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS +
-            setOf("mapControls", "recenterZoom", "orientationLock") // T176
+            setOf("mapControls", "recenterZoom", "orientationLock") + // T176
+            setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW) // T177
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -378,10 +390,16 @@ class SettingsRoutes(private val app: DystopoApp) {
             val (recenterZoom, e6) = intIn("recenterZoom", io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE, "(zoom level)")
             e6?.let { return Parsed.Error(it) }
             val orientationLock = params["orientationLock"]?.let { flag(it) ?: return Parsed.Error("orientationLock must be 1 or 0 (got $it)") }
+            // T177: the readout bar's switch and the climb window.
+            val readoutBar = params[rs.BAR]?.let { flag(it) ?: return Parsed.Error("${rs.BAR} must be 1 or 0 (got $it)") }
+            val climbWindow = params[rs.CLIMB_WINDOW]?.let {
+                rs.parseClimbWindow(it.toString()) ?: return Parsed.Error("${rs.CLIMB_WINDOW} must be 30, 60, 300 or 600 seconds (got $it)")
+            }
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
-                mapControls = mapControls, recenterZoom = recenterZoom, orientationLock = orientationLock)
+                mapControls = mapControls, recenterZoom = recenterZoom, orientationLock = orientationLock,
+                readoutBar = readoutBar, climbWindow = climbWindow)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

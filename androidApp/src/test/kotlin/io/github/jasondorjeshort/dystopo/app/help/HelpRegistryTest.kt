@@ -103,6 +103,8 @@ class HelpRegistryTest {
             "settings.readoutBarometer",
             // T176: the position button's rows.
             "settings.mapControls", "settings.recenterZoom", "settings.orientationLock",
+            // T177: the readout bar's rows.
+            "settings.readoutBar", "settings.climbWindow",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

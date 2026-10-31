@@ -34,6 +34,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T176: the position button's layout (`app.mapControls`, `1`, `2` or `3`), its close zoom (`app.recenterZoom`, a whole
  * zoom level) and "Keep north up" (`app.orientationLock`, `on` or `off`); [SettingsRoutes] keys. The orientation itself
  * stays on each phone.
+ * T177: the readout bar's switch (`app.readoutBar`, `on` or `off`) and the climb window (`app.climbWindow`, seconds);
+ * [SettingsRoutes] keys.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -72,6 +74,9 @@ object SettingsSync {
     const val MAP_CONTROLS = "mapControls"
     const val RECENTER_ZOOM = "recenterZoom"
     const val ORIENTATION_LOCK = "orientationLock"
+    /** T177: the readout bar's switch (`on`/`off`) and the climb window (seconds), [SettingsRoutes] keys. */
+    const val READOUT_BAR = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR
+    const val CLIMB_WINDOW = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -124,6 +129,8 @@ object SettingsSync {
         m[syncedKey(MAP_CONTROLS)] = AppSettings.mapControls.toString() // T176
         m[syncedKey(RECENTER_ZOOM)] = AppSettings.recenterZoom.toString()
         m[syncedKey(ORIENTATION_LOCK)] = onOff(AppSettings.orientationLock)
+        m[syncedKey(READOUT_BAR)] = onOff(AppSettings.readoutBar) // T177
+        m[syncedKey(CLIMB_WINDOW)] = AppSettings.climbWindowS.toString()
         return m
     }
 
@@ -189,6 +196,8 @@ object SettingsSync {
         if (parsed.mapControls != null) keys += syncedKey(MAP_CONTROLS) // T176
         if (parsed.recenterZoom != null) keys += syncedKey(RECENTER_ZOOM)
         if (parsed.orientationLock != null) keys += syncedKey(ORIENTATION_LOCK)
+        if (parsed.readoutBar != null) keys += syncedKey(READOUT_BAR) // T177
+        if (parsed.climbWindow != null) keys += syncedKey(CLIMB_WINDOW)
         publishKeys(app, keys)
     }
 

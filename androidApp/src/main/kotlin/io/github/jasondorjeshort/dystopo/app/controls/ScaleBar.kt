@@ -236,6 +236,8 @@ const val TILT_MIN_DEG = 0.5
 fun ScaleBar() {
     val app = DystopoApp.instance
     var view by remember { mutableStateOf<ScaleView?>(null) }
+    // T177: the readout bar's switch, read with the camera every half second (a settings change is not Compose state).
+    var barOn by remember { mutableStateOf(AppSettings.readoutBar) }
     // T110: out of the composition (the no-pack line shows instead) it says so, rather than keeping the last bar as shown.
     DisposableEffect(Unit) { onDispose { ScaleBarLayout.hide("notComposed") } }
     LaunchedEffect(Unit) {
@@ -252,6 +254,7 @@ fun ScaleBar() {
                 }
                 // Also catches camera jumps without move callbacks and changes of units or the night style.
                 m?.let(::read)?.let { view = it }
+                barOn = AppSettings.readoutBar
                 io.github.jasondorjeshort.dystopo.app.Foreground.delay(500) // T150: paused in the background
             }
         } finally {
@@ -341,8 +344,10 @@ fun ScaleBar() {
             }
             if (other != null) BasicText(other.label, style = labelStyle)
         }
-            // T161: the live readout's strip on the bar's line (readout/ReadoutStrip; nothing before a fix)
-            io.github.jasondorjeshort.dystopo.app.readout.ReadoutStrip(v.night)
+            // T161: the live readout's bar on the scale bar's line (readout/ReadoutStrip). T177: always drawn while its
+            // switch is on, dashes before a fix; off, the scale bar is alone on its line.
+            if (barOn) io.github.jasondorjeshort.dystopo.app.readout.ReadoutStrip(v.night)
+            else SideEffect { io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(io.github.jasondorjeshort.dystopo.app.readout.StripLayout.OFF) }
         },
         modifier = Modifier.fillMaxSize(),
     ) { measurables, constraints ->
@@ -353,7 +358,9 @@ fun ScaleBar() {
         ScaleBarLayout.navCardBottomDp = navCard.value
         // T161: the readout strip to the bar's right on its line, bottoms level, clear of the recentre button's column on
         // the right; where the line leaves it less than STRIP_MIN_BESIDE it goes above the bar instead. Like the bar it
-        // never reaches up to the top-left column or the navigation card.
+        // never reaches up to the top-left column or the navigation card. T177: beside only when the whole bar fits on
+        // the line in one row (its width is fixed by its templates for the settings, so the choice never flips with the
+        // values), else above, wrapping upward only when even that is too narrow.
         val strip = measurables.getOrNull(1)
         var stripPlace: Triple<androidx.compose.ui.layout.Placeable, Int, Int>? = null
         if (strip != null) {
@@ -364,17 +371,18 @@ fun ScaleBar() {
             val besideMax = constraints.maxWidth - x - reserve
             val bottomPx = bottomPad.roundToPx()
             val ceiling = if (topLeft > 0.dp) (topLeft + TOP_LEFT_GAP).roundToPx() else 0
-            if (besideMax >= STRIP_MIN_BESIDE.roundToPx()) {
+            val natural = strip.maxIntrinsicWidth(constraints.maxHeight)
+            if (besideMax >= STRIP_MIN_BESIDE.roundToPx() && natural <= besideMax) {
                 val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = besideMax))
                 val y = constraints.maxHeight - bottomPx - p.height
-                if (y >= ceiling) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMax) }
+                if (y >= ceiling) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMax, natural, besideMax) }
                 else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT)
             } else {
                 val start = STRIP_START.roundToPx()
                 val aboveMax = (constraints.maxWidth - start - reserve).coerceAtLeast(0)
                 val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = aboveMax))
                 val y = top - gap - p.height // the bar's top edge is its plate's (its padding is below)
-                if (room && y >= ceiling) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax) }
+                if (room && y >= ceiling) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax, natural, besideMax) }
                 else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT)
             }
         }
