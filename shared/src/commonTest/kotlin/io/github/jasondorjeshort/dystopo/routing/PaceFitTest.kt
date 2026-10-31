@@ -94,9 +94,16 @@ class PaceFitTest {
     fun settingValueRoundTrips() {
         val f = truth.copy(tracks = 5, metres = 23_456.0, spread = 0.123)
         val text = PaceFits.encode(listOf(f), mapOf(TravelMode.BIKE to (2 to 8000.0)))
-        assertEquals("1;hike:1.45,3.2,-0.06,5,23456,0.123;bike:,,,2,8000,", text)
+        assertEquals("1;hike:1.45,3.2,-0.06,5,23456,0.123,0.0,0.0,0;bike:,,,2,8000,", text)
         val back = assertNotNull(PaceFits.decode(text))
         assertEquals(f, back.fit(TravelMode.HIKE))
+        // T184: the whole-track statistic rides in three trailing fields; a value from before T184 reads as a fit with no range.
+        val ranged = f.copy(rangeLow = 0.912, rangeHigh = 1.087, rangeTracks = 7)
+        val text2 = PaceFits.encode(listOf(ranged))
+        assertEquals("1;hike:1.45,3.2,-0.06,5,23456,0.123,0.912,1.087,7", text2)
+        assertEquals(ranged, assertNotNull(PaceFits.decode(text2)).fit(TravelMode.HIKE))
+        assertEquals(f, assertNotNull(PaceFits.decode("1;hike:1.45,3.2,-0.06,5,23456,0.123")).fit(TravelMode.HIKE))
+        assertEquals(0, assertNotNull(PaceFits.decode("1;hike:1.45,3.2,-0.06,5,23456,0.123,0,1.1,7")).fit(TravelMode.HIKE)!!.rangeTracks, "a malformed range is no range")
         assertNull(back.fit(TravelMode.BIKE))
         assertEquals(2 to 8000.0, back.count(TravelMode.BIKE))
         assertEquals(0, assertNotNull(PaceFits.decode("")).fits.size)
@@ -144,6 +151,67 @@ class PaceFitTest {
         val flat = listOf(TrackPoint(0.0, 0.0, 100.0), TrackPoint(0.009, 0.0, 100.0))
         assertEquals(1000.0 / slow.flatMps, mine.pathTimeS(flat, 1000.0, 0.0), 2.0)
         assertEquals(standard.timeS(1000.0, 0.0), standard.pathTimeS(flat, 1000.0, 0.0), 1e-9)
+    }
+
+    @Test
+    fun wholeTrackRatiosTellOneDayFromAnother() {
+        // Five tracks each walked at its own factor of the curve, with piece noise that averages out over a track.
+        val factors = listOf(0.88, 0.95, 1.0, 1.05, 1.12)
+        val r = Random(21)
+        val s = factors.flatMapIndexed { t, k ->
+            List(60) {
+                val g = -0.3 + 0.6 * r.nextDouble()
+                PaceSample(g, 200.0, 200.0 / (truth.speedMps(g) * k * exp(0.08 * gauss(r))), t)
+            }
+        }
+        val f = assertNotNull(PaceFits.fit(s, TravelMode.HIKE))
+        val ratios = PaceFits.wholeTrackRatios(s, f)
+        assertEquals(5, ratios.size)
+        // Time over prediction goes as one over the walker's factor: the fastest day is the lowest ratio.
+        for (i in 1 until 5) assertTrue(ratios[i].ratio < ratios[i - 1].ratio, "${ratios.map { it.ratio }}")
+        within(factors[4] / factors[0], ratios[0].ratio / ratios[4].ratio, 0.04, "the slowest over the fastest day")
+        assertTrue(f.spread > 0.05, "the pieces scatter (${f.spread}) more than the tracks' own ratios settle")
+        val ranged = PaceFits.withRange(f, ratios)
+        assertEquals(5, ranged.rangeTracks)
+        assertTrue(ranged.rangeLow < 1 && ranged.rangeHigh > 1, "$ranged")
+        // Leaving each track out widens the ratios (the honest form with few tracks).
+        val loo = PaceFits.wholeTrackRatios(s, f, leaveOneOut = true)
+        assertTrue(loo.first().ratio / loo.last().ratio > ratios.first().ratio / ratios.last().ratio, "${loo.map { it.ratio }} against ${ratios.map { it.ratio }}")
+        // Short tracks give no ratio.
+        assertEquals(0, PaceFits.wholeTrackRatios(s.map { it.copy(lengthM = 10.0, timeS = it.timeS / 20) }, f).size)
+    }
+
+    @Test
+    fun theRangeRule() {
+        val f = truth.copy(tracks = 6, metres = 30_000.0, rangeLow = 0.97, rangeHigh = 1.03, rangeTracks = 6)
+        // 4.5 h: the floor of +-5 % widens a narrow statistic; 10-minute steps above 3 h, outwards.
+        val e = PaceRange.estimate(4.5 * 3600, f)
+        assertTrue(e.isRange)
+        assertEquals("about 4:30", e.headline)
+        assertEquals("4:10 to 4:50", e.rangeText)
+        assertEquals(0.95, e.lowFactor!!, 1e-9)
+        assertEquals(1.05, e.highFactor!!, 1e-9)
+        // 2 h with a wider statistic: kept as measured, 5-minute steps.
+        val w = PaceRange.estimate(7200.0, f.copy(rangeLow = 0.9, rangeHigh = 1.12))
+        assertEquals("about 2:00", w.headline)
+        assertEquals("1:45 to 2:15", w.rangeText)
+        // Past the cap of +-25 %, under five measured tracks, without a measurement or a fit: the typical time alone.
+        val wide = PaceRange.estimate(7200.0, f.copy(rangeLow = 0.7))
+        assertFalse(wide.isRange)
+        assertEquals(PaceRange.WIDE, wide.reason)
+        assertEquals("typical 2:00", wide.headline)
+        assertNull(wide.rangeText)
+        assertEquals(PaceRange.WIDE, PaceRange.estimate(7200.0, f.copy(rangeHigh = 1.3)).reason)
+        assertEquals(PaceRange.FEW_TRACKS, PaceRange.estimate(7200.0, f.copy(rangeTracks = 4)).reason)
+        assertEquals(PaceRange.NOT_MEASURED, PaceRange.estimate(7200.0, f.copy(rangeLow = 0.0, rangeHigh = 0.0, rangeTracks = 0)).reason)
+        val std = PaceRange.estimate(9_000.0, null)
+        assertEquals(PaceRange.STANDARD, std.reason)
+        assertEquals("typical 2:30", std.headline)
+        // A short walk keeps a range of at least one step.
+        val short = PaceRange.estimate(600.0, f)
+        assertEquals("0:05 to 0:15", short.rangeText)
+        assertEquals(0.5, PaceRange.percentile(listOf(0.0, 1.0), 0.5), 1e-12)
+        assertEquals(1.4, PaceRange.percentile(listOf(1.0, 2.0, 3.0, 4.0, 5.0), 0.1), 1e-12)
     }
 
     @Test

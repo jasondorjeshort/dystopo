@@ -4,6 +4,7 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.choice
@@ -18,6 +19,8 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.routing.PaceFit
 import io.github.jasondorjeshort.dystopo.routing.PaceFits
+import io.github.jasondorjeshort.dystopo.routing.PaceRange
+import io.github.jasondorjeshort.dystopo.routing.PastEfforts
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
@@ -46,6 +49,12 @@ import java.time.Instant
  * `--synthesize N` first writes N synthetic tracks into `--gpx-dir` ([SyntheticWalk]: out and back from Paradise to the
  * Skyline loop's public points over the pack's trails, at the curve `--truth-kmh`, `--truth-width`, `--truth-grade`,
  * one a day from 2026-09-01), then fits them; `truth` and `recovery` (fit over truth, per parameter) are in the report.
+ *
+ * `--range` (T184) adds `range`: the whole-track statistic behind the route card's range (each track's moving time over
+ * the fit's prediction for the same pieces, [PaceFits.wholeTrackRatios], in-sample as the phone stores it and with each
+ * track left out of the fit), its 10th and 90th percentiles, the rule ([PaceRange]: the +-5 % floor, the +-25 % cap, five
+ * tracks), and with `--pack` and a ready fit, per leg of the example route the card's headline and range
+ * ([PaceRange.estimate]) for both forms of the statistic and the past efforts the tracks give it ([PastEfforts.summary]).
  */
 class PaceFitCommand : CliktCommand(name = "pace-fit") {
     override fun help(context: Context) =
@@ -60,6 +69,7 @@ class PaceFitCommand : CliktCommand(name = "pace-fit") {
     private val truthWidth by option("--truth-width", help = "Synthetic: the curve's width").double().default(3.5)
     private val truthGrade by option("--truth-grade", help = "Synthetic: the curve's peak grade").double().default(-0.05)
     private val seed by option("--seed", help = "Synthetic: the first track's seed").int().default(1)
+    private val range by option("--range", help = "T184: also print the whole-track statistic, the route card's range and the past efforts for the example route").flag()
 
     /** Public points of the Skyline loop at Paradise (the `skyline-loop.gpx` fixture's waypoints). */
     private val paradise = "Paradise Inn" to (46.7859 to -121.7356)
@@ -135,6 +145,7 @@ class PaceFitCommand : CliktCommand(name = "pace-fit") {
         }
         val g = graph
         if (g != null && fit != null && fit.ready) out["example"] = example(g, mode, fit, truth.takeIf { synthesize > 0 })
+        if (range) out["range"] = rangeReport(report, mode, fit, g, tracks)
         out["trackRows"] = report.rows.map { it.json() }
         out["graph"] = graphReport
         out["timingsMs"] = linkedMapOf("load" to (t1 - t0) / 1_000_000, "fit" to (t2 - t1) / 1_000_000)
@@ -146,6 +157,60 @@ class PaceFitCommand : CliktCommand(name = "pace-fit") {
         val m = CostModel(mode, pace = null)
         val flat = m.timeS(1000.0, 0.0)
         return linkedMapOf("flatPaceMinPerKm" to PaceFit.r3(flat / 60), "climbRateMph" to Math.round(3600.0 / (m.timeS(0.0, 1.0))))
+    }
+
+    /**
+     * T184: the whole-track statistic for [mode]'s [fit] (in-sample, as the phone stores it, and leave-one-out), the rule,
+     * and with a graph and a ready fit the card's estimate and the past efforts for each leg of the example route.
+     */
+    private fun rangeReport(report: PaceFits.Report, mode: TravelMode, fit: PaceFit?, g: RoutingGraph?, tracks: List<Track>): Map<String, Any?> {
+        if (fit == null) return linkedMapOf("error" to "no fit in ${mode.label}")
+        val samples = report.samples(mode)
+        val names = report.rows.filter { it.mode == mode && it.rank != null }.associate { it.rank!! to it.name }
+        val inSample = PaceFits.wholeTrackRatios(samples, fit)
+        val loo = PaceFits.wholeTrackRatios(samples, fit, leaveOneOut = true)
+        fun stat(rs: List<PaceFits.TrackRatio>): Map<String, Any?> {
+            val f = PaceFits.withRange(fit, rs)
+            val sorted = rs.map { it.ratio }.sorted()
+            return linkedMapOf(
+                "tracks" to rs.map { it.json() + mapOf("name" to names[it.track]) },
+                "n" to rs.size, "min" to sorted.firstOrNull()?.let { PaceFit.r3(it) }, "median" to sorted.takeIf { it.isNotEmpty() }?.let { PaceFit.r3(PaceRange.percentile(it, 0.5)) },
+                "max" to sorted.lastOrNull()?.let { PaceFit.r3(it) },
+                "p10" to PaceFit.r3(f.rangeLow), "p90" to PaceFit.r3(f.rangeHigh),
+                // What the rule does to it: the floor widens a narrower statistic, the cap refuses a wider one.
+                "floorWidens" to linkedMapOf("low" to (f.rangeLow > 1 - PaceRange.FLOOR), "high" to (f.rangeHigh < 1 + PaceRange.FLOOR)),
+                "capRefuses" to (f.rangeLow < 1 - PaceRange.CAP || f.rangeHigh > 1 + PaceRange.CAP),
+            )
+        }
+        val out = linkedMapOf<String, Any?>(
+            "rule" to linkedMapOf(
+                "percentiles" to listOf(PaceRange.LOW_PERCENTILE, PaceRange.HIGH_PERCENTILE), "floor" to PaceRange.FLOOR, "cap" to PaceRange.CAP,
+                "minTracks" to PaceRange.MIN_TRACKS, "minTrackKm" to PaceRange.MIN_TRACK_M / 1000, "stepMin" to "5 under 3 h, 10 above",
+            ),
+            "pieceSpread" to PaceFit.r3(fit.spread),
+            "inSample" to stat(inSample), "leaveOneOut" to stat(loo),
+            "stored" to linkedMapOf("low" to PaceFit.r3(fit.rangeLow), "high" to PaceFit.r3(fit.rangeHigh), "tracks" to fit.rangeTracks),
+        )
+        if (g != null && fit.ready) {
+            val looFit = PaceFits.withRange(fit, loo)
+            val to = destinations[1].second
+            val legs = listOf("up" to (paradise.second to to), "down" to (to to paradise.second))
+            val now = System.currentTimeMillis()
+            out["routes"] = legs.associate { (name, ends) ->
+                val (a, b) = ends
+                PaceFits.setActive(listOf(fit))
+                val plan = (Router(g).route(a.first, a.second, b.first, b.second, mode) as? RouteResult.Found)?.plan
+                PaceFits.clearActive()
+                name to if (plan == null) linkedMapOf("error" to "no route") else linkedMapOf(
+                    "from" to if (name == "up") paradise.first else destinations[1].first, "to" to if (name == "up") destinations[1].first else paradise.first,
+                    "km" to PlannedRoute.r1(plan.distanceM / 1000), "yours" to PlannedRoute.hm(plan.timeS),
+                    "estimate" to PaceRange.estimate(plan.timeS, fit).json(),
+                    "estimateLeaveOneOut" to PaceRange.estimate(plan.timeS, looFit).json(),
+                    "pastEffort" to PastEfforts.summary(plan.route.points, tracks).json(now),
+                )
+            }
+        }
+        return out
     }
 
     /** Paradise to Panorama Point and back on the standard estimate and on [fit]. */
