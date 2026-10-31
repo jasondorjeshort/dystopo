@@ -113,6 +113,8 @@ class HelpRegistryTest {
             "settings.waterAlongRoute", "settings.waterSpoken",
             // T182: the viewshed's range, and its Map options row.
             "settings.viewRange", "map.viewshed",
+            // T183: the printed sheet's row.
+            "settings.printSheet",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

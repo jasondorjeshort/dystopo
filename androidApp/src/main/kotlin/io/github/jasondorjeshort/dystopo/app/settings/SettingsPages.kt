@@ -655,13 +655,10 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         // T183: the printed sheet's row.
         HelpText("settings.printSheet", "Print a map sheet", at(SettingsGroup.MAP, "Print a map sheet"), show = page(SettingsGroup.MAP)) { units ->
-            "One page of the map you see, centred where it is, at a true scale: 1:25,000 is " +
+            "One page of the map you see at a true scale: 1:25,000 is " +
                 (if (units == ContourUnits.FEET) "about 2.5 inches to the mile" else "4 cm to the kilometre") +
-                ", as printed topographic maps are; 1:10,000 shows more detail and 1:50,000 more ground, and Fit the view " +
-                "takes all of it at the scale it needs. The page has a UTM grid, scale bars, the north diagram with the " +
-                "magnetic declination, the contour interval, the sources, and your route and track when the map shows them. " +
-                "Pick the paper and the orientation in the print dialog, and print at 100 percent (actual size), not fit to " +
-                "page, or the scale is wrong."
+                ", as on printed topographic maps. It has a UTM grid, scale bars, the north diagram, the contour interval, " +
+                "the sources, and your route and track. Pick the paper in the print dialog and print at 100 percent, not fit to page."
         },
     )
 }
