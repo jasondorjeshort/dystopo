@@ -65,6 +65,8 @@ object MapOrientation {
 
     // Our own camera moves: a foreign move cancels ours (its callback ends the flight) and is then seen at rest.
     private var ownSeq = 0L
+    /** T176: the sequence number of the last tap's move; a fix's follow move or a facing turn would cancel its zoom. */
+    private var tapSeq = -1L
     @Volatile private var ownInFlight = false
     @Volatile private var ownEndedAt = 0L
     /** Where our last move put (or, cut short by a gesture, left) the camera's centre; at rest, a centre elsewhere was moved by someone else. */
@@ -197,7 +199,7 @@ object MapOrientation {
         }
         // A pinch or a rotation in progress, or someone else moving the camera (a route fit, a search result): do
         // not fight it; the next fix catches up, or the move ends away from the fix and following stops at rest.
-        if (busy()) return
+        if (busy() || tapMoving()) return
         move(LatLng(loc.latitude, loc.longitude), targetBearing(), null, FOLLOW_MS)
         followMoves++
     }
@@ -231,6 +233,7 @@ object MapOrientation {
         startFollowing("tap")
         recenters++
         val ms = if (t.zoomTo != null && animateMs > 0) maxOf(animateMs, ZOOM_MS) else animateMs
+        tapSeq = ownSeq + 1 // the move's own number (it may end at once)
         move(LatLng(fix.latitude, fix.longitude), targetBearing(), t.zoomTo, ms, done)
         linkedMapOf(
             "action" to t.action.name.lowercase(),
@@ -340,7 +343,7 @@ object MapOrientation {
 
     /** Facing: turn to the heading when it is [OrientationRules.TURN_DEG] off the bearing we last set. */
     private fun turn() {
-        if (app.map.map == null || busy()) return
+        if (app.map.map == null || busy() || tapMoving()) return
         val h = Heading.current() ?: return
         if (!OrientationRules.turns(bearing, h.deg)) return
         val fix = app.map.lastLocation
@@ -402,6 +405,13 @@ object MapOrientation {
         }
         return gestures > 0
     }
+
+    /**
+     * T176: the tap's own move (recentre and zoom) is still easing. A new ease cancels the one in flight, so the follow
+     * move of the next fix (the GPS gives one a second) cut the zoom short at once on a device; the next fix after it
+     * catches up instead.
+     */
+    private fun tapMoving(): Boolean = ownInFlight && ownSeq == tapSeq
 
     private fun ended(seq: Long, done: () -> Unit) {
         if (seq == ownSeq) {
