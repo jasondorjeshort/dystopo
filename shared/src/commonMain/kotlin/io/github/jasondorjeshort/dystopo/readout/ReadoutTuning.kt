@@ -60,14 +60,32 @@ object ReadoutTuning {
     const val STILL_WINDOW_S = 3.0
 
     /**
-     * The climb rate is hidden below [hideMps] and shown again above [showMps] (research: "may be left out when near
-     * zero"; derived: 50 and 100 m/h on the ground, 100 and 200 ft/min in the air), and always hidden when it is
-     * under twice its own uncertainty.
+     * The climb rate reads near zero below [hideMps] and as a number again above [showMps] (research: "may be left out
+     * when near zero"; derived: 50 and 100 m/h on the ground, 100 and 200 ft/min in the air), and always near zero when
+     * it is under twice its own uncertainty. T177: near zero is 0 while moving and a dash while standing, no longer left
+     * out; on the ground the band scales with the climb window [windowS] as the noise of a mean does, by the square
+     * root of 60 s over the window (30 s: 71 and 141 m/h; 1 min: 50 and 100; 5 min: 22 and 45; 10 min: 16 and 32).
      */
     data class ClimbGate(val hideMps: Double, val showMps: Double)
 
-    fun climbGate(activity: Activity): ClimbGate =
-        if (activity == Activity.AIR) ClimbGate(100 * FT / 60, 200 * FT / 60) else ClimbGate(50.0 / 3600, 100.0 / 3600)
+    fun climbGate(activity: Activity, windowS: Int? = null): ClimbGate {
+        if (activity == Activity.AIR) return ClimbGate(100 * FT / 60, 200 * FT / 60)
+        val k = if (windowS == null || windowS <= 0) 1.0 else kotlin.math.sqrt(60.0 / windowS)
+        return ClimbGate(50.0 / 3600 * k, 100.0 / 3600 * k)
+    }
+
+    /** T177: the climb is a dash (`filling`) until its window holds this long, or the whole window when that is shorter. */
+    const val CLIMB_MIN_FILL_S = 30.0
+
+    /** T177: the longest window offered (10 min) is always kept, so a change of the window takes effect at once. */
+    const val CLIMB_KEEP_MS = 600_000L
+
+    /**
+     * T177: how long the fused filter's vertical speed error stays correlated (s; derived: the 10 to 15 s effective
+     * window [verticalNoise] gives it with the barometer), so a mean over a window W has its uncertainty cut by the
+     * square root of this over W. On GNSS alone [gnssCorrelationS] is used.
+     */
+    const val CLIMB_CORRELATION_FUSED_S = 15.0
 
     /**
      * The elevation filter's vertical acceleration noise (m²/s³). With the barometer (derived: the climb rate's

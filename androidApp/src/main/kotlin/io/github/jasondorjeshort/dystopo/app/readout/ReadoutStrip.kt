@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app.readout
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -23,12 +24,13 @@ import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.Foreground
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.app.controls.RecenterLayout
@@ -45,18 +47,31 @@ object StripLayout {
     @Volatile var hiddenBecause: String? = "notComposed"
         private set
 
-    /** `beside` (on the scale bar's line, to its right) or `above` (stacked over it when the line has no room). */
+    /** T177: why the bar is not drawn when its switch is off. */
+    const val OFF = "off"
+
+    /**
+     * `beside` (on the scale bar's line, to its right) or `above` (stacked over it when the line has no room). T177: the
+     * choice is made on the bar's own width, which its templates fix for the settings, so it does not change with the
+     * values: beside when the whole bar fits on the line in one row, else above.
+     */
     @Volatile var placement: String? = null
     @Volatile var boundsPx: FloatArray? = null
     @Volatile var density = 1f
     @Volatile var maxWidthPx = 0
+
+    /** T177: the bar's width in one row ([placed] decides on it) and the room the line had beside the scale bar. */
+    @Volatile var naturalWidthPx = 0
+    @Volatile var besideRoomPx = 0
     @Volatile var windowHeightPx = 0f
 
-    fun placed(where: String, maxWidth: Int) {
+    fun placed(where: String, maxWidth: Int, naturalWidth: Int = 0, besideRoom: Int = 0) {
         shown = true
         hiddenBecause = null
         placement = where
         maxWidthPx = maxWidth
+        naturalWidthPx = naturalWidth
+        besideRoomPx = besideRoom
     }
 
     fun hide(reason: String) {
@@ -89,6 +104,8 @@ object StripLayout {
             "placement" to placement,
             "boundsPx" to b?.map { Math.round(it) },
             "maxWidthPx" to maxWidthPx,
+            "naturalWidthPx" to naturalWidthPx, "besideRoomPx" to besideRoomPx, // T177
+            "sizePx" to b?.let { listOf(Math.round(it[2] - it[0]), Math.round(it[3] - it[1])) },
             "topDp" to b?.let { Math.round(it[1] / d * 10) / 10.0 },
             "bottomFromWindowBottomDp" to bottomDp?.let { Math.round(it * 10) / 10.0 },
             "scaleBarBoundsPx" to ScaleBarLayout.boundsPx?.map { Math.round(it) },
@@ -104,29 +121,34 @@ object StripLayout {
 }
 
 /**
- * T161: the live readout's strip, drawn by the scale bar's layout on its line (`controls/ScaleBar.kt`): a small plate like
- * the bar's, one entry per shown readout value, each a caption over its number ("speed" over "4 km/h"), dimmed in a gap
- * of the fixes with "no fix" and how long first. Never a box of its own over the map: nothing shows before a fix or with
- * every entry off, and it wraps onto a second line upward rather than run under the recentre button. Polls
+ * T161: the live readout's bar, drawn by the scale bar's layout on its line (`controls/ScaleBar.kt`): a small plate like
+ * the bar's, one entry per shown readout value, each a caption over its number ("elevation" over "1650 m"), dimmed in a
+ * gap of the fixes with "no fix" and how long as the first caption. Never a box of its own over the map. Polls
  * [LiveReadout.refresh] twice a second while the app is in the foreground ([Foreground.delay]).
+ *
+ * T177: always drawn while the bar switch is on (`readoutBar`; the scale bar leaves it out otherwise): every shown entry
+ * is drawn whatever its value, a dash where it is not known, each entry as wide as its widest text ([StripItem.template]
+ * drawn invisibly under the real one), so the bar never comes and goes, never changes width and nothing in it moves.
+ * In both-units mode each entry has the other system's text under it, as the scale bar has. Only every entry switched
+ * off draws nothing.
  */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 fun ReadoutStrip(night: Boolean) {
-    var items by remember { mutableStateOf(LiveReadout.snapshot?.items.orEmpty()) }
+    var items by remember { mutableStateOf(LiveReadout.snapshot?.items ?: LiveReadout.placeholder()) }
     var line by remember { mutableStateOf<String?>(null) }
     DisposableEffect(Unit) {
         LiveReadout.setComposed(true)
         onDispose {
             LiveReadout.setComposed(false)
-            StripLayout.hide("notComposed")
+            StripLayout.hide(if (AppSettings.readoutBar) "notComposed" else StripLayout.OFF)
         }
     }
     LaunchedEffect(Unit) {
         while (true) {
             LiveReadout.refresh()
             val s = LiveReadout.snapshot
-            items = s?.items.orEmpty()
+            items = s?.items ?: LiveReadout.placeholder()
             line = s?.line
             Foreground.delay(REFRESH_MS)
         }
@@ -136,6 +158,11 @@ fun ReadoutStrip(night: Boolean) {
     val muted = if (night) NightMuted else Muted
     val plate = if (night) NightPlate else Plate
     val density = LocalDensity.current
+    val captionStyle = TextStyle(color = muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+    val valueStyle = TextStyle(color = ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    val unitStyle = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    val pmStyle = TextStyle(color = muted, fontSize = 11.sp)
+    val otherStyle = TextStyle(color = muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     FlowRow(
         Modifier
             .onGloballyPositioned { c ->
@@ -148,20 +175,39 @@ fun ReadoutStrip(night: Boolean) {
             }
             .background(plate, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 3.dp)
-            .semantics { contentDescription = line ?: "" },
+            .clearAndSetSemantics { contentDescription = line ?: "" },
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         for (it in items) {
             Column(Modifier.alpha(if (it.dimmed) DIM else 1f)) {
-                BasicText(it.caption, style = TextStyle(color = muted, fontSize = 10.sp, fontWeight = FontWeight.Medium))
-                Row {
-                    BasicText(it.value, Modifier.alignBy(FirstBaseline), style = TextStyle(color = ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-                    if (it.unit.isNotEmpty()) BasicText(" " + it.unit, Modifier.alignBy(FirstBaseline), style = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Medium))
-                    it.plusMinus?.let { pm -> BasicText(" $pm", Modifier.alignBy(FirstBaseline), style = TextStyle(color = muted, fontSize = 11.sp)) }
+                Box {
+                    BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
+                    BasicText(it.caption, style = captionStyle)
+                }
+                Box {
+                    ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle)
+                    ValueRow(it.value, it.unit, it.plusMinus, it.trend, Modifier, valueStyle, unitStyle, pmStyle)
+                }
+                it.otherTemplate?.let { t ->
+                    Box {
+                        BasicText(t, Modifier.alpha(0f), style = otherStyle)
+                        BasicText(it.other.orEmpty(), style = otherStyle)
+                    }
                 }
             }
         }
+    }
+}
+
+/** One entry's number, unit, the elevation's [trend] arrow (T178's place) and the ±, on one baseline. */
+@Composable
+private fun ValueRow(value: String, unit: String, plusMinus: String?, trend: String?, modifier: Modifier, valueStyle: TextStyle, unitStyle: TextStyle, pmStyle: TextStyle) {
+    Row(modifier) {
+        BasicText(value, Modifier.alignBy(FirstBaseline), style = valueStyle)
+        if (unit.isNotEmpty()) BasicText(" $unit", Modifier.alignBy(FirstBaseline), style = unitStyle)
+        trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = unitStyle) }
+        plusMinus?.let { pm -> BasicText(" $pm", Modifier.alignBy(FirstBaseline), style = pmStyle) }
     }
 }
 

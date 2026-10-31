@@ -30,23 +30,26 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *
  * T161, the live readout's strip on the bar's line ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]):
  * - `GET /readout`: what the strip draws and why: `shown`, `hiddenBecause` (`notComposed`, `noRoomBelowNavCard`,
- *   `noRoomBelowTopLeft`; nothing is drawn before a fix or with every entry off, `drawn` then empty), the `activity`
+ *   `noRoomBelowTopLeft`, T177 `off` with the bar switch off; only every entry off leaves `drawn` empty), T177's `bar`
+ *   (`on`, `window` with `s` and `label`, `windowFilledS`, `bothUnits`, and `fields` in drawn order: `entry`, `state`
+ *   `value`, `zero` or `dash`, `text` as drawn, `other` in both-units mode, `caption`, `dimmed`), the `activity`
  *   (T172's remembered one) and `units`, `options` per entry (`shown=1;pace=0;damping=medium;pm=0;knots=0`, `barometer`,
- *   `knots` as honoured), `drawn` (per item as drawn: `entry`, `caption`, `value`, `unit`, `plusMinus`, `full`, `dimmed`;
- *   the gap's item `entry: gap`), `line` (the strip as one line), `gap`, `text` per entry, `readout` (T160's
+ *   `knots` as honoured), `drawn` (per item as drawn: `entry`, `caption`, `state`, `value`, `unit`, `plusMinus`, `full`,
+ *   `other`, `dimmed`, `trend`; T177: a gap is the first caption, "no fix 8 s", no item of its own), `line` (the strip as one line), `gap`, `text` per entry, `readout` (T160's
  *   [io.github.jasondorjeshort.dystopo.readout.Readout.json]: each value's `state`, SI `value`, `sigma`, `source`,
  *   `dimmed`, `frozen`, `reason`; `gapS`; `heights` with `gnssM`, `baroM` and `demM` apart; `barometer` with its `state`,
- *   `reason`, `offsetM`; `fixSpeedMps`, `routeSpeedMps`, `counters`), `barometerSensor` (`present`, `listening`, `wanted`,
+ *   `reason`, `offsetM`; `fixSpeedMps`, `routeSpeedMps`, `counters`, T177 `climbWindowS`, `climbFilledS`), `barometerSensor` (`present`, `listening`, `wanted`,
  *   `samples`, `lastHPa`, `source`: `sensor` or `replay`), `seaLevelPressure` (T173, `readout/PressureSource`: `state`
  *   off, fetching, in use, no station in range or unavailable; the prior's `hPa`, `station`, `distanceM`, `ageS`,
  *   `source`, `applied`; `limits`, `request`, `box`, `lastResponse`, `counts`), `route` (while
  *   navigating: `alongM`, `distanceM`, `onRoute`), `inputs` (counts per input, the clock offset) and `layout` (`placement`
- *   `beside` or `above`, `boundsPx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
+ *   `beside` or `above`, T177 `naturalWidthPx` (the bar's one-row width it is chosen on) and `besideRoomPx`, `boundsPx`, `sizePx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
  *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`).
  * - `POST /readout/reset`: forgets every input (between replays); answers like `GET`.
  * - `POST /readout/stations[?url=<endpoint>]` (T173's test hook): the weather station fetch reads `url` instead of the
  *   registry's (`url=` empty restores it), forgets the stations and fetches at the next refresh; answers the URL.
- * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`; `SettingsRoutes`).
+ * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`, T177 `readoutBar=0`,
+ * `climbWindow=300`; `SettingsRoutes`).
  */
 object ScaleBarRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {

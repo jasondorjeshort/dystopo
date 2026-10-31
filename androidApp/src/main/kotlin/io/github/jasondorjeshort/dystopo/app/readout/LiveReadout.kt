@@ -54,7 +54,9 @@ import java.util.concurrent.TimeUnit
  *   estimator as a prior (applied once per report); `GET /readout` › `seaLevelPressure` shows it.
  *
  * The estimator reads on its own clock (the fixes' times): [refresh] reads it at the wall clock moved by the last fix's
- * offset from it, so a replay's file times and a device's GPS times both see gaps in real time. The strip
+ * offset from it, so a replay's file times and a device's GPS times both see gaps in real time. T177: the climb window
+ * ([AppSettings.climbWindowS]) is part of the options, so a change takes effect at the next [refresh] with the window's
+ * history kept; `GET /readout` › `bar` reports the switch, the window and each field's `state` and text. The strip
  * ([ReadoutStrip]) calls [refresh] twice a second while shown and draws [snapshot]; `GET /readout` ([json]) mirrors it.
  */
 object LiveReadout {
@@ -152,6 +154,10 @@ object LiveReadout {
     /** Takes the settings as they are now, reads the estimator and updates [snapshot] (on the readout's thread). */
     fun refresh() = post { recompute() }
 
+    /** T177: the bar before the first [refresh] answered: every shown entry a dash. */
+    fun placeholder(): List<StripItem> =
+        StripText.items(null, AppSettings.readoutOptions(), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits)
+
     /** Forgets every input (`POST /readout/reset`, between replays); the settings stay. */
     fun reset(): Map<String, Any?> = call {
         est = null
@@ -175,6 +181,14 @@ object LiveReadout {
         return linkedMapOf(
             "shown" to StripLayout.shown,
             "hiddenBecause" to StripLayout.hiddenBecause,
+            // T177: the bar as drawn: its switch, the climb window, both-units mode and each field's state and text.
+            "bar" to linkedMapOf(
+                "on" to AppSettings.readoutBar,
+                "window" to (s?.options?.climbWindowS ?: AppSettings.climbWindowS).let { w -> linkedMapOf("s" to w, "label" to ReadoutOptions.windowLabel(w)) },
+                "windowFilledS" to s?.readout?.climbFilledS?.let { Math.round(it * 10) / 10.0 },
+                "bothUnits" to (s?.both ?: false),
+                "fields" to s?.items?.map { linkedMapOf("entry" to it.entry.code, "state" to it.state, "text" to it.full, "other" to it.other, "caption" to it.caption, "dimmed" to it.dimmed) },
+            ),
             "activity" to (s?.options?.activity ?: AppSettings.trackActivity).code,
             "units" to (s?.units ?: AppSettings.units).symbol,
             "options" to s?.options?.let { o -> ReadoutEntry.entries.associate { it.code to o[it].encode() } + mapOf("barometer" to o.barometer, "knots" to o.knots) },
@@ -272,7 +286,8 @@ object LiveReadout {
         // T173: the weather station prior, fetched and fed only while the barometer serves the shown strip.
         PressureSource.tick(wanted && Barometer.present, lastFed, offsetMs)?.let { e.onStationPressure(it) }
         if (STATION_SOURCE_ID in r.provenance) PressureSource.credited = true
-        snapshot = Snapshot(r, o, units, StripText.items(r, o, units), StripText.gap(r.gapS), wanted)
+        val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits // T177 (T161's follow-up)
+        snapshot = Snapshot(r, o, units, StripText.items(r, o, units, both), StripText.gap(r.gapS), wanted, both)
     }
 
     /** The barometer is read while it can serve a shown entry: the switch on, an activity that fuses it, climb or elevation shown. */
@@ -287,6 +302,8 @@ object LiveReadout {
         val items: List<StripItem>,
         val gapText: String?,
         val barometerWanted: Boolean,
+        /** T177: the items carry the other unit system's text (the scale bar's both-units mode). */
+        val both: Boolean = false,
     ) {
         /** The strip as one line of text (what `GET /readout` `line` and the strip's description say). */
         val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l -> l.joinToString(" · ") { "${it.caption} ${it.full}" } }

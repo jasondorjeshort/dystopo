@@ -303,6 +303,24 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, orientationLock = false)) }
             }
         }
+        // T177: the readout bar's switch and the climb window.
+        SettingsRow.READOUT_BAR -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.readoutBar
+            Setting(row.label, "elevation and climb beside the scale bar, always shown", help = "settings.readoutBar") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBar = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBar = false)) }
+            }
+        }
+        SettingsRow.CLIMB_WINDOW -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val w = AppSettings.climbWindowS
+            Setting(row.label, "the climb is your average over this long; longer is steadier but slower to follow", help = "settings.climbWindow") {
+                for (s in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S) {
+                    Option(io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.windowLabel(s), w == s) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, climbWindow = s)) }
+                }
+            }
+        }
     }
 }
 
@@ -319,7 +337,7 @@ private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dysto
     fun edit(v: String) = change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutEdits = mapOf(e to v)))
     val what = when (e) {
         io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.SPEED -> "your speed or pace beside the scale bar"
-        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB -> "how fast you climb or descend, left out when level"
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB -> "how fast you climb or descend, 0 when level" // T177
         io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE -> "the direction you travel, held while you stand"
         io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION -> "your height above sea level"
     }
@@ -332,9 +350,12 @@ private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dysto
                 Option("Pace", o.pace) { edit("pace=1;knots=0") }
                 if (rs.offersKnots(a, e)) Option("Knots", o.knots && !o.pace) { edit("pace=0;knots=1") }
             }
-            BasicText("Smoothing", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Muted, fontSize = 13.sp))
-            for (d in io.github.jasondorjeshort.dystopo.readout.Damping.entries) {
-                Option(d.code.replaceFirstChar { it.uppercase() }, o.damping == d) { edit("damping=${d.code}") }
+            // T177: on the ground the climb's smoothing is the climb window's row; flying keeps its lag.
+            if (e != io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB || a == io.github.jasondorjeshort.dystopo.model.Activity.AIR) {
+                BasicText("Smoothing", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Muted, fontSize = 13.sp))
+                for (d in io.github.jasondorjeshort.dystopo.readout.Damping.entries) {
+                    Option(d.code.replaceFirstChar { it.uppercase() }, o.damping == d) { edit("damping=${d.code}") }
+                }
             }
             Option("±", o.plusMinus) { edit(if (o.plusMinus) "pm=0" else "pm=1") }
         }
@@ -515,8 +536,9 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         HelpText("settings.readoutClimb", "Climb", at(SettingsGroup.NAVIGATION, "Readout: Climb"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "How fast you are going up or down, per hour on the ground (${if (units == ContourUnits.FEET) "ft/h" else "m/h"}) and per " +
-                "minute when flying. It lags a few seconds so it does not jump with each step, and it is left out when you are " +
-                "on the level or the reading is too uncertain to tell."
+                "minute when flying. On the ground it is your average over the climb window (1 minute unless you change it); " +
+                "flying, it lags a few seconds. It reads 0 when you walk on the level or the reading is too uncertain to tell, " +
+                "and a dash while you stand still or before it has enough to go on."
         },
         HelpText("settings.readoutCourse", "Course", at(SettingsGroup.NAVIGATION, "Readout: Course"), show = page(SettingsGroup.NAVIGATION)) {
             "The direction you are moving over the ground, in degrees from true north, from the GPS. It stays at the last " +
@@ -544,6 +566,17 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         HelpText("settings.orientationLock", "Keep north up", at(SettingsGroup.MAP, "Keep north up"), show = page(SettingsGroup.MAP)) {
             "Keeps the map the way you set it, north up unless you chose heading up: two-finger turns no longer rotate it, and " +
                 "a tap on the position button no longer turns it. The orientation button still changes it; a padlock shows the lock."
+        },
+        // T177: the readout bar's rows.
+        HelpText("settings.readoutBar", "Readout bar", at(SettingsGroup.NAVIGATION, "Readout bar"), show = page(SettingsGroup.NAVIGATION)) {
+            "A bar beside the scale bar at the bottom of the map with your elevation and climb rate, and speed or course if " +
+                "you turn them on in the rows above. It is always there while on: a dash shows where a value is not known yet, " +
+                "so nothing jumps about. Off leaves the scale bar alone and stops reading the barometer."
+        },
+        HelpText("settings.climbWindow", "Climb window", at(SettingsGroup.NAVIGATION, "Readout: Climb window"), show = page(SettingsGroup.NAVIGATION)) {
+            "The climb rate is your average climb over this window. 30 seconds follows each switchback; 5 or 10 minutes " +
+                "gives a steady figure for the whole slope, but takes that long to catch up after a change. Flying keeps a " +
+                "few seconds' lag whatever the window."
         },
     )
 }

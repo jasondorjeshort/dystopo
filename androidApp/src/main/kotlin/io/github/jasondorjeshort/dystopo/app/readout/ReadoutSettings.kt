@@ -19,12 +19,32 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
  *   whole under its [key], so they sync through it.
  * - The barometer switch, `readoutBarometer` ([BAROMETER], default on: the owner's point 7), one for every activity
  *   (road, rail and air never use the barometer whatever it says), synced as `app.readoutBarometer`.
+ * - T177: the bar switch, `readoutBar` ([BAR], default on: the owner, 2026-10-30, "always visible beside the scale
+ *   with an option"; T161's missing whole-strip switch), synced as `app.readoutBar` `on`/`off`; and the climb window,
+ *   `climbWindow` ([CLIMB_WINDOW], seconds, 30, 60 (default), 300 or 600; ADR 0044: users ask for 30 s to 5 min and no
+ *   app offers the choice), synced as `app.climbWindow`. One of each for every activity.
+ * - T177: an activity's defaults are [ReadoutOptions.phoneDefaults] (on foot elevation and climb only).
  *
  * Pace and knots belong to speed only; knots is offered for boat and air only (the owner's answer of 2026-10-25), and a
  * value that asks for it elsewhere is kept but not honoured ([ReadoutOptions.knots]).
  */
 object ReadoutSettings {
     const val BAROMETER = "readoutBarometer"
+
+    /** T177: the bar switch and the climb window. */
+    const val BAR = "readoutBar"
+    const val CLIMB_WINDOW = "climbWindow"
+
+    /** T177: a climb window as given (`60`, `60s`, `1min`, `5 min`), or null when it is not one of [ReadoutOptions.CLIMB_WINDOWS_S]. */
+    fun parseClimbWindow(raw: String?): Int? {
+        val t = raw?.trim()?.lowercase()?.replace(" ", "") ?: return null
+        val s = when {
+            t.endsWith("min") -> t.removeSuffix("min").toIntOrNull()?.times(60)
+            t.endsWith("s") -> t.removeSuffix("s").toIntOrNull()
+            else -> t.toIntOrNull()
+        }
+        return s?.takeIf { it in ReadoutOptions.CLIMB_WINDOWS_S }
+    }
 
     fun key(a: Activity, e: ReadoutEntry) = "readout.${a.code}.${e.code}"
 
@@ -66,11 +86,11 @@ object ReadoutSettings {
     }
 
     /** A stored or synced whole value in [EntryOptions.encode]'s form over [a]'s defaults, or null when it is refused ([merge]). */
-    fun parseValue(a: Activity, e: ReadoutEntry, raw: String): String? = merge(e, raw, ReadoutOptions.defaults(a)[e])?.encode()
+    fun parseValue(a: Activity, e: ReadoutEntry, raw: String): String? = merge(e, raw, ReadoutOptions.phoneDefaults(a)[e])?.encode()
 
-    /** [a]'s options: its defaults with the [stored] values (by [key]) over them, and the barometer switch. */
-    fun options(a: Activity, stored: Map<String, String>, barometer: Boolean): ReadoutOptions {
-        var o = ReadoutOptions.defaults(a).copy(barometer = barometer)
+    /** [a]'s options: its defaults (T177: [ReadoutOptions.phoneDefaults]) with the [stored] values (by [key]) over them, the barometer switch and the climb window. */
+    fun options(a: Activity, stored: Map<String, String>, barometer: Boolean, climbWindowS: Int = ReadoutOptions.DEFAULT_CLIMB_WINDOW_S): ReadoutOptions {
+        var o = ReadoutOptions.phoneDefaults(a).copy(barometer = barometer, climbWindowS = climbWindowS)
         for (e in ReadoutEntry.entries) {
             val v = stored[key(a, e)] ?: continue
             o = o.with(e, normalize(e, EntryOptions.decode(v, o[e])))
