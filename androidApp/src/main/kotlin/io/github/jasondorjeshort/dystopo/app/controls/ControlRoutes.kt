@@ -58,13 +58,13 @@ object ControlRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
         "GET" to "/camera" -> Response.json(cameraJson(app))
         "POST" to "/camera/recenter" -> when {
-            r.query["long"] == "1" -> Response.json(cameraJson(app) + mapOf("button" to Recenter.longPress(app, "route")))
+            r.query["long"] == "1" -> Recenter.longPress(app, "route").let { Response.json(cameraJson(app) + mapOf("button" to it)) }
             r.query["button"] == "orientation" -> {
                 val b = Recenter.orientationButton("route")
                 Thread.sleep(MapOrientation.FOLLOW_MS + 200L) // let the turn land
                 Response.json(cameraJson(app) + mapOf("button" to b))
             }
-            r.query["button"] == "lock" -> Response.json(cameraJson(app) + mapOf("button" to Recenter.toggleLock(app, "route")))
+            r.query["button"] == "lock" -> Recenter.toggleLock(app, "route").let { Response.json(cameraJson(app) + mapOf("button" to it)) }
             r.query["button"] != null && r.query["button"] != "position" -> Response.json(mapOf("error" to "button must be position, orientation or lock"), 400)
             else -> recenter(app, r)
         }
