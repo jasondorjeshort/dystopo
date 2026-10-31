@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
+import io.github.jasondorjeshort.dystopo.app.options.SunPoint
+import io.github.jasondorjeshort.dystopo.app.options.SunShade
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
 import java.util.Locale
 
@@ -43,11 +45,52 @@ import java.util.Locale
  * point ([RouteSession.routeTo]). "Waypoint here" keeps its place near the front (T109), and "Route from here" keeps the
  * two long-presses for a trip planned from a trailhead. After the route card's Choose on map (`pickStart`) a long-press
  * goes to the route like the end press does.
+ *
+ * T188: under the coordinates, a line on the sun at the point ([sun], [SunPoint]): "Sun reaches here 9:12, leaves 16:40
+ * PDT", with the gaps when a peak blocks it, for today or the date picked under Sun and shade, in the phone's zone named.
+ * The card keeps such lines in one column above its actions ([PointLines]); the next one (the viewshed's) goes there.
  */
 object LongPressMenu {
-    /** The long-pressed point the card is open for, or null. */
-    var point by mutableStateOf<Pair<Double, Double>?>(null)
+    private var pointState by mutableStateOf<Pair<Double, Double>?>(null)
+
+    /** The long-pressed point the card is open for, or null. T188: opening the card at a point starts its sun line. */
+    var point: Pair<Double, Double>?
+        get() = pointState
+        private set(v) {
+            val moved = v != pointState
+            pointState = v
+            if (v == null) {
+                sunRuns.incrementAndGet()
+                sun = null
+            } else if (moved || sun == null) {
+                startSun()
+            }
+        }
+
+    /**
+     * T188: the card's sun line for the open point ([SunPoint]: when the sun reaches it and leaves it on the terrain, the
+     * day of [SunShade.answerDate]); `working` while the horizon sweep runs on its own thread.
+     */
+    var sun by mutableStateOf<SunPoint.Answer?>(null)
         private set
+    private val sunRuns = java.util.concurrent.atomic.AtomicInteger()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun startSun() {
+        val (lat, lon) = point ?: return
+        val date = SunShade.answerDate()
+        val run = sunRuns.incrementAndGet()
+        sun = SunPoint.working(lat, lon, date)
+        Thread({
+            val a = SunPoint.compute(lat, lon, date)
+            main.post { if (run == sunRuns.get()) sun = a }
+        }, "dystopo-sun-point").apply { isDaemon = true }.start()
+    }
+
+    /** T188: the sun-and-shade day changed (turned on or off, a date picked): the open card answers for the new day. Main thread. */
+    fun onSunDay() {
+        if (point != null && sun?.date != SunShade.answerDate()) startSun()
+    }
 
     @Volatile var presses = 0
         private set
@@ -135,6 +178,7 @@ object LongPressMenu {
         "open" to (point != null), "lat" to point?.first, "lon" to point?.second,
         "presses" to presses, "lastAction" to lastAction, "routePhase" to RouteSession.phase,
         "actions" to ACTIONS, // T114
+        "sun" to sun?.json(), // T188: the sun line and the terrain day behind it
     )
 }
 
@@ -143,6 +187,7 @@ internal const val ROUTE_TO = "Route to here"
 
 private val Ink = Color(0xFF2B2420)
 private val Paper = Color(0xEEFFFCF5)
+private val Muted = Color(0xFF6B5A4A)
 private val Link = Color(0xFF2C7BB6)
 
 /**
@@ -161,6 +206,8 @@ internal fun LongPressCard() {
             BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 12.sp))
             HelpIcon("longPress.menu") // T109: dropping a waypoint, which was hard to find
         }
+        PointLines()
+        // The actions; a new entry goes in this row in its place in [LongPressMenu.ACTIONS].
         FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             MenuAction(ROUTE_TO) { LongPressMenu.routeTo() } // T114: destination first
             MenuAction("Waypoint here") { LongPressMenu.waypoint() }
@@ -168,6 +215,22 @@ internal fun LongPressCard() {
             MenuAction(io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE) { LongPressMenu.aroundHere() } // T142
             MenuAction("Cancel") { LongPressMenu.cancel() }
         }
+    }
+}
+
+/**
+ * T188: what the card says about the pressed point, one line each, under its coordinates: the sun line ([SunPoint]).
+ * The viewshed's line or entry (T182) joins this column.
+ */
+@Composable
+private fun PointLines() {
+    val sun = LongPressMenu.sun ?: return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BasicText(
+            sun.line, Modifier.weight(1f),
+            style = TextStyle(color = if (sun.state == "done") Ink else Muted, fontSize = 13.sp),
+        )
+        HelpIcon("longPress.sun")
     }
 }
 
@@ -181,6 +244,12 @@ internal val LONG_PRESS_HELP: List<HelpText> = listOf(
         "A long-press on the map opens this card. Route to here plans a route from where you are to the point; Change " +
             "on the route card starts it elsewhere. Waypoint here marks the point with a waypoint you can name. Route " +
             "from here starts a route at the point: long-press again where it should end."
+    },
+    // T188: the sun line.
+    HelpText("longPress.sun", "Sun at this point", "The map: long-press anywhere, the sun line", show = { LongPressMenu.showAtCentre() }) {
+        "When the sun first reaches this point and when it leaves, behind the real ridges around it rather than a flat " +
+            "horizon, with any time a peak hides it in between. It is for today, or the date picked under Shade " +
+            "in Map options. Times are in this phone's time zone, named at the end."
     },
 )
 

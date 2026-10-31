@@ -76,9 +76,9 @@ private fun BoxScope.Controls() {
     val tracking = remember { Tracking.of(app) }
     val mapView = app.map.mapView
     DisposableEffect(mapView) {
-        mapView?.let { tracking.overlay.bind(it) }
+        mapView?.let { tracking.overlay.bind(it); io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.bind(it) } // T188: the shade layer
         LongPressMenu.install() // T91: a long-press offers a waypoint or a route
-        onDispose { tracking.overlay.unbind() }
+        onDispose { tracking.overlay.unbind(); io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.unbind() }
     }
     val ui = tracking.ui
     var listOpen by remember { mutableStateOf(false) }
