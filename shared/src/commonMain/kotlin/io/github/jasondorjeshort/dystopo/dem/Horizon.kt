@@ -30,14 +30,74 @@ class TerrainLayer(val window: MercatorWindow, val grid: ElevationGrid, val unti
     val maxElevation: Double = grid.max().toDouble()
 
     /**
+     * True when the layer has no cell without data: only then may a ray skip across its blocks (where a cell has no
+     * data a sample falls back to a coarser layer, which the block maxima do not bound).
+     */
+    internal val skippable: Boolean = grid.values.none { it.isNaN() }
+
+    /**
+     * Block maxima for skipping (built on first use): level `L` (index `L - 1`, up to [SKIP_LEVELS]) holds, per block of
+     * `2^L` by `2^L` cells, the highest cell within one cell of the block (a bilinear sample in the block reads its
+     * neighbours too).
+     */
+    internal val maxLevels: Array<FloatArray> by lazy {
+        val w = grid.width
+        val h = grid.height
+        val v = grid.values
+        var level = FloatArray(w * h) { k ->
+            val x = k % w
+            val y = k / w
+            var m = Float.NEGATIVE_INFINITY
+            for (j in maxOf(0, y - 1)..minOf(h - 1, y + 1)) for (i in maxOf(0, x - 1)..minOf(w - 1, x + 1)) {
+                val e = v[j * w + i]
+                if (e > m) m = e
+            }
+            m
+        }
+        var lw = w
+        var lh = h
+        val out = ArrayList<FloatArray>()
+        for (l in 1..SKIP_LEVELS) {
+            val nw = (lw + 1) / 2
+            val nh = (lh + 1) / 2
+            val prev = level
+            val pw = lw
+            val ph = lh
+            level = FloatArray(nw * nh) { k ->
+                val x = 2 * (k % nw)
+                val y = 2 * (k / nw)
+                var m = prev[y * pw + x]
+                if (x + 1 < pw && prev[y * pw + x + 1] > m) m = prev[y * pw + x + 1]
+                if (y + 1 < ph) {
+                    if (prev[(y + 1) * pw + x] > m) m = prev[(y + 1) * pw + x]
+                    if (x + 1 < pw && prev[(y + 1) * pw + x + 1] > m) m = prev[(y + 1) * pw + x + 1]
+                }
+                m
+            }
+            out += level
+            lw = nw
+            lh = nh
+        }
+        out.toTypedArray()
+    }
+
+    internal companion object {
+        /** Block levels for skipping: up to 64 cells a side. */
+        const val SKIP_LEVELS = 6
+    }
+
+    /**
      * Bilinear elevation at global pixel ([gx], [gy]) of zoom [refZoom]: [Terrain.OUTSIDE] when the point is not
      * between this layer's cell centres, NaN when one of the four cells has no data.
      */
     internal fun sample(gx: Double, gy: Double, refZoom: Int): Double {
         val shift = window.zoom - refZoom
         val scale = if (shift >= 0) (1L shl shift).toDouble() else 1.0 / (1L shl -shift)
-        val px = gx * scale - window.x0 - 0.5
-        val py = gy * scale - window.y0 - 0.5
+        return at(gx * scale - window.x0 - 0.5, gy * scale - window.y0 - 0.5)
+    }
+
+    /** Bilinear elevation at fractional cell ([px], [py]) of [grid]; [Terrain.OUTSIDE] off the cell centres. */
+    internal fun at(px: Double, py: Double): Double {
         val w = grid.width
         if (px < 0 || py < 0 || px > w - 1 || py > grid.height - 1) return Terrain.OUTSIDE
         val x0 = floor(px).toInt().coerceAtMost(w - 2).coerceAtLeast(0)
@@ -78,6 +138,17 @@ class Terrain(val layers: List<TerrainLayer>) {
     /** Highest elevation in any layer: no sample can be higher (the rays' early exit). */
     val maxElevation: Double = layers.maxOf { it.maxElevation }
 
+    // Per layer, for the inner loop of every ray: the scale from reference pixels, the offset to cell coordinates, the band.
+    private val count = layers.size
+    private val layerArray = layers.toTypedArray()
+    private val scale = DoubleArray(count) {
+        val shift = layers[it].window.zoom - layers[0].window.zoom
+        if (shift >= 0) (1L shl shift).toDouble() else 1.0 / (1L shl -shift)
+    }
+    private val offsetX = DoubleArray(count) { layers[it].window.x0 + 0.5 }
+    private val offsetY = DoubleArray(count) { layers[it].window.y0 + 0.5 }
+    private val until = DoubleArray(count) { layers[it].untilPx }
+
     /**
      * Elevation at global pixel ([gx], [gy]) for a sample [distancePx] (reference pixels) from the ray's start:
      * the finest layer whose band reaches that far and has data there; NaN when the layers that cover it have no
@@ -85,14 +156,56 @@ class Terrain(val layers: List<TerrainLayer>) {
      */
     fun sample(gx: Double, gy: Double, distancePx: Double = 0.0): Double {
         var covered = false
-        for (layer in layers) {
-            if (distancePx > layer.untilPx) continue
-            val v = layer.sample(gx, gy, zoom)
+        for (i in 0 until count) {
+            if (distancePx > until[i]) continue
+            val v = layerArray[i].at(gx * scale[i] - offsetX[i], gy * scale[i] - offsetY[i])
             if (v == OUTSIDE) continue
             covered = true
             if (!v.isNaN()) return v
         }
         return if (covered) Double.NaN else OUTSIDE
+    }
+
+    /**
+     * Into [out], for skipping: the layer a sample at global pixel ([gx], [gy]) [distancePx] out would read, its block
+     * at [level] there ([TerrainLayer.maxLevels]): the block's highest elevation (`out[0]`) and how far (reference
+     * pixels) a ray along the unit pixel direction ([dx], [dy]) stays in that block, in the layer and in its band
+     * (`out[1]`). False when that layer cannot be skipped (cells without data) or no layer covers the point.
+     */
+    internal fun block(gx: Double, gy: Double, distancePx: Double, dx: Double, dy: Double, level: Int, out: DoubleArray): Boolean {
+        for (i in 0 until count) {
+            if (distancePx > until[i]) continue
+            val layer = layerArray[i]
+            val w = layer.grid.width
+            val h = layer.grid.height
+            val px = gx * scale[i] - offsetX[i]
+            val py = gy * scale[i] - offsetY[i]
+            if (px < 0 || py < 0 || px > w - 1 || py > h - 1) continue
+            if (!layer.skippable || w < 2 || h < 2) return false
+            val size = 1 shl level
+            val bx = floor(px).toInt().coerceIn(0, w - 2) shr level
+            val by = floor(py).toInt().coerceIn(0, h - 2) shr level
+            val lw = (w + size - 1) shr level
+            out[0] = layer.maxLevels[level - 1][by * lw + bx].toDouble()
+            // Layer pixels per reference pixel along the ray; the exit through the block's sides, the layer's last
+            // cell centres and the band's end, whichever comes first.
+            val ux = dx * scale[i]
+            val uy = dy * scale[i]
+            fun exit(p: Double, u: Double, lo: Double, hi: Double): Double = when {
+                u > 1e-12 -> (hi - p) / u
+                u < -1e-12 -> (lo - p) / u
+                else -> Double.POSITIVE_INFINITY
+            }
+            val bx0 = (bx shl level).toDouble()
+            val by0 = (by shl level).toDouble()
+            out[1] = minOf(
+                minOf(exit(px, ux, bx0, bx0 + size), exit(py, uy, by0, by0 + size)),
+                minOf(exit(px, ux, 0.0, (w - 1).toDouble()), exit(py, uy, 0.0, (h - 1).toDouble())),
+                until[i] - distancePx,
+            )
+            return true
+        }
+        return false
     }
 
     /** Global pixel x at [zoom] of longitude [lon]. */
@@ -167,6 +280,11 @@ class RayMarch(
     var distanceM = 0.0
         private set
 
+    /** Blocks skipped (the ground in them stood below the ray's line), over every ray so far. */
+    var skips = 0L
+
+    private val block = DoubleArray(2)
+
     /** Distance (m) of the last ray's farthest sample with data (an early exit stops short of the data's end: [coverageM] has that). */
     var reachedM = 0.0
         private set
@@ -178,6 +296,10 @@ class RayMarch(
      * needs no more), or once no sample farther out could beat the larger of the best so far and [floorTan] (the
      * ground's highest point, lowered by the curvature, would be seen below it). Negative infinity when the ray had
      * no sample with data.
+     *
+     * Blocks of ground lying wholly below the line the ray must beat ([TerrainLayer.maxLevels], 64 down to 4 cells a
+     * side) are skipped without sampling: no sample in them could raise the answer. The result depends only on the
+     * start, the direction and the terrain's values, so two windows over the same ground still agree cell for cell.
      */
     fun maxTangent(
         gx: Double, gy: Double, eyeM: Double, east: Double, north: Double, pxPerM: Double, minStepM: Double,
@@ -191,9 +313,34 @@ class RayMarch(
         var reached = 0.0
         var s = minStepM
         var n = 0L
-        while (s <= rangeM) {
-            if ((dz - curvature * s * s) / s <= max(best, floorTan)) break
-            val v = terrain.sample(gx + stepX * s, gy + stepY * s, s * pxPerM)
+        var skipped = 0L
+        march@ while (s <= rangeM) {
+            val line = max(best, floorTan)
+            if ((dz - curvature * s * s) / s <= line) break
+            val px = gx + stepX * s
+            val py = gy + stepY * s
+            if (line > Double.NEGATIVE_INFINITY) {
+                var level = TerrainLayer.SKIP_LEVELS
+                while (level >= 2) {
+                    if (!terrain.block(px, py, s * pxPerM, east, -north, level, block)) break
+                    val exitM = block[1] / pxPerM
+                    if (exitM > minStepM * 0.5) {
+                        // The line the ground must clear, eye + line*s + curvature*s^2, is convex in s: its lowest
+                        // point over the block is at an end or at its vertex.
+                        val sEnd = s + exitM
+                        var floorLine = minOf(eyeM + line * s + curvature * s * s, eyeM + line * sEnd + curvature * sEnd * sEnd)
+                        val vertex = -line / (2 * curvature)
+                        if (vertex > s && vertex < sEnd) floorLine = minOf(floorLine, eyeM + line * vertex + curvature * vertex * vertex)
+                        if (block[0] < floorLine) {
+                            skipped++
+                            s = sEnd + 0.01 // past the side, so a ray going west or north lands in the next block
+                            continue@march
+                        }
+                    }
+                    level -= 2
+                }
+            }
+            val v = terrain.sample(px, py, s * pxPerM)
             if (v == Terrain.OUTSIDE) break
             if (!v.isNaN()) {
                 n++
@@ -208,6 +355,7 @@ class RayMarch(
             s += max(minStepM, s * growth)
         }
         steps += n
+        skips += skipped
         distanceM = bestS
         reachedM = reached
         return best
@@ -290,8 +438,14 @@ object Horizon {
     /** A ray's step grows by this share of its distance (after a first run of one-cell steps). */
     const val STEP_GROWTH = 0.02
 
-    /** The fine layer is used this many of its cells out from a ray's start; the coarse layer beyond. */
-    const val NEAR_CELLS = 64
+    /**
+     * The fine layer is used this many of its cells out from a ray's start; the coarse layer beyond. Measured on
+     * Rainier at z13 (T181): against a reference march (40 km, steps of 0.5 percent, a coarse layer 2 zooms down,
+     * 128 near cells), 64 near cells left 0.67 percent of the cells sunlit that the reference shades, 128 left
+     * 0.19 percent; the step's growth (1, 2 or 4 percent: 0.65, 0.67, 0.77) and the range (30 or 40 km: equal)
+     * mattered far less.
+     */
+    const val NEAR_CELLS = 128
 
     /** The coarse layer is this many zooms coarser than the fine one (8 times the cell). */
     const val COARSE_ZOOMS = 3
@@ -309,7 +463,7 @@ object Horizon {
      * [zoom] reaching [NEAR_CELLS] cells (plus two) around the point, and when [COARSE_ZOOMS] coarser exists, one
      * around the point out to [rangeM].
      */
-    fun windowsAround(lat: Double, lon: Double, zoom: Int, rangeM: Double = DEFAULT_RANGE_M, tileSize: Int = 256): List<Pair<MercatorWindow, Double>> {
+    fun windowsAround(lat: Double, lon: Double, zoom: Int, rangeM: Double = DEFAULT_RANGE_M, tileSize: Int = 256, coarseZooms: Int = COARSE_ZOOMS): List<Pair<MercatorWindow, Double>> {
         val gx = WebMercator.lonToX(lon, zoom) * tileSize
         val gy = WebMercator.latToY(lat, zoom) * tileSize
         val out = ArrayList<Pair<MercatorWindow, Double>>()
@@ -319,7 +473,7 @@ object Horizon {
             val cy = floor(gy * scale).toInt()
             return MercatorWindow(z, cx - radiusPx, cy - radiusPx, 2 * radiusPx + 1, 2 * radiusPx + 1, tileSize)
         }
-        val coarse = zoom - COARSE_ZOOMS
+        val coarse = if (coarseZooms > 0) zoom - coarseZooms else -1
         out += square(zoom, NEAR_CELLS + 2) to (if (coarse >= 0) NEAR_CELLS.toDouble() else Double.POSITIVE_INFINITY)
         if (coarse >= 0) {
             val mpp = WebMercator.metersPerPixel(lat, coarse, tileSize)
@@ -329,8 +483,8 @@ object Horizon {
     }
 
     /** The terrain of [windowsAround], each window read by [read]. */
-    fun terrainAround(lat: Double, lon: Double, zoom: Int, rangeM: Double = DEFAULT_RANGE_M, tileSize: Int = 256, read: (MercatorWindow) -> ElevationGrid): Terrain =
-        Terrain.read(windowsAround(lat, lon, zoom, rangeM, tileSize), read)
+    fun terrainAround(lat: Double, lon: Double, zoom: Int, rangeM: Double = DEFAULT_RANGE_M, tileSize: Int = 256, coarseZooms: Int = COARSE_ZOOMS, read: (MercatorWindow) -> ElevationGrid): Terrain =
+        Terrain.read(windowsAround(lat, lon, zoom, rangeM, tileSize, coarseZooms), read)
 
     /**
      * The horizon from ([lat], [lon]) at [observerHeightM] above the ground: one ray per bearing every [stepDeg]

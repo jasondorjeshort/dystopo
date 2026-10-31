@@ -56,6 +56,7 @@ class ShadeCommand : AreaCommand("shade") {
     private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
     private val point by option("--point", help = "lat,lon for the point answer (the horizon and the day's sun on the terrain)")
     private val pointZoom by option("--point-zoom", help = "DEM zoom of the point answer's fine layer").int().default(ShadeTiles.POINT_ZOOM)
+    private val pointCoarseZooms by option("--point-coarse-zooms", help = "Zooms between the point answer's fine layer and its coarse one").int().default(Horizon.COARSE_ZOOMS)
     private val eye by option("--eye-m", help = "The point answer's eye height above the ground, metres").double().default(Horizon.EYE_HEIGHT_M)
     private val zone by option("--zone", help = "Time zone of the clock times in the report (the ISO instants are UTC)").default("UTC")
     private val rangeKm by option("--range-km", help = "The most the rays look toward the sun, km (each ray: the relief over the tangent of its sun's altitude, at most this; default 30)").double()
@@ -119,7 +120,7 @@ class ShadeCommand : AreaCommand("shade") {
 
         val pointLatLon = point?.let { parseLatLon(it) }
         val answer = pointLatLon?.let { (lat, lon) ->
-            val t = timings.time("point.fetch") { Horizon.terrainAround(lat, lon, pointZoom, read = ::read) }
+            val t = timings.time("point.fetch") { Horizon.terrainAround(lat, lon, pointZoom, coarseZooms = pointCoarseZooms, read = ::read) }
             timings.time("point.answer") { ShadeTiles.pointAnswer(t, lat, lon, epochMs, eye) }
         }
 
@@ -155,10 +156,10 @@ class ShadeCommand : AreaCommand("shade") {
             "widthPx" to result.width, "heightPx" to result.height, "cellM" to round2(target.cellSizeMeters),
             "shadedCells" to result.shadedCells, "litCells" to result.litCells, "noDataCells" to result.noDataCells,
             "shadedFraction" to round4(result.shadedFraction),
-            "steps" to result.steps, "stepsPerCell" to round1(result.steps.toDouble() / maxOf(1, cells)),
+            "steps" to result.steps, "stepsPerCell" to round1(result.steps.toDouble() / maxOf(1, cells)), "skipsPerCell" to round1(result.skips.toDouble() / maxOf(1, cells)),
             "marchMs" to round1(result.ms), "marchMsPer256Tile" to round1(result.ms * 65_536 / maxOf(1, cells)),
             "reference" to ref,
-            "point" to answer?.let { pointReport(it, epochMs, target, result, iso, clock, horizonFile) },
+            "point" to answer?.let { pointReport(it, epochMs, target, result, iso, clock, horizonFile) + ("coarseZooms" to pointCoarseZooms) },
             "output" to outFile.path,
             "timingsMs" to timings.ms,
             "provenance" to provenance.toList(),

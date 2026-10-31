@@ -54,6 +54,8 @@ object CastShadow {
         /** Samples taken over all rays. */
         val steps: Long,
         val ms: Double,
+        /** Blocks of ground skipped below the rays' lines ([RayMarch.skips]). */
+        val skips: Long = 0,
     ) {
         val shadedFraction: Double get() = if (shadedCells + litCells == 0) 0.0 else shadedCells.toDouble() / (shadedCells + litCells)
     }
@@ -201,7 +203,7 @@ object CastShadow {
             }
         }
         val night = dark > 0 && dark == shaded + lit
-        return Result(w, h, shade, shaded, lit, noData, night, march.steps, clock.elapsedNow().inWholeMicroseconds / 1000.0)
+        return Result(w, h, shade, shaded, lit, noData, night, march.steps, clock.elapsedNow().inWholeMicroseconds / 1000.0, march.skips)
     }
 
     /** [compute] under the [SunField] of [epochMs]. */
@@ -224,6 +226,14 @@ object CastShadow {
     class SunField(val epochMs: Long, val latticeZoom: Int = SUN_LATTICE_ZOOM) {
         private val corners = HashMap<Long, DoubleArray>()
 
+        // The lattice cell of the last call and its four corners (neighbouring cells share them).
+        private var lastX = Int.MIN_VALUE
+        private var lastY = Int.MIN_VALUE
+        private var quadA = DoubleArray(3)
+        private var quadB = quadA
+        private var quadC = quadA
+        private var quadD = quadA
+
         private fun corner(ix: Int, iy: Int): DoubleArray = corners.getOrPut((ix.toLong() shl 32) or (iy.toLong() and 0xffffffffL)) {
             val p = Sun.position(WebMercator.yToLat(iy.toDouble(), latticeZoom), WebMercator.xToLon(ix.toDouble(), latticeZoom), epochMs)
             doubleArrayOf(sin(p.azimuthDeg * DEG), cos(p.azimuthDeg * DEG), p.apparentAltitudeDeg)
@@ -242,10 +252,18 @@ object CastShadow {
             val iy = floor(v).toInt()
             val fx = u - ix
             val fy = v - iy
-            val a = corner(ix, iy)
-            val b = corner(ix + 1, iy)
-            val c = corner(ix, iy + 1)
-            val e = corner(ix + 1, iy + 1)
+            if (ix != lastX || iy != lastY) {
+                lastX = ix
+                lastY = iy
+                quadA = corner(ix, iy)
+                quadB = corner(ix + 1, iy)
+                quadC = corner(ix, iy + 1)
+                quadD = corner(ix + 1, iy + 1)
+            }
+            val a = quadA
+            val b = quadB
+            val c = quadC
+            val e = quadD
             for (k in 0..2) {
                 val top = a[k] + (b[k] - a[k]) * fx
                 out[k] = top + ((c[k] + (e[k] - c[k]) * fx) - top) * fy
