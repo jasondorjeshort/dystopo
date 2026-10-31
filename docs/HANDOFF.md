@@ -27,9 +27,8 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
    ADR 0051.
 2. At the close: the sweep, the release (the `RELEASE_*` secrets were set 2026-10-30: check the draft is
    release-signed), the handoff, the wave record, the allowance reading.
-3. Later: a Hatchery-rooted session (five pending carry-backs per the triage of d14c2c1; the triage skill's
-   carry-back step classifies against the wrong `main` in project trees); ADR 0040's and 0042's build tasks after
-   the owner; ADR 0049's C after the z10 answer.
+3. Later: a Hatchery-rooted session (five pending carry-backs per d14c2c1; the triage skill's carry-back step
+   classifies against the wrong `main` in project trees); ADR 0040's and 0042's builds after the owner; ADR 0049's C.
 
 ## Waiting on user
 
