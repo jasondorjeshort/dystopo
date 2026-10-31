@@ -24,6 +24,11 @@ package io.github.jasondorjeshort.dystopo.packs
  * encrypted LAN link, with file URLs relative to the link (`/peer/file/<file>`) and one more top-level field,
  * `publisher` (`{"name": "Dystopo Pixel 6 3f2a", "device": "<8 hex>"}`; absent from a server). Readers that do not
  * know it ignore it, so a server's catalog and a phone's parse alike.
+ *
+ * T189 (ADR 0049's B): an entry may carry `derived`, a list beside `files` of files made from the pack's archives
+ * ([DerivedFile]; today the routing graph a server built, `<name>-outdoors-graph.idx`). They are never part of
+ * `files`, `bytes` or `contentHash`: a rebuilt graph is not a new pack. A reader that does not know `derived` (v0.1.14
+ * and older) ignores it and builds the graph itself; an unusable entry in it is left out, never failing the pack.
  */
 data class PackCatalog(val version: Int, val generatedAt: String?, val packs: List<CatalogPack>, val publisher: Map<String, Any?>? = null) {
     fun find(id: String): CatalogPack? = packs.firstOrNull { it.id == id } ?: packs.firstOrNull { it.name == id }
@@ -119,8 +124,13 @@ data class CatalogPack(
     val attribution: String,
     val hash: String,
     val files: List<CatalogFile>,
+    /** T189: files derived from the archives ([DerivedFile]), outside [files] and [hash]; empty when none is shipped. */
+    val derived: List<DerivedFile> = emptyList(),
 ) {
     fun file(role: PackRole): CatalogFile? = files.firstOrNull { it.role == role }
+
+    /** T189: the shipped routing graph entry this build can read (format, version, tile zoom), whatever its fingerprints; null when none. */
+    val graph: DerivedFile? get() = ShippedGraph.readable(derived)
 
     /** T65: map data without a DEM (a server's single-file vector pack). */
     val vectorOnly: Boolean get() = files.none { it.role == PackRole.DEM }
@@ -132,7 +142,7 @@ data class CatalogPack(
         "id" to id, "name" to name, "title" to title, "bounds" to bounds?.toList(), "minZoom" to minZoom, "maxZoom" to maxZoom,
         "profile" to profile, "bytes" to bytes, "builtAt" to builtAt, "builtAtMs" to builtAtMs, "provenance" to provenance,
         "attribution" to attribution, "contentHash" to hash, "files" to files.map { it.json() },
-    )
+    ).also { m -> if (derived.isNotEmpty()) m["derived"] = derived.map { it.json() } } // T189
 
     companion object {
         fun parse(m: Map<String, Any?>): CatalogPack {
@@ -163,6 +173,7 @@ data class CatalogPack(
                 attribution = m["attribution"] as? String ?: "",
                 hash = hash,
                 files = files,
+                derived = DerivedFile.parseList(m["derived"]), // T189
             )
         }
 
@@ -181,6 +192,8 @@ data class CatalogPack(
             builtAt: String?,
             builtAtMs: Long?,
             urlPrefix: String = "/out/",
+            /** T189: what the publisher derived from the archives (a peer phone's matching graph). */
+            derived: List<DerivedFile> = emptyList(),
         ): CatalogPack {
             fun file(role: PackRole, a: PackArchiveInfo, sha: String) = CatalogFile(
                 role, a.fileName, urlPrefix + a.fileName, a.bytes, PackHash.normalize(sha) ?: throw IllegalArgumentException("bad sha256 '$sha'"),
@@ -204,6 +217,7 @@ data class CatalogPack(
                 attribution = archives.map { it.attribution }.filter { it.isNotEmpty() }.distinct().joinToString(" | "),
                 hash = PackHash.combine(files.associate { it.role to it.sha256 }),
                 files = files,
+                derived = derived,
             )
         }
     }

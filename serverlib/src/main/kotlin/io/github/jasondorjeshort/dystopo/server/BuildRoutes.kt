@@ -19,6 +19,7 @@ import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
 import io.github.jasondorjeshort.dystopo.pmtiles.ByteSink
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import java.io.BufferedOutputStream
 import java.io.File
@@ -94,6 +95,16 @@ import kotlin.math.floor
  * A box across the antimeridian (west > east, e.g. `bbox=179.2,-17.2,-179.8,-16.4`) is split at 180°
  * into two jobs, `<name>-e` (west..180) and `<name>-w` (-180..east), each a normal rectangular pack
  * pair; the 202 answer is the first job, and both carry `antimeridian` with the other's id.
+ *
+ * T189 (ADR 0049's B), the `graph` phase: after `publish`, a pack with a vector archive gets its routing graph built
+ * by the server's own route planner ([RouteRoutes.planner]: today's one-pass builder and encoder, the same file a first
+ * route writes), `out/<name>-outdoors-graph.idx` with its `.sha256` sidecar, so the catalog lists it under `derived`
+ * ([PackCatalog.graph]) and phones download it with the pack instead of building it. The job's `graph` says how it went
+ * (`state` `done`, `failed` or `skipped`, the file, bytes, SHA-256, nodes, tiles, `buildMs`, `error`). The phase never
+ * fails the pack: the archives are published before it starts, and a failure (an `OutOfMemoryError` on a server too
+ * small for the box included) is a note on the job while the catalog lists no graph. The job stays `running` with phase
+ * `graph` until the phase ends either way, so a phone polling `POST /area` gets the manifest with the graph. `graph=0`
+ * skips the phase (measurement: a build without it).
  *
  * Files are written as `*.building` and renamed when complete, so `/out/` never serves half a pack;
  * a finished pack is also handed to [LiveTiles.addPack], so the viewer then shows it as `pack`.
@@ -183,6 +194,10 @@ class BuildRoutes(
         @Volatile var osmProvenance: List<String> = emptyList()
         /** For half of a box split at the antimeridian: which half and the other job's id. */
         @Volatile var antimeridian: Map<String, String>? = null
+        /** T189: whether the `graph` phase runs after `publish` (`graph=0` on the request turns it off). */
+        @Volatile var graphPhase: Boolean = true
+        /** T189: how the `graph` phase went (null until it starts). */
+        @Volatile var graph: Map<String, Any?>? = null
 
         val active: Boolean get() = status == Status.QUEUED || status == Status.RUNNING
 
@@ -206,6 +221,7 @@ class BuildRoutes(
                 "overpass" to overpassInfo, "tilebuild" to tilebuildInfo, "download" to downloadInfo,
                 "warnings" to warnings.toList(),
                 "error" to error,
+                "graph" to graph,
             ).also { m -> antimeridian?.let { m["antimeridian"] = it } }
         }
     }
@@ -290,6 +306,7 @@ class BuildRoutes(
             )
         }
         val overwrite = params["overwrite"].let { it == "1" || it == "true" }
+        val graphPhase = params["graph"].let { it == null || (it != "0" && it != "false") } // T189
         synchronized(jobs) {
             for ((partName, _) in parts) {
                 if (jobs.values.any { it.active && it.name == partName }) throw Refused(409, "a build of '$partName' is already queued or running")
@@ -307,6 +324,7 @@ class BuildRoutes(
                     plan.download?.let { r -> it.downloadInfo = linkedMapOf("name" to r.name, "url" to r.pbfUrl, "bytes" to 0L, "total" to null) }
                     it.osmProfile = if (plan.source == SOURCE_OPENFREEMAP) PROFILE_OPENMAPTILES else PROFILE_OUTDOORS
                     plan.warning?.let { w -> it.warnings += w }
+                    it.graphPhase = graphPhase
                 }
             }
             if (made.size == 2) {
@@ -425,6 +443,7 @@ class BuildRoutes(
         val osmOut = File(outDir, PackNames.fileName(job.name, PackRole.VECTOR))
         val demTmp = File(outDir, demOut.name + ".building")
         val osmTmp = File(outDir, osmOut.name + ".building")
+        var publishedPack = false
         try {
             buildDem(job, demTmp)
             if (job.osmZooms != null) {
@@ -438,7 +457,7 @@ class BuildRoutes(
                 job.files += describe(out)
                 live.addPack(out)
             }
-            finish(job, Status.DONE)
+            publishedPack = true
         } catch (e: Throwable) {
             val cause = (e as? CompletionException)?.cause ?: e
             demTmp.delete()
@@ -448,6 +467,55 @@ class BuildRoutes(
                 job.error = cause.message ?: cause.toString()
                 finish(job, Status.FAILED)
             }
+        }
+        if (!publishedPack) return
+        // T189: outside the catch above, which fails the job and deletes the archives: the pack is published already.
+        buildGraph(job, demOut, osmOut)
+        finish(job, Status.DONE)
+    }
+
+    /** T189: the server's planner for this build's `out/` (the routes' own when they share it, so a route and the phase never build one graph twice). */
+    private val graphPlanner: RoutePlanner by lazy {
+        if (live.outDir.absoluteFile.normalize() == outDir.absoluteFile.normalize()) RouteRoutes.planner(live) else RoutePlanner(outDir)
+    }
+
+    /**
+     * T189, the `graph` phase: builds (or finds current) the routing graph of the published pack through [graphPlanner] and
+     * hashes it into its sidecar, so the catalog's `derived` list names it. Never throws; a failure is the job's `graph`.
+     */
+    private fun buildGraph(job: Job, demOut: File, osmOut: File) {
+        val graphFile = PackCatalog.graphFile(osmOut)
+        val dem = demOut.takeIf { it.isFile }
+        fun skipped(why: String) { job.graph = linkedMapOf("state" to "skipped", "reason" to why) }
+        when {
+            !osmOut.isFile -> return skipped("no vector archive (a terrain-only pack has no trails)")
+            !job.graphPhase -> return skipped("graph=0")
+            job.cancelled -> return skipped("cancelled")
+        }
+        job.phase = "graph"
+        job.graph = linkedMapOf("state" to "building", "file" to graphFile.name)
+        val started = System.nanoTime()
+        try {
+            val h = PmtilesReader.open(FileRangeSource(osmOut), Gzip.decompressors).header
+            val pack = RoutePlanner.Pack(job.name, osmOut, dem, BoundingBox(h.minLon, h.minLat, h.maxLon, h.maxLat))
+            val (archive, info) = graphPlanner.graph(pack)
+            val sha = live.catalog.sha256(graphFile)
+            val listed = live.catalog.graph(osmOut, dem)
+            job.timings["graphMs"] = (System.nanoTime() - started) / 1_000_000
+            job.graph = linkedMapOf(
+                "state" to "done", "action" to info["action"], "file" to graphFile.name, "url" to "/out/${graphFile.name}",
+                "bytes" to graphFile.length(), "sha256" to sha, "sidecar" to PackCatalog.sidecar(graphFile).name,
+                "version" to GraphTileFile.VERSION, "tileZoom" to archive.tileZoom, "tiles" to archive.entries.size,
+                "nodes" to archive.entries.sumOf { it.nodes }, "edges" to archive.entries.sumOf { it.edges }, "buildMs" to info["buildMs"],
+                "listed" to (listed != null), "problem" to if (listed == null) live.catalog.graphProblem(osmOut, dem) else null,
+            )
+        } catch (e: Throwable) {
+            // Never a failed pack (ADR 0049): the archives stay published and phones build the graph themselves.
+            job.timings["graphMs"] = (System.nanoTime() - started) / 1_000_000
+            job.graph = linkedMapOf(
+                "state" to "failed", "file" to graphFile.name, "error" to (e.message ?: e.toString()),
+                "note" to "the pack is published without a graph: the catalog lists none and phones build their own",
+            )
         }
     }
 
@@ -758,7 +826,15 @@ class BuildRoutes(
                 }
             }
             val vector = PackNames.fileName(name, PackRole.VECTOR)
-            items += LocalItem(ManifestItem.KIND_GRAPH, vector, true, "the phone builds the trail graph tiles (z11) from the vector pack on first use")
+            // T189: the graph the build's `graph` phase wrote, when it matches the archives; else the phone builds it.
+            val shipped = if (status == AreaManifest.STATUS_READY) File(outDir, vector).takeIf { it.isFile }?.let { v ->
+                runCatching { live.catalog.graph(v, File(outDir, PackNames.fileName(name, PackRole.DEM)).takeIf { it.isFile }) }.getOrNull()
+            } else null
+            items += if (shipped != null) {
+                LocalItem(ManifestItem.KIND_GRAPH, vector, true, "the server built the trail graph tiles (z11) from the vector pack; the phone downloads them with the pack and builds its own only when they do not match", shipped)
+            } else {
+                LocalItem(ManifestItem.KIND_GRAPH, vector, true, "the phone builds the trail graph tiles (z11) from the vector pack on first use")
+            }
             items += LocalItem(ManifestItem.KIND_SEARCH, vector, true, "the phone builds the place search index from the vector pack")
         } else {
             // T157: the DEM to the area's demMaxZoom when it has one, the vector to maxZoom (both within the live sources').

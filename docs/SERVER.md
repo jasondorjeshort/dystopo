@@ -198,8 +198,10 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   "sha256", "bytes"}]}`. A phone fetches every file whose hash differs from its copy, so a changed sprite
   sheet or glyph range reaches installs that already had the old one.
 - `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
-- `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1]`,
+- `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1][&graph=0]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
+  T189 (ADR 0049's B): after `publish`, a pack with a vector archive goes through a `graph` phase (below, The pack's
+  routing graph); `graph=0` skips it.
 - `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`), a route
   corridor or (T140) a polygon (tile lists); T157: `demMaxZoom` or `detail=full|medium|less` caps the elevation
   below the vector tiles; `GET /area` for the parameters, the shapes read, the zoom caps and the manifest
@@ -318,7 +320,52 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
 - `contentHash`: `sha256:` + SHA-256 of the lines `<role>:<file sha256>\n` (dem first). A client compares
   it with the one it installed to offer an update; it verifies each file against `sha256` after download.
 
+- `derived` (T189, ADR 0049's B; only when the pack has one): files made from the pack's archives and shipped beside
+  them, never one of them. Today one kind, the routing graph (below, The pack's routing graph):
+  `{"kind": "graph", "file": "rainier-outdoors-graph.idx", "url": "/out/rainier-outdoors-graph.idx", "bytes": 512345,
+  "sha256": "<64 hex>", "sidecar": "rainier-outdoors-graph.idx.sha256", "format": "DYSG", "version": 6,
+  "key": {"tileZoom": 11, "fingerprint": "v1:...", "demFingerprint": "v1:..."}}`. Field by field: `kind` (what the file
+  is; a reader ignores a kind it does not know), `file` (a plain file name in `outDir`), `url` (as for `files`),
+  `bytes`, `sha256` (of the whole file, from its `.sha256` sidecar, which follows the archives' rule: stamped with the
+  file's time, so any rewrite of the graph makes it stale and it is recomputed; `/healthz` `catalog` counts graphs
+  too), `sidecar` (the sidecar's file name), `format` (`DYSG`, the graph file's magic) and `version` (6), and under
+  `key` the kind's match keys: `tileZoom` (11, the zoom of the graph tiles every reader requires), `fingerprint` and
+  `demFingerprint` (the vector and DEM archive headers' fingerprints the graph was built from, `v1:` tuples, a wire
+  value since T189; `demFingerprint` is empty for a pack without a DEM). The catalog lists a graph only when the file
+  opens as a version 6 graph at tile zoom 11 whose fingerprints match the archives beside it; a stale graph (the pack
+  rebuilt since) or an unreadable one is left out. `derived` is outside `files`, `bytes`, `builtAt` and `contentHash`,
+  so a rebuilt graph is not a new pack and a pack's hash is the same with or without one. Readers before T189
+  (v0.1.14 and older) ignore the key and build the graph on the phone; a reader that knows it fetches the graph only
+  when `format`, `version`, `tileZoom` and both fingerprints match what it holds, and builds otherwise (ADR 0033 §2:
+  derived data is rebuilt, never refused). The phone's peer catalog (T78) lists its own graph the same way when it
+  matches its archives. The catalog's `version` stays 1.
+
 `devtool serve` (both modes) answers `/catalog` and `/catalog/refresh` too (no token there).
+
+### The pack's routing graph (T189, ADR 0049's B)
+
+A pack built through `POST /build` or `POST /area` ends with a `graph` phase after `publish`: the server's route
+planner (the one `/route` uses, so a route and the phase never build one graph twice) builds the pack's routing
+graph from the published vector archive with elevations from its DEM, in one pass, and writes
+`out/<name>-outdoors-graph.idx` (the version 6 tiled graph file every reader opens beside a vector archive) and
+hashes it into `<name>-outdoors-graph.idx.sha256`; the catalog then lists it under `derived` and `POST /area`'s
+manifest on its `graph` item, and phones download it with the pack instead of building it. When a matching graph is
+already there (an identical rebuild, a route that ran first) it is reused (`action` `loaded` or `cached`).
+
+- The job's `graph` (in `GET /build/{id}`): `state` `building`, `done`, `failed` or `skipped`; when done, `action`
+  (`built`, `loaded`, `cached`), `file`, `url`, `bytes`, `sha256`, `sidecar`, `version`, `tileZoom`, `tiles`, `nodes`,
+  `edges`, `buildMs`, `listed` (the catalog lists it) and `problem` (why not, when it does not); when failed, `error`
+  and `note`; when skipped, `reason` (`graph=0`, `cancelled`, or a terrain-only pack). `timings.graphMs` is the phase.
+- The phase never fails the pack: the archives are published before it starts, and a failure (an
+  `OutOfMemoryError` on a server whose heap is too small for the box included) leaves `graph.state` `failed` with
+  the error; the catalog lists no graph and phones build their own, as before T189. The job stays `running`, with
+  phase `graph`, until the phase ends either way, so a phone polling `POST /area` gets the manifest with the graph.
+- Cost: the one-pass builder holds the whole network (T149's fit: 48 MiB + 300 B per routable vertex, about x1.5
+  for garbage), and the encoder the whole file once more. `devtool serve` runs with the JVM's default heap (a quarter
+  of the machine's memory); the server image takes 60 percent of its container's (`server/Dockerfile`). A 3 degree
+  box needs about 2.25 GB at the least and builds in 8 to 19 minutes depending on the heap (T149's series).
+- A graph rewritten later (by the first route after the pack changed)
+  gets a new modification time, so its sidecar is stale and recomputed on the next catalog read.
 
 ## Areas of interest (T75)
 
@@ -452,6 +499,16 @@ area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `dem
   - `contours`, `graph`, `search`: products the client makes itself (`onDevice: true`) from `from` (the DEM
     route, or the vector archive); `available: false` when this area cannot have one (a corridor has no
     trail graph: graphs come from vector packs), with the reason in `note`.
+    T189 (ADR 0049's B): a box's `graph` item, once the build's `graph` phase wrote a graph matching the archives,
+    also carries it, with the fields of a catalog `derived` entry (`file`, `url`, `bytes`, `sha256`, `sidecar`,
+    `format`, `version`, `key`) and `onDevice: false`: `{"kind": "graph", "onDevice": false, "from":
+    "paradise-outdoors.pmtiles", "available": true, "note": "...", "file": "paradise-outdoors-graph.idx", "url":
+    "/out/paradise-outdoors-graph.idx", "bytes": 512345, "sha256": "<64 hex>", "sidecar": "...", "format": "DYSG",
+    "version": 6, "key": {"tileZoom": 11, "fingerprint": "v1:...", "demFingerprint": "v1:..."}}`. Its `bytes` count in
+    the manifest's `bytes`. A client fetches it with the archives when the match keys fit (as for `derived`) and
+    builds its own otherwise; a reader before T189 parses the item as before, ignores the extra keys and builds, so
+    the manifest's `version` does not move (not a new item kind: an older parser refuses an unknown kind and fails
+    the whole manifest).
 - `build`: the `/build` job (as `GET /build/{id}` answers it) while `status` is `building` or `failed`.
 - `notes`: plain sentences about choices made (fallbacks, the DEM start zoom).
 - `pack` (server, box only): the pack name, so a client can find it in `/catalog` later.
@@ -507,7 +564,8 @@ Norway's coverage box, in the background after the stores are indexed, and write
 
 The browser map plans routes on the server with the phone's shared code (`RouteRoutes.kt`: T45's router, T60's
 route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each pack in
-`outDir` with a vector archive gets a trail graph on first use, written next to it as
+`outDir` with a vector archive gets a trail graph on first use (T189: or at the end of its build, the `graph` phase
+above), written next to it as
 `<vector archive>-graph.idx` (the phone's and `devtool route`'s file name, e.g. `rainier-outdoors-graph.idx`;
 reused while both archives are unchanged; the Rainier graph builds in about 2 s). Since T76 the file holds z11
 graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every pack

@@ -46,6 +46,9 @@ import kotlin.math.roundToLong
 object RouteSession {
     val overlay = RouteOverlay().apply { onLongPress = { lat, lon -> longPress(lat, lon) } }
 
+    /** T189: shipped trail networks, as the planner sees them ([ShippedGraphWait]); a test may put a fake here. */
+    @Volatile var shippedGraphs: ShippedGraphWait = io.github.jasondorjeshort.dystopo.app.packs.ShippedGraphs
+
     /**
      * idle, start (waiting for the end), planning, route, failed; T114: waitingFix (a route to here waits for the first
      * fix), noLocation (the same while location is off), pickStart (Choose on map: the next long-press is the start).
@@ -343,6 +346,7 @@ object RouteSession {
             val why = when {
                 s == null -> "this pack has no trail data (no vector archive)"
                 s.status == "refused" -> GRAPH_TOO_LARGE // T149: the heap guard refused the build
+                s.status == "downloading" -> GRAPH_DOWNLOADING // T189: the graph shipped with the map is still arriving
                 s.status == "error" -> "the trail network could not be built: ${s.error}"
                 else -> "the trail network is still being built (${s.json()["progress"] ?: s.status}); try again in a moment"
             }
@@ -549,3 +553,33 @@ object RouteSession {
     const val FIT_AFTER_MS = 250L
     const val CARD_MIN_DP = 150f
 }
+
+/**
+ * T189 (ADR 0049's B): what the route planner asks before it builds a pack's trail network, and what `GET /route/status`
+ * says of the graph it opened. Implemented by [io.github.jasondorjeshort.dystopo.app.packs.ShippedGraphs], read through
+ * [RouteSession.shippedGraphs]. The planner's calls ([RoutePlanner], the round after T184): [awaitShipped] in its worker
+ * before a build (state `downloading` meanwhile, the card's [GRAPH_DOWNLOADING]), and [source] in each pack's status.
+ */
+interface ShippedGraphWait {
+    /**
+     * Blocks the planner's worker while a graph shipped with pack [pack] downloads and progresses, or, when none is
+     * downloading and a server is set, while the one its catalog offers for these archives ([vector], [dem]) downloads.
+     * True when a graph file matching the archives is then beside [vector]; false when the planner should build (none
+     * offered, a version or fingerprint mismatch, a failed download, or one stalled past [RouteSession.WAIT_MS]; the
+     * reason is kept for [source]). [onProgress] gets the download's state while it waits.
+     */
+    fun awaitShipped(pack: String, vector: File, dem: File?, onProgress: (Map<String, Any?>) -> Unit = {}): Boolean
+
+    /**
+     * The status's `source` for [graphFile]: `shipped` (with the server's `builtAtMs` and where from) when it is the file
+     * a download put there, `built` (with the reason nothing was shipped or taken) when the phone built it; null without
+     * a file.
+     */
+    fun source(pack: String, graphFile: File): Map<String, Any?>?
+}
+
+/** T189: the route card's line while the trail network shipped with the map downloads (ADR 0031: listed for the owner). */
+internal const val GRAPH_DOWNLOADING = "Downloading the trail network"
+
+/** T189: the route status card's line when the trail network came with the map and nothing was built on the phone. */
+internal const val GRAPH_SHIPPED = "Trail network downloaded with the map"

@@ -5,10 +5,12 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.PackFiles
 import io.github.jasondorjeshort.dystopo.packs.CatalogPack
 import io.github.jasondorjeshort.dystopo.packs.CatalogStatus
+import io.github.jasondorjeshort.dystopo.packs.DerivedFile
 import io.github.jasondorjeshort.dystopo.packs.InstalledPack
 import io.github.jasondorjeshort.dystopo.packs.PackCatalog
 import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
+import io.github.jasondorjeshort.dystopo.packs.ShippedGraph
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import java.io.File
 import java.io.IOException
@@ -27,6 +29,12 @@ import java.util.concurrent.Executors
  * when a catalog download finishes, or computed in the background (one file at a time) for packs that
  * arrived another way (pushed, built per view, an older download). A record is trusted while the file's
  * path, size and mtime are unchanged.
+ *
+ * T189 (ADR 0049's B): an entry's shipped routing graph (`derived`, [CatalogPack.graph]) rides along with a download,
+ * an update and a peer's download ([PackDownloader.startCatalog] fetches it after the archives when it matches them);
+ * [offeredGraph] answers the route planner's question for a pack already on the device (the third fetch point), and
+ * [recordGraph] keeps where an installed graph came from (`graph` in the pack's record: path, size, mtime, SHA-256, the
+ * server and its `builtAtMs`), so `GET /route/status` can say `source: shipped` while the file is unchanged.
  */
 class PackCatalogClient(private val manager: PackManager, packsDir: File) {
     private val storeDir = File(packsDir, ".catalog").apply { mkdirs() }
@@ -223,7 +231,8 @@ class PackCatalogClient(private val manager: PackManager, packsDir: File) {
         if (manager.catalog().any { it.name == p.name && (it.dem != null || it.vector != null) }) return update(p.name) // T65: vector-only packs too
         val s = server ?: throw IllegalStateException("no server")
         val files = p.files.associate { it.role to Triple(PackCatalog.resolveUrl(s, it.url), it.sha256, it.bytes) }
-        return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = catalogInfo(p))
+        val g = p.graph // T189
+        return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = catalogInfo(p), shipped = g, shippedUrl = g?.let { PackCatalog.resolveUrl(s, it.url) })
     }
 
     /**
@@ -235,15 +244,17 @@ class PackCatalogClient(private val manager: PackManager, packsDir: File) {
         val p = catalog.find(id) ?: throw NoSuchElementException("no pack '$id' on $source")
         val info = linkedMapOf<String, Any?>("server" to source, "id" to p.id, "hash" to p.hash, "builtAt" to p.builtAt, "via" to label)
         val local = manager.catalog().firstOrNull { it.name == p.name && (it.dem != null || it.vector != null) }
+        val g = p.graph // T189: a peer's matching graph rides along too
+        val gUrl = g?.let { PackCatalog.resolveUrl(source, it.url) }
         if (local == null) {
             val files = p.files.associate { it.role to Triple(PackCatalog.resolveUrl(source, it.url), it.sha256, it.bytes) }
-            return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = info)
+            return manager.downloads.startCatalog(p.name, files, emptySet(), update = false, activate = activate, catalog = info, shipped = g, shippedUrl = gUrl)
         }
         val inst = installedNow(local)
         val changed = CatalogStatus.changedRoles(p, inst)
         require(changed.isNotEmpty()) { "pack '${p.name}' is already on this phone with the same content (${p.hash})" }
         val files = p.files.filter { it.role in changed }.associate { it.role to Triple(PackCatalog.resolveUrl(source, it.url), it.sha256, it.bytes) }
-        return manager.downloads.startCatalog(p.name, files, p.files.map { it.role }.toSet() - changed, update = true, activate = false, catalog = info)
+        return manager.downloads.startCatalog(p.name, files, p.files.map { it.role }.toSet() - changed, update = true, activate = false, catalog = info, shipped = g, shippedUrl = gUrl)
     }
 
     /** Updates installed pack [name] to the catalog's content: only the archives whose SHA-256 differs are fetched. */
@@ -257,7 +268,64 @@ class PackCatalogClient(private val manager: PackManager, packsDir: File) {
         val s = server ?: throw IllegalStateException("no server")
         val files = p.files.filter { it.role in changed }.associate { it.role to Triple(PackCatalog.resolveUrl(s, it.url), it.sha256, it.bytes) }
         val unchanged = p.files.map { it.role }.toSet() - changed
-        return manager.downloads.startCatalog(name, files, unchanged, update = true, activate = false, catalog = catalogInfo(p))
+        val g = p.graph // T189: the second fetch point, with a pack update
+        return manager.downloads.startCatalog(name, files, unchanged, update = true, activate = false, catalog = catalogInfo(p), shipped = g, shippedUrl = g?.let { PackCatalog.resolveUrl(s, it.url) })
+    }
+
+    // --- T189: shipped routing graphs ---
+
+    /** T189: what [offeredGraph] found: the entry and its absolute URL, or why there is none. */
+    class Offer(val entry: DerivedFile?, val url: String?, val reason: String?)
+
+    /**
+     * T189, the planner's third fetch point: the graph the configured server's catalog ships for pack [name], when its
+     * format, version, tile zoom and both fingerprints match the archives on the device ([vector], [dem]). The cached
+     * catalog when it is from this server and younger than [maxAgeMs], else one fetch (errors are a reason, not thrown).
+     */
+    fun offeredGraph(name: String, vector: File, dem: File?, maxAgeMs: Long = 10 * 60_000L): Offer {
+        val s = configuredServer() ?: return Offer(null, null, "no server set")
+        val c = try {
+            current(maxAgeMs, s)
+        } catch (e: Exception) {
+            return Offer(null, null, "the server's catalog could not be read (${e.message})")
+        }
+        val p = c.packs.firstOrNull { it.name == name } ?: return Offer(null, null, "the server has no pack '$name'")
+        val readable = p.graph ?: return Offer(null, null, if (p.derived.isEmpty()) "the server ships no graph with this pack" else "the server's graph is a version this app does not read")
+        val why = try {
+            ShippedGraph.mismatch(readable, PackDownloader.fingerprint(vector), dem?.let { PackDownloader.fingerprint(it) }.orEmpty())
+        } catch (e: Exception) {
+            "the archives could not be read (${e.message})"
+        }
+        if (why != null) return Offer(null, null, why)
+        return Offer(readable, PackCatalog.resolveUrl(server ?: s, readable.url), null)
+    }
+
+    /** T189: called by the downloader once a shipped graph is installed as [file]: where it came from, so the status can say `shipped`. */
+    fun recordGraph(name: String, file: File, sha256: String, entry: DerivedFile, catalogInfo: Map<String, Any?>?) {
+        val builtAtMs = runCatching {
+            io.github.jasondorjeshort.dystopo.app.FileRangeSource(file).use { src ->
+                io.github.jasondorjeshort.dystopo.routing.GraphTileFile.open { o, l -> src.read(o, l) }.source.builtAtMs
+            }
+        }.getOrNull()
+        synchronized(this) {
+            writeRecord(name, LinkedHashMap(readRecord(name)).apply {
+                put("name", name)
+                put("graph", linkedMapOf(
+                    "path" to file.absolutePath, "bytes" to file.length(), "mtime" to file.lastModified(), "sha256" to sha256,
+                    "version" to entry.version, "fingerprint" to entry.fingerprint, "demFingerprint" to entry.demFingerprint,
+                    "builtAtMs" to builtAtMs, "server" to catalogInfo?.get("server"), "via" to catalogInfo?.get("via"), "installedAt" to System.currentTimeMillis(),
+                ))
+            })
+        }
+    }
+
+    /** T189: the record of the shipped graph of pack [name] when [file] is still that file (path, size, mtime), else null. */
+    fun shippedGraph(name: String, file: File): Map<String, Any?>? {
+        if (!PackNames.isValidName(name) || !file.isFile) return null
+        @Suppress("UNCHECKED_CAST")
+        val r = readRecord(name)["graph"] as? Map<String, Any?> ?: return null
+        val same = r["path"] == file.absolutePath && (r["bytes"] as? Number)?.toLong() == file.length() && (r["mtime"] as? Number)?.toLong() == file.lastModified()
+        return r.takeIf { same }
     }
 
     /** The installed packs whose catalog entry has other content (fresh catalog). */
