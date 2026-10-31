@@ -23,7 +23,9 @@ import org.maplibre.geojson.Point
  * and joins, green start and red end dots with white rings), in orange so a route and a recorded track
  * shown together stay apart; a start point picked before the end shows as the green dot alone.
  * Survives style reloads like [io.github.jasondorjeshort.dystopo.app.tracking.TrackOverlay], and
- * forwards long-presses on the map to [onLongPress]. [show] can be called from any thread.
+ * forwards long-presses on the map to [onLongPress]. [show] can be called from any thread. T187: the water along the
+ * route ([RouteWater]) as markers above the line, one symbol per kind ([WaterMarkers]), once it is computed; none with
+ * the `waterAlongRoute` setting off.
  */
 class RouteOverlay {
     private val main = Handler(Looper.getMainLooper())
@@ -40,6 +42,10 @@ class RouteOverlay {
         private set
     @Volatile var installedOnStyle = false
         private set
+
+    /** T187: the water markers of the route shown, and that route's points (a late result for an older route is dropped). */
+    val water = WaterMarkers("dystopo-route")
+    @Volatile private var shownPoints: List<RoutePoint>? = null
 
     fun bind(mapView: MapView) {
         if (view === mapView) return
@@ -74,7 +80,22 @@ class RouteOverlay {
         if (points != null || end != null) e?.let { fs += marker(it, "end") }
         data = FeatureCollection.fromFeatures(fs)
         features = fs.size
+        shownPoints = points?.takeIf { it.size >= 2 }
+        refreshWater()
         main.post { apply() }
+    }
+
+    /** T187: the markers for the route shown, from [RouteWater] (none with the setting off); any thread. */
+    fun refreshWater() {
+        val pts = shownPoints
+        water.set(null)
+        main.post { apply() }
+        if (pts == null) return
+        RouteWater.async(pts) { r ->
+            if (shownPoints !== pts || !io.github.jasondorjeshort.dystopo.app.AppSettings.waterAlongRoute) return@async
+            water.set(r.items)
+            main.post { apply() }
+        }
     }
 
     private fun marker(p: LatLng, kind: String) =
@@ -117,6 +138,7 @@ class RouteOverlay {
                 ),
             )
         }
+        water.addTo(style, view?.resources?.displayMetrics?.density ?: 2f) // T187: above the line and its dots
         installedOnStyle = true
         apply()
     }
@@ -127,6 +149,7 @@ class RouteOverlay {
             val style = map.style ?: return@getMapAsync
             if (!style.isFullyLoaded) return@getMapAsync
             (style.getSource(SOURCE) as? GeoJsonSource)?.setGeoJson(data)
+            water.apply(style) // T187
         }
     }
 

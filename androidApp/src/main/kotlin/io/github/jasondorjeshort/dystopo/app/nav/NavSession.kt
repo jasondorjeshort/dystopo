@@ -39,6 +39,10 @@ import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.Instruction
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.routing.WaterGaps
+import io.github.jasondorjeshort.dystopo.routing.isSource
+import io.github.jasondorjeshort.dystopo.app.routing.RouteWater
+import io.github.jasondorjeshort.dystopo.app.routing.WaterText
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import java.util.concurrent.Executors
 
@@ -62,6 +66,10 @@ import java.util.concurrent.Executors
  * out-and-back's way back runs forward and "arrived" fires at its end) and "Heading back" on the card when the direction
  * flips ([NavState.headingBack], which the clock reads as the way back). Without navigation, a recording's clock is
  * [WayBackClock]'s (`GET /nav/turnaround` reads it).
+ * T187: the water along the line ([RouteWater], computed when navigation starts, never stored): the card names the next
+ * water that is not a dry gully ("Water in 1.2 km: Stream, likely flowing"), and with the `waterSpoken` setting on the
+ * last source before a stretch of more than 5 km without one is said once at its lead distance ([WaterText.dueSpoken],
+ * [NavSpeech.sayWater]); `GET /nav` `water`.
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -105,6 +113,8 @@ object NavSession {
         val turnBackColour: String = TurnAround.NORMAL,
         /** T180: the direction flipped to the way back of a loop or out-and-back: "Heading back" on the card. */
         val headingBack: Boolean = false,
+        /** T187: the next water ahead ("Water in 1.2 km: Stream, likely flowing"); null when none is left or the setting is off. */
+        val water: String? = null,
     )
 
     /** T86: backed by [NavUiState], so touching [NavSession] from a background thread never creates Compose state. */
@@ -143,6 +153,10 @@ object NavSession {
     @Volatile private var turnFarthestM = 0.0
     @Volatile private var turnSpoken: String? = null
     private val turnEvents = ArrayList<Map<String, Any?>>()
+    /** T187: the water along the line (null until computed, or with the setting off), the items said and the spoken events. */
+    @Volatile private var water: RouteWater.Result? = null
+    private val waterSaid = HashSet<Int>()
+    private val waterEvents = ArrayList<Map<String, Any?>>()
 
     val layer = NavMapLayer()
     private val alerts by lazy { NavAlerts(app) }
@@ -213,6 +227,7 @@ object NavSession {
             headingSource = null
         }
         NavSpeech.begin() // T126: a fresh spoken list; the engine is made on the first line
+        startWater(path) // T187
         app.map.cameraMode = camera
         layer.show(path.points, null, null)
         // T65: the route editor sheet closes (its card would sit under the stats bar; the trip stays stored).
@@ -232,6 +247,84 @@ object NavSession {
         }
         Log.i(TAG, "navigating ${path.name}: ${path.points.size} points, ${path.totalM.toInt()} m, ${shownDirections.size} directions")
         return json()
+    }
+
+    /**
+     * T187: computes the water along [path] (or takes the route card's: the same line, one cache) and, once it lands,
+     * redraws the card on navigation's worker. Nothing with the `waterAlongRoute` setting off.
+     */
+    private fun startWater(path: NavPath) {
+        water = null
+        synchronized(waterSaid) { waterSaid.clear(); waterEvents.clear() }
+        val nav = navigator ?: return
+        val pts = path.points.map { io.github.jasondorjeshort.dystopo.model.RoutePoint(it.lat, it.lon, it.ele) }
+        RouteWater.async(pts) { r ->
+            if (navigator !== nav) return@async
+            water = r
+            worker.execute {
+                val s = nav.state ?: return@execute
+                val u = uiOf(nav, s)
+                main.post { if (navigator === nav) ui = u }
+                if (lastFixOrigin != null && lastFixOrigin != "last") speakWater(s)
+            }
+        }
+    }
+
+    /** T187: the card's next-water line at [s]. */
+    private fun waterLine(s: NavState): String? {
+        val r = water ?: return null
+        if (s.arrived || !AppSettings.waterAlongRoute) return null
+        val it = r.items.getOrNull(WaterText.nextOnCard(r.items, s.progress)) ?: return null
+        return WaterText.navLine(it, (it.alongM - s.progress).coerceAtLeast(0.0), AppSettings.units)
+    }
+
+    /**
+     * T187: says the last source before a long dry stretch once, within its lead distance, with `waterSpoken` on (a due line
+     * with the setting off is not remembered, so turning it on before the water still says it). Worker thread.
+     */
+    private fun speakWater(s: NavState) {
+        val r = water ?: return
+        if (s.arrived || !AppSettings.waterAlongRoute || !AppSettings.waterSpoken) return
+        val k = synchronized(waterSaid) { WaterText.dueSpoken(r.items, r.lengthM, s.progress, WaterText.leadM(travel), waterSaid).also { if (it >= 0) waterSaid += it } }
+        if (k < 0) return
+        val item = r.items[k]
+        val ahead = (item.alongM - s.progress).coerceAtLeast(0.0)
+        val gap = WaterGaps.after(r.items, k, r.lengthM)
+        val text = WaterText.spoken(item, ahead, gap, WaterGaps.lastSource(r.items, k), AppSettings.units)
+        val said = NavSpeech.sayWater(text)
+        synchronized(waterSaid) {
+            waterEvents += linkedMapOf(
+                "n" to k + 1, "atMs" to System.currentTimeMillis(), "progressM" to r1(s.progress), "aheadM" to r1(ahead), "gapM" to r1(gap),
+                "text" to text, "speech" to (said?.let { if (it.muted) "muted" else it.engine } ?: "off"),
+            )
+        }
+        Log.i(TAG, "water #${k + 1}: $text")
+    }
+
+    /** T187: `GET /nav` `water`. */
+    private fun waterJson(s: NavState?): Map<String, Any?> {
+        val r = water
+        val k = if (r != null && s != null) WaterText.nextOnCard(r.items, s.progress) else -1
+        val next = r?.items?.getOrNull(k)
+        return linkedMapOf(
+            "enabled" to AppSettings.waterAlongRoute, "spokenSetting" to AppSettings.waterSpoken,
+            "state" to when { !AppSettings.waterAlongRoute -> "off"; r == null -> "computing"; r.error != null -> "error"; else -> "ready" },
+            "count" to r?.items?.size, "lengthM" to r?.lengthM?.let(::r1), "longestGapM" to r?.longest?.let { r1(it.second - it.first) },
+            "leadM" to WaterText.leadM(travel), "longM" to WaterGaps.LONG_M,
+            "next" to next?.let {
+                linkedMapOf(
+                    "n" to k + 1, "alongM" to r1(it.alongM), "aheadM" to s?.let { st -> r1((it.alongM - st.progress).coerceAtLeast(0.0)) },
+                    "label" to it.label, "kind" to it.kind.key, "class" to it.waterClass?.key, "basis" to it.basis.key, "name" to it.name,
+                )
+            },
+            "card" to ui?.water,
+            // The sources with a long dry stretch after them: the spoken line's candidates.
+            "beforeLongStretch" to r?.let { rr ->
+                rr.items.indices.filter { i -> rr.items[i].isSource && WaterGaps.after(rr.items, i, rr.lengthM) > WaterGaps.LONG_M }
+                    .map { i -> linkedMapOf("n" to i + 1, "alongM" to r1(rr.items[i].alongM), "gapM" to r1(WaterGaps.after(rr.items, i, rr.lengthM))) }
+            },
+            "spoken" to synchronized(waterSaid) { ArrayList(waterEvents) },
+        )
     }
 
     /** "Go" on the route card: navigate the route on the map (background thread). */
@@ -400,6 +493,7 @@ object NavSession {
         // T126: not from the last known location at the start (it can be anywhere, the end of the route included, and a
         // direction said there would never be said again); the first live fix speaks.
         if (origin != "last") speak(s)
+        if (origin != "last") speakWater(s) // T187
     }
 
     /** T126: says the card's next direction once it is within its lead distance (the card's alert colour), when the setting is on. */
@@ -547,6 +641,7 @@ object NavSession {
             snoozed = snoozedText(System.currentTimeMillis()),
             turnBack = tc?.text(::clock), turnBackLabel = tc?.label(::clock), turnBackColour = tc?.colour ?: TurnAround.NORMAL, // T163
             headingBack = s.headingBack, // T180
+            water = waterLine(s), // T187
         ).let { ui ->
             // T102: the next turn direction and how far ahead it is.
             val k = if (s.arrived) -1 else nextTurn(s.progress)
@@ -607,10 +702,11 @@ object NavSession {
             "alerts" to alerts.json(),
             "snooze" to synchronized(this) { snooze.json(now) }, // T65
             "fix" to synchronized(this) { freshness.json(now, startedAt) }, // T65: stale-fix handling
-            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon) },
+            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon, "water" to it.water) }, // T187: water
             "directions" to linkedMapOf("count" to directions.size, "shown" to shownDirections.size, "level" to Directions.DEFAULT_LEVEL), // T102
             "speech" to NavSpeech.navJson(), // T137: the mute and the no-voice notice
             "turnAround" to turnJson(), // T163
+            "water" to waterJson(s), // T187
             "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null)), // T65
         )
     }

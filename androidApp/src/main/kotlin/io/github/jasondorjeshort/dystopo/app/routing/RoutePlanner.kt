@@ -358,6 +358,12 @@ object RoutePlanner {
     fun localJunctions(points: List<Pair<Double, Double>>, waitMs: Long = 2_000): io.github.jasondorjeshort.dystopo.routing.JunctionSource? =
         runCatching { router(waitMs, points).junctions }.getOrNull()
 
+    /**
+     * T187: the water along [points] from the vector packs on the device ([RouteWater]: no graph needed, one cache keyed by
+     * the line and the pack set), waiting at most [waitMs]; null with the `waterAlongRoute` setting off or on a timeout.
+     */
+    fun waterAlong(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, waitMs: Long = 10_000): RouteWater.Result? = RouteWater.await(points, waitMs)
+
     /** Keeps the memory figures of the last route found, for `/route/status`. */
     private class Measured(private val inner: Router) : Router by inner {
         override fun route(

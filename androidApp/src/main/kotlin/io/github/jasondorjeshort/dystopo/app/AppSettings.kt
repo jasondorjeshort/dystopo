@@ -107,6 +107,9 @@ object AppSettings {
             .takeIf { it in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S } ?: io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S
         // T178
         pressureFallWarning = p.getString(KEY_PRESSURE_FALL_WARNING, null)?.let { io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it) } ?: io.github.jasondorjeshort.dystopo.readout.FallWarning.DEFAULT
+        // T187
+        waterAlongRoute = p.getBoolean(KEY_WATER_ALONG_ROUTE, true)
+        waterSpoken = p.getBoolean(KEY_WATER_SPOKEN, false)
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -267,6 +270,26 @@ object AppSettings {
         layout?.let { mapControls = it; e?.putInt(KEY_MAP_CONTROLS, it) }
         closeZoom?.let { recenterZoom = it; e?.putInt(KEY_RECENTER_ZOOM, it) }
         lock?.let { orientationLock = it; e?.putBoolean(KEY_ORIENTATION_LOCK, it) }
+        e?.apply()
+    }
+
+    // ---- T187: water along the route (routing/RouteWater) and its spoken line (nav/NavSession); synced ----
+
+    private const val KEY_WATER_ALONG_ROUTE = "waterAlongRoute"
+    private const val KEY_WATER_SPOKEN = "waterSpoken"
+
+    /** Water along a planned or navigated route on the cards, the map and the navigation card (default on). */
+    @Volatile var waterAlongRoute: Boolean = true
+        private set
+
+    /** While navigating, the last water before a stretch of more than 5 km without any is said once (default off). */
+    @Volatile var waterSpoken: Boolean = false
+        private set
+
+    fun setWater(along: Boolean?, spoken: Boolean?) {
+        val e = prefs?.edit()
+        along?.let { waterAlongRoute = it; e?.putBoolean(KEY_WATER_ALONG_ROUTE, it) }
+        spoken?.let { waterSpoken = it; e?.putBoolean(KEY_WATER_SPOKEN, it) }
         e?.apply()
     }
 
@@ -569,5 +592,6 @@ object AppSettings {
         "mapControls" to mapControls, "recenterZoom" to recenterZoom, "orientationLock" to orientationLock, // T176
         "readoutBar" to readoutBar, "climbWindow" to climbWindowS, // T177
         "pressureFallWarning" to pressureFallWarning.code, // T178
+        "waterAlongRoute" to waterAlongRoute, "waterSpoken" to waterSpoken, // T187
     ) + mapOptions.json(units) // T47
 }

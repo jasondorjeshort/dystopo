@@ -68,7 +68,7 @@ private val Link = Color(0xFF2C7BB6)
  * T102: the next turn direction first, in large type with its distance and an arrow for the turn, in the alert
  * colour once it is within its lead distance. T163: the turn-around clock under the end ([TurnBack]). T180: "Heading
  * back" under it once the direction flips; and while a track records with no route navigated, the free-tracking clock
- * in the card's place ([WayBackCard], [WayBackClock]).
+ * in the card's place ([WayBackCard], [WayBackClock]). T187: the next water ahead on one line under them ([WaterNext]).
  */
 @Composable
 fun NavOverlay() {
@@ -166,6 +166,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             Stat("End", null, u.endDistance, u.endTime + if (u.endClock.isNotEmpty()) "  (${u.endClock})" else "")
             u.turnBack?.let { TurnBack(it, u.turnBackLabel, u.turnBackColour) } // T163
             if (u.headingBack && !u.arrived) HeadingBack() // T180
+            u.water?.let { WaterNext(it) } // T187
             if (u.rejoin != null) {
                 Row(
                     Modifier.fillMaxWidth().background(if (u.offRoute) Alert else Color(0xFFFDAE61), RoundedCornerShape(8.dp))
@@ -242,6 +243,15 @@ private fun WayBackCard(w: WayBackClock.Ui, chips: io.github.jasondorjeshort.dys
 /** T180: where the free-tracking card was last laid out (px; `GET /nav/turnaround` `layout`), null while hidden. */
 internal object WayBackLayout {
     @Volatile var boundsPx: FloatArray? = null
+}
+
+/**
+ * T187: the next water ahead ("Water in 1.2 km: Stream, likely flowing"), one line cut with an ellipsis, so the card
+ * grows by one short line at most (the clearance of T176's and T177's scenario).
+ */
+@Composable
+private fun WaterNext(text: String) {
+    BasicText(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Color(0xFF1F78B4), fontSize = 14.sp, fontWeight = FontWeight.Bold))
 }
 
 /** T180: the direction flipped to the way back (the notice the survey's users ask for). */

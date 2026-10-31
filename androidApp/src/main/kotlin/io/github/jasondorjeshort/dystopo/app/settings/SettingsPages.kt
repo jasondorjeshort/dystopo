@@ -331,6 +331,23 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        // T187: water along the route and its spoken line.
+        SettingsRow.WATER_ALONG_ROUTE -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.waterAlongRoute
+            Setting(row.label, "streams, springs and lakes on a route's card, the map and the navigation card", help = "settings.waterAlongRoute") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterAlongRoute = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterAlongRoute = false)) }
+            }
+        }
+        SettingsRow.WATER_SPOKEN -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.waterSpoken
+            Setting(row.label, "says the last water before a long stretch without any", help = "settings.waterSpoken") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterSpoken = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterSpoken = false)) }
+            }
+        }
     }
 }
 
@@ -594,6 +611,16 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "(sea-level equivalent, your climbing allowed for) brings a card and a spoken line: More warnings at " +
                 (if (inHg) "0.09 inHg, Standard at 0.12, Fewer at 0.18." else "3 hPa, Standard at 4, Fewer at 6.") +
                 " It is a hint to check the weather, not a safety alarm."
+        },
+        // T187: water along the route and its spoken line.
+        HelpText("settings.waterAlongRoute", "Water along the route", at(SettingsGroup.NAVIGATION, "Water along the route"), show = page(SettingsGroup.NAVIGATION)) {
+            "Marks streams a route crosses and springs, taps and lakes beside it. A stream's class is a hint from its map tags " +
+                "or the size of the slope draining into it, never a report of water: check locally, conditions change."
+        },
+        HelpText("settings.waterSpoken", "Spoken water", at(SettingsGroup.NAVIGATION, "Water: Spoken"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "While you navigate, the phone says the last water before a stretch of more than " +
+                "${if (units == ContourUnits.FEET) "3 mi" else "5 km"} without any, once, as you near it, so you can fill up. It uses " +
+                "the phone's text-to-speech voice, as spoken directions do."
         },
     )
 }

@@ -66,7 +66,8 @@ private val Flag = Color(0xFFC79A00)
  * you tap, Waypoint adds a waypoint; Hike/Bike reroutes; the via chips remove one). T67: "Share link"
  * asks the sync server for a read-only link to the trip and copies it. T108: the card shows the directions saved with
  * the trip ("Show N directions", the default detail level) or says they were not saved; Crow joins the modes with its
- * one line; a mode this build does not know is named as it is, not as hike, and the trip is not edited.
+ * one line; a mode this build does not know is named as it is, not as hike, and the trip is not edited. T187: under the
+ * directions, the water along the trip (the route card's [io.github.jasondorjeshort.dystopo.app.routing.WaterAlongLine]).
  */
 @Composable
 fun TripControls() {
@@ -205,6 +206,10 @@ private fun TripCard(modifier: Modifier) {
             )
         }
         TripDirections(p)
+        // T187: the water along the trip, in order with the distance along it and the gap to the next (a list under the line).
+        io.github.jasondorjeshort.dystopo.app.routing.WaterAlongLine(p.path.points, io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen) {
+            io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen = !io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen
+        }
         TripCorridorLine(p) // T130: the corridor kept offline around the trip
         Trips.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
         // T95: the Offline button's offer: the size first, then Download and Cancel, or Close when it does not fit.
