@@ -203,7 +203,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             io.github.jasondorjeshort.dystopo.app.routing.RouteWater.onSettings()
         }
         parsed.viewRange?.let { AppSettings.setViewRange(it) } // T182: the next viewshed reads it
-        parsed.timeEstimateForm?.let { AppSettings.setTimeEstimateForm(it) } // T184: the card reads it on its next frame
+        // T184: the route card's time; the card recomposes at once (also after POST /settings, which bumps no revision itself).
+        parsed.timeEstimateForm?.let { AppSettings.setTimeEstimateForm(it); runCatching { app.map.onMain { SettingsUi.revision++ } } }
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }

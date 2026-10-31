@@ -256,11 +256,12 @@ object PaceSettings {
     fun rangeJson(plan: PlannedRoute?): Map<String, Any?>? {
         plan ?: return null
         val e = estimate(plan)
-        return linkedMapOf<String, Any?>(
+        // The estimate's own fields first; the card's headline and line (what is drawn, in either form) override its headline.
+        return LinkedHashMap<String, Any?>(e?.json() ?: mapOf("form" to "plain", "reason" to "mode")) + linkedMapOf<String, Any?>(
             "setting" to AppSettings.timeEstimateForm, "shown" to (e != null && rangeForm()),
             "headline" to headline(plan), "line" to secondLine(plan),
             "fit" to PaceFits.active[plan.mode]?.let { linkedMapOf("low" to PaceFit.r3(it.rangeLow), "high" to PaceFit.r3(it.rangeHigh), "tracks" to it.rangeTracks) },
-        ) + (e?.json() ?: mapOf("form" to "plain", "reason" to "mode"))
+        )
     }
 
     private const val EFFORT_CACHE = 6
