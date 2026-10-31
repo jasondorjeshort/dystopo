@@ -110,6 +110,9 @@ object AppSettings {
         // T187
         waterAlongRoute = p.getBoolean(KEY_WATER_ALONG_ROUTE, true)
         waterSpoken = p.getBoolean(KEY_WATER_SPOKEN, false)
+        // T182
+        viewRangeKm = p.getInt(KEY_VIEW_RANGE, io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM).takeIf { it in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM }
+            ?: io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -291,6 +294,19 @@ object AppSettings {
         along?.let { waterAlongRoute = it; e?.putBoolean(KEY_WATER_ALONG_ROUTE, it) }
         spoken?.let { waterSpoken = it; e?.putBoolean(KEY_WATER_SPOKEN, it) }
         e?.apply()
+    }
+
+    // ---- T182: how far "What can I see from here" looks (viewshed/ViewshedSession); synced ----
+
+    private const val KEY_VIEW_RANGE = "viewRange"
+
+    /** The viewshed's range in km: 10, 30 (the default) or 100 (the survey: the apps split, and the phone's cost differs). */
+    @Volatile var viewRangeKm: Int = io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM
+        private set
+
+    fun setViewRange(km: Int) {
+        viewRangeKm = km
+        prefs?.edit()?.putInt(KEY_VIEW_RANGE, km)?.apply()
     }
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
@@ -593,5 +609,6 @@ object AppSettings {
         "readoutBar" to readoutBar, "climbWindow" to climbWindowS, // T177
         "pressureFallWarning" to pressureFallWarning.code, // T178
         "waterAlongRoute" to waterAlongRoute, "waterSpoken" to waterSpoken, // T187
+        "viewRange" to viewRangeKm, // T182
     ) + mapOptions.json(units) // T47
 }
