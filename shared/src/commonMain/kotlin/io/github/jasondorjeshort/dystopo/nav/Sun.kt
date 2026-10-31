@@ -18,10 +18,11 @@ import kotlin.math.tan
  * obliquity of the ecliptic). Good to about a minute in the event times between 1900 and 2100; `SunTest` checks it
  * against the US Naval Observatory's published values for Paradise, Mount Rainier.
  *
- * The events are for a flat horizon at sea level (the almanac's convention): sunset when the sun's upper limb meets a
- * level horizon under standard refraction (the centre 0.833 degrees below it), civil twilight's end when the centre is
- * 6 degrees below. A valley's own horizon is earlier; that terrain sunset is the sun-and-shade idea's, which builds on
- * [position]. Pure Kotlin, no dependency; times are epoch milliseconds (UTC).
+ * The events are for a flat horizon at sea level (the almanac's convention): sunrise and sunset when the sun's upper
+ * limb meets a level horizon under standard refraction (the centre 0.833 degrees below it), civil twilight's end when
+ * the centre is 6 degrees below. T181: the terrain's own horizon is [onTerrain]: the day's sun path crossed with a
+ * horizon profile (`dem/Horizon.kt`), giving the terrain sunrise and sunset and the gaps when a peak blocks the sun.
+ * Pure Kotlin, no dependency; times are epoch milliseconds (UTC).
  */
 object Sun {
     /** The sun's centre below a flat horizon at the published sunset: refraction 34' plus the semi-diameter 16'. */
@@ -29,6 +30,9 @@ object Sun {
 
     /** Civil twilight ends with the centre this far below the horizon (6 degrees). */
     const val CIVIL_ZENITH_DEG = 96.0
+
+    /** The sun's mean semi-diameter, degrees (16'): the upper limb is this far above the centre. */
+    const val SEMI_DIAMETER_DEG = 0.2667
 
     private const val DEG = PI / 180
     private const val MS_PER_DAY = 86_400_000L
@@ -48,8 +52,11 @@ object Sun {
         val apparentAltitudeDeg: Double,
     )
 
-    /** One day's events at a point; null when the sun does not reach that depression that day (polar summer). */
-    data class Day(val year: Int, val month: Int, val day: Int, val noonMs: Long, val sunsetMs: Long?, val civilEndMs: Long?)
+    /**
+     * One day's events at a point; null when the sun does not reach that depression that day (polar summer).
+     * T181: [sunriseMs] is the flat-horizon sunrise before [noonMs], the mirror of [sunsetMs].
+     */
+    data class Day(val year: Int, val month: Int, val day: Int, val noonMs: Long, val sunsetMs: Long?, val civilEndMs: Long?, val sunriseMs: Long? = null)
 
     /** Declination (degrees) and equation of time (minutes) at [epochMs]. */
     fun declinationAndEot(epochMs: Long): Pair<Double, Double> {
@@ -110,7 +117,10 @@ object Sun {
         val midnight = epochDay(year, month, day) * MS_PER_DAY
         var noon = midnight + ((720 - 4 * lonDeg) * 60_000).roundToLong()
         repeat(2) { noon = midnight + ((720 - 4 * lonDeg - declinationAndEot(noon).second) * 60_000).roundToLong() }
-        return Day(year, month, day, noon, after(latDeg, lonDeg, midnight, noon, SUNSET_ZENITH_DEG), after(latDeg, lonDeg, midnight, noon, CIVIL_ZENITH_DEG))
+        return Day(
+            year, month, day, noon, event(latDeg, lonDeg, midnight, noon, SUNSET_ZENITH_DEG, 1),
+            event(latDeg, lonDeg, midnight, noon, CIVIL_ZENITH_DEG, 1), event(latDeg, lonDeg, midnight, noon, SUNSET_ZENITH_DEG, -1),
+        )
     }
 
     /**
@@ -123,9 +133,12 @@ object Sun {
         return day(latDeg, lonDeg, y, m, d)
     }
 
-    /** The time after [noonMs] when the sun's centre reaches [zenithDeg], by iterating on the hour angle; null if it never does. */
-    private fun after(latDeg: Double, lonDeg: Double, midnight: Long, noonMs: Long, zenithDeg: Double): Long? {
-        var t = noonMs + 6 * 3_600_000L
+    /**
+     * The time after ([side] 1) or before ([side] -1) [noonMs] when the sun's centre reaches [zenithDeg], by iterating on
+     * the hour angle; null if it never does.
+     */
+    private fun event(latDeg: Double, lonDeg: Double, midnight: Long, noonMs: Long, zenithDeg: Double, side: Int): Long? {
+        var t = noonMs + side * 6 * 3_600_000L
         val phi = latDeg * DEG
         repeat(4) {
             val (decl, eot) = declinationAndEot(t)
@@ -135,11 +148,107 @@ object Sun {
             val ha = acos(cosH) / DEG
             // Solar noon at this declination's equation of time, then the hour angle in minutes after it.
             val noonHere = midnight + ((720 - 4 * lonDeg - eot) * 60_000)
-            val next = (noonHere + 4 * ha * 60_000).roundToLong()
+            val next = (noonHere + side * 4 * ha * 60_000).roundToLong()
             if (abs(next - t) < 1000) return next
             t = next
         }
         return t
+    }
+
+    /** A stretch of the day: from [startMs] to [endMs]. */
+    data class Span(val startMs: Long, val endMs: Long) {
+        val minutes: Double get() = (endMs - startMs) / 60_000.0
+    }
+
+    /**
+     * A gap in the sunshine between terrain sunrise and sunset: the sun went behind the terrain at [span]'s start and
+     * came back at its end; [bearingDeg] and [horizonDeg] are the horizon where it went (the peak that blocked it).
+     */
+    data class Gap(val span: Span, val bearingDeg: Double, val horizonDeg: Double)
+
+    /**
+     * T181, the point answer: one local day's sun at a point on the terrain.
+     *
+     * [sunriseMs] is when the sun's upper limb first clears the terrain horizon that day and [sunsetMs] when it last
+     * drops behind it (null when the sun never shows: a deep north-facing hollow in winter, or polar night); [sunlit]
+     * lists every stretch of sunshine in between and [gaps] the stretches when a peak blocks it. [flat] is the almanac's
+     * day at the same point, for comparison: a valley's terrain sunrise is later than [Day.sunriseMs], a summit's can be
+     * earlier (its horizon dips below level). [alwaysUp] is true when the sun stays clear of the horizon the whole day.
+     */
+    data class TerrainDay(
+        val flat: Day,
+        val sunriseMs: Long?,
+        val sunsetMs: Long?,
+        val sunlit: List<Span>,
+        val gaps: List<Gap>,
+        val alwaysUp: Boolean,
+        /** Sun positions evaluated (the minute scan plus the bisections). */
+        val evaluations: Int,
+    ) {
+        /** Minutes of sunshine on the terrain that day. */
+        val sunMinutes: Double get() = sunlit.sumOf { it.minutes }
+    }
+
+    /**
+     * The terrain day at [latDeg], [lonDeg] on the civil date [year]-[month]-[day] (the date whose solar noon it is, as
+     * [day]): the sun's path scanned every [stepMs] over the 24 hours around that noon, the sun counted up while its
+     * upper limb's apparent altitude ([Position.apparentAltitudeDeg] plus [SEMI_DIAMETER_DEG]) is above
+     * [horizonDeg] at its azimuth, each crossing refined by bisection to a second. [horizonDeg] is the apparent
+     * elevation of the terrain horizon by azimuth (degrees, clockwise from true north): `HorizonProfile::angleAt`
+     * (`dem/Horizon.kt`, refraction included), or `{ 0.0 }` for the flat horizon. A gap shorter than [stepMs] can be
+     * missed (the step is a minute by default: a summit blocks the sun for many minutes).
+     */
+    fun onTerrain(latDeg: Double, lonDeg: Double, year: Int, month: Int, day: Int, horizonDeg: (Double) -> Double, stepMs: Long = 60_000L): TerrainDay {
+        require(stepMs in 1_000L..3_600_000L) { "stepMs must be 1 s to 1 h" }
+        val flat = day(latDeg, lonDeg, year, month, day)
+        var evaluations = 0
+        fun clearance(t: Long): Double {
+            evaluations++
+            val p = position(latDeg, lonDeg, t)
+            return p.apparentAltitudeDeg + SEMI_DIAMETER_DEG - horizonDeg(p.azimuthDeg)
+        }
+        fun crossing(a: Long, b: Long, upAtA: Boolean): Long {
+            var lo = a
+            var hi = b
+            while (hi - lo > 1000) {
+                val mid = (lo + hi) / 2
+                if ((clearance(mid) > 0) == upAtA) lo = mid else hi = mid
+            }
+            return if (upAtA) lo else hi
+        }
+        val start = flat.noonMs - MS_PER_DAY / 2
+        val end = flat.noonMs + MS_PER_DAY / 2
+        val spans = ArrayList<Span>()
+        var t = start
+        var up = clearance(t) > 0
+        var spanStart = if (up) t else 0L
+        while (t < end) {
+            val next = minOf(t + stepMs, end)
+            val nextUp = clearance(next) > 0
+            if (nextUp != up) {
+                val c = crossing(t, next, up)
+                if (nextUp) spanStart = c else spans += Span(spanStart, c)
+                up = nextUp
+            }
+            t = next
+        }
+        if (up) spans += Span(spanStart, end)
+        val alwaysUp = spans.size == 1 && spans[0].startMs == start && spans[0].endMs == end
+        val gaps = spans.zipWithNext { a, b ->
+            // The blocking peak: the horizon where the sun is midway through the gap (where it went and came back
+            // can both be on a ridge's flanks).
+            val p = position(latDeg, lonDeg, (a.endMs + b.startMs) / 2)
+            Gap(Span(a.endMs, b.startMs), p.azimuthDeg, horizonDeg(p.azimuthDeg))
+        }
+        return TerrainDay(
+            flat = flat,
+            sunriseMs = spans.firstOrNull()?.startMs?.takeIf { it != start },
+            sunsetMs = spans.lastOrNull()?.endMs?.takeIf { it != end },
+            sunlit = spans,
+            gaps = gaps,
+            alwaysUp = alwaysUp,
+            evaluations = evaluations,
+        )
     }
 
     /** Days from 1970-01-01 to a proleptic Gregorian date (Howard Hinnant's days-from-civil). */
