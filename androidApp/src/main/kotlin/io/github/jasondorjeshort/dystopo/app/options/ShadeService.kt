@@ -11,6 +11,9 @@ import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import io.github.jasondorjeshort.dystopo.tiles.ShadeOptions
 import io.github.jasondorjeshort.dystopo.tiles.ShadeTileStats
 import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
+import io.github.jasondorjeshort.dystopo.tiles.SunPointAnswer
+import io.github.jasondorjeshort.dystopo.tiles.SunShadeOptions
+import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -33,6 +36,11 @@ import java.util.concurrent.atomic.AtomicLong
  * disk-cached (their DEM may still be arriving). T104: such a tile over a DEM pack's edge whose zoom is above the
  * pack's first zoom reads at that first zoom ([OnlineTiles.shadeReadZoom]; `packFloorReads`, and `blankAtPackFloor`
  * for one that still came out with no data at all, which should stay 0).
+ *
+ * T188: also T181's sun-and-shade tiles for `/shade/sun/{z}/{x}/{y}.png?m=<epoch minute>` ([ShadeService.sunTile]; the
+ * instant is in the URL, so a tile never answers for another time than its request names), cached the same way under
+ * the instant's key ([SunShadeOptions.key]), counted apart (`GET /shade` `sun.generation`, with the sun's altitude, the
+ * ray samples and the terrain cells read per tile), and the long-press card's point answer ([ShadeService.pointAnswer]).
  */
 /** T65: [ShadeService]'s `/stats` counters (`shadeGeneration`), kept across tile service reopens like the T57 tile counters. */
 class ShadeCounters {
@@ -47,6 +55,15 @@ class ShadeCounters {
 
     /** T104: such tiles that still had no data in any pixel (should stay 0: the pack under them has elevations). */
     val blankAtPackFloor = AtomicLong()
+
+    /** T188: the sun-and-shade tiles, counted apart from the hillshade and slope ones. */
+    val sunServed = SourceCounters()
+    val sunCacheHits = AtomicLong()
+    val sunTransparent = AtomicLong()
+    val sunStats = ShadeTileStats(keepRecent = 64)
+
+    /** T188: the latest sun tiles made, with the sun's altitude, the ray samples and the terrain cells read. */
+    val sunRecent = java.util.concurrent.ConcurrentLinkedDeque<Map<String, Any?>>()
 }
 
 class ShadeService(
@@ -113,14 +130,18 @@ class ShadeService(
         return TileResult.notFound()
     }
 
-    private fun cachedOrGenerate(p: DemPyramid, identity: String, o: ShadeOptions, z: Int, x: Int, y: Int): ByteArray {
+    private fun cachedOrGenerate(p: DemPyramid, identity: String, o: ShadeOptions, z: Int, x: Int, y: Int): ByteArray =
+        cachedOrGenerate(o.key, identity, z, x, y, cacheHits) { generate(p, o, z, x, y) }
+
+    /** The cached tile of [optionsKey] and [identity] at z/x/y, else [make]'s, made once however many requests wait. */
+    private fun cachedOrGenerate(optionsKey: String, identity: String, z: Int, x: Int, y: Int, hits: AtomicLong, make: () -> ByteArray): ByteArray {
         val c = cache()
-        val file = ContourCache.shadeKey(ContourCache.shadeDir(o.key, identity), z, x, y)
+        val file = ContourCache.shadeKey(ContourCache.shadeDir(optionsKey, identity), z, x, y)
         c.get(file)?.let {
-            cacheHits.incrementAndGet()
+            hits.incrementAndGet()
             return it
         }
-        val key = "${o.key}/$identity/$z/$x/$y"
+        val key = "$optionsKey/$identity/$z/$x/$y"
         val mine = CompletableFuture<ByteArray>()
         val running = inFlight.putIfAbsent(key, mine)
         if (running != null) {
@@ -132,7 +153,7 @@ class ShadeService(
             }
         }
         try {
-            val bytes = generate(p, o, z, x, y)
+            val bytes = make()
             c.put(file, bytes)
             mine.complete(bytes)
             return bytes
@@ -172,6 +193,103 @@ class ShadeService(
         }
     }
 
+    /** T188: the `v` of the sun tiles' URL: the pack and the server's content version (the instant is `m`). */
+    fun sunUrlVersion(): String = demIdentity + (online?.fetcher?.contentTag?.takeIf { it.isNotEmpty() }?.let { "-$it" } ?: "")
+
+    /**
+     * T188: sun-and-shade tile z/x/y for the epoch minute [minute] as PNG: the pack's (cached) where its DEM covers the
+     * tile, else the online DEM's, else a 404; a tile without data, or all in sun, is transparent.
+     */
+    fun sunTile(z: Int, x: Int, y: Int, minute: Long, packCovers: Boolean): TileResult {
+        val o = SunShadeOptions(minute * 60_000L)
+        val sv = counters.sunServed
+        try {
+            val bytes = if (packCovers || online == null) {
+                val (p, identity) = pyramidFor(z, x, y) ?: run {
+                    sv.notFound.incrementAndGet()
+                    return TileResult.notFound()
+                }
+                cachedOrGenerate(o.key, identity, z, x, y, counters.sunCacheHits) { generateSun(p, o, z, x, y).first }
+            } else {
+                online.shadeTile(o.key, z, x, y) { p, _ -> generateSun(p, o, z, x, y).first }
+            }
+            sv.served.incrementAndGet()
+            sv.bytes.addAndGet(bytes.size.toLong())
+            return TileResult(200, "image/png", bytes)
+        } catch (e: Throwable) {
+            sv.errors.incrementAndGet()
+            throw e
+        }
+    }
+
+    /** T188: makes sun tile z/x/y (no cache) and says what it took. */
+    private fun generateSun(p: DemPyramid, o: SunShadeOptions, z: Int, x: Int, y: Int, record: Boolean = true): Pair<ByteArray, Map<String, Any?>> {
+        val requested = System.nanoTime()
+        slots.acquire()
+        try {
+            val started = System.nanoTime()
+            val plan = ShadeTiles.sunPlan(z, x, y, p.maxZoom, o)
+            val terrain = ShadeTiles.sunSample(p, plan)
+            val sampled = System.nanoTime()
+            val tile = ShadeTiles.sunRender(terrain, plan, o)
+            val rendered = System.nanoTime()
+            val blank = tile.argb.all { it == 0 }
+            val bytes = if (blank) emptyPng else encode(tile.argb, tile.size)
+            val done = System.nanoTime()
+            val detail = linkedMapOf<String, Any?>(
+                "tile" to "$z/$x/$y", "minute" to o.minuteMs / 60_000L, "sampleZoom" to plan.base.sampleZoom,
+                "altitudeDeg" to Math.round(plan.sun.apparentAltitudeDeg * 10) / 10.0, "azimuthDeg" to Math.round(plan.sun.azimuthDeg * 10) / 10.0,
+                "ms" to ms(done - started), "waitMs" to ms(started - requested), "sampleMs" to ms(sampled - started),
+                "marchMs" to tile.fieldMs, "composeMs" to tile.composeMs, "encodeMs" to ms(done - rendered),
+                "cellsRead" to plan.windows.sumOf { it.first.width.toLong() * it.first.height },
+                "marchSteps" to tile.marchSteps, "shadowPixels" to tile.shadowPixels, "noDataPixels" to tile.noDataPixels, "bytes" to bytes.size,
+            )
+            if (record) {
+                if (blank) counters.sunTransparent.incrementAndGet()
+                counters.sunStats.add(plan.base, tile, (done - started) / 1e6, (sampled - started) / 1e6, (done - rendered) / 1e6, bytes.size, o.key, (started - requested) / 1e6)
+                counters.sunRecent.addLast(detail)
+                while (counters.sunRecent.size > 32) counters.sunRecent.pollFirst()
+            }
+            return bytes to detail
+        } finally {
+            slots.release()
+        }
+    }
+
+    /**
+     * T188, `GET /shade/sun/bench`: makes the sun tile at [lat], [lon], zoom [z] for [epochMs] [repeat] times, bypassing
+     * every cache, and reports each run (the phone's tile time); null when nothing covers it.
+     */
+    fun sunBench(lat: Double, lon: Double, z: Int, epochMs: Long, repeat: Int): Map<String, Any?>? {
+        val x = WebMercator.lonToX(lon, z).toInt()
+        val y = WebMercator.latToY(lat, z).toInt()
+        val p = pyramidFor(z, x, y)?.first ?: online?.pyramid() ?: return null
+        val o = SunShadeOptions(epochMs)
+        val runs = (1..repeat.coerceIn(1, 10)).map { generateSun(p, o, z, x, y, record = false).second }
+        val times = runs.map { it["ms"] as Double }
+        return linkedMapOf("z" to z, "x" to x, "y" to y, "runs" to runs, "minMs" to times.min(), "maxMs" to times.max(), "avgMs" to Math.round(times.average() * 10) / 10.0)
+    }
+
+    /**
+     * T188: the long-press card's point answer at [lat], [lon] for the local day of [epochMs] (T181's
+     * [ShadeTiles.pointAnswer] over the pack under the point, else the online DEM); null without elevation data there.
+     */
+    fun pointAnswer(lat: Double, lon: Double, epochMs: Long): SunPointAnswer? {
+        val p = POINT_ZOOMS.firstNotNullOfOrNull { z -> pyramidFor(z, WebMercator.lonToX(lon, z).toInt(), WebMercator.latToY(lat, z).toInt())?.first }
+            ?: online?.pyramid() ?: return null
+        return ShadeTiles.pointAnswer(p, lat, lon, epochMs).takeUnless { it.horizon.groundM.isNaN() }
+    }
+
+    /** T188: `GET /shade` `sun.generation`. */
+    fun sunJson(): Map<String, Any?> = counters.sunStats.json() + mapOf(
+        "served" to counters.sunServed.json(),
+        "diskCacheHits" to counters.sunCacheHits.get(),
+        "transparentTiles" to counters.sunTransparent.get(),
+        "recentDetail" to counters.sunRecent.toList().takeLast(12),
+    )
+
+    private fun ms(nanos: Long) = Math.round(nanos / 1e5) / 10.0
+
     /** `/stats` shadeGeneration. */
     fun json(): Map<String, Any?> = stats.json() + mapOf(
         "permits" to permits,
@@ -191,6 +309,9 @@ class ShadeService(
     )
 
     companion object {
+        /** T188: the DEM zooms a point answer looks for a pack at, deepest first. */
+        private val POINT_ZOOMS = listOf(ShadeTiles.POINT_ZOOM, 12, 10, 8)
+
         /** [FastPng]: Bitmap.compress took most of a tile's time. */
         private fun encode(argb: IntArray, size: Int): ByteArray = FastPng.encode(argb, size, size)
 

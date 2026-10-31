@@ -12,11 +12,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +96,8 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
             Chip("Steepness", o.slope == SlopeShading.STEEPNESS) { change(mapOf("slope" to SlopeShading.STEEPNESS.key)) }
         }
         if (o.slope != SlopeShading.OFF) SlopeLegend(o.slope)
+        // Terrain overlays worked out on the phone for a moment or a point: T188's shade first (the viewshed, T182, after it).
+        SunShadeRow()
         val choices = MapOptions.intervals(units)
         OptionRow("Contours", "fixed interval from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM}; coarser below", help = "map.contours") {
             Chip("Auto", o.contourInterval == null) { change(mapOf("contourInterval" to "auto")) }
@@ -116,6 +136,89 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
             Chip("One unit", !both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(false) }
             Chip("Both units", both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(true) }
         }
+    }
+}
+
+/**
+ * T188: the Shade row ([SunShade]): On and Off (off by default and at each launch); when on, the day (a step either way,
+ * a tap on the date for the system's date picker, Today to come back) and the time (a quarter hour either way, and a
+ * slider over the day from an hour before sunrise to an hour after sunset at the view's centre). The slider moves the
+ * time shown while dragged and the map's shade when let go.
+ */
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun SunShadeRow() {
+    val on = SunShade.on
+    OptionRow("Shade", SHADE_HINT, help = "map.shade") {
+        Chip("On", on) { SunShade.turn(true) }
+        Chip("Off", !on) { SunShade.turn(false) }
+    }
+    if (!on) return
+    val zone = SunShade.zone()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val date = SunShade.date
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Wraps at large font scales (Today drops to a second line).
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Chip("<", false) { SunShade.pickDate(date.minusDays(1)) }
+            BasicText(
+                SunClock.dateLabel(date),
+                Modifier.widthIn(min = 92.dp).clickable {
+                    android.app.DatePickerDialog(context, { _, y, m, d -> SunShade.pickDate(java.time.LocalDate.of(y, m + 1, d)) }, date.year, date.monthValue - 1, date.dayOfMonth).show()
+                }.padding(vertical = 7.dp),
+                style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center), softWrap = false, maxLines = 1,
+            )
+            Chip(">", false) { SunShade.pickDate(date.plusDays(1)) }
+            if (date != SunShade.today()) Chip("Today", false) { SunShade.pickDate(SunShade.today()) }
+        }
+        var drag by remember { mutableStateOf<Long?>(null) }
+        val shown = drag ?: SunShade.instantMs
+        val range = SunShade.range
+        Stepper(SunClock.clock(shown, zone) + " " + SunClock.zoneName(zone, shown), 92, { SunShade.step(-1) }, { SunShade.step(1) }, "<", ">")
+        TimeSlider(range, shown, onMove = { drag = it }, onDone = { drag?.let { SunShade.setInstant(it, "slider") }; drag = null })
+        Row(Modifier.fillMaxWidth()) {
+            BasicText(SunClock.clock(range.startMs, zone), Modifier.weight(1f), style = TextStyle(color = Muted, fontSize = 11.sp))
+            BasicText(SunClock.clock(range.endMs, zone), style = TextStyle(color = Muted, fontSize = 11.sp))
+        }
+    }
+}
+
+/** T188: under the Shade row's chips. */
+internal const val SHADE_HINT = "blue where the terrain hides the sun at the time below; night is all shade"
+
+/**
+ * T188: a slider over [range] at [value]: a tap or a drag along it calls [onMove] with the instant there (snapped), and
+ * the end of the gesture [onDone]. For accessibility it is a range with a set-progress action, as a slider is.
+ */
+@Composable
+private fun TimeSlider(range: SunClock.Range, value: Long, onMove: (Long) -> Unit, onDone: () -> Unit) {
+    var width by remember { mutableStateOf(1) }
+    val thumb = 22.dp
+    val thumbPx = with(androidx.compose.ui.platform.LocalDensity.current) { thumb.toPx() }
+    fun at(x: Float): Long = range.at(((x - thumbPx / 2) / (width - thumbPx).coerceAtLeast(1f)).toDouble())
+    val f = range.fraction(value).toFloat()
+    Box(
+        Modifier.fillMaxWidth().height(40.dp)
+            .onSizeChanged { width = it.width.coerceAtLeast(1) }
+            .pointerInput(range) { detectTapGestures { onMove(at(it.x)); onDone() } }
+            .pointerInput(range) {
+                detectHorizontalDragGestures(onDragEnd = onDone, onDragCancel = onDone) { change, _ ->
+                    change.consume()
+                    onMove(at(change.position.x))
+                }
+            }
+            .semantics {
+                contentDescription = "Time of day for the shade"
+                progressBarRangeInfo = ProgressBarRangeInfo(f, 0f..1f)
+                setProgress { v -> onMove(range.at(v.toDouble())); onDone(); true }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.padding(horizontal = thumb / 2).fillMaxWidth().height(4.dp).background(Line, RoundedCornerShape(2.dp)))
+        Box(
+            Modifier.offset { IntOffset(((width - thumbPx) * f).roundToInt(), 0) }
+                .size(thumb).background(Accent, CircleShape).border(2.dp, Paper, CircleShape),
+        )
     }
 }
 
@@ -242,6 +345,11 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
             "Each colour is a band of slope angle in degrees, as the swatches show. The angle is measured over the " +
                 "elevation grid at the map's zoom: zoomed out, a short steep step blurs into a gentler slope, so zoom " +
                 "in before you judge a slope."
+        },
+        HelpText("map.shade", "Shade", "$place › Shade", show = show) { // T188
+            "Tints the ground blue where the terrain keeps the sun off it at the time shown, ridges far away included, " +
+                "worked out on this phone from the elevation data; at night it is all shade. It opens at now while the " +
+                "sun is up today, else two hours before sunset; pick another date, or drag the time. Shown from map zoom 10 in."
         },
         HelpText("map.contours", "Contours", "$place › Contours", show = show) {
             "Lines of equal elevation, in your units. Auto picks the interval from the zoom. A fixed interval applies " +

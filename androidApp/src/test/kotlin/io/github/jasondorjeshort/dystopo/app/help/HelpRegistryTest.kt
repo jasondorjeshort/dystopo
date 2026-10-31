@@ -105,6 +105,8 @@ class HelpRegistryTest {
             "settings.mapControls", "settings.recenterZoom", "settings.orientationLock",
             // T177: the readout bar's rows.
             "settings.readoutBar", "settings.climbWindow",
+            // T188: the Shade row of Map options and the long-press card's sun line.
+            "map.shade", "longPress.sun",
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
