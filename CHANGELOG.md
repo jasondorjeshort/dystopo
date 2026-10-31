@@ -4,7 +4,9 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
-(nothing yet)
+### 2026-10-30
+
+- T186: Proposal: the phone-to-phone transport between signed copies (positions, condition notes, breadcrumbs, pressure)
 
 ## v0.1.15-alpha (2026-10-30)
 
