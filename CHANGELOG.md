@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.16-alpha (2026-10-31)
+
 ### 2026-10-31
 
 - T189: ADR 0049's B: the routing graph ships with a server-built pack
