@@ -116,6 +116,21 @@ class StripTextTest {
     }
 
     @Test
+    fun theTrendArrowSitsBesideTheElevationOnly() { // T178
+        val items = StripText.items(walk, bar, ContourUnits.METERS, trend = "↘", trendLabel = "falling slowly", trendSlot = true)
+        assertEquals("↘", items[0].trend)
+        assertEquals("falling slowly", items[0].trendLabel)
+        assertTrue(items[0].trendSlot)
+        assertNull(items[1].trend)
+        assertTrue(!items[1].trendSlot)
+        // No slot (the barometer switch off): no arrow even when one is known; a slot with no arrow yet reserves the room.
+        assertNull(StripText.items(walk, bar, ContourUnits.METERS, trend = "↘", trendSlot = false)[0].trend)
+        val waiting = StripText.items(walk, bar, ContourUnits.METERS, trendSlot = true)[0]
+        assertTrue(waiting.trendSlot)
+        assertNull(waiting.trend)
+    }
+
+    @Test
     fun everyEntryOffDrawsNothing() {
         val off = all.let { o -> ReadoutEntry.entries.fold(o) { acc, e -> acc.with(e, acc[e].copy(shown = false)) } }
         assertTrue(StripText.items(walk.copy(gapS = 30.0), off, ContourUnits.METERS).isEmpty(), "no gap item alone")

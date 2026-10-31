@@ -429,6 +429,38 @@ object NavSpeech {
             "lastError" to lastError,
         )
     }
+
+    // ---- T178: the pressure-fall warning's spoken line (appended under the wave's NavSpeech rule) ----
+
+    /** T178: the index the pressure-fall warning's line is listed under (not a direction's). */
+    const val PRESSURE_INDEX = -3
+
+    /**
+     * T178: the pressure-fall warning's one spoken line (`readout/PressureWatch`, "Air pressure is falling fast. Weather
+     * may get worse."), said once per warning by the caller, under the same setting and mute as the directions, queued
+     * behind whatever is being said (`QUEUE_ADD`, no priority); listed in `GET /nav/speech` with index -3. Returns the
+     * line, or null when the setting is off.
+     */
+    fun sayPressure(text: String): Line? {
+        synchronized(this) {
+            if (!enabled) return null
+            val now = System.currentTimeMillis()
+            if (muted) {
+                val line = Line(now, PRESSURE_INDEX, text, "pressure", text, engine?.name ?: "none", muted = true)
+                if (lines.size >= MAX_LINES) lines.removeAt(0)
+                lines += line
+                mutedCount++
+                return line
+            }
+            val e = engine ?: makeEngine().also { engine = it; it.open() }
+            val line = Line(now, PRESSURE_INDEX, text, "pressure", text, e.name)
+            if (lines.size >= MAX_LINES) lines.removeAt(0)
+            lines += line
+            runCatching { e.speak(line.voice, "dystopo-pressure-$now") }.onFailure { Log.w(NavSession.TAG, "speaking failed", it) }
+            Log.i(NavSession.TAG, "spoke the pressure line: $text")
+            return line
+        }
+    }
 }
 
 /**

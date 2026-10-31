@@ -194,6 +194,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
         io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
+        io.github.jasondorjeshort.dystopo.app.readout.PressureCard() // T178: the pressure-fall warning's card, under the search box and the nav card
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line

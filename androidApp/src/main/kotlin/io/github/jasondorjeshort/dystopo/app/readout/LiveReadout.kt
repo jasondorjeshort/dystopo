@@ -58,6 +58,10 @@ import java.util.concurrent.TimeUnit
  * ([AppSettings.climbWindowS]) is part of the options, so a change takes effect at the next [refresh] with the window's
  * history kept; `GET /readout` › `bar` reports the switch, the window and each field's `state` and text. The strip
  * ([ReadoutStrip]) calls [refresh] twice a second while shown and draws [snapshot]; `GET /readout` ([json]) mirrors it.
+ *
+ * T178: the barometer's trend ([PressureWatch]) is apart from the estimator (it never reads the fused elevation or its
+ * offset); a replay's pressure column goes to both, the bar's elevation carries the trend's arrow ([StripItem.trend]),
+ * and `GET /readout` › `trend` is [PressureWatch.json].
  */
 object LiveReadout {
     const val TAG = "DystopoReadout"
@@ -125,6 +129,7 @@ object LiveReadout {
         lastInjectedAt = now
         lastReplayPressureAt = now
         bump("replayPressure")
+        PressureWatch.onReplayPressure(timeMs, hPa) // T178: the trend takes the replay's column too
         post { ensure().onPressure(PressureSample(timeMs, hPa)) }
     }
 
@@ -156,7 +161,10 @@ object LiveReadout {
 
     /** T177: the bar before the first [refresh] answered: every shown entry a dash. */
     fun placeholder(): List<StripItem> =
-        StripText.items(null, AppSettings.readoutOptions(), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits)
+        StripText.items(null, AppSettings.readoutOptions(), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot())
+
+    /** T178: an arrow of the barometer's trend can appear beside the elevation (the switch on, a barometer present). */
+    private fun trendSlot(): Boolean = AppSettings.readoutBarometer && Barometer.present
 
     /** Forgets every input (`POST /readout/reset`, between replays); the settings stay. */
     fun reset(): Map<String, Any?> = call {
@@ -206,6 +214,7 @@ object LiveReadout {
                 },
             ),
             "seaLevelPressure" to PressureSource.json(s?.readout?.counters?.get("priors")), // T173
+            "trend" to PressureWatch.json(), // T178: the barometer's trend and the pressure-fall warning
             "route" to route,
             "inputs" to linkedMapOf(
                 "counts" to counts.toSortedMap(),
@@ -287,7 +296,8 @@ object LiveReadout {
         PressureSource.tick(wanted && Barometer.present, lastFed, offsetMs)?.let { e.onStationPressure(it) }
         if (STATION_SOURCE_ID in r.provenance) PressureSource.credited = true
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits // T177 (T161's follow-up)
-        snapshot = Snapshot(r, o, units, StripText.items(r, o, units, both), StripText.gap(r.gapS), wanted, both)
+        val items = StripText.items(r, o, units, both, PressureWatch.arrow, PressureWatch.arrowLabel, trendSlot()) // T178: the trend's arrow
+        snapshot = Snapshot(r, o, units, items, StripText.gap(r.gapS), wanted, both)
     }
 
     /** The barometer is read while it can serve a shown entry: the switch on, an activity that fuses it, climb or elevation shown. */
@@ -306,6 +316,6 @@ object LiveReadout {
         val both: Boolean = false,
     ) {
         /** The strip as one line of text (what `GET /readout` `line` and the strip's description say). */
-        val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l -> l.joinToString(" · ") { "${it.caption} ${it.full}" } }
+        val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l -> l.joinToString(" · ") { "${it.caption} ${it.full}" + (it.trendLabel?.let { t -> ", pressure $t" } ?: "") } }
     }
 }

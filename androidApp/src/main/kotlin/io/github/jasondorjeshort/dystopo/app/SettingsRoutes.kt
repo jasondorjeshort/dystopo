@@ -63,6 +63,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   bar; off draws the scale bar alone) and `climbWindow=30|60|300|600` (seconds, also `30s`, `1min`, `5min`, `10min`;
  *   default 60: the climb rate's averaging window on the ground), synced as `app.readoutBar` `on`/`off` and
  *   `app.climbWindow` in seconds. `GET /settings` reports `readoutBar` and `climbWindow`.
+ *   T178, the pressure-fall warning (Settings › Navigation and tracking): `pressureFallWarning=off|more|standard|fewer`
+ *   (also `0`, `3`, `4`, `6`, the fall in hPa over 3 hours, sea-level equivalent; default `standard`, 4), synced as
+ *   `app.pressureFallWarning`. `GET /settings` reports it; `GET /readout` › `trend` shows its effect.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -182,6 +185,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             AppSettings.setReadoutBar(parsed.readoutBar, parsed.climbWindow)
             io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh()
         }
+        // T178: the pressure-fall warning (the trend is evaluated again at once); the barometer switch also starts or stops its sampling.
+        parsed.pressureFallWarning?.let { AppSettings.setPressureFallWarning(it) }
+        if (parsed.pressureFallWarning != null || parsed.readoutBarometer != null) io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.onSettings()
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -226,6 +232,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             val mapControls: Int? = null, val recenterZoom: Int? = null, val orientationLock: Boolean? = null,
             // T177: the readout bar's switch and the climb window (seconds).
             val readoutBar: Boolean? = null, val climbWindow: Int? = null,
+            // T178: the pressure-fall warning.
+            val pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning? = null,
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -247,7 +255,8 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER) + io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS +
             io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS +
             setOf("mapControls", "recenterZoom", "orientationLock") + // T176
-            setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW) // T177
+            setOf(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW) + // T177
+            setOf(AppSettings.KEY_PRESSURE_FALL_WARNING) // T178
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -395,11 +404,17 @@ class SettingsRoutes(private val app: DystopoApp) {
             val climbWindow = params[rs.CLIMB_WINDOW]?.let {
                 rs.parseClimbWindow(it.toString()) ?: return Parsed.Error("${rs.CLIMB_WINDOW} must be 30, 60, 300 or 600 seconds (got $it)")
             }
+            // T178: the pressure-fall warning.
+            val pressureFallWarning = params[AppSettings.KEY_PRESSURE_FALL_WARNING]?.let {
+                io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it.toString())
+                    ?: return Parsed.Error("${AppSettings.KEY_PRESSURE_FALL_WARNING} must be off, more, standard or fewer (or 0, 3, 4, 6) (got $it)")
+            }
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
                 mapControls = mapControls, recenterZoom = recenterZoom, orientationLock = orientationLock,
-                readoutBar = readoutBar, climbWindow = climbWindow)
+                readoutBar = readoutBar, climbWindow = climbWindow,
+                pressureFallWarning = pressureFallWarning)
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

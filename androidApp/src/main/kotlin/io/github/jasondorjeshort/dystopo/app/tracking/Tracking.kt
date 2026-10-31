@@ -278,6 +278,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         val before = state
         if (recorder.onFix(fix)) {
             wayBackPoint(fix) // T180
+            io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.onFix(fix) // T178: the pressure trend's heights
             if (recorder.accepted % 10 == 1L || stateNow() != before) refreshUi() else refreshUiThrottled()
             refreshOverlay()
         } else if (recorder.recording && stateNow() != before) refreshUi()

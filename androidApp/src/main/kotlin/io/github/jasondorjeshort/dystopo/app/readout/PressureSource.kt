@@ -59,8 +59,15 @@ object PressureSource {
         val query: String get() = "bbox=$south,$west,$north,$east"
     }
 
-    /** One station's report from a response: [hPa] parsed from the raw report, [timeMs] its observation (wall clock). */
-    data class Station(val id: String, val lat: Double, val lon: Double, val hPa: Double, val timeMs: Long, val group: String)
+    /**
+     * One station's report from a response: [hPa] parsed from the raw report, [timeMs] its observation (wall clock).
+     * T178: [tempC] from the report's temperature group, [elevationM] from the JSON's `elev`, [tendencyHPa] from the
+     * remarks' 3-hour tendency group (US reports at the synoptic hours), each null when absent.
+     */
+    data class Station(
+        val id: String, val lat: Double, val lon: Double, val hPa: Double, val timeMs: Long, val group: String,
+        val tempC: Double? = null, val elevationM: Double? = null, val tendencyHPa: Double? = null,
+    )
 
     /** A response read: the stations with a valid altimeter group, how many reports it carried, how many were not usable. */
     data class Parsed(val stations: List<Station>, val reports: Int, val unusable: Int)
@@ -96,7 +103,8 @@ object PressureSource {
             if (p == null || lat == null || lon == null) { unusable++; continue }
             val t = p.timeMs(nowMs) ?: (m["obsTime"] as? Number)?.toLong()?.times(1000)
             if (t == null) { unusable++; continue }
-            out += Station(p.station, lat, lon, p.hPa, t, p.group)
+            val w = io.github.jasondorjeshort.dystopo.readout.MetarWeather.parse(raw) // T178
+            out += Station(p.station, lat, lon, p.hPa, t, p.group, w.tempC, (m["elev"] as? Number)?.toDouble(), w.tendencyHPa)
         }
         // A station may report more than once (a special report after the routine one): the latest of each.
         val latest = out.groupBy { it.id }.values.map { l -> l.maxBy { it.timeMs } }
@@ -142,6 +150,33 @@ object PressureSource {
     private var priorOffsetMs = 0L
     @Volatile private var lastDistanceM: Double? = null
 
+    /** T178: each chosen station's altimeter settings seen (time to hPa), for its own 3-hour tendency when no remark gives one. */
+    private val history = java.util.concurrent.ConcurrentHashMap<String, java.util.TreeMap<Long, Double>>()
+
+    /**
+     * T178: the chosen station's temperature for the pressure trend (`PressureTrend`'s fixed temperature), or null with no
+     * station chosen, no temperature group or no elevation. The station stays chosen after the readout stops wanting it,
+     * so a recording with the screen off uses the last one (the trend ages it).
+     */
+    fun stationTemperature(): io.github.jasondorjeshort.dystopo.readout.StationTemperature? {
+        val s = chosen ?: return null
+        val t = s.tempC ?: return null
+        val e = s.elevationM ?: return null
+        return io.github.jasondorjeshort.dystopo.readout.StationTemperature(s.id, t, e, s.timeMs)
+    }
+
+    /**
+     * T178: the chosen station's own 3-hour tendency (hPa, positive a rise) beside the phone's: its remark's group when the
+     * report has one, else the change between two of its settings this app saw 2.5 to 3.5 hours apart; null otherwise.
+     */
+    fun stationTendency(): Pair<Double, String>? {
+        val s = chosen ?: return null
+        s.tendencyHPa?.let { return it to "remark" }
+        val h = history[s.id] ?: return null
+        val then = synchronized(h) { h.floorEntry(s.timeMs - 9_000_000L) }?.takeIf { s.timeMs - it.key <= 12_600_000L } ?: return null
+        return (s.hPa - then.value) to "settings"
+    }
+
     /** A station's pressure has reached the estimator since the app started ([LiveReadout] sets it): the About screen credits the source. */
     @Volatile var credited = false
         internal set
@@ -178,6 +213,7 @@ object PressureSource {
         val p = prior
         if (p != null && chosen == s && kotlin.math.abs(offsetMs - priorOffsetMs) < 60_000L) return p
         chosen = s
+        history.getOrPut(s.id) { java.util.TreeMap() }.let { h -> synchronized(h) { h[s.timeMs] = s.hPa; while (h.size > 12) h.pollFirstEntry() } } // T178
         priorOffsetMs = offsetMs
         bump("priorsMade")
         return StationPressure(s.id, s.hPa, s.lat, s.lon, s.timeMs + offsetMs).also { prior = it }
@@ -261,6 +297,8 @@ object PressureSource {
             "group" to s?.group,
             "distanceM" to lastDistanceM?.let { Math.round(it).toDouble() },
             "ageS" to s?.let { (now - it.timeMs) / 1000 },
+            "tempC" to s?.tempC, "elevationM" to s?.elevationM, // T178: the trend's fixed temperature
+            "tendencyHPa" to stationTendency()?.first, "tendencyFrom" to stationTendency()?.second,
             "source" to STATION_SOURCE_ID,
             "credit" to src?.attribution,
             "applied" to applied,
