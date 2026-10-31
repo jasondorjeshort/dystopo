@@ -19,6 +19,7 @@ import io.github.jasondorjeshort.dystopo.dem.TerrainLayer
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.nav.Sun
+import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.render.CastShadow
 import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
 import io.github.jasondorjeshort.dystopo.tiles.SunPointAnswer
@@ -230,16 +231,16 @@ class ShadeCommand : AreaCommand("shade") {
         val cx = grid.width - 60.0
         val cy = 60.0
         g.color = Color(255, 255, 255, 210)
-        g.fill(Ellipse2D.Double(cx - 48, cy - 48, 96, 96))
+        g.fill(Ellipse2D.Double(cx - 48, cy - 48, 96.0, 96.0))
         g.color = Color(60, 60, 60)
         g.stroke = BasicStroke(1.2f)
-        g.draw(Ellipse2D.Double(cx - 48, cy - 48, 96, 96))
+        g.draw(Ellipse2D.Double(cx - 48, cy - 48, 96.0, 96.0))
         val ex = cx + 36 * sin(Math.toRadians(sun.azimuthDeg))
         val ey = cy - 36 * cos(Math.toRadians(sun.azimuthDeg))
         g.color = Color(230, 150, 0)
         g.stroke = BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
         g.draw(Line2D.Double(cx, cy, ex, ey))
-        g.fill(Ellipse2D.Double(ex - 7, ey - 7, 14, 14))
+        g.fill(Ellipse2D.Double(ex - 7, ey - 7, 14.0, 14.0))
         g.font = RenderFonts.bold(11.0)
         g.color = Color(40, 40, 40)
         g.drawString("N", (cx - 4).toFloat(), (cy - 36).toFloat())
@@ -254,7 +255,7 @@ class ShadeCommand : AreaCommand("shade") {
             val py = WebMercator.latToY(point.first, target.zoom) * target.tileSize - target.y0
             g.color = Color(200, 0, 0)
             g.stroke = BasicStroke(2.5f)
-            g.draw(Ellipse2D.Double(px - 7, py - 7, 14, 14))
+            g.draw(Ellipse2D.Double(px - 7, py - 7, 14.0, 14.0))
         }
         g.dispose()
         return image

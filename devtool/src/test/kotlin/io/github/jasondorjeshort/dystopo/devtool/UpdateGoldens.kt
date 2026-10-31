@@ -32,6 +32,9 @@ fun main(args: Array<String>) {
     // T167: the printed sheet's golden, in its own subdirectory (PrintGolden).
     File(dir, "print").mkdirs()
     write(PrintGolden.FILE, ByteArrayOutputStream().also { ImageIO.write(PrintGolden.render().page, "png", it) }.toByteArray())
+    // T181: the sun-and-shade goldens, in their own subdirectory (ShadeGolden).
+    File(dir, "shade").mkdirs()
+    for (case in ShadeGolden.cases) write(case.file, ByteArrayOutputStream().also { ImageIO.write(case.render(), "png", it) }.toByteArray())
     // Files no longer in the case list would linger as unused goldens; report them.
     val stale = dir.listFiles { f ->
         (f.name.endsWith(".png") && Goldens.cases.none { it.fileName == f.name }) ||
