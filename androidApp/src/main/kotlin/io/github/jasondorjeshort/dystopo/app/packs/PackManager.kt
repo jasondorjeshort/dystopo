@@ -169,8 +169,7 @@ class PackManager private constructor(private val app: DystopoApp) {
         // T41: the search index next to the vector archive goes too (T39 left it behind).
         val index = pack?.vector?.let { v -> File(v.absoluteFile.parentFile, SearchIndex.fileNameFor(v.name)) }
         val graphs = pack?.vector?.let(io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner::graphFiles).orEmpty() // T49: its routing graph too
-        val leftovers = pack?.vector?.let(::graphLeftovers).orEmpty() // T189: a graph download's part file, a build's temp file
-        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile }) + graphs + leftovers).distinct().filter { it.delete() }.map { it.name }
+        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile }) + graphs).distinct().filter { it.delete() }.map { it.name } // T189: graphs has the .part and .tmp
         PlaceSearch.forget(name)
         ShippedGraphs.forget(name) // T189
         catalogClient.forget(name) // T53: its recorded content hashes
@@ -397,15 +396,6 @@ class PackManager private constructor(private val app: DystopoApp) {
 
     companion object {
         const val TAG = "DystopoPacks"
-
-        /**
-         * T189: what a pack's graph leaves behind besides the file [io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.graphFiles]
-         * names: a graph download's `.part` and a build's `.tmp`, deleted with the pack (whichever exist).
-         */
-        fun graphLeftovers(vector: File): List<File> {
-            val g = File(vector.absoluteFile.parentFile, io.github.jasondorjeshort.dystopo.routing.RoutingGraph.fileNameFor(vector.name))
-            return listOf(File(g.path + ".part"), File(g.path + ".tmp")).filter { it.isFile }
-        }
 
         /** T189: whether [f] starts like a routing graph file (`DYSG`), rather than a PMTiles archive. */
         fun isGraphFile(f: File): Boolean = runCatching {

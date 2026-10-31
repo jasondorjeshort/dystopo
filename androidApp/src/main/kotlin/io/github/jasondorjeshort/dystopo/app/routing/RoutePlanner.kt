@@ -66,12 +66,22 @@ import java.util.concurrent.TimeUnit
  * server ([RemoteRouter] behind a [FallbackRouter]): the phone keeps the answer as geometry, and the trip's
  * corridor download (T75) makes it work offline. Ends inside the packs never go to the server.
  *
+ * T189 (ADR 0049's B), the shipped graph: before it builds (after the file on disk was found missing, stale or
+ * unreadable, and again after a refusal), the worker asks [RouteSession.shippedGraphs] for a graph shipped with the pack:
+ * one downloading with it, or, when a server is set, the one its catalog offers for these archives, fetched alone.
+ * While that download progresses the state is `downloading` (the card's [GRAPH_DOWNLOADING]); a graph in place is opened
+ * like one found on disk, and anything else (none offered, a mismatch, a wrong hash, a stall past [RouteSession.WAIT_MS])
+ * falls back to the build. Each pack's status says `source` (`shipped` with the server's `builtAtMs`, or `built` with the
+ * reason, `sourceDetail`).
+ *
  * Saved routes are GPX files in `files/routes/`, one route each, named after the route and its id.
  */
 object RoutePlanner {
     /** Graph state for one pack. Fields are written by the worker thread. */
     class State(val pack: String, val vector: File, val dem: File?, val file: File, private val vectorBytes: Long, private val vectorMtime: Long, val bounds: DoubleArray) {
-        @Volatile var status = "queued" // queued, loading, waiting (T149: for the heap guard), building, ready, refused (T149), error
+        @Volatile var status = "queued" // queued, loading, downloading (T189: a shipped graph), waiting (T149: for the heap guard), building, ready, refused (T149), error
+        /** T189: the shipped graph's download while the state is `downloading` (bytes, status, time waited). */
+        @Volatile var download: Map<String, Any?>? = null
         /** T149: the build's size and estimate ([RoutingGraphBuilder.measure]), its admission, and the heap through it. */
         @Volatile var size: GraphBuildSize? = null
         @Volatile var guard: HeapGuard.Admission? = null
@@ -114,14 +124,21 @@ object RoutePlanner {
             "graphTiles" to archive?.entries?.size, "tileZoom" to archive?.tileZoom, // T76
             "heapStartBytes" to heapStartBytes, "peakHeapBytes" to peakHeapBytes, // T149: the build's heap
             "guard" to (guard?.json().orEmpty() + mapOf("size" to size?.json())).takeIf { size != null || guard != null },
-            "message" to if (status == "refused") GRAPH_TOO_LARGE else null,
-        )
+            "message" to when (status) { "refused" -> GRAPH_TOO_LARGE; "downloading" -> GRAPH_DOWNLOADING; else -> null },
+            "download" to download, // T189
+        ) + sourceJson(pack, file)
 
         val busy: Boolean get() = status in BUSY
     }
 
     /** States still on their way to ready, refused or error. */
-    private val BUSY = listOf("queued", "loading", "waiting", "building")
+    private val BUSY = listOf("queued", "loading", "downloading", "waiting", "building")
+
+    /** T189: `source` (`shipped` or `built`, null without a graph file) and its detail, for a pack's status. */
+    private fun sourceJson(pack: String, file: File): Map<String, Any?> {
+        val d = runCatching { RouteSession.shippedGraphs.source(pack, file) }.getOrNull()
+        return linkedMapOf("source" to d?.get("source"), "sourceLine" to if (d?.get("source") == "shipped") GRAPH_SHIPPED else null, "sourceDetail" to d)
+    }
 
     /** T149: a refused build is asked again by the next use after this long (not sooner: the heap rarely frees faster). */
     const val REFUSED_RETRY_MS = 30_000L
@@ -255,6 +272,18 @@ object RoutePlanner {
                         s.rebuildReason = loaded.exceptionOrNull()?.message ?: "stale (pack changed)"
                     } else {
                         s.rebuildReason = if (rebuild) "requested" else "missing"
+                    }
+                    // T189: a graph shipped with the pack (downloading with it, or offered by the server for these archives) is
+                    // waited for and opened instead of a build; none, a mismatch or a stall falls back to building (ADR 0049).
+                    if (!rebuild && RouteSession.shippedGraphs.awaitShipped(s.pack, s.vector, s.dem) { p -> s.status = "downloading"; s.download = p }) {
+                        val a = runCatching { open(s) }.getOrNull()
+                        if (a != null && a.source.fingerprint == fingerprint && a.source.demFingerprint == demFingerprint && a.tileZoom == GraphTiler.ZOOM) {
+                            s.archive = a
+                            s.status = "ready"
+                            return
+                        }
+                        if (a != null) close(s)
+                        s.rebuildReason = "the shipped graph did not match the archives"
                     }
                     // T149: the heap guard. The build's peak is estimated from the archive, and the build starts only when
                     // that fits the heap free now (after a trim and a bounded wait), one build at a time; never an OOM.
@@ -401,7 +430,7 @@ object RoutePlanner {
         val each = regions.map { r ->
             states[r.osm!!.file.path]?.takeIf { it.matches(r.name, r.osm.file) }?.json() ?: run {
                 val f = File(r.osm.file.absoluteFile.parentFile, RoutingGraph.fileNameFor(r.osm.file.name))
-                linkedMapOf("pack" to r.name, "status" to "idle", "file" to f.path, "bytes" to f.takeIf { it.isFile }?.length(), "decoder" to TileService.decoderName) // T57
+                linkedMapOf("pack" to r.name, "status" to "idle", "file" to f.path, "bytes" to f.takeIf { it.isFile }?.length(), "decoder" to TileService.decoderName) + sourceJson(r.name, f) // T57; T189
             }
         }
         return LinkedHashMap(each.first()) + linkedMapOf(
@@ -440,11 +469,12 @@ object RoutePlanner {
 
     /**
      * T49: the graph files of a vector archive, for deleting a pack: the current name and the pre-T49 one
-     * (`<pack>-graph.idx`), whichever exist.
+     * (`<pack>-graph.idx`), whichever exist; T189: also a shipped graph's download part (`.part`) and a build's `.tmp`.
      */
     fun graphFiles(vector: File): List<File> {
         val dir = vector.absoluteFile.parentFile
-        return listOf(RoutingGraph.fileNameFor(vector.name), RoutingGraph.legacyFileNameFor(vector.name)).distinct().map { File(dir, it) }.filter { it.isFile }
+        val name = RoutingGraph.fileNameFor(vector.name)
+        return listOf(name, RoutingGraph.legacyFileNameFor(vector.name), "$name.part", "$name.tmp").distinct().map { File(dir, it) }.filter { it.isFile }
     }
 
     /** T49: drops the loaded graph of pack [name] (being deleted). */

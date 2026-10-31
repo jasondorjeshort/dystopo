@@ -558,7 +558,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             return
         }
         g.status = "done"
-        io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(job.name) // reopened (from the new file) on the next use
+        // Reopened from the new file on the next use; a graph fetched alone is opened by the planner that waits for it.
+        if (!job.graphOnly) io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(job.name)
         job.shipped?.let { manager.catalogClient.recordGraph(job.name, g.target, g.sha256 ?: it.sha256, it, job.catalog) }
     }
 
