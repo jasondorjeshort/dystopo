@@ -40,9 +40,10 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  * - `POST /firstrun/test[?server=]`: Settings › Sources › Test (the saved server unless given; not saved):
  *   `state` ok with `packs`, or failed with `error`. 502 when it failed.
  * - `POST /firstrun/dismiss[?undo=1]`: "Not now" (or bring the card back).
- * - `POST /packs/import?dem=<path>[&osm=<path>][&name=]`: import a pack from files on the device (absolute, or
+ * - `POST /packs/import?dem=<path>[&osm=<path>][&graph=<path>][&name=]`: import a pack from files on the device (absolute, or
  *   relative to the app's external files dir), validated like a download, as the picker does. 400 with the
- *   reason when a file is not a whole PMTiles archive or the roles do not fit; 409 while another import runs.
+ *   reason when a file is not a whole PMTiles archive or the roles do not fit; 409 while another import runs. T189:
+ *   `graph` is the pack's routing graph (`<name>-outdoors-graph.idx`), installed when it names the archives (`graph` in the answer).
  * - `GET /packs/import`: the running or last import. `POST /packs/import/pick`: open the system file picker.
  */
 object FirstRunRoutes {
@@ -107,7 +108,7 @@ object FirstRunRoutes {
                 "GET" to "/packs/import" -> Response.json(PackManager.get(app).importState)
                 "POST" to "/packs/import" -> {
                     val dem = r.query["dem"] ?: return Response.json(mapOf("error" to "dem required (a path on the device)"), 400)
-                    Response.json(ImportPicker.importPaths(dem, r.query["osm"]?.ifEmpty { null }, r.query["name"]))
+                    Response.json(ImportPicker.importPaths(dem, r.query["osm"]?.ifEmpty { null }, r.query["name"], r.query["graph"]?.ifEmpty { null }))
                 }
                 "POST" to "/packs/import/pick" -> {
                     app.map.onMain { ImportPicker.request() }

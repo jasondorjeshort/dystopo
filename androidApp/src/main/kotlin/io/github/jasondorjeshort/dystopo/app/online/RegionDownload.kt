@@ -157,7 +157,8 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
                         val role = PackRole.entries.firstOrNull { it.label == f.role } ?: return@mapNotNull null
                         role to Triple(PackCatalog.resolveUrl(server, f.url), f.sha256, f.bytes)
                     }.toMap()
-                    packs.downloads.startCatalog(packName, files, emptySet(), update = false, activate = true, catalog = linkedMapOf("server" to server, "id" to packName, "area" to m.id))
+                    val g = m.items.filterIsInstance<io.github.jasondorjeshort.dystopo.areas.LocalItem>().firstOrNull { it.kind == "graph" }?.shipped // T189: the server's graph, fetched when it matches
+                    packs.downloads.startCatalog(packName, files, emptySet(), update = false, activate = true, catalog = linkedMapOf("server" to server, "id" to packName, "area" to m.id), shipped = g, shippedUrl = g?.let { PackCatalog.resolveUrl(server, it.url) })
                 } else packs.downloads.start("$server/out/$packName-dem.pmtiles", packName, activate = true)
             } catch (e: IllegalArgumentException) {
                 if (packs.find(packName) == null) throw e

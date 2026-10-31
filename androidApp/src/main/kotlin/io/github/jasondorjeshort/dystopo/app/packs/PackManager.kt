@@ -169,8 +169,10 @@ class PackManager private constructor(private val app: DystopoApp) {
         // T41: the search index next to the vector archive goes too (T39 left it behind).
         val index = pack?.vector?.let { v -> File(v.absoluteFile.parentFile, SearchIndex.fileNameFor(v.name)) }
         val graphs = pack?.vector?.let(io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner::graphFiles).orEmpty() // T49: its routing graph too
-        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile }) + graphs).filter { it.delete() }.map { it.name }
+        val leftovers = pack?.vector?.let(::graphLeftovers).orEmpty() // T189: a graph download's part file, a build's temp file
+        val deleted = (files + listOfNotNull(index?.takeIf { it.isFile }) + graphs + leftovers).distinct().filter { it.delete() }.map { it.name }
         PlaceSearch.forget(name)
+        ShippedGraphs.forget(name) // T189
         catalogClient.forget(name) // T53: its recorded content hashes
         io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(name) // T49
         // T41: and its contour tiles (no DEM file on the device has that identity any more).
@@ -263,6 +265,12 @@ class PackManager private constructor(private val app: DystopoApp) {
      * joins the map like a finished download ([onDownloaded]: primary when there is none, camera moved to
      * it). A pack of the same name is replaced. Nothing is installed when any file fails. Blocks; returns
      * the result, also kept in [importState].
+     *
+     * T189 (ADR 0049's B): a third file, the pack's routing graph (`<name>-outdoors-graph.idx`, as `devtool route` or a
+     * server writes it; recognised by its `DYSG` header), may come along: when it opens as a graph this build reads and
+     * names the imported archives' fingerprints it is installed beside the vector archive and the planner opens it with
+     * no build; otherwise it is left out with the reason (`graph` in the result) and the phone builds its own, never
+     * refusing the pack.
      */
     fun importFiles(sources: List<ImportSource>, name: String? = null): Map<String, Any?> {
         if (!importing.compareAndSet(false, true)) throw IllegalStateException("an import is already running")
@@ -276,9 +284,11 @@ class PackManager private constructor(private val app: DystopoApp) {
         }
         try {
             require(sources.isNotEmpty()) { "no files chosen" }
-            require(sources.size <= 2) { "choose one <name>-dem.pmtiles and at most one <name>-outdoors.pmtiles (got ${sources.size} files)" }
+            require(sources.size <= 3) { "choose one <name>-dem.pmtiles, at most one <name>-outdoors.pmtiles and its <name>-outdoors-graph.idx (got ${sources.size} files)" }
             state("copying")
-            val picked = sources.mapIndexed { i, src ->
+            var graphPart: File? = null
+            var graphName: String? = null
+            val picked = sources.mapIndexedNotNull { i, src ->
                 val part = File(packsDir, ".import-$i-${System.nanoTime()}.part")
                 parts += part
                 src.open().use { input ->
@@ -294,6 +304,13 @@ class PackManager private constructor(private val app: DystopoApp) {
                     }
                 }
                 state("verifying")
+                // T189: the routing graph that may come with the archives (by its header, whatever its name).
+                if (isGraphFile(part)) {
+                    require(graphPart == null) { "two routing graphs: ${graphName}, ${src.displayName}" }
+                    graphPart = part
+                    graphName = src.displayName
+                    return@mapIndexedNotNull null
+                }
                 val info = try {
                     FileRangeSource(part).use { s -> PackArchiveInfo.read(src.displayName, part.length(), PmtilesReader.open(s, mapOf(Compression.GZIP to gunzip))) }
                 } catch (e: Exception) {
@@ -327,9 +344,11 @@ class PackManager private constructor(private val app: DystopoApp) {
                 PlaceSearch.forget(packName)
                 catalogClient.forget(packName) // hashed again in the background like any pack that arrived another way
             }
+            // T189: the graph, when it names these archives; beside the vector archive the import just installed.
+            val graph = graphPart?.let { gp -> installImportedGraph(packName, gp, graphName!!) }
             onDownloaded(packName, show = true)
             val result = linkedMapOf<String, Any?>(
-                "name" to packName, "dem" to dem.json(), "vector" to vector?.json(),
+                "name" to packName, "dem" to dem.json(), "vector" to vector?.json(), "graph" to graph,
                 "active" to activeName(), "inUse" to inUse(), "bytes" to progress.get(),
                 "labels" to (app.tiles.packs.glyphDir != null || io.github.jasondorjeshort.dystopo.app.AppSettings.server.isNotEmpty()), // glyphs on the device or from the server
             )
@@ -346,12 +365,52 @@ class PackManager private constructor(private val app: DystopoApp) {
         }
     }
 
+    /**
+     * T189: installs an imported routing graph [part] for pack [packName] when it opens as a graph this build reads and its
+     * fingerprints are the installed archives'; else deletes it. Returns what happened (`installed`, `file`, `reason`).
+     */
+    private fun installImportedGraph(packName: String, part: File, displayName: String): Map<String, Any?> {
+        val pack = catalog().firstOrNull { it.name == packName }
+        val vector = pack?.vector ?: return linkedMapOf<String, Any?>("installed" to false, "file" to displayName, "reason" to "the pack has no vector archive").also { part.delete() }
+        val why = try {
+            val a = FileRangeSource(part).use { src -> io.github.jasondorjeshort.dystopo.routing.GraphTileFile.open { o, l -> src.read(o, l) } }
+            val shown = io.github.jasondorjeshort.dystopo.packs.DerivedFile.graph(displayName, displayName, part.length(), "0".repeat(64), a.source.fingerprint, a.source.demFingerprint, tileZoom = a.tileZoom)
+            io.github.jasondorjeshort.dystopo.packs.ShippedGraph.mismatch(shown, PackDownloader.fingerprint(vector), pack.dem?.let { PackDownloader.fingerprint(it) }.orEmpty())
+        } catch (e: Exception) {
+            e.message ?: e.javaClass.simpleName
+        }
+        if (why != null) {
+            part.delete()
+            Log.i(TAG, "imported graph $displayName left out: $why")
+            return linkedMapOf("installed" to false, "file" to displayName, "reason" to why)
+        }
+        val target = File(vector.absoluteFile.parentFile, io.github.jasondorjeshort.dystopo.routing.RoutingGraph.fileNameFor(vector.name))
+        target.delete()
+        if (!part.renameTo(target)) return linkedMapOf<String, Any?>("installed" to false, "file" to displayName, "reason" to "rename failed").also { part.delete() }
+        io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(packName)
+        return linkedMapOf("installed" to true, "file" to target.name, "bytes" to target.length())
+    }
+
     private class Picked(val displayName: String, val part: File, val role: io.github.jasondorjeshort.dystopo.packs.PackRole, val packName: String?, val info: PackArchiveInfo) {
         fun json() = linkedMapOf("file" to displayName, "tileType" to info.tileType, "minZoom" to info.minZoom, "maxZoom" to info.maxZoom, "bytes" to info.bytes)
     }
 
     companion object {
         const val TAG = "DystopoPacks"
+
+        /**
+         * T189: what a pack's graph leaves behind besides the file [io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.graphFiles]
+         * names: a graph download's `.part` and a build's `.tmp`, deleted with the pack (whichever exist).
+         */
+        fun graphLeftovers(vector: File): List<File> {
+            val g = File(vector.absoluteFile.parentFile, io.github.jasondorjeshort.dystopo.routing.RoutingGraph.fileNameFor(vector.name))
+            return listOf(File(g.path + ".part"), File(g.path + ".tmp")).filter { it.isFile }
+        }
+
+        /** T189: whether [f] starts like a routing graph file (`DYSG`), rather than a PMTiles archive. */
+        fun isGraphFile(f: File): Boolean = runCatching {
+            f.inputStream().use { val b = ByteArray(4); it.read(b) == 4 && b.contentEquals(byteArrayOf(0x44, 0x59, 0x53, 0x47)) }
+        }.getOrDefault(false)
 
         /**
          * T79: an imported file's role: the name's (`-dem`, `-outdoors`, `-osm`) when it has one, which must agree

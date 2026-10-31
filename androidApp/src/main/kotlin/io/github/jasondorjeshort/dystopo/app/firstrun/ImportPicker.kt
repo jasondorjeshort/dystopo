@@ -63,14 +63,14 @@ object ImportPicker {
     }
 
     /** Imports files by path (debug builds: `POST /packs/import?dem=&osm=`); relative paths are under the app's external files dir. */
-    fun importPaths(dem: String, osm: String?, name: String?): Map<String, Any?> {
+    fun importPaths(dem: String, osm: String?, name: String?, graph: String? = null): Map<String, Any?> {
         val app = DystopoApp.instance
         fun file(p: String): File {
             val f = File(p).let { if (it.isAbsolute) it else File(app.getExternalFilesDir(null), p) }
             require(f.isFile) { "no file $f" }
             return f
         }
-        val files = listOfNotNull(file(dem), osm?.let(::file))
+        val files = listOfNotNull(file(dem), osm?.let(::file), graph?.let(::file)) // T189: and the optional routing graph
         return PackManager.get(app).importFiles(files.map { f -> PackManager.ImportSource(f.name, f.length()) { FileInputStream(f) } }, name)
     }
 

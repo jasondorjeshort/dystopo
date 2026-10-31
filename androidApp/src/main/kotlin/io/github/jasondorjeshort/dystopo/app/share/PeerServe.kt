@@ -118,7 +118,7 @@ class PeerServe(private val app: DystopoApp, private val publisher: () -> Map<St
     /** The current catalog (hashes computed the first time; minutes for big packs on a slow phone, so [warm] runs it at start). */
     fun catalog(): PackCatalog {
         val listed = manager.list().filter { it.info.dem != null || it.info.vector != null }
-        val key = listed.joinToString("|") { l -> l.files.files.joinToString(",") { "${it.path}:${it.length()}:${it.lastModified()}" } }
+        val key = listed.joinToString("|") { l -> (l.files.files + listOfNotNull(io.github.jasondorjeshort.dystopo.app.packs.ShippedGraphs.graphFileOf(l.files)?.takeIf { it.isFile })).joinToString(",") { "${it.path}:${it.length()}:${it.lastModified()}" } } // T189: and its graph
         cached?.let { (k, c) -> if (k == key) return c.copy(publisher = publisher()) }
         val t0 = System.currentTimeMillis()
         val profiles = runCatching { app.tiles.packs.regions.associate { it.name to it.osmCoverage?.profile?.label } }.getOrDefault(emptyMap())
@@ -130,6 +130,7 @@ class PeerServe(private val app: DystopoApp, private val publisher: () -> Map<St
                 CatalogPack.of(
                     l.info.name, l.info.dem, inst.sha256[PackRole.DEM], l.info.vector, inst.sha256[PackRole.VECTOR],
                     profiles[l.info.name], emptyList(), java.time.Instant.ofEpochMilli(built).toString(), built, urlPrefix = FILE_PREFIX,
+                    derived = listOfNotNull(io.github.jasondorjeshort.dystopo.app.packs.ShippedGraphs.peerEntry(l.files, FILE_PREFIX)), // T189: its matching graph
                 )
             }.onFailure { Log.w(TAG, "pack ${l.info.name} left out of the catalog: ${it.message}") }.getOrNull()
         }
@@ -158,16 +159,18 @@ class PeerServe(private val app: DystopoApp, private val publisher: () -> Map<St
     }
 
     private fun file(name: String, q: Map<String, String>, f: Fetcher): Response {
-        if (PackNames.parse(name) == null || '/' in name || '\\' in name) return Response.json(mapOf("error" to "not a pack file"), 404)
-        val file = manager.catalog().flatMap { it.files }.firstOrNull { it.name == name && it.isFile }
+        // T189: a pack's graph listed under `derived` is served like its archives.
+        val graph = if ('/' in name || '\\' in name) null else manager.catalog().mapNotNull { io.github.jasondorjeshort.dystopo.app.packs.ShippedGraphs.graphFileOf(it) }.firstOrNull { it.name == name && it.isFile }
+        if (graph == null && (PackNames.parse(name) == null || '/' in name || '\\' in name)) return Response.json(mapOf("error" to "not a pack file"), 404)
+        val file = graph ?: manager.catalog().flatMap { it.files }.firstOrNull { it.name == name && it.isFile }
         if (file == null) {
             refusedFiles.incrementAndGet()
             return Response.json(mapOf("error" to "no such pack file"), 404)
         }
         val total = file.length()
         q["sha"]?.let { want ->
-            val entry = catalog().packs.flatMap { it.files }.firstOrNull { it.file == name }
-            if (entry != null && !want.equals(entry.sha256, ignoreCase = true)) return Response.json(mapOf("error" to "file changed", "sha256" to entry.sha256), 409)
+            val entry = catalog().packs.flatMap { it.files }.firstOrNull { it.file == name }?.sha256 ?: catalog().packs.flatMap { it.derived }.firstOrNull { it.file == name }?.sha256
+            if (entry != null && !want.equals(entry, ignoreCase = true)) return Response.json(mapOf("error" to "file changed", "sha256" to entry), 409)
         }
         val from = q["from"]?.toLongOrNull()?.takeIf { it >= 0 } ?: 0L
         if (from >= total) return Response(416, "application/octet-stream; first=$from; total=$total", ByteArray(0))

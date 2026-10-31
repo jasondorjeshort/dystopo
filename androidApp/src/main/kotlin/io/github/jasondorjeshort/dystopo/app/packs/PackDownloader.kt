@@ -4,15 +4,20 @@ import android.os.SystemClock
 import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.FileRangeSource
 import io.github.jasondorjeshort.dystopo.app.gunzip
+import io.github.jasondorjeshort.dystopo.packs.DerivedFile
 import io.github.jasondorjeshort.dystopo.packs.PackArchiveInfo
 import io.github.jasondorjeshort.dystopo.packs.PackDownload
 import io.github.jasondorjeshort.dystopo.packs.PackHash
 import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
 import io.github.jasondorjeshort.dystopo.packs.PackSource
+import io.github.jasondorjeshort.dystopo.packs.ShippedGraph
 import io.github.jasondorjeshort.dystopo.pmtiles.Compression
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
+import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
+import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
+import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -43,14 +48,29 @@ import java.util.concurrent.atomic.AtomicLong
  * T78: a URL `peer://<host:port>/peer/file/<file>` is a nearby phone's archive ([io.github.jasondorjeshort.dystopo.app.share.PeerFiles]):
  * the same loop asks it for the bytes from the part file's length on, over the encrypted LAN link in chunks, with
  * the same plan, resume and SHA-256 check; only the transport differs ([RangeConn]).
+ *
+ * T189 (ADR 0049's B): a catalog download may carry the routing graph the server shipped with the pack ([DerivedFile],
+ * the catalog's `derived` or the manifest's `graph` item) as a role-less file job ([FileJob.role] null, `kind: graph`).
+ * It is fetched after the archives verify, only when its `version`, tile zoom and both fingerprints match the archives
+ * just verified (or, for an update, kept) ([ShippedGraph.mismatch]); it is checked by size, SHA-256 and its header,
+ * then installed beside the vector archive (`<archive>-graph.idx`) once the archives are. A graph that does not match,
+ * fails its hash or fails to download is left out with the reason (`graph` in the job's JSON): never a failed pack;
+ * the phone builds its own (ADR 0033 §2). [startGraph] fetches a graph alone for a pack already on the device (the
+ * route planner's third fetch point, [ShippedGraphs]).
  */
 class PackDownloader(private val manager: PackManager, private val dir: File) {
     private val stateDir = File(dir, ".downloads").apply { mkdirs() }
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-pack-download").apply { isDaemon = true } }
     private val jobs = LinkedHashMap<String, Job>()
 
-    class FileJob(val role: PackRole, val url: String, val target: File, val optional: Boolean) {
+    /**
+     * One file of a job: an archive ([role]), or (T189) a role-less derived file ([role] null, [kind] `graph`), whose
+     * label in the saved state and the JSON is [kind].
+     */
+    class FileJob(val role: PackRole?, val url: String, val target: File, val optional: Boolean, val kind: String = role?.label ?: "file") {
         val part = File(target.parentFile, target.name + ".part")
+        /** T189: why a derived file was left out (`skipped`, `failed`), for the job's JSON and the planner's status. */
+        @Volatile var reason: String? = null
         /** T53: the SHA-256 and size the catalog promises (null for a plain URL download). */
         @Volatile var expectSha256: String? = null
         @Volatile var expectBytes: Long? = null
@@ -65,9 +85,9 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         val resumedFrom = ArrayList<Long>()
 
         fun json(): Map<String, Any?> = linkedMapOf(
-            "role" to role.label, "url" to url, "file" to target.name, "status" to status, "bytesDone" to done.get(),
+            "role" to role?.label, "kind" to kind, "url" to url, "file" to target.name, "status" to status, "bytesDone" to done.get(),
             "bytesTotal" to total, "resumedFrom" to synchronized(resumedFrom) { resumedFrom.toList() },
-            "expectSha256" to expectSha256, "sha256" to sha256,
+            "expectSha256" to expectSha256, "sha256" to sha256, "reason" to reason,
             "responses" to synchronized(responses) { responses.takeLast(10) },
         )
     }
@@ -80,6 +100,12 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         val update: Boolean = false,
         /** T53: the catalog this pack came from: server, id and content hash (recorded once installed). */
         val catalog: Map<String, Any?>? = null,
+        /** T189: the routing graph shipped with the pack (its entry and absolute URL), fetched after the archives when it matches. */
+        val shipped: DerivedFile? = null,
+        val shippedUrl: String? = null,
+        /** T189: a job that fetches only the graph of a pack already on the device ([startGraph]), beside [graphTarget]. */
+        val graphOnly: Boolean = false,
+        graphTarget: File? = null,
     ) {
         val name get() = source.name
         // The (small, optional) vector archive first: the DEM getting its final name is what makes the
@@ -88,6 +114,14 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             FileJob(PackRole.VECTOR, source.vectorUrl, File(dir, PackNames.fileName(source.name, PackRole.VECTOR)), optional = true),
             FileJob(PackRole.DEM, source.demUrl, File(dir, PackNames.fileName(source.name, PackRole.DEM)), optional = false),
         )
+        /** T189: the shipped graph's file job (null when none is shipped): after the archives, never failing the job. */
+        val graph: FileJob? = if (shipped == null || shippedUrl == null) null else FileJob(
+            null, shippedUrl, graphTarget ?: File(dir, RoutingGraph.fileNameFor(PackNames.fileName(source.name, PackRole.VECTOR))), optional = true, kind = shipped.kind,
+        ).also { it.expectSha256 = shipped.sha256; it.expectBytes = shipped.bytes }
+
+        /** The archives and the graph: what the byte counts add up. */
+        private val all get() = files + listOfNotNull(graph)
+
         @Volatile var state = "queued" // queued, running, done, failed, cancelled
         @Volatile var error: String? = null
         @Volatile var cancelled = false
@@ -97,8 +131,9 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         @Volatile var sessionStartBytes = 0L
         @Volatile var finishedAt: Long? = null
 
-        val bytesDone get() = files.filter { it.status != "unchanged" }.sumOf { it.done.get() }
-        val bytesTotal: Long? get() = files.filter { it.status != "missing" && it.status != "unchanged" }.map { it.total }.let { t -> if (t.any { it == null }) null else t.sumOf { it!! } }
+        val bytesDone get() = all.filter { it.status != "unchanged" && it.status != "skipped" }.sumOf { it.done.get() }
+        val bytesTotal: Long? get() = all.filter { it.status != "missing" && it.status != "unchanged" && it.status != "skipped" && it.status != "failed" }
+            .map { it.total ?: it.expectBytes }.let { t -> if (t.any { it == null }) null else t.sumOf { it!! } }
 
         fun json(): Map<String, Any?> {
             val done = bytesDone
@@ -112,6 +147,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 "bytesPerSec" to if (elapsed > 0) (done - sessionStartBytes) * 1000 / elapsed else null,
                 "restarts" to restarts,
                 "files" to files.map { it.json() },
+                "graph" to graph?.json(), "graphOnly" to graphOnly, // T189
             )
         }
     }
@@ -135,13 +171,16 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         update: Boolean,
         activate: Boolean,
         catalog: Map<String, Any?>,
+        /** T189: the routing graph shipped with the pack and its absolute URL; fetched after the archives when it matches them. */
+        shipped: DerivedFile? = null,
+        shippedUrl: String? = null,
     ): Job {
         require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
         // T65: a vector-only pack (a server's single-file pack) is map data drawn where the DEM comes from another pack or online.
         require(files.isNotEmpty() || (update && unchanged.isNotEmpty())) { "pack '$name' has no archive to download" }
         val source = PackSource(name, files[PackRole.DEM]?.first.orEmpty(), files[PackRole.VECTOR]?.first.orEmpty())
         return enqueue(source, update) {
-            Job(source, activate, System.currentTimeMillis(), update, catalog).also { job ->
+            Job(source, activate, System.currentTimeMillis(), update, catalog, shipped, shippedUrl).also { job ->
                 for (f in job.files) {
                     val e = files[f.role]
                     when {
@@ -153,6 +192,26 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             }
         }
     }
+
+    /**
+     * T189: fetches only the routing graph [shipped] (at [url]) of pack [name], already on the device with its vector
+     * archive [vector] (and [dem]): the graph lands beside [vector] once its size, hash, header and fingerprints check out.
+     * The planner's third fetch point ([ShippedGraphs]): a pack whose graph is missing, stale or refused, and a server
+     * whose catalog offers one for these archives. A job already running for the pack is returned instead.
+     */
+    fun startGraph(name: String, vector: File, dem: File?, shipped: DerivedFile, url: String, catalog: Map<String, Any?>): Job {
+        require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
+        val source = PackSource(name, dem?.path.orEmpty(), vector.path)
+        return enqueue(source, update = true) {
+            Job(source, false, System.currentTimeMillis(), update = true, catalog = catalog, shipped = shipped, shippedUrl = url, graphOnly = true,
+                graphTarget = File(vector.absoluteFile.parentFile, RoutingGraph.fileNameFor(vector.name))).also { job ->
+                job.files.forEach { it.status = "unchanged" }
+            }
+        }
+    }
+
+    /** T189: the job running or last finished for pack [name], or null. */
+    fun job(name: String): Job? = synchronized(jobs) { jobs[name] }
 
     private fun enqueue(source: PackSource, update: Boolean = false, make: () -> Job): Job {
         synchronized(jobs) {
@@ -175,11 +234,23 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 val m = MiniJson.parseObject(f.readText())
                 val source = PackSource(m["name"] as String, m["demUrl"] as String, m["vectorUrl"] as String)
                 @Suppress("UNCHECKED_CAST")
-                val job = Job(source, m["activate"] == true, (m["createdAt"] as? Number)?.toLong() ?: 0L, m["update"] == true, m["catalog"] as? Map<String, Any?>)
+                val g = m["graph"] as? Map<String, Any?>
+                @Suppress("UNCHECKED_CAST")
+                val shipped = (g?.get("entry") as? Map<String, Any?>)?.let(DerivedFile::parse)
+                @Suppress("UNCHECKED_CAST")
+                val job = Job(
+                    source, m["activate"] == true, (m["createdAt"] as? Number)?.toLong() ?: 0L, m["update"] == true, m["catalog"] as? Map<String, Any?>,
+                    shipped, g?.get("url") as? String, m["graphOnly"] == true, (g?.get("target") as? String)?.let(::File),
+                )
+                job.graph?.let { gj ->
+                    gj.total = (g?.get("total") as? Number)?.toLong()
+                    gj.etag = g?.get("etag") as? String
+                    gj.lastModified = g?.get("lastModified") as? String
+                }
                 job.restarts = ((m["restarts"] as? Number)?.toInt() ?: 0) + 1
                 @Suppress("UNCHECKED_CAST")
                 for (fm in (m["files"] as? List<Map<String, Any?>>).orEmpty()) {
-                    val fj = job.files.firstOrNull { it.role.label == fm["role"] } ?: continue
+                    val fj = job.files.firstOrNull { it.role?.label == fm["role"] } ?: continue
                     fj.total = (fm["total"] as? Number)?.toLong()
                     fj.etag = fm["etag"] as? String
                     fj.lastModified = fm["lastModified"] as? String
@@ -209,7 +280,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         job?.let { it.cancelled = true; it.state = "cancelled" }
         state.delete()
         // The worker may still hold a part file open for a moment; delete what is there now and again after it stops.
-        val parts = PackRole.entries.map { File(dir, PackNames.fileName(name, it) + ".part") }
+        val parts = PackRole.entries.map { File(dir, PackNames.fileName(name, it) + ".part") } +
+            listOfNotNull(File(dir, RoutingGraph.fileNameFor(PackNames.fileName(name, PackRole.VECTOR)) + ".part"), job?.graph?.part) // T189
         parts.forEach { it.delete() }
         if (job != null) executor.execute { parts.forEach { it.delete() } }
         return had
@@ -228,9 +300,14 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             "createdAt" to job.createdAt, "restarts" to job.restarts, "update" to job.update, "catalog" to job.catalog,
             "files" to job.files.map {
                 mapOf(
-                    "role" to it.role.label, "total" to it.total, "etag" to it.etag, "lastModified" to it.lastModified, "status" to it.status,
+                    "role" to it.role?.label, "total" to it.total, "etag" to it.etag, "lastModified" to it.lastModified, "status" to it.status,
                     "expectSha256" to it.expectSha256, "expectBytes" to it.expectBytes,
                 )
+            },
+            "graphOnly" to job.graphOnly,
+            // T189: the shipped graph: its entry, URL, target and resume validators (a build before T189 ignores the key).
+            "graph" to job.graph?.let { g ->
+                mapOf("entry" to job.shipped?.json(), "url" to g.url, "target" to g.target.path, "total" to g.total, "etag" to g.etag, "lastModified" to g.lastModified)
             },
         )
         val f = File(stateDir, "${job.name}.json")
@@ -258,14 +335,22 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 if (!job.update && f.expectSha256 == null && f.target.isFile && f.total == f.target.length()) { f.status = "done"; continue }
                 fetch(job, f)
             }
-            if (job.update || job.catalog != null) manager.installUpdate(job.name, job.files.filter { it.status == "verified" }.map { it.part to it.target }, job.files.filter { it.status == "missing" }.map { it.role })
+            job.graph?.let { fetchGraph(job, it) } // T189: after the archives verify; never fails the job
+            if (!job.graphOnly && (job.update || job.catalog != null)) {
+                manager.installUpdate(job.name, job.files.filter { it.status == "verified" }.map { it.part to it.target }, job.files.filter { it.status == "missing" }.mapNotNull { it.role })
+            }
             job.files.filter { it.status == "verified" }.forEach { it.status = "done" }
+            job.graph?.takeIf { it.status == "verified" }?.let { installGraph(job, it) }
             job.finishedAt = SystemClock.elapsedRealtime()
-            job.catalog?.let { c -> manager.catalogClient.recordInstalled(job.name, c, job.files.filter { it.sha256 != null }.associate { it.role to (it.target to it.sha256!!) }) }
+            if (!job.graphOnly) job.catalog?.let { c -> manager.catalogClient.recordInstalled(job.name, c, job.files.filter { it.sha256 != null && it.role != null }.associate { it.role!! to (it.target to it.sha256!!) }) }
             job.state = "done"
             File(stateDir, "${job.name}.json").delete()
-            Log.i(PackManager.TAG, "downloaded pack ${job.name}: ${job.bytesDone} bytes${if (job.update) " (update)" else ""}")
-            if (job.update) manager.onUpdated(job.name) else manager.onDownloaded(job.name, job.activate)
+            Log.i(PackManager.TAG, "downloaded pack ${job.name}: ${job.bytesDone} bytes${if (job.update) " (update)" else ""}${job.graph?.let { ", graph ${it.status}${it.reason?.let { r -> " ($r)" } ?: ""}" } ?: ""}")
+            when {
+                job.graphOnly -> {}
+                job.update -> manager.onUpdated(job.name)
+                else -> manager.onDownloaded(job.name, job.activate)
+            }
         } catch (_: Cancelled) {
             job.state = "cancelled"
         } catch (e: HashMismatch) {
@@ -276,6 +361,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             // Wrong bytes: nothing to resume. The parts of the other archives go too.
             File(stateDir, "${job.name}.json").delete()
             job.files.forEach { it.part.delete() }
+            job.graph?.part?.delete()
         } catch (e: Exception) {
             Log.w(PackManager.TAG, "download of ${job.name} failed", e)
             job.finishedAt = SystemClock.elapsedRealtime()
@@ -387,9 +473,93 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             } finally {
                 runCatching { conn.close() }
             }
-            finish(f, stage = job.update || job.catalog != null)
+            if (f.role == null) finishDerived(job, f) else finish(f, stage = job.update || job.catalog != null)
             return
         }
+    }
+
+    /**
+     * T189: fetches the shipped graph [g] when it matches the archives this job verified (or kept): the vector archive's
+     * and the DEM's fingerprints against the entry's `key` ([ShippedGraph.mismatch]). Never throws but for a cancel: a
+     * mismatch is `skipped`, a failed download or hash `failed`, each with its [FileJob.reason].
+     */
+    private fun fetchGraph(job: Job, g: FileJob) {
+        val entry = job.shipped ?: return
+        fun archive(role: PackRole): File? = job.files.firstOrNull { it.role == role }?.let { f ->
+            when (f.status) {
+                "verified" -> f.part
+                "done" -> f.target
+                "unchanged" -> if (job.graphOnly) File(if (role == PackRole.VECTOR) job.source.vectorUrl else job.source.demUrl).takeIf { it.isFile }
+                    else manager.catalog().firstOrNull { it.name == job.name }?.let { p -> if (role == PackRole.VECTOR) p.vector else p.dem }
+                else -> null
+            }
+        }
+        val vector = archive(PackRole.VECTOR)
+        if (vector == null) { g.status = "skipped"; g.reason = "no vector archive"; return }
+        val why = try {
+            ShippedGraph.mismatch(entry, fingerprint(vector), archive(PackRole.DEM)?.let(::fingerprint).orEmpty())
+        } catch (e: Exception) {
+            "the archives could not be read (${e.message})"
+        }
+        if (why != null) {
+            g.status = "skipped"
+            g.reason = why
+            Log.i(PackManager.TAG, "graph shipped with ${job.name} not taken: $why")
+            return
+        }
+        try {
+            fetch(job, g)
+            if (g.status == "missing") g.reason = "not found on the server"
+        } catch (e: Cancelled) {
+            throw e
+        } catch (e: Exception) {
+            g.part.delete()
+            g.status = "failed"
+            g.reason = if (e is HashMismatch) "hash mismatch" else (e.message ?: e.javaClass.simpleName)
+            Log.w(PackManager.TAG, "graph shipped with ${job.name} not taken: ${g.reason}")
+        }
+    }
+
+    /**
+     * T189: checks a downloaded derived file: the promised size and SHA-256 (a mismatch is [HashMismatch]: wrong bytes),
+     * then, for a graph, its header ([GraphTileFile.open]: version and tile zoom) and that it names the fingerprints the
+     * entry promised. Leaves it `verified`; [installGraph] moves it in after the archives.
+     */
+    private fun finishDerived(job: Job, f: FileJob) {
+        f.status = "verifying"
+        val size = f.part.length()
+        f.expectBytes?.let { if (size != it) { f.part.delete(); throw HashMismatch("${f.target.name}: $size bytes, the catalog says $it; part file deleted") } }
+        val actual = sha256(f.part)
+        f.sha256 = actual
+        if (!PackHash.matches(f.expectSha256, actual)) {
+            f.part.delete()
+            throw HashMismatch("${f.target.name}: hash mismatch, got sha256 $actual, the catalog says ${f.expectSha256}; part file deleted")
+        }
+        val entry = job.shipped
+        if (f.kind == DerivedFile.KIND_GRAPH && entry != null) {
+            val a = FileRangeSource(f.part).use { src -> GraphTileFile.open { offset, length -> src.read(offset, length) } }
+            if (a.source.fingerprint != entry.fingerprint || a.source.demFingerprint != entry.demFingerprint.orEmpty()) {
+                f.part.delete()
+                throw IOException("${f.target.name}: its header names other archives than the catalog said; part file deleted")
+            }
+        }
+        f.done.set(size)
+        f.total = size
+        f.status = "verified"
+    }
+
+    /** T189: moves a verified graph in beside its vector archive, drops the planner's open graph of the pack and records where it came from. */
+    private fun installGraph(job: Job, g: FileJob) {
+        g.target.delete()
+        if (!g.part.renameTo(g.target)) {
+            g.status = "failed"
+            g.reason = "rename ${g.part.name} -> ${g.target.name} failed"
+            g.part.delete()
+            return
+        }
+        g.status = "done"
+        io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(job.name) // reopened (from the new file) on the next use
+        job.shipped?.let { manager.catalogClient.recordGraph(job.name, g.target, g.sha256 ?: it.sha256, it, job.catalog) }
     }
 
     private fun copy(job: Job, f: FileJob, conn: RangeConn, append: Boolean) {
@@ -446,6 +616,10 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     }
 
     companion object {
+        /** T189: [RoutingGraphBuilder.fingerprint] of a PMTiles archive's header (what a graph names its archives by). */
+        fun fingerprint(file: File): String =
+            FileRangeSource(file).use { src -> RoutingGraphBuilder.fingerprint(PmtilesReader.open(src, mapOf(Compression.GZIP to gunzip)).header) }
+
         /** SHA-256 of [file] as 64 lowercase hex digits (the platform digest, much faster than the pure Kotlin one). */
         fun sha256(file: File): String {
             val md = MessageDigest.getInstance("SHA-256")
