@@ -157,7 +157,8 @@ object WaterText {
         val n = items.size
         val noun = if (items.all { it.kind == WaterKind.STREAM }) (if (n == 1) "crossing" else "crossings") else (if (n == 1) "place" else "places")
         val next = items.firstOrNull { it.isSource } ?: return "Water: $n $noun, none likely flowing"
-        return "Water: $n $noun, next ${sourceWords(next)} in ${UnitFormat.distance(next.alongM, units)}"
+        val at = if (next.alongM < PASS_M) "at the start" else "in ${UnitFormat.distance(next.alongM, units)}"
+        return "Water: $n $noun, next ${sourceWords(next)} $at"
     }
 
     /** The route card's second line: "Longest stretch without water: 6.2 km" (null with no source at all, the card says so). */

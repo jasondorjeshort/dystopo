@@ -46,6 +46,7 @@ class RouteWaterTest {
         assertEquals("Water: 1 crossing, none likely flowing", WaterText.cardLine(walk.take(1), m))
         assertEquals("Water: none found along the route", WaterText.cardLine(emptyList(), m))
         assertEquals("Water: 1 place, next a mapped spring in 1.9 mi", WaterText.cardLine(listOf(walk[3]), ContourUnits.FEET))
+        assertEquals("Water: 1 place, next a lake or pond at the start", WaterText.cardLine(listOf(item(10.0, WaterKind.LAKE)), m))
         assertEquals("Longest stretch without water: 6.50 km", WaterText.longestLine(walk, lengthM, m))
         assertNull(WaterText.longestLine(walk.take(1), lengthM, m), "no source at all: the card line says so")
     }
