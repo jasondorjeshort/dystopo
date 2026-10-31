@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -137,5 +138,125 @@ mpp14 = ui.scale_mpp(bar("Scale 500 m", round(84 * d2 + ui.SCALE_PAD_DP * d2)), 
 assert ui.zoom_step(mpp13, mpp14) == 1.0, (mpp13, mpp14)
 assert abs(ui.zoom_step(mpp14, ui.scale_mpp(bar("Scale 200 m", round(33.6 * d2 + ui.SCALE_PAD_DP * d2)), d2))) < 0.05
 assert ui.zoom_step(None, mpp14) is None and ui.scale_mpp([{"desc": "Recenter", "bounds": [0, 0, 1, 1]}]) is None
+
+# T185: the checked capture (android-firstrun.py's Device.capture) on a fake adb: empty, cut short, then good bytes.
+fr = ui.firstrun
+png_dir = tempfile.mkdtemp(prefix="t185-png-")
+fr.check.encode_png(fr.check.Raster(3, 2, bytearray(range(18))), os.path.join(png_dir, "good.png"))
+GOOD = open(os.path.join(png_dir, "good.png"), "rb").read()
+shutil.rmtree(png_dir, ignore_errors=True)
+assert fr.png_problem(GOOD) is None and fr.png_problem(b"") == "empty"
+assert fr.png_problem(GOOD[:len(GOOD) // 2]).startswith("cut short") and fr.png_problem(b"<html>").startswith("not a PNG")
+
+
+def raw_frame(w, h, fmt=1, head=16):
+    return struct.pack("<III", w, h, fmt) + bytes(head - 12) + bytes(range(w * h * 4))
+
+
+GOOD_RAW = raw_frame(2, 2)
+assert fr.raw_problem(GOOD_RAW) is None and fr.raw_problem(raw_frame(2, 2, head=12)) is None
+assert fr.raw_problem(GOOD_RAW[:-3]).startswith("cut short") and fr.raw_problem(b"\x00" * 8).startswith("short")
+
+
+class FakeAdb:
+    """subprocess.run for Device: answers each screencap with the next (exit code, stdout, stderr) of a script, or raises
+    TimeoutExpired for the entry "timeout". Records the commands and the sleeps."""
+
+    def __init__(self, answers):
+        self.answers, self.cmds, self.sleeps = list(answers), [], []
+
+    def __call__(self, cmd, capture_output=True, timeout=60):
+        self.cmds.append(cmd)
+        a = self.answers.pop(0)
+        if a == "timeout":
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        code, out, err = a
+        return subprocess.CompletedProcess(cmd, code, out, err)
+
+    def sleep(self, s):
+        self.sleeps.append(s)
+
+
+def fake_device(answers):
+    fake = FakeAdb(answers)
+    d = tempfile.mkdtemp(prefix="t185-capture-")
+    return fr.Device("emulator-5999", d, exe="adb-fake", run=fake, sleep=fake.sleep), fake, d
+
+
+def reset_stats():
+    fr.CAPTURE_STATS.update(captures=0, retries=0, failures=0, reasons=[])
+
+
+# screencap: empty, cut short, good; the file is the good PNG, two retries after 0.5 and 1 s, counted.
+reset_stats()
+dev, fake, d = fake_device([(0, b"", b""), (0, GOOD[:40], b""), (0, GOOD, b"")])
+try:
+    path, raw = dev.screencap("install-previous")
+    assert raw == GOOD and open(path, "rb").read() == GOOD and os.path.basename(path) == "01-install-previous.png", path
+    assert fake.sleeps == [0.5, 1] and dev.capture_retries == 2 and len(fake.cmds) == 3, (fake.sleeps, fake.cmds)
+    assert all(c[-2:] == ["screencap", "-p"] and c[:3] == ["adb-fake", "-s", "emulator-5999"] for c in fake.cmds), fake.cmds
+    rep = fr.capture_report()
+    assert rep["captureRetries"] == 2 and len(rep["captureRetryReasons"]) == 2 and "captureFailures" not in rep, rep
+    assert "1: empty" in rep["captureRetryReasons"][0] and "cut short" in rep["captureRetryReasons"][1], rep
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
+# Every attempt empty: four retries (0.5, 1, 2, 4 s), one error naming all five attempts, and no file written at all.
+reset_stats()
+dev, fake, d = fake_device([(0, b"", b"")] * 5)
+try:
+    try:
+        dev.screencap("never")
+        raise AssertionError("an empty capture must not pass")
+    except fr.CaptureError as e:
+        assert "failed 5 times" in str(e) and "5: empty" in str(e), str(e)
+    assert fake.sleeps == [0.5, 1, 2, 4] and os.listdir(d) == [] and dev.shots == 0, (fake.sleeps, os.listdir(d))
+    assert fr.capture_report()["captureRetries"] == 4 and fr.capture_report()["captureFailures"] == 1
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
+# A failing exit code (with its stderr in the reason) and a timeout are retried like empty bytes.
+reset_stats()
+dev, fake, d = fake_device([(1, b"", b"error: closed"), "timeout", (0, GOOD, b"")])
+try:
+    assert dev.screencap("x")[1] == GOOD and dev.capture_retries == 2
+    reasons = fr.CAPTURE_STATS["reasons"]
+    assert "exit 1 (error: closed)" in reasons[0] and "exit None (no answer within 60 s)" in reasons[1], reasons
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
+# Raw frames (Device.frame, which the parts' still() uses): empty, cut short, then a whole 2x2 RGBA frame.
+reset_stats()
+dev, fake, d = fake_device([(0, b"", b""), (0, GOOD_RAW[:-5], b""), (0, GOOD_RAW, b"")])
+try:
+    t, r = dev.frame()
+    assert (r.w, r.h) == (2, 2) and r.px(1, 0) == (4, 5, 6) and t is not None, (r.w, r.h, r.px(1, 0))
+    assert all("-p" not in c for c in fake.cmds) and fake.sleeps == [0.5, 1], fake.cmds
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
+# A raw format raw_raster cannot read (RGB_565 here) is not retried: PNG frames from then on, with no raw capture first.
+reset_stats()
+dev, fake, d = fake_device([(0, struct.pack("<III", 2, 2, 4) + bytes(4) + bytes(8), b""), (0, GOOD, b""), (0, GOOD, b"")])
+try:
+    _, r = dev.frame()
+    assert (r.w, r.h) == (3, 2) and not dev.raw_frames and fake.sleeps == [], (r.w, fake.sleeps)
+    _, r = dev.frame()
+    assert [c[-1] for c in fake.cmds] == ["screencap", "-p", "-p"] and fr.CAPTURE_STATS["retries"] == 0, fake.cmds
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
+# Run.step: a failed step whose failure screenshot never comes good reports the error and no png (wave 22's 0-byte
+# 01-install-previous-failed.png is not written).
+reset_stats()
+dev, fake, d = fake_device([(0, b"", b"")] * 5)
+ui.dismiss_foreign = lambda dev: None  # no uiautomator on the fake
+try:
+    r = ui.Run(dev)
+    assert not r.step("install-previous", lambda: {"ok": False, "error": "boom"})
+    assert "png" not in r.steps[0] and os.listdir(d) == [], (r.steps[0], os.listdir(d))
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+reset_stats()
 
 print("test_android_ui: ok")

@@ -2,11 +2,17 @@
 expectation per source from the tiles that overlap the pack's bounds, and the request log's pack-answered tiles that
 count when the view's own delta is 0, with the cases that must not count (the online fallback, a tile outside the view,
 another zoom or source, an error status, an empty log). T170: a contour delta proven by the view's own pack-answered lines.
+T185: Server._open on a local HTTP server: a GET cut short is asked once more, a POST never; a refused port is forwarded
+again (a stand-in for adb that starts the listener) and the request sent once more, both counted.
 
     python -I tools/test_android_check.py
 """
+import http.client
+import http.server
 import importlib.util
 import os
+import socket
+import threading
 
 here = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("android_check", os.path.join(here, "android-check.py"))
@@ -113,5 +119,97 @@ assert ok and t["servedBeforeBaseline"] == 1, t
 tiles = {k: {"served": 1, "notFound": 0, "errors": 0} for k in ac.SOURCES}
 assert ac.tiles_check(tiles, ["dem", "osm"], [], x, [line("/dem/9/81/180.png", pack=ONLINE)]) == (True, [])
 assert ac.pack_answered([line("/contours/9/82/180.pbf", pack=None), line("/contours/9/82/180.pbf")], "contours") == [line("/contours/9/82/180.pbf")]
+
+# T185: the HTTP retries, against a local server whose /cut answers announce 100 bytes and send 10 the first `cuts` times.
+class Handler(http.server.BaseHTTPRequestHandler):
+    seen = []
+    cuts = 0
+
+    def answer(self):
+        Handler.seen.append((self.command, self.path))
+        cut = self.path.startswith("/cut") and Handler.cuts > 0
+        if cut:
+            Handler.cuts -= 1
+        self.send_response(200)
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        self.wfile.write(b"x" * (10 if cut else 100))
+        self.close_connection = True
+
+    do_GET = do_POST = answer
+
+    def log_message(self, *a):
+        pass
+
+
+def listen(port=0):
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def server_on(port):
+    s = ac.Server(port, exe="adb-fake", serial="emulator-5999")
+    s.token, s.device_port = "t", 41000  # no logcat read: the token is known
+    return s
+
+
+httpd = listen()
+try:
+    port = httpd.server_address[1]
+    s = server_on(port)
+    Handler.cuts, Handler.seen = 1, []
+    assert s.get("/cut?wait=1") == b"x" * 100 and s.counters["incompleteReadRetries"] == 1 and len(Handler.seen) == 2
+    Handler.cuts, Handler.seen = 2, []
+    try:
+        s.get("/cut")
+        raise AssertionError("a GET cut short twice must raise")
+    except http.client.IncompleteRead:
+        assert len(Handler.seen) == 2, Handler.seen
+    Handler.cuts, Handler.seen = 1, []
+    try:
+        s._open("/cut", "POST")
+        raise AssertionError("a POST cut short must raise, not be sent again")
+    except http.client.IncompleteRead:
+        assert Handler.seen == [("POST", "/cut")], Handler.seen
+    assert s.counters == {"forwardRestores": 0, "incompleteReadRetries": 2, "tokenRefreshes": 0}, s.counters
+finally:
+    httpd.shutdown()
+    httpd.server_close()
+
+# The forward gone: nothing listens on the port, so the connection is refused; restore_forward (adb's stand-in) brings
+# the listener back and the request goes through, counted. With no way to forward, the logcat path is taken (fetch_token).
+probe = socket.socket()
+probe.bind(("127.0.0.1", 0))
+free = probe.getsockname()[1]
+probe.close()
+s = server_on(free)
+started = []
+
+
+def restore():
+    started.append(listen(free))
+    return True
+
+
+s.restore_forward = restore
+Handler.cuts, Handler.seen = 0, []
+try:
+    assert s._open("/screenshot?wait=1", "POST") == b"x" * 100 and s.counters["forwardRestores"] == 1, s.counters
+    assert Handler.seen == [("POST", "/screenshot?wait=1")] and "connection refused; forwarded" in s.events[0], s.events
+finally:
+    for h in started:
+        h.shutdown()
+        h.server_close()
+s = server_on(free)
+s.restore_forward = lambda: False
+fetched = []
+s.fetch_token = lambda timeout=10.0: fetched.append(timeout) or setattr(s, "token", "t2")
+try:
+    s.get("/health")
+    raise AssertionError("still refused after the logcat path must raise")
+except Exception as e:
+    assert ac.refused(e) and fetched and s.counters["forwardRestores"] == 1, (e, fetched, s.counters)
+assert ac.refused(ConnectionRefusedError()) and not ac.refused(ConnectionResetError())
 
 print("test_android_check: ok")
