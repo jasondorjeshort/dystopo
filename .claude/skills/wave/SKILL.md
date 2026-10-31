@@ -91,8 +91,10 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    `git merge --abort` and a verifier round that rebases the branch; the coordinator resolves nothing.
 4. `bash tools/push-verified.sh`; report the VERIFIED line and nothing earlier. Only then have a Haiku
    agent clean up (`brief` skill, `chore.md`): `git branch -r --merged origin/main` must list
-   `origin/task/Tnn`; then `git push origin --delete task/Tnn`, the worktree removal and
-   `git branch -d task/Tnn` (never `-D` for a merged task; worktree removal on Windows:
+   `origin/task/Tnn`; then `git push origin --delete task/Tnn`, the worktree removal,
+   `git branch -d task/Tnn` and the task's AVD and its verifier's (`avdmanager delete avd -n
+   dystopo35-Tnn`, after `adb devices` shows neither running; waves 22 and 23 left 27 AVDs, about
+   127 GB, and C: reached under 1 GB free during the sweep of 2026-10-31; never `-D` for a merged task; worktree removal on Windows:
    `docs/reference/windows-and-shells.md`: give the chore the `\\?\` delete and one git command per
    call, and launch it only after the verifier has reported its last check, or its emulator and Gradle
    daemon hold files in the folder).
