@@ -22,7 +22,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.readout.LiveReadout
+import io.github.jasondorjeshort.dystopo.readout.KnownHeight
+import io.github.jasondorjeshort.dystopo.readout.KnownHeights
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.options.SunPoint
@@ -49,6 +53,11 @@ import java.util.Locale
  * T188: under the coordinates, a line on the sun at the point ([sun], [SunPoint]): "Sun reaches here 9:12, leaves 16:40
  * PDT", with the gaps when a peak blocks it, for today or the date picked under Sun and shade, in the phone's zone named.
  * The card keeps such lines in one column above its actions ([PointLines]); the next one (the viewshed's) goes there.
+ *
+ * T197: "I am at <name>, <height>" ([known], [setHeight]) when the press is on a named peak, saddle or pass with a
+ * tagged height (shared `readout/KnownHeights`) within 100 m of the phone's fix, the barometer in use: one tap sets the
+ * readout's height from it ([LiveReadout.pin]) and says "Height set from <name>". The height is in the user's units, so a
+ * wrong tag shows before the tap. Offered before Cancel; `GET /map/longpress` › `knownHeight` says why it is or is not.
  */
 object LongPressMenu {
     private var pointState by mutableStateOf<Pair<Double, Double>?>(null)
@@ -62,8 +71,11 @@ object LongPressMenu {
             if (v == null) {
                 sunRuns.incrementAndGet()
                 sun = null
+                knownRuns.incrementAndGet() // T197
+                known = null
             } else if (moved || sun == null) {
                 startSun()
+                startKnown(v.first, v.second) // T197
             }
         }
 
@@ -75,6 +87,70 @@ object LongPressMenu {
         private set
     private val sunRuns = java.util.concurrent.atomic.AtomicInteger()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // T197: the card's "I am at <name>, <height>" for the open point: worked out on its own thread when the card opens.
+    /** The known height the press is on, offered as an action; null while none (or while it is worked out). */
+    var known by mutableStateOf<KnownHeight?>(null)
+        private set
+    @Volatile private var knownInfo: Map<String, Any?>? = null
+    private val knownRuns = java.util.concurrent.atomic.AtomicInteger()
+
+    /** A press counts as on a feature within this of it, or a fingertip at the map's zoom when that is wider. */
+    const val FINGER_DP = 24.0
+
+    private fun startKnown(lat: Double, lon: Double) {
+        val run = knownRuns.incrementAndGet()
+        known = null
+        knownInfo = mapOf("state" to "working")
+        val app = DystopoApp.instance
+        val metersPerDp = runCatching { app.map.map?.projection?.getMetersPerPixelAtLatitude(lat) }.getOrNull()
+        val radius = maxOf(KnownHeights.NEAR_FIX_M, (metersPerDp ?: 0.0) * FINGER_DP)
+        Thread({
+            val t0 = System.nanoTime()
+            val fix = LiveReadout.freshFix()
+            val b = LiveReadout.snapshot?.readout?.barometer
+            val pinnable = b?.pinnable == true
+            val found = fix?.let { f ->
+                runCatching {
+                    KnownHeights.read({ z, x, y -> app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) } }, f.lat, f.lon, io.github.jasondorjeshort.dystopo.routing.ElevationSampler { la, lo -> LiveReadout.demAt(la, lo) })
+                }.getOrNull()
+            }
+            val pick = found?.let { KnownHeights.pick(it.candidates, lat, lon, radius) }
+            val offer = pick?.takeIf { pinnable }
+            val why = when {
+                fix == null -> "noFix"
+                found == null -> "readFailed"
+                found.candidates.isEmpty() -> "nothingNearFix"
+                pick == null -> "pressNotOnOne"
+                !pinnable -> "barometerNotInUse"
+                else -> null
+            }
+            val info = linkedMapOf(
+                "state" to "done", "offered" to (offer != null), "why" to why,
+                "label" to offer?.let { KnownHeights.menuLabel(it, AppSettings.units) },
+                "candidate" to pick?.json(), "pressRadiusM" to Math.round(radius * 10) / 10.0, "nearFixM" to KnownHeights.NEAR_FIX_M,
+                "fix" to fix?.let { linkedMapOf("lat" to it.lat, "lon" to it.lon, "time" to it.time) },
+                "barometer" to b?.state?.code, "pinnable" to pinnable,
+                "ms" to (System.nanoTime() - t0) / 1_000_000,
+            ) + (found?.json() ?: emptyMap())
+            main.post {
+                if (run != knownRuns.get()) return@post
+                known = offer
+                knownInfo = info
+            }
+        }, "dystopo-known-height").apply { isDaemon = true }.start()
+    }
+
+    /** T197, "I am at <name>, <height>": the readout's height set from the feature, a one-line confirmation. Main thread. */
+    fun setHeight() {
+        val k = known ?: return
+        point = null
+        lastAction = "height"
+        LiveReadout.pinThen(k.name, k.eleM, k.sigmaM, "menu") { line ->
+            line?.let { android.widget.Toast.makeText(DystopoApp.instance, it, android.widget.Toast.LENGTH_SHORT).show() }
+        }
+    }
+    // end T197
 
     private fun startSun() {
         val (lat, lon) = point ?: return
@@ -187,6 +263,7 @@ object LongPressMenu {
         "presses" to presses, "lastAction" to lastAction, "routePhase" to RouteSession.phase,
         "actions" to ACTIONS, // T114
         "sun" to sun?.json(), // T188: the sun line and the terrain day behind it
+        "knownHeight" to (if (point != null) knownInfo else null), // T197: "I am at <name>, <height>" and why (not)
     )
 }
 
@@ -222,6 +299,7 @@ internal fun LongPressCard() {
             MenuAction("Route from here") { LongPressMenu.route() }
             MenuAction(io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE) { LongPressMenu.aroundHere() } // T142
             MenuAction(io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION) { LongPressMenu.viewshed() } // T182
+            LongPressMenu.known?.let { k -> MenuAction(KnownHeights.menuLabel(k, AppSettings.units)) { LongPressMenu.setHeight() } } // T197
             MenuAction("Cancel") { LongPressMenu.cancel() }
         }
     }

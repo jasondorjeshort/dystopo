@@ -64,6 +64,22 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   (`time,hPa,heightM,source,speedMps,lat,lon`, `PressureSeries`): replaces the series with the synthetic one moved to
  *   end now and evaluates it (the card, the spoken line and the arrow follow as live); live input is ignored meanwhile.
  *   `?clear=1` forgets it and the warning's memory (raised, its band, the 3 h no-repeat) and returns to live input. `?dismiss=1` presses the card's Dismiss. Answers `trend`.
+ * T197, the known height (shared `readout/KnownHeights`, [io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.pin]):
+ * - `GET /readout` › `readout.barometer` adds `pinned`, `pinnedAt` (the inputs' clock), `pinnedName` (null for a typed
+ *   height), `pinnedSigmaM`, `pinnedEleM`, `pinnable` (the barometer fused: a pin would hold) and `pinEnd` (why the last
+ *   one ended: `sigma`, `barometer`, `disagreement`, `replaced`), and `readout.counters` `pins`, `pinsCleared`,
+ *   `pinReleases`, `gnssHeldByPin`, `demHeldByPin`. `pin`: `pinned`, `pinnable`, `name`, `eleM`, `sigmaM`, `atMs`,
+ *   `ageS`, `offsetSigmaM`, `holdsUnderM` (twice the pin's sigma: the mark clears when the offset's sigma reaches it),
+ *   `end`, `mark` (`shown`, `glyph`, `label` "Set at <name>" or "Set by you", `detail` the tap's line, `boundsPx`,
+ *   `taps`, `lastTapText`), `fix` (the last fix when fresh, 120 s) and `last` (the last pin: `via`, `name`, `eleM`,
+ *   `sigmaM`, `confirmation`, `held`, `movedM`, `reason`). `line` ends with the mark's words while it is drawn.
+ * - `POST /readout/calibrate?ele=<m>|height=<typed>[&name=<place>][&kind=peak|saddle|pass|sign][&sigma=<m>]` sets the
+ *   height (`height` is read as the settings field reads it, in the user's units unless it names one; `kind` gives the
+ *   sigma, 3 m for a peak, 5 m otherwise; a peak with a name, a sign without, by default); `?nearest=1` takes the
+ *   candidate nearest the fresh fix as the long-press card finds them (409 with none, the candidates and rejections
+ *   in the answer); `?menu=1` taps the open long-press card's "I am at" (409 when it does not offer one). 400 for a
+ *   height out of range. Answers `result` (`held`, `movedM`, `reason`), `confirmation`, and `pin` as in `GET`.
+ *   `POST /readout/reset` forgets the pin with every input.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`, T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`; `SettingsRoutes`).
  */
@@ -76,8 +92,49 @@ object ScaleBarRoutes {
         "POST" to "/readout/reset" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.reset() + io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         "POST" to "/readout/stations" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.PressureSource.configure(r.query["url"])) // T173
         "POST" to "/readout/trend" -> trend(app, r) // T178
+        "POST" to "/readout/calibrate" -> calibrate(app, r) // T197
         else -> null
     }
+
+    /** T197: `POST /readout/calibrate`. */
+    private fun calibrate(app: DystopoApp, r: Request): Response {
+        val live = io.github.jasondorjeshort.dystopo.app.readout.LiveReadout
+        val kh = io.github.jasondorjeshort.dystopo.readout.KnownHeights
+        fun answer(result: io.github.jasondorjeshort.dystopo.readout.PinResult, name: String?, eleM: Double, extra: Map<String, Any?> = emptyMap()): Response {
+            val pin = live.json()["pin"]
+            return Response.json(linkedMapOf("result" to result.json(), "confirmation" to kh.confirmation(name, eleM, io.github.jasondorjeshort.dystopo.app.AppSettings.units), "pin" to pin) + extra)
+        }
+        if (r.query["menu"] == "1") {
+            val k = app.map.onMain { io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu.known }
+                ?: return Response.json(mapOf("error" to "the long-press card offers no \"I am at\"", "longPress" to app.map.onMain { io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu.json() }), 409)
+            app.map.onMain { io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu.setHeight() }
+            // setHeight pins on its own thread: wait for it to land.
+            val until = System.currentTimeMillis() + 5000
+            while (System.currentTimeMillis() < until) {
+                val last = live.json()["pin"].let { (it as? Map<*, *>)?.get("last") as? Map<*, *> }
+                if (last?.get("via") == "menu" && last["name"] == k.name) break
+                Thread.sleep(50)
+            }
+            return Response.json(linkedMapOf("tapped" to io.github.jasondorjeshort.dystopo.readout.KnownHeights.menuLabel(k, io.github.jasondorjeshort.dystopo.app.AppSettings.units), "candidate" to k.json(), "pin" to live.json()["pin"]))
+        }
+        if (r.query["nearest"] == "1") {
+            val fix = live.freshFix() ?: return Response.json(mapOf("error" to "no fresh fix"), 409)
+            val found = kh.read({ z, x, y -> app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) } }, fix.lat, fix.lon,
+                io.github.jasondorjeshort.dystopo.routing.ElevationSampler { la, lo -> live.demAt(la, lo) })
+            val k = found.candidates.firstOrNull() ?: return Response.json(mapOf("error" to "no named peak, saddle or pass with a height within ${kh.NEAR_FIX_M} m of the fix") + found.json(), 409)
+            return answer(live.pin(k.name, k.eleM, k.sigmaM, "route"), k.name, k.eleM, mapOf("candidate" to k.json()) + found.json())
+        }
+        val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
+        val ele = r.query["ele"]?.let { raw -> raw.trim().toDoubleOrNull()?.takeIf { it in kh.MIN_ELE_M..kh.MAX_ELE_M } ?: return Response.json(mapOf("error" to "ele must be metres between ${kh.MIN_ELE_M} and ${kh.MAX_ELE_M}"), 400) }
+            ?: r.query["height"]?.let { raw -> kh.parseTyped(raw, units) ?: return Response.json(mapOf("error" to "height: $raw is not a height"), 400) }
+            ?: return Response.json(mapOf("error" to "ele=<m>, height=<typed>, nearest=1 or menu=1 is required"), 400)
+        val name = r.query["name"]?.trim()?.takeIf { it.isNotEmpty() }
+        val kind = r.query["kind"]?.trim()?.lowercase() ?: if (name != null) "peak" else "sign"
+        val sigma = r.query["sigma"]?.let { raw -> raw.toDoubleOrNull()?.takeIf { it > 0 && it <= 100 } ?: return Response.json(mapOf("error" to "sigma must be metres, above 0 and at most 100"), 400) }
+            ?: kh.sigmaFor(kind)
+        return answer(live.pin(name, ele, sigma, "route"), name, ele, mapOf("kind" to kind))
+    }
+    // end T197
 
     /** T178: `POST /readout/trend`. */
     private fun trend(app: DystopoApp, r: Request): Response {

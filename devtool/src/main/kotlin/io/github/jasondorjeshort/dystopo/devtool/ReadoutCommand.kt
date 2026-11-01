@@ -21,6 +21,9 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.readout.Damping
 import io.github.jasondorjeshort.dystopo.readout.FallWarning
 import io.github.jasondorjeshort.dystopo.readout.HeightSource
+import io.github.jasondorjeshort.dystopo.readout.Altimeter
+import io.github.jasondorjeshort.dystopo.readout.KnownHeights
+import io.github.jasondorjeshort.dystopo.readout.PinResult
 import io.github.jasondorjeshort.dystopo.readout.PressureFixtures
 import io.github.jasondorjeshort.dystopo.readout.PressureSeries
 import io.github.jasondorjeshort.dystopo.readout.PressureTrend
@@ -66,6 +69,13 @@ import kotlin.math.sqrt
  *
  *   devtool readout --trend-fixture all
  *   devtool readout --pressure out/pressure-still-fall.csv --warning fewer
+ *
+ * T197: `--calibrate <ele>@<time>` sets a known height during the replay (`--calibrate-name` the place, else a typed
+ * height; `--calibrate-kind` peak 3 m, saddle, pass or sign 5 m) and the report adds `calibrate` ([Calibration]): the
+ * height and offset before and after, the mark's `heldMin` and `end` as replayed, `walkAloneHoldMin` and
+ * `againstStation`, how long the pin stays surer than a weather station's prior at 0, 25 and 50 km.
+ *
+ *   devtool readout --gpx track.gpx --pressure track-pressure.csv --calibrate 2097@+90min --calibrate-name "Panorama Point"
  */
 class ReadoutCommand : CliktCommand(name = "readout") {
     override fun help(context: Context) =
@@ -89,6 +99,10 @@ class ReadoutCommand : CliktCommand(name = "readout") {
     private val warning by option("--warning", help = "The pressure-fall warning: off, more (3 hPa), standard (4, default) or fewer (6)").choice(*FallWarning.entries.map { it.code }.toTypedArray()).default("standard")
     private val stationTemp by option("--station-temp", help = "A weather station's temperature (degrees C) for the trend's reduction").double()
     private val stationElev by option("--station-elev", help = "That station's elevation (m)").double()
+    // T197: a known height set during the replay.
+    private val calibrate by option("--calibrate", help = "Set the height during the replay: <ele>@<time>, ele in metres (or 5940ft), time ISO 8601, epoch ms or +<s>|+<n>min from the first fix")
+    private val calibrateName by option("--calibrate-name", help = "The place --calibrate sets the height from (none: a typed height)")
+    private val calibrateKind by option("--calibrate-kind", help = "peak (3 m, the default with a name), saddle, pass or sign (5 m, the default without)").choice("peak", "volcano", "hill", "saddle", "pass", "sign")
 
     override fun run() {
         val t0 = System.nanoTime()
@@ -139,6 +153,7 @@ class ReadoutCommand : CliktCommand(name = "readout") {
         var maxSpeed = 0.0
         var p = 0
         var last: Readout? = null
+        val cal = calibrate?.let { Calibration.parse(it, calibrateName, calibrateKind, points.first().time!!) } // T197
         for ((i, pt) in points.withIndex()) {
             val t = pt.time!!
             while (p < pressure.size && pressure[p].timeMs <= t) {
@@ -149,9 +164,11 @@ class ReadoutCommand : CliktCommand(name = "readout") {
             trend.onFix(t, demH ?: pt.ele, if (demH != null) demSource(pt.lat, pt.lon) else if (pt.ele != null) HeightSource.GNSS else null, pt.speedMps, pt.lat, pt.lon)
             val fix = LocationFix(pt.lat, pt.lon, pt.ele, t, pt.accuracyM, speedMps = pt.speedMps, courseDeg = pt.courseDeg, verticalAccuracyM = pt.verticalAccuracyM)
             val along = nav?.onFix(pt.lat, pt.lon, t, pt.accuracyM)?.let { s -> if (s.offRoute) null else s.progress }
+            cal?.beforeFix(est, t, pressure.getOrNull(p - 1)?.hPa)
             est.onFix(fix, along)
             val r = est.readout(t)
             last = r
+            cal?.afterFix(r, pt.ele)
             for (e in ReadoutEntry.entries) {
                 val v = r[e]
                 count("${e.code}.${v.state.code}")
@@ -185,6 +202,7 @@ class ReadoutCommand : CliktCommand(name = "readout") {
             ),
             "counters" to last?.counters, "provenance" to last?.provenance,
             "trend" to if (pressure.isEmpty()) null else trend.evaluate(points.last().time!! + 1, w, station(null)).json(), // T178
+            "calibrate" to cal?.json(points.last().time!!), // T197
             "series" to series,
             "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,
         )
@@ -273,4 +291,94 @@ class ReadoutCommand : CliktCommand(name = "readout") {
     }
 
     private fun r3(v: Double) = Math.round(v * 1000) / 1000.0
+}
+
+/**
+ * T197: `devtool readout --calibrate <ele>@<time>`: a known height set during the replay ([ReadoutEstimator.pin]) and
+ * what came of it: the height before and after, how long the mark held (the offset's sigma under twice the pin's) and
+ * why it ended, and how long the pin stays surer than a weather station's prior at 0, 25 and 50 km
+ * ([KnownHeights.holdAgainstStationS]), the idea's figure.
+ */
+internal class Calibration(val eleM: Double, val tMs: Long, val name: String?, val kind: String, val sigmaM: Double) {
+    private var result: PinResult? = null
+    private var hPa: Double? = null
+    private var before: Readout? = null
+    private var after: Readout? = null
+    private var afterGpxEle: Double? = null
+    private var clearedAt: Readout? = null
+    private var lastBefore: Readout? = null
+
+    /** Sets the height before the first fix at or after [tMs] ([hPaNow]: the last barometer sample, for the station figures). */
+    fun beforeFix(est: ReadoutEstimator, t: Long, hPaNow: Double?) {
+        if (result != null || t < tMs) return
+        before = lastBefore
+        hPa = hPaNow
+        result = est.pin(name, eleM, sigmaM, tMs)
+    }
+
+    fun afterFix(r: Readout, gpxEle: Double?) {
+        if (result == null) { lastBefore = r; return }
+        if (after == null) { after = r; afterGpxEle = gpxEle }
+        else if (clearedAt == null && after?.barometer?.pinned == true && !r.barometer.pinned) clearedAt = r
+    }
+
+    fun json(endMs: Long): Map<String, Any?> {
+        val res = result
+        val a = after
+        val offsetSigma = a?.barometer?.offsetSigmaM
+        val p = hPa ?: (Altimeter.STANDARD_HPA * Math.pow(1 - eleM / 44_330.77, 1 / 0.190263))
+        val held = clearedAt?.let { (it.timeMs - tMs) / 1000.0 }
+        fun minutes(s: Double?) = s?.let { Math.round(it / 6.0) / 10.0 }
+        return linkedMapOf(
+            "eleM" to eleM, "time" to GpxFormat.formatTime(tMs), "name" to name, "kind" to kind, "sigmaM" to sigmaM,
+            "applied" to (res != null), "result" to res?.json(),
+            "elevationBeforeM" to before?.elevation?.value?.let(::r3), "elevationAfterM" to a?.elevation?.value?.let(::r3),
+            "gpxEleAfterM" to afterGpxEle,
+            "offsetBeforeM" to before?.barometer?.offsetM?.let(::r3), "offsetAfterM" to a?.barometer?.offsetM?.let(::r3),
+            "offsetSigmaAfterM" to offsetSigma?.let(::r3),
+            "barometerAfter" to a?.barometer?.json(),
+            // The mark as replayed: when it cleared and why, or still held at the end.
+            "mark" to linkedMapOf(
+                "pinned" to (a?.barometer?.pinned ?: false),
+                "clearedAt" to clearedAt?.let { GpxFormat.formatTime(it.timeMs) },
+                "heldS" to held?.let(::r3), "heldMin" to minutes(held),
+                "end" to clearedAt?.barometer?.pinEnd,
+                "stillHeldAtEnd" to (a?.barometer?.pinned == true && clearedAt == null),
+                "replayLeftS" to (endMs - tMs) / 1000,
+                "offsetSigmaAtClearM" to clearedAt?.barometer?.offsetSigmaM?.let(::r3),
+            ),
+            // On the walk alone (no station prior, no other input): the rule's own figure.
+            "walkAloneHoldMin" to offsetSigma?.let { minutes(KnownHeights.markHoldS(it, sigmaM)) },
+            "againstStation" to offsetSigma?.let { s ->
+                linkedMapOf(
+                    "hPa" to r3(p),
+                    "rule" to "the pin's offset sigma grown by the 5 m/sqrt(h) walk against a report fresh at the pin, 0.5 hPa plus 1 hPa per 100 km plus 0.1 hPa per hour",
+                    "byDistance" to listOf(0.0, 25_000.0, 50_000.0).map { d ->
+                        val h = KnownHeights.holdAgainstStationS(s, d, p)
+                        linkedMapOf("km" to d / 1000, "stationSigmaM" to r3(KnownHeights.stationSigmaM(d, p)), "holdsMin" to h?.let { minutes(it.toDouble()) }, "surerThanStationAtPin" to (h != 0L))
+                    },
+                )
+            },
+        )
+    }
+
+    companion object {
+        /** `<ele>@<time>`: ele in metres or with a unit (`5940ft`), time ISO 8601, epoch ms, or `+<s>` / `+<n>min` from [firstMs]. */
+        fun parse(raw: String, name: String?, kind: String?, firstMs: Long): Calibration {
+            val at = raw.lastIndexOf('@')
+            if (at <= 0) throw UsageError("--calibrate must be <ele>@<time>")
+            val ele = KnownHeights.parseTyped(raw.substring(0, at), ContourUnits.METERS)
+                ?: throw UsageError("--calibrate: ${raw.substring(0, at)} is not a height between ${KnownHeights.MIN_ELE_M} and ${KnownHeights.MAX_ELE_M} m")
+            val ts = raw.substring(at + 1).trim()
+            val t = when {
+                ts.startsWith("+") && ts.endsWith("min") -> ts.drop(1).removeSuffix("min").toDoubleOrNull()?.let { firstMs + (it * 60_000).toLong() }
+                ts.startsWith("+") -> ts.drop(1).removeSuffix("s").toDoubleOrNull()?.let { firstMs + (it * 1000).toLong() }
+                else -> ts.toLongOrNull() ?: GpxFormat.parseTime(ts)
+            } ?: throw UsageError("--calibrate: $ts is not a time (ISO 8601, epoch ms, +<s> or +<n>min)")
+            val k = kind ?: if (name != null) "peak" else "sign"
+            return Calibration(ele, t, name, k, KnownHeights.sigmaFor(k))
+        }
+
+        private fun r3(v: Double) = Math.round(v * 1000) / 1000.0
+    }
 }
