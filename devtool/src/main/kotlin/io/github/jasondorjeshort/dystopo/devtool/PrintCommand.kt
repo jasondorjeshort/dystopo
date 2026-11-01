@@ -28,6 +28,16 @@ import io.github.jasondorjeshort.dystopo.render.SheetFont
 import io.github.jasondorjeshort.dystopo.render.SheetGrid
 import io.github.jasondorjeshort.dystopo.render.SheetMargin
 import io.github.jasondorjeshort.dystopo.render.UnitRegions
+import io.github.jasondorjeshort.dystopo.render.TripReport
+import io.github.jasondorjeshort.dystopo.render.TripReportPage
+import io.github.jasondorjeshort.dystopo.render.TripSummary
+import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
+import io.github.jasondorjeshort.dystopo.model.Track
+import io.github.jasondorjeshort.dystopo.model.TrackPoint
+import io.github.jasondorjeshort.dystopo.model.TrackSegment
+import io.github.jasondorjeshort.dystopo.routing.PaceFit
+import io.github.jasondorjeshort.dystopo.routing.PaceFits
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -474,6 +484,15 @@ class AwtSheetCanvas(private val g: Graphics2D, private val layout: PageLayout, 
         g.draw(p)
     }
 
+    override fun roundLine(xy: DoubleArray, dx: Double, dy: Double, color: Int, width: Double) {
+        if (xy.size < 4) return
+        val p = Path2D.Double()
+        for (i in 0 until xy.size / 2) if (i == 0) p.moveTo(dx + xy[0], dy + xy[1]) else p.lineTo(dx + xy[2 * i], dy + xy[2 * i + 1])
+        g.color = color(color)
+        g.stroke = BasicStroke(width.toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g.draw(p)
+    }
+
     override fun rect(x: Double, y: Double, w: Double, h: Double, fill: Int?, stroke: Int?, width: Double) {
         val r = Rectangle2D.Double(x, y, w, h)
         fill?.let { g.color = color(it); g.fill(r) }
@@ -509,8 +528,163 @@ class AwtSheetCanvas(private val g: Graphics2D, private val layout: PageLayout, 
     }
 }
 
+/** T198: a made trip report: the page image, its layout, the summary behind it and its JSON report. */
+class PrintedReport(
+    val layout: PageLayout,
+    val page: BufferedImage,
+    val summary: TripSummary,
+    val report: LinkedHashMap<String, Any?>,
+    /** Text drawn by the page, page pixels: the golden compares these loosely. */
+    val textBoxes: List<Rectangle2D>,
+    /** Contour labels drawn on the map, frame pixels. */
+    val mapLabels: List<ContourLabel>,
+) {
+    val title: String get() = report["title"] as String
+
+    fun png(): ByteArray = ByteArrayOutputStream().also { check(ImageIO.write(page, "png", it)) { "no PNG writer" } }.toByteArray()
+
+    fun pdf(): ByteArray = PrintSheet.pdf(page, layout, title)
+
+    fun json(): String = JsonWriter.write(report)
+}
+
+/**
+ * T198: the trip report of a track as devtool makes it (`devtool print --gpx <file> --report`): `shared`'s [TripReport]
+ * plans the page and works out the figures, the map is [MapRenderer]'s as on the sheet (T167), and [TripReportPage]
+ * draws the track, the profile strip and the margin through [AwtSheetCanvas]. The PDF is [PrintSheet.pdf]'s.
+ */
+object TripReportSheet {
+    data class Request(
+        val track: Track,
+        val title: String,
+        /** Null: by region, Letter in the US and A4 elsewhere. */
+        val paper: Paper? = null,
+        val landscape: Boolean = false,
+        /** Null: by region, feet in the US and metres elsewhere. */
+        val units: ContourUnits? = null,
+        val dpi: Double = PageLayout.DEFAULT_DPI,
+        val source: String = "best",
+        val osm: File? = null,
+        /** The walker's fits (`--pace-fit`); a hike without one is held against the standard estimate. */
+        val fits: Map<TravelMode, PaceFit> = emptyMap(),
+        val textScale: Double = 1.2,
+        val epochMs: Long = System.currentTimeMillis(),
+        /** The zone the walk's day and the print date are read in. */
+        val zone: ZoneId = ZoneId.systemDefault(),
+    )
+
+    /** The units [req] asks for, else by region at the track's first point. */
+    fun unitsOf(req: Request): ContourUnits =
+        req.units ?: req.track.points.firstOrNull()?.let { UnitRegions.contourUnitsAt(it.lat, it.lon) } ?: ContourUnits.METERS
+
+    /** Plans the page, fetches the elevation for its frame and makes the report; [packs] are searched for a vector archive when [Request.osm] is null. */
+    fun make(req: Request, packs: List<File>, timings: Timings = Timings()): PrintedReport {
+        val units = unitsOf(req)
+        val summary = timings.time("summary") { TripReport.summarize(req.track, units, req.fits) }
+        val layout = timings.time("plan") { TripReport.plan(summary, req.paper, req.landscape, req.dpi) }
+        val window = PrintSheet.window(layout)
+        require(window.width.toLong() * window.height <= PrintSheet.MAX_MAP_PIXELS) { "the map would be ${window.width}x${window.height} px; lower the dpi" }
+        val osm = req.osm ?: PrintSheet.osmPackAt(layout.centerLat, layout.centerLon, packs)
+        val src = ElevationSource.byId(req.source)
+        val fetched = timings.time("fetch") { src.fetch(window) }
+        val attribution = fetched.attribution(src) + (if (osm != null) " " + SourceRegistry.builtIn.attribution(LiveTiles.OSM_PACK_REGISTRY_IDS) else "")
+        return fromGrid(req.copy(units = units, osm = osm), summary, layout, fetched.grid, attribution, fetched.provenance, fetched.counters, timings)
+    }
+
+    /** The report over an elevation [grid] already in [layout]'s window (the golden passes a synthetic one). */
+    fun fromGrid(
+        req: Request,
+        summary: TripSummary,
+        layout: PageLayout,
+        grid: ElevationGrid,
+        attribution: String,
+        provenance: List<String>,
+        counters: Map<String, Long> = emptyMap(),
+        timings: Timings = Timings(),
+    ): PrintedReport {
+        val units = summary.units
+        val window = PrintSheet.window(layout)
+        val sheetReq = SheetRequest(
+            title = req.title, centerLat = layout.centerLat, centerLon = layout.centerLon, paper = layout.paper, landscape = layout.landscape,
+            units = units, dpi = req.dpi, osm = req.osm, textScale = req.textScale, epochMs = req.epochMs,
+        )
+        val style = PrintSheet.style(layout, sheetReq, units)
+        val render = MapRenderer.render(grid, layout.zoom, style, timings, window = window)
+        val labels = ContourLayer.build(grid, layout.zoom, style, Timings()).labels
+        val printed = Instant.ofEpochMilli(req.epochMs).atZone(req.zone).toLocalDate().toString()
+        val walked = summary.stats.startTime?.let { Instant.ofEpochMilli(it).atZone(req.zone).toLocalDate().toString() }
+        val pageDraw = TripReportPage(
+            layout, summary, req.title, walked, printed, attribution, SheetMargin.contourLine(render.contours.interval, render.contours.units),
+        )
+        val boxes = ArrayList<Rectangle2D>()
+        val page = timings.time("compose") {
+            val image = BufferedImage(layout.pageWidthPx, layout.pageHeightPx, BufferedImage.TYPE_INT_RGB)
+            val g = image.createGraphics()
+            hints(g)
+            g.color = Color.WHITE
+            g.fillRect(0, 0, image.width, image.height)
+            g.drawImage(render.image, layout.frameXPx, layout.frameYPx, null)
+            pageDraw.paint(AwtSheetCanvas(g, layout, boxes))
+            g.dispose()
+            image
+        }
+        val b = layout.bbox
+        val r5 = { v: Double -> (v * 1e5).roundToLong() / 1e5 }
+        val report = linkedMapOf<String, Any?>(
+            "title" to req.title,
+            "track" to summary.name,
+            "walked" to walked,
+            "scale" to layout.scale,
+            "ratio" to layout.ratioText,
+            "paper" to layout.paper.key,
+            "landscape" to layout.landscape,
+            "dpi" to (layout.dpi * 100).roundToLong() / 100.0,
+            "nominalDpi" to layout.nominalDpi,
+            "pageWidthPx" to layout.pageWidthPx,
+            "pageHeightPx" to layout.pageHeightPx,
+            "frameMm" to listOf(layout.frameMm.x, layout.frameMm.y, layout.frameMm.w, layout.frameMm.h),
+            "extent" to listOf(b.west, b.south, b.east, b.north).map(r5),
+            "center" to listOf(layout.centerLat, layout.centerLon).map(r5),
+            "zoom" to layout.zoom,
+            "contourInterval" to render.contours.interval,
+            "contourUnits" to render.contours.units,
+        )
+        report.putAll(summary.json())
+        report["stopLabels"] = pageDraw.stopLabels
+        report["profileBoxPx"] = pageDraw.profileBox?.let { listOf(it.x, it.y, it.w, it.h).map { v -> v.roundToLong() } }
+        report["figuresBoxPx"] = pageDraw.figuresBox?.let { listOf(it.x, it.y, it.w, it.h).map { v -> v.roundToLong() } }
+        report["margin"] = pageDraw.texts.toList()
+        report["printed"] = printed
+        report["provenance"] = provenance
+        report["attribution"] = attribution
+        report["osmArchive"] = req.osm?.name
+        report["elevationMinMeters"] = grid.finiteMin()
+        report["elevationMaxMeters"] = grid.finiteMax()
+        report["sourceCounters"] = counters
+        report["timingsMs"] = timings.ms
+        return PrintedReport(layout, page, summary, report, boxes, labels)
+    }
+
+    /**
+     * The track a GPX file's report is of: its first track with points (every segment), else its first route as one
+     * segment without times; [fallbackName] names it when the file does not.
+     */
+    fun trackOf(doc: GpxDocument, fallbackName: String): Track? {
+        doc.tracks.firstOrNull { t -> t.segments.any { it.points.isNotEmpty() } }?.let { t ->
+            return t.copy(name = t.name.ifBlank { fallbackName }, segments = t.segments.filter { it.points.isNotEmpty() })
+        }
+        val r = doc.routes.firstOrNull { it.points.size >= 2 } ?: return null
+        return Track("route", r.name.ifBlank { fallbackName }, listOf(TrackSegment(r.points.map { TrackPoint(it.lat, it.lon, it.ele, it.time) })))
+    }
+
+    /** Output stem for a report: out/<name>-report-<paper>. */
+    fun stem(name: String, layout: PageLayout): String =
+        "${name.replace(Regex("[^A-Za-z0-9._-]+"), "-")}-report-${layout.paper.key}${if (layout.landscape) "-landscape" else ""}"
+}
+
 /**
  * `devtool print`: a map sheet to print, as a PDF and a PNG of the page in `out/`, with a JSON report (T167).
+ * T198: `--gpx <file> --report` makes the trip report of the file's track instead ([TripReportSheet]).
  */
 class PrintCommand : CliktCommand(name = "print") {
     override fun help(context: Context) =
@@ -535,8 +709,17 @@ class PrintCommand : CliktCommand(name = "print") {
     private val dpi by option("--dpi", help = "Page resolution").double().default(PageLayout.DEFAULT_DPI)
     private val textScale by option("--text-scale", help = "Label size; 1.0 is about 6 pt on paper").double().default(1.2)
     private val out by option("--out", help = "Output stem (default out/<area>-sheet-<scale>-<paper>); .pdf and .png are added")
+    private val report by option(
+        "--report",
+        help = "With --gpx: the trip report of its first track instead of a map sheet (the map fitted to the track, the elevation profile with the stops, the day's figures)",
+    ).flag()
+    private val paceFit by option(
+        "--pace-fit",
+        help = "With --report: the walker's fit as the phone stores it (the app.paceFit setting); default the standard estimate",
+    )
 
     override fun run() {
+        if (report) return runReport()
         val timings = Timings()
         val fit = scaleText.trim().lowercase() == "fit"
         val scale = if (fit) null else scaleText.trim().replace(",", "").toDoubleOrNull()?.takeIf { it >= 500 }
@@ -572,6 +755,40 @@ class PrintCommand : CliktCommand(name = "print") {
             pngBytes = pngFile.length()
         }
         echo(reportJson.encodeToString(sheet.report.copy(timingsMs = LinkedHashMap(timings.ms))))
+    }
+
+    /** T198: `--gpx <file> --report`: the trip report's PDF and PNG in out/ and its JSON, every margin figure listed. */
+    private fun runReport() {
+        val timings = Timings()
+        val file = gpx ?: throw UsageError("--report needs --gpx <track>")
+        if (area != null || bbox != null || center != null) throw UsageError("--report fits the map to the track; leave out --area, --bbox and --center")
+        val doc = timings.time("readGpx") { GpxCommand.load(file).document }
+        val track = TripReportSheet.trackOf(doc, file.nameWithoutExtension) ?: throw UsageError("${file.path} has no track or route with points")
+        val fits = paceFit?.let { v ->
+            val stored = PaceFits.decode(v) ?: throw UsageError("--pace-fit is not a fit this build reads (got '$v')")
+            stored.fits.filter { it.ready }.associateBy { it.mode }
+        } ?: emptyMap()
+        val req = TripReportSheet.Request(
+            track = track, title = title ?: track.name, paper = paperText?.let { Paper.parse(it) }, landscape = landscape,
+            units = unitsText?.let { ContourUnits.parse(it) }, dpi = dpi, source = source, osm = if (noOsm) null else osm,
+            fits = fits, textScale = textScale,
+        )
+        val packs = if (noOsm) emptyList() else LiveTiles.findPacks(emptyList()).second
+        val made = TripReportSheet.make(req, packs, timings)
+        val stem = out ?: "out/${TripReportSheet.stem(file.nameWithoutExtension, made.layout)}"
+        val pdfFile = File("$stem.pdf")
+        val pngFile = File("$stem.png")
+        pdfFile.absoluteFile.parentFile.mkdirs()
+        val pdf = timings.time("writePdf") { made.pdf().also { pdfFile.writeBytes(it) } }
+        timings.time("writePng") { pngFile.writeBytes(made.png()) }
+        made.report["fits"] = fits.keys.map { it.label }
+        made.report["pdf"] = pdfFile.path
+        made.report["pdfBytes"] = pdfFile.length()
+        made.report["pdfPages"] = PrintSheet.pdfPages(pdf)
+        made.report["png"] = pngFile.path
+        made.report["pngBytes"] = pngFile.length()
+        made.report["timingsMs"] = LinkedHashMap(timings.ms)
+        echo(made.json())
     }
 
     private data class Where(val name: String?, val box: BoundingBox?, val lat: Double, val lon: Double)

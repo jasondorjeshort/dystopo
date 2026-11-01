@@ -32,6 +32,7 @@ fun main(args: Array<String>) {
     // T167: the printed sheet's golden, in its own subdirectory (PrintGolden).
     File(dir, "print").mkdirs()
     write(PrintGolden.FILE, ByteArrayOutputStream().also { ImageIO.write(PrintGolden.render().page, "png", it) }.toByteArray())
+    write(TripReportGolden.FILE, ByteArrayOutputStream().also { ImageIO.write(TripReportGolden.render().page, "png", it) }.toByteArray()) // T198
     // T181: the sun-and-shade goldens, in their own subdirectory (ShadeGolden).
     File(dir, "shade").mkdirs()
     for (case in ShadeGolden.cases) write(case.file, ByteArrayOutputStream().also { ImageIO.write(case.render(), "png", it) }.toByteArray())
