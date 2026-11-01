@@ -114,10 +114,14 @@ function Wait-Healthz([int]$seconds) {
 function Stop-SiteTasks([switch]$Disable) {
     foreach ($t in @($serverTask, $proxyTask)) {
         if (-not (Get-Task $t)) { continue }
-        # Disabled first, so the every-minute trigger cannot start the task again in the middle of an update.
-        if ($Disable) { Disable-ScheduledTask -TaskName $t | Out-Null }
         $taskPid = Get-TaskPid $t
-        Stop-ScheduledTask -TaskName $t
+        try {
+            # Disabled first, so the every-minute trigger cannot start the task again in the middle of an update.
+            if ($Disable) { Disable-ScheduledTask -TaskName $t | Out-Null }
+            Stop-ScheduledTask -TaskName $t
+        } catch {
+            Fail "Task Scheduler refused to stop '$t' ($($_.Exception.Message.Trim())); S4U tasks need this run $elevatedHint"
+        }
         if ($taskPid) {
             for ($i = 0; $i -lt 30 -and (Get-Process -Id $taskPid -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
         }
