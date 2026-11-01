@@ -3498,6 +3498,25 @@ if (['EL', 'ES'].some((g) => selected(g) || (opt.only && opt.only.startsWith(g))
       report('ES05', 'a lock whose PID now runs another program (reused): never killed, the lock removed as dead',
         r.code === 0 && alive(plain) && !fs.existsSync(lockFile(5709)) && /removed the dead lock of emulator-5709/.test(r.stdout), `exit ${r.code}, alive ${alive(plain)}`, r.stdout);
     }
+    if (selected('ES09')) {
+      // The real input of a SubagentStop that is only a yield (schema read from the installed Claude Code 2026-11-01).
+      const pid = fakeEmu(5717, 'dystopo35-T9');
+      writeClaims('agentES09', [{ avd: 'dystopo35-T9', prefix: false }]);
+      const task = { id: 'bg1', type: 'shell', status: 'running', description: 'sweep', command: 'powershell tools/sweep.ps1' };
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES09', agent_type: 'general-purpose', background_tasks: [task], session_crons: [] }), elEnv());
+      const kept = alive(pid) && fs.existsSync(lockFile(5717)) && fs.existsSync(claimFile('agentES09'));
+      // The final stop of the same agent finds the claim and the lock still there and stops the emulator.
+      const r2 = run('emulator-stop', stopInput({ agent_id: 'agentES09', agent_type: 'general-purpose', background_tasks: [], session_crons: [] }), elEnv());
+      report('ES09', 'background_tasks non-empty (the agent yields): the fake qemu (pid ' + pid + ') and its lock and claim are left alone, and the same agent, later stopping with [] terminates it',
+        r.code === 0 && r.stdout === '' && kept && r2.code === 0 && !alive(pid) && !fs.existsSync(lockFile(5717)), `exit ${r.code}, kept ${kept}, then alive ${alive(pid)}`, r.stdout + r2.stdout);
+    }
+    if (selected('ES10')) {
+      // background_tasks: [] and absent both mean the agent has ended.
+      const a = fakeEmu(5719, 'dystopo35-T10');
+      writeClaims('agentES10', [{ avd: 'dystopo35-T10', prefix: false }]);
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES10', background_tasks: [], session_crons: [] }), elEnv());
+      report('ES10', 'background_tasks []: the fake qemu (pid ' + a + ') is terminated, lock removed', r.code === 0 && !alive(a) && !fs.existsSync(lockFile(5719)), `exit ${r.code}, alive ${alive(a)}`, r.stdout);
+    }
     if (selected('ES06')) {
       const a = fakeEmu(5711, 'dystopo35-sweep-20261031');
       const b = fakeEmu(5713, 'dystopo35-sweep-20261031-b');

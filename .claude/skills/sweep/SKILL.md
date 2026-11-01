@@ -82,7 +82,7 @@ columns and scale used and `cut`, true when the page still reached the capture l
 be missing: then view each part's own sheets and screenshots and say so in the log entry; a
 `sheetError` instead means no sheet was made), plus each part's log; exit 1 on any failure. `steps.tsv` gets one line
 per part as it ends; since T99 it is written with read sharing and retried, so watching it
-(`tail -F`, `Get-Content -Wait`) no longer stops the sweep. The `update` part also keeps the app's
+(`tail -F`, `Get-Content -Wait`) no longer stops the sweep. A sweep agent waits for `steps.tsv` with bounded foreground calls (a loop of a few minutes at most, then look again) and never ends its turn while the sweep or its emulator runs: the stop hook leaves an emulator alone only while the agent has background work registered (finding `docs/findings/2026-11-01-stop-hook-kills-the-emulator-of-an-agent-that-yields-its-turn.md`), and an agent killed after yielding leaves its emulator until the cap refusal names it. The `update` part also keeps the app's
 update log, `ui\update\updater-log.txt`. `bash tools/sweep.sh` runs the same parts without the device, and
 `.github/workflows/nightly.yml` runs it every night on main (artifact `sweep-nightly`).
 

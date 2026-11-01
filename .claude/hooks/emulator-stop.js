@@ -16,6 +16,9 @@
 // emulator.exe parent likewise. A dead lock (its PID gone or reused) is only removed. The AVD itself is
 // kept (`android-emu.ps1 -Stop -Delete` removes it).
 //
+// Background work (T201): a SubagentStop whose input carries a non-empty background_tasks array is the agent
+// yielding, not ending: nothing is stopped and the claims stay for the final stop.
+//
 // Never blocks: exit 0 always; a line per stopped emulator goes to <lockDir>/stop.log and, when
 // anything was stopped, to the user as systemMessage. Test seam: EMULATOR_STOP_ADB names the adb
 // binary, or "none" to skip the console step (test-hooks.js sets it).
@@ -132,6 +135,19 @@ function stopLock(l) {
 function main(input) {
   const { lockDir } = L.policyEmulators();
   const { id, claims, sources } = claimsFor(input || {}, lockDir);
+  // The harness also fires SubagentStop when the agent only yields with background work of its own still running
+  // (it resumes when that work ends; finding 2026-11-01-stop-hook-kills-the-emulator-of-an-agent-that-yields-its-turn).
+  // The input's background_tasks (an array of in-flight work, empty when none; session-wide) tells the two apart: while
+  // it is non-empty nothing is stopped and the claims stay, so the final stop (empty or absent) still finds them.
+  // stop_hook_active is only the harness's loop guard and says nothing about resuming.
+  if (input && Array.isArray(input.background_tasks) && input.background_tasks.length > 0) {
+    if (claims.length) {
+      const stamp = new Date().toISOString();
+      try { fs.appendFileSync(path.join(lockDir, 'stop.log'), `${stamp} agent ${id || '?'} (${input.agent_type || '?'}): left its emulators alone, ${input.background_tasks.length} background task(s) still running
+`); } catch (_) { /* best effort */ }
+    }
+    return [];
+  }
   if (id) fs.rmSync(path.join(lockDir, 'agents', `${id.replace(/[^\w.-]/g, '_')}.json`), { force: true });
   if (!claims.length) return [];
   const lines = [];
