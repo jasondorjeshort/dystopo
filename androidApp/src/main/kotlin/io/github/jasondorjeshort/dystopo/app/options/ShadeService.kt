@@ -226,13 +226,16 @@ class ShadeService(
         }
     }
 
-    /** T188: makes sun tile z/x/y (no cache) and says what it took. */
-    private fun generateSun(p: DemPyramid, o: SunShadeOptions, z: Int, x: Int, y: Int, record: Boolean = true): Pair<ByteArray, Map<String, Any?>> {
+    /** T188: makes sun tile z/x/y (no cache) and says what it took; T194: [lowSunM] the low-sun range cap (the bench's `lowSunKm`). */
+    private fun generateSun(
+        p: DemPyramid, o: SunShadeOptions, z: Int, x: Int, y: Int, record: Boolean = true,
+        lowSunM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.LOW_SUN_RANGE_M,
+    ): Pair<ByteArray, Map<String, Any?>> {
         val requested = System.nanoTime()
         slots.acquire()
         try {
             val started = System.nanoTime()
-            val plan = ShadeTiles.sunPlan(z, x, y, p.maxZoom, o)
+            val plan = ShadeTiles.sunPlan(z, x, y, p.maxZoom, o, lowSunM = lowSunM)
             val terrain = ShadeTiles.sunSample(p, plan)
             val sampled = System.nanoTime()
             val tile = ShadeTiles.sunRender(terrain, plan, o)
@@ -264,14 +267,14 @@ class ShadeService(
      * T188, `GET /shade/sun/bench`: makes the sun tile at [lat], [lon], zoom [z] for [epochMs] [repeat] times, bypassing
      * every cache, and reports each run (the phone's tile time); null when nothing covers it.
      */
-    fun sunBench(lat: Double, lon: Double, z: Int, epochMs: Long, repeat: Int): Map<String, Any?>? {
+    fun sunBench(lat: Double, lon: Double, z: Int, epochMs: Long, repeat: Int, lowSunM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.LOW_SUN_RANGE_M): Map<String, Any?>? {
         val x = WebMercator.lonToX(lon, z).toInt()
         val y = WebMercator.latToY(lat, z).toInt()
         val p = pyramidFor(z, x, y)?.first ?: online?.pyramid() ?: return null
         val o = SunShadeOptions(epochMs)
-        val runs = (1..repeat.coerceIn(1, 10)).map { generateSun(p, o, z, x, y, record = false).second }
+        val runs = (1..repeat.coerceIn(1, 10)).map { generateSun(p, o, z, x, y, record = false, lowSunM = lowSunM).second }
         val times = runs.map { it["ms"] as Double }
-        return linkedMapOf("z" to z, "x" to x, "y" to y, "runs" to runs, "minMs" to times.min(), "maxMs" to times.max(), "avgMs" to Math.round(times.average() * 10) / 10.0)
+        return linkedMapOf("z" to z, "x" to x, "y" to y, "lowSunM" to lowSunM, "runs" to runs, "minMs" to times.min(), "maxMs" to times.max(), "avgMs" to Math.round(times.average() * 10) / 10.0)
     }
 
     /**
@@ -279,10 +282,14 @@ class ShadeService(
      * [ShadeTiles.pointAnswer] over the pack under the point, else the online DEM); null without elevation data there.
      */
     fun pointAnswer(lat: Double, lon: Double, epochMs: Long): SunPointAnswer? {
-        val p = POINT_ZOOMS.firstNotNullOfOrNull { z -> pyramidFor(z, WebMercator.lonToX(lon, z).toInt(), WebMercator.latToY(lat, z).toInt())?.first }
-            ?: online?.pyramid() ?: return null
+        val p = pyramidAt(lat, lon) ?: return null
         return ShadeTiles.pointAnswer(p, lat, lon, epochMs).takeUnless { it.horizon.groundM.isNaN() }
     }
+
+    /** T194: the DEM pyramid under [lat], [lon] (the pack's, deepest first, else the online DEM's), or null; terrain shade along a route reads it. */
+    fun pyramidAt(lat: Double, lon: Double): DemPyramid? =
+        POINT_ZOOMS.firstNotNullOfOrNull { z -> pyramidFor(z, WebMercator.lonToX(lon, z).toInt(), WebMercator.latToY(lat, z).toInt())?.first }
+            ?: online?.pyramid()
 
     /** T193: a turn-back clock's terrain day at a point: [day] when the sweep answered, [noData] without elevation there. */
     class TerrainAt(val day: io.github.jasondorjeshort.dystopo.nav.Sun.TerrainDay?, val noData: Boolean, val sweepMs: Double?, val totalMs: Double, val error: String? = null)

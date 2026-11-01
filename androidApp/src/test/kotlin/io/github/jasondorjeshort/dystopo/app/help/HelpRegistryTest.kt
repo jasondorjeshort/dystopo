@@ -120,6 +120,9 @@ class HelpRegistryTest {
             // T193: the terrain sunset choice of the Turn back by row.
             "settings.turnTerrain",
             // end T193
+            // T194: the spoken terrain shade line.
+            "settings.shadeSpoken",
+            // end T194
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

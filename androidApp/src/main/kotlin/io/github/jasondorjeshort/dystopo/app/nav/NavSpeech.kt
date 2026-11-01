@@ -494,6 +494,41 @@ object NavSpeech {
             return line
         }
     }
+
+    // ---- T194: the terrain shade line (navigation's NavShade; one line before each long sunny stretch) ----
+
+    /** T194: the index the terrain shade line is listed under in `GET /nav/speech` (not a direction's). */
+    const val SHADE_INDEX = -5
+
+    /**
+     * T194: the end of terrain shade before more than 20 minutes of sun ("In 400 m, the terrain shade ends. Then sun for
+     * 25 minutes."), said once per such stretch by the caller ([NavShade], which also checks the hot-day rule), under the
+     * `shadeSpoken` setting (not `navSpeech`) and this navigation's mute; listed in `GET /nav/speech` with index -5 and
+     * direction `shade`. Queued behind any line being said (the engine's QUEUE_ADD, no priority), as the water and
+     * pressure lines are. Returns the line, or null with the setting off.
+     */
+    fun sayShade(text: String): Line? {
+        synchronized(this) {
+            if (AppSettings.shadeSpoken == io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.OFF) return null
+            val now = System.currentTimeMillis()
+            val voice = SpokenText.forVoice(text)
+            if (muted) {
+                val line = Line(now, SHADE_INDEX, text, "shade", voice, engine?.name ?: "none", muted = true)
+                if (lines.size >= MAX_LINES) lines.removeAt(0)
+                lines += line
+                mutedCount++
+                return line
+            }
+            val e = engine ?: makeEngine().also { engine = it; it.open() }
+            val line = Line(now, SHADE_INDEX, text, "shade", voice, e.name)
+            if (lines.size >= MAX_LINES) lines.removeAt(0)
+            lines += line
+            runCatching { e.speak(line.voice, "dystopo-shade-$now") }.onFailure { Log.w(NavSession.TAG, "speaking failed", it) }
+            Log.i(NavSession.TAG, "spoke the terrain shade line: $text")
+            return line
+        }
+    }
+    // end T194
 }
 
 /**

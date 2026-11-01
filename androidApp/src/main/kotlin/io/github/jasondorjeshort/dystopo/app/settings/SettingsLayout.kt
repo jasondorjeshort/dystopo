@@ -83,6 +83,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     PRINT_SHEET("printSheet", SettingsGroup.MAP, "Print a map sheet", "SettingsPages", "T183"),
     // T184: the route card's time as a range or one number (Navigation and tracking, after T187's rows)
     TIME_ESTIMATE_FORM("timeEstimateForm", SettingsGroup.NAVIGATION, "Route times: Show as", "SettingsPages", "T184"),
+    // T194: the spoken terrain shade line (Navigation and tracking, after T187's water rows and T184's)
+    SHADE_SPOKEN("shadeSpoken", SettingsGroup.NAVIGATION, "Terrain shade: Spoken", "SettingsPages", "T194"),
+    // end T194
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

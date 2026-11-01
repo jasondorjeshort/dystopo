@@ -76,6 +76,10 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   T184, the route card's time (Settings › Navigation and tracking, `routing/PaceSettings`): `timeEstimateForm=range|one`
  *   (default `range`: "about 4:30" with "4:10 to 4:50" from the recorded hikes under it; `one`: the single number),
  *   synced as `app.timeEstimateForm`. The card follows at once.
+ *   T194, the terrain shade line (Settings › Navigation and tracking, `nav/NavShade`): `shadeSpoken=off|hot|always` (also
+ *   `On hot days`; default `hot`: navigating, the line before a sunny stretch of more than 20 minutes after terrain shade
+ *   is said only when the air at the walker's height is 25 C or more, the weather station's temperature lowered at 6.5 C
+ *   a km; `always` says it whatever the temperature), synced as `app.shadeSpoken`. The card's line shows in every case.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -206,6 +210,9 @@ class SettingsRoutes(private val app: DystopoApp) {
         parsed.viewRange?.let { AppSettings.setViewRange(it) } // T182: the next viewshed reads it
         // T184: the route card's time; the card recomposes at once (also after POST /settings, which bumps no revision itself).
         parsed.timeEstimateForm?.let { AppSettings.setTimeEstimateForm(it); runCatching { app.map.onMain { SettingsUi.revision++ } } }
+        // T194: the terrain shade line's setting (read at each due line).
+        parsed.shadeSpoken?.let { AppSettings.setShadeSpoken(it) }
+        // end T194
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -258,6 +265,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             val viewRange: Int? = null,
             // T184: the route card's time as a range or one number.
             val timeEstimateForm: String? = null,
+            // T194: the spoken terrain shade line.
+            val shadeSpoken: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken? = null,
+            // end T194
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -283,7 +293,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf(AppSettings.KEY_PRESSURE_FALL_WARNING) + // T178
             setOf("waterAlongRoute", "waterSpoken") + // T187
             setOf("viewRange") + // T182
-            setOf(AppSettings.KEY_TIME_ESTIMATE_FORM) // T184
+            setOf(AppSettings.KEY_TIME_ESTIMATE_FORM) + // T184
+            setOf(AppSettings.KEY_SHADE_SPOKEN) // T194
+            // end T194
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -450,6 +462,11 @@ class SettingsRoutes(private val app: DystopoApp) {
                 v.toString().trim().lowercase().takeIf { it in AppSettings.TIME_FORMS }
                     ?: return Parsed.Error("${AppSettings.KEY_TIME_ESTIMATE_FORM} must be range or one (got $v)")
             }
+            // T194: the spoken terrain shade line.
+            val shadeSpoken = params[AppSettings.KEY_SHADE_SPOKEN]?.let { v ->
+                io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(v.toString()) ?: return Parsed.Error("${AppSettings.KEY_SHADE_SPOKEN} must be off, hot or always (got $v)")
+            }
+            // end T194
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
@@ -458,7 +475,10 @@ class SettingsRoutes(private val app: DystopoApp) {
                 pressureFallWarning = pressureFallWarning,
                 waterAlongRoute = waterAlongRoute, waterSpoken = waterSpoken,
                 viewRange = viewRange,
-                timeEstimateForm = timeEstimateForm)
+                timeEstimateForm = timeEstimateForm,
+                shadeSpoken = shadeSpoken, // T194
+                // end T194
+            )
         }
 
         private fun flag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {

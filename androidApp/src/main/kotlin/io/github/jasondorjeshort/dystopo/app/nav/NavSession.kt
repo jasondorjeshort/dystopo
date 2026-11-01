@@ -75,6 +75,10 @@ import java.util.concurrent.Executors
  * ([io.github.jasondorjeshort.dystopo.app.options.ShadeService.terrainAt], cached by point and date), the card shows the
  * flat deadline with "working out the terrain sunset" until it lands, then both sunsets ("Sun behind the ridge 16:12,
  * flat horizon 17:42"); `GET /nav/turnaround` `flatSunsetMs`, `terrainSunsetMs`, `terrain` and `terrainCache`.
+ * T194: terrain shade along the line at the time the walker reaches it ([NavShade]: from the first fix, then every 10
+ * minutes off the UI thread): the card's line under the end ("Terrain shade in 400 m for 10 min"), above the turn-back
+ * block so its label changing does not move it, and the spoken line before a long sunny stretch under `shadeSpoken`;
+ * `GET /nav` `shadeAlong`.
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -120,6 +124,8 @@ object NavSession {
         val headingBack: Boolean = false,
         /** T187: the next water ahead ("Water in 1.2 km: Stream, likely flowing"); null when none is left or the setting is off. */
         val water: String? = null,
+        /** T194: the next terrain shade ("Terrain shade in 400 m for 10 min"); null before the first answer or with the sun down. */
+        val shade: String? = null,
     )
 
     /** T86: backed by [NavUiState], so touching [NavSession] from a background thread never creates Compose state. */
@@ -233,6 +239,7 @@ object NavSession {
         }
         NavSpeech.begin() // T126: a fresh spoken list; the engine is made on the first line
         startWater(path) // T187
+        startShade(path) // T194
         // T193: the end's terrain sunset starts sweeping now, so it is usually back by the first fix.
         DeadlineSetting.parse(AppSettings.turnDeadline)?.takeIf { it.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TERRAIN }?.let { st ->
             val now = System.currentTimeMillis()
@@ -276,6 +283,24 @@ object NavSession {
                 val u = uiOf(nav, s)
                 main.post { if (navigator === nav) ui = u }
                 if (lastFixOrigin != null && lastFixOrigin != "last") speakWater(s)
+            }
+        }
+    }
+
+    /**
+     * T194: terrain shade along [path] ([NavShade]): worked out from the first fix's progress, then every 10 minutes; each
+     * answer redraws the card on navigation's worker and may say the due line.
+     */
+    private fun startShade(path: NavPath) {
+        val nav = navigator ?: return
+        val t = turn ?: return
+        NavShade.begin(path, t) {
+            if (navigator !== nav) return@begin
+            worker.execute {
+                val s = nav.state ?: return@execute
+                val u = uiOf(nav, s)
+                main.post { if (navigator === nav) ui = u }
+                if (lastFixOrigin != null && lastFixOrigin != "last") NavShade.speak(s.progress, travel)
             }
         }
     }
@@ -385,6 +410,7 @@ object NavSession {
         turn = null // T163
         turnClock = null
         NavSpeech.end() // T126: the text-to-speech engine is released
+        NavShade.end() // T194
         app.map.cameraMode = CameraMode.FREE
         main.removeCallbacks(ticker)
         main.post {
@@ -504,6 +530,8 @@ object NavSession {
         // direction said there would never be said again); the first live fix speaks.
         if (origin != "last") speak(s)
         if (origin != "last") speakWater(s) // T187
+        NavShade.maybeCompute(s.progress) // T194: the first fix, then every 10 minutes
+        if (origin != "last") NavShade.speak(s.progress, travel)
     }
 
     /** T126: says the card's next direction once it is within its lead distance (the card's alert colour), when the setting is on. */
@@ -545,6 +573,7 @@ object NavSession {
                     if (u.turnBack != text || u.turnBackLabel != label || u.turnBackColour != (c?.colour ?: TurnAround.NORMAL)) ui = u.copy(turnBack = text, turnBackLabel = label, turnBackColour = c?.colour ?: TurnAround.NORMAL)
                 }
                 c?.let { turnAlert(it) }
+                if (!s.arrived) NavShade.maybeCompute(s.progress) // T194: every 10 minutes, off this thread
             }
             main.postDelayed(this, 500)
         }
@@ -670,6 +699,7 @@ object NavSession {
             turnBack = tc?.text(::clock), turnBackLabel = tc?.label(::clock), turnBackColour = tc?.colour ?: TurnAround.NORMAL, // T163
             headingBack = s.headingBack, // T180
             water = waterLine(s), // T187
+            shade = if (s.arrived) null else NavShade.cardLine(s.progress), // T194
         ).let { ui ->
             // T102: the next turn direction and how far ahead it is.
             val k = if (s.arrived) -1 else nextTurn(s.progress)
@@ -730,13 +760,25 @@ object NavSession {
             "alerts" to alerts.json(),
             "snooze" to synchronized(this) { snooze.json(now) }, // T65
             "fix" to synchronized(this) { freshness.json(now, startedAt) }, // T65: stale-fix handling
-            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon, "water" to it.water) }, // T187: water
+            "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon, "water" to it.water, "shade" to it.shade) }, // T187: water; T194: shade
             "directions" to linkedMapOf("count" to directions.size, "shown" to shownDirections.size, "level" to Directions.DEFAULT_LEVEL), // T102
             "speech" to NavSpeech.navJson(), // T137: the mute and the no-voice notice
             "turnAround" to turnJson(), // T163
             "water" to waterJson(s), // T187
+            "shadeAlong" to shadeJson(), // T194
             "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null)), // T65
         )
+    }
+
+    /** T194: `GET /nav` `shadeAlong` and `GET /nav/shade`: [NavShade]'s state at the walker's progress. */
+    fun shadeJson(): Map<String, Any?> = NavShade.json(navigator?.state?.takeIf { !it.arrived }?.progress, travel, ::clock) + mapOf("ui" to ui?.shade)
+
+    /** T194: `POST /nav/shade?recompute=1`: works the stretches out again from the walker's progress now. */
+    fun recomputeShade(waitMs: Long): Boolean {
+        val s = navigator?.state ?: return false
+        NavShade.maybeCompute(s.progress, force = true)
+        NavShade.await(waitMs)
+        return true
     }
 
     /** `GET /nav/status`: whether off route now, and every event so far. */

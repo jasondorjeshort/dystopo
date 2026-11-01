@@ -207,4 +207,18 @@ class SettingsRoutesTest {
         assertEquals("sunset", io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.DEFAULT, "the default stays sunset (ADR 0044)")
     }
     // end T193
+
+    // T194: the spoken terrain shade line's three choices.
+    @Test
+    fun theShadeSpokenSetting() {
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, ok("shadeSpoken" to "hot").shadeSpoken)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, ok("shadeSpoken" to "On hot days").shadeSpoken)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.ALWAYS, ok("shadeSpoken" to "always").shadeSpoken)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.OFF, ok("shadeSpoken" to "Off").shadeSpoken)
+        assertEquals(null, ok("units" to "m").shadeSpoken)
+        assertTrue(bad("shadeSpoken" to "sometimes").message.contains("off, hot or always"))
+        assertTrue("shadeSpoken" in SettingsRoutes.KEYS)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT, "the default is On hot days (ADR 0044)")
+    }
+    // end T194
 }
