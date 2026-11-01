@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-31
 
+- T193: The turn-back deadline from the terrain sunset at the route's end
 - T198: A trip report page after a recording
 
 ## v0.1.16-alpha (2026-10-31)
