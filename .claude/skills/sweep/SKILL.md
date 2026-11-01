@@ -57,6 +57,15 @@ stopped by PID; it refuses 8765, 8686, 8687 and console 5554. The `check` part r
 stale build state of finding `docs/findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md`)
 and says so on its `steps.tsv` line.
 
+T191 (finding `docs/findings/2026-10-31-sweep-hung-when-the-paging-file-ran-out.md`, a 9.5 h hang): every part
+has a ceiling, 900 s by default (`-PartTimeout`), with `device-tour` 750 s a run, `update` 1500, `check` 2400 and
+`matrix` 2400 built in and `-PartTimeouts part=seconds` overriding any; at the ceiling the running program's process
+tree is killed by its PID, the part's `steps.tsv` line reads `timeout` and names the PIDs, and the sweep goes on
+(`-InjectHang <part>` replaces a part with a sleeping process tree to test this). Before `device-boot` and the
+`bothunits` boot it waits up to 50 s for the console ports to be free and fails the part naming the holder. The
+Python device tools bound every subprocess wait (`android_debug.run_bounded`), and a step that cannot start a
+process (WinError 1455, the paging file full) fails at once with `hostOutOfMemory`.
+
 From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
 `tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
 `tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).
