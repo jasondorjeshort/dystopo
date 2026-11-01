@@ -1,40 +1,40 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-01, at commit 2b9baeb3 plus this edit, by main session (wave 24 closed, v0.1.17-alpha published)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open wave;
-the Later list carries wave 24's follow-ups and the sweep's findings; the record `docs/tasks/wave-24.md`).
+Updated: 2026-11-01, at commit b82b7b41 plus this edit, by main session (wave 25 launched)
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (the open wave 25 and its
+paragraph; Later carries wave 24's follow-ups), ADR 0052.
 
 ## Now
 
-- **Wave 24 is closed and v0.1.17-alpha is published** (tag 5504a729, published 2026-11-01, versionCode 972; the
-  close entry of 2026-11-01 in `docs/PLANNING.md`'s log). Nine tasks T190 to T198 merged by verifier verdict; the
-  post-wave sweep green (the device parts on its third run, see the finding below); the draft verified on an
-  emulator (upgrade from 0.1.16 with data kept, features, strings). Nothing is running; no emulator, no lock, no
-  worktree. The live viewer on 8765 is still up (PID in `out/coordinator-pids.txt`).
-- **The emulator lock is live** (T190, `~/.dystopo/emulators/`, cap 2 in `policy.json`, guests at 3 GB by
-  measurement): the owner's condition for the wave held throughout (two slips of under three minutes before the
-  lock merged). An emulator costs about 4 GB of host; CPU saturation, not RAM, stalls a boot.
-- Meter: 7-day 60 at launch, 81 at the close (21 points for nine tasks against 32 assumed); resets 2026-11-06.
-
+- **Wave 25 is launched** (planned and critic-reviewed 2026-11-01, b82b7b41): the owner's short diversion to get
+  the web site running from this PC under a dynamic-DNS name. Three implementers are out: T199 (Opus, the site as
+  Windows scheduled tasks, test instance on 8691), T200 (Opus, the page opens at the browser's location and fits a
+  phone, `serve --live` on 8690), T201 (Sonnet, the stop hook and the sweep's small defects). Worktrees under
+  `~/Documents/src/dystopo-wt/T199..T201`; scratch under `%TEMP%/claude-wave25/`. Verifier ports: 8693 (T199), 8692
+  (T200). No emulator in the wave; no release at the close (no app change); the sweep skips device parts but `device-boot`.
+- **The host name is private** (a host name under `.claude/rules/docs.md`): it never enters a tracked file, a
+  brief or a report; the owner adds it to `privateTerms` before T199 is pushed (Owner actions pending). The live
+  viewer on 8765 is still up (PID in `out/coordinator-pids.txt`). Meter: 0 on both windows at planning.
 ## Next
 
-1. The next wave is unplanned. Its sweep task takes the board's "Wave 24 sweep findings" Later line first:
-   `emulator-stop.js` must leave an emulator alone when the hook input's `background_tasks` is non-empty (the
-   sweep lost its emulator twice to the stop hook when its agent yielded). Plan by the `wave` skill: Later's
-   lifted follow-ups (T190 to T198), the ideas with a `Plan:` block, the owner's theme if any.
-2. A Hatchery-rooted session: the pending carry-backs plus T190's two (a project-extension section in the policy
-   schema; the `SubagentStop` input fields for its hook spec) and the wave skill's sentinel rule.
-3. ADR 0040's, 0042's and 0049's C after the owner's answers; the terrain-fix live source after the hike logs.
+1. As each implementer reports: a Sonnet verifier (`brief` skill); T199's or T200's verifier, whichever is second,
+   runs the Interacts-with scenario (install a test instance from `main`, run T200's geolocation check against it).
+   Merge by the `wave` skill's sequence; at T201's merge strike the "Wave 24 sweep findings" Later line.
+2. Close: the sweep, no release, handoff, the chore's move of the wave into its record under `docs/tasks/`. Then
+   the owner installs the real instance (T199's script with the default root and one elevated run) and the first
+   outside check is the owner's phone on mobile data.
+3. After the wave: the owner's cross-platform idea (`docs/ideas/2026-11-01-one-definition-of-controls-and-settings-
+   across-platforms.md`) is a proposal when the owner wants it; the Hatchery carry-backs; ADR 0040/0042/0049's C.
 
 ## Waiting on user
 
-- **The paging file** (`docs/TASKS.md` › Owner actions pending): 12.8 GB on C: and not growing (commit limit 60 GB,
-  44 GB in use mid-wave); set it to 32 GB or more, or turn automatic management on.
-- The rest of Owner actions pending: install v0.1.17-alpha and the hike checks; the `Question:` blocks; ADR 0051's
-  two answers; the git housekeeping row (now with `task/T192` and `task/T197`, the pre-rebase copies).
+- **Before T199 pushes:** the host name into `privateTerms` in `devtool.local.json`. Then router forwards for 80 and
+  443, the dynamic-DNS updater, power settings (no sleep), the elevated install command T199's report names.
+- The paging file (12.8 GB on C:, set 32 GB or automatic); install v0.1.17-alpha and the hike checks; the `Question:`
+  blocks; ADR 0051's two answers; the git housekeeping row.
 
 ## Open findings
 
-- `docs/findings/2026-11-01-stop-hook-kills-the-emulator-of-an-agent-that-yields-its-turn.md` (the next sweep task).
+- `docs/findings/2026-11-01-stop-hook-kills-the-emulator-of-an-agent-that-yields-its-turn.md` (T201 resolves it).
 - `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T189 ships the graph; the phone next.
