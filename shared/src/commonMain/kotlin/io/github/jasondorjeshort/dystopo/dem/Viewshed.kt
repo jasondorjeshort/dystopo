@@ -301,6 +301,13 @@ object Viewshed {
      */
     val PEAK_CLASSES = setOf("peak", "volcano", "hill")
 
+    /**
+     * T197: the `mountain_peak` classes whose tagged elevation is a height a hiker can stand at and set the altimeter
+     * from: the peaks, and the layer's `saddle` and `pass` (`tilebuild/PROFILE.md`); not its ridge, arete and cliff
+     * label points (a line's label has no one height).
+     */
+    val KNOWN_HEIGHT_CLASSES = PEAK_CLASSES + setOf("saddle", "pass")
+
     private const val DEG = PI / 180
 
     /** The zoom whose cells are nearest [cellM] metres at [lat]. */
@@ -472,22 +479,22 @@ object Viewshed {
     fun peakBandM(lat: Double, zoom: Int): Double = 2 * PI * Horizon.EARTH_RADIUS_M * cos(lat * DEG) / (1L shl zoom) * 4
 
     /**
-     * The named peaks (classes [PEAK_CLASSES]) of the `mountain_peak` layer within [rangeM] of ([lat], [lon]) from
+     * The named peaks ([classes], [PEAK_CLASSES] by default; T197 passes [KNOWN_HEIGHT_CLASSES]) of the `mountain_peak` layer within [rangeM] of ([lat], [lon]) from
      * [tiles] (a vector pack's `tile(z, x, y)`, null where it has none). The layer is thinned below z13 (two a 64 px
      * cell), so near peaks are read at z12 and farther ones at coarser zooms down to [zoom]: each zoom out to
      * [peakBandM] (the last to the range). A point counts in its own tile only (tiles carry a buffer); the same name
      * within 200 m is one peak.
      */
-    fun readPeaks(tiles: (Int, Int, Int) -> ByteArray?, lat: Double, lon: Double, rangeM: Double, zoom: Int = peakZoom(lat, rangeM)): List<Peak> {
+    fun readPeaks(tiles: (Int, Int, Int) -> ByteArray?, lat: Double, lon: Double, rangeM: Double, zoom: Int = peakZoom(lat, rangeM), classes: Set<String> = PEAK_CLASSES): List<Peak> {
         val out = ArrayList<Peak>()
         for (z in maxOf(zoom, 12) downTo zoom) {
             val r = if (z == zoom) rangeM else minOf(rangeM, peakBandM(lat, z))
-            readPeaksAt(tiles, lat, lon, r, z, out)
+            readPeaksAt(tiles, lat, lon, r, z, out, classes)
         }
         return out
     }
 
-    private fun readPeaksAt(tiles: (Int, Int, Int) -> ByteArray?, lat: Double, lon: Double, rangeM: Double, zoom: Int, out: MutableList<Peak>) {
+    private fun readPeaksAt(tiles: (Int, Int, Int) -> ByteArray?, lat: Double, lon: Double, rangeM: Double, zoom: Int, out: MutableList<Peak>, classes: Set<String>) {
         val n = 1 shl zoom
         val mpp = WebMercator.metersPerPixel(lat, zoom, 1)
         val cx = WebMercator.lonToX(lon, zoom)
@@ -499,7 +506,7 @@ object Viewshed {
                 val layer = runCatching { MvtDecoder.decode(LayerFilter.filter(bytes, setOf("mountain_peak"))).layer("mountain_peak") }.getOrNull() ?: continue
                 for (f in layer.features) {
                     val kind = f.properties["class"]?.asText() ?: continue
-                    if (kind !in PEAK_CLASSES) continue
+                    if (kind !in classes) continue
                     val name = f.properties["name"]?.asText()?.takeIf { it.isNotBlank() } ?: continue
                     val pts = (f.geometry as? Geometry.Points)?.points ?: continue
                     for (p in pts) {

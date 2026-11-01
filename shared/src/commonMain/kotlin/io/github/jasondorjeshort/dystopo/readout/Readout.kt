@@ -82,11 +82,36 @@ data class BarometerStatus(
     val offsetM: Double? = null,
     val offsetSigmaM: Double? = null,
     val pressureHPa: Double? = null,
+    // T197: the known height the user set ([ReadoutEstimator.pin]) while it holds; "pinned", not "calibrated", which
+    // is the station prior's state ([BarometerState.CALIBRATING]).
+    /** When the height was set (the inputs' clock), null while no pin holds. */
+    val pinnedAt: Long? = null,
+    /** The place it was set from; null for a typed height (or no pin). */
+    val pinnedName: String? = null,
+    val pinnedSigmaM: Double? = null,
+    val pinnedEleM: Double? = null,
+    /** A pin would be kept now (the barometer fused): what the phone offers "I am at" on. */
+    val pinnable: Boolean = false,
+    /** Why the last pin ended (`sigma`, `barometer`, `disagreement`, `replaced`), null before any or while one holds. */
+    val pinEnd: String? = null,
 ) {
+    val pinned: Boolean get() = pinnedAt != null
+
     fun json(): Map<String, Any?> = linkedMapOf(
         "state" to state.code, "reason" to reason, "offsetM" to offsetM?.let { r3(it) },
         "offsetSigmaM" to offsetSigmaM?.let { r3(it) }, "pressureHPa" to pressureHPa?.let { r3(it) },
+        // T197
+        "pinned" to pinned, "pinnedAt" to pinnedAt, "pinnedName" to pinnedName, "pinnedSigmaM" to pinnedSigmaM?.let { r3(it) },
+        "pinnedEleM" to pinnedEleM?.let { r3(it) }, "pinnable" to pinnable, "pinEnd" to pinEnd,
     )
+}
+
+/**
+ * T197: what [ReadoutEstimator.pin] did: [held] when the barometer keeps it (else applied once as a height, [reason]
+ * says why not kept); [movedM] how far the height moved (the known height minus the estimate before it).
+ */
+data class PinResult(val held: Boolean, val movedM: Double?, val reason: String?) {
+    fun json(): Map<String, Any?> = linkedMapOf("held" to held, "movedM" to movedM?.let { r3(it) }, "reason" to reason)
 }
 
 /**
@@ -163,6 +188,9 @@ data class Readout(
  *   of the fixes (T192) it holds the value of the last fix, dimmed and `frozen`, and is a dash (`no fix`) once the
  *   climb window (the air: the gap rule) has passed since that fix, whatever the barometer reads meanwhile.
  * - **A gap** in the fixes (over 5 s or three intervals) dims the values and [Readout.gapS] counts it.
+ * - **A known height** (T197, [pin]): a summit, a saddle or a sign the user stands at replaces the elevation; with the
+ *   barometer fused it holds as a pin ([BarometerStatus.pinnedAt]) until the offset's own random walk has doubled its
+ *   sigma, GNSS and DEM heights set aside meanwhile ([ElevationFilter]).
  *
  * @param dem the terrain height at a point (NaN for none), or null for no DEM.
  * @param nearStructure true where the DEM should not be trusted at a point: a bridge, building, tunnel or cliff
@@ -341,6 +369,28 @@ class ReadoutEstimator(
         pendingPrior = null
     }
 
+    /**
+     * T197: the user stands at a known height: [eleM] (m, EGM2008) with 1-sigma [sigmaM] ([KnownHeights.sigmaFor]: 3 m
+     * for a tagged summit, 5 m for a saddle, a pass or a typed sign), named [name] (null for a typed height), at [tMs]
+     * on the inputs' clock. The height is replaced by it; with the barometer fused it is kept as a pin
+     * ([BarometerStatus.pinnedAt]) that holds while the offset's sigma stays under twice [sigmaM] ([ElevationFilter]).
+     * Without the barometer it is applied once and the next fixes take over ([PinResult.held] false).
+     */
+    fun pin(name: String?, eleM: Double, sigmaM: Double, tMs: Long): PinResult {
+        require(eleM.isFinite() && eleM in KnownHeights.MIN_ELE_M..KnownHeights.MAX_ELE_M) { "height $eleM m is out of range" }
+        require(sigmaM.isFinite() && sigmaM > 0) { "sigma must be positive" }
+        val before = filter.heightM.takeIf { filter.heightKnown }
+        val held = filter.knownHeight(tMs, eleM, sigmaM, name?.takeIf { it.isNotBlank() })
+        val reason = when {
+            held -> null
+            !baroAllowed -> "barometer off"
+            suspectUntilMs != null -> "barometer suspect"
+            filter.lastBaroMs == null -> "no barometer"
+            else -> "barometer not in use"
+        }
+        return PinResult(held, before?.let { eleM - it }, reason)
+    }
+
     /** The readout at [nowMs] (normally the latest input's time or the wall clock): pure, it changes nothing. */
     fun readout(nowMs: Long): Readout {
         val last = fixes.lastOrNull()
@@ -397,6 +447,11 @@ class ReadoutEstimator(
             !filter.offsetKnown || filter.offsetSigmaM > CALIBRATED_SIGMA_M ->
                 BarometerStatus(BarometerState.CALIBRATING, offsetM = filter.offsetM.takeIf { filter.offsetKnown }, offsetSigmaM = filter.offsetSigmaM.takeIf { filter.offsetKnown }, pressureHPa = lastPressureHPa)
             else -> BarometerStatus(BarometerState.IN_USE, offsetM = filter.offsetM, offsetSigmaM = filter.offsetSigmaM, pressureHPa = lastPressureHPa)
+        }.let { b ->
+            // T197: the pin while it holds at nowMs (the offset's sigma grown to now), else why the last one ended.
+            val pn = filter.pin?.takeIf { filter.pinHolds(nowMs) }
+            b.copy(pinnedAt = pn?.tMs, pinnedName = pn?.name, pinnedSigmaM = pn?.sigmaM, pinnedEleM = pn?.eleM, pinnable = fused,
+                pinEnd = if (pn != null) null else if (filter.pin != null) (if (fused) "sigma" else "barometer") else filter.pinEnd)
         }
         val heights = ReadoutHeights(
             last?.ele,
@@ -411,6 +466,11 @@ class ReadoutEstimator(
         c["baroUpdates"] = filter.baroUpdates.toLong()
         c["recalibrations"] = filter.recalibrations.toLong()
         c["priors"] = filter.priors.toLong()
+        c["pins"] = filter.pins.toLong() // T197
+        c["pinsCleared"] = filter.pinsCleared.toLong()
+        c["pinReleases"] = filter.pinReleases.toLong()
+        c["gnssHeldByPin"] = filter.gnssHeldByPin.toLong()
+        c["demHeldByPin"] = filter.demHeldByPin.toLong()
         return Readout(nowMs, activity, speed, climb, course, elevation, gapS, heights, baroState, fixSpeed?.first ?: pos?.first, route?.first, c,
             if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList(),
             climbWindowS = if (windowed) options.climbWindowS else null,
@@ -578,6 +638,7 @@ class ReadoutEstimator(
     private fun demUpdate(s: Sample, speedMps: Double?) {
         val d = dem ?: return
         if (activity != Activity.FOOT) return
+        if (filter.pin != null) return // T197: a set height outranks the DEM while it holds (no tries, no tile reads)
         if (speedMps != null && speedMps > DEM_MAX_MPS) return
         val prev = lastDemAt
         if (prev != null && TrackStats.distanceM(prev.lat, prev.lon, s.lat, s.lon) < DEM_SPACING_M) return
