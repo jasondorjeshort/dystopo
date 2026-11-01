@@ -24,6 +24,10 @@ import io.github.jasondorjeshort.dystopo.nav.TurnAround
 import io.github.jasondorjeshort.dystopo.nav.TurnPace
 import io.github.jasondorjeshort.dystopo.nav.TurnClock
 import io.github.jasondorjeshort.dystopo.nav.WayBack
+import io.github.jasondorjeshort.dystopo.nav.WayDown
+import io.github.jasondorjeshort.dystopo.nav.WayDownParams
+import io.github.jasondorjeshort.dystopo.nav.WayDownText
+import io.github.jasondorjeshort.dystopo.routing.DemElevation
 import io.github.jasondorjeshort.dystopo.nav.WayPoint
 import io.github.jasondorjeshort.dystopo.nav.Navigator
 import io.github.jasondorjeshort.dystopo.nav.NavEvent
@@ -79,6 +83,13 @@ import kotlin.math.roundToLong
  * reads it, or the source's windows) and counts to the sun behind the terrain when it is earlier than the flat sunset
  * ([Deadline.resolve]); the report's `terrain` block has both sunsets, which counts and why, and the sweep's time.
  * `--zone` prints the clock times in a named zone instead of the end's mean solar time.
+ *
+ * T196, the way down after a storm warning: `nav --way-down --path <gpx> [--path-track] --at <lat,lon> [--dem <DEM
+ * pack>] [--navigating]` places the walker on the line (its nearest point to `--at`, or `--along-m`) and runs the
+ * phone's [WayDown]: whether the walker's ground is on a ridge by T195's ridge rule, and if so the first point 100 m
+ * lower and off the ridge back along the line toward its start (the way back) and, with `--navigating`, on along it to
+ * its end (the route ahead), each with its distance, time at the clock's pace and the stretch's points; the card's
+ * lines and the spoken clause as the phone words them. `--drop-m` and `--search-m` try other figures than the app's.
  */
 class NavCommand : CliktCommand(name = "nav") {
     init {
@@ -110,9 +121,18 @@ class NavCommand : CliktCommand(name = "nav") {
     private val everyS by option("--every-s", help = "T180: seconds of fix time between readings of the series (default 300)").int().default(300)
     private val expectFlips by option("--expect-flips", help = "T180: exit 1 unless the series has this many flips to heading back").int()
 
+    // T196: the way down after a storm warning.
+    private val wayDown by option("--way-down", help = "T196: is the walker at --at on a ridge, and the first lower ground off it along --path, as JSON").flag()
+    private val at by option("--at", help = "T196: the walker's position, lat,lon (placed on --path's nearest point)")
+    private val navigating by option("--navigating", help = "T196: --path is a route being navigated: the route ahead counts too (default: a recorded track, the way back only)").flag()
+    private val demPack by option("--dem", help = "T196: DEM pack (.pmtiles) read at z14 (default out/rainier-dem.pmtiles)").file(mustExist = true, canBeDir = false)
+    private val dropM by option("--drop-m", help = "T196: how much lower the way down's end is, metres (default the app's ${WayDown.DROP_M.toInt()})").double().default(WayDown.DROP_M)
+    private val searchM by option("--search-m", help = "T196: how far along each line to look, metres (default ${WayDown.SEARCH_M.toInt()})").double().default(WayDown.SEARCH_M)
+
     override fun run() {
         if (currentContext.invokedSubcommand != null) return
-        if (!turnAround) throw UsageError("use `nav replay ...` or `nav --turn-around --path <gpx> ...`")
+        if (wayDown) return wayDownReport() // T196
+        if (!turnAround) throw UsageError("use `nav replay ...`, `nav --turn-around --path <gpx> ...` or `nav --way-down --path <gpx> --at <lat,lon>`")
         val f = pathFile ?: throw UsageError("--turn-around needs --path")
         val t0 = System.nanoTime()
         val doc = Gpx.parse(f.readText(Charsets.UTF_8))
@@ -254,6 +274,49 @@ class NavCommand : CliktCommand(name = "nav") {
         report["failures"] = failures
         echo(pretty(report))
         if (failures.isNotEmpty()) throw ProgramResult(1)
+    }
+
+    /** T196: `nav --way-down`. */
+    private fun wayDownReport() {
+        val f = pathFile ?: throw UsageError("--way-down needs --path")
+        val t0 = System.nanoTime()
+        val doc = Gpx.parse(f.readText(Charsets.UTF_8))
+        val route = doc.routes.firstOrNull()
+        val track = doc.tracks.firstOrNull()
+        val path = when {
+            !pathTrack && route != null && route.points.size >= 2 -> NavPath.of(route, doc.waypoints)
+            track != null && track.points.size >= 2 -> NavPath.of(track, doc.waypoints)
+            else -> throw UsageError("${f.path} has no route or track with two points")
+        }
+        val (lat, lon, along) = at?.let { raw ->
+            val parts = raw.split(',').map { it.trim().toDoubleOrNull() }
+            if (parts.size != 2 || parts.any { it == null }) throw UsageError("--at must be lat,lon (got $raw)")
+            val pr = path.project(parts[0]!!, parts[1]!!, null, behindM = path.totalM + 1, aheadM = path.totalM + 1)
+            Triple(parts[0]!!, parts[1]!!, pr.alongM)
+        } ?: alongM?.let { a -> path.pointAt(a).let { Triple(it.lat, it.lon, a.coerceIn(0.0, path.totalM)) } }
+            ?: throw UsageError("--way-down needs --at <lat,lon> or --along-m")
+        val demFile = demPack ?: File("out/rainier-dem.pmtiles").takeIf { it.isFile } ?: throw UsageError("pass --dem <DEM pack>")
+        val sampler = DemElevation(RouteGraphs.pyramid(demFile), zoom = 14)
+        val pace = TurnPace.of(CostModel(TravelMode.of(mode)!!))
+        val params = try { WayDownParams(dropM, searchM = searchM) } catch (e: IllegalArgumentException) { throw UsageError("--drop-m and --search-m must be above 0") }
+        val tf = System.nanoTime()
+        val back = WayDown.behind(path.points, along)
+        val ahead = if (navigating) WayDown.onward(path.points, along) else null
+        val r = WayDown.find(sampler, lat, lon, back, ahead, pace, params)
+        val findMs = (System.nanoTime() - tf) / 1e6
+        val placed = path.pointAt(along)
+        val report = linkedMapOf<String, Any?>(
+            "command" to "nav --way-down", "pathFile" to f.path, "name" to path.name, "dem" to demFile.path,
+            "totalM" to Math.round(path.totalM), "navigating" to navigating, "mode" to mode,
+            "at" to linkedMapOf("lat" to lat, "lon" to lon, "alongM" to Math.round(along * 10) / 10.0,
+                "offLineM" to Math.round(io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, placed.lat, placed.lon) * 10) / 10.0),
+            "lines" to linkedMapOf("backM" to Math.round(along), "aheadM" to if (navigating) Math.round(path.totalM - along) else null),
+        ) + r.json() + linkedMapOf(
+            "help" to WayDownText.HELP, "action" to WayDownText.ACTION,
+            "stretch" to r.quickest?.stretch?.map { listOf(Math.round(it.lat * 1e6) / 1e6, Math.round(it.lon * 1e6) / 1e6) },
+            "elevationSamples" to sampler.samples, "findMs" to Math.round(findMs * 10) / 10.0, "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,
+        )
+        echo(pretty(report))
     }
 
     /** The clock's zone: --zone, else the end's mean solar time in whole minutes. */
