@@ -11,10 +11,10 @@ paragraph: Emulator slots, Launch day, Memory, Launch order, Past the critic; th
   overwhelm the PC with emulators"; the paragraph's Launch day sentence is the rule until T190's lock enforces it).
   Five surveys done (`out/wave24-research/`, gitignored, summarised in each task's Research line); the critic's
   19 objections answered on the board (8bd5f9bb). **Merged and logged:** T198 (02fb2a95), T193 (013afa8a), T190
-  (e1863320: the lock is live, `~/.dystopo/emulators/`, cap 2, guests at 3 GB). **Running:** T191's and T192's
-  verifiers (slot V), T194's implementer (Opus). **Not launched:** T195 and T197 (after T192 merges), T196 (after
-  T195 and T197). The live viewer on 8765 runs (PID in `out/coordinator-pids.txt`). ADR 0049's and 0050's
-  Outcomes written (held), their ideas deleted; the orphan `T178` folders removed.
+  (e1863320: the lock is live, `~/.dystopo/emulators/`, cap 2, guests at 3 GB), T192 (3828ecf0), T194 (f957839a).
+  **Running:** the verifiers of T191, T195 and T197 (Sonnet, the two slots through the lock). **Not launched:**
+  T196 (after T195 and T197 merge; its survey is on the board). The live viewer on 8765 runs (PID in
+  `out/coordinator-pids.txt`). ADR 0049's and 0050's Outcomes written (held); the orphan `T178` folders removed.
 - Meters at launch: 7-day 60 (Fable 70), resets 2026-11-06 04:00 UTC (`/usage` shows no 5-hour meter here).
 
 ## Next
