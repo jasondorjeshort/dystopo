@@ -79,7 +79,9 @@ param(
     # Emulator GPU. auto: host when the machine has a hardware GPU, else swiftshader_indirect. Under the
     # software GPU MapLibre draws no text and no dash patterns (found in T25), so tours need host.
     [ValidateSet('auto', 'host', 'swiftshader_indirect', 'angle_indirect')] [string]$Gpu = 'auto',
-    [int]$Memory = 4096,
+    # T190: guest RAM in MB. 3072 measured at 4.1 GB of host working set for the qemu and emulator.exe pair after a minute
+    # of the map (2048: 3.7 GB, and an ANR dialog on the guest), so the cap of 2 costs about 8.5 GB; docs/reference/machines.md.
+    [int]$Memory = 3072,
     [int]$Cores = 4,
     # Use a connected device (a phone with USB debugging) instead of an emulator; -Serial picks one of several.
     [switch]$NoEmulator,
@@ -103,7 +105,10 @@ param(
     # T105: the app's server (Settings > Sources) from its first start: a URL the emulator reaches (the host is 10.0.2.2),
     # or 'none' for no server (the packs and the public sources). Not given: the debug build's own default on an
     # emulator, the host's 8765 (AppSettings.EMULATOR_DEBUG_SERVER).
-    [string]$Server = ''
+    [string]$Server = '',
+    # T190: who holds this emulator's lock (the task or role of the brief, e.g. T190 or T190-verify); default: the AVD
+    # name without its dystopoNN- prefix. Named in the refusal when the cap is reached.
+    [string]$Owner = ''
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -215,6 +220,138 @@ function Connect-DebugServer {
     if ($ep) { $ep[1] } else { '' }
 }
 
+# T190: the machine-wide emulator cap. Every emulator this script boots holds a lock file, <lockDir>\emulator-<console
+# port>.json, with the qemu process's PID (the console port's listener), its emulator.exe parent, the serial, AVD, owner,
+# host port, checkout and time. lockDir and max come from the emulators block of .claude/hooks/policy.json (defaults
+# ~/.dystopo/emulators and 2): one folder for the whole machine, so a lock binds across worktrees. A boot first
+# reclaims dead locks (PID gone or reused by another program; a lock still booting whose script is gone), then refuses
+# when the live locks plus running emulators without a lock reach max, naming them. .claude/hooks/emulator-stop.js
+# stops an ending subagent's emulators by the PID in the lock; -Stop removes the lock. Same liveness rule as
+# .claude/hooks/emulator-lock.js (node .claude/hooks/emulator-lock.js --locks lists them).
+$emuImage = '^(qemu-system-[\w.-]+|emulator\d*)(\.exe)?$'
+function Get-EmuPolicy {
+    $max = 2; $dir = '~/.dystopo/emulators'
+    $file = Join-Path $repoRoot '.claude\hooks\policy.json'
+    if (Test-Path $file) {
+        try {
+            $e = (Get-Content -Raw $file | ConvertFrom-Json).emulators
+            if ($e -and $e.max) { $max = [int]$e.max }
+            if ($e -and $e.lockDir) { $dir = [string]$e.lockDir }
+        } catch { Write-Warning "cannot read the emulators block of ${file}: $_ (using max $max, $dir)" }
+    }
+    if ($dir -eq '~' -or $dir -match '^~[\\/]') { $dir = Join-Path $env:USERPROFILE $dir.Substring(1).TrimStart('\', '/') }
+    [pscustomobject]@{ Max = $max; Dir = [IO.Path]::GetFullPath($dir) }
+}
+function Get-ProcImage([int]$id) {
+    if ($id -le 0) { return '' }
+    $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+    if ($p) { "$($p.ProcessName).exe" } else { '' }
+}
+function Get-EmuLocks([string]$dir) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter 'emulator-*.json' -File -ErrorAction SilentlyContinue)) {
+        $l = $null
+        try { $l = Get-Content -Raw -LiteralPath $f.FullName | ConvertFrom-Json } catch { }
+        $live = $false; $why = 'unreadable'
+        if ($l) {
+            if ($l.pid -and [int]$l.pid -gt 0) {
+                $img = Get-ProcImage ([int]$l.pid)
+                $live = $img -match $emuImage
+                $why = if ($live) { '' } elseif ($img) { "pid $($l.pid) now runs $img" } else { "pid $($l.pid) gone" }
+            } else {
+                $img = Get-ProcImage ([int]$l.bootedBy)
+                $live = $img -match '^(powershell|pwsh)\.exe$'
+                $why = if ($live) { '' } else { "booting, and its script (pid $($l.bootedBy)) is gone" }
+            }
+        }
+        [pscustomobject]@{ File = $f.FullName; Lock = $l; Live = $live; Why = $why }
+    }
+}
+function Format-EmuHolder($l) {
+    $since = '?'
+    try { $since = ([datetime]$l.startedAt).ToLocalTime().ToString('HH:mm') } catch { }
+    "$($l.serial) ($($l.avd), owner $($l.owner), pid $(if ($l.pid) { $l.pid } else { "booting, script $($l.bootedBy)" }), since $since, $($l.checkout))"
+}
+function Write-EmuLock([string]$file, [hashtable]$fields) {
+    $tmp = "$file.$PID.tmp"
+    [IO.File]::WriteAllText($tmp, ($fields | ConvertTo-Json -Compress))
+    Move-Item -LiteralPath $tmp -Destination $file -Force
+}
+# Under a machine-wide mutex (two scripts booting at once must not both see a free slot): reclaim dead locks, then take
+# a lock for $serial (its file in $script:emuLock) or throw the refusal. -Adopt writes a lock for an emulator already running
+# without one (no cap check: it runs already); -CheckOnly refuses or returns without writing (the early check, before the
+# build and the AVD). Returns nothing: progress lines are output here (T65).
+function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch]$CheckOnly) {
+    $pol = Get-EmuPolicy
+    New-Item -ItemType Directory -Force $pol.Dir | Out-Null
+    $mutex = [System.Threading.Mutex]::new($false, 'Local\dystopo-emulator-locks')
+    $held = $false
+    try {
+        try { $held = $mutex.WaitOne([TimeSpan]::FromMinutes(2)) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+        if (-not $held) { throw 'another android-emu.ps1 has held the emulator lock folder for 2 minutes' }
+        $live = @()
+        foreach ($x in @(Get-EmuLocks $pol.Dir)) {
+            if ($x.Live) { $live += $x; continue }
+            Remove-Item -LiteralPath $x.File -Force -ErrorAction SilentlyContinue
+            $name = if ($x.Lock) { "$($x.Lock.serial) ($($x.Lock.avd), owner $($x.Lock.owner))" } else { (Split-Path -Leaf $x.File) }
+            Write-Host "reclaimed the lock of ${name}: $($x.Why)"
+        }
+        $file = Join-Path $pol.Dir "$serial.json"
+        $mine = @($live | Where-Object { $_.Lock.serial -eq $serial })
+        if ($mine) {
+            if ($mine[0].Lock.avd -ne $avd) { throw "$serial is locked for AVD $($mine[0].Lock.avd): $(Format-EmuHolder $mine[0].Lock)" }
+            if (-not $CheckOnly) { $script:emuLock = $file }
+            return
+        }
+        if (-not $Adopt) {
+            # Emulators adb lists that hold no lock (booted before T190, or around the script) count as holders too.
+            $locked = @($live | ForEach-Object { $_.Lock.serial })
+            $unlocked = @((Get-AdbDevices).Keys | Where-Object { $_ -match '^emulator-\d+$' -and $locked -notcontains $_ } | Sort-Object)
+            $holders = @($live | ForEach-Object { Format-EmuHolder $_.Lock }) + @($unlocked | ForEach-Object { "$_ ($(Get-EmuAvdName $_), no lock)" })
+            if ($holders.Count -ge $pol.Max) {
+                throw ("emulator cap reached: $($holders.Count) of $($pol.Max) running (emulators.max in .claude/hooks/policy.json; locks in $($pol.Dir)): " +
+                    ($holders -join '; ') + ". Not booting $avd on $serial. Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).")
+            }
+        }
+        if ($CheckOnly) { return }
+        $script:emuLockOwner = if ($Owner) { $Owner } else { $avd -replace '^dystopo\d*-', '' }
+        Write-EmuLock $file @{ serial = $serial; consolePort = [int]($serial -replace 'emulator-', ''); avd = $avd; owner = $script:emuLockOwner
+            pid = $null; emulatorPid = $null; hostPort = $Port; checkout = $repoRoot; bootedBy = $PID; startedAt = (Get-Date).ToUniversalTime().ToString('o'); state = 'booting' }
+        $count = if ($Adopt) { "adopted; $($live.Count + 1) locked" } else { "$($holders.Count + 1) of $($pol.Max) running" }
+        Write-Host "lock $file (owner $script:emuLockOwner; $count)"
+        $script:emuLock = $file
+    } finally {
+        if ($held) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+# The qemu process listening on the console port, and its emulator.exe parent; written into the lock once seen
+# ($script:emuLockPid set then).
+function Update-EmulatorLockPid([string]$file, [int]$consolePort) {
+    # No -State Listen: on this machine the State column of Get-NetTCPConnection reads empty, so that filter matches
+    # nothing. Every socket on the console port (an ephemeral port is never in 5554-5682) belongs to the emulator.
+    $qemu = @(Get-NetTCPConnection -LocalPort $consolePort -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.OwningProcess } |
+        Where-Object { (Get-ProcImage $_) -match $emuImage } | Select-Object -First 1)
+    if (-not $qemu) { return }
+    $qemu = $qemu[0]
+    $parent = (Get-CimInstance Win32_Process -Filter "ProcessId = $qemu" -ErrorAction SilentlyContinue).ParentProcessId
+    $emuPid = if ($parent -and (Get-ProcImage ([int]$parent)) -match '^emulator\d*\.exe$') { [int]$parent } else { $null }
+    $l = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+    $h = @{}; foreach ($p in $l.PSObject.Properties) { $h[$p.Name] = $p.Value }
+    $h.pid = $qemu; $h.emulatorPid = $emuPid; $h.state = 'running'
+    Write-EmuLock $file $h
+    Write-Host "lock: qemu pid $qemu$(if ($emuPid) { ", emulator.exe pid $emuPid" })"
+    $script:emuLockPid = $qemu
+}
+function Remove-EmulatorLock([string]$serial, [string]$avd) {
+    $pol = Get-EmuPolicy
+    foreach ($x in @(Get-EmuLocks $pol.Dir)) {
+        if ($x.Lock -and $x.Lock.avd -eq $avd -and (-not $serial -or $x.Lock.serial -eq $serial) -and -not ($x.Live -and $x.Lock.pid)) {
+            Remove-Item -LiteralPath $x.File -Force -ErrorAction SilentlyContinue
+            Write-Host "lock of $($x.Lock.serial) ($avd) removed"
+        }
+    }
+}
+
 # 0. -Stop: kill this AVD's emulator and drop its forward.
 if ($Stop) {
     if ($NoEmulator) { throw '-Stop applies to emulators only' }
@@ -240,6 +377,7 @@ if ($Stop) {
         while ((Get-AdbDevices).ContainsKey($s) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
         if ((Get-AdbDevices).ContainsKey($s)) { Write-Warning "$s still listed by adb after 60 s" } else { Write-Host "$s stopped" }
     }
+    Remove-EmulatorLock $s $Avd # T190: the lock goes with the emulator (a lock whose emulator still runs is kept)
     if ($Delete) {
         $ini = Join-Path $env:ANDROID_AVD_HOME "$Avd.ini"
         $dir = Join-Path $env:ANDROID_AVD_HOME "$Avd.avd"
@@ -278,6 +416,9 @@ if ($Forward) {
     exit 0
 }
 
+# T190: refuse past the cap before building or creating anything (taken for real just before the boot, below).
+if (-not $NoEmulator -and -not (Find-AvdSerial)) { Get-EmulatorLock "emulator-$(if ($EmuPort) { $EmuPort } else { 'any' })" $Avd -CheckOnly }
+
 # 1. Build (optional) and the AVD.
 if ($Build) {
     # A fresh worktree has no local.properties (it is gitignored); without it Gradle skips the Android module.
@@ -289,7 +430,7 @@ if ($Build) {
     }
     Push-Location $repoRoot
     $buildStarted = Get-Date
-    Write-Host 'building the debug APK (gradlew :androidApp:assembleDebug)'
+    Write-Host 'building the debug APK (gradlew :androidApp:assembleDebug --no-daemon)'
     # T147: two starts at once in one checkout (two AVDs) build one at a time, each with its own log: a shared log made
     # the second start's cmd fail to open it, and two Gradle builds writing the same APK could leave a torn one. The
     # lock is a named mutex per checkout; the second build then finds the APK up to date.
@@ -303,7 +444,8 @@ if ($Build) {
         $ErrorActionPreference = 'Continue'
         $buildLog = Join-Path $repoRoot "out\android-emu-build-$Avd.log"
         New-Item -ItemType Directory -Force (Split-Path $buildLog) | Out-Null
-        $b = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':androidApp:assembleDebug', '--console=plain', '-q') $buildLog
+        # T190 (T159's follow-up): --no-daemon, so no Gradle daemon outlives the build (machines.md, the second PC's RAM row).
+    $b = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':androidApp:assembleDebug', '--console=plain', '-q', '--no-daemon') $buildLog
         $b.WaitForExit()
         if (Test-Path $buildLog) { Get-Content $buildLog | ForEach-Object { "  $_" } }
         if ($b.ExitCode -ne 0) { throw "assembleDebug failed (exit $($b.ExitCode)); see $buildLog" }
@@ -400,9 +542,15 @@ if ($NoEmulator) {
         if ($NetSpeed) { $emuArgs += @('-netspeed', $NetSpeed) }
         if ($NetDelay) { $emuArgs += @('-netdelay', $NetDelay) }
         foreach ($f in @($Feature | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) { $emuArgs += @('-feature', $f) }
+        Get-EmulatorLock $script:serial $Avd # T190: refuses past the cap, naming the holders
         Write-Host ("starting emulator " + ($emuArgs -join ' ') + "  (log: $log)")
         $proc = Start-Detached $emulator $emuArgs $log
     }
+}
+if (-not $proc -and -not $NoEmulator) {
+    # T190: an emulator of this AVD already running keeps its lock, or gets one (adopted, no cap check: it runs already).
+    Get-EmulatorLock $script:serial $Avd -Adopt
+    Update-EmulatorLockPid $script:emuLock ([int]($script:serial -replace 'emulator-', ''))
 }
 if (-not $proc -and -not $NoEmulator -and $PSBoundParameters.ContainsKey('Gpu')) {
     Write-Warning "$script:serial is already running; -Gpu $Gpu applies only at boot (use -Stop first to change it)"
@@ -416,6 +564,7 @@ Write-Host 'waiting for sys.boot_completed'
 while ($true) {
     $booted = (Adb shell getprop sys.boot_completed) -join ''
     if ($booted.Trim() -eq '1') { break }
+    if ($proc -and -not $script:emuLockPid) { Update-EmulatorLockPid $script:emuLock ([int]($script:serial -replace 'emulator-', '')) }
     if ($proc -and $proc.HasExited) {
         $tail = if (Test-Path $log) { (Get-Content $log -Tail 10) -join "`n" } else { '' }
         throw "emulator exited (code $($proc.ExitCode)) before booting. Log tail:`n$tail"

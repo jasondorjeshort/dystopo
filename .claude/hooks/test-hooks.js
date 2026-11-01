@@ -3368,6 +3368,164 @@ if (selected('CB1')) {
   }
 }
 
+// ---------- the emulator cap: emulator-lock.js and emulator-stop.js (groups EL, ES; Dystopo T190) ----------
+// EL: emulator-lock.js at PreToolUse denies a raw `emulator -avd` / `emulator @name` (a tripwire) and records a
+// subagent's android-emu.ps1 and sweep.ps1 AVDs as claims; policy.js reads the emulators block. ES: emulator-stop.js
+// at SubagentStop stops the ending agent's emulators by the PID in the lock. The "emulators" are a copy of node
+// named like the qemu binary, sleeping, so the image check and the kill by PID are real; a plain node sleeper
+// stands for a reused PID. Every case runs under a scratch policy whose lockDir is a scratch folder, adb off.
+if (['EL', 'ES'].some((g) => selected(g) || (opt.only && opt.only.startsWith(g)))) {
+  const { spawn } = require('child_process');
+  const elDir = path.join(scratch, 'emulator-locks');
+  const elPolicy = scratchPolicy('emulators', { emulators: { max: 2, lockDir: fwd(elDir) } });
+  const elEnv = (extra) => envWith(Object.assign({ HOOK_POLICY_FILE: elPolicy, EMULATOR_STOP_ADB: 'none' }, extra || {}));
+  const pre = (command, tool, agentId) => JSON.stringify(Object.assign({ hook_event_name: 'PreToolUse', tool_name: tool || 'Bash', cwd: scratch, tool_input: { command } },
+    agentId ? { agent_id: agentId, agent_type: 'general-purpose' } : {}));
+  const claimFile = (id) => path.join(elDir, 'agents', `${id}.json`);
+  const readClaims = (id) => { try { return JSON.parse(fs.readFileSync(claimFile(id), 'utf8')).claims; } catch (_) { return null; } };
+  const elCases = [
+    ['EL01', 'a raw `emulator -avd` (Bash) is denied, pointing at android-emu.ps1', 'emulator -avd dystopo35-T1 -port 5666 -no-window', 'Bash', true],
+    ['EL02', 'emulator.exe by full path with @name is denied', 'D:/sdk/emulator/emulator.exe @dystopo35-T1 -no-window', 'Bash', true],
+    ['EL03', 'PowerShell `& "...\\emulator.exe" -avd` is denied', '& "C:\\sdk\\emulator\\emulator.exe" -avd dystopo35-T1 -no-window', 'PowerShell', true],
+    ['EL04', 'PowerShell Start-Process -FilePath emulator.exe -ArgumentList \'-avd x\' is denied', "Start-Process -FilePath emulator.exe -ArgumentList '-avd dystopo35-T1'", 'PowerShell', true],
+    ['EL05', 'cmd /c "emulator -avd x" is denied (a runner\'s argument is read again)', 'cmd /c "emulator -avd dystopo35-T1"', 'Bash', true],
+    ['EL06', 'emulator -list-avds is allowed', 'emulator -list-avds', 'Bash', false],
+    ['EL07', 'emulator -accel-check is allowed', 'C:/sdk/emulator/emulator.exe -accel-check', 'Bash', false],
+    ['EL08', 'grep for "emulator -avd" is allowed (data, not a command)', 'grep -n "emulator -avd" docs/reference/android-emulator.md', 'Bash', false],
+    ['EL09', 'echo emulator -avd x is allowed (emulator is not the command)', 'echo emulator -avd dystopo35-T1', 'Bash', false],
+    ['EL10', 'the script itself is allowed', 'powershell -ExecutionPolicy Bypass -File tools\\android-emu.ps1 -Avd dystopo35-T1 -EmuPort 5666 -Port 8800', 'Bash', false],
+  ];
+  for (const [id, label, command, tool, deny] of elCases) {
+    if (!selected(id)) continue;
+    const r = run('emulator-lock', pre(command, tool), elEnv());
+    const d = parseDecision(r.stdout);
+    const ok = r.code === 0 && (deny ? !!d && d.decision === 'deny' && /android-emu\.ps1/.test(d.reason) : r.stdout === '');
+    report(id, label, ok, `exit ${r.code}, stderr ${r.stderr.trim().slice(0, 200)}`, r.stdout);
+  }
+  if (selected('EL11')) {
+    const r = run('emulator-lock', pre('powershell -ExecutionPolicy Bypass -File tools\\android-emu.ps1 -Avd dystopo35-T1 -EmuPort 5666 -Port 8800 -Owner T1', 'Bash', 'agentEL11'), elEnv());
+    const c = readClaims('agentEL11');
+    report('EL11', 'a subagent\'s android-emu.ps1 -Avd records its claim under lockDir/agents/<agent_id>.json',
+      r.code === 0 && r.stdout === '' && JSON.stringify(c) === JSON.stringify([{ avd: 'dystopo35-T1', prefix: false }]), `exit ${r.code}, claims ${JSON.stringify(c)}`, r.stdout);
+  }
+  if (selected('EL12')) {
+    const r = run('emulator-lock', pre('& tools\\android-emu.ps1 -avd dystopo35-T1 -BootOnly', 'PowerShell'), elEnv());
+    const agents = path.join(elDir, 'agents');
+    report('EL12', 'the main session (no agent_id) records no claim', r.code === 0 && r.stdout === '' &&
+      (!fs.existsSync(agents) || fs.readdirSync(agents).every((n) => n === 'agentEL11.json')), `exit ${r.code}`, r.stdout);
+  }
+  if (selected('EL13')) {
+    const r = run('emulator-lock', pre('powershell -File tools/sweep.ps1 -NoBothUnits -EmuPort 5668 -Port 8802', 'Bash', 'agentEL13'), elEnv());
+    const c = readClaims('agentEL13');
+    report('EL13', 'a subagent\'s sweep.ps1 claims its AVD family by prefix (dystopo35-sweep-, with -b and -m<i>)',
+      r.code === 0 && JSON.stringify(c) === JSON.stringify([{ avd: 'dystopo35-sweep-', prefix: true }]), `claims ${JSON.stringify(c)}`, r.stdout);
+  }
+  if (selected('EL14')) {
+    const P = require('./policy.js');
+    const bad = [['max 0', { emulators: { max: 0, lockDir: 'x' } }], ['max "2"', { emulators: { max: '2' } }], ['unknown key', { emulators: { cap: 2 } }]];
+    const problems = [];
+    for (const [what, obj] of bad) if (!P.load(scratchPolicy(`el14-${what.replace(/\W/g, '')}`, obj)).error) problems.push(`${what} loaded without error`);
+    const good = P.load(elPolicy);
+    if (good.error || good.policy.emulators.max !== 2 || good.policy.emulators.lockDir !== fwd(elDir)) problems.push(`good policy: ${good.error || JSON.stringify(good.policy.emulators)}`);
+    const none = P.load(POLICIES.none).policy.emulators;
+    if (none.max !== 2 || none.lockDir !== '~/.dystopo/emulators') problems.push(`defaults ${JSON.stringify(none)}`);
+    report('EL14', 'policy.js: the emulators block (max an integer from 1, lockDir text, no other key; defaults 2 and ~/.dystopo/emulators)', problems.length === 0, problems.join('; '));
+  }
+  if (selected('EL15')) {
+    const home = path.join(scratch, 'el15-home');
+    fs.mkdirSync(home, { recursive: true });
+    const r = spawnSync(NODE, [path.join(HOOKS, 'emulator-lock.js'), '--locks'], { encoding: 'utf8', timeout: 30000, env: envWith({ HOOK_POLICY_FILE: POLICIES.none, HOME: home, USERPROFILE: home }) });
+    report('EL15', '--locks: the default lockDir is ~/.dystopo/emulators under the home folder', r.status === 0 && (r.stdout || '').startsWith(`lockDir ${path.join(home, '.dystopo', 'emulators')}, max 2`),
+      `exit ${r.status}, ${(r.stdout || '').trim()}`);
+  }
+
+  // ES: the stop hook.
+  const fakeExe = path.join(scratch, process.platform === 'win32' ? 'qemu-system-x86_64-headless.exe' : 'qemu-system-x86_64');
+  fs.copyFileSync(process.execPath, fakeExe);
+  fs.chmodSync(fakeExe, 0o755);
+  const sleeper = (exe) => { const p = spawn(exe, ['-e', 'setTimeout(()=>{},600000)'], { detached: true, stdio: 'ignore', windowsHide: true }); p.unref(); return p.pid; };
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+  const waitAlive = (pid) => { for (let i = 0; i < 40 && !alive(pid); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); return alive(pid); };
+  const started = [];
+  const lockFile = (port) => path.join(elDir, `emulator-${port}.json`);
+  const writeLock = (port, avd, pid) => {
+    fs.mkdirSync(elDir, { recursive: true });
+    fs.writeFileSync(lockFile(port), JSON.stringify({ serial: `emulator-${port}`, consolePort: port, avd, owner: avd.replace(/^dystopo\d*-/, ''), pid,
+      emulatorPid: null, hostPort: 8800, checkout: scratch, bootedBy: 1, startedAt: new Date().toISOString(), state: 'running' }));
+  };
+  const fakeEmu = (port, avd) => { const pid = sleeper(fakeExe); started.push(pid); waitAlive(pid); writeLock(port, avd, pid); return pid; };
+  const writeClaims = (id, claims) => { fs.mkdirSync(path.join(elDir, 'agents'), { recursive: true }); fs.writeFileSync(claimFile(id), JSON.stringify({ agentId: id, claims })); };
+  const stopInput = (o) => JSON.stringify(Object.assign({ hook_event_name: 'SubagentStop', session_id: 's', cwd: scratch, stop_hook_active: false }, o));
+  try {
+    if (selected('ES01')) {
+      const mine = fakeEmu(5701, 'dystopo35-T1');
+      const other = fakeEmu(5703, 'dystopo35-T2');
+      writeClaims('agentES01', [{ avd: 'dystopo35-T1', prefix: false }]);
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES01', agent_type: 'general-purpose' }), elEnv());
+      let msg = null; try { msg = JSON.parse(r.stdout).systemMessage; } catch (_) { /* none */ }
+      const ok = r.code === 0 && !alive(mine) && !fs.existsSync(lockFile(5701)) && !fs.existsSync(claimFile('agentES01')) &&
+        alive(other) && fs.existsSync(lockFile(5703)) && /stopped emulator-5701 \(dystopo35-T1, owner T1\) by pid \d+ terminated; lock removed/.test(msg || '');
+      report('ES01', 'an ending agent\'s emulator (by its claim) is terminated by the PID in its lock, lock and claim removed; another agent\'s stays',
+        ok, `exit ${r.code}, mine alive ${alive(mine)}, other alive ${alive(other)}, locks ${fs.readdirSync(elDir).join(',')}`, r.stdout);
+    }
+    if (selected('ES02')) {
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES02', agent_type: 'general-purpose' }), elEnv());
+      report('ES02', 'an agent with no claim and no transcript stops nothing', r.code === 0 && r.stdout === '' && fs.existsSync(lockFile(5703)), `exit ${r.code}`, r.stdout);
+    }
+    const transcript = (name, avd) => {
+      const f = path.join(scratch, name);
+      fs.writeFileSync(f, [JSON.stringify({ type: 'user', message: { content: 'go' } }),
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: `powershell -ExecutionPolicy Bypass -File tools\\android-emu.ps1 -Avd ${avd} -EmuPort 5666 -Port 8800 -BootOnly` } }] } })].join('\n') + '\n');
+      return f;
+    };
+    if (selected('ES03')) {
+      const pid = fakeEmu(5705, 'dystopo35-T3');
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES03', agent_type: 'general-purpose', agent_transcript_path: transcript('es03.jsonl', 'dystopo35-T3') }), elEnv());
+      report('ES03', 'no claim recorded: the agent\'s transcript (-Avd of an android-emu.ps1 line) names the emulator, which is stopped',
+        r.code === 0 && !alive(pid) && !fs.existsSync(lockFile(5705)) && fs.existsSync(lockFile(5703)), `exit ${r.code}, alive ${alive(pid)}`, r.stdout);
+    }
+    if (selected('ES04')) {
+      const pid = fakeEmu(5707, 'dystopo35-T4');
+      const r = run('emulator-stop', stopInput({ transcript_path: transcript('es04.jsonl', 'dystopo35-T4') }), elEnv());
+      report('ES04', 'no agent_id: transcript_path is read the same way', r.code === 0 && !alive(pid) && !fs.existsSync(lockFile(5707)), `exit ${r.code}, alive ${alive(pid)}`, r.stdout);
+    }
+    if (selected('ES05')) {
+      const plain = sleeper(process.execPath);
+      started.push(plain); waitAlive(plain);
+      writeLock(5709, 'dystopo35-T5', plain);
+      writeClaims('agentES05', [{ avd: 'dystopo35-T5', prefix: false }]);
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES05' }), elEnv());
+      report('ES05', 'a lock whose PID now runs another program (reused): never killed, the lock removed as dead',
+        r.code === 0 && alive(plain) && !fs.existsSync(lockFile(5709)) && /removed the dead lock of emulator-5709/.test(r.stdout), `exit ${r.code}, alive ${alive(plain)}`, r.stdout);
+    }
+    if (selected('ES06')) {
+      const a = fakeEmu(5711, 'dystopo35-sweep-20261031');
+      const b = fakeEmu(5713, 'dystopo35-sweep-20261031-b');
+      writeClaims('agentES06', [{ avd: 'dystopo35-sweep-', prefix: true }]);
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES06' }), elEnv());
+      report('ES06', 'a sweep\'s claim (prefix) stops both of its emulators (<Avd> and <Avd>-b)',
+        r.code === 0 && !alive(a) && !alive(b) && !fs.existsSync(lockFile(5711)) && !fs.existsSync(lockFile(5713)) && fs.existsSync(lockFile(5703)), `exit ${r.code}, alive ${alive(a)} ${alive(b)}`, r.stdout);
+    }
+    if (selected('ES07')) {
+      writeLock(5715, 'dystopo35-T7', 999999);
+      writeClaims('agentES07', [{ avd: 'dystopo35-T7', prefix: false }]);
+      const r = run('emulator-stop', stopInput({ agent_id: 'agentES07' }), elEnv());
+      report('ES07', 'a matched lock whose PID is gone is removed', r.code === 0 && !fs.existsSync(lockFile(5715)) && /pid 999999 gone/.test(r.stdout), `exit ${r.code}`, r.stdout);
+    }
+    if (selected('ES08')) {
+      const log = path.join(elDir, 'stop.log');
+      const text = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+      report('ES08', 'each stop is logged in lockDir/stop.log with the agent and how it was identified', /agent agentES01 \(general-purpose; by claims\): stopped emulator-5701/.test(text) &&
+        /agent agentES03 \(general-purpose; by transcript\): stopped emulator-5705/.test(text), text.slice(0, 400));
+    }
+  } finally {
+    for (const pid of started) if (alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch (_) { /* gone */ } }
+    // Until each has exited: a running copy holds its exe, and the scratch tree is removed at the end.
+    for (const pid of started) for (let i = 0; i < 100 && alive(pid); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    if (process.platform === 'win32') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+}
+
 // ---------- the harness's own command line ----------
 if (selected('CLI01')) {
   const r = spawnSync(NODE, [__filename, '--only', 'nosuch'], { encoding: 'utf8', timeout: 60000 });

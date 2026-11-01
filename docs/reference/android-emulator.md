@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-18
+verified: 2026-10-31
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -15,6 +15,20 @@ powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Build -Avd dysto
 python -I tools/android-check.py --port 8694 --serial emulator-5570 --views-file tools/android-tour.txt --out out/t28a/tour.png
 powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-T28a -AvdHome E:\dystopo-avd -EmuPort 5570 -Port 8694 -Stop -Delete   # kill it, drop the forward, delete the AVD
 ```
+
+## The emulator cap (T190)
+
+At most `emulators.max` emulators run on the machine at once (`.claude/hooks/policy.json`; 2, the owner's cap of 2026-10-31). Every boot goes through `tools/android-emu.ps1`, which writes one lock file per emulator, `emulator-<console port>.json`, in `emulators.lockDir` (default `~/.dystopo/emulators/`, one folder for the whole machine; a lock under a worktree's `out/` would bind nobody else). The lock holds the qemu process's PID (the console port's owner, not the wrapper's), its `emulator.exe` parent, the serial, the AVD, the owner (`-Owner <task>`, the task or role of the brief; default the AVD name without `dystopo35-`), the host port, the checkout and the time. Before a boot the script reclaims dead locks (the PID gone or now running another program; a lock still booting whose script is gone), printing each, then refuses once the live locks plus any running emulator without a lock reach the cap, naming them:
+```
+emulator cap reached: 2 of 2 running (emulators.max in .claude/hooks/policy.json; locks in C:\Users\<you>\.dystopo\emulators): emulator-5666 (dystopo35-T190, owner T190, pid 1234, since 18:55, <checkout>); emulator-5668 (...). Not booting dystopo35-T190c on emulator-5670. Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).
+```
+Two scripts booting at once take turns on a mutex, so both never see the same free slot. `-Stop` removes the lock with the emulator; an emulator of the AVD already running keeps its lock or is adopted. `node .claude/hooks/emulator-lock.js --locks` lists the folder with each lock's liveness. The sweep boots through the script (`device-boot`, and `bothunits`' second emulator on `-MatrixEmuPort`), so its two emulators are the cap; `-Matrix` boots more and is refused past it.
+
+**Close on done.** A `SubagentStop` hook (`.claude/hooks/emulator-stop.js`) stops the ending agent's emulators and removes their locks. The agent is identified by the hook input's `agent_id` (Claude Code 2.1.316 sends `agent_id`, `agent_type` and `agent_transcript_path` to `SubagentStop`, and `agent_id` to every `PreToolUse` inside a subagent): the `PreToolUse` hook `emulator-lock.js` records the `-Avd` of each `android-emu.ps1` or `sweep.ps1` command a subagent runs (`lockDir/agents/<agent_id>.json`; the sweep's AVD family by prefix), and the stop hook adds the `-Avd` lines of the agent's own transcript. It stops only by the PID in the lock and only after checking that PID still runs an emulator binary (`qemu-system-*`, `emulator*`), never by name: first `adb emu kill` when the console answers with the lock's AVD, then the PID itself after 20 s; each stop is a line in `lockDir/stop.log` and a message in the session. The AVD stays (`-Stop -Delete` removes it). Stop your emulator yourself after your last check anyway; the hook is the net for an agent cut off before its cleanup. An agent continued after it ended (`SendMessage`) finds its emulator stopped and boots it again.
+
+**The tripwire.** The same `PreToolUse` hook denies a raw `emulator -avd <name>` or `emulator @<name>` command line (any path, also through `Start-Process` or `cmd /c`) and points at the script. It is a tripwire, not a wall: a command built from variables passes it, and the enforcement is the console port (the script refuses a port another AVD holds) and the lock.
+
+**Guest RAM.** `-Memory` sets the guest RAM at boot and in a new AVD's `hw.ramSize`; the default is 3072 (T190; 4096 before). Measured on the second PC with the debug app showing the Rainier map for a minute: the `qemu-system-x86_64-headless.exe` and `emulator.exe` pair's working set was 3.7 GB at `-Memory 2048` (4.5 GB private bytes) and 4.1 GB at 3072 (4.9 GB private), the wrapper 12 MB of it; `crashpad_handler` and the shared `netsimd` come on top and are small. So the extra GB of guest costs about 0.4 GB on the host, and the 2048 guest showed a "Messages isn't responding" dialog in that minute; the cap of 2 at 3072 is about 8.5 GB. A Git Bash `timeout` around the script kills the emulator with it (seen in T190): wait for the script instead.
 
 **The Rainier packs in a worktree.** The script pushes `out\rainier-dem.pmtiles` and `out\rainier-outdoors.pmtiles` from the checkout it runs in (`-Dem`, `-Osm`), and a new worktree's `out\` is empty. Copy the two packs from the main checkout's `out\` into the worktree's `out\` (in Git Bash `mkdir -p out && cp <main>/out/rainier-dem.pmtiles <main>/out/rainier-outdoors.pmtiles out/`); never a junction or symlink to the main `out\`, which removing the worktree follows and deletes (`CLAUDE.md`, Working in parallel). When a chore is still building them, wait in the foreground for its file (`until [ -f <main>/out/rainier-outdoors.pmtiles ]; do sleep 30; done`, or the marker the brief names) before copying. The sprite sheet needs no copy: every push makes it (below). `tools\sweep.ps1` copies the packs itself from `-DataDir`.
 
