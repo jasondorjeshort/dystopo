@@ -35,6 +35,14 @@ object ReadoutSettings {
     const val BAR = "readoutBar"
     const val CLIMB_WINDOW = "climbWindow"
 
+    /**
+     * T197: the row "Set my height now" (`settings/SettingsLayout`'s `SET_HEIGHT`): an action, not a setting (ADR 0044:
+     * calibrating at a known height is one practice everywhere), so nothing is stored or synced. Its field reads a
+     * height as `readout/KnownHeights.parseTyped` does, in the user's units unless it names one, sets it with a sign's
+     * 5 m and says "Height set to 5420 ft".
+     */
+    const val SET_HEIGHT = "setHeight"
+
     /** T177: a climb window as given (`60`, `60s`, `1min`, `5 min`), or null when it is not one of [ReadoutOptions.CLIMB_WINDOWS_S]. */
     fun parseClimbWindow(raw: String?): Int? {
         val t = raw?.trim()?.lowercase()?.replace(" ", "") ?: return null

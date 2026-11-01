@@ -123,6 +123,9 @@ class HelpRegistryTest {
             // T194: the spoken terrain shade line.
             "settings.shadeSpoken",
             // end T194
+            // T197: Set my height now.
+            "settings.setHeight",
+            // end T197
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

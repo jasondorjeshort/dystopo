@@ -13,6 +13,7 @@ import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.ElevationSource
+import io.github.jasondorjeshort.dystopo.readout.KnownHeights
 import io.github.jasondorjeshort.dystopo.readout.PressureSample
 import io.github.jasondorjeshort.dystopo.readout.Readout
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
@@ -62,6 +63,11 @@ import java.util.concurrent.TimeUnit
  * T178: the barometer's trend ([PressureWatch]) is apart from the estimator (it never reads the fused elevation or its
  * offset); a replay's pressure column goes to both, the bar's elevation carries the trend's arrow ([StripItem.trend]),
  * and `GET /readout` › `trend` is [PressureWatch.json].
+ *
+ * T197: a known height ([pin]: the long-press card's "I am at <name>, <height>", Readout settings' "Set my height now",
+ * `POST /readout/calibrate`) goes to the estimator's [ReadoutEstimator.pin] on the readout's thread; while it holds
+ * the bar draws its mark ([Snapshot.markShown], [PIN_GLYPH]) and `GET /readout` › `pin` reports it. [freshFix] is the
+ * fix the long-press card measures its 100 m from.
  */
 object LiveReadout {
     const val TAG = "DystopoReadout"
@@ -176,6 +182,8 @@ object LiveReadout {
         offsetMs = 0L
         lastInjectedAt = 0L
         lastReplayPressureAt = 0L
+        lastFix = null // T197
+        lastPin = null
         counts.clear()
         bump("resets")
         recompute()
@@ -215,6 +223,7 @@ object LiveReadout {
             ),
             "seaLevelPressure" to PressureSource.json(s?.readout?.counters?.get("priors")), // T173
             "trend" to PressureWatch.json(), // T178: the barometer's trend and the pressure-fall warning
+            "pin" to pinJson(s), // T197: the known height set ("I am at", "Set my height now")
             "route" to route,
             "inputs" to linkedMapOf(
                 "counts" to counts.toSortedMap(),
@@ -251,6 +260,7 @@ object LiveReadout {
             }
         }
         lastFed = fix
+        lastFix = fix // T197
         val e = ensure()
         offsetMs = fix.time - System.currentTimeMillis()
         clockKnown = true
@@ -315,7 +325,100 @@ object LiveReadout {
         /** T177: the items carry the other unit system's text (the scale bar's both-units mode). */
         val both: Boolean = false,
     ) {
-        /** The strip as one line of text (what `GET /readout` `line` and the strip's description say). */
-        val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l -> l.joinToString(" · ") { "${it.caption} ${it.full}" + (it.trendLabel?.let { t -> ", pressure $t" } ?: "") } }
+        /** The strip as one line of text (what `GET /readout` `line` and the strip's description say); T197: the mark's words last. */
+        val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l ->
+            l.joinToString(" · ") { "${it.caption} ${it.full}" + (it.trendLabel?.let { t -> ", pressure $t" } ?: "") } +
+                (if (markShown) " · " + KnownHeights.markLabel(readout.barometer.pinnedName) else "")
+        }
+
+        /** T197: the bar draws the mark beside the elevation: a pin holds and the elevation is drawn. */
+        val markShown: Boolean get() = readout.barometer.pinned && items.any { it.entry == ReadoutEntry.ELEVATION }
     }
+
+    // T197: the known height ("I am at <name>", "Set my height now"; shared `readout/KnownHeights`): the estimator's pin,
+    // the last fix the long-press card measures from, and `GET /readout` › `pin`.
+
+    /** The last fix fed to the estimator (any thread reads it). */
+    @Volatile var lastFix: LocationFix? = null
+        private set
+
+    /** The last pin's result and words, for `GET /readout` › `pin` › `last`. */
+    @Volatile private var lastPin: Map<String, Any?>? = null
+
+    /** The last fix when it is at most [FIX_FRESH_MS] old on the fixes' clock, else null. */
+    fun freshFix(): LocationFix? = lastFix?.takeIf { System.currentTimeMillis() + offsetMs - it.time <= FIX_FRESH_MS }
+
+    /** A fix older than this is not "here" for the long-press card's "I am at". */
+    const val FIX_FRESH_MS = 120_000L
+
+    /** The DEM height at a point (NaN for none), as the estimator reads it: the long-press card's tag check. */
+    fun demAt(lat: Double, lon: Double): Double = dem.elevation(lat, lon)
+
+    /**
+     * Sets the height to [eleM] (m) with 1-sigma [sigmaM] from [name] (null: typed) on the readout's thread, at the wall
+     * clock moved to the fixes' clock, and refreshes the bar. [via] (`menu`, `settings`, `route`) is reported.
+     */
+    fun pin(name: String?, eleM: Double, sigmaM: Double, via: String): io.github.jasondorjeshort.dystopo.readout.PinResult = call {
+        val r = ensure().pin(name, eleM, sigmaM, System.currentTimeMillis() + offsetMs)
+        bump("pins.$via")
+        lastPin = linkedMapOf<String, Any?>(
+            "via" to via, "name" to name, "eleM" to eleM, "sigmaM" to sigmaM, "atWallMs" to System.currentTimeMillis(),
+            "confirmation" to KnownHeights.confirmation(name, eleM, AppSettings.units),
+        ) + r.json()
+        recompute()
+        r
+    }
+
+    /** [pin] off the caller's thread; [done] gets the confirmation line on the main thread (null when it failed). */
+    fun pinThen(name: String?, eleM: Double, sigmaM: Double, via: String, done: (String?) -> Unit) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        Thread({
+            val line = runCatching { pin(name, eleM, sigmaM, via); KnownHeights.confirmation(name, eleM, AppSettings.units) }
+                .onFailure { Log.w(TAG, "pin failed", it) }.getOrNull()
+            main.post { done(line) }
+        }, "dystopo-pin").apply { isDaemon = true }.start()
+    }
+
+    /** `GET /readout` › `pin`: the mark as drawn and the pin behind it. */
+    private fun pinJson(s: Snapshot?): Map<String, Any?> {
+        val b = s?.readout?.barometer
+        val units = s?.units ?: AppSettings.units
+        val pinnedAt = b?.pinnedAt
+        return linkedMapOf(
+            "pinned" to (b?.pinned ?: false),
+            "pinnable" to (b?.pinnable ?: false),
+            "name" to b?.pinnedName, "eleM" to b?.pinnedEleM, "sigmaM" to b?.pinnedSigmaM, "atMs" to pinnedAt,
+            "ageS" to if (s != null && pinnedAt != null) (s.readout.timeMs - pinnedAt) / 1000 else null,
+            "offsetSigmaM" to b?.offsetSigmaM?.let { Math.round(it * 100) / 100.0 },
+            "holdsUnderM" to b?.pinnedSigmaM?.let { it * 2 },
+            "end" to b?.pinEnd,
+            "mark" to linkedMapOf(
+                "shown" to (s?.markShown ?: false),
+                "glyph" to PIN_GLYPH,
+                "label" to if (b?.pinned == true) KnownHeights.markLabel(b.pinnedName) else null,
+                "detail" to markDetail(s),
+                "boundsPx" to StripLayout.markBoundsPx?.map { Math.round(it) },
+                "taps" to StripLayout.markTaps,
+                "lastTapText" to StripLayout.markLastTap,
+            ),
+            "fix" to freshFix()?.let { linkedMapOf("lat" to it.lat, "lon" to it.lon, "time" to it.time) },
+            "last" to lastPin,
+        )
+    }
+
+    /** What a tap on the mark says ("Set at Alta Vista, 10:42, 5938 ft"), or null with no pin. */
+    fun markDetail(s: Snapshot? = snapshot): String? {
+        val b = s?.readout?.barometer ?: return null
+        val at = b.pinnedAt ?: return null
+        val ele = b.pinnedEleM ?: return null
+        return KnownHeights.markDetail(b.pinnedName, clockText(at - offsetMs), ele, s.units)
+    }
+
+    /** The phone's clock text for [wallMs] ("10:42", or "10:42 AM" by the phone's setting). */
+    fun clockText(wallMs: Long): String =
+        android.text.format.DateFormat.getTimeFormat(DystopoApp.instance).format(java.util.Date(wallMs))
+
+    /** The bar's mark: a survey point's triangle, as topographic maps mark a height measured on the ground. */
+    const val PIN_GLYPH = "△"
+    // end T197
 }

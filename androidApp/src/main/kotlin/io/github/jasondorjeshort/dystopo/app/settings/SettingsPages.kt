@@ -398,6 +398,19 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T194
+        // T197: "Set my height now": a height typed from a sign, a map or a marker sets the readout's elevation (an action).
+        SettingsRow.SET_HEIGHT -> Setting(row.label, io.github.jasondorjeshort.dystopo.readout.KnownHeights.FIELD_HINT, help = "settings.setHeight") {
+            val context = LocalContext.current
+            val units = AppSettings.units
+            TypedValue("", "height", KeyboardType.Number, suffix = if (units == ContourUnits.FEET) "ft" else "m") { raw ->
+                val m = io.github.jasondorjeshort.dystopo.readout.KnownHeights.parseTyped(raw, units) ?: return@TypedValue if (units == ContourUnits.FEET) "a height like 5420" else "a height like 1652"
+                io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.pinThen(null, m, io.github.jasondorjeshort.dystopo.readout.KnownHeights.SIGN_SIGMA_M, "settings") { line ->
+                    line?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+                }
+                null
+            }
+        }
+        // end T197
     }
 }
 
@@ -571,6 +584,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "while after. Sunset uses a flat horizon. Trees and buildings are not counted."
         },
         // end T193
+        // T197: Set my height now (the survey's wording: what it does, and that the mark goes when the height is no longer trusted).
+        HelpText("settings.setHeight", "Set my height now", at(SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.readout.KnownHeights.SET_NOW), show = page(SettingsGroup.NAVIGATION)) {
+            "Type the height on a sign, map or survey marker where you stand to correct the readout's elevation. A small " +
+                "triangle beside the elevation shows it is in use; it goes when the barometer has drifted too far to trust " +
+                "the height. Long-press a summit or pass you stand on to set it from the map."
+        },
+        // end T197
         HelpText("settings.syncStatus", "Sync status", at(SettingsGroup.SYNC, "Sync status"), show = page(SettingsGroup.SYNC)) {
             "Tracks, waypoints, routes and your settings sync with your server when one is set, and with the phones " +
                 "you share with. This shows when the last sync ran, what it sent and received, and what is still waiting."

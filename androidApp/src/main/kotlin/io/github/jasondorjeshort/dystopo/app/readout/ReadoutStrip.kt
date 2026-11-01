@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.readout
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,12 +18,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -73,6 +76,12 @@ object StripLayout {
         naturalWidthPx = naturalWidth
         besideRoomPx = besideRoom
     }
+
+    // T197: the mark beside the elevation while a known height holds (window pixels; null while not drawn), and its taps.
+    @Volatile var markBoundsPx: FloatArray? = null
+    @Volatile var markTaps = 0
+    @Volatile var markLastTap: String? = null
+    // end T197
 
     fun hide(reason: String) {
         if (shown) LiveReadout.refresh() // the barometer stops at once
@@ -132,12 +141,17 @@ object StripLayout {
  * drawn invisibly under the real one), so the bar never comes and goes, never changes width and nothing in it moves.
  * In both-units mode each entry has the other system's text under it, as the scale bar has. Only every entry switched
  * off draws nothing.
+ *
+ * T197: while a known height holds (`readout/KnownHeights`, [LiveReadout.pin]) a small triangle sits beside the
+ * elevation's caption ([PinMark]); its description is "Set at <name>" ("Set by you" for a typed height), a tap shows the
+ * time and the height, and it goes without a word when the estimate no longer trusts the set height.
  */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 fun ReadoutStrip(night: Boolean) {
     var items by remember { mutableStateOf(LiveReadout.snapshot?.items ?: LiveReadout.placeholder()) }
     var line by remember { mutableStateOf<String?>(null) }
+    var mark by remember { mutableStateOf(false) } // T197
     DisposableEffect(Unit) {
         LiveReadout.setComposed(true)
         onDispose {
@@ -151,6 +165,8 @@ fun ReadoutStrip(night: Boolean) {
             val s = LiveReadout.snapshot
             items = s?.items ?: LiveReadout.placeholder()
             line = s?.line
+            mark = s?.markShown == true // T197
+            if (!mark) StripLayout.markBoundsPx = null
             Foreground.delay(REFRESH_MS)
         }
     }
@@ -164,6 +180,8 @@ fun ReadoutStrip(night: Boolean) {
     val unitStyle = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     val pmStyle = TextStyle(color = muted, fontSize = 11.sp)
     val otherStyle = TextStyle(color = muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    val markStyle = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Bold) // T197
+    val context = LocalContext.current
     FlowRow(
         Modifier
             .onGloballyPositioned { c ->
@@ -181,10 +199,16 @@ fun ReadoutStrip(night: Boolean) {
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         for (it in items) {
-            Column(Modifier.alpha(if (it.dimmed) DIM else 1f)) {
-                Box {
-                    BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
-                    BasicText(it.caption, style = captionStyle)
+            // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
+            val markSlot = it.entry == io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION && it.trendSlot
+            val tapMark = markSlot && mark
+            Column(Modifier.alpha(if (it.dimmed) DIM else 1f).then(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box {
+                        BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
+                        BasicText(it.caption, style = captionStyle)
+                    }
+                    if (markSlot) PinMark(mark, markStyle)
                 }
                 Box {
                     ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle, trendTemplate = it.trendSlot)
@@ -200,6 +224,31 @@ fun ReadoutStrip(night: Boolean) {
         }
     }
 }
+
+/**
+ * T197: the known height's mark beside the elevation's caption: a survey point's triangle ([LiveReadout.PIN_GLYPH]),
+ * as topographic maps mark a height measured on the ground; its slot is kept while hidden so the bar never changes
+ * width (T177). Cleared silently when the pin no longer holds.
+ */
+@Composable
+private fun PinMark(shown: Boolean, style: TextStyle) {
+    BasicText(
+        " " + LiveReadout.PIN_GLYPH,
+        Modifier.alpha(if (shown) 1f else 0f).onGloballyPositioned { c ->
+            if (shown) c.boundsInRoot().let { b -> StripLayout.markBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom) }
+        },
+        style = style,
+    )
+}
+
+/** T197: a tap on the mark: one line, where and when the height was set and to what ("Set at Alta Vista, 10:42, 5938 ft"). */
+private fun onMarkTap(context: android.content.Context) {
+    val text = LiveReadout.markDetail() ?: return
+    StripLayout.markTaps++
+    StripLayout.markLastTap = text
+    android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_LONG).show()
+}
+// end T197
 
 /**
  * One entry's number, unit, the elevation's [trend] arrow (T178: the barometer's trend) and the ±, on one baseline.

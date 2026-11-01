@@ -86,6 +86,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T194: the spoken terrain shade line (Navigation and tracking, after T187's water rows and T184's)
     SHADE_SPOKEN("shadeSpoken", SettingsGroup.NAVIGATION, "Terrain shade: Spoken", "SettingsPages", "T194"),
     // end T194
+    // T197: the readout's height set from a sign (Navigation and tracking, after the readout's rows): an action, not a setting
+    SET_HEIGHT(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.SET_HEIGHT, SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.readout.KnownHeights.SET_NOW, "SettingsPages", "T197"),
+    // end T197
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */
