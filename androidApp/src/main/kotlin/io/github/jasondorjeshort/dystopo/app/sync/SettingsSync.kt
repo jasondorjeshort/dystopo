@@ -24,7 +24,7 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * stays on the phone (T130).
  * T164: the route-time fit (`app.paceFit`, [io.github.jasondorjeshort.dystopo.routing.PaceFits.encode]'s value, so every
  * device shows the same numbers), its switch (`app.paceStandard`, `on` or `off`) and its reset (`app.paceSince`, epoch ms).
- * T163: the turn-around clock's deadline and margin (`app.turnDeadline`, `sunset`, `civil` or `HH:MM`; `app.turnMarginMin`,
+ * T163: the turn-around clock's deadline and margin (`app.turnDeadline`, `sunset`, `civil`, T193's `terrain` or `HH:MM`; `app.turnMarginMin`,
  * whole minutes) are [SettingsRoutes] keys too.
  * T172: the recording activity the picker remembers (`app.trackActivity`, an activity code) and one value per activity for its
  * four recording choices (`app.trackProfile.<activity>`, `acc=50;autopause=0;net=1;interval=1000`); both [SettingsRoutes] keys.

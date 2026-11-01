@@ -41,6 +41,10 @@ import java.util.concurrent.atomic.AtomicLong
  * instant is in the URL, so a tile never answers for another time than its request names), cached the same way under
  * the instant's key ([SunShadeOptions.key]), counted apart (`GET /shade` `sun.generation`, with the sun's altitude, the
  * ray samples and the terrain cells read per tile), and the long-press card's point answer ([ShadeService.pointAnswer]).
+ *
+ * T193: the turn-back clock's terrain sunset at a line's end or a way-back anchor ([ShadeService.terrainAt]): one point
+ * answer per point and date on a thread of its own, cached for this service's life (a pack added or removed reopens
+ * the tile service and so sweeps again).
  */
 /** T65: [ShadeService]'s `/stats` counters (`shadeGeneration`), kept across tile service reopens like the T57 tile counters. */
 class ShadeCounters {
@@ -280,6 +284,56 @@ class ShadeService(
         return ShadeTiles.pointAnswer(p, lat, lon, epochMs).takeUnless { it.horizon.groundM.isNaN() }
     }
 
+    /** T193: a turn-back clock's terrain day at a point: [day] when the sweep answered, [noData] without elevation there. */
+    class TerrainAt(val day: io.github.jasondorjeshort.dystopo.nav.Sun.TerrainDay?, val noData: Boolean, val sweepMs: Double?, val totalMs: Double, val error: String? = null)
+
+    private val terrainDays = java.util.Collections.synchronizedMap(object : LinkedHashMap<String, TerrainAt>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, TerrainAt>?): Boolean = size > TERRAIN_CACHE
+    })
+    private val terrainPending = ConcurrentHashMap.newKeySet<String>()
+    private val terrainSweeps = AtomicLong()
+    private val terrainHits = AtomicLong()
+
+    /**
+     * T193: the turn-back clock's terrain day at [lat], [lon] (a line's end or a way-back anchor) for the local day of
+     * [epochMs]: the cached answer, or null while the sweep ([pointAnswer]) runs on its own thread, started by the first
+     * ask. Cached by point and date ([io.github.jasondorjeshort.dystopo.nav.Deadline.terrainKey]), the latest
+     * [TERRAIN_CACHE] kept; a point with no elevation data is remembered as such. Non-blocking: the clock asks on every
+     * reading, the main thread included.
+     */
+    fun terrainAt(lat: Double, lon: Double, epochMs: Long): TerrainAt? {
+        val key = io.github.jasondorjeshort.dystopo.nav.Deadline.terrainKey(lat, lon, epochMs)
+        terrainDays[key]?.let { terrainHits.incrementAndGet(); return it }
+        if (terrainPending.add(key)) {
+            terrainWorker.execute {
+                val t0 = System.nanoTime()
+                val r = try {
+                    val a = pointAnswer(lat, lon, epochMs)
+                    TerrainAt(a?.day, a == null, a?.sweepMs, ms(System.nanoTime() - t0))
+                } catch (e: IllegalArgumentException) { // the sweep refuses a point with no elevation under it
+                    TerrainAt(null, true, null, ms(System.nanoTime() - t0))
+                } catch (e: Exception) {
+                    android.util.Log.w("Dystopo", "terrain sunset at a line's end failed", e)
+                    TerrainAt(null, true, null, ms(System.nanoTime() - t0), e.toString())
+                }
+                terrainSweeps.incrementAndGet()
+                terrainDays[key] = r
+                terrainPending.remove(key)
+            }
+        }
+        return null
+    }
+
+    /** T193: `GET /nav/turnaround` `terrainCache`: the answers kept, the sweeps run, the hits and what is in flight. */
+    fun terrainJson(): Map<String, Any?> = linkedMapOf(
+        "sweeps" to terrainSweeps.get(), "hits" to terrainHits.get(), "pending" to terrainPending.toList(),
+        "kept" to synchronized(terrainDays) {
+            terrainDays.map { (k, v) ->
+                linkedMapOf("key" to k, "noData" to v.noData, "terrainSunsetMs" to v.day?.sunsetMs, "flatSunsetMs" to v.day?.flat?.sunsetMs, "sweepMs" to v.sweepMs, "totalMs" to v.totalMs, "error" to v.error)
+            }
+        },
+    )
+
     /** T188: `GET /shade` `sun.generation`. */
     fun sunJson(): Map<String, Any?> = counters.sunStats.json() + mapOf(
         "served" to counters.sunServed.json(),
@@ -309,6 +363,12 @@ class ShadeService(
     )
 
     companion object {
+        /** T193: terrain answers kept per service (two or three per navigation: the end, a way-back anchor, a new day). */
+        const val TERRAIN_CACHE = 16
+
+        /** T193: the terrain sunset's sweeps, one at a time, off the UI thread and the tile permits. */
+        private val terrainWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-terrain-sunset").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+
         /** T188: the DEM zooms a point answer looks for a pack at, deepest first. */
         private val POINT_ZOOMS = listOf(ShadeTiles.POINT_ZOOM, 12, 10, 8)
 

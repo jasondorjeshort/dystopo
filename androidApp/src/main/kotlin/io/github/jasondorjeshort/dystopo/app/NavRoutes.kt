@@ -78,6 +78,12 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `WayBackClock`'s: the way back's `anchor` (`source` `start`, `walk` or `here`), `retrace` (`returning`, `headingBack`,
  *   `flips`), the clock, the card's `ui`, `shownOnCard`, `layout.cardPx`, and the `alerts` and `spoken` line of this
  *   recording (`POST /tracks/wayback` moves the anchor; `TrackRoutes.kt`).
+ *   T193, `turnDeadline=terrain`: the clock counts to the sun behind the terrain at the line's end (in free tracking at
+ *   the way-back anchor) when that is earlier than the flat sunset. `GET /nav/turnaround` while navigating adds
+ *   `flatSunsetMs` and `terrainSunsetMs` (with `flatSunset` and `terrainSunset` as clock strings), `terrain` (`behind`:
+ *   the terrain's counts; `later`, `noSun`, `pending`, `noData`: the flat one does; null for the other deadlines) and
+ *   `terrainCache` (the shade service's answers by point and date: `sweeps`, `hits`, `pending`, `kept`); `clock.deadline`
+ *   carries `flatSunsetMs`, `terrainSunsetMs` and `terrain` in both readings.
  * - T187, water along the line (`routing/RouteWater`, computed at the start): `GET /nav` `water`: `enabled` and
  *   `spokenSetting` (the `waterAlongRoute` and `waterSpoken` settings), `state` `ready|computing|off|error`, `count`,
  *   `lengthM`, `longestGapM`, `next` (the item the card names: `n`, `alongM`, `aheadM`, `label`, `kind`, `class`, `basis`,

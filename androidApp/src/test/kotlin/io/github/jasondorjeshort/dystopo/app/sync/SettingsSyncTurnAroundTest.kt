@@ -35,4 +35,19 @@ class SettingsSyncTurnAroundTest {
         assertEquals(60, parsed.turnMarginMin)
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("turnDeadline" to "off")))
     }
+
+    // T193: `terrain` syncs like the other choices.
+    @Test
+    fun theTerrainChoiceIsTakenOnAnotherDevice() {
+        var clock = 1_000L
+        val a = InMemoryTrackStore("aaaa", wallClock = { clock })
+        val b = InMemoryTrackStore("bbbb", wallClock = { clock })
+        assertEquals(1, SettingsSync.write(a, listOf(deadline), mapOf(deadline to "terrain"), clock))
+        clock += 1_000
+        b.apply(a.bundle(b.vector()), clock)
+        val plan = SettingsSync.plan(b.settings(), mapOf(deadline to "sunset", margin to "30"), SettingsRoutes.KEYS)
+        assertEquals(mapOf<String, Any?>("turnDeadline" to "terrain"), plan.params)
+        assertEquals("terrain", assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params)).turnDeadline)
+    }
+    // end T193
 }

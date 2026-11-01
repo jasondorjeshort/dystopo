@@ -197,4 +197,14 @@ class SettingsRoutesTest {
             assertFalse(Routes.isMapRequest(req(p)), p)
         }
     }
+
+    // T193: the terrain sunset as a fourth choice of the deadline row.
+    @Test
+    fun theTerrainDeadline() {
+        assertEquals("terrain", ok("turnDeadline" to "terrain").turnDeadline)
+        assertEquals("terrain", ok("turnDeadline" to "Terrain sunset").turnDeadline)
+        assertTrue(bad("turnDeadline" to "ridge").message.contains("terrain"), "the error names the new choice")
+        assertEquals("sunset", io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.DEFAULT, "the default stays sunset (ADR 0044)")
+    }
+    // end T193
 }

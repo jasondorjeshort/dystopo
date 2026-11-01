@@ -117,6 +117,9 @@ class HelpRegistryTest {
             "settings.printSheet",
             // T184: the route card's time as a range or one number.
             "settings.timeEstimateForm",
+            // T193: the terrain sunset choice of the Turn back by row.
+            "settings.turnTerrain",
+            // end T193
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
