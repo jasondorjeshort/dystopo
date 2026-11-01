@@ -529,6 +529,40 @@ object NavSpeech {
         }
     }
     // end T194
+
+    // ---- T196: the way down after the pressure-fall warning (readout/WayDownWatch; one clause per warning) ----
+
+    /** T196: the index the way-down clause is listed under in `GET /nav/speech` (not a direction's). */
+    const val WAY_DOWN_INDEX = -6
+
+    /**
+     * T196: the way down off a ridge after the pressure-fall warning ("25 minutes down to lower ground along the way
+     * back."), said once per warning right after its line ([sayPressure]) by `readout/PressureWatch`, under the same
+     * setting and mute as that line (`navSpeech`); listed in `GET /nav/speech` with index -6 and direction `wayDown`.
+     * Queued behind whatever is being said (the engine's QUEUE_ADD, no priority), so it follows the warning's own line
+     * and any terrain shade or water line without clipping. Returns the line, or null with the setting off.
+     */
+    fun sayWayDown(text: String): Line? {
+        synchronized(this) {
+            if (!enabled) return null
+            val now = System.currentTimeMillis()
+            if (muted) {
+                val line = Line(now, WAY_DOWN_INDEX, text, "wayDown", text, engine?.name ?: "none", muted = true)
+                if (lines.size >= MAX_LINES) lines.removeAt(0)
+                lines += line
+                mutedCount++
+                return line
+            }
+            val e = engine ?: makeEngine().also { engine = it; it.open() }
+            val line = Line(now, WAY_DOWN_INDEX, text, "wayDown", text, e.name)
+            if (lines.size >= MAX_LINES) lines.removeAt(0)
+            lines += line
+            runCatching { e.speak(line.voice, "dystopo-waydown-$now") }.onFailure { Log.w(NavSession.TAG, "speaking failed", it) }
+            Log.i(NavSession.TAG, "spoke the way-down clause: $text")
+            return line
+        }
+    }
+    // end T196
 }
 
 /**

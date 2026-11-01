@@ -47,6 +47,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitRegions
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import java.io.File
+import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.style.layers.PropertyFactory
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -73,6 +75,10 @@ import java.util.concurrent.TimeUnit
  *   rewritten as each minute closes; read once at the first use.
  * - **Debug** (`controls/ScaleBarRoutes`): `GET /readout` › `trend` is [json]; `POST /readout/trend` feeds a synthetic
  *   series ([feedSynthetic]: a named fixture or a CSV body), ending now; live input is ignored while it is loaded.
+ * - T196, **the way down**: on a raise [WayDownWatch] asks `shared`'s `nav/WayDown` whether the walker is on a ridge
+ *   and, if so, how long the walk to lower ground is along the way back and the route ahead; the card adds the line and
+ *   "Show the way down", and the spoken clause follows the warning's line (`NavSpeech.sayWayDown`). Recomputed as each
+ *   minute closes while the warning is up (the card's line follows the walker; nothing more is spoken).
  */
 object PressureWatch {
     const val TAG = "DystopoPressure"
@@ -197,7 +203,7 @@ object PressureWatch {
         when (alert.update(r)) {
             FallAlert.Event.RAISE -> raise(r)
             FallAlert.Event.CLEAR -> clear()
-            FallAlert.Event.NONE -> {}
+            FallAlert.Event.NONE -> if (why == "minute" && alert.active && card != null) WayDownWatch.compute("minute") // T196
         }
         LiveReadout.refresh()
     }
@@ -211,12 +217,20 @@ object PressureWatch {
         main.post { card = c }
         val line = runCatching { io.github.jasondorjeshort.dystopo.app.nav.NavSpeech.sayPressure(PressureText.SPOKEN) }.getOrNull()
         spoken = ArrayList(spoken.takeLast(19) + linkedMapOf("atMs" to System.currentTimeMillis(), "text" to PressureText.SPOKEN, "said" to (line != null), "muted" to (line?.muted ?: false)))
+        // T196: on a ridge, the way down: the card's line and the spoken clause queued right after the warning's line.
+        val clause = WayDownWatch.compute("raise")?.let { io.github.jasondorjeshort.dystopo.nav.WayDownText.spoken(it) }
+        WayDownWatch.spokenText = clause
+        if (clause != null) {
+            val said = runCatching { io.github.jasondorjeshort.dystopo.app.nav.NavSpeech.sayWayDown(clause) }.getOrNull()
+            spoken = ArrayList(spoken.takeLast(19) + linkedMapOf("atMs" to System.currentTimeMillis(), "text" to clause, "said" to (said != null), "muted" to (said?.muted ?: false), "wayDown" to true))
+        }
         bump("raises")
         Log.i(TAG, "pressure-fall warning: ${c.body}")
     }
 
     private fun clear() {
         main.post { card = null }
+        WayDownWatch.clear() // T196
         bump("clears")
         Log.i(TAG, "pressure-fall warning cleared")
     }
@@ -224,6 +238,7 @@ object PressureWatch {
     /** The card's Dismiss (main thread): the card goes; the warning stays raised (it is not repeated). */
     fun dismiss() {
         card = null
+        WayDownWatch.clear() // T196: the drawn stretch goes with the card
         dismissedAtMs = System.currentTimeMillis()
         bump("dismissals")
     }
@@ -241,6 +256,7 @@ object PressureWatch {
             trend.clear()
             alert.restore(false, null, null) // the warning's memory too, so the next series starts clean
             main.post { card = null }
+            WayDownWatch.clear() // T196
             lastMinutes = -1L
             result = null
             evaluate("clear")
@@ -303,6 +319,13 @@ object PressureWatch {
         }.onFailure { writeFailures++; Log.w(TAG, "could not write $FILE", it) }
     }
 
+    /** T196: `POST /readout/trend?wayDown=1`: the way down computed again now (no new warning, nothing spoken); answers [json]. */
+    fun recomputeWayDown(): Map<String, Any?> = call {
+        load()
+        WayDownWatch.compute("debug")
+        jsonNow()
+    }
+
     /** `GET /readout` › `trend`. */
     fun json(): Map<String, Any?> = runCatching { call { jsonNow() } }.getOrElse { mapOf("error" to (it.message ?: it.javaClass.simpleName)) }
 
@@ -329,6 +352,7 @@ object PressureWatch {
             "card" to linkedMapOf("shown" to (c != null), "title" to c?.title, "body" to c?.body, "station" to c?.station, "raisedAtMs" to c?.raisedAtMs,
                 "dismissedAtMs" to dismissedAtMs, "boundsPx" to cardBoundsPx?.takeIf { c != null }?.map { Math.round(it) }), // T192: none once the card is gone
             "spoken" to spoken.toList(),
+            "wayDown" to WayDownWatch.json(), // T196
             "station" to st?.let { linkedMapOf("station" to it.station, "tempC" to it.tempC, "elevationM" to it.elevationM, "ageS" to (System.currentTimeMillis() - it.timeMs) / 1000) },
             "stationTendency" to (if (synthetic != null) null else PressureSource.stationTendency()?.let { linkedMapOf("hPa" to it.first, "from" to it.second) }),
             "persisted" to linkedMapOf("file" to FILE, "writtenAtMs" to writtenAtMs.takeIf { it > 0 }, "writeFailures" to writeFailures),
@@ -384,7 +408,9 @@ fun PressureCard() {
             BasicText(c.title, style = TextStyle(color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
             BasicText(c.body, style = TextStyle(color = Ink, fontSize = 14.sp))
             c.station?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            WayDownLines() // T196: on a ridge, the walk to lower ground
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                WayDownAction() // T196
                 BasicText(
                     "Dismiss",
                     Modifier
@@ -402,3 +428,269 @@ private val Ink = Color(0xFF2B2420)
 private val Muted = Color(0xFF6B5A4A)
 private val Accent = Color(0xFF8A4B14)
 private val Plate = Color(0xF2F6F1E4)
+
+// ---- T196: the way down after the warning (shared `nav/WayDown`, the survey's words in `WayDownText`) ----
+
+/**
+ * T196: after the pressure-fall warning, the quickest way off exposed ground. On a raise (and as each minute closes
+ * while the warning is up) [compute] reads the walker's last fix ([LiveReadout.lastFix]), the way back (the
+ * recording's retrace line from `nav/WayBackClock.line`, else the navigated route behind the walker) and, while
+ * navigating, the route ahead, and runs `shared`'s `nav/WayDown` over the DEM pack under the fix read at z14 (T195's
+ * ridge rule wants that zoom). On a ridge the card adds "25 min down to lower ground along the way back" (the quicker
+ * direction first, the other as "or 40 min along the route") and "Show the way down", which draws the quicker stretch
+ * on the map ([setDrawn]: a dashed line from the walker to the lower ground and a dot at its end; the camera fits it
+ * when it is not all in view). Below a ridge, without a fix or without a DEM nothing is added and the warning stays as
+ * it is. No setting: it rides on `pressureFallWarning` (ADR 0044). `GET /readout` and `POST /readout/trend` report
+ * [json] as `wayDown`; `POST /readout/trend?wayDown=1` recomputes it and `?wayDownShow=1|0` presses the action.
+ */
+object WayDownWatch {
+    const val TAG = "DystopoWayDown"
+    const val SOURCE = "dystopo-way-down"
+    const val CASING = "dystopo-way-down-casing"
+    const val LINE = "dystopo-way-down-line"
+    const val END = "dystopo-way-down-end"
+
+    /** What the card shows: its [lines] (empty below a ridge) and whether the stretch is drawn. */
+    data class Ui(val lines: List<String>, val drawn: Boolean)
+
+    var ui by mutableStateOf<Ui?>(null)
+        private set
+
+    @Volatile var result: io.github.jasondorjeshort.dystopo.nav.WayDownResult? = null
+        private set
+    @Volatile private var reason: String? = null
+    @Volatile private var why: String? = null
+    @Volatile private var inputs: Map<String, Any?>? = null
+    @Volatile private var computedAtMs = 0L
+    @Volatile private var computeMs = 0L
+    @Volatile private var computes = 0
+    @Volatile var drawn = false
+        private set
+    @Volatile private var fitted = 0
+    /** The clause said with the last warning (null when there was none). */
+    @Volatile var spokenText: String? = null
+    @Volatile var actionBoundsPx: FloatArray? = null
+    @Volatile var linesBoundsPx: FloatArray? = null
+
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    /** One sampler per DEM pack, read under a lock (its tile cache is not thread-safe). */
+    private val samplers = java.util.WeakHashMap<io.github.jasondorjeshort.dystopo.app.Pack, io.github.jasondorjeshort.dystopo.routing.ElevationSampler>()
+
+    private fun sampler(lat: Double, lon: Double): io.github.jasondorjeshort.dystopo.routing.ElevationSampler? {
+        val packs = DystopoApp.instance.tiles.packs
+        val dem = packs.demPacks.firstOrNull { d -> d.header.let { h -> lon in h.minLon..h.maxLon && lat in h.minLat..h.maxLat } } ?: packs.dem ?: return null
+        return synchronized(samplers) {
+            samplers.getOrPut(dem) {
+                val pyramid = io.github.jasondorjeshort.dystopo.tiles.DemPyramid(dem.header.minZoom, dem.header.maxZoom, io.github.jasondorjeshort.dystopo.app.TileService.demDecoder(), cacheTiles = 24) { z, x, y -> dem.tile(z, x, y) }
+                val s = io.github.jasondorjeshort.dystopo.routing.DemElevation(pyramid, zoom = 14)
+                val lock = Any()
+                io.github.jasondorjeshort.dystopo.routing.ElevationSampler { la, lo -> synchronized(lock) { s.elevation(la, lo) } }
+            }
+        }
+    }
+
+    /** Computes the way down now (on the pressure worker) and updates the card; null without a fix or a DEM. */
+    fun compute(because: String): io.github.jasondorjeshort.dystopo.nav.WayDownResult? {
+        val t0 = SystemClock.elapsedRealtime()
+        why = because
+        computes++
+        computedAtMs = System.currentTimeMillis()
+        val r = runCatching { find() }.onFailure { Log.w(TAG, "way down failed", it); reason = "error: ${it.message}" }.getOrNull()
+        computeMs = SystemClock.elapsedRealtime() - t0
+        result = r
+        val lines = r?.let { io.github.jasondorjeshort.dystopo.nav.WayDownText.cardLines(it) }.orEmpty()
+        main.post {
+            if (lines.isEmpty() && drawn) setDrawn(false)
+            ui = Ui(lines, drawn && lines.isNotEmpty())
+            if (drawn) setDrawn(true) // the stretch follows the walker
+        }
+        r?.let { Log.i(TAG, "way down ($because): exposed ${it.exposed}, TPI ${it.tpiM}, ${lines.joinToString(" / ")} in $computeMs ms") }
+        return r
+    }
+
+    private fun find(): io.github.jasondorjeshort.dystopo.nav.WayDownResult? {
+        val fix = LiveReadout.lastFix ?: return null.also { reason = "noFix"; inputs = null }
+        val dem = sampler(fix.lat, fix.lon) ?: return null.also { reason = "noDem"; inputs = null }
+        val nav = io.github.jasondorjeshort.dystopo.app.nav.NavSession.navigator
+        val along = nav?.state?.progress
+        val recorded = io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.line()
+        val wd = io.github.jasondorjeshort.dystopo.nav.WayDown
+        val (back, backSource) = when {
+            recorded != null -> wd.behind(recorded.first, recorded.second) to "recording"
+            nav != null && along != null -> wd.behind(nav.path.points, along) to "route"
+            else -> null to null
+        }
+        val ahead = if (nav != null && along != null) wd.onward(nav.path.points, along) else null
+        val pace = io.github.jasondorjeshort.dystopo.nav.TurnPace.of(io.github.jasondorjeshort.dystopo.routing.CostModel(nav?.options?.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE))
+        inputs = linkedMapOf(
+            "fix" to linkedMapOf("lat" to fix.lat, "lon" to fix.lon, "time" to fix.time),
+            "back" to backSource, "backPoints" to back?.size, "navigating" to (nav != null), "alongM" to along?.let { Math.round(it * 10) / 10.0 },
+            "aheadPoints" to ahead?.size,
+        )
+        reason = null
+        return wd.find(dem, fix.lat, fix.lon, back, ahead, pace)
+    }
+
+    /** The warning cleared or was dismissed (any thread): the lines and the drawn stretch go. */
+    fun clear() {
+        result = null
+        reason = "cleared"
+        main.post {
+            setDrawn(false)
+            ui = null
+        }
+    }
+
+    /** "Show the way down" / "Hide the way down" (main thread): draws or removes the quicker stretch. */
+    fun setDrawn(on: Boolean) {
+        val style = DystopoApp.instance.map.map?.style
+        val r = result
+        val q = r?.quickest?.takeIf { r.exposed }
+        if (on && q != null && style != null) {
+            val line = org.maplibre.geojson.LineString.fromLngLats(q.stretch.map { org.maplibre.geojson.Point.fromLngLat(it.lon, it.lat) })
+            val end = org.maplibre.geojson.Point.fromLngLat(q.lon, q.lat)
+            source(style).setGeoJson(
+                org.maplibre.geojson.FeatureCollection.fromFeatures(listOf(org.maplibre.geojson.Feature.fromGeometry(line), org.maplibre.geojson.Feature.fromGeometry(end))),
+            )
+            val first = !drawn
+            drawn = true
+            if (first) fit(q.stretch)
+        } else {
+            style?.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>(SOURCE)?.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(emptyList()))
+            drawn = false
+        }
+        ui = ui?.copy(drawn = drawn)
+    }
+
+    private fun source(style: org.maplibre.android.maps.Style): org.maplibre.android.style.sources.GeoJsonSource {
+        style.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>(SOURCE)?.let { return it }
+        val src = org.maplibre.android.style.sources.GeoJsonSource(SOURCE)
+        style.addSource(src)
+        val isLine = Expression.eq(Expression.geometryType(), Expression.literal("LineString"))
+        val isPoint = Expression.eq(Expression.geometryType(), Expression.literal("Point"))
+        val round = org.maplibre.android.style.layers.Property.LINE_JOIN_ROUND
+        style.addLayer(
+            org.maplibre.android.style.layers.LineLayer(CASING, SOURCE).withFilter(isLine).withProperties(
+                PropertyFactory.lineColor("#ffffff"), PropertyFactory.lineWidth(9f), PropertyFactory.lineOpacity(0.9f),
+                PropertyFactory.lineCap(org.maplibre.android.style.layers.Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(round),
+            ),
+        )
+        style.addLayer(
+            org.maplibre.android.style.layers.LineLayer(LINE, SOURCE).withFilter(isLine).withProperties(
+                PropertyFactory.lineColor(WAY_DOWN_INK), PropertyFactory.lineWidth(5f), PropertyFactory.lineDasharray(arrayOf(1.5f, 1f)), PropertyFactory.lineJoin(round),
+            ),
+        )
+        style.addLayer(
+            org.maplibre.android.style.layers.CircleLayer(END, SOURCE).withFilter(isPoint).withProperties(
+                PropertyFactory.circleRadius(7f), PropertyFactory.circleColor(WAY_DOWN_INK), PropertyFactory.circleStrokeColor("#ffffff"), PropertyFactory.circleStrokeWidth(2.5f),
+            ),
+        )
+        return src
+    }
+
+    /** Moves the camera to the stretch when it is not all in view below the warning's card (the card hides the map under it). */
+    private fun fit(points: List<io.github.jasondorjeshort.dystopo.nav.NavPoint>) {
+        val m = DystopoApp.instance.map.map ?: return
+        val view = DystopoApp.instance.map.mapView ?: return
+        val density = DystopoApp.instance.resources.displayMetrics.density
+        val top = ((PressureWatch.cardBoundsPx?.get(3) ?: 0f) + 32 * density).toInt()
+        val side = (48 * density).toInt()
+        val bottom = view.height - 140 * density
+        // In view means below the warning's card (it covers the map under it) and above the bottom bars.
+        val inView = runCatching {
+            points.all { p -> m.projection.toScreenLocation(org.maplibre.android.geometry.LatLng(p.lat, p.lon)).let { it.x in 0f..view.width.toFloat() && it.y in top.toFloat()..bottom } }
+        }.getOrDefault(false)
+        if (inView) return
+        val b = org.maplibre.android.geometry.LatLngBounds.Builder()
+        points.forEach { b.include(org.maplibre.android.geometry.LatLng(it.lat, it.lon)) }
+        runCatching {
+            m.easeCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngBounds(b.build(), side, top, side, (140 * density).toInt()), 600)
+            fitted++
+        }.onFailure { Log.w(TAG, "could not fit the stretch", it) }
+    }
+
+    /** `GET /readout` › `wayDown` and `trend` › `wayDown`. */
+    fun json(): Map<String, Any?> {
+        val r = result
+        val u = ui
+        val shown = u?.lines?.isNotEmpty() == true
+        val style = runCatching { DystopoApp.instance.map.map?.style }.getOrNull()
+        val text = io.github.jasondorjeshort.dystopo.nav.WayDownText
+        return linkedMapOf(
+            "state" to when {
+                r == null -> reason ?: "notComputed"
+                r.noData -> "noData"
+                !r.exposed -> "belowRidge"
+                r.exits.isEmpty() -> "noWayDownWithinWindow"
+                else -> "exposed"
+            },
+            "why" to why, "computes" to computes, "computedAtMs" to computedAtMs.takeIf { it > 0 }, "computeMs" to computeMs,
+            "inputs" to inputs,
+            "result" to r?.json(),
+            "card" to linkedMapOf(
+                "lines" to u?.lines, "action" to if (shown) (if (u!!.drawn) text.ACTION_HIDE else text.ACTION) else null,
+                "linesBoundsPx" to linesBoundsPx?.takeIf { shown }?.map { Math.round(it) },
+                "actionBoundsPx" to actionBoundsPx?.takeIf { shown }?.map { Math.round(it) },
+            ),
+            "drawn" to drawn, "layerInstalled" to (runCatching { style?.getLayer(LINE) != null }.getOrNull() ?: false),
+            "stretchPoints" to r?.quickest?.stretch?.size, "cameraFits" to fitted,
+            "spoken" to spokenText,
+            "help" to text.HELP,
+        )
+    }
+}
+
+/** T196: the card's way-down lines, the quicker direction first, with the help icon (nothing below a ridge). */
+@Composable
+private fun WayDownLines() {
+    val u = WayDownWatch.ui
+    if (u == null || u.lines.isEmpty()) {
+        androidx.compose.runtime.SideEffect { WayDownWatch.linesBoundsPx = null }
+        return
+    }
+    Row(
+        Modifier.fillMaxWidth().onGloballyPositioned { l -> l.boundsInRoot().let { b -> WayDownWatch.linesBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            u.lines.forEachIndexed { i, l ->
+                BasicText(l, style = if (i == 0) TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium) else TextStyle(color = Muted, fontSize = 13.sp))
+            }
+        }
+        io.github.jasondorjeshort.dystopo.app.help.HelpIcon("readout.wayDown")
+    }
+}
+
+/** T196: "Show the way down" / "Hide the way down" beside Dismiss (nothing below a ridge). */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.WayDownAction() {
+    val u = WayDownWatch.ui
+    if (u == null || u.lines.isEmpty()) {
+        androidx.compose.runtime.SideEffect { WayDownWatch.actionBoundsPx = null }
+        return
+    }
+    val text = io.github.jasondorjeshort.dystopo.nav.WayDownText
+    val label = if (u.drawn) text.ACTION_HIDE else text.ACTION
+    BasicText(
+        label,
+        Modifier
+            .weight(1f, fill = false)
+            .onGloballyPositioned { l -> l.boundsInRoot().let { b -> WayDownWatch.actionBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } }
+            .clickable(role = Role.Button) { WayDownWatch.setDrawn(!u.drawn) }
+            .semantics { contentDescription = label }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+    )
+}
+
+/** T196: the stretch's colour on the map (a dark blue, apart from the route's and the track's lines). */
+private const val WAY_DOWN_INK = "#1f4fa8"
+
+/** T196: the card's help text (`HelpRegistryTest`: declared beside its icon). */
+internal val PRESSURE_CARD_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText(
+        "readout.wayDown", "The way down", "The map: pressure warning card, on a ridge", needs = "a pressure warning while on a ridge",
+    ) { io.github.jasondorjeshort.dystopo.nav.WayDownText.HELP },
+)
+// end T196
