@@ -177,6 +177,41 @@ object Slope {
         return if (a < 0) a + 360.0 else a
     }
 
+    /**
+     * T195: the edges of steep ground in a route's summary ([io.github.jasondorjeshort.dystopo.routing.ExposureAlong]):
+     * at least [STEEP_DEG] is "over 30 degrees", at least [VERY_STEEP_DEG] "over 35 degrees". The same edges as the
+     * orange and red bands of [avalancheBands] (30-34 and 35-45), so the card and the map agree; one published
+     * practice (avalanche education, the terrain exposure scale, the slope shadings; the T195 survey), so no setting.
+     */
+    const val STEEP_DEG = 30.0
+    const val VERY_STEEP_DEG = 35.0
+
+    /** T195: the eight compass sides a slope can face, clockwise from north, as the summaries name them. */
+    val COMPASS_SIDES: List<String> = listOf("north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest")
+
+    /** T195: the index into [COMPASS_SIDES] of an [aspect] (each side 45 degrees wide, north from 337.5 to 22.5); -1 for NaN. */
+    fun compassSide(aspectDeg: Double): Int {
+        if (aspectDeg.isNaN()) return -1
+        val a = ((aspectDeg % 360.0) + 360.0) % 360.0
+        return ((a + 22.5) / 45.0).toInt() % 8
+    }
+
+    /**
+     * T195: Horn's gradient from one 3x3 stencil ([hornGradient]'s weights) of elevations [v], row by row from the
+     * north-west corner (v[0] north-west, v[4] the centre, v[8] south-east), [cellM] metres apart: (dzdx east, dzdy
+     * north). A NaN neighbour takes the centre's value, as [hornGradient] does; a NaN centre gives NaN for both.
+     */
+    fun hornAt(v: DoubleArray, cellM: Double): Pair<Double, Double> {
+        require(v.size == 9) { "a 3x3 stencil has 9 values" }
+        val e = v[4]
+        if (e.isNaN()) return Double.NaN to Double.NaN
+        fun at(i: Int) = if (v[i].isNaN()) e else v[i]
+        val scale = 1.0 / (8.0 * cellM)
+        val dzdx = ((at(2) + 2 * at(5) + at(8)) - (at(0) + 2 * at(3) + at(6))) * scale
+        val dzdy = -((at(6) + 2 * at(7) + at(8)) - (at(0) + 2 * at(1) + at(2))) * scale
+        return dzdx to dzdy
+    }
+
     /** Slope angle in degrees per cell, same layout as [grid]; NaN where the grid has no data. */
     fun compute(grid: ElevationGrid): FloatArray {
         val out = FloatArray(grid.width * grid.height)
