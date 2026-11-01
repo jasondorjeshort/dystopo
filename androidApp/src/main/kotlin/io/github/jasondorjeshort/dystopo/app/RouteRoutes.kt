@@ -77,6 +77,17 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * `lowFactor`, `highFactor`) and `pastEffort` (waits up to 10 s: `state` `matched|partial|none|computing|mode`, the card's
  * `line`, `best`, `latest` and `partial` with `trackId`, `coverage`, `ordered`, `toleranceM`, `direction`, `startMs`,
  * `elapsedS`, `onRoute`; the counts, `ms`, `read`, `skipped` and the `rule`).
+ * T195, the route's terrain ([io.github.jasondorjeshort.dystopo.app.routing.RouteExposure]; computed from the DEM pack
+ * under the route at z14, never stored): `POST /route` and `GET /route` gain `exposure` (waits up to 10 s): `state`
+ * `ready|computing|noRoute|mode|noDem|noData|error`, `pack`, `ms`, `open` (the sheet is shown), and as `devtool
+ * exposure` prints them `lengthM`, `mode`, `totalTimeS`, `samples`, `sampleM`, `zoom`, `cellM`, `noDataM`, `bands`
+ * (`30to34`, `35up`: `distanceM`, `timeS`), `over30`, `over35`, `facing` (each compass side of the ground over 30
+ * degrees with its distance and time), `facingShown` (the sides the card names), `ridge` (`distanceM`, `timeS`,
+ * `ringM`, `thresholdM`), the card's `card`, the sheet's `times` and `ridgeLine`, `help`, and `stretches` (`kind`
+ * `slope|ridge`, `fromM`, `toM`, `distanceM`, `timeS`, `over35M`, `maxSlopeDeg`, `facing`, `lat`, `lon`, the sheet's
+ * `row`). Drive routes answer `state` `mode`.
+ * - `GET /route/exposure`: the same for the route on the map; 404 with none.
+ * - `POST /route/exposure?open=1|0`: opens or closes the sheet under the card's terrain line (a tap on it); like the GET.
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -100,12 +111,14 @@ object RouteRoutes {
                 when (result) {
                     is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
                         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)), // T187
-                        "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to PaceSettings.pastEffortJson(result.plan))) // T184
+                        "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to PaceSettings.pastEffortJson(result.plan), // T184
+                        "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(result.plan.route.points, result.plan.mode, exposureOpen(app)))) // T195
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
             "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1"))
 "GET" to "/route/water", "POST" to "/route/water" -> water(app, r) // T187
+            "GET" to "/route/exposure", "POST" to "/route/exposure" -> exposure(app, r) // T195
             "GET" to "/route/status" -> Response.json(RoutePlanner.json(app) ?: mapOf("error" to "active pack has no vector archive"))
             "POST" to "/route/build" -> {
                 // T149: answers once the build is admitted, refused or failed (at most 30 s); force=1 skips the heap guard.
@@ -197,7 +210,21 @@ object RouteRoutes {
         "graph" to RoutePlanner.json(app),
         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false)), // T187
         "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to PaceSettings.pastEffortJson(RouteSession.plan), // T184
+        "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(RouteSession.plan?.route?.points, RouteSession.plan?.mode, exposureOpen(app)), // T195
     )
+
+    /** T195: `GET|POST /route/exposure[?open=1|0]`: the terrain of the route on the map. */
+    private fun exposure(app: DystopoApp, r: Request): Response {
+        val plan = RouteSession.plan ?: return Response.json(mapOf("error" to "no route"), 404)
+        if (r.method == "POST") {
+            val open = when (r.query["open"]) { "1", "true" -> true; "0", "false" -> false; else -> return bad("open=1|0 required") }
+            app.map.onMain { io.github.jasondorjeshort.dystopo.app.routing.ExposureUi.routeOpen = open }
+        }
+        return Response.json(io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(plan.route.points, plan.mode, exposureOpen(app)))
+    }
+
+    private fun exposureOpen(app: DystopoApp): Boolean =
+        runCatching { app.map.onMain { io.github.jasondorjeshort.dystopo.app.routing.ExposureUi.routeOpen } }.getOrDefault(false)
 
     /** T187: `GET|POST /route/water[?trip=1][&open=1|0]`: the water of the route on the map or of the trip being edited. */
     private fun water(app: DystopoApp, r: Request): Response {

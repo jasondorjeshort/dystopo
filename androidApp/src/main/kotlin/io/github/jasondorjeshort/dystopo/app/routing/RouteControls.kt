@@ -116,7 +116,8 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  *
  * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, next likely flowing in
  * 1.2 km" and the longest stretch without water, the first line opening the list ([WaterText.row]); the next card line
- * (T184) sits under that one composable.
+ * (T184) sits under that one composable. T195: under the water line, the route's terrain ([ExposureLine]): "1.2 km on
+ * slopes over 30 degrees, facing north and east; 0.4 km over 35 degrees", opening its sheet.
  *
  * T184: the time in the range form (the `timeEstimateForm` setting, default): the headline's time "about 4:30" and the
  * line under it "4:10 to 4:50, based on your last 5 hikes" ([PaceSettings.headline], [PaceSettings.secondLine]), or
@@ -228,6 +229,7 @@ fun RouteControls() {
                 }
                 Directions(plan)
                 WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
+                ExposureLine(plan.route.points, plan.mode) // T195
                 PastEffortLine(plan) // T184
             }
             if (phase == "planning") BuildProgress()
@@ -481,6 +483,49 @@ internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model
                 androidx.compose.runtime.snapshotFlow { listScroll.value to listScroll.maxValue }.collect { (v, m) -> rows.scrollPx = v; rows.scrollMaxPx = m }
             }
             BasicText(WaterText.HINT, style = TextStyle(color = Ink.copy(alpha = 0.75f), fontSize = 11.sp))
+        }
+    }
+}
+
+/** T195: whether the terrain sheet under the card's line is open (Compose state; `POST /route/exposure?open=` sets it). */
+internal object ExposureUi {
+    var routeOpen by mutableStateOf(false)
+}
+
+/**
+ * T195: the route's terrain on the card ([RouteExposure], [io.github.jasondorjeshort.dystopo.routing.ExposureText]): the
+ * line "1.2 km on slopes over 30 degrees, facing north and east; 0.4 km over 35 degrees" (or "No slopes over 30 degrees
+ * along the route"), which opens and closes the sheet behind it: the times on that ground, the distance and time along
+ * ridges, each stretch in route order (scrolls past a few rows), then what the figures measure. Nothing until it is
+ * computed, nor for drive routes or without a DEM under the route.
+ */
+@Composable
+internal fun ExposureLine(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, mode: TravelMode) {
+    val listScroll = rememberScrollState()
+    if (!RouteExposure.applies(mode)) return
+    var res by remember(points, mode) { mutableStateOf(RouteExposure.cached(points, mode)) }
+    LaunchedEffect(points, mode) {
+        if (res == null) res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteExposure.await(points, mode, 60_000) }
+    }
+    val e = res?.exposure ?: return
+    val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
+    val line = io.github.jasondorjeshort.dystopo.routing.ExposureText.cardLine(e, units) ?: return
+    val open = ExposureUi.routeOpen
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        BasicText(
+            line, style = TextStyle(color = Link, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+            modifier = Modifier.clickable { ExposureUi.routeOpen = !ExposureUi.routeOpen }.padding(vertical = 2.dp),
+        )
+        if (open) {
+            val small = TextStyle(color = Ink, fontSize = 12.sp)
+            io.github.jasondorjeshort.dystopo.routing.ExposureText.timeLine(e)?.let { BasicText(it, style = small) }
+            io.github.jasondorjeshort.dystopo.routing.ExposureText.ridgeLine(e, units)?.let { BasicText(it, style = small) }
+            if (e.stretches.isNotEmpty()) {
+                Column(Modifier.heightIn(max = 140.dp).scrollbar(listScroll).verticalScroll(listScroll), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    for ((i, st) in e.stretches.withIndex()) BasicText("${i + 1}. " + io.github.jasondorjeshort.dystopo.routing.ExposureText.row(st, units), style = small)
+                }
+            }
+            BasicText(io.github.jasondorjeshort.dystopo.routing.ExposureText.HELP, style = TextStyle(color = Ink.copy(alpha = 0.75f), fontSize = 11.sp))
         }
     }
 }

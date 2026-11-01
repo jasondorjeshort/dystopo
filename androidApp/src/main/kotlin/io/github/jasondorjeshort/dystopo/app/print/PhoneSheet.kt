@@ -73,7 +73,8 @@ class MadeSheet(val pdf: ByteArray, val layout: PageLayout, val report: Map<Stri
  * of dpi / [PageLayout.STYLE_DPI] (lines and labels as thick on paper as on a 150 dpi screen) and the camera zoom
  * [PageLayout.mapLibreZoom] gives, so one snapshot pixel is one page pixel and the scale is exact; the route
  * (RouteSession's plan), the shown or recording track and its waypoints are drawn over it as the map draws them;
- * the margins are [SheetMargin]'s, the same as devtool's sheet, on [AndroidSheetCanvas]. Written with
+ * the margins are [SheetMargin]'s, the same as devtool's sheet, on [AndroidSheetCanvas] (T195: with a planned route,
+ * its terrain line from the route card in the notes, `extraLines` in the report). Written with
  * `android.graphics.pdf.PdfDocument` (no dependency): one page of the paper's size in points, the map an image at
  * the page's dpi, the margins vector text. Off the main thread; the snapshot itself runs on the main thread.
  */
@@ -154,7 +155,8 @@ object PhoneSheet {
         val north = layout.north(spec.epochMs)
         val date = Instant.ofEpochMilli(spec.epochMs).atZone(ZoneId.systemDefault()).toLocalDate().toString()
         val title = spec.title ?: defaultTitle(layout)
-        val margin = SheetMargin(layout, title, spec.grid, units, contour, units.symbol, north, date, attribution)
+        val extra = listOfNotNull(terrainLine(app, units)) // T195: the planned route's terrain line in the notes
+        val margin = SheetMargin(layout, title, spec.grid, units, contour, units.symbol, north, date, attribution, extra)
 
         val doc = PdfDocument()
         val wPt = (layout.pageWidthMm / PageLayout.MM_PER_INCH * 72).roundToInt()
@@ -225,6 +227,7 @@ object PhoneSheet {
             "units" to units.symbol,
             "contourInterval" to contour,
             "attribution" to attribution,
+            "extraLines" to extra,
             "overlay" to drawn,
             "margin" to margin.texts.toList(),
             "textsDrawn" to canvas.textsDrawn,
@@ -246,6 +249,15 @@ object PhoneSheet {
         val extra = credits.sources.filter { c -> c.usedBy.none { it == "osm" || it == "dem" } }
             .map { plain(it.source.attribution) }.filter { it.isNotEmpty() && it !in text }.distinct()
         return (packs + extra).joinToString(" ").ifEmpty { credits.compact }
+    }
+
+    /**
+     * T195: the planned route's terrain line for the notes ([io.github.jasondorjeshort.dystopo.app.routing.RouteExposure],
+     * the route card's line; waits up to 10 s for it), or null with no route, a drive route or no DEM under it.
+     */
+    private fun terrainLine(app: DystopoApp, units: io.github.jasondorjeshort.dystopo.render.ContourUnits): String? {
+        val plan = runCatching { app.map.onMain { RouteSession.plan?.let { it.route.points to it.mode } } }.getOrNull() ?: return null
+        return io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.cardLine(plan.first, plan.second, units, waitMs = 10_000)
     }
 
     /** "Map sheet 46°47'10"N 121°44'09"W": the centre, as the grid labels' latitude and longitude read. */

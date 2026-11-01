@@ -45,4 +45,7 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     .subcommands(ShadeCommand())
     // T182: what can I see from here, the viewshed and the peaks in view.
     .subcommands(ViewshedCommand())
+    // T195: a route's terrain, steep ground, the sides it faces and ridges.
+    .subcommands(ExposureCommand())
+    // end T195
     .main(args)

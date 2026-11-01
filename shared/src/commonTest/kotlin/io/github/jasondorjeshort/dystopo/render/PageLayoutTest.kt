@@ -319,6 +319,24 @@ class PageLayoutTest {
     }
 
     @Test
+    fun sheetMarginPrintsItsExtraLinesAfterTheHeights() {
+        // T195: the route's terrain line in the notes, below the frame and on the page, the print note still last.
+        val l = PageLayout.plan(Paper.LETTER, false, 25_000.0, paradiseLat, paradiseLon, 200.0)
+        val line = "0.3 mi on slopes over 30 degrees, facing east, southwest and west; 0.1 mi over 35 degrees"
+        val m = SheetMargin(l, "Paradise", SheetGrid.UTM, ContourUnits.FEET, 80.0, "ft", l.north(jan2026), "2026-01-01", "Elevation: USGS 3DEP.", listOf(line))
+        val c = RecordingCanvas()
+        m.paint(c)
+        val i = m.texts.indexOf(line)
+        assertEquals(m.texts.indexOf("Heights in feet above sea level (EGM2008).") + 1, i, m.texts.toString())
+        assertTrue(m.texts.indexOf(SheetMargin.PRINT_NOTE) > i)
+        val pageH = l.pageHeightPx.toDouble()
+        for ((t, b) in c.texts) assertTrue(b.maxY <= pageH, "'$t' at $b off the page")
+        val plain = SheetMargin(l, "Paradise", SheetGrid.UTM, ContourUnits.FEET, 80.0, "ft", l.north(jan2026), "2026-01-01", "Elevation: USGS 3DEP.")
+        plain.paint(RecordingCanvas())
+        assertEquals(m.texts.size - 1, plain.texts.size, "no extra line by default")
+    }
+
+    @Test
     fun sheetMarginLinesForMetresAndLatLon() {
         val l = PageLayout.plan(Paper.A4, true, 50_000.0, montBlancLat, montBlancLon, 200.0)
         val m = SheetMargin(l, "Mont Blanc", SheetGrid.LATLON, ContourUnits.METERS, 20.0, "m", l.north(jan2026), "2026-01-01", "x")

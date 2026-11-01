@@ -485,6 +485,8 @@ class SheetMargin(
     /** The print date as printed, YYYY-MM-DD. */
     val date: String,
     val attribution: String,
+    /** T195: lines printed in the notes after the heights line (the route's terrain line on the phone's sheet); none by default. */
+    val extraLines: List<String> = emptyList(),
 ) {
     val utm: UtmGrid? = if (grid.utm) layout.utmGrid() else null
     val graticule: Graticule? = if (grid.latLon) layout.graticule() else null
@@ -674,6 +676,7 @@ class SheetMargin(
         var y = top + mm(1.0) + pt(6.5) * 0.72
         y = paragraph(c, gridLine(), f, x, y, width)
         y = paragraph(c, "Heights in ${if (units == ContourUnits.FEET) "feet" else "metres"} above sea level (EGM2008).", f, x, y, width)
+        for (line in extraLines) y = paragraph(c, line, f, x, y, width) // T195
         y = paragraph(c, "Printed $date.", f, x, y, width)
         y = paragraph(c, "Sources: $attribution", regular(5.5), x, y, width)
         paragraph(c, PRINT_NOTE, bold(6.5), x, y + mm(0.5), width)
