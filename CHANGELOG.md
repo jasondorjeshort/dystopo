@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.17-alpha (2026-11-01)
+
 ### 2026-11-01
 
 - T196: After a storm warning: the quickest way off exposed ground (after T195 and T197)
