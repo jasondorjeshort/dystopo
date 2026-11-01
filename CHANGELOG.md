@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-01
+
+- T200: The map as the front door: opens at the visitor's location, fits a phone
+
 ## v0.1.17-alpha (2026-11-01)
 
 ### 2026-11-01
