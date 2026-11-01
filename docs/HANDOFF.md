@@ -10,10 +10,11 @@ paragraph: Emulator slots, Launch day, Memory, Launch order, Past the critic; th
 - **Wave 24 is launched** (the owner's go, 2026-10-31, with one condition: "I really want to make sure we do not
   overwhelm the PC with emulators"; the paragraph's Launch day sentence is the rule until T190's lock enforces it).
   Five surveys done (`out/wave24-research/`, gitignored, summarised in each task's Research line); the critic's
-  19 objections answered on the board (8bd5f9bb). Running: implementers T190, T191, T192, T193 (pure half first)
-  and T198 (Opus). The live viewer on 8765 runs (PID in `out/coordinator-pids.txt`). ADR 0049's and 0050's
-  Outcomes written (all held; a new idea from the check: a fresh server lists no graph until a route is planned),
-  their ideas deleted; the orphan `T178` and `T178v` folders removed. Slot V is free (no emulator running).
+  19 objections answered on the board (8bd5f9bb). **Merged and logged:** T198 (02fb2a95), T193 (013afa8a), T190
+  (e1863320: the lock is live, `~/.dystopo/emulators/`, cap 2, guests at 3 GB). **Running:** T191's and T192's
+  verifiers (slot V), T194's implementer (Opus). **Not launched:** T195 and T197 (after T192 merges), T196 (after
+  T195 and T197). The live viewer on 8765 runs (PID in `out/coordinator-pids.txt`). ADR 0049's and 0050's
+  Outcomes written (held), their ideas deleted; the orphan `T178` folders removed.
 - Meters at launch: 7-day 60 (Fable 70), resets 2026-11-06 04:00 UTC (`/usage` shows no 5-hour meter here).
 
 ## Next
@@ -28,8 +29,9 @@ paragraph: Emulator slots, Launch day, Memory, Launch order, Past the critic; th
 ## Waiting on user
 
 - `docs/TASKS.md` › Owner actions pending: install v0.1.16-alpha and the hike checks; the `Question:` blocks of
-  2026-10-30 and 2026-10-31; ADR 0051's two answers; the git housekeeping row. The paging file read
-  system-managed on C: on launch day (12.8 GB allocated, 145 GB free): confirm it was you, then strike the row.
+  2026-10-30 and 2026-10-31; ADR 0051's two answers; the git housekeeping row. **The paging file is still the
+  limit:** it reads 12.8 GB on C: and does not grow (commit limit 60 GB, 44 GB used mid-wave; T191 saw 1 GB free
+  commit during a `check`); set it to 32 GB or more, or system-managed with automatic management on.
 
 ## Open findings
 
