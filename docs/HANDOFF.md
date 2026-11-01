@@ -15,8 +15,7 @@ the Later list carries wave 24's follow-ups and the sweep's findings; the record
 - **The emulator lock is live** (T190, `~/.dystopo/emulators/`, cap 2 in `policy.json`, guests at 3 GB by
   measurement): the owner's condition for the wave held throughout (two slips of under three minutes before the
   lock merged). An emulator costs about 4 GB of host; CPU saturation, not RAM, stalls a boot.
-- Meter: 7-day 60 at launch, 81 at the close (21 points for nine tasks against the 32 assumed; the figures in the
-  wave skill's step 3 stand). Resets 2026-11-06 04:00 UTC.
+- Meter: 7-day 60 at launch, 81 at the close (21 points for nine tasks against 32 assumed); resets 2026-11-06.
 
 ## Next
 
@@ -25,8 +24,7 @@ the Later list carries wave 24's follow-ups and the sweep's findings; the record
    sweep lost its emulator twice to the stop hook when its agent yielded). Plan by the `wave` skill: Later's
    lifted follow-ups (T190 to T198), the ideas with a `Plan:` block, the owner's theme if any.
 2. A Hatchery-rooted session: the pending carry-backs plus T190's two (a project-extension section in the policy
-   schema; the `SubagentStop` input fields, `agent_id`, `agent_transcript_path`, `background_tasks`, for its hook
-   spec) and the sentinel rule now in the wave skill.
+   schema; the `SubagentStop` input fields for its hook spec) and the wave skill's sentinel rule.
 3. ADR 0040's, 0042's and 0049's C after the owner's answers; the terrain-fix live source after the hike logs.
 
 ## Waiting on user
