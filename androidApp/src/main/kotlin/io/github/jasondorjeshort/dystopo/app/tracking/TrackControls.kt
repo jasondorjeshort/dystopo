@@ -59,7 +59,7 @@ private val Magenta = Color(0xFFD01C8B)
  * The track controls on the map (T31, T40): record/pause/resume/stop with the live distance, point
  * count and time; a Waypoint chip, always shown (T91: at the current fix, recording or not; a long-press
  * on the map offers one too, [LongPressMenu]); a "Tracks" list (tap a track to show it, "Profile" for its
- * elevation profile, "GPX" to export it to the files dir, "Import" for a GPX from the files dir or
+ * elevation profile, "Report" for its trip report in the print dialog (T198), "GPX" to export it to the files dir, "Import" for a GPX from the files dir or
  * the system file picker); the waypoint sheet (rename or delete; opened by tapping a waypoint on the
  * map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view. T180: the recording panel has
  * the way back ([WayBackLine]): the turn-around clock, where the way back goes, and "The way back starts here".
@@ -184,7 +184,13 @@ private fun BoxScope.Controls() {
                                     )
                                     ActivityLine(t.id, t.name, t.activity) // T172: changeable afterwards
                                 }
-                                Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
+                                // T198: "Report" under "Profile" (stacked, so the row stays inside the list's width): the trip report in the print dialog.
+                                Column {
+                                    Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
+                                    Action("Report") {
+                                        io.github.jasondorjeshort.dystopo.app.print.SheetPrint.printReport(app, t.id) { why -> why?.let { msg -> Thread { tracking.refreshUi("Report failed: $msg") }.start() } }
+                                    }
+                                }
                                 Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start() } // T61: navigate
                                 Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
                                 io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51

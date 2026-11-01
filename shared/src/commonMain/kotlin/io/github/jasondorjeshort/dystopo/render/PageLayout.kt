@@ -260,8 +260,14 @@ data class PageLayout(
             return RectMm(side, top, w - 2 * side, h - top - bottom)
         }
 
-        /** The sheet of [paper] at 1:[scale] centred on [centerLat], [centerLon], drawn at about [dpi]. */
-        fun plan(paper: Paper, landscape: Boolean, scale: Double, centerLat: Double, centerLon: Double, dpi: Double = DEFAULT_DPI): PageLayout {
+        /**
+         * The sheet of [paper] at 1:[scale] centred on [centerLat], [centerLon], drawn at about [dpi]; [frame] is the map
+         * frame on the paper (T198: the trip report's is smaller, [TripReport.frameMm]).
+         */
+        fun plan(
+            paper: Paper, landscape: Boolean, scale: Double, centerLat: Double, centerLon: Double, dpi: Double = DEFAULT_DPI,
+            frame: RectMm = frameMm(paper, landscape),
+        ): PageLayout {
             require(scale >= 500 && scale.isFinite()) { "scale must be at least 1:500 (got $scale)" }
             require(dpi in 20.0..1200.0) { "dpi must be 20 to 1200 (got $dpi)" }
             require(centerLat in -80.0..84.0) { "the sheet's centre must be between 80 S and 84 N (UTM; got $centerLat)" }
@@ -274,7 +280,6 @@ data class PageLayout(
             val tileSize = (ground / (target * (1L shl zoom))).roundToInt().coerceAtLeast(16)
             val actual = ground / (tileSize.toDouble() * (1L shl zoom))
             val effectiveDpi = scale * METERS_PER_INCH / actual
-            val frame = frameMm(paper, landscape)
             val fw = (frame.w * effectiveDpi / MM_PER_INCH).roundToInt()
             val fh = (frame.h * effectiveDpi / MM_PER_INCH).roundToInt()
             val cx = WebMercator.lonToX(centerLon, zoom) * tileSize
@@ -295,12 +300,11 @@ data class PageLayout(
          * "Fit the view": the scale at which [box] just fits the frame of [paper], rounded up to a whole
          * denominator (so the sheet shows all of it and prints the exact ratio it used).
          */
-        fun fitScale(box: BoundingBox, paper: Paper, landscape: Boolean): Double {
+        fun fitScale(box: BoundingBox, paper: Paper, landscape: Boolean, frame: RectMm = frameMm(paper, landscape)): Double {
             val (lat, _) = center(box)
             val perWorld = WebMercator.EARTH_CIRCUMFERENCE_M * cos(lat * PI / 180)
             val groundW = (box.east - box.west) / 360.0 * perWorld
             val groundH = (WebMercator.latToY(box.south, 0) - WebMercator.latToY(box.north, 0)) * perWorld
-            val frame = frameMm(paper, landscape)
             return ceil(max(groundW / (frame.w / 1000), groundH / (frame.h / 1000))).coerceAtLeast(500.0)
         }
 
@@ -442,6 +446,12 @@ interface SheetCanvas {
 
     /** The polyline [xy] (x, y pairs) moved by [dx], [dy]. */
     fun polyline(xy: DoubleArray, dx: Double, dy: Double, color: Int, width: Double)
+
+    /**
+     * T198: the polyline [xy] moved by [dx], [dy] with round caps and joins (a thick track over the map, which mitred
+     * joins would spike at every hairpin). By default [polyline]; the AWT and phone canvases round it.
+     */
+    fun roundLine(xy: DoubleArray, dx: Double, dy: Double, color: Int, width: Double) = polyline(xy, dx, dy, color, width)
 
     /** A rectangle filled with [fill] and then outlined with [stroke] at [width], either null to skip it. */
     fun rect(x: Double, y: Double, w: Double, h: Double, fill: Int?, stroke: Int?, width: Double)
