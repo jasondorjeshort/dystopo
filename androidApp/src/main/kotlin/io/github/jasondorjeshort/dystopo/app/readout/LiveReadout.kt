@@ -68,6 +68,9 @@ import java.util.concurrent.TimeUnit
  * `POST /readout/calibrate`) goes to the estimator's [ReadoutEstimator.pin] on the readout's thread; while it holds
  * the bar draws its mark ([Snapshot.markShown], [PIN_GLYPH]) and `GET /readout` › `pin` reports it. [freshFix] is the
  * fix the long-press card measures its 100 m from.
+ *
+ * T196: the pressure-fall warning's way down ([WayDownWatch], in `PressureCard.kt`) reads [lastFix] as the walker's
+ * position; `GET /readout` › `wayDown` is [WayDownWatch.json].
  */
 object LiveReadout {
     const val TAG = "DystopoReadout"
@@ -224,6 +227,7 @@ object LiveReadout {
             "seaLevelPressure" to PressureSource.json(s?.readout?.counters?.get("priors")), // T173
             "trend" to PressureWatch.json(), // T178: the barometer's trend and the pressure-fall warning
             "pin" to pinJson(s), // T197: the known height set ("I am at", "Set my height now")
+            "wayDown" to WayDownWatch.json(), // T196: the way down after the pressure-fall warning
             "route" to route,
             "inputs" to linkedMapOf(
                 "counts" to counts.toSortedMap(),

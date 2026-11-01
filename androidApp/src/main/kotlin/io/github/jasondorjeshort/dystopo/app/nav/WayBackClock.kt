@@ -216,6 +216,11 @@ object WayBackClock {
         }
     }
 
+    /** T196: the way back's line (the retrace's vertices from its start) and where the walker is on it; null before two vertices. */
+    @Synchronized
+    fun line(): Pair<List<io.github.jasondorjeshort.dystopo.nav.NavPoint>, Double>? =
+        wayBack?.retrace?.takeIf { it.points.size >= 2 }?.let { r -> ArrayList(r.points) to r.alongM }
+
     /** `GET /nav/turnaround` while a track records and nothing is navigated, and `GET /tracks` `wayBack`; null otherwise. */
     fun json(): Map<String, Any?>? = synchronized(this) {
         val id = trackId ?: return null

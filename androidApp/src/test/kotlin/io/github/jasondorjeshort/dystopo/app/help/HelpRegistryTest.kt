@@ -126,6 +126,9 @@ class HelpRegistryTest {
             // T197: Set my height now.
             "settings.setHeight",
             // end T197
+            // T196: the pressure warning card's way down.
+            "readout.wayDown",
+            // end T196
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

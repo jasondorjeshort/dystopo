@@ -80,6 +80,20 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   in the answer); `?menu=1` taps the open long-press card's "I am at" (409 when it does not offer one). 400 for a
  *   height out of range. Answers `result` (`held`, `movedM`, `reason`), `confirmation`, and `pin` as in `GET`.
  *   `POST /readout/reset` forgets the pin with every input.
+ * T196, the way down after the warning ([io.github.jasondorjeshort.dystopo.app.readout.WayDownWatch], shared `nav/WayDown`):
+ * - `GET /readout` › `wayDown` and `trend` › `wayDown` (so `POST /readout/trend` answers it too): `state` (`exposed`,
+ *   `belowRidge`, `noWayDownWithinWindow`, `noData`, `noFix`, `noDem`, `cleared`, `notComputed`), `why` (`raise`,
+ *   `minute`, `debug`), `computes`, `computedAtMs`, `computeMs`, `inputs` (the `fix`, `back` `recording` or `route`,
+ *   `backPoints`, `navigating`, `alongM`, `aheadPoints`), `result` (shared `WayDownResult.json`: `exposed`, `eleM`,
+ *   `tpiM`, `rule` with `ringM`, `thresholdM`, `dropM`, `sampleM`, `searchM`, `pace`, `exits` quicker first with
+ *   `direction` `back` or `ahead`, `distanceM`, `timeS`, `minutes`, the point, `eleM`, `dropM`, `tpiM`; `searches` per
+ *   direction `found`, `noneWithinWindow`, `noneBeforeLineEnd`, `noLine`; `card`, `spoken`), `card` (`lines` as drawn,
+ *   `action`, `linesBoundsPx`, `actionBoundsPx`), `drawn`, `layerInstalled`, `stretchPoints`, `cameraFits`, `spoken`
+ *   (the clause said with the warning; also in `trend.spoken` with `wayDown` true and in `GET /nav/speech` with index
+ *   -6) and `help`.
+ * - `POST /readout/trend?wayDown=1` computes the way down again now from the last fix (no new warning, nothing
+ *   spoken); `?wayDownShow=1|0` presses the card's "Show the way down" or "Hide the way down" (409 when the card shows
+ *   no way down). Both answer `trend`.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`, T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`; `SettingsRoutes`).
  */
@@ -143,6 +157,21 @@ object ScaleBarRoutes {
             app.map.onMain { w.dismiss() }
             return Response.json(w.json())
         }
+        // T196: the way down, computed again now, and the card's "Show the way down" pressed.
+        if (r.query["wayDown"] == "1") return Response.json(w.recomputeWayDown())
+        r.query["wayDownShow"]?.let { raw ->
+            val on = when (raw.trim().lowercase()) {
+                "1", "on", "true" -> true
+                "0", "off", "false" -> false
+                else -> return Response.json(mapOf("error" to "wayDownShow must be 1 or 0 (got $raw)"), 400)
+            }
+            val wd = io.github.jasondorjeshort.dystopo.app.readout.WayDownWatch
+            if (on && wd.ui?.lines.isNullOrEmpty()) return Response.json(mapOf("error" to "the card shows no way down") + mapOf("wayDown" to wd.json()), 409)
+            app.map.onMain { wd.setDrawn(on) }
+            Thread.sleep(800) // the camera's fit (600 ms) and a frame
+            return Response.json(w.json())
+        }
+        // end T196
         return try {
             val body = r.bodyText.takeIf { it.isNotBlank() }
             Response.json(w.feedSynthetic(r.query["fixture"], body, r.query["clear"] == "1"))
