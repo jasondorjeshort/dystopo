@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app
 
 import io.github.jasondorjeshort.dystopo.app.print.PhoneSheet
 import io.github.jasondorjeshort.dystopo.app.print.SheetPrint
+import io.github.jasondorjeshort.dystopo.app.print.TripReportPrint
 import io.github.jasondorjeshort.dystopo.render.PageLayout
 import io.github.jasondorjeshort.dystopo.render.Paper
 import io.github.jasondorjeshort.dystopo.render.SheetGrid
@@ -28,8 +29,22 @@ import io.github.jasondorjeshort.dystopo.render.SheetQuery
  *   `trackSegments`, `trackPoints`, `waypointsDrawn`, `waypointsOutside`), `margin` (every margin text),
  *   `textsDrawn`, `pdfBytes`, `pages`, `timingsMs` (`plan`, `snapshot`, `draw`, `writePdf`, `total`). A bad option is
  *   a 400; a snapshot that fails or takes over 90 s a 500. One sheet at a time; a second request waits.
+ * - T198: `POST /print?track=<id>&report=1` with `paper=a4|letter|a3` (default by the track's region), `landscape=1`,
+ *   `dpi=` (100 to 300, default 200) and `format=pdf|json` (default pdf): the trip report of a stored track (or the
+ *   recording's points) as the Tracks list's "Report" prints it ([TripReportPrint]: the map fitted to the track, the
+ *   elevation profile with the stops, the day's figures); `scale`, `grid`, `title`, `lat` and `lon` do not apply.
+ *   `json` is its report: `kind` `report`, `track`, `title`, `walked`, `scale`, `ratio`, `paper`, `landscape`, `dpi`,
+ *   `pagePoints`, `pageWidthPx`, `pageHeightPx`, `frameMm`, `extent`, `snapshot` (`zoom`, `pixelRatio`, `bitmap`),
+ *   `contourInterval`, `snapped` (the pieces placed on a trail network), `name`, `units`, `figures` (every margin
+ *   figure in the page's order: `key`, `label`, `value`, `large`, `raw` in metres or seconds), `extraLines` (the lines
+ *   under the rule), `pace` (`reason` `yours|standard|noTimes|tooShort|mode`, `mode`, `actualMin`, `predictedMin`,
+ *   `deltaMin`, `pieceKm`), `stops` (`atKm`, `minutes`), `points`, `segments`, `profileSamples`, `stopLabels`,
+ *   `margin`, `textsDrawn`, `printed`, `attribution`, `pdfBytes`, `pages`, `timingsMs` (`track`, `summary`, `snapshot`,
+ *   `draw`, `writePdf`, `total`). 404 for an unknown track, 400 for one without two points or a bad option.
  * - `POST /print/ui?scale=25000|10000|50000|fit`: what a tap on the Settings row's scale does: the system print
- *   dialog for the current view (503 while the activity is stopped).
+ *   dialog for the current view (503 while the activity is stopped). T198: `POST /print/ui?track=<id>&report=1` is a
+ *   tap on a track's "Report" in the Tracks list: the print dialog for its trip report. `GET /print` › `report` has
+ *   `made`, `lastError` and `last` (the last report, as above).
  */
 object PrintRoutes {
     private val lock = Any()
@@ -54,10 +69,38 @@ object PrintRoutes {
         "lastError" to PhoneSheet.lastError,
         "last" to PhoneSheet.last,
         "ui" to SheetPrint.lastUi,
+        "report" to linkedMapOf("made" to TripReportPrint.made, "lastError" to TripReportPrint.lastError, "last" to TripReportPrint.last), // T198
     )
+
+    /** T198: `report=1` asks for a track's trip report instead of the view's sheet. */
+    private fun wantsReport(q: Map<String, String>): Boolean = q["report"]?.trim()?.lowercase() in listOf("1", "true", "on", "yes")
+
+    /** T198: the trip report of `track=<id>` as `POST /print?report=1` asks for it. */
+    private fun report(app: DystopoApp, q: Map<String, String>): Response {
+        val spec = try {
+            val id = q["track"]?.trim()?.takeIf { it.isNotEmpty() } ?: throw IllegalArgumentException("report=1 needs track=<id>")
+            val opts = SheetQuery.parse(q - "scale")
+            val dpi = q["dpi"]?.let { d -> d.toDoubleOrNull()?.takeIf { it in 100.0..300.0 } ?: throw IllegalArgumentException("dpi must be 100 to 300") } ?: PhoneSheet.DPI
+            TripReportPrint.Spec(id, opts.paper, opts.landscape, dpi)
+        } catch (e: IllegalArgumentException) {
+            return Response.json(mapOf("error" to (e.message ?: e.toString())), 400)
+        }
+        val format = q["format"] ?: "pdf"
+        if (format != "pdf" && format != "json") return Response.json(mapOf("error" to "format must be pdf or json"), 400)
+        if (TripReportPrint.track(app, spec.trackId) == null) return Response.json(mapOf("error" to "no track ${spec.trackId}"), 404)
+        val made = try {
+            synchronized(lock) { TripReportPrint.make(app, spec) }
+        } catch (e: IllegalArgumentException) {
+            return Response.json(mapOf("error" to (e.message ?: e.toString())), 400)
+        } catch (e: Exception) {
+            return Response.json(mapOf("error" to e.toString()), 500)
+        }
+        return if (format == "pdf") Response(200, "application/pdf", made.pdf) else Response.json(made.report)
+    }
 
     private fun make(app: DystopoApp, r: Request): Response {
         val q = r.query
+        if (wantsReport(q)) return report(app, q)
         val spec = try {
             val opts = SheetQuery.parse(q)
             val dpi = q["dpi"]?.let { d -> d.toDoubleOrNull()?.takeIf { it in 100.0..300.0 } ?: throw IllegalArgumentException("dpi must be 100 to 300") } ?: PhoneSheet.DPI
@@ -85,6 +128,14 @@ object PrintRoutes {
 
     private fun ui(app: DystopoApp, r: Request): Response {
         app.map.backgroundReason()?.let { return Response.json(mapOf("error" to "the app is not on screen", "reason" to it, "route" to "/print/ui"), 503) }
+        if (wantsReport(r.query)) { // T198: the Tracks list's "Report"
+            val id = r.query["track"]?.trim()?.takeIf { it.isNotEmpty() } ?: return Response.json(mapOf("error" to "report=1 needs track=<id>"), 400)
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var why: String? = null
+            SheetPrint.printReport(app, id) { why = it; latch.countDown() }
+            if (!latch.await(30, java.util.concurrent.TimeUnit.SECONDS)) return Response.json(mapOf("opened" to false, "error" to "timed out"), 500)
+            return if (why == null) Response.json(mapOf("opened" to true, "ui" to SheetPrint.lastUi)) else Response.json(mapOf("opened" to false, "error" to why), 409)
+        }
         val scaleText = (r.query["scale"] ?: PageLayout.DEFAULT_SCALE.toLong().toString()).trim().lowercase()
         val scale = if (scaleText == "fit") null else scaleText.toDoubleOrNull()?.takeIf { it >= 500 }
             ?: return Response.json(mapOf("error" to "scale must be a denominator of at least 500 or fit"), 400)
