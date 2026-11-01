@@ -1,6 +1,7 @@
 ---
 date: 2026-10-31
-status: open
+status: resolved (wave 24)
+promoted_to: .claude/skills/wave/SKILL.md
 area: process / merge, wave ownership rules
 ---
 
@@ -61,6 +62,12 @@ The other files:
 
 Cost: four repair commits and one failed verify cycle (T187's verifier). The failure was a compile error, so `check`
 caught it every time; none shipped.
+
+Adopted as option (a) in wave 24's ownership paragraph (2026-10-31): every appended block ends with its own
+`// end Tnn` sentinel and every worktree sets `merge.conflictStyle diff3`. It held twice: T192's verifier
+rebased over a doc conflict and T197's over T194's blocks in four registry files, keeping both blocks with
+their closers each time. The rule now lives in the `wave` skill's Plan and launch step 1. The enforcement
+hook or test of option (a) is not built.
 
 ## Next
 

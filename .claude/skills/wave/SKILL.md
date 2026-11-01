@@ -39,7 +39,11 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    and, where two tasks share a mechanism behind disjoint Owns lines (a hook, a cache, a format, an
    index, a join), an **Interacts with:** line on each naming the other task and the mechanism
    (ADR 0048). Make the Owns lines disjoint; two tasks that must touch one file go in different
-   waves, or one task owns the file and the other records a follow-up. A wave paragraph at the top
+   waves, or one task owns the file and the other records a follow-up. A file several tasks append to in
+   one wave (a settings registry, a dispatch block, a speech file) takes each task's block at the end
+   under a comment naming the task, closed by the task's own sentinel line (`// end Tnn`) after its
+   closers, so a rebase keeps both blocks (finding 2026-10-31; held in two rebase rounds of wave 24);
+   every worktree sets `merge.conflictStyle diff3`. A wave paragraph at the top
    states ownership
    resolved for the wave and the machine's paths when they differ from `docs/reference/machines.md`.
    Before the critic, list the wave's open choices (user-facing or technical) that nothing settles
