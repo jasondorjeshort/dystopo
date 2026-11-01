@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-01
 
+- T201: Hooks: `emulator-stop.js` leaves an emulator alone while the agent has background work; the sweep's small defects
 - T200: The map as the front door: opens at the visitor's location, fits a phone
 
 ## v0.1.17-alpha (2026-11-01)
