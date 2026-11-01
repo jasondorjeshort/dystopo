@@ -481,6 +481,13 @@ def server_json(base, path, token="", method="GET", body=None, raw=False):
     return data if raw else json.loads(data)
 
 
+def set_token(page, token):
+    """T92: the server's bearer token into the page's Server token field (stored as the page does on change). T200: the
+    field shows only with a stored token or ?tools=1, so it is set through the page rather than typed."""
+    page.evaluate("""t => { const i = document.getElementById('packtoken'); i.value = t; i.dispatchEvent(new Event('change'));
+                         document.getElementById('live-tools').hidden = false; }""", token)
+
+
 def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280, 900)):
     """T92: waypoint editing and the pull side of the browser's trip replica (tools/demo/trip-sync.js), after --route
     saved a trip. With the real mouse: "Add waypoint" and a click on the map, a drag of that waypoint; through the page:
@@ -568,8 +575,7 @@ def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280
         fresh.wait_for_function("() => window.dystopoTripSync && window.dystopoTrips", timeout=timeout * 1000)
         fresh.evaluate(OPEN_TRIPS_JS)
         if token:
-            fresh.fill("#packtoken", token)
-            fresh.dispatch_event("#packtoken", "change")
+            set_token(fresh, token)
         fresh.wait_for_function("() => map.isStyleLoaded() && map.getSource('trip')", timeout=timeout * 1000)
         before = fresh.evaluate("() => window.dystopoTrips.trips().length")
         fresh.click("#sync-pull")
@@ -678,13 +684,25 @@ def main() -> int:
     ap.add_argument("--print", action="store_true", help="T167, live mode: the Print box makes a sheet of the last view (check_print)")
     ap.add_argument("--print-scale", default="25000", help="T167: the Print box's scale for --print (10000, 25000, 50000, fit)")
     ap.add_argument("--print-paper", default="a4", help="T167: the Print box's paper for --print (a4, letter, a3; '' by region)")
+    ap.add_argument("--geolocation", default="", metavar="LAT,LON",
+                    help="T200: the browser context's position, with the geolocation permission granted (Playwright's context geolocation)")
+    ap.add_argument("--deny-geolocation", action="store_true", help="T200: the browser context answers geolocation with a denial (as a user's Block)")
+    ap.add_argument("--expect", action="append", default=[], metavar="VIEW",
+                    help="T200: after the views, load --url again with no hash in the same browser context (its localStorage kept) and check "
+                         "it opens at VIEW (z/lat/lon with the view options |src=, |req=, |WxH): the page's hash within --tolerance degrees "
+                         "and 0.05 zoom; repeatable, one load each")
+    ap.add_argument("--tolerance", type=float, default=0.01, help="T200: degrees of latitude and longitude --expect allows (default 0.01)")
     ap.add_argument("--route", default="", help="T68, live mode: after the views, plan lat,lon;lat,lon[;drag-to lat,lon] in the trip editor, drag a via point, export GPX, save as trip (check_route)")
     args = ap.parse_args()
 
     views = read_views(args)
     tour = bool(args.views or args.views_file)
-    if not views:
+    if not views and not args.expect:
         views = [{"view": "", "z": None, "lat": None, "lon": None, "label": ""}]
+    # T200: --expect loads have no hash; the page decides where it opens, and the check compares.
+    for e in args.expect:
+        views.append({**parse_view(e), "nohash": True})
+    tour = tour or len(views) > 1
     stem, ext = os.path.splitext(args.out)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
 
@@ -694,7 +712,15 @@ def main() -> int:
         if args.channel:
             launch["channel"] = args.channel
         browser = p.chromium.launch(**launch)
-        page = browser.new_page(viewport={"width": args.width, "height": args.height})
+        ctx_opts = {"viewport": {"width": args.width, "height": args.height}}
+        if args.geolocation:  # T200: a position and the permission to read it
+            lat, lon = (float(x) for x in args.geolocation.split(","))
+            ctx_opts.update(geolocation={"latitude": lat, "longitude": lon, "accuracy": 30}, permissions=["geolocation"])
+        context = browser.new_context(**ctx_opts)
+        page = context.new_page()
+        if args.deny_geolocation:  # T200: the browser's own denial, as after a user's Block (navigator.permissions says denied)
+            origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(args.url))
+            context.new_cdp_session(page).send("Browser.setPermission", {"permission": {"name": "geolocation"}, "setting": "denied", "origin": origin})
         cur = {}  # the report currently collecting events
 
         def on_console(m):
@@ -726,17 +752,22 @@ def main() -> int:
             page.route(re.compile(r".*/trips\.js(\?.*)?$"), lambda route: held.append(route))
 
         for i, v in enumerate(views):
-            url = args.url + ("#" + v["view"] if v["view"] else "")
+            url = args.url + ("#" + v["view"] if v["view"] and not v.get("nohash") else "")
             report = {"url": url, "console": [], "pageErrors": [], "failedRequests": [], "idle": False, "map": None, "missingTiles": 0, "tile404": []}
             if tour:
                 report["index"] = i
-                report["label"] = v["label"]
+                report["label"] = v["label"] or ("expect" if v.get("nohash") else "")
             page.set_viewport_size({"width": v["size"][0], "height": v["size"][1]} if v.get("size") else {"width": args.width, "height": args.height})
             cur.clear()
             cur.update(report)
             report = cur  # share the lists/counters the handlers mutate
             t0 = time.time()
-            if i == 0:
+            if v.get("nohash"):
+                # T200: a full load of the page with no hash, in the same context (localStorage, permissions kept).
+                if i > 0:
+                    page.goto("about:blank")
+                page.goto(url, wait_until="load", timeout=args.timeout * 1000)
+            elif i == 0:
                 page.goto(url, wait_until="load", timeout=args.timeout * 1000)
             else:
                 page.evaluate("h => { location.hash = h; }", v["view"])
@@ -746,6 +777,7 @@ def main() -> int:
             # zoom, so the gap between one batch of tile requests and the next does not count. Under load a
             # view can miss the deadline (a stalled request, a slow live tile): then jump to it again, which
             # asks again for whatever is missing, and wait once more (--retries; T66).
+            idle_z = None if v.get("nohash") else v["z"]  # T200: an --expect load goes idle wherever it opened
             state = None
             for attempt in range(args.retries + 1):
                 deadline = time.time() + args.timeout
@@ -753,7 +785,7 @@ def main() -> int:
                 while time.time() < deadline:
                     state = page.evaluate(STATE_JS)
                     if state and state["loaded"] and state["tilesLoaded"] and state["styleLoaded"] and \
-                            (v["z"] is None or abs(state["zoom"] - v["z"]) < 0.05):
+                            (idle_z is None or abs(state["zoom"] - idle_z) < 0.05):
                         streak += 1
                         if streak >= 2:
                             report["idle"] = True
@@ -764,8 +796,8 @@ def main() -> int:
                     time.sleep(0.5)
                 if report["idle"]:
                     break
-                report.setdefault("notIdle", []).append(not_idle_because(state, v))
-                if attempt < args.retries and v["z"] is not None:
+                report.setdefault("notIdle", []).append(not_idle_because(state, {"z": idle_z}))
+                if attempt < args.retries and idle_z is not None:
                     report["retries"] = attempt + 1
                     page.evaluate("v => { map.jumpTo({center: [v.lon, v.lat], zoom: v.z}); map.triggerRepaint(); }",
                                   {"lon": v["lon"], "lat": v["lat"], "z": v["z"]})
@@ -804,7 +836,19 @@ def main() -> int:
                         report["scaleRule"] = rule
             ok = report["idle"] and not report["pageErrors"] and not report["failedRequests"] and not any(c["type"] == "error" for c in report["console"])
             ok = ok and not (report.get("scaleRule") or {}).get("mismatches")
-            if tour and v["z"] is not None:
+            report["start"] = page.evaluate("() => window.dystopoStart || null")  # T200: which view opened and why
+            if v.get("nohash"):
+                # T200: where the page opened, read from its hash (MapLibre writes it), against the expected view.
+                h = page.evaluate("() => location.hash").lstrip("#").split("/")
+                try:
+                    got = [float(x) for x in h[:3]]
+                except ValueError:
+                    got = None
+                miss = got is None or len(got) < 3 or abs(got[0] - v["z"]) >= 0.05 or abs(got[1] - v["lat"]) > args.tolerance \
+                    or abs(got[2] - v["lon"]) > args.tolerance
+                report["expect"] = {"want": v["view"], "hash": "/".join(h), "tolerance": args.tolerance, "ok": not miss}
+                ok = ok and not miss
+            if (tour or v.get("nohash")) and v["z"] is not None:  # T200: an --expect load gets the view checks too
                 inside = live or covered(v["z"], v["lat"], v["lon"])
                 report["inCoverage"] = inside
                 report["emptyLayers"] = []
@@ -832,8 +876,7 @@ def main() -> int:
                 page.evaluate("v => map.jumpTo({ center: [v.lon, v.lat], zoom: v.z })", {"lon": views[-1]["lon"], "lat": views[-1]["lat"], "z": views[-1]["z"]})
             reports[-1].update(lateTrips=lt, ok=reports[-1]["ok"] and lt["ok"])
         if args.token:
-            page.fill("#packtoken", args.token)
-            page.dispatch_event("#packtoken", "change")
+            set_token(page, args.token)
         if args.route:
             route = check_route(page, args.route, f"{stem}-route{ext}", args.timeout, args.route_mode, args.token)
             errors = cur["pageErrors"] + cur["failedRequests"] + [c for c in cur["console"] if c["type"] == "error"]
@@ -857,7 +900,7 @@ def main() -> int:
         print(f"{'#':>2} {'view':<26} {'label':<14} {'ok':<4} {'cov':<4} {'miss':>5} {'err':>3} {'cont':>5} {'idx':>4} {'clbl':>4} {'trail':>5} {'poi':>4} {'cliff':>5} {'water':>5} {'peak':>4} {'place':>5} {'s':>5}", file=sys.stderr)
         for r in reports:
             L = r.get("layers", {})
-            print(f"{r['index']:>2} {r['url'].split('#')[-1]:<26} {r['label']:<14} {'ok' if r['ok'] else 'FAIL':<4} "
+            print(f"{r['index']:>2} {(r['expect']['hash'] if r.get('expect') else r['url'].split('#')[-1]):<26} {r['label']:<14} {'ok' if r['ok'] else 'FAIL':<4} "
                   f"{'yes' if r.get('inCoverage') else 'no':<4} {r['missingTiles']:>5} "
                   f"{len(r['console']) + len(r['pageErrors']) + len(r['failedRequests']):>3} "
                   f"{L.get('contour-minor', 0):>5} {L.get('contour-index', 0):>4} {L.get('contour-labels', 0):>4} {role_count('trails', L):>5} {role_count('poi-markers', L):>4} {role_count('cliffs', L):>5} "
