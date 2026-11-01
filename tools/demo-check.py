@@ -46,6 +46,12 @@ T167: --print (live mode, `devtool serve --live`) opens the panel's Print box, p
 "Make the sheet (PDF)" and checks the download is a PDF (`%PDF-` header) of one page whose size and page count the
 `print` entry of the JSON states, saved as `<out>-print.pdf`, with a screenshot `<out>-print.png`; the box must show,
 since GET /print answers there. Elsewhere the probe's 404 on GET /print is expected and not counted as a failure.
+T200: --geolocation LAT,LON gives the browser context a position and the permission to read it; --deny-geolocation
+makes it answer with a denial (as a user's Block; navigator.permissions says denied). --expect VIEW (repeatable) loads
+--url again after the views with no hash, in the same context (localStorage kept), and checks the page opened at VIEW:
+its hash within --tolerance degrees (default 0.01) and 0.05 zoom (`expect` in the JSON; VIEW's |src=, |req=, |WxH apply).
+Every report carries `start` (window.dystopoStart: which view opened and why). --token sets the page's field through the
+page, since it shows only with a stored token or ?tools=1.
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.

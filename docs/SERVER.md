@@ -746,7 +746,8 @@ constant-time. CORS preflights are answered without the token. `POST /catalog/re
 The browser page sends the token with "Build pack here" (and its progress polls and cancel) when it has
 one: open it once as `https://maps.example.org/?token=<token>` (the page stores it in the browser's
 localStorage as `dystopo.token` and removes it from the address bar) or type it in the Token field next to
-the button; an empty field sends none. Without it the build answers 401 and the page says so. The phone's
+the button; an empty field sends none. The build box and the Token field show only with a stored token or
+`?tools=1`, so a visitor sees the map alone (T200). Without it the build answers 401 and the page says so. The phone's
 sync client sends the token from its sync settings (`POST /sync/settings?token=`). With curl:
 
 ```
