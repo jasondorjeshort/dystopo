@@ -6,7 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-10-31
 
-- T191: Tools: the sweep's per-part timeout, bounded waits, the console-port wait, the screenshot of the overlays
+- T191: Tools: the sweep's per-part timeout, bounded waits, the console-port wait
 - T194: Shade along the route at the time you reach it (after T193)
 - T192: The reviewer's defects at the close of wave 23, and two card follow-ups (first; before T195 and T197)
 - T190: Emulators: a lock with a cap, and close on done (first; the owner's priority)
