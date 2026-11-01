@@ -70,6 +70,11 @@ import java.util.concurrent.Executors
  * water that is not a dry gully ("Water in 1.2 km: Stream, likely flowing"), and with the `waterSpoken` setting on the
  * last source before a stretch of more than 5 km without one is said once at its lead distance ([WaterText.dueSpoken],
  * [NavSpeech.sayWater]); `GET /nav` `water`.
+ * T193: with the `terrain` deadline the clock counts to the sun behind the terrain at the line's end when that is earlier
+ * than the flat sunset ([Deadline.resolve]): the end's horizon is swept once per end and date off the UI thread
+ * ([io.github.jasondorjeshort.dystopo.app.options.ShadeService.terrainAt], cached by point and date), the card shows the
+ * flat deadline with "working out the terrain sunset" until it lands, then both sunsets ("Sun behind the ridge 16:12,
+ * flat horizon 17:42"); `GET /nav/turnaround` `flatSunsetMs`, `terrainSunsetMs`, `terrain` and `terrainCache`.
  */
 object NavSession {
     const val TAG = "DystopoNav"
@@ -228,6 +233,11 @@ object NavSession {
         }
         NavSpeech.begin() // T126: a fresh spoken list; the engine is made on the first line
         startWater(path) // T187
+        // T193: the end's terrain sunset starts sweeping now, so it is usually back by the first fix.
+        DeadlineSetting.parse(AppSettings.turnDeadline)?.takeIf { it.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TERRAIN }?.let { st ->
+            val now = System.currentTimeMillis()
+            runCatching { resolveDeadline(st, path.points.last().lat, path.points.last().lon, now, localMidnight(now)) }
+        }
         app.map.cameraMode = camera
         layer.show(path.points, null, null)
         // T65: the route editor sheet closes (its card would sit under the stats bar; the trip stays stored).
@@ -531,7 +541,8 @@ object NavSession {
                 val c = turnReading(s, now)
                 ui?.let { u ->
                     val text = c?.text(::clock)
-                    if (u.turnBack != text || u.turnBackColour != (c?.colour ?: TurnAround.NORMAL)) ui = u.copy(turnBack = text, turnBackLabel = c?.label(::clock), turnBackColour = c?.colour ?: TurnAround.NORMAL)
+                    val label = c?.label(::clock) // T193: the label changes alone when the terrain sunset lands
+                    if (u.turnBack != text || u.turnBackLabel != label || u.turnBackColour != (c?.colour ?: TurnAround.NORMAL)) ui = u.copy(turnBack = text, turnBackLabel = label, turnBackColour = c?.colour ?: TurnAround.NORMAL)
                 }
                 c?.let { turnAlert(it) }
             }
@@ -563,11 +574,23 @@ object NavSession {
         if (s.arrived) return null.also { turnClock = null }
         val setting = DeadlineSetting.parse(AppSettings.turnDeadline) ?: DeadlineSetting.SUNSET
         val end = t.path.points.last()
-        val deadline = Deadline.resolve(setting, end.lat, end.lon, now, localMidnight(now))
+        val deadline = resolveDeadline(setting, end.lat, end.lon, now, localMidnight(now))
         val off = if (s.offRoute) s.projection.distanceM else 0.0
         if (!s.offRoute) turnFarthestM = maxOf(turnFarthestM, s.progress)
         return runCatching { t.clock(s.progress, now, deadline, AppSettings.turnMarginMin, off, farthestM = turnFarthestM, headingBack = s.headingBack) }
             .onFailure { Log.w(TAG, "turn-around clock", it) }.getOrNull().also { turnClock = it }
+    }
+
+    /**
+     * T163's deadline at [lat], [lon]; T193: for the `terrain` choice with the point's terrain day from the shade
+     * service's cache (null while its sweep runs, which this call starts). Shared with the free-tracking clock
+     * ([WayBackClock], at its way-back anchor). Non-blocking.
+     */
+    internal fun resolveDeadline(setting: DeadlineSetting, lat: Double, lon: Double, now: Long, localMidnightMs: Long): Deadline {
+        if (setting.kind != io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TERRAIN) return Deadline.resolve(setting, lat, lon, now, localMidnightMs)
+        val shade = runCatching { app.tiles.shade }.getOrNull()
+        val at = shade?.terrainAt(lat, lon, now)
+        return Deadline.resolve(setting, lat, lon, now, localMidnightMs, at?.day, noTerrainData = shade == null || at?.noData == true)
     }
 
     /** T163: the alerts a reading has made due: a tone and a buzz on the alert path, the spoken line once (at the first). */
@@ -604,6 +627,11 @@ object NavSession {
             "text" to c?.text(::clock), "label" to c?.label(::clock), "clock" to c?.json(),
             "turnBack" to c?.turnBackMs?.let(::clock), "arrival" to c?.arrivalMs?.let(::clock),
             "deadline" to c?.deadline?.atMs?.let(::clock),
+            // T193: both sunsets at the end, which counts (`terrain`: behind, later, noSun, pending, noData; null unless
+            // the deadline is `terrain`) and the shade service's terrain answers.
+            "flatSunsetMs" to c?.deadline?.flatSunsetMs, "terrainSunsetMs" to c?.deadline?.terrainSunsetMs, "terrain" to c?.deadline?.terrain?.key,
+            "flatSunset" to c?.deadline?.flatSunsetMs?.let(::clock), "terrainSunset" to c?.deadline?.terrainSunsetMs?.let(::clock),
+            "terrainCache" to runCatching { app.tiles.shade.terrainJson() }.getOrNull(),
             "alerts" to synchronized(turnAlerts) { turnAlerts.json() + mapOf("events" to ArrayList(turnEvents)) },
             "spoken" to turnSpoken,
             "ui" to ui?.let { linkedMapOf("text" to it.turnBack, "label" to it.turnBackLabel, "colour" to it.turnBackColour) },

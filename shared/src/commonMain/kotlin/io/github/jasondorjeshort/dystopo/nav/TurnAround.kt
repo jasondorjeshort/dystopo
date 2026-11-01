@@ -31,17 +31,49 @@ class TurnPace(val fitted: Boolean, private val stretchTimeS: (lengthM: Double, 
     }
 }
 
-/** What the clock counts down to: the day's sunset, the end of civil twilight, or a time the user typed. */
+/**
+ * What the clock counts down to: the day's sunset, the end of civil twilight, a time the user typed, or (T193) the sun
+ * going behind the terrain at the line's end.
+ */
 enum class DeadlineKind(val key: String, val label: String) {
     SUNSET("sunset", "sunset"),
     CIVIL("civil", "civil twilight"),
-    TIME("time", "your time");
+    TIME("time", "your time"),
+
+    /**
+     * T193: the terrain sunset at the line's end (T181's horizon sweep crossed with the day's sun path), when it is
+     * earlier than the flat-horizon sunset; else, or until the sweep answers, the flat sunset ([TerrainSunset]).
+     */
+    TERRAIN("terrain", "terrain sunset");
+}
+
+/**
+ * T193: what the terrain sunset at the end came to for a [DeadlineKind.TERRAIN] deadline, and so which sunset counts.
+ * Only [BEHIND] moves the deadline; every other state keeps the flat-horizon sunset and says why on the card.
+ */
+enum class TerrainSunset(val key: String) {
+    /** The sun goes behind the terrain before the flat sunset: the deadline is the terrain's. */
+    BEHIND("behind"),
+
+    /** The terrain sunset is at or after the flat one (a high point with an open view): the flat sunset counts. */
+    LATER("later"),
+
+    /** The sun does not clear the terrain there that day (a deep hollow in winter): the flat sunset counts. */
+    NO_SUN("noSun"),
+
+    /** The sweep has not answered yet (it runs off the UI thread): the flat sunset until it lands. */
+    PENDING("pending"),
+
+    /** No elevation data covers the point: the flat sunset. */
+    NO_DATA("noData");
 }
 
 /**
  * The deadline setting (T163, `turnDeadline`): `sunset` (the default; every surveyed watch and app counts to sunset),
- * `civil` (the end of civil twilight, which relies on a headlamp) or a typed local clock time `HH:MM` (a pickup, a last
- * ferry). There is no "off": the clock always runs while navigating.
+ * `civil` (the end of civil twilight, which relies on a headlamp), `terrain` (T193: the sun behind the ridge at the
+ * line's end; a choice, not the default, as no navigation app counts to it, ADR 0044) or a typed local clock time `HH:MM`
+ * (a pickup, a last ferry). There is no "off": the clock always runs while navigating. Builds before T193 do not parse
+ * `terrain`: a stored one reads as the default, a synced one is skipped (ADR 0033).
  */
 data class DeadlineSetting(val kind: DeadlineKind, val minuteOfDay: Int? = null) {
     init {
@@ -58,11 +90,12 @@ data class DeadlineSetting(val kind: DeadlineKind, val minuteOfDay: Int? = null)
 
         private val TIME = Regex("""^(\d{1,2}):(\d{2})$""")
 
-        /** `sunset`, `civil` or `H:MM`/`HH:MM` (24-hour); null for anything else. */
+        /** `sunset`, `civil`, `terrain` or `H:MM`/`HH:MM` (24-hour); null for anything else. */
         fun parse(raw: String?): DeadlineSetting? {
             val v = raw?.trim()?.lowercase() ?: return null
             if (v == "sunset") return SUNSET
             if (v == "civil" || v == "civil twilight" || v == "twilight") return DeadlineSetting(DeadlineKind.CIVIL)
+            if (v == "terrain" || v == "terrain sunset") return DeadlineSetting(DeadlineKind.TERRAIN) // T193
             val m = TIME.matchEntire(v) ?: return null
             val h = m.groupValues[1].toInt()
             val min = m.groupValues[2].toInt()
@@ -78,21 +111,70 @@ data class DeadlineSetting(val kind: DeadlineKind, val minuteOfDay: Int? = null)
     }
 }
 
-/** A deadline placed in time: [atMs] (null when the sun does not go down that far that day), and how the card names it. */
-data class Deadline(val kind: DeadlineKind, val atMs: Long?, val label: String) {
+/**
+ * A deadline placed in time: [atMs] (null when the sun does not go down that far that day), and how the card names it.
+ * T193: [flatSunsetMs] is the day's flat-horizon sunset at the point (for the sun kinds), and for a
+ * [DeadlineKind.TERRAIN] deadline [terrainSunsetMs] the terrain's (null until the sweep answers, without data, or when
+ * the sun never clears the terrain) and [terrain] which of the two counts and why.
+ */
+data class Deadline(
+    val kind: DeadlineKind,
+    val atMs: Long?,
+    val label: String,
+    val flatSunsetMs: Long? = null,
+    val terrainSunsetMs: Long? = null,
+    val terrain: TerrainSunset? = null,
+) {
     companion object {
         /** The sun events are for a level horizon; the label says so (a valley's own sunset is earlier). */
         const val FLAT_HORIZON = "flat horizon"
+
+        /** T193: the card's words for a terrain sunset earlier than the flat one (the survey's wording). */
+        const val BEHIND_RIDGE = "sun behind the ridge"
 
         /**
          * [setting] for a walk at [lat], [lon] (the end of the line) at [nowMs]. A typed time is that clock time on the
          * day that starts at [localMidnightMs] (the phone's own zone; the caller knows it); the sun's events are the
          * local day's at the point ([Sun.dayAt]).
+         *
+         * T193, [DeadlineKind.TERRAIN]: [terrain] is the point's terrain day (`ShadeTiles.pointAnswer`), null while the
+         * sweep runs or with [noTerrainData]; its sunset is the deadline when it is earlier than the flat one, else the
+         * flat sunset counts. A terrain day for another date than [nowMs]'s is treated as not back yet.
          */
-        fun resolve(setting: DeadlineSetting, lat: Double, lon: Double, nowMs: Long, localMidnightMs: Long): Deadline = when (setting.kind) {
+        fun resolve(
+            setting: DeadlineSetting, lat: Double, lon: Double, nowMs: Long, localMidnightMs: Long,
+            terrain: Sun.TerrainDay? = null, noTerrainData: Boolean = false,
+        ): Deadline = when (setting.kind) {
             DeadlineKind.TIME -> Deadline(DeadlineKind.TIME, localMidnightMs + setting.minuteOfDay!! * 60_000L, DeadlineKind.TIME.label)
-            DeadlineKind.SUNSET -> Deadline(DeadlineKind.SUNSET, Sun.dayAt(lat, lon, nowMs).sunsetMs, "${DeadlineKind.SUNSET.label}, $FLAT_HORIZON")
-            DeadlineKind.CIVIL -> Deadline(DeadlineKind.CIVIL, Sun.dayAt(lat, lon, nowMs).civilEndMs, "${DeadlineKind.CIVIL.label}, $FLAT_HORIZON")
+            DeadlineKind.SUNSET -> Sun.dayAt(lat, lon, nowMs).let { d -> Deadline(DeadlineKind.SUNSET, d.sunsetMs, "${DeadlineKind.SUNSET.label}, $FLAT_HORIZON", d.sunsetMs) }
+            DeadlineKind.CIVIL -> Sun.dayAt(lat, lon, nowMs).let { d -> Deadline(DeadlineKind.CIVIL, d.civilEndMs, "${DeadlineKind.CIVIL.label}, $FLAT_HORIZON", d.sunsetMs) }
+            DeadlineKind.TERRAIN -> terrain(Sun.dayAt(lat, lon, nowMs), terrain, noTerrainData)
+        }
+
+        private fun terrain(flat: Sun.Day, day: Sun.TerrainDay?, noData: Boolean): Deadline {
+            val fs = flat.sunsetMs
+            val sameDay = day != null && day.flat.year == flat.year && day.flat.month == flat.month && day.flat.day == flat.day
+            val ts = if (sameDay) day!!.sunsetMs else null
+            val state = when {
+                noData -> TerrainSunset.NO_DATA
+                !sameDay -> TerrainSunset.PENDING
+                ts == null -> if (day!!.alwaysUp) TerrainSunset.LATER else TerrainSunset.NO_SUN
+                fs == null || ts < fs -> TerrainSunset.BEHIND
+                else -> TerrainSunset.LATER
+            }
+            return if (state == TerrainSunset.BEHIND) Deadline(DeadlineKind.TERRAIN, ts, BEHIND_RIDGE, fs, ts, state)
+            else Deadline(DeadlineKind.TERRAIN, fs, "${DeadlineKind.SUNSET.label}, $FLAT_HORIZON", fs, ts, state)
+        }
+
+        /**
+         * T193: the cache key of a terrain sunset: the point to 5 decimals (about a metre: the same line end or way-back
+         * anchor hits it again, a different one misses) and the local date at the point ([Sun.dayAt]: the sun's path,
+         * so the answer, moves by a minute or two a day; the horizon sweep is the cost the key saves).
+         */
+        fun terrainKey(lat: Double, lon: Double, nowMs: Long): String {
+            val d = Sun.dayAt(lat, lon, nowMs)
+            fun r5(v: Double) = kotlin.math.round(v * 100_000).toLong()
+            return "${r5(lat)},${r5(lon)}@${d.year}-${d.month}-${d.day}"
         }
     }
 }
@@ -152,21 +234,44 @@ data class TurnClock(
         TurnState.NO_DEADLINE -> "Out by ${clock(arrivalMs)}"
     }
 
-    /** The label under it: "Sunset 19:12, flat horizon, 30 min margin, standard pace". */
-    fun label(clock: (Long) -> String): String {
-        val d = deadline.atMs?.let { at ->
-            when (deadline.kind) {
-                DeadlineKind.TIME -> "Your time ${clock(at)}"
-                else -> deadline.kind.label.replaceFirstChar { it.uppercase() } + " " + clock(at) + ", " + Deadline.FLAT_HORIZON
+    /**
+     * The label under it: "Sunset 19:12, flat horizon, 30 min margin, standard pace". T193, a terrain deadline shows
+     * both sunsets: "Sun behind the ridge 16:12, flat horizon 17:42, ..." when the terrain's counts, else the flat one
+     * with the reason ([terrainNote]).
+     */
+    fun label(clock: (Long) -> String): String = "${deadlineText(clock)}, $marginMin min margin, $paceLabel"
+
+    /** T193: the label's first part, the deadline alone ("Sun behind the ridge 16:12, flat horizon 17:42"). */
+    fun deadlineText(clock: (Long) -> String): String = deadline.atMs?.let { at ->
+        when (deadline.kind) {
+            DeadlineKind.TIME -> "Your time ${clock(at)}"
+            DeadlineKind.TERRAIN -> if (deadline.terrain == TerrainSunset.BEHIND) {
+                "Sun behind the ridge ${clock(at)}" + (deadline.flatSunsetMs?.let { ", ${Deadline.FLAT_HORIZON} ${clock(it)}" } ?: "")
+            } else {
+                "Sunset ${clock(at)}, ${Deadline.FLAT_HORIZON}" + (terrainNote(clock)?.let { ", $it" } ?: "")
             }
-        } ?: "No ${deadline.kind.label} today"
-        return "$d, $marginMin min margin, $paceLabel"
+            else -> deadline.kind.label.replaceFirstChar { it.uppercase() } + " " + clock(at) + ", " + Deadline.FLAT_HORIZON
+        }
+    } ?: "No ${if (deadline.kind == DeadlineKind.TERRAIN) "sunset" else deadline.kind.label} today"
+
+    /**
+     * T193: why a terrain deadline shows the flat sunset: "terrain sunset later, 17:49" (an open high point),
+     * "working out the terrain sunset" (the sweep has not answered; the long-press card's "working out" wording), "no
+     * elevation data for the terrain sunset", "the sun does not clear the terrain today". Null otherwise.
+     */
+    fun terrainNote(clock: (Long) -> String): String? = when (deadline.terrain) {
+        TerrainSunset.LATER -> "terrain sunset later" + (deadline.terrainSunsetMs?.let { ", ${clock(it)}" } ?: "")
+        TerrainSunset.PENDING -> "working out the terrain sunset"
+        TerrainSunset.NO_DATA -> "no elevation data for the terrain sunset"
+        TerrainSunset.NO_SUN -> "the sun does not clear the terrain today"
+        TerrainSunset.BEHIND, null -> null
     }
 
     /** The one spoken line, at the margin: "Turn back by 14:10 to be out by sunset." */
     fun spoken(clock: (Long) -> String): String {
         val by = when (deadline.kind) {
             DeadlineKind.SUNSET -> "sunset"
+            DeadlineKind.TERRAIN -> if (deadline.terrain == TerrainSunset.BEHIND) "the time the sun goes behind the ridge" else "sunset" // T193
             DeadlineKind.CIVIL -> "the end of twilight"
             DeadlineKind.TIME -> deadline.atMs?.let(clock) ?: "your time"
         }
@@ -175,7 +280,10 @@ data class TurnClock(
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "state" to state.key, "colour" to colour, "nowMs" to nowMs,
-        "deadline" to linkedMapOf("kind" to deadline.kind.key, "atMs" to deadline.atMs, "label" to deadline.label),
+        "deadline" to linkedMapOf(
+            "kind" to deadline.kind.key, "atMs" to deadline.atMs, "label" to deadline.label,
+            "flatSunsetMs" to deadline.flatSunsetMs, "terrainSunsetMs" to deadline.terrainSunsetMs, "terrain" to deadline.terrain?.key, // T193
+        ),
         "marginMin" to marginMin, "pace" to paceLabel, "loop" to loop, "alongM" to r1(alongM),
         "retraceS" to retraceS.roundToLong(), "onwardS" to onwardS.roundToLong(), "returnS" to returnS.roundToLong(), "way" to way,
         "turnBackMs" to turnBackMs, "warnAtMs" to warnAtMs, "arrivalMs" to arrivalMs,

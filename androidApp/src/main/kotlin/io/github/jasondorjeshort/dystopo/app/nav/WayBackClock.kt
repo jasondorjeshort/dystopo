@@ -7,7 +7,6 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.tracking.WayBackAnchor
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.nav.AnchorSource
-import io.github.jasondorjeshort.dystopo.nav.Deadline
 import io.github.jasondorjeshort.dystopo.nav.DeadlineSetting
 import io.github.jasondorjeshort.dystopo.nav.TurnAlerts
 import io.github.jasondorjeshort.dystopo.nav.TurnAround
@@ -196,7 +195,7 @@ object WayBackClock {
         val wb = wayBack ?: return null
         val start = wb.anchor ?: return null
         val setting = DeadlineSetting.parse(AppSettings.turnDeadline) ?: DeadlineSetting.SUNSET
-        val deadline = Deadline.resolve(setting, start.lat, start.lon, now, localMidnight(now))
+        val deadline = NavSession.resolveDeadline(setting, start.lat, start.lon, now, localMidnight(now)) // T193: the terrain sunset at the anchor
         return runCatching { wb.clock(now, deadline, AppSettings.turnMarginMin) }.getOrNull().also { lastClock = it }
     }
 

@@ -34,7 +34,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   [io.github.jasondorjeshort.dystopo.app.routing.PaceSettings]) and `paceSince` (the reset: only tracks started at or after
  *   this epoch ms count, 0 all), all three synced (`app.paceStandard` `on`/`off`, `app.paceFit`, `app.paceSince`); also
  *   Settings › Navigation and tracking › Route times and `GET /pace`.
- *   T163 `turnDeadline` (`sunset`, the default; `civil`; or a typed local time `HH:MM`; there is no off) and `turnMarginMin`
+ *   T163 `turnDeadline` (`sunset`, the default; `civil`; T193 `terrain`, the sun behind the ridge at the route's end when
+ *   earlier, which builds before T193 skip; or a typed local time `HH:MM`; there is no off) and `turnMarginMin`
  *   (0 to 240, default 30): the turn-around clock's deadline and margin, synced (`app.turnDeadline`, `app.turnMarginMin`);
  *   also Settings › Navigation and tracking. A running navigation reads them at its next reading.
  *   T172, recording per activity (Settings › Navigation and tracking): `trackActivity=foot|bike|road|rail|boat|air`, the
@@ -382,7 +383,7 @@ class SettingsRoutes(private val app: DystopoApp) {
             var turnDeadline: String? = null
             params["turnDeadline"]?.let { raw ->
                 turnDeadline = io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(raw.toString())?.value
-                    ?: return Parsed.Error("turnDeadline must be sunset, civil or a time HH:MM (got $raw)")
+                    ?: return Parsed.Error("turnDeadline must be sunset, civil, terrain or a time HH:MM (got $raw)")
             }
             val (turnMarginMin, e4) = intIn("turnMarginMin", io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE, "min")
             e4?.let { return Parsed.Error(it) }

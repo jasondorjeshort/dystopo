@@ -152,6 +152,12 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             Setting(row.label, "what the navigation card's turn-back time counts to", help = "settings.turnDeadline") {
                 Option("Sunset", d.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.SUNSET) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = "sunset")) }
                 Option("Civil twilight", d.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.CIVIL) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = "civil")) }
+                // T193: the sun behind the ridge at the route's end (a choice: the survey found no navigation app counting to it, ADR 0044).
+                // Its own help beside it (the row's would pass the one-paragraph cap with the survey's text).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Option("Terrain sunset", d.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TERRAIN) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = "terrain")) }
+                    HelpIcon("settings.turnTerrain")
+                }
                 Option("A time I type", typed) { if (!typed) change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnDeadline = AppSettings.turnTypedTime)) }
                 if (typed) TypedValue(d.value, "HH:MM", KeyboardType.Number) { raw ->
                     val v = io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(raw)?.takeIf { it.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TIME }
@@ -539,14 +545,21 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         // T163: the turn-around clock's two rows.
         HelpText("settings.turnDeadline", "Turn back by", at(SettingsGroup.NAVIGATION, "Navigation: Turn back by"), show = page(SettingsGroup.NAVIGATION)) {
-            "While you navigate a loop or an out-and-back, the card says when to turn back to be out by this. Sunset is " +
-                "for a level horizon. Civil twilight ends about half an hour later and relies on a headlamp: under trees " +
-                "a trail is dark before it ends. Or type a time, for a pickup or a last ferry."
+            "While you navigate a loop or an out-and-back, the card says when to turn back to be out by this. Sunset uses " +
+                "a flat horizon, Terrain sunset the ridges around the route's end. Civil twilight ends about half an " +
+                "hour later and relies on a headlamp: under trees a trail is dark before it ends. Or type a time."
         },
         HelpText("settings.turnMargin", "Turn-back margin", at(SettingsGroup.NAVIGATION, "Navigation: Turn-back margin"), show = page(SettingsGroup.NAVIGATION)) {
             "How long before the deadline you want to be out. The turn-back time leaves this much spare, and the card " +
                 "turns amber this long before it. 30 minutes covers a slow descent; raise it in steep or unfamiliar ground."
         },
+        // T193: the terrain sunset choice of the Turn back by row (the survey's wording, with the valley's afterglow).
+        HelpText("settings.turnTerrain", "Terrain sunset", at(SettingsGroup.NAVIGATION, "Navigation: Turn back by"), show = page(SettingsGroup.NAVIGATION)) {
+            "The time the sun drops behind the ridge or horizon as seen from the route's end, worked out from elevation " +
+                "data. Usually earlier than the listed sunset in valleys and on north-facing slopes; a valley stays light a " +
+                "while after. Sunset uses a flat horizon. Trees and buildings are not counted."
+        },
+        // end T193
         HelpText("settings.syncStatus", "Sync status", at(SettingsGroup.SYNC, "Sync status"), show = page(SettingsGroup.SYNC)) {
             "Tracks, waypoints, routes and your settings sync with your server when one is set, and with the phones " +
                 "you share with. This shows when the last sync ran, what it sent and received, and what is still waiting."

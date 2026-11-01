@@ -36,7 +36,11 @@ import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.server.ElevationSource
 import io.github.jasondorjeshort.dystopo.server.reportJson
+import io.github.jasondorjeshort.dystopo.dem.Horizon
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
+import io.github.jasondorjeshort.dystopo.tiles.SunPointAnswer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.io.File
@@ -69,6 +73,12 @@ import kotlin.math.roundToLong
  * `nav --turn-around --path <route gpx> --fixes <walk gpx>` navigates the route with the walk's points ([Navigator]: the
  * [PathTracker]'s progress and jumps, "Heading back") and prints the same series, the flips and whether it arrived.
  * `--expect-flips N` exits 1 unless N flips happen.
+ *
+ * T193, the terrain sunset: `nav --turn-around --path <gpx> --deadline terrain [--source <DEM pack .pmtiles | elevation
+ * source id>]` sweeps the horizon once at the line's end (T181's [ShadeTiles.pointAnswer], over the pack as the phone
+ * reads it, or the source's windows) and counts to the sun behind the terrain when it is earlier than the flat sunset
+ * ([Deadline.resolve]); the report's `terrain` block has both sunsets, which counts and why, and the sweep's time.
+ * `--zone` prints the clock times in a named zone instead of the end's mean solar time.
  */
 class NavCommand : CliktCommand(name = "nav") {
     init {
@@ -79,13 +89,16 @@ class NavCommand : CliktCommand(name = "nav") {
 
     override fun help(context: Context) =
         "Navigation on the JVM (T65): `nav replay` runs a GPX walk along a route or track through the phone's off-route logic; " +
-            "T163: `nav --turn-around --path <gpx> --deadline sunset|civil|<iso instant> --margin-min 30` prints the turn-around clock along the line."
+            "T163: `nav --turn-around --path <gpx> --deadline sunset|civil|terrain|<iso instant> --margin-min 30` prints the turn-around clock along the line " +
+            "(T193: terrain counts to the sun behind the ridge at the line's end, from --source)."
 
     // T163: the turn-around clock.
     private val turnAround by option("--turn-around", help = "T163: print the turn-around clock along --path as JSON").flag()
     private val pathFile by option("--path", help = "T163: GPX with the route (or track) the clock runs along").file(mustExist = true, canBeDir = false)
     private val pathTrack by option("--path-track", help = "T163: use the GPX's first track instead of its first route").flag()
-    private val deadline by option("--deadline", help = "T163: sunset (default), civil (end of civil twilight) or an ISO 8601 instant (2025-08-14T18:30:00-07:00)").default("sunset")
+    private val deadline by option("--deadline", help = "T163: sunset (default), civil (end of civil twilight), terrain (T193: the sun behind the terrain at the line's end when earlier than sunset) or an ISO 8601 instant (2025-08-14T18:30:00-07:00)").default("sunset")
+    private val source by option("--source", help = "T193: with --deadline terrain, the elevation for the end's horizon: a DEM pack (.pmtiles, read as the phone reads its pack) or an elevation source id (default best)").default("best")
+    private val zone by option("--zone", help = "T193: time zone of the clock times (default: the end's mean solar time)")
     private val marginMin by option("--margin-min", help = "T163: minutes to be out before the deadline (default 30)").int().default(TurnAround.DEFAULT_MARGIN_MIN)
     private val now by option("--now", help = "T163: the time of the reading, ISO 8601 (default: the line's first track time, else now)")
     private val alongM by option("--along-m", help = "T163: one reading this far along the line (default: --samples readings over it)").double()
@@ -113,10 +126,25 @@ class NavCommand : CliktCommand(name = "nav") {
         val nowMs = now?.let { parseInstant(it) ?: throw UsageError("--now must be an ISO 8601 instant (got $it)") }
             ?: track?.points?.firstOrNull()?.time ?: System.currentTimeMillis()
         val end = path.points.last()
+        var terrainReport: Map<String, Any?>? = null
         val dl = when (deadline.trim().lowercase()) {
             "sunset" -> Deadline.resolve(DeadlineSetting.SUNSET, end.lat, end.lon, nowMs, 0)
             "civil" -> Deadline.resolve(DeadlineSetting(DeadlineKind.CIVIL), end.lat, end.lon, nowMs, 0)
-            else -> Deadline(DeadlineKind.TIME, parseInstant(deadline) ?: throw UsageError("--deadline must be sunset, civil or an ISO 8601 instant (got $deadline)"), DeadlineKind.TIME.label)
+            "terrain" -> { // T193: one horizon sweep at the end
+                val ts = System.nanoTime()
+                val answer = terrainAt(end.lat, end.lon, nowMs)
+                val d = Deadline.resolve(DeadlineSetting(DeadlineKind.TERRAIN), end.lat, end.lon, nowMs, 0, answer?.day, noTerrainData = answer == null)
+                terrainReport = linkedMapOf(
+                    "source" to source, "state" to d.terrain?.key, "flatSunset" to d.flatSunsetMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+                    "terrainSunset" to d.terrainSunsetMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+                    "earlierMin" to if (d.flatSunsetMs != null && d.terrainSunsetMs != null) Math.round((d.flatSunsetMs!! - d.terrainSunsetMs!!) / 6_000.0) / 10.0 else null,
+                    "groundM" to answer?.horizon?.groundM?.let { Math.round(it) }, "zoom" to answer?.zoom,
+                    "westHorizonDeg" to answer?.horizon?.angleAt(270.0)?.let { Math.round(it * 10) / 10.0 },
+                    "sweepMs" to answer?.sweepMs?.let { Math.round(it * 10) / 10.0 }, "elapsedMs" to (System.nanoTime() - ts) / 1_000_000,
+                )
+                d
+            }
+            else -> Deadline(DeadlineKind.TIME, parseInstant(deadline) ?: throw UsageError("--deadline must be sunset, civil, terrain or an ISO 8601 instant (got $deadline)"), DeadlineKind.TIME.label)
         }
         if (marginMin !in TurnAround.MARGIN_RANGE) throw UsageError("--margin-min must be ${TurnAround.MARGIN_RANGE.first} to ${TurnAround.MARGIN_RANGE.last}")
         if (replay || fixesFile != null) {
@@ -125,9 +153,9 @@ class NavCommand : CliktCommand(name = "nav") {
         }
         val ta = TurnAround(path, TurnPace.of(CostModel(TravelMode.of(mode)!!)), retraceOnly = retrace)
         val day = Sun.dayAt(end.lat, end.lon, nowMs)
-        // Clock times in the line's mean solar time (the JSON's ISO instants are UTC); whole minutes of offset.
-        val zone = java.time.ZoneOffset.ofTotalSeconds(((end.lon / 15) * 60).roundToLong().toInt() * 60)
-        val clock: (Long) -> String = { ms -> java.time.Instant.ofEpochMilli(ms).atOffset(zone).toLocalTime().withSecond(0).withNano(0).toString() }
+        // Clock times in the line's mean solar time (the JSON's ISO instants are UTC); whole minutes of offset. T193: or --zone.
+        val zone = clockZone(end.lon)
+        val clock: (Long) -> String = { ms -> java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalTime().withSecond(0).withNano(0).toString() }
         val iso: (Long?) -> String? = { ms -> ms?.let { java.time.Instant.ofEpochMilli(it).toString() } }
         val n = samples.coerceAtLeast(2)
         val at = alongM?.let { listOf(it) } ?: (0 until n).map { path.totalM * it / (n - 1) }
@@ -141,6 +169,10 @@ class NavCommand : CliktCommand(name = "nav") {
             "totalM" to Math.round(path.totalM), "totalAscentM" to Math.round(path.totalAscentM), "loop" to ta.loop, "retraceOnly" to retrace,
             "now" to iso(nowMs), "nowMs" to nowMs, "marginMin" to marginMin, "pace" to ta.pace.label, "mode" to mode,
             "deadline" to linkedMapOf("kind" to dl.kind.key, "at" to iso(dl.atMs), "atMs" to dl.atMs, "label" to dl.label),
+            "terrain" to terrainReport?.let { t -> // T193
+                t + linkedMapOf("text" to ta.clock(at.first(), nowMs, dl, marginMin).deadlineText(clock),
+                    "flatSunsetClock" to dl.flatSunsetMs?.let(clock), "terrainSunsetClock" to dl.terrainSunsetMs?.let(clock))
+            },
             "sun" to linkedMapOf(
                 "lat" to end.lat, "lon" to end.lon, "date" to "%04d-%02d-%02d".format(day.year, day.month, day.day),
                 "noon" to iso(day.noonMs), "sunset" to iso(day.sunsetMs), "civilTwilightEnd" to iso(day.civilEndMs),
@@ -158,8 +190,8 @@ class NavCommand : CliktCommand(name = "nav") {
     private fun series(f: File, doc: GpxDocument, path: NavPath, dl: Deadline, nowMs: Long, t0: Long) {
         val pace = TurnPace.of(CostModel(TravelMode.of(mode)!!))
         val end = path.points.last()
-        val zone = java.time.ZoneOffset.ofTotalSeconds(((end.lon / 15) * 60).roundToLong().toInt() * 60)
-        val clock: (Long) -> String = { ms -> java.time.Instant.ofEpochMilli(ms).atOffset(zone).toLocalTime().withSecond(0).withNano(0).toString() }
+        val zone = clockZone(end.lon)
+        val clock: (Long) -> String = { ms -> java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalTime().withSecond(0).withNano(0).toString() }
         val readings = ArrayList<Map<String, Any?>>()
         val flips = ArrayList<Map<String, Any?>>()
         var lastAt = Long.MIN_VALUE
@@ -222,6 +254,29 @@ class NavCommand : CliktCommand(name = "nav") {
         report["failures"] = failures
         echo(pretty(report))
         if (failures.isNotEmpty()) throw ProgramResult(1)
+    }
+
+    /** The clock's zone: --zone, else the end's mean solar time in whole minutes. */
+    private fun clockZone(lon: Double): java.time.ZoneId = zone?.let { z -> runCatching { java.time.ZoneId.of(z) }.getOrElse { throw UsageError("--zone: unknown zone $z") } }
+        ?: java.time.ZoneOffset.ofTotalSeconds(((lon / 15) * 60).roundToLong().toInt() * 60)
+
+    /**
+     * T193: the point answer at the line's end for the local day of [nowMs]: over the DEM pack `--source` names (as the
+     * phone reads its pack, [ShadeTiles.pointAnswer]) or the elevation source's windows; null without data there.
+     */
+    private fun terrainAt(lat: Double, lon: Double, nowMs: Long): SunPointAnswer? {
+        val packFile = File(source)
+        val pack = source.endsWith(".pmtiles") || packFile.isFile
+        if (pack && !packFile.isFile) throw UsageError("--source: no DEM pack at $source")
+        if (!pack && source !in ElevationSource.ids) throw UsageError("--source must be a DEM pack (.pmtiles) or one of ${ElevationSource.ids.joinToString()}")
+        // The sweep refuses a point with no elevation under it (IllegalArgumentException): no data there.
+        val a = try {
+            if (pack) ShadeTiles.pointAnswer(RouteGraphs.pyramid(packFile), lat, lon, nowMs)
+            else ElevationSource.byId(source).let { src -> ShadeTiles.pointAnswer(Horizon.terrainAround(lat, lon, ShadeTiles.POINT_ZOOM) { w -> src.fetch(w).grid }, lat, lon, nowMs) }
+        } catch (e: IllegalArgumentException) {
+            return null
+        }
+        return a.takeUnless { it.horizon.groundM.isNaN() }
     }
 
     private fun parseInstant(s: String): Long? = runCatching { java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli() }.getOrNull()

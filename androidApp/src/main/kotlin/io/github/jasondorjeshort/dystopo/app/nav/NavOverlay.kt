@@ -349,7 +349,7 @@ internal val NAV_HELP: List<HelpText> = listOf(
     HelpText("nav.turnAround", "Turn back by", "The map: navigation card, turn-back time", needs = "navigating, after a fix") {
         "The latest time to turn back and still be out by sunset, or your deadline, with your margin to spare: amber " +
             "the margin before, red at it, then when you will be out. Recording without a route, it times the way back " +
-            "along your track. Sunset is for a level horizon."
+            "along your track. Sunset is for a level horizon; Terrain sunset adds the ridge's time and counts to it if earlier."
     },
     HelpText("nav.offRoute", "Off route", "The map: navigation card, off the route", needs = "navigating, off the route") {
         "You have left the route. The arrow points the shortest way back to it, with the direction and distance below. " +
