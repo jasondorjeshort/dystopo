@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-10-31
+
+- T198: A trip report page after a recording
+
 ## v0.1.16-alpha (2026-10-31)
 
 ### 2026-10-31
