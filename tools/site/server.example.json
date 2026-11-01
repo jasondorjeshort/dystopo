@@ -1,0 +1,20 @@
+{
+  "bind": "127.0.0.1",
+  "port": 8801,
+  "publicUrl": "https://maps.example.org",
+  "cacheDir": "C:/site-root/cache",
+  "outDir": "C:/site-root/out",
+  "token": "generated-at-install",
+  "tilebuildHome": "C:/site-root/tilebuild",
+  "corsOrigins": ["*"],
+  "logRequests": true,
+  "log": {
+    "file": "C:/site-root/logs/server.log",
+    "maxMb": 64,
+    "keep": 5
+  },
+  "metrics": {
+    "enabled": true,
+    "diskScanMinutes": 10
+  }
+}

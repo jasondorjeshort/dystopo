@@ -24,4 +24,5 @@ them, on the same branch.
 | `android-online.md` | The phone reading the sources with no server, the cold view stage by stage, no Wi-Fi gates, pinned areas and content versions, in-app updates, first run and cleartext | 2026-10-14 |
 | `android-battery.md` | `tools/android-battery.py`: the app's battery use per scenario (tracking screen off, navigation, idle map) from `dumpsys batterystats`, how to run it on a phone, the report's fields, results | 2026-10-23 |
 | `android-release.md` | The release build and signing, deep links, `android-release.ps1` | 2026-10-12 |
+| `home-site.md` | The home site: `tools/site/install.ps1` and `status.ps1`, the server and Caddy as scheduled tasks (S4U needs elevation once), the folder and token, `-Update`, port 80, the owner's three steps, the always-on cost | 2026-11-01 |
 | `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, and the sweep's device parts | 2026-10-14 |

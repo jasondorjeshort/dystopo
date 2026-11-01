@@ -1,0 +1,38 @@
+# The home site's TLS proxy (docs/reference/home-site.md). tools/site/install.ps1 copies this file
+# unchanged to <root>/caddy/Caddyfile; Caddy reads the values below from <root>/site.env
+# (caddy run --envfile), so the host name never appears in a tracked file:
+#   DYSTOPO_SITE_HOST  the site's host name (localhost for a test instance)
+#   DYSTOPO_SITE_PORT  the server's port on 127.0.0.1
+#   DYSTOPO_SITE_ROOT  the install folder (forward slashes)
+#   DYSTOPO_SITE_BIND  a whole "default_bind ..." line for a localhost instance, else empty (every interface)
+#   DYSTOPO_SITE_AUTO_HTTPS  a whole "auto_https disable_redirects" line when port 80 is not wanted (a
+#                      localhost instance, or another program holds 80), else empty (80 redirects to 443)
+#   XDG_DATA_HOME, XDG_CONFIG_HOME  Caddy's certificates, keys and autosave, under the root
+# Caddy substitutes {$VAR} before it parses the file, so an empty value leaves an empty line.
+{
+	# One Caddy per install: no admin endpoint (it would fight over localhost:2019); a restart reloads.
+	admin off
+	# A hidden task cannot answer the prompt to trust Caddy's internal CA (used for localhost).
+	skip_install_trust
+	{$DYSTOPO_SITE_BIND}
+	{$DYSTOPO_SITE_AUTO_HTTPS}
+	log {
+		output file "{$DYSTOPO_SITE_ROOT}/caddy/caddy.log" {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}
+
+{$DYSTOPO_SITE_HOST} {
+	# /metrics exposes the log path and the disk figures (docs/SERVER.md, What to monitor); status.ps1
+	# reads it on 127.0.0.1. The server's /metrics context also answers any path that starts with it.
+	respond /metrics* 403
+
+	# docs/SERVER.md, Behind a reverse proxy: the server builds the absolute URLs in /style.json from
+	# Host, X-Forwarded-Proto and X-Forwarded-Host. Caddy sets X-Forwarded-Proto, X-Forwarded-Host and
+	# X-Forwarded-For itself (it warns that a header_up for them is unnecessary); Host is kept explicit.
+	reverse_proxy 127.0.0.1:{$DYSTOPO_SITE_PORT} {
+		header_up Host {host}
+	}
+}
