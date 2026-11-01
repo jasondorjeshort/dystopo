@@ -124,7 +124,7 @@ param(
     # which every child inherits, so each build runs in a single-use daemon that ends with it.
     [switch]$NoDaemon,
     # T170: the RAM in MB of every emulator the sweep boots (android-emu.ps1 -Memory; the AVD's hw.ramSize too); 0 keeps
-    # android-emu.ps1's default (4096).
+    # android-emu.ps1's default (3072, T190).
     [int]$EmuMemory = 0,
     # T191 (finding 2026-10-31, a 9.5 h hang): the ceiling in seconds of every part, the wait on its programs done with
     # WaitForExit(ms); at the ceiling the program's process tree is killed by its PID (taskkill /PID <pid> /T /F, never by
@@ -430,6 +430,7 @@ function Get-PreviousApk([string]$tag, [string]$dir, [string[]]$patterns, [strin
 function Part([string]$name, [scriptblock]$body) {
     if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and $NoBothUnits) { '-NoBothUnits' } else { 'not selected' }); return $false }
     $t0 = Get-Date
+    $sw = [System.Diagnostics.Stopwatch]::StartNew() # the seconds column: monotonic, so a clock change (DST) cannot make it negative
     $note = ''
     $script:partNote = '' # T105: a body may leave a note for its steps.tsv line (a retry and its reason)
     # T191: the part's ceiling; every Run inside it waits at most until this deadline.
@@ -457,7 +458,7 @@ function Part([string]$name, [scriptblock]$body) {
     $counts = $counts -join ', '
     if ($counts) { $script:partNote = (@($script:partNote, $counts) | Where-Object { $_ }) -join '; ' }
     if ($script:partNote) { $note = (@($script:partNote, $note) | Where-Object { $_ }) -join '; ' }
-    Step $name $code ((Get-Date) - $t0).TotalSeconds $note
+    Step $name $code $sw.Elapsed.TotalSeconds $note
     "$code" -eq '0'
 }
 
@@ -661,7 +662,7 @@ try {
     # --- device parts -------------------------------------------------------------------------------------
     $dev = Join-Path $Out 'device'
     New-Item -ItemType Directory -Force $dev | Out-Null
-    $emuArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $Avd, '-EmuPort', "$EmuPort", '-Port', "$Port")
+    $emuArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $Avd, '-EmuPort', "$EmuPort", '-Port', "$Port", '-Owner', "sweep-$Date")
     if ($AvdHome) { $emuArgs += @('-AvdHome', $AvdHome) }
     $emuArgs += $emuMemoryArgs
     $dem = Join-Path $localOut 'rainier-dem.pmtiles'
@@ -697,10 +698,20 @@ try {
         # until then nothing here is the sweep's to stop, so the cleanup at the end leaves that holder alone.
         $why = Wait-ConsolePorts $EmuPort $Avd
         if ($why) { throw $why }
-        $script:emulatorStarted = $true
+        # An emulator of this very AVD already running on the serial is not the sweep's to stop at the end.
+        $already = ((Tool-Text $adbExe @('devices') 30) -match "(?m)^$([regex]::Escape($serial))\s+device")
+        if ($already) { $script:partNote = (@($script:partNote, "$serial already ran ${Avd}: left running at the end") | Where-Object { $_ }) -join '; ' }
+        else { $script:emulatorStarted = $true }
         # android-emu.ps1 prints nothing when its output is piped (T65 follow-up); its exit code and the
         # logcat line the Python tools read are what count, so the logs are kept only for a post-mortem.
-        Run 'powershell.exe' ($emuArgs + @('-Build', '-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg)) (Join-Path $dev 'emu.log') (Join-Path $dev 'emu.err.log')
+        $c = Run 'powershell.exe' ($emuArgs + @('-Build', '-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg)) (Join-Path $dev 'emu.log') (Join-Path $dev 'emu.err.log')
+        # A refusal at the emulator cap (T190) is its own word on the steps.tsv line, not "exit 1".
+        if ($c -ne 0 -and $c -ne 'timeout' -and (Select-String -Path (Join-Path $dev 'emu.err.log'), (Join-Path $dev 'emu.log') -Pattern 'emulator cap reached' -Quiet -ErrorAction SilentlyContinue)) {
+            $script:partNote = (@($script:partNote, 'emulator cap reached: see device\emu.err.log for the holders') | Where-Object { $_ }) -join '; '
+            $script:emulatorStarted = $false
+            return 'cap-refused'
+        }
+        $c
     }
     $deviceSkipNote = 'emulator did not boot'
     if ($booted -or -not (Want 'device-boot')) {
@@ -732,7 +743,7 @@ try {
             $bdir = Join-Path $Out 'ui\bothunits'
             New-Item -ItemType Directory -Force $bdir | Out-Null
             $bAvd = "$Avd-b"; $bEmu = $MatrixEmuPort; $bSerial = "emulator-$bEmu"; $bFwd = $Port + 2; $bp = $BasePort + 3
-            $bArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $bAvd, '-EmuPort', "$bEmu", '-Port', "$bFwd")
+            $bArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $bAvd, '-EmuPort', "$bEmu", '-Port', "$bFwd", '-Owner', "sweep-$Date")
             if ($AvdHome) { $bArgs += @('-AvdHome', $AvdHome) }
             $bArgs += $emuMemoryArgs
             # The same debug build as the first emulator's (built by device-boot); built here only when it is missing.
@@ -904,7 +915,7 @@ try {
                 $api = $fields[0]; $devName = $fields[1]; $loc = if ($fields.Count -gt 2) { $fields[2] } else { '' }
                 $label = "api$api-$devName" + $(if ($loc) { "-$loc" } else { '' })
                 $mAvd = "$Avd-m$i"; $mPort = $MatrixEmuPort + 2 * $i; $mSerial = "emulator-$mPort"
-                $mArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $mAvd, '-EmuPort', "$mPort", '-Port', "$($Port + 2 + $i)",
+                $mArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $mAvd, '-EmuPort', "$mPort", '-Port', "$($Port + 2 + $i)", '-Owner', "sweep-$Date",
                     '-Api', $api, '-Device', $devName, '-BootOnly')
                 if ([int]$api -lt 30) { $mArgs += @('-Feature', 'GLESDynamicVersion') } # images before 30 offer only GLES 2 otherwise
                 if ($loc) { $mArgs += @('-Locale', $loc) }

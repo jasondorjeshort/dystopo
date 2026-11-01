@@ -1,6 +1,6 @@
 ---
 date: 2026-11-01
-status: open
+status: resolved (T201)
 area: tooling / emulator lock, hooks, sweep
 ---
 
@@ -38,8 +38,24 @@ single command outruns the tool's maximum timeout.
 
 ## Next
 
-The next wave's sweep task: `emulator-stop.js` leaves the emulator and the lock alone when the hook
-input's `background_tasks` is non-empty (or `stop_hook_active` says the agent will resume), and stops
-it on the final stop only; a hook test case feeds both shapes; the sweep skill says a sweep agent
-polls `steps.tsv` with bounded foreground calls rather than yielding. Until then a sweep agent is
-briefed to never end its turn while its emulator runs.
+Done in T201 (wave 25). The critic's correction: `stop_hook_active` is the harness's loop guard (true when
+the agent already continued because a Stop hook asked it to), not "the agent will resume"; the hook reads
+`background_tasks` only. The input shape, read from the installed Claude Code's hook schema on 2026-11-01
+(the `SubagentStop` input: `hook_event_name`, `session_id`, `transcript_path`, `cwd`, `stop_hook_active`,
+`agent_id`, `agent_transcript_path`, `agent_type`, optional `last_assistant_message`, optional
+`background_tasks` and `session_crons`; a `background_tasks` entry has `id`, `type` ('shell', 'subagent',
+'monitor', 'workflow'), `status`, `description`, and `command` / `agent_type` / `server` where they apply;
+an empty array when nothing is in flight; the field's description: it lets hooks tell "session is done"
+from "paused waiting for background work to wake it"). `emulator-stop.js` leaves the emulators, locks and
+claims alone while the array is non-empty and stops on the stop that has it empty or absent
+(`test-hooks.js` ES09 and ES10 against the harness's fake qemu copy). The sweep skill says a sweep agent
+polls `steps.tsv` with bounded foreground calls and never yields while its emulator runs.
+
+## Remaining leaks
+
+- An agent that yields with background work and is then killed (the owner stops it, the session ends) never
+  has its final stop with an empty array, so its emulator and lock stay until the cap refusal names them
+  (`android-emu.ps1 -Stop` by serial, or the dead-lock reclaim once the PID is gone).
+- `background_tasks` is session-wide ("registered in this session"), not per agent: while any sibling
+  agent's work is in flight, an ending agent's emulator is left until a later stop sees the array empty.
+  That errs toward a lingering emulator, never a killed one; the cap and the next stop bound it.
