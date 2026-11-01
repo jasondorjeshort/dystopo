@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-30
+verified: 2026-11-01
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -65,6 +65,8 @@ run of the local release path (fake tag, nothing published) passed here except t
 | Private terms | check for `devtool.local.json` before relying on the privacy hooks |
 | Task worktrees | `~\Documents\src\dystopo-wt\<task-id>` (wave 20, 2026-10-25); AVDs `dystopo35-<task>` under `~\Android\avd` |
 | Coordinator's servers | live viewer on 8765 from the installed `devtool` distribution; PID in `out\coordinator-pids.txt` (`live-8765 <pid>`) |
+| Home site | the owner's instance (ADR 0052, `home-site.md`): folder `~\.dystopo\site`, server on 127.0.0.1:8801, Caddy on 443; tasks `Dystopo site server` and `Dystopo site proxy`, installed by the owner. Test instances use `-Root <scratch> -Name " <id>"` and never the default folder or the unsuffixed names. Always-on cost about 0.5 GB (server about 425 MB working set after two live views, heap capped at 2 GB; Caddy about 37 MB) |
+| Port 80 | held machine-wide by a `java` in session 0 that is not the site's (2026-11-01; a bind of 127.0.0.1:80 is refused): the site's Caddy needs `DYSTOPO_SITE_AUTO_HTTPS=auto_https disable_redirects` here unless that program moves (`home-site.md`, Port 80) |
 | `tilebuild.bat` | the installed distribution's start script fails at once with "The input line is too long" (the classpath exceeds `cmd`'s line limit; from Git Bash and PowerShell alike); build packs with `./gradlew :tilebuild:run --no-daemon --args="..."` from the main checkout, or `java -cp "tilebuild/build/install/tilebuild/lib/*"` on the main class. The Rainier outdoors pack: `--extract <cache>/osm/north-america-us-washington-latest.osm.pbf --bbox -121.95,46.68,-121.45,46.98 --min-zoom 6 --max-zoom 14 --profile outdoors`, 33 s, 2.63 MB, the Paradise to Sunrise drive 82,069 m |
 | The Rainier DEM pack | `./gradlew :devtool:run --no-daemon --args="tiles --bbox=-121.95,46.68,-121.45,46.98 --min-zoom 8 --max-zoom 14 --pmtiles out/rainier-dem.pmtiles --verify"` (the outdoors pack's box; 664 tiles, 106 MB, 48 s from the cache). The pack pair the sweep serves is then about 109 MB, as the first PC's was (143 MB): with the `rainier` area's own box at z8 to 13 (8.7 MB, kept as `rainier-dem-small.pmtiles`) the sweep's `network` part saw the whole pair download before its progress line and the device tour's z8 view served no DEM tile from the pack (2026-10-26, the wave 20 sweep) |
 | Known network trouble | Geofabrik `.osm.pbf` HEAD and ranged GET hung for over a minute on 2026-10-25 while its root answered at once, so `rainier-outdoors.pmtiles` could not be built; retry or place the extract in `cache\osm` (done 2026-10-25; a copy is in `cache\extracts` for the live viewer) |
@@ -80,6 +82,8 @@ or copied, or generated into the worktree's own `out/` (never a junction; `CLAUD
 | 8687 | `devtool serve` default | used by a sweep |
 | 8765 | the coordinator's live viewer | asked to build by an agent (`--until test` only reads its catalog); stopped by anyone but its starter |
 | 8800 | the coordinator's standalone server on this account | stopped by anyone but its starter |
+| 8801 | the home site's server on 127.0.0.1 (`home-site.md`; Caddy in front on 443) | used by a test instance; stopped by anyone but the owner |
+| 443 (and 80) | the home site's Caddy; a test instance's Caddy while it is installed (one at a time) | taken by a test instance while the owner's site is installed |
 | 8841 | the share listener on a phone (`adb forward` for emulator pairs) | |
 | 8980 to 8987 | `tools/sweep.ps1` (`-BasePort`, +7 is the mock releases API). T191: every part has a ceiling (900 s; `device-tour` 750 s a run, `device-boot` 1500, `update` 1500, `check` 2400, `matrix` 2400, the release build 1800 s of its own; `-PartTimeout`, `-PartTimeouts part=seconds`); at the ceiling the part's running program is killed with its process tree by PID, its `steps.tsv` line reads `timeout` with the PIDs, and the sweep goes on. A port counts as taken when the listener table lists it or a wildcard bind fails: inside the agents' sandbox the table leaves listeners out | |
 | 8990, console 5640 | the sweep's emulator (`-Port`, `-EmuPort`; matrix from 5642; `bothunits` on console `-EmuPort`+2). T191: before `device-boot` and the `bothunits` boot the sweep waits up to 50 s for the console pair to be free and adb to list no such serial, then fails the part naming the holder (an emulator by its `-port` command line where the sandbox hides the table's owner) and stops nothing it did not boot. Both boots go through `tools/android-emu.ps1`. A task's own sweep runs on its slot's ports (`-EmuPort`, `-Port`, `-Avd`, `-AvdHome ~\Android\avd`) | |

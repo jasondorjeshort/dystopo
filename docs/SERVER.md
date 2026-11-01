@@ -957,6 +957,15 @@ services:
 volumes: { cache: {}, out: {}, caddy-data: {} }
 ```
 
+### Windows: the home site
+
+On Windows, `tools/site/install.ps1` runs the installed server and a Caddy proxy as two Task Scheduler
+tasks that start with the PC (logon type S4U, an at-startup trigger plus a restart every minute while
+stopped; registering them needs an elevated PowerShell once), with its own folder, cache and `out/`, the
+server on `127.0.0.1` and `/metrics` refused at the proxy; `tools/site/status.ps1` says in one run whether
+it is up. Stopping a task is a hard kill, not the graceful shutdown above. Everything else, including
+the owner's steps outside the script: `docs/reference/home-site.md` (ADR 0052).
+
 ### The reverse proxy is part of the defence
 
 The JDK HTTP listener reads a request's headers on a worker thread (`threads`, 32). The probe's slowloris
@@ -1018,8 +1027,9 @@ scrape_configs:
 `/metrics` is unauthenticated, like `/healthz`: anyone who reaches the server can read it. It carries no
 tokens, user ids or slot ids, but it does expose the log file's path, the cache and out directories'
 sizes per top-level directory, the free disk space, request counts per route and the JVM's memory, which
-an operator may not want public. Restrict it at the reverse proxy (`location = /metrics { allow 127.0.0.1;
-deny all; }` in nginx, `respond /metrics 403` in Caddy) and scrape it on the private address, or turn it
+an operator may not want public. Restrict it at the reverse proxy by prefix, since the server answers any
+path that starts with `/metrics` (`/metricsX` too, observed T199): `location ^~ /metrics { allow 127.0.0.1;
+deny all; }` in nginx, `respond /metrics* 403` in Caddy; and scrape it on the private address, or turn it
 off with `metrics.enabled: false`. Share-link tokens are never logged: `/s/<token>` and
 `/sync/share/<token>` appear in the request log as `/s/…` and `/sync/share/…`.
 
