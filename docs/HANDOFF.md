@@ -1,40 +1,40 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-10-31, at commit 26dc895 plus this edit, by main session (wave 24 planned, not launched)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the Wave 24 section and its paragraph: slots, ports, launch order, the sentinel rule; the record `docs/tasks/wave-23.md` for the previous wave).
+Updated: 2026-10-31, at commit 8bd5f9bb plus this edit, by main session (wave 24 launched)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the Wave 24
+paragraph: Emulator slots, Launch day, Memory, Launch order, Past the critic; the previous wave: `docs/tasks/wave-23.md`).
 
 ## Now
 
-- **Wave 24 is planned and waiting for the owner's go** ("we'll wait to implement", 2026-10-31): nine tasks, T190 to
-  T198, on the board. T190 the emulator locks (owner's priority, cap 2), T191 the sweep's timeouts and the overlay
-  screenshot, T192 the reviewer's defects, T193 the terrain-sunset deadline, T194 shade along the route, T195 the
-  route's exposure, T196 the way down after a storm warning, T197 the summit calibration, T198 the trip report page.
-  Nothing launched; no research agent, no critic yet.
-- **Wave 23 is closed** and **v0.1.16-alpha is published** (tag bc62eee; the record `docs/tasks/wave-23.md`).
-- Three stale Later lines struck (T159, T162 and T185 had done them). Usage at this edit: 7-day 55 (resets
-  2026-11-06 04:00 UTC); the wave's allowance sentence assumes 32 points against the hold of 97.
+- **Wave 24 is launched** (the owner's go, 2026-10-31, with one condition: "I really want to make sure we do not
+  overwhelm the PC with emulators"; the paragraph's Launch day sentence is the rule until T190's lock enforces it).
+  Five surveys done (`out/wave24-research/`, gitignored, summarised in each task's Research line); the critic's
+  19 objections answered on the board (8bd5f9bb). Running: implementers T190, T191, T192, T193 (pure half first)
+  and T198 (Opus); the ADR 0049 device check on slot V (Sonnet; its report gives prediction 1's Outcome). The live
+  viewer on 8765 runs (PID in `out/coordinator-pids.txt`). ADR 0050's Outcome written (held), its idea deleted;
+  the orphan `T178` and `T178v` folders removed.
+- Meters at launch: 7-day 60 (Fable 70), resets 2026-11-06 04:00 UTC (`/usage` shows no 5-hour meter here).
 
 ## Next
 
-1. On the owner's word: launch day by the `wave` skill, Plan and launch steps 1 to 4 in this order: the five
-   research agents named in the wave paragraph (reports to the gitignored research folder the paragraph names), their answers written into T193,
-   T194, T195, T197 and T198; the critic (most capable model, read-only) over the section with the wave 23 record and
-   the two findings of 2026-10-31 in its brief; then T190, T191, T192 and the pure halves of T193, T195, T197, T198.
-   Re-read both meters first. The two coordinator chores (ADR 0049's and 0050's Outcomes) go with the first launches.
-2. A Hatchery-rooted session: five pending carry-backs; the triage skill's carry-back step runs in project trees
-   and classifies against the wrong `main`; the wave skill's AVD line and the sentinel rule once adopted.
-3. ADR 0040's and 0042's build tasks after the owner; ADR 0049's C after the z10 answer; the terrain-fix live
-   source after the owner's hike logs.
+1. As each implementer reports: a Sonnet verifier on slot V (one at a time; T190's waits for an empty
+   `adb devices`), then the merge sequence. T195 and T197 launch when T192 merges; T194 after T193; T196 after
+   T195 and T197 (critic 9 suggests a sixth survey, exposed ground in storm guidance, before T196's brief).
+2. Write ADR 0049's two Outcomes from the device check's report and delete
+   `docs/ideas/2026-10-31-adr-0049-predictions-when-b-merged.md`.
+3. Close: the sweep only with slot I empty (its two emulators are the cap), then the release (ADR 0024); the
+   allowance sentence's close reading; the wave moved to its record [no-check: written at the close].
+4. Later: a Hatchery-rooted session (the carry-backs); ADR 0040's, 0042's and 0049's C after the owner's answers.
 
 ## Waiting on user
 
-- The go for wave 24. `docs/TASKS.md` › Owner actions pending: install v0.1.16-alpha and the hike checks; the
-  `Question:` blocks of 2026-10-30 and 2026-10-31 (twelve, none blocks wave 24); ADR 0051's two answers; the paging
-  file (system-managed, or 32 GB or more); the git housekeeping row.
+- `docs/TASKS.md` › Owner actions pending: install v0.1.16-alpha and the hike checks; the `Question:` blocks of
+  2026-10-30 and 2026-10-31; ADR 0051's two answers; the git housekeeping row. The paging file read
+  system-managed on C: on launch day (12.8 GB allocated, 145 GB free): confirm it was you, then strike the row.
 
 ## Open findings
 
-- `docs/findings/2026-10-31-sweep-hung-when-the-paging-file-ran-out.md` (T191 resolves it) and
-  `2026-10-31-appended-blocks-drop-their-closers-on-rebase.md` (the wave 24 paragraph adopts its sentinel rule).
-- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T189 ships the graph; the phone next.
+- `docs/findings/2026-10-31-sweep-hung-when-the-paging-file-ran-out.md` (T191 resolves it),
+  `2026-10-31-appended-blocks-drop-their-closers-on-rebase.md` (the wave paragraph's sentinel rule) and
+  `2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md` (T189 ships the graph; the phone next).
