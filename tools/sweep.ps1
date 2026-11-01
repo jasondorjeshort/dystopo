@@ -71,6 +71,17 @@
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only live          # just these parts
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoBothUnits        # no second emulator (T147: bothunits is on by default)
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDaemon -EmuMemory 3072   # T170: no Gradle daemon left running, 3 GB emulators
+#   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -PartTimeouts update=2000      # T191: one part's ceiling in seconds
+#   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only server,notices -InjectHang server -PartTimeouts server=30   # T191: test the ceiling
+#
+# Time limits (T191, finding 2026-10-31: one stuck child once held the sweep 9.5 h). Every part has a ceiling,
+# -PartTimeout (900 s) unless the table $ceilings below (device-tour 750 s a run, update 1500, check 2400, matrix 2400)
+# or -PartTimeouts says otherwise; the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
+# at the deadline the running program's process tree is killed by its PID (taskkill /PID <pid> /T /F), the part's
+# steps.tsv line reads "timeout" with what was killed, and the sweep goes on with the next part. Cleanup after a part
+# (stopping its own emulator) has 300 s of its own. Before device-boot (and the bothunits boot) the sweep waits up to
+# a minute for the console port pair to be free (a just-killed emulator lets go of it slowly), then fails the part
+# naming the PID that holds it; nothing it did not boot is stopped. Every boot goes through tools\android-emu.ps1.
 #
 # Ports and processes. The script starts its own servers (demo-server.py on -BasePort, serve on +1, serve
 # --live on +2, for the live part and then for the debug device parts) and its own emulator (-Avd, console -EmuPort, debug forward -Port, release probe -Port+1),
@@ -115,6 +126,14 @@ param(
     # T170: the RAM in MB of every emulator the sweep boots (android-emu.ps1 -Memory; the AVD's hw.ramSize too); 0 keeps
     # android-emu.ps1's default (4096).
     [int]$EmuMemory = 0,
+    # T191 (finding 2026-10-31, a 9.5 h hang): the ceiling in seconds of every part, the wait on its programs done with
+    # WaitForExit(ms); at the ceiling the program's process tree is killed by its PID (taskkill /PID <pid> /T /F, never by
+    # name), the part's steps.tsv line says "timeout" and names what was killed, and the sweep goes on. -PartTimeouts
+    # overrides a part ('name=seconds', comma-separated works); the built-in overrides are below ($ceilings).
+    [int]$PartTimeout = 900,
+    [string[]]$PartTimeouts = @(),
+    # T191, for testing the ceiling only: the named part runs a child process tree that sleeps instead of its body.
+    [string]$InjectHang = '',
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
     [string]$Known = '', # T91: overlap:search/Settings fixed (the map chips cap their font scale at 1.3)
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
@@ -151,7 +170,25 @@ $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $LiveViews = @($LiveViews | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $MatrixDevices = @($MatrixDevices | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
-foreach ($p in $Skip + $Only) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
+foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
+
+# T191: the per-part ceilings, from the parts' timings in the sweeps of waves 20 to 23 (steps.tsv of out\sweep-w20,
+# -w21, -wave22, -20261031-0254 and its reruns): no other part took more than 322 s (features), so 900 s is the default,
+# about 2.8 times the slowest. device-tour took 500 to 565 s for its two runs, so 750 s a run (1500 s for the default two);
+# update took 230 to 513 s and builds a second release APK inside the part, which alone takes minutes under load: 1500 s;
+# check took 27 to 246 s warm, but a fresh worktree compiles everything and the part may run check twice (the
+# stale-compile retry after :androidApp:clean): 2400 s; matrix has no timing on record and boots two fresh emulators
+# (one an API 26 image) around three runs: 2400 s. Code outside a part (the devtool build, the cleanup) gets 1800 s.
+if ($PartTimeout -lt 1) { throw '-PartTimeout must be a number of seconds' }
+$ceilings = @{ 'device-tour' = 750 * [math]::Max(1, $DeviceTourRuns); 'update' = 1500; 'check' = 2400; 'matrix' = 2400 }
+foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
+    if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
+        throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
+    }
+    $ceilings[$Matches[1]] = [int]$Matches[2]
+}
+function Part-Ceiling([string]$name) { if ($ceilings.ContainsKey($name)) { $ceilings[$name] } else { $PartTimeout } }
+$outsideTimeoutS = 1800
 
 # --- environment -------------------------------------------------------------------------------------------
 foreach ($jdk in @('C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot', 'C:\Program Files\Java\jdk-21')) { # the two PCs (machines.md)
@@ -167,7 +204,8 @@ if (-not $env:DYSTOPO_CACHE -and (Test-Path (Join-Path $mainCheckout 'cache'))) 
 if (-not $DataDir) { $DataDir = Join-Path $mainCheckout 'out' }
 if (-not $Avd) { $Avd = 'dystopo35-sweep-' + (Get-Date -Format 'yyyyMMdd') }
 if (-not $AvdHome) {
-    if ($env:DYSTOPO_AVD_HOME) { $AvdHome = $env:DYSTOPO_AVD_HOME } elseif (Test-Path 'E:\') { $AvdHome = 'E:\dystopo-avd' }
+    # T191: the folder, not the drive: on the second PC E: is a small drive the AVDs must not fill (machines.md).
+    if ($env:DYSTOPO_AVD_HOME) { $AvdHome = $env:DYSTOPO_AVD_HOME } elseif (Test-Path 'E:\dystopo-avd') { $AvdHome = 'E:\dystopo-avd' }
 }
 if (-not $Out) { $Out = Join-Path 'out' "sweep-$Date" }
 # T154 (T147's follow-up): -Out is a folder under the checkout, given relative to it; an absolute path used to throw
@@ -227,12 +265,21 @@ $portParts = @{ 'demo-server' = @('demo-static'); 'serve' = @('demo-serve'); 'fi
     'serve-live' = @('live') + $(if ($DeviceServer -eq 'live') { $deviceParts } else { @() })
     'ui-server' = @('features', 'permissions'); 'network-server' = @('network'); 'network-proxy' = @('network'); 'update-mock' = @('update')
     'debug-forward' = $deviceParts; 'release-probe' = $deviceParts; 'bothunits-forward' = @('bothunits') }
-$listening = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | ForEach-Object { $_.Port })
+# T191: whether a TCP port is taken. The listener table first; then a bind of the wildcard address with exclusive use,
+# which fails while any socket holds the port: inside the agents' sandbox the table leaves out listeners (a listener
+# held by python on 127.0.0.1, even the asking process's own, was missing from GetActiveTcpListeners, netstat and
+# Get-NetTCPConnection alike on 2026-10-31), so the table alone said free and the boot went on to fail.
+function Test-PortHeld([int]$p) {
+    if (@([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object { $_.Port -eq $p }).Count) { return $true }
+    $sock = [Net.Sockets.Socket]::new([Net.Sockets.AddressFamily]::InterNetwork, [Net.Sockets.SocketType]::Stream, [Net.Sockets.ProtocolType]::Tcp)
+    try { $sock.ExclusiveAddressUse = $true; $sock.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Any, $p)); $false } catch { $true } finally { $sock.Close() }
+}
+
 foreach ($k in $ports.Keys) {
     if (-not @($portParts[$k] | Where-Object { Want $_ }).Count) { continue }
     $p = $ports[$k]
     if ($reserved -contains $p) { throw "$k port $p is reserved for the coordinator (8765 live viewer, 8686/8687); pick another -BasePort/-Port" }
-    if ($listening -contains $p) { throw "$k port $p is already in use; pick another -BasePort/-Port" }
+    if (Test-PortHeld $p) { throw "$k port $p is already in use; pick another -BasePort/-Port" } # T191: the table or a bind
 }
 
 function Step([string]$name, $code, [double]$seconds, [string]$note = '') {
@@ -251,14 +298,104 @@ function Quote([string]$a) {
     $a
 }
 
+# T191: kills one process and its descendants by the recorded PID (taskkill /T walks the tree from it; nothing is
+# matched by name). Returns the PIDs taskkill reported terminated, for the steps.tsv note.
+function Stop-Tree([int]$id) {
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $out = @(& taskkill.exe /PID $id /T /F 2>&1 | ForEach-Object { "$_" })
+    } catch { $out = @("taskkill failed: $($_.Exception.Message)") } finally { $ErrorActionPreference = $eap }
+    $killed = @($out | ForEach-Object { if ($_ -match 'PID (\d+)') { $Matches[1] } })
+    if (-not $killed.Count) { try { (Get-Process -Id $id -ErrorAction Stop).Kill(); $killed = @("$id") } catch { } }
+    $killed -join ', '
+}
+
+# T191: the part running now: its ceiling and its deadline (set by Part), and the note of a part that hit it.
+$script:partDeadline = $null
+$script:partCeiling = 0
+$script:partTimedOut = ''
+
 # Runs one program to completion with stdout and stderr in files; returns the exit code. Start-Process
 # -Wait would also wait for the Gradle daemon the wrapper leaves behind, so wait on the process itself.
-function Run([string]$exe, [string[]]$argv, [string]$stdout, [string]$stderr) {
+# T191: the wait is bounded, by the part's deadline inside a part (-TimeoutS shortens it), by -TimeoutS alone for a
+# -Cleanup call (it runs after a part's deadline too: stopping the part's own emulator), and by $outsideTimeoutS
+# elsewhere. At the deadline the program's process tree is killed by its PID; at a part's deadline Run throws and the
+# part ends with "timeout" on its steps.tsv line; at its own -TimeoutS it returns 'timeout'.
+function Run([string]$exe, [string[]]$argv, [string]$stdout, [string]$stderr, [int]$TimeoutS = 0, [switch]$Cleanup) {
+    $own = if ($TimeoutS -gt 0) { (Get-Date).AddSeconds($TimeoutS) } elseif ($Cleanup -or -not $script:partDeadline) { (Get-Date).AddSeconds($outsideTimeoutS) } else { $null }
+    $byPart = (-not $Cleanup) -and $script:partDeadline -and (-not $own -or $script:partDeadline -le $own)
+    $deadline = if ($byPart) { $script:partDeadline } else { $own }
     $p = Start-Process -FilePath $exe -ArgumentList (($argv | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WorkingDirectory $repo
     $null = $p.Handle  # makes ExitCode available after the wait
-    $p.WaitForExit()
-    $p.ExitCode
+    $ms = [math]::Max(0, [math]::Min([double][int]::MaxValue, ($deadline - (Get-Date)).TotalMilliseconds))
+    if ($p.WaitForExit([int]$ms)) { return $p.ExitCode }
+    $killed = Stop-Tree $p.Id
+    $gone = $p.WaitForExit(30000)
+    $what = "$([IO.Path]::GetFileName($exe)) (PID $($p.Id)) and its process tree killed by PID (taskkill /T: $(if ($killed) { $killed } else { 'none reported' })$(if (-not $gone) { '; still running 30 s later' }))"
+    if ($byPart) {
+        $script:partTimedOut = "timed out at its ceiling of $($script:partCeiling) s: $what"
+        throw $script:partTimedOut
+    }
+    Write-Host "[sweep] $([IO.Path]::GetFileName($exe)) did not finish within its time: $what"
+    'timeout'
+}
+
+# T191: the trimmed stdout of a short program (adb, gh) under a bounded wait; '' when it failed or ran out of time.
+$script:toolRuns = 0
+function Tool-Text([string]$exe, [string[]]$argv, [int]$TimeoutS = 60, [switch]$Cleanup) {
+    $dir = Join-Path $Out 'tool'
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $script:toolRuns++
+    $o = Join-Path $dir "$($script:toolRuns).out.log"
+    $code = Run $exe $argv $o (Join-Path $dir "$($script:toolRuns).err.log") -TimeoutS $TimeoutS -Cleanup:$Cleanup
+    if ("$code" -ne '0' -or -not (Test-Path $o)) { return '' }
+    "$(Get-Content -Raw $o)".Trim()
+}
+
+# T191: who holds a port, for a message: the listener table's owner, else (the sandbox hides it there) the processes
+# whose command line names "-port <port>", which is how an emulator is started. Read only: nothing is ever stopped by
+# this (CLAUDE.md: never stop a process found by name or command line).
+function Describe-PortHolder([int]$port) {
+    $ids = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } | Where-Object { $_ } | Sort-Object -Unique)
+    if (-not $ids.Count) {
+        $ids = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "(^|\s)-port\s+$port(\s|$)" } | ForEach-Object { $_.ProcessId })
+    }
+    $who = @($ids | ForEach-Object { $n = (Get-Process -Id $_ -ErrorAction SilentlyContinue).ProcessName; "PID $_$(if ($n) { " ($n)" })" })
+    if ($who.Count) { $who -join ', ' } else { 'a process the listener table does not show' }
+}
+
+# T191 (finding 2026-10-31: a rerun lost device-boot to the killed run's console ports, "ports 5640/5641 are in use",
+# 35 s in): before a boot, waits up to $timeoutS (50 s, so the part ends within a minute) for the console port pair (<port>, <port>+1) to be free and for adb to
+# list no emulator-<port>. Returns '' then, or at once when that serial already runs this very AVD (android-emu.ps1
+# reuses it); otherwise the reason, naming the serial adb lists and each holder's PID. The caller boots nothing then,
+# and stops nothing it did not start.
+function Wait-ConsolePorts([int]$emuPort, [string]$avdName, [int]$timeoutS = 50) {
+    $pair = @($emuPort, ($emuPort + 1))
+    $s = "emulator-$emuPort"
+    $t0 = Get-Date
+    while ($true) {
+        $listed = ''
+        if ((Tool-Text $adbExe @('devices') 30) -match "(?m)^$([regex]::Escape($s))\s+(\S+)") {
+            $listed = $Matches[1]
+            if ($listed -eq 'device') {
+                $name = @((Tool-Text $adbExe @('-s', $s, 'emu', 'avd', 'name') 30) -split "`r?`n")[0].Trim()
+                if ($name -eq $avdName) { return '' }
+                if ($name) { $listed = "device, AVD $name" }
+            }
+        }
+        $held = @($pair | Where-Object { Test-PortHeld $_ })
+        $waited = ((Get-Date) - $t0).TotalSeconds
+        if (-not $held.Count -and -not $listed) {
+            if ($waited -ge 1) { Write-Host ("[sweep] console ports {0} free after {1:N0} s" -f ($pair -join '/'), $waited) }
+            return ''
+        }
+        if ($waited -ge $timeoutS) { break }
+        Start-Sleep -Seconds 2
+    }
+    $parts = @(foreach ($port in $(if ($held.Count) { $held } else { $pair[0] })) { "$port by $(Describe-PortHolder $port)" })
+    if ($listed) { $parts += "adb lists $s ($listed)" }
+    "console ports $($pair -join '/') still held after $timeoutS s ($($parts -join '; ')); not booting $s on them"
 }
 
 # T91: the previous release's APK, pinned and checked: downloads the first asset matching $patterns plus the release's
@@ -290,11 +427,23 @@ function Part([string]$name, [scriptblock]$body) {
     $t0 = Get-Date
     $note = ''
     $script:partNote = '' # T105: a body may leave a note for its steps.tsv line (a retry and its reason)
+    # T191: the part's ceiling; every Run inside it waits at most until this deadline.
+    $script:partCeiling = Part-Ceiling $name
+    $script:partDeadline = $t0.AddSeconds($script:partCeiling)
+    $script:partTimedOut = ''
+    if ($InjectHang -eq $name) {
+        # T191, a test of the ceiling: a child that starts a grandchild, prints its PID and both sleep past any ceiling.
+        $body = { Run $py @('-I', '-c', "import subprocess, sys, time; g = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(100000)']); print('grandchild', g.pid, flush=True); time.sleep(100000)") (Join-Path $Out "$name.hang.log") (Join-Path $Out "$name.hang.err.log") }
+    }
     try {
         # The body's last output is the exit code (anything it printed before that is ignored).
         $code = @(& $body) | Select-Object -Last 1
+        if ($script:partTimedOut) { $code = 'timeout'; $note = $script:partTimedOut } # a body that caught it still timed out
     } catch {
-        $code = 'error'; $note = "$($_.Exception.Message)"
+        if ($script:partTimedOut) { $code = 'timeout'; $note = $script:partTimedOut }
+        else { $code = 'error'; $note = "$($_.Exception.Message)" }
+    } finally {
+        $script:partDeadline = $null
     }
     # T185: the retries the part's reports counted (screen captures, adb forwards restored, cut reads) on its steps.tsv line.
     $n = @{}; foreach ($f in @(Get-ChildItem $Out -Recurse -File -Include "$name.json", '*.stdout.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 })) {
@@ -330,10 +479,15 @@ function Start-Server([string]$name, [string]$exe, [string[]]$argv, [int]$port, 
     }
     $script:servers[$name] = $p.Id
     $deadline = (Get-Date).AddSeconds($timeoutS)
+    if ($script:partDeadline -and $script:partDeadline -lt $deadline) { $deadline = $script:partDeadline } # T191
     while ((Get-Date) -lt $deadline) {
         if ($p.HasExited) { throw "$name exited before answering (see $name.err.log)" }
         try { if ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "http://127.0.0.1:$port$readyPath").StatusCode -eq 200) { return } } catch { }
         Start-Sleep -Milliseconds 500
+    }
+    if ($script:partDeadline -and (Get-Date) -ge $script:partDeadline) {
+        $script:partTimedOut = "timed out at its ceiling of $($script:partCeiling) s waiting for $name to answer http://127.0.0.1:$port$readyPath"
+        throw $script:partTimedOut
     }
     throw "$name did not answer http://127.0.0.1:$port$readyPath within $timeoutS s"
 }
@@ -371,9 +525,7 @@ function Build-Release {
 # T105: the sweep's copy of the release APK for a device's ABI (the universal one when there is no split for it).
 function Release-Apk([string]$s) {
     Build-Release
-    $sdkDir = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
-    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue' # adb's stderr must not stop the part (PowerShell 5.1)
-    try { $abi = "$(& (Join-Path $sdkDir 'platform-tools\adb.exe') -s $s shell getprop ro.product.cpu.abi 2>$null)".Trim() } finally { $ErrorActionPreference = $eap }
+    $abi = Tool-Text $adbExe @('-s', $s, 'shell', 'getprop', 'ro.product.cpu.abi') # T191: a bounded wait
     $apk = Join-Path $apkCopies "androidApp-$abi-release.apk"
     if ($abi -and (Test-Path $apk)) { return $apk }
     Join-Path $apkCopies 'androidApp-universal-release.apk'
@@ -404,10 +556,11 @@ function Lan-Address {
 }
 
 $py = 'python'
+$adbExe = Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }) 'platform-tools\adb.exe'
 $gradle = Join-Path $repo 'gradlew.bat'
 $devtool = Join-Path $repo 'devtool\build\install\devtool\bin\devtool.bat'
 $meta = [ordered]@{ host = 'windows'; startedAt = (Get-Date).ToString('s'); noDevice = [bool]$NoDevice; noDaemon = [bool]$NoDaemon; emuMemoryMb = $EmuMemory
-    commit = "$(& git rev-parse --short HEAD 2>$null)".Trim() }
+    commit = "$(& git rev-parse --short HEAD 2>$null)".Trim(); partTimeoutS = $PartTimeout; partTimeoutsS = $ceilings }
 $meta | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Out 'meta.json')
 
 $emulatorStarted = $false
@@ -505,10 +658,7 @@ try {
     # device-boot) and nothing answers on the serial, device-boot runs anyway (and its AVD is stopped and deleted
     # at the end like any the sweep boots); an emulator already running on -EmuPort is used as it is.
     if (-not $NoDevice -and -not (Want 'device-boot') -and @($deviceParts | Where-Object { $_ -ne 'device-boot' -and (Want $_) }).Count) {
-        $sdkDir = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
-        $state = ''
-        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-        try { $state = "$(& (Join-Path $sdkDir 'platform-tools\adb.exe') -s $serial get-state 2>$null)".Trim() } catch { } finally { $ErrorActionPreference = $eap }
+        $state = Tool-Text $adbExe @('-s', $serial, 'get-state') 30 # T191: a bounded wait
         if ($state -ne 'device') {
             $script:bootImplied = $true
             Write-Host "[sweep] $serial is not running: device-boot runs first (the device parts selected need it)"
@@ -530,8 +680,12 @@ try {
         Write-Host "[sweep] the debug build's $deviceServerNote"
     }
     $booted = Part 'device-boot' {
-        $script:emulatorStarted = $true
         $script:partNote = $deviceServerNote
+        # T191: the previous emulator's console ports free first (up to a minute), else the part fails naming the holder;
+        # until then nothing here is the sweep's to stop, so the cleanup at the end leaves that holder alone.
+        $why = Wait-ConsolePorts $EmuPort $Avd
+        if ($why) { throw $why }
+        $script:emulatorStarted = $true
         # android-emu.ps1 prints nothing when its output is piped (T65 follow-up); its exit code and the
         # logcat line the Python tools read are what count, so the logs are kept only for a post-mortem.
         Run 'powershell.exe' ($emuArgs + @('-Build', '-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg)) (Join-Path $dev 'emu.log') (Join-Path $dev 'emu.err.log')
@@ -572,6 +726,8 @@ try {
             # The same debug build as the first emulator's (built by device-boot); built here only when it is missing.
             $debugApk = Join-Path $repo 'androidApp\build\outputs\apk\debug\androidApp-debug.apk'
             $boot = $bArgs + @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) + $(if (Test-Path $debugApk) { @() } else { @('-Build') })
+            $why = Wait-ConsolePorts $bEmu $bAvd # T191: as before device-boot; a held pair is a skip like a failed boot
+            if ($why) { $script:partNote = "skipped: $why"; 'skip'; return }
             try {
                 $c = Run 'powershell.exe' $boot (Join-Path $bdir 'emu-b.log') (Join-Path $bdir 'emu-b.err.log')
                 if ($c -ne 0) {
@@ -592,7 +748,7 @@ try {
                             '--server', "http://10.0.2.2:$bp", '--out', $bdir)) (Join-Path $Out 'bothunits.json') (Join-Path $Out 'bothunits.err.log')
                 } finally { Stop-Server 'bothunits-server' }
             } finally {
-                $null = Run 'powershell.exe' ($bArgs + @('-Stop', '-Delete')) (Join-Path $bdir 'emu-b-stop.log') (Join-Path $bdir 'emu-b-stop.err.log')
+                $null = Run 'powershell.exe' ($bArgs + @('-Stop', '-Delete')) (Join-Path $bdir 'emu-b-stop.log') (Join-Path $bdir 'emu-b-stop.err.log') -Cleanup -TimeoutS 300
             }
         }
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
@@ -677,9 +833,9 @@ try {
             Build-Release
             $prevDir = Join-Path $ui 'previous'
             $tag = $PrevRelease
-            if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
+            if (-not $tag) { $tag = Tool-Text 'gh' @('release', 'list', '--exclude-drafts', '--limit', '1', '--json', 'tagName', '--jq', '.[0].tagName') } # T191: bounded
             if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
-            $abi = "$(& (Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }) 'platform-tools\adb.exe') -s $serial shell getprop ro.product.cpu.abi)".Trim()
+            $abi = Tool-Text $adbExe @('-s', $serial, 'shell', 'getprop', 'ro.product.cpu.abi')
             # Alpha releases since v0.1.4 ship only the universal APK (owner's policy 2026-10-11); older ones have per-ABI files too.
             $prev = Get-PreviousApk $tag $prevDir @("*-$abi.apk", '*-universal.apk') (Join-Path $ui 'previous') # T91: pinned and checked
             Run $py (@('-I', 'tools/android-ui.py', 'upgrade', '--serial', $serial, '--prev-apk', $prev.FullName, '--apk', (Release-Apk $serial), '--dem', $dem, '--osm', $osm,
@@ -711,7 +867,7 @@ try {
             if ($c -ne 0) { throw 'assembleRelease of the next build failed (see update\assemble-next.err.log)' }
             Copy-Item (Join-Path $apkDir 'androidApp-universal-release.apk') (Join-Path $udir 'next.apk') -Force
             $tag = $PrevRelease
-            if (-not $tag) { $tag = "$(& gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName' 2>$null)".Trim() }
+            if (-not $tag) { $tag = Tool-Text 'gh' @('release', 'list', '--exclude-drafts', '--limit', '1', '--json', 'tagName', '--jq', '.[0].tagName') } # T191: bounded
             if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
             $prev = Get-PreviousApk $tag (Join-Path $udir 'previous') @('*-universal.apk') (Join-Path $udir 'previous') # T91: pinned and checked
             Run $py (@('-I', 'tools/android-ui.py', 'update', '--serial', $serial, '--prev-apk', $prev.FullName, '--apk', (Join-Path $udir 'current.apk'),
@@ -748,7 +904,7 @@ try {
                     $c = Run $py (@('-I', 'tools/android-ui.py', 'matrix', '--serial', $mSerial, '--apk', (Release-Apk $mSerial), '--dem', $dem, '--osm', $osm, '--label', $label, '--out', $mdir) + $knownArgs) (Join-Path $mdir "$label.json") (Join-Path $mdir "$label.err.log")
                     if ($c -ne 0) { $worst = $c }
                 } finally {
-                    $null = Run 'powershell.exe' ($mArgs[0..7] + @('-Stop', '-Delete') + $(if ($AvdHome) { @('-AvdHome', $AvdHome) } else { @() })) (Join-Path $mdir "$label-stop.log") (Join-Path $mdir "$label-stop.err.log")
+                    $null = Run 'powershell.exe' ($mArgs[0..7] + @('-Stop', '-Delete') + $(if ($AvdHome) { @('-AvdHome', $AvdHome) } else { @() })) (Join-Path $mdir "$label-stop.log") (Join-Path $mdir "$label-stop.err.log") -Cleanup -TimeoutS 300
                 }
             }
             $worst
@@ -765,15 +921,10 @@ try {
 } finally {
     foreach ($name in @($script:servers.Keys)) { Stop-Server $name }
     if ($emulatorStarted -and -not $KeepEmulator) {
-        $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
-        $adb = Join-Path $sdk 'platform-tools\adb.exe'
         # T79: a forward that was never set (a partial -Only run) makes adb exit 1 with stderr; that must not stop
-        # the cleanup, or the AVD stays up and summary.json is never written.
-        if (Test-Path $adb) {
-            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-            try { & $adb -s $serial forward --remove "tcp:$($Port + 1)" 2>&1 | Out-Null } catch { } finally { $ErrorActionPreference = $eap }
-        }
-        $code = Run 'powershell.exe' ($emuArgs + @('-Stop', '-Delete')) (Join-Path $dev 'emu-stop.log') (Join-Path $dev 'emu-stop.err.log')
+        # the cleanup, or the AVD stays up and summary.json is never written. T191: bounded, like the stop below.
+        if (Test-Path $adbExe) { try { $null = Tool-Text $adbExe @('-s', $serial, 'forward', '--remove', "tcp:$($Port + 1)") 30 -Cleanup } catch { } }
+        $code = Run 'powershell.exe' ($emuArgs + @('-Stop', '-Delete')) (Join-Path $dev 'emu-stop.log') (Join-Path $dev 'emu-stop.err.log') -Cleanup -TimeoutS 300
         Write-Host "[sweep] emulator $serial ($Avd) stopped and deleted (exit $code)"
     }
 }
