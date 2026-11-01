@@ -447,8 +447,10 @@ object Horizon {
      * T194: how far a ray toward a sun below [LOW_SUN_DEG] looks, metres. Measured with `devtool shade --reference` on
      * Rainier (T194's report): against the reference march, 30, 20 and 15 km left the same cells wrong at 3.9 and 1.7
      * degrees with the sun south-west, and 15 km lit 0.26 percent more cells than 30 km 25 km west of the summit with a
-     * 2.2 degree sun behind it (0.16 percent at 20 km), while a tile's coarse window shrinks about four times. Ground
-     * that shades a cell from farther away stands over 1,300 m above it at a 5 degree sun.
+     * 2.2 degree sun behind it (0.16 percent at 20 km). A z14 tile reads some 40 percent fewer cells (278k to 169k at
+     * 3.9 degrees) and took 1.0 s on the emulator against 1.4 to 1.8 s uncapped (1.7 degrees: 1.05 against 1.14 to
+     * 1.38 s); the rays' samples stay the same, so the march, most of a low-sun tile, is not what it cuts. Ground that
+     * shades a cell from farther away stands over 1,300 m above it at a 5 degree sun.
      */
     const val LOW_SUN_RANGE_M = 15_000.0
 

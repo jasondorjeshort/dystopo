@@ -174,6 +174,9 @@ class ShadeAlongTest {
         assertEquals("No terrain shade before sunset", ShadeText.cardLine(r, 1700.0, m))
         assertNull(ShadeText.cardLine(r, 2100.0, m)) // the sun is down
         assertNull(ShadeText.cardLine(r, 9999.0, m)) // past the end
+        // In feet: to 100 ft below a tenth of a mile (98.5 m ahead reads 300 ft, not 328), then the mile rule.
+        assertEquals("Terrain shade in 300 ft for 10 min", ShadeText.cardLine(r, 889.0, ContourUnits.FEET))
+        assertEquals("Terrain shade in 0.3 mi for 10 min", ShadeText.cardLine(r, 575.0, ContourUnits.FEET)) // 412.5 m
         assertEquals("1 h 5 min", ShadeText.minutes(65.2))
         assertEquals("1 min", ShadeText.minutes(0.2))
         assertEquals("1 hour 5 minutes", ShadeText.minutesSpoken(65.0))

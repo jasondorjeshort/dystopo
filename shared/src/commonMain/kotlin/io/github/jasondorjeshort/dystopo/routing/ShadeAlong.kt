@@ -544,9 +544,20 @@ object ShadeText {
         return listOf(hs, ms).filter { it.isNotEmpty() }.joinToString(" ")
     }
 
-    /** A distance ahead for the card: to 50 m below a kilometre (the samples are 25 m apart). */
-    private fun ahead(m: Double, units: ContourUnits): String =
-        UnitFormat.distance(if (m < 1000) (m / 50).roundToInt() * 50.0 else m, units)
+    /**
+     * A distance ahead for the card and the spoken line: to 50 m below a kilometre, or to 100 ft below a tenth of a mile
+     * (the samples are 25 m apart; 50 m in feet would read "328 ft").
+     */
+    private fun ahead(m: Double, units: ContourUnits): String = UnitFormat.distance(
+        when {
+            units == ContourUnits.FEET && m < 160 -> (m * FT / 100).roundToInt() * 100 / FT
+            units != ContourUnits.FEET && m < 1000 -> (m / 50).roundToInt() * 50.0
+            else -> m
+        },
+        units,
+    )
+
+    private const val FT = 3.28084
 
     /**
      * The navigation card's line at [progressM]: in terrain shade "In terrain shade for 12 min more"; in sun the next

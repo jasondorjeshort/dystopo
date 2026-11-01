@@ -53,7 +53,11 @@ object NavShade {
     /** The latest answer of this navigation, or null before the first. */
     @Volatile var result: ShadeAlongResult? = null
         private set
-    @Volatile private var computing = false
+    /** The generation a computation is running for, -1 for none: a navigation that ends or restarts leaves it stale. */
+    @Volatile private var computingGen = -1
+    private val computing: Boolean get() = computingGen == generation
+    /** A forced recompute asked for while one ran: its progress, started when that one ends. */
+    @Volatile private var again: Double? = null
     @Volatile private var computedAtMs = 0L
     @Volatile private var computes = 0
     @Volatile private var lastTotalMs: Long? = null
@@ -79,7 +83,7 @@ object NavShade {
             timing = t
             onReady = ready
             result = null
-            computing = false
+            computingGen = -1
             computedAtMs = 0L
             lastError = null
             noData = false
@@ -113,14 +117,18 @@ object NavShade {
         synchronized(this) {
             p = path ?: return
             t = timing ?: return
-            if (computing) return
+            if (computing) {
+                if (force) again = progressM // the debug route's recompute runs as soon as this one ends
+                return
+            }
             val wall = System.currentTimeMillis()
             if (!force && computedAtMs != 0L && wall - computedAtMs < RECOMPUTE_MS) return
-            computing = true
-            computedAtMs = wall
             gen = generation
+            computingGen = gen
+            computedAtMs = wall
         }
         val start = now()
+        Log.i(TAG, "working out terrain shade from ${progressM.toInt()} m for ${java.time.Instant.ofEpochMilli(start)}")
         worker.execute {
             val t0 = System.nanoTime()
             try {
@@ -128,13 +136,17 @@ object NavShade {
                 val pyramid = runCatching { app.tiles.shade.pyramidAt(here.lat, here.lon) }.getOrNull()
                 if (pyramid == null) {
                     noData = true
+                    Log.i(TAG, "no elevation data under the line at ${progressM.toInt()} m")
                     return@execute
                 }
                 val r = ShadeAlong.compute(
                     p, t, progressM, start, minOf(pyramid.maxZoom, ShadeAlong.MAX_ZOOM),
                     read = { w -> pyramid.window(w.zoom, w.x0, w.y0, w.width, w.height) }, tileSize = pyramid.tileSize, reuse = result?.terrain,
                 )
-                if (gen != generation) return@execute
+                if (gen != generation) {
+                    Log.i(TAG, "a computation for an ended navigation was dropped")
+                    return@execute
+                }
                 result = r
                 noData = false
                 lastError = null
@@ -142,11 +154,15 @@ object NavShade {
                 lastTotalMs = (System.nanoTime() - t0) / 1_000_000
                 Log.i(TAG, "terrain shade from ${progressM.toInt()} m: ${r.stretches.size} stretches, ${r.samples.size} rays in $lastTotalMs ms (read ${r.stats.readMs} ms, reused ${r.stats.terrainReused})")
                 onReady?.invoke()
-            } catch (e: Exception) {
+            } catch (e: Throwable) { // an out-of-memory on a long route is reported, not a crash
                 lastError = "${e.javaClass.simpleName}: ${e.message}"
                 Log.w(TAG, "terrain shade along the line failed", e)
             } finally {
-                synchronized(this) { if (gen == generation) computing = false }
+                val next = synchronized(this) {
+                    if (computingGen == gen) computingGen = -1
+                    again.also { again = null }
+                }
+                if (next != null && gen == generation) maybeCompute(next, force = true)
             }
         }
     }
@@ -154,7 +170,7 @@ object NavShade {
     /** Waits up to [ms] for a running computation (debug routes, off the main thread). */
     fun await(ms: Long) {
         val until = System.currentTimeMillis() + ms
-        while (computing && System.currentTimeMillis() < until) Thread.sleep(50)
+        while ((computing || again != null) && System.currentTimeMillis() < until) Thread.sleep(50)
     }
 
     /** The card's line at [progressM] (null before the first answer, with the sun down, past the end). */
@@ -223,7 +239,7 @@ object NavShade {
             "spokenSetting" to AppSettings.shadeSpoken.key,
             "card" to progressM?.let { cardLine(it) },
             "recomputeMs" to RECOMPUTE_MS, "computedAtMs" to computedAtMs.takeIf { it != 0L },
-            "nextAtMs" to computedAtMs.takeIf { it != 0L }?.plus(RECOMPUTE_MS), "computing" to computing, "computes" to computes,
+            "nextAtMs" to computedAtMs.takeIf { it != 0L }?.plus(RECOMPUTE_MS), "computing" to computing, "computes" to computes, "generation" to generation,
             "lastTotalMs" to lastTotalMs, "error" to lastError, "clockOffsetMs" to clockOffsetMs, "now" to clock(now()),
             "hotDay" to linkedMapOf(
                 "thresholdC" to HotDay.THRESHOLD_C, "lapseCPerKm" to HotDay.LAPSE_C_PER_KM, "maxAgeMin" to HotDay.MAX_AGE_MS / 60_000,
