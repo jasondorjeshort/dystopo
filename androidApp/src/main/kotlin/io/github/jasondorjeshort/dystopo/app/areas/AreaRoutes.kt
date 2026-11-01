@@ -95,7 +95,8 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *     Download (202, the download's start; 409 with the refusal past the budget); `POST /areas/picker/close` Cancel.
  *   - T153: `POST /areas/region[?bbox=w,s,e,n][&zoom=z][&wait=ms]`: the overlay's "Download this region" (the visible map and
  *     its zoom by default): the region's summary; `GET /areas/picker` adds `region` (`bbox`, `viewZoom`, `defaultDetail`,
- *     `packFits`, `path` `pack` or `area`, `pathLine`, `packTiles`, `limits`); its Download answers `path`.
+ *     `packFits`, `path` `pack` or `area`, `pathLine`, `packTiles`, `limits`); its Download answers `path`. T192: on the
+ *     pack path `sizeLine` counts the trail graph and `graphBytes` is its estimate (null on the area path).
  *   - `POST /areas/{id}/rename?name=`: the card's Rename.
  * - T152 (ADR 0041 §3's T152 note): no heap refusal. Every plan (`POST /areas/plan`, the picker's `full` and `less`) carries
  *   its estimate (`bytes`, `estimated`, `sizeLine` "About ..."), `rows` (what the download walks), `refused` (the budget's

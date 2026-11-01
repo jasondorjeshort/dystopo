@@ -110,4 +110,51 @@ class ReadoutClimbWindowTest {
         assertEquals(null, r.last().climbWindowS)
         assertEquals(ValueState.SHOWN, r.last().climb.state)
     }
+
+    /**
+     * T192: the fixes stop on a climb. With the barometer still reading (a level phone, the emulator's fixed pressure)
+     * and without one, the climb holds what it read at the last fix, dimmed and frozen, through the window, then is a
+     * dash: never a decay toward zero.
+     */
+    @Test
+    fun theClimbHoldsThroughAGapOfTheFixesThenDashes() {
+        for (withBaro in listOf(true, false)) for (w in listOf(60, 300)) {
+            val sim = ReadoutSim(23)
+            val climbing = sim.journey(listOf(ReadoutSim.Leg(240 + w, 1.0, climb = climb)), startEle = 1600.0)
+            val fixes = sim.fixes(climbing, eleSigma = 6.0, vAcc = 8.0)
+            val est = ReadoutEstimator(ActivityProfile.of(Activity.FOOT), options(w))
+            val byT = if (withBaro) sim.pressure(climbing, sigma = 0.3).associateBy { it.timeMs } else emptyMap()
+            for (f in fixes) {
+                byT[f.time]?.let(est::onPressure)
+                est.onFix(f)
+            }
+            val lastT = fixes.last().time
+            val atFix = est.readout(lastT).climb
+            // GNSS alone over 1 min can read the climb as 0 (the band); either way the state and figure are held.
+            if (withBaro) assertEquals(ValueState.SHOWN, atFix.state, "window $w: climbing at the last fix")
+            assertTrue(atFix.state == ValueState.SHOWN || atFix.state == ValueState.ZERO, "baro $withBaro window $w: ${atFix.state}")
+            // The fixes stop; the barometer goes on reading a level phone for twice the window.
+            val level = climbing.last().ele
+            val series = ArrayList<ReadoutValue>()
+            for (s in 1..2 * w) {
+                val t = lastT + s * 1000L
+                if (withBaro) est.onPressure(PressureSample(t, ReadoutSim.hPaAt(level + 30.0)))
+                series += est.readout(t).climb
+            }
+            val gapStart = 30 // past the gap rule (5 s, or three fix intervals)
+            for (s in gapStart until w) {
+                val c = series[s - 1]
+                assertEquals(atFix.state, c.state, "baro $withBaro window $w: held at $s s (${c.reason})")
+                assertEquals(atFix.value!!, c.value!!, 1e-9, "baro $withBaro window $w: the last fix's value at $s s")
+                assertTrue(c.dimmed && c.frozen, "baro $withBaro window $w: dimmed and frozen at $s s")
+            }
+            for (s in w + 1..2 * w) {
+                val c = series[s - 1]
+                assertEquals(ValueState.DASH, c.state, "baro $withBaro window $w: a dash at $s s")
+                assertEquals("no fix", c.reason)
+                assertTrue(c.dimmed)
+            }
+            println("T192 baro $withBaro window $w s: last fix ${atFix.state.code} ${(atFix.value!! * 3600).toLong()} m/h, held to ${w} s, then ${series.last().state.code} (${series.last().reason})")
+        }
+    }
 }

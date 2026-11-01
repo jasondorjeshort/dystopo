@@ -907,6 +907,22 @@ internal fun sizeLine(bytes: Long, tiles: Int, minZoom: Int, maxZoom: Int, demMa
     return "About ${aboutSize(bytes)} (${String.format(java.util.Locale.US, "%,d", tiles)} tiles) $detail"
 }
 
+/**
+ * T192 (T189's follow-up): the pack path's size line counts the trail graph that comes with the pack (or is built on the
+ * phone from it): "About 172 MB (1,300 tiles plus the trail graph) at full detail". The graph is estimated from the
+ * vector bytes ([graphEstimateBytes]).
+ */
+internal fun packSizeLine(tileBytes: Long, graphBytes: Long, tiles: Int, minZoom: Int, maxZoom: Int): String =
+    sizeLine(tileBytes + graphBytes, tiles, minZoom, maxZoom).replaceFirst(" tiles)", " tiles plus the trail graph)")
+
+/**
+ * T192: the trail graph's bytes for a pack whose vector tiles take [vectorBytes]: [GRAPH_PER_VECTOR] of them. Measured on
+ * the Rainier pack: a 312,356-byte graph (`DYSG` version 5, T189) for 2,630,059 bytes of vector tiles, 0.12.
+ */
+internal fun graphEstimateBytes(vectorBytes: Long): Long = Math.round(vectorBytes * GRAPH_PER_VECTOR)
+
+internal const val GRAPH_PER_VECTOR = 0.12
+
 /** T140 (ADR 0041 §5): "Less detail (about 30 MB)". Pure, tested. */
 internal fun lessDetailLine(bytes: Long): String = detailChoiceLine(AreaDetail.LESS, bytes)
 

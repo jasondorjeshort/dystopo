@@ -24,6 +24,8 @@ class OnlineOverlaySnapshotTest {
         assertEquals("Online" to OnlineUi.Dot.GREEN, OnlineUi("online", view(OnlineService.ONLINE), emptyMap(), false).label)
         assertEquals("Paused" to OnlineUi.Dot.GREY, OnlineUi("online", view(OnlineService.ONLINE), emptyMap(), false, notice = "limit").label)
         assertEquals("Offline" to OnlineUi.Dot.RED, OnlineUi("offline", null, emptyMap(), false).label)
+        // T192: no server set (the public sources directly): offline is grey, not an error.
+        assertEquals("Offline" to OnlineUi.Dot.GREY, OnlineUi("offline", null, emptyMap(), false, direct = true).label)
         assertEquals("Connecting" to OnlineUi.Dot.GREY, OnlineUi("unknown", null, emptyMap(), false).label)
         assertEquals("live from server", OnlineUi("online", view(OnlineService.ONLINE), emptyMap(), false).sourceText)
         assertEquals("live from public sources", OnlineUi("online", view(OnlineService.ONLINE), emptyMap(), false, direct = true).sourceText)

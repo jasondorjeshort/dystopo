@@ -339,10 +339,18 @@ object AreaPicker {
     /** T153: the refusal of the plan shown: the pinned budget's, except on the pack path (a pack is not pinned tiles). */
     fun refusalOf(s: Summary?): String? = if (packPath(s)) null else planOf(s)?.refusal
 
-    /** T153: the size line of the plan shown; the pack path's z8 to z14 is this card's full detail. */
+    /**
+     * T153: the size line of the plan shown; the pack path's z8 to z14 is this card's full detail. T192: the pack path
+     * counts the trail graph the pack brings ([packSizeLine]).
+     */
     fun sizeLineOf(s: Summary?): String? = planOf(s)?.let { p ->
-        if (packPath(s)) sizeLine(p.bytes, p.tiles, p.area.minZoom, FULL_MAX_ZOOM) else sizeLine(p.bytes, p.tiles, p.area.minZoom, p.area.maxZoom, p.area.demMaxZoom)
+        if (packPath(s)) packSizeLine(p.bytes, graphBytesOf(p), p.tiles, p.area.minZoom, FULL_MAX_ZOOM)
+        else sizeLine(p.bytes, p.tiles, p.area.minZoom, p.area.maxZoom, p.area.demMaxZoom)
     }
+
+    /** T192: the estimated trail graph of [p]'s vector tiles ([graphEstimateBytes]). */
+    fun graphBytesOf(p: AreaDownload.Plan): Long =
+        graphEstimateBytes(p.manifest.items.filterIsInstance<io.github.jasondorjeshort.dystopo.areas.TilesItem>().filter { it.route == io.github.jasondorjeshort.dystopo.areas.AreaManifest.ROUTE_OSM }.sumOf { it.bytes })
 
     /** T157: the line under the size line: what the medium detail keeps and drops; null at the other details. */
     fun hintOf(s: Summary?): String? = if (s != null && s.error == null && detailOf(s) == DETAIL_MEDIUM) MEDIUM_DETAIL_HINT else null
@@ -386,6 +394,7 @@ object AreaPicker {
             "revision" to revision, "plannedRevision" to s?.revision, "planned" to (s != null && s.revision == revision && !s.fullPending),
             "error" to (downloadError ?: s?.error),
             "sizeLine" to sizeLineOf(s),
+            "graphBytes" to planOf(s)?.takeIf { packPath(s) }?.let { graphBytesOf(it) }, // T192: counted in the pack path's size line
             "alternative" to s?.let { alternativeLine(detailOf(it), it) }, "timeLine" to p?.let { timeLine(it.bytes, it.bytesPerMs) },
             // T157: every detail not shown, as the card lists them (`detail`, `line`), and the medium detail's hint.
             "alternatives" to s?.let { alternativeLines(detailOf(it), it).map { (d, l) -> linkedMapOf("detail" to d, "line" to l) } }, "hint" to hintOf(s),

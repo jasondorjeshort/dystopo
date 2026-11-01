@@ -60,7 +60,9 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * `GET /route` `ui` has `from` and `to` (`kind` `fix` or `point`, `label` as the card shows it; a fix's `source`
  * `recorder` or `device`, `fixTime`, `ageS` when planned and `stale`, older than [io.github.jasondorjeshort.dystopo.app.routing.RouteOrigin.STALE_S]),
  * `fromOpen`, `fromChoices`, `location` (`on`, `off`, `noPermission`), `waitingForFix` and `routeTo` (the last route to
- * here: `at`, `origin`, `waited`, and once a fix came `fixAfterMs` and `polls`).
+ * here: `at`, `origin`, `waited`, and once a fix came `fixAfterMs` and `polls`). T192: `ends` (`from`, `to`: the `line`
+ * as the card draws it, the pack feature within 100 m that `named` it, else "a point on the map"; `radiusM`); `layout`
+ * adds the card's height cap under the top chips and its scroll; `water.list` the list's rows as drawn and its scroll.
  * T187, water along the route ([io.github.jasondorjeshort.dystopo.app.routing.RouteWater]; computed, never stored):
  * `POST /route` and `GET /route` gain `water` (waits up to 10 s for it): `enabled` (the `waterAlongRoute` setting),
  * `state` `ready|computing|noRoute|error`, the card's `card` and `longest` lines and the list's `hint`, `lengthM`,

@@ -292,7 +292,13 @@ object Viewshed {
     /** The share of the way to a peak left out of its ray (its own shoulder), at least two terrain cells. */
     const val PEAK_MARGIN = 0.01
 
-    /** `mountain_peak` classes listed as peaks. */
+    /**
+     * `mountain_peak` classes listed as peaks: the classes the map labels as peaks (`DefaultOsmStyle`'s peak layers), so
+     * the list never names a summit the map does not, nor leaves out one it does. T192: `hill` stays although no pack of
+     * ours carries it (the outdoors profile maps `natural` peak, volcano and saddle and `mountain_pass`, never
+     * `natural=hill`; the Rainier pack's 149 named features within 30 km of Paradise are 148 `peak` and 1 `volcano`): a
+     * pack whose profile writes hills gets them listed as the style labels them.
+     */
     val PEAK_CLASSES = setOf("peak", "volcano", "hill")
 
     private const val DEG = PI / 180
