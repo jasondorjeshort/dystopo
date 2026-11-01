@@ -377,8 +377,9 @@ def fresh_install(dev, apk):
 
 def launch(dev):
     dev.shell("am", "start", "-n", ACTIVITY)
-    # The location dialog (no -g at install: a user sees it too).
-    n, _ = dev.wait_for(r"^(While using the app|Only this time|Allow)$", 12)
+    # The location dialog (no -g at install: a user sees it too). T191: up to 30 s; on the loaded second PC it came 22 s
+    # after the start and covered the first-run card when the wait was 12 s (T191's full sweep, 2026-10-31).
+    n, _ = dev.wait_for(r"^(While using the app|Only this time|Allow)$", 30)
     if n:
         dev.tap(n)
     return bool(n)
