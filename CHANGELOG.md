@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-01
+
+- T195: A route's terrain exposure: steep ground, aspects, ridge time, shade at the planned hour
+
 ### 2026-10-31
 
 - T191: Tools: the sweep's per-part timeout, bounded waits, the console-port wait
