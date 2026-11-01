@@ -25,6 +25,16 @@
   tiles came from (pack, live-3dep, live-swissalti, live-copernicus, openfreemap); "Build pack here" asks the server (POST /build) to make out/<name>-dem.pmtiles and
   out/<name>-outdoors.pmtiles (OpenFreeMap tiles, OpenMapTiles schema) for the current view and shows progress.
 
+  The front door (T200, ADR 0052; live mode, which is also what the standalone server answers at /): the map is the page.
+  Where it opens is decided before the map exists: a #z/lat/lon hash always wins (share links); else the browser's own
+  position at z13 (navigator.geolocation, HTTPS or localhost; the position stays in the browser); on a denial, no fix within
+  8 s or an insecure origin, the last view this browser saved (localStorage dystopo.view, written on moveend), else Rainier.
+  The fallback is silent and a remembered denial (dystopo.geolocation) is never prompted again on load; the locate-me
+  control (top right) asks on a click. Units are seeded after that, from the opening place, and once more from the first
+  geolocated view while they are still a region seed (dystopo.unitsSeed). "Build a pack here" and the Server token field
+  show only with a stored token (?token=...) or ?tools=1. Below 520 px (the one breakpoint) the panel starts collapsed to
+  its title. window.dystopoStart says which view opened and why (hash, geolocation, saved, default).
+
   Map options (T50; the phone's T47 options, same keys as devtool serve's /style.json): the "Map options" section of the
   panel, or the query string: hillshade=off|single|multi, hillshadeIntensity=0..1, slope=off|avalanche|steepness (T104's two slope shadings, on is avalanche; served
   by devtool serve as /shade/ tiles, so live mode only), contourInterval=auto|<n> in the shown units, night=on, and
@@ -144,24 +154,103 @@ const osmArchiveUrl = base + (osmMode === "outdoors" ? "/out/rainier-outdoors.pm
 // user changes it (the Units select); panning, or opening the page somewhere else, keeps it. ?units=ft|m overrides it for
 // one load without storing it (links, tools). Contour lines and labels, peak elevations and the scale bar follow it.
 // window.dystopoUnits says which units are shown and where they came from (url, preference, region, pack).
-const UNITS_KEY = "dystopo.units";
-const readUnits = () => { try { const v = localStorage.getItem(UNITS_KEY); return v === "ft" || v === "m" ? v : null; } catch (e) { return null; } };
-const writeUnits = v => { try { if (v) localStorage.setItem(UNITS_KEY, v); else localStorage.removeItem(UNITS_KEY); } catch (e) { /* private mode: this load only */ } };
+// T200: the seed runs after the opening view is known (below), from that place, and records where it came from in
+// dystopo.unitsSeed: "region" (the place of a hash, a saved view or the default) or "geolocation" (the visitor's own
+// position). While it is still "region", the first geolocated view (on load, the locate-me control, or a late fix)
+// seeds again from the visitor's position, once; the Units select removes the key, after which only the user changes it.
+const UNITS_KEY = "dystopo.units", UNITS_SEED_KEY = "dystopo.unitsSeed";
+const store = {
+  get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) { /* private mode: this load only */ } },
+};
+const readUnits = () => { const v = store.get(UNITS_KEY); return v === "ft" || v === "m" ? v : null; };
+const writeUnits = v => store.set(UNITS_KEY, v);
+// The region's units at a place (live mode: GET /live/units, shared UnitRegions; pack mode: the demo pack is in the US).
+// The position goes to the server rounded to two decimals (about a kilometre), coarser than the tiles of the view.
+const regionUnits = async (lat, lon) => {
+  if (!LIVE) return "ft";
+  try { return (await (await fetch(base + "/live/units?lat=" + lat.toFixed(2) + "&lon=" + lon.toFixed(2))).json()).units === "m" ? "m" : "ft"; } catch (e) { return null; }
+};
+
+// T200: where the page opens, decided before the map exists (MapLibre's hash: true writes its default view into the hash
+// on load). A hash always wins (share links). Else, in live mode, the browser's own position at z13 (navigator.geolocation;
+// the position stays in this browser, nothing is sent beyond the tiles of the view and the rounded units call above);
+// denied, no fix within 8 s or an insecure origin: the last view this browser saved (dystopo.view, written on moveend),
+// else the Rainier default. Silent; a denial is remembered (dystopo.geolocation) and never prompted again on load, only
+// by the locate-me control. Pack mode (the static demo) keeps the hash or the Rainier default: its data covers Rainier only.
+// window.dystopoStart says which view opened and why.
+const VIEW_KEY = "dystopo.view", GEO_KEY = "dystopo.geolocation", GEO_WAIT_MS = 8000, GEO_ZOOM = 13;
+const DEFAULT_VIEW = { zoom: 11, lat: 46.86, lon: -121.76 };
+const parseView = s => {
+  const h = String(s || "").replace(/^#/, "").split("/").map(Number);
+  return h.length >= 3 && h.slice(0, 3).every(Number.isFinite) && Math.abs(h[1]) <= 90 && Math.abs(h[2]) <= 180 ? { zoom: h[0], lat: h[1], lon: h[2] } : null;
+};
+let lateFix = null; // set once the map exists: what a fix that arrives after the 8 s does
+function locateOnLoad() {
+  if (!window.isSecureContext || !navigator.geolocation) return Promise.resolve({ result: "unavailable" });
+  return (async () => {
+    let perm = null;
+    try { perm = (await navigator.permissions.query({ name: "geolocation" })).state; } catch (e) { /* no Permissions API */ }
+    if (perm === "denied") { store.set(GEO_KEY, "denied"); return { result: "denied", remembered: true }; }
+    if (perm !== "granted" && store.get(GEO_KEY) === "denied") return { result: "denied", remembered: true };
+    return new Promise(resolve => {
+      let done = false;
+      const finish = r => { if (!done) { done = true; clearTimeout(timer); resolve(r); } };
+      const timer = setTimeout(() => finish({ result: "timeout" }), GEO_WAIT_MS);
+      document.getElementById("status").textContent = "Finding your location...";
+      navigator.geolocation.getCurrentPosition(p => {
+        store.set(GEO_KEY, null);
+        const fix = { result: "fix", lat: p.coords.latitude, lon: p.coords.longitude, accuracyM: Math.round(p.coords.accuracy) };
+        if (done) { if (lateFix) lateFix(fix); } else finish(fix);
+      }, e => {
+        if (e.code === 1) store.set(GEO_KEY, "denied"); // PERMISSION_DENIED
+        finish({ result: e.code === 1 ? "denied" : "error" });
+      }, { enableHighAccuracy: false, timeout: GEO_WAIT_MS, maximumAge: 10 * 60 * 1000 });
+    });
+  })();
+}
+const START = await (async () => {
+  const h = parseView(location.hash);
+  if (h) return { ...h, from: "hash" };
+  if (!LIVE) return { ...DEFAULT_VIEW, from: "default" };
+  const t0 = performance.now(), geo = await locateOnLoad();
+  document.getElementById("status").textContent = "";
+  const why = { geolocation: geo.result, ms: Math.round(performance.now() - t0) };
+  if (geo.result === "fix") return { zoom: GEO_ZOOM, lat: geo.lat, lon: geo.lon, from: "geolocation", ...why };
+  const saved = parseView(store.get(VIEW_KEY));
+  return saved ? { ...saved, from: "saved", ...why } : { ...DEFAULT_VIEW, from: "default", ...why };
+})();
+window.dystopoStart = START;
+
 let UNITS = "ft", unitsSource = "pack";
 {
   const unitsParam = new URLSearchParams(location.search).get("units");
+  const seed = store.get(UNITS_SEED_KEY), geolocated = START.from === "geolocation";
   if (unitsParam === "ft" || unitsParam === "m") { UNITS = unitsParam; unitsSource = "url"; }
-  else if (readUnits()) { UNITS = readUnits(); unitsSource = "preference"; }
+  else if (readUnits() && !(seed === "region" && geolocated)) { UNITS = readUnits(); unitsSource = "preference"; }
   else {
-    if (LIVE) {
-      const h = location.hash.slice(1).split("/").map(Number);
-      const [lat, lon] = h.length >= 3 && h.every(Number.isFinite) ? [h[1], h[2]] : [46.86, -121.76];
-      try { UNITS = (await (await fetch(base + "/live/units?lat=" + lat + "&lon=" + lon)).json()).units; unitsSource = "region"; } catch (e) { /* keep feet */ }
-    }
+    const u = await regionUnits(START.lat, START.lon);
+    if (u) { UNITS = u; unitsSource = LIVE ? "region" : "pack"; }
     writeUnits(UNITS);
+    store.set(UNITS_SEED_KEY, geolocated ? "geolocation" : "region");
   }
 }
-window.dystopoUnits = { units: UNITS, source: unitsSource, stored: readUnits() };
+window.dystopoUnits = { units: UNITS, source: unitsSource, stored: readUnits(), seed: store.get(UNITS_SEED_KEY) };
+// T200: the first geolocated view after a seed from a place (the locate-me control, or a fix later than the 8 s): seed
+// again from the visitor's position, once; a different answer reloads the page in those units at the same view (the
+// hash), as the Units select does.
+async function reseedFromPosition(lat, lon) {
+  if (store.get(UNITS_SEED_KEY) !== "region" || unitsSource === "url") return;
+  const u = await regionUnits(lat, lon);
+  if (!u) return;
+  writeUnits(u);
+  store.set(UNITS_SEED_KEY, "geolocation");
+  if (u === UNITS) return;
+  // The camera may still be moving (the hash follows it late): open the reload at the position itself.
+  const z = Math.max(window.map && map.getZoom ? map.getZoom() : 0, GEO_ZOOM);
+  history.replaceState(history.state, "", "#" + [z.toFixed(2), lat.toFixed(5), lon.toFixed(5)].join("/"));
+  location.reload();
+}
 document.getElementById("contour-units").textContent = UNITS === "m" ? "metres" : "feet";
 const ELE = UNITS === "m" ? ["round", ["to-number", ["get", "ele"], 0]] : ["round", ["*", ["to-number", ["get", "ele"], 0], 3.28084]];
 
@@ -265,7 +354,8 @@ contourUrl = interval => {
 };
 contourTiles = contourUrl(null);
 } // end pack mode
-if (LIVE) document.getElementById("hint").textContent = "Scroll to zoom, drag to pan. " + "Live: packs in out/ first (" + (LIVE.demPacks.length + LIVE.osmPacks.length) + " open), else DEM from the cloud sources and OSM from OpenFreeMap.";
+// T200: what a visitor sees, not the server's internals (the source box at the top right still names each view's source).
+if (LIVE) document.getElementById("hint").textContent = "Scroll to zoom, drag to pan. The map is drawn on request from public elevation data and OpenStreetMap, so the first view of a new place takes a while.";
 
 // Label names (as MapLibreStyle.LABEL_NAME): English, else Latin transliteration, else the local name; a local name in
 // another script follows on a second line where MapLibre can shape that script (not Devanagari, for example).
@@ -334,8 +424,8 @@ const iconByClass = ["match", ["get", "class"], ...markerClasses.flatMap(k => [k
 
 const map = new maplibregl.Map({
   container: "map",
-  center: [-121.76, 46.86],
-  zoom: 11,
+  center: [START.lon, START.lat], // T200: the opening view above (with a hash, MapLibre reads the same from it)
+  zoom: START.zoom,
   minZoom: LIVE ? 2 : 7,
   maxZoom: 17,
   hash: true,
@@ -450,6 +540,28 @@ map.on("styleimagemissing", e => {
   if (m && !map.hasImage(e.id)) map.addImage(e.id, markerImage(m), { pixelRatio: MARKER_RATIO });
 });
 map.addControl(new maplibregl.NavigationControl(), "top-right");
+// T200: the locate-me control (MapLibre's own; a user's click may prompt even after a denial on load). Its first fix, or a
+// fix that came after the 8 s wait while the map is still where it opened, is a geolocated view: units seed again while
+// they are still a region seed (reseedFromPosition). Live mode only, like the opening at the visitor's position.
+if (LIVE) {
+  const locate = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true });
+  map.addControl(locate, "top-right");
+  locate.on("geolocate", p => { store.set(GEO_KEY, null); reseedFromPosition(p.coords.latitude, p.coords.longitude); });
+  locate.on("error", e => { if (e.code === 1) store.set(GEO_KEY, "denied"); });
+  let moved = false;
+  for (const ev of ["dragstart", "zoomstart", "rotatestart"]) map.on(ev, e => { if (e.originalEvent) moved = true; });
+  lateFix = fix => {
+    if (moved || START.from === "hash") return;
+    map.jumpTo({ center: [fix.lon, fix.lat], zoom: GEO_ZOOM });
+    window.dystopoStart = { ...START, from: "geolocation", late: true };
+    reseedFromPosition(fix.lat, fix.lon);
+  };
+}
+// T200: the last view, for the next load that has no hash and no position (live mode: the static demo covers Rainier only).
+if (LIVE) {
+  const saveView = () => { const c = map.getCenter(); store.set(VIEW_KEY, [map.getZoom().toFixed(2), c.lat.toFixed(5), c.lng.toFixed(5)].join("/")); };
+  map.on("moveend", saveView); map.on("load", saveView); // load: a share link opened and left where it was
+}
 // T107: the scale bar by T101's nice-length rule, the phone's (UnitFormat.scaleBar and metersPerPixel in
 // shared/.../render/UnitFormat.kt; keep the two in step, tools/demo-check.py checks this port against the Kotlin
 // test's cases): the longest 1, 2 or 5 times a power of ten in the unit the distance rule picks that fits in 100 px at
@@ -507,6 +619,7 @@ map.on("load", () => {
   unitSel.value = UNITS;
   unitSel.onchange = () => {
     writeUnits(unitSel.value || null);
+    store.set(UNITS_SEED_KEY, null); // the user's choice (or a reset): no seed may change it
     // Assigning the same URL with a #hash only scrolls; reload when nothing else changes.
     const u = new URL(location.href); u.searchParams.delete("units");
     if (u.href === location.href) location.reload(); else location.href = u.href;
@@ -638,7 +751,6 @@ map.on("move", () => { const c = map.getCenter(); status.textContent = `z ${map.
 if (LIVE) {
   document.querySelector("#panel summary").textContent = "Dystopo: live world";
   document.getElementById("osmsel").parentElement.style.display = "none";
-  document.getElementById("live-tools").hidden = false;
   // Attribution for exactly what the view shows (the server knows each tile's provenance), conservative until known.
   let credit = null, creditText = "";
   const creditView = html => {
@@ -683,6 +795,9 @@ if (LIVE) {
   }
   tokenInput.value = readToken();
   tokenInput.onchange = () => writeToken(tokenInput.value.trim());
+  // T200: "Build a pack here" and the Server token field are the operator's: shown only with a stored token (?token= sets
+  // it) or ?tools=1, so a visitor to a public instance sees the map and its layers only.
+  document.getElementById("live-tools").hidden = !(readToken() || new URLSearchParams(location.search).get("tools") === "1");
   const authed = (opts = {}) => { const t = tokenInput.value.trim(); return t ? { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + t } } : opts; };
   window.dystopoToken = () => tokenInput.value.trim() ? "set" : "none";
   const show = text => { pre.textContent = text; pre.hidden = false; };
