@@ -387,6 +387,17 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option(TIME_FORM_ONE, form == AppSettings.TIME_ONE) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, timeEstimateForm = AppSettings.TIME_ONE)) }
             }
         }
+        // T194: the spoken terrain shade line (ADR 0044: three choices, the default On hot days).
+        SettingsRow.SHADE_SPOKEN -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.shadeSpoken
+            Setting(row.label, "says when terrain shade ends before a long sunny stretch while you navigate", help = "settings.shadeSpoken") {
+                for (o in io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.entries) {
+                    Option(o.label, v == o) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, shadeSpoken = o)) }
+                }
+            }
+        }
+        // end T194
     }
 }
 
@@ -692,6 +703,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "pace predicted. It needs ${io.github.jasondorjeshort.dystopo.routing.PaceRange.MIN_TRACKS} hikes; until then, or when " +
                 "they vary too much, one typical time shows. One number shows the estimate alone."
         },
+        // T194: the spoken terrain shade line.
+        HelpText("settings.shadeSpoken", "Spoken terrain shade", at(SettingsGroup.NAVIGATION, "Terrain shade: Spoken"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "While you navigate, the phone says when terrain shade ends before more than 20 minutes of sun, from the ridges " +
+                "and slopes only, not trees or clouds. On hot days speaks when the air at your height is " +
+                (if (units == ContourUnits.FEET) "77 F" else "25 C") + " or more, from the nearest weather station; Always speaks every time."
+        },
+        // end T194
     )
 }
 

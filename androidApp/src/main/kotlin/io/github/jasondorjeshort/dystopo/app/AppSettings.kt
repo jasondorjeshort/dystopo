@@ -115,6 +115,9 @@ object AppSettings {
             ?: io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM
         // T184
         timeEstimateForm = p.getString(KEY_TIME_ESTIMATE_FORM, null)?.takeIf { it in TIME_FORMS } ?: TIME_RANGE
+        // T194
+        shadeSpoken = io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(p.getString(KEY_SHADE_SPOKEN, null)) ?: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT
+        // end T194
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -326,6 +329,20 @@ object AppSettings {
         timeEstimateForm = form
         prefs?.edit()?.putString(KEY_TIME_ESTIMATE_FORM, form)?.apply()
     }
+
+    // ---- T194: the spoken line before a long sunny stretch while navigating (nav/NavShade); synced ----
+
+    const val KEY_SHADE_SPOKEN = "shadeSpoken"
+
+    /** `off`, `hot` (on hot days, the default: 25 C at the walker's height, routing/HotDay) or `always`. */
+    @Volatile var shadeSpoken: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken = io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT
+        private set
+
+    fun setShadeSpoken(v: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken) {
+        shadeSpoken = v
+        prefs?.edit()?.putString(KEY_SHADE_SPOKEN, v.key)?.apply()
+    }
+    // end T194
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
@@ -629,5 +646,7 @@ object AppSettings {
         "waterAlongRoute" to waterAlongRoute, "waterSpoken" to waterSpoken, // T187
         "viewRange" to viewRangeKm, // T182
         "timeEstimateForm" to timeEstimateForm, // T184
+        "shadeSpoken" to shadeSpoken.key, // T194
+        // end T194
     ) + mapOptions.json(units) // T47
 }

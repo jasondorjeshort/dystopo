@@ -69,6 +69,7 @@ private val Link = Color(0xFF2C7BB6)
  * colour once it is within its lead distance. T163: the turn-around clock under the end ([TurnBack]). T180: "Heading
  * back" under it once the direction flips; and while a track records with no route navigated, the free-tracking clock
  * in the card's place ([WayBackCard], [WayBackClock]). T187: the next water ahead on one line under them ([WaterNext]).
+ * T194: the next terrain shade on one line under the end ([ShadeNext]).
  */
 @Composable
 fun NavOverlay() {
@@ -164,6 +165,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                 Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
             }
             Stat("End", null, u.endDistance, u.endTime + if (u.endClock.isNotEmpty()) "  (${u.endClock})" else "")
+            u.shade?.let { ShadeNext(it) } // T194: above the turn-back block, whose label grows when the terrain sunset lands
             u.turnBack?.let { TurnBack(it, u.turnBackLabel, u.turnBackColour) } // T163
             if (u.headingBack && !u.arrived) HeadingBack() // T180
             u.water?.let { WaterNext(it) } // T187
@@ -252,6 +254,16 @@ internal object WayBackLayout {
 @Composable
 private fun WaterNext(text: String) {
     BasicText(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Color(0xFF1F78B4), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+}
+
+/**
+ * T194: the next terrain shade along the line ("Terrain shade in 400 m for 10 min"), one line cut with an ellipsis in the
+ * shade overlay's blue, under the end and above the turn-back block (whose label can run to three lines at font scale
+ * 2.0 and changes when the terrain sunset lands), so the card grows by one short line and the line never moves then.
+ */
+@Composable
+private fun ShadeNext(text: String) {
+    BasicText(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Color(0xFF1E3A6E), fontSize = 14.sp, fontWeight = FontWeight.Bold))
 }
 
 /** T180: the direction flipped to the way back (the notice the survey's users ask for). */

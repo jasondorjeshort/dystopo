@@ -30,8 +30,8 @@ import kotlin.time.TimeSource
  * Far ridges: the terrain is a fine layer reaching [Horizon.NEAR_CELLS] cells toward the sun and a layer
  * [Horizon.COARSE_ZOOMS] zooms coarser out to the range ([windowsFor]), the range capped by how far a ray can still
  * meet ground ([rangeFor]: the highest relief [RELIEF_M] over the tangent of the sun's altitude, at most
- * [Horizon.DEFAULT_RANGE_M]). A ray also stops as soon as the highest ground of the layers, seen from there, would
- * stand below the sun's line.
+ * [Horizon.DEFAULT_RANGE_M]; T194: at most [Horizon.LOW_SUN_RANGE_M] below [Horizon.LOW_SUN_DEG]). A ray also stops as
+ * soon as the highest ground of the layers, seen from there, would stand below the sun's line.
  */
 object CastShadow {
     /** The relief a far ridge can stand above a cell (metres): beyond `RELIEF_M / tan(altitude)` no ground can shade it. */
@@ -60,9 +60,15 @@ object CastShadow {
         val shadedFraction: Double get() = if (shadedCells + litCells == 0) 0.0 else shadedCells.toDouble() / (shadedCells + litCells)
     }
 
-    /** The farthest a ray toward a sun at [altitudeDeg] can meet ground standing [RELIEF_M] higher, capped at [capM]. */
-    fun rangeFor(altitudeDeg: Double, capM: Double = Horizon.DEFAULT_RANGE_M): Double =
-        if (altitudeDeg <= 0) capM else min(capM, RELIEF_M / tan(altitudeDeg * DEG))
+    /**
+     * The farthest a ray toward a sun at [altitudeDeg] can meet ground standing [RELIEF_M] higher, capped at [capM];
+     * T194: below [Horizon.LOW_SUN_DEG] at most [lowSunM] ([Horizon.LOW_SUN_RANGE_M]; 0 or less leaves it uncapped).
+     */
+    fun rangeFor(altitudeDeg: Double, capM: Double = Horizon.DEFAULT_RANGE_M, lowSunM: Double = Horizon.LOW_SUN_RANGE_M): Double = when {
+        altitudeDeg <= 0 -> capM
+        altitudeDeg < Horizon.LOW_SUN_DEG && lowSunM > 0 -> min(capM, lowSunM)
+        else -> min(capM, RELIEF_M / tan(altitudeDeg * DEG))
+    }
 
     /**
      * The terrain windows the shade of [target] needs for a sun at [azimuthDeg], each with its band
@@ -110,14 +116,14 @@ object CastShadow {
      */
     fun windowsFor(
         target: MercatorWindow, field: SunField, capM: Double = Horizon.DEFAULT_RANGE_M,
-        nearCells: Int = Horizon.NEAR_CELLS, coarseZooms: Int = Horizon.COARSE_ZOOMS,
+        nearCells: Int = Horizon.NEAR_CELLS, coarseZooms: Int = Horizon.COARSE_ZOOMS, lowSunM: Double = Horizon.LOW_SUN_RANGE_M,
     ): List<Pair<MercatorWindow, Double>> {
         val sun = DoubleArray(3)
         var union: List<Pair<MercatorWindow, Double>>? = null
         for (a in 0..2) for (b in 0..2) {
             field.at(target.zoom, target.tileSize, target.x0 + target.width * a / 2.0, target.y0 + target.height * b / 2.0, sun)
             if (sun[2] <= 0) continue
-            val ws = windowsFor(target, SunField.azimuthDeg(sun), rangeFor(sun[2], capM), nearCells, coarseZooms)
+            val ws = windowsFor(target, SunField.azimuthDeg(sun), rangeFor(sun[2], capM, lowSunM), nearCells, coarseZooms)
             union = union?.zip(ws) { (u, until), (w, _) -> bounding(u, w) to until } ?: ws
         }
         return union ?: listOf(target to Double.POSITIVE_INFINITY)
@@ -153,12 +159,15 @@ object CastShadow {
      * the field's lattice), its rays out to [rangeFor] its altitude (at most [capM]). A cell's answer depends on its
      * place, the instant and the terrain only, so tiles cut from one world agree along their edges exactly.
      */
-    fun compute(terrain: Terrain, target: MercatorWindow, field: SunField, growth: Double = Horizon.STEP_GROWTH, capM: Double = Horizon.DEFAULT_RANGE_M): Result =
-        run(terrain, target, growth, capM, true) { gx, gy, out -> field.at(target.zoom, target.tileSize, gx, gy, out) }
+    fun compute(
+        terrain: Terrain, target: MercatorWindow, field: SunField, growth: Double = Horizon.STEP_GROWTH, capM: Double = Horizon.DEFAULT_RANGE_M,
+        lowSunM: Double = Horizon.LOW_SUN_RANGE_M,
+    ): Result =
+        run(terrain, target, growth, capM, true, lowSunM) { gx, gy, out -> field.at(target.zoom, target.tileSize, gx, gy, out) }
 
     private inline fun run(
         terrain: Terrain, target: MercatorWindow, growth: Double, rangeM: Double, perCellRange: Boolean,
-        sunAt: (Double, Double, DoubleArray) -> Unit,
+        lowSunM: Double = Horizon.LOW_SUN_RANGE_M, sunAt: (Double, Double, DoubleArray) -> Unit,
     ): Result {
         require(target.zoom == terrain.zoom) { "target zoom ${target.zoom} is not the terrain's ${terrain.zoom}" }
         val clock = TimeSource.Monotonic.markNow()
@@ -191,7 +200,7 @@ object CastShadow {
                     true
                 } else {
                     val tanSun = tan(alt * DEG)
-                    val range = if (perCellRange) rangeFor(alt, rangeM) else rangeM
+                    val range = if (perCellRange) rangeFor(alt, rangeM, lowSunM) else rangeM
                     march.maxTangent(gx, gy, ground, sun[0], sun[1], 1 / mpp, mpp, stopTan = tanSun, floorTan = tanSun, rangeM = range) >= tanSun
                 }
                 if (inShade) {

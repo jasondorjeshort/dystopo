@@ -90,6 +90,19 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `name`), `card` (its line), `leadM` and `longM` (the spoken line's lead and the 5 km stretch), `beforeLongStretch`
  *   (the sources a stretch of more than `longM` follows: `n`, `alongM`, `gapM`) and `spoken` (each line said: `n`, `atMs`,
  *   `progressM`, `aheadM`, `gapM`, `text`, `speech` engine, `muted` or `off`); `GET /nav/speech` lists it with index -4.
+ * - T194, terrain shade along the line (`nav/NavShade`, `routing/ShadeAlong`): `GET /nav` `shadeAlong` (and `GET /nav/shade`):
+ *   `state` `off|waiting|computing|ready|noData|error`, `spokenSetting` (`shadeSpoken`), `card` (the card's line, also
+ *   `ui`), `computedAtMs`, `nextAtMs` (every `recomputeMs`, 10 minutes), `computes`, `lastTotalMs`, `clockOffsetMs` and
+ *   `now` (the computation's clock), `hotDay` (`thresholdC` 25, `lapseCPerKm`, `maxAgeMin`, `hot`, `allows`, `tempC` at the
+ *   walker's height and its `source` `station|synthetic|noStation|stale|noHeight`, the station's `stationTempC` and
+ *   `stationEleM`, `walkerEleM`, `ageMin`), `leadM`, `longSunMin` (20), `due` (the stretch the spoken line is due for),
+ *   `heldBack` (`notHot`), `saidUntilM`, `spoken` (each line said: `stretch`, `atMs`, `progressM`, `aheadM`, `fromM`,
+ *   `minutes`, `tempC`, `text`, `speech`) and `result` (`fromM`, `toM`, `startMs`, `stretches` with `fromM`, `toM`,
+ *   `light` `sun|shade|down|noData`, `startMs`, `endMs`, `minutes`, the clock times, `open`; `firstSunLoss` and
+ *   `firstSunGain` with `alongM`, `atMs`, `at`, the point and `cause` `terrain|sunset`; `totals`; `stats`: rays, ray
+ *   samples, zooms, cells read, read and march ms, `terrainReused`); `GET /nav/speech` lists the line with index -5.
+ *   `POST /nav/shade?at=<ISO|epoch ms|now>&tempC=<C|empty>&recompute=1` (debug): the computation's clock, a synthetic
+ *   temperature at the walker's height (both kept until cleared) and a recompute now.
  * Fixes reach navigation from `POST /location`, `POST /location/replay` (the GPX's own times, so off-route
  * timing is the same at any replay rate; T146: `?route=current&kmh=<n>` replays the current route timed in the app, no
  * body) and the device GPS while navigating.
@@ -135,6 +148,8 @@ object NavRoutes {
                     bad(e.message ?: "bad snooze")
                 }
             }
+            "GET" to "/nav/shade" -> Response.json(NavSession.shadeJson()) // T194
+            "POST" to "/nav/shade" -> shade(r)
             "POST" to "/nav/heading" -> {
                 val raw = r.query["deg"]
                 val d = raw?.takeIf { it.isNotEmpty() }?.let { it.toDoubleOrNull() ?: return bad("deg must be a number") }
@@ -218,6 +233,25 @@ object NavRoutes {
         )
     } catch (e: NavSources.NotFound) {
         Response.json(mapOf("error" to e.message), 404)
+    }
+
+    /**
+     * T194: `POST /nav/shade?at=<ISO or epoch ms|now>&tempC=<number|empty>&recompute=1`: the computation's clock (an offset
+     * from the wall clock, kept until `at=now`), a synthetic air temperature at the walker's height (kept until `tempC=`
+     * empty), and a recompute from the walker's progress now, waited for up to 20 s. Answers like `GET /nav/shade`.
+     */
+    private fun shade(r: Request): Response {
+        val q = r.query
+        if (listOf("at", "tempC", "recompute").none { q[it] != null }) return bad("at=<ISO instant|epoch ms|now>, tempC=<C|empty> or recompute=1 required")
+        val shade = io.github.jasondorjeshort.dystopo.app.nav.NavShade
+        q["at"]?.let { raw ->
+            val at = if (raw == "now") null else raw.toLongOrNull() ?: runCatching { java.time.Instant.parse(raw).toEpochMilli() }.getOrNull()
+                ?: runCatching { java.time.OffsetDateTime.parse(raw).toInstant().toEpochMilli() }.getOrNull() ?: return bad("at must be an ISO instant, epoch ms or now")
+            shade.clockOffsetMs = if (at == null) 0L else at - System.currentTimeMillis()
+        }
+        q["tempC"]?.let { raw -> shade.syntheticTempC = if (raw.isBlank()) null else raw.toDoubleOrNull() ?: return bad("tempC must be a number or empty") }
+        if (q["recompute"] == "1" && !NavSession.recomputeShade(20_000)) return Response.json(mapOf("error" to "not navigating, or no fix yet"), 409)
+        return Response.json(NavSession.shadeJson())
     }
 
     private fun camera(s: String?): CameraMode? = when (s?.lowercase()) {

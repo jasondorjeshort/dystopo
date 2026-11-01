@@ -7,7 +7,6 @@ import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
-import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.double
 import com.github.ajalt.clikt.parameters.types.file
@@ -18,6 +17,16 @@ import io.github.jasondorjeshort.dystopo.dem.Terrain
 import io.github.jasondorjeshort.dystopo.dem.TerrainLayer
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.nav.NavPath
+import io.github.jasondorjeshort.dystopo.nav.TurnAround
+import io.github.jasondorjeshort.dystopo.nav.TurnPace
+import io.github.jasondorjeshort.dystopo.routing.CostModel
+import io.github.jasondorjeshort.dystopo.routing.ShadeAlong
+import io.github.jasondorjeshort.dystopo.routing.ShadeAlongResult
+import io.github.jasondorjeshort.dystopo.routing.ShadeEvent
+import io.github.jasondorjeshort.dystopo.routing.ShadeLight
+import io.github.jasondorjeshort.dystopo.routing.ShadeText
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.nav.Sun
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.render.CastShadow
@@ -46,14 +55,30 @@ import kotlin.math.sin
  * T181: sun and shade on the terrain of an area at an instant ([CastShadow] over a fine layer and a coarse one toward
  * the sun), as the PNG of the base map with the shade in the shade tiles' cool tint, and with `--point` the point
  * answer ([ShadeTiles.pointAnswer]: the horizon sweep crossed with the day's sun path) and its horizon chart.
+ *
+ * T194: `--gpx <route> --start <ISO>` is terrain shade along a route ([ShadeAlong]: a ray toward the sun every 25 m at
+ * the time the walker reaches it at the route's standard pace), its stretches, the first sun-loss and sun-gain, the
+ * card's line and the spoken line's candidates, with a PNG of the route over the overlay at the start instant above the
+ * elevation profile in the light met (`--frozen`: every sample at the start, to check against the overlay); `--source`
+ * also takes a DEM pack. `--tile-bench` times the sun tiles of the area over a pack for each `--low-sun-km` cap.
  */
 class ShadeCommand : AreaCommand("shade") {
     override fun help(context: Context) =
         "Shade on the terrain at an instant (cast and attached shadows, night as shade): PNG with the shade as a translucent cool tint " +
-            "over the hillshade + JSON; --point adds the point answer (terrain sunrise and sunset, the gaps when a peak blocks the sun)."
+            "over the hillshade + JSON; --point adds the point answer (terrain sunrise and sunset, the gaps when a peak blocks the sun). " +
+            "T194: --gpx <route> --start <ISO> gives the terrain shade along the route at the time the walker reaches each point " +
+            "(stretches, the first sun-loss and sun-gain, a map and profile PNG); --tile-bench times the sun tiles over a DEM pack."
 
-    private val at by option("--at", help = "The instant, ISO 8601 (2026-10-30T16:00Z)").required()
-    private val source by option("--source", help = "Elevation source").choice(*ElevationSource.ids.toTypedArray()).default("best")
+    private val at by option("--at", help = "The instant, ISO 8601 (2026-10-30T16:00Z); not with --gpx")
+    private val source by option("--source", help = "Elevation source id, or (T194) a DEM pack .pmtiles read as the phone reads its pack").default("best")
+    private val gpx by option("--gpx", help = "T194: terrain shade along this GPX's first route (or track) at the time the walker reaches each point; needs --start").file(mustExist = true, canBeDir = false)
+    private val start by option("--start", help = "T194: with --gpx, the instant the walk starts, ISO 8601")
+    private val fromM by option("--from-m", help = "T194: with --gpx, start this far along the line (default 0)").double().default(0.0)
+    private val mode by option("--mode", help = "T194: with --gpx, the pace: hike (default) or bike").choice("hike", "bike").default("hike")
+    private val frozen by option("--frozen", help = "T194: with --gpx, every sample at --start (the overlay's one instant, for a side-by-side check)").flag()
+    private val tileBench by option("--tile-bench", help = "T194: time the sun tiles of the area at --zoom over the DEM pack --source names, once per --low-sun-km").flag()
+    private val lowSunKm by option("--low-sun-km", help = "T194: with --tile-bench, the low-sun range caps to compare, km (0: uncapped, before T194; default 0,15)").default("0,${(Horizon.LOW_SUN_RANGE_M / 1000).roundToInt()}")
+    private val benchTiles by option("--bench-tiles", help = "T194: with --tile-bench, at most this many tiles (default 16)").int().default(16)
     private val point by option("--point", help = "lat,lon for the point answer (the horizon and the day's sun on the terrain)")
     private val pointZoom by option("--point-zoom", help = "DEM zoom of the point answer's fine layer").int().default(ShadeTiles.POINT_ZOOM)
     private val pointCoarseZooms by option("--point-coarse-zooms", help = "Zooms between the point answer's fine layer and its coarse one").int().default(Horizon.COARSE_ZOOMS)
@@ -68,19 +93,24 @@ class ShadeCommand : AreaCommand("shade") {
     private val out by option("--out", help = "Output PNG (default out/<area>-shade-z<zoom>-<instant>.png)").file()
 
     override fun run() {
+        if (gpx != null) return alongRoute(gpx!!)
+        if (tileBench) return bench()
+        val at = at ?: throw UsageError("--at is required (or --gpx with --start)")
         val (name, box) = Areas.resolve(area, bbox)
         val epochMs = parseInstant(at) ?: throw UsageError("--at must be an ISO 8601 instant (got $at)")
         val clockZone = runCatching { ZoneId.of(zone) }.getOrElse { throw UsageError("--zone: unknown zone $zone") }
         val timings = Timings()
         val target = MercatorWindow.forBbox(box, zoom)
-        val src = ElevationSource.byId(source)
+        val src = if (packFile() == null) elevationSource() else null
         val sun = CastShadow.sunAt(target, epochMs)
         val cap = rangeKm?.let { it * 1000 } ?: Horizon.DEFAULT_RANGE_M
 
         val provenance = LinkedHashSet<String>()
         var attribution = ""
+        val pyramid = packFile()?.let { RouteGraphs.pyramid(it) }
         fun read(w: MercatorWindow): io.github.jasondorjeshort.dystopo.dem.ElevationGrid {
-            val r = src.fetch(w)
+            if (pyramid != null) return pyramid.window(w.zoom, w.x0, w.y0, w.width, w.height)
+            val r = src!!.fetch(w)
             provenance += r.provenance
             attribution = r.attribution(src)
             return r.grid
@@ -164,6 +194,315 @@ class ShadeCommand : AreaCommand("shade") {
             "timingsMs" to timings.ms,
             "provenance" to provenance.toList(),
             "attribution" to attribution,
+        )
+        echo(reportJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(MiniJson.encode(report))))
+    }
+
+    /** T194: the DEM pack `--source` names (a .pmtiles file), or null for an elevation source id. */
+    private fun packFile(): File? {
+        val f = File(source)
+        val pack = source.endsWith(".pmtiles") || f.isFile
+        if (pack && !f.isFile) throw UsageError("--source: no DEM pack at $source")
+        return if (pack) f else null
+    }
+
+    private fun elevationSource(): ElevationSource {
+        if (source !in ElevationSource.ids) throw UsageError("--source must be a DEM pack (.pmtiles) or one of ${ElevationSource.ids.joinToString()}")
+        return ElevationSource.byId(source)
+    }
+
+    /**
+     * T194: terrain shade along [file]'s first route (else its first track) for a walk starting at `--start`
+     * ([ShadeAlong.compute] at the standard pace of `--mode`, over the pack or the source as the phone reads its pack):
+     * the stretches, the first sun-loss and sun-gain as JSON, and a PNG of the route on the shade overlay at the start
+     * instant above the elevation profile coloured by the light the walker meets.
+     */
+    private fun alongRoute(file: File) {
+        val startMs = start?.let { parseInstant(it) ?: throw UsageError("--start must be an ISO 8601 instant (got $it)") }
+            ?: throw UsageError("--gpx needs --start")
+        val clockZone = runCatching { ZoneId.of(zone) }.getOrElse { throw UsageError("--zone: unknown zone $zone") }
+        val timings = Timings()
+        val doc = io.github.jasondorjeshort.dystopo.gpx.Gpx.parse(file.readText(Charsets.UTF_8))
+        val route = doc.routes.firstOrNull()?.takeIf { it.points.size >= 2 }
+        val track = doc.tracks.firstOrNull()
+        val path = when {
+            route != null -> NavPath.of(route, doc.waypoints)
+            track != null && track.points.size >= 2 -> NavPath.of(track, doc.waypoints)
+            else -> throw UsageError("${file.path} has no route or track with two points")
+        }
+        val travel = if (mode == "bike") TravelMode.BIKE else TravelMode.HIKE
+        val timing = TurnAround(path, TurnPace.of(CostModel(travel)))
+        val pack = packFile()
+        val pyramid = pack?.let { RouteGraphs.pyramid(it) }
+        val src = if (pack == null) elevationSource() else null
+        val provenance = LinkedHashSet<String>()
+        val read: (MercatorWindow) -> io.github.jasondorjeshort.dystopo.dem.ElevationGrid = { w ->
+            if (pyramid != null) pyramid.window(w.zoom, w.x0, w.y0, w.width, w.height)
+            else src!!.fetch(w).also { provenance += it.provenance }.grid
+        }
+        val maxZoom = minOf(pyramid?.maxZoom ?: ShadeAlong.MAX_ZOOM, ShadeAlong.MAX_ZOOM)
+        val r = timings.time("along") { ShadeAlong.compute(path, timing, fromM, startMs, maxZoom, read, frozen = frozen) }
+        // The overlay at the start instant over the route's box, as the phone's shade tiles draw it.
+        val (mapImage, overlayAgree) = timings.time("overlay") { drawRouteMap(r, startMs, r.stats.zoom, read) }
+        val profile = drawProfile(r, path, clockZone)
+        val stamp = Instant.ofEpochMilli(startMs).toString().replace(":", "").replace("-", "").removeSuffix("00Z").removeSuffix("Z")
+        val outFile = out ?: File("out/${file.nameWithoutExtension}-shade-$stamp${if (frozen) "-frozen" else ""}.png")
+        timings.time("draw") {
+            outFile.absoluteFile.parentFile.mkdirs()
+            val w = maxOf(mapImage.width, profile.width)
+            val img = BufferedImage(w, mapImage.height + profile.height, BufferedImage.TYPE_INT_RGB)
+            val g = img.createGraphics()
+            g.color = Color.WHITE
+            g.fillRect(0, 0, img.width, img.height)
+            g.drawImage(mapImage, (w - mapImage.width) / 2, 0, null)
+            g.drawImage(profile, 0, mapImage.height, null)
+            g.dispose()
+            ImageIO.write(img, "png", outFile)
+        }
+        val clock: (Long) -> String = { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).toLocalTime().withNano(0).toString() }
+        val units = io.github.jasondorjeshort.dystopo.render.ContourUnits.METERS
+        val report = linkedMapOf<String, Any?>(
+            "command" to "shade", "gpx" to file.path, "name" to path.name, "lengthM" to round1(path.totalM),
+            "ascentM" to round1(path.totalAscentM), "mode" to mode, "pace" to timing.pace.label, "walkTimeS" to timing.totalS.roundToLong(),
+            "start" to Instant.ofEpochMilli(startMs).toString(), "startClock" to clock(startMs), "zone" to zone, "source" to source,
+            "end" to Instant.ofEpochMilli(r.samples.last().atMs).toString(), "endClock" to clock(r.samples.last().atMs),
+        ) + r.json(clock) + linkedMapOf(
+            "card" to ShadeText.cardLine(r, r.fromM, units),
+            "spokenCandidates" to r.stretches.indices.filter { i ->
+                i > 0 && r.stretches[i].light == ShadeLight.SUN && r.stretches[i - 1].light == ShadeLight.SHADE && r.stretches[i].minutes > ShadeText.LONG_SUN_MIN
+            }.map { i -> linkedMapOf("index" to i, "fromM" to round1(r.stretches[i].fromM), "text" to ShadeText.spoken(r, i, ShadeText.LEAD_M, units)) },
+            "overlayAtStart" to overlayAgree,
+            "output" to outFile.path, "timingsMs" to timings.ms, "provenance" to provenance.toList(),
+        )
+        echo(reportJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(MiniJson.encode(report))))
+    }
+
+    /**
+     * T194: the route's box with a margin, the hillshade with the shade overlay at [startMs] (each cell's own sun, as the
+     * tiles), the route drawn in the light each sample met (orange sun, dark blue terrain shade, black sun down, grey no
+     * data) and the first sun-loss and sun-gain marked; with how many samples agree with the overlay's cell under them
+     * (all of them with `--frozen`, up to the ray's sub-cell start).
+     */
+    private fun drawRouteMap(
+        r: ShadeAlongResult, startMs: Long, zoom: Int, read: (MercatorWindow) -> io.github.jasondorjeshort.dystopo.dem.ElevationGrid,
+    ): Pair<BufferedImage, Map<String, Any?>> {
+        val lats = r.samples.map { it.lat }
+        val lons = r.samples.map { it.lon }
+        // The route's box with a margin, the narrower side widened to three quarters of the longer (in metres).
+        val k = cos(Math.toRadians(lats.average()))
+        var halfLat = (lats.max() - lats.min()) * 0.65 + 0.002
+        var halfLon = (lons.max() - lons.min()) * 0.65 + 0.003
+        if (halfLon * k < 0.75 * halfLat) halfLon = 0.75 * halfLat / k
+        if (halfLat < 0.75 * halfLon * k) halfLat = 0.75 * halfLon * k
+        val cLat = (lats.max() + lats.min()) / 2
+        val cLon = (lons.max() + lons.min()) / 2
+        val box = io.github.jasondorjeshort.dystopo.geo.BoundingBox(cLon - halfLon, cLat - halfLat, cLon + halfLon, cLat + halfLat)
+        val target = MercatorWindow.forBbox(box, zoom)
+        val field = CastShadow.SunField(startMs)
+        val terrain = Terrain(CastShadow.windowsFor(target, field).map { (w, until) -> TerrainLayer(w, read(w), until) })
+        val shade = CastShadow.compute(terrain, target, CastShadow.SunField(startMs))
+        val fine = terrain.layers[0]
+        val grid = fine.grid.crop(target.x0 - fine.window.x0, target.y0 - fine.window.y0, target.width, target.height)
+        val pixels = Shading.sunShade(grid, shade.shade, opacity)
+        val base = BufferedImage(grid.width, grid.height, BufferedImage.TYPE_INT_RGB)
+        base.setRGB(0, 0, grid.width, grid.height, pixels, 0, grid.width)
+        val scale = maxOf(1, minOf(4, 720 / maxOf(grid.width, grid.height)))
+        val img = BufferedImage(grid.width * scale, grid.height * scale, BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+        g.drawImage(base, 0, 0, img.width, img.height, null)
+        fun px(lon: Double) = (WebMercator.lonToX(lon, zoom) * target.tileSize - target.x0) * scale
+        fun py(lat: Double) = (WebMercator.latToY(lat, zoom) * target.tileSize - target.y0) * scale
+        var agree = 0
+        var compared = 0
+        for (s in r.samples) {
+            val i = (WebMercator.lonToX(s.lon, zoom) * target.tileSize - target.x0).toInt()
+            val j = (WebMercator.latToY(s.lat, zoom) * target.tileSize - target.y0).toInt()
+            if (i !in 0 until target.width || j !in 0 until target.height) continue
+            val v = shade.shade[j * target.width + i]
+            if (v.isNaN() || s.light == ShadeLight.NO_DATA) continue
+            compared++
+            if ((v == 1f) == (s.light != ShadeLight.SUN)) agree++
+        }
+        g.stroke = BasicStroke(7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g.color = Color(255, 255, 255, 230)
+        for (k in 1 until r.samples.size) g.draw(Line2D.Double(px(r.samples[k - 1].lon), py(r.samples[k - 1].lat), px(r.samples[k].lon), py(r.samples[k].lat)))
+        g.stroke = BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        for (k in 1 until r.samples.size) {
+            g.color = lightColour(r.samples[k - 1].light)
+            g.draw(Line2D.Double(px(r.samples[k - 1].lon), py(r.samples[k - 1].lat), px(r.samples[k].lon), py(r.samples[k].lat)))
+        }
+        fun mark(e: ShadeEvent?, label: String) {
+            e ?: return
+            g.color = Color(200, 0, 0)
+            g.stroke = BasicStroke(2.5f)
+            g.draw(Ellipse2D.Double(px(e.lon) - 8, py(e.lat) - 8, 16.0, 16.0))
+            g.font = RenderFonts.bold(13.0)
+            g.color = Color(255, 255, 255, 220)
+            g.fillRect(px(e.lon).toInt() + 10, py(e.lat).toInt() - 12, g.fontMetrics.stringWidth(label) + 6, 17)
+            g.color = Color(150, 0, 0)
+            g.drawString(label, px(e.lon).toFloat() + 13, py(e.lat).toFloat() + 1)
+        }
+        mark(r.firstSunLoss, "sun lost")
+        mark(r.firstSunGain, "sun back")
+        val sun = CastShadow.sunAt(target, startMs)
+        g.font = RenderFonts.regular(12.0)
+        val lines = listOf(
+            "overlay at ${Instant.ofEpochMilli(startMs)}, sun ${sun.azimuthDeg.roundToInt()}°, ${"%.1f".format(sun.apparentAltitudeDeg)}° up",
+            "line: the light when reached" + if (r.frozen) " (frozen at the start)" else "",
+        )
+        for ((n, text) in lines.withIndex()) {
+            val yy = img.height - 10 - (lines.size - 1 - n) * 18
+            g.color = Color(255, 255, 255, 220)
+            g.fillRect(6, yy - 14, g.fontMetrics.stringWidth(text) + 10, 18)
+            g.color = Color(30, 30, 30)
+            g.drawString(text, 11, yy)
+        }
+        g.dispose()
+        return img to linkedMapOf("compared" to compared, "agree" to agree, "zoom" to zoom, "shadedFraction" to round4(shade.shadedFraction))
+    }
+
+    /** T194: the elevation profile along the line from the walk's start, filled in the light each sample met, with clock ticks and the stretches. */
+    private fun drawProfile(r: ShadeAlongResult, path: NavPath, zone: ZoneId): BufferedImage {
+        val w = 960
+        val h = 300
+        val left = 56.0
+        val right = 16.0
+        val top = 40.0
+        val bottom = 64.0
+        val img = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        g.color = Color.WHITE
+        g.fillRect(0, 0, w, h)
+        val eles = r.samples.map { it.eleM ?: path.pointAt(it.alongM).ele ?: 0.0 }
+        val lo = (eles.min() / 50).toInt() * 50.0 - 50
+        val hi = (eles.max() / 50).toInt() * 50.0 + 100
+        val span = (r.toM - r.fromM).coerceAtLeast(1.0)
+        fun x(d: Double) = left + (d - r.fromM) / span * (w - left - right)
+        fun y(e: Double) = top + (hi - e) / (hi - lo) * (h - top - bottom)
+        // The light bar under the axis and the profile's fill, sample by sample.
+        for (k in r.samples.indices) {
+            val a = if (k == 0) r.fromM else (r.samples[k - 1].alongM + r.samples[k].alongM) / 2
+            val b = if (k == r.samples.size - 1) r.toM else (r.samples[k].alongM + r.samples[k + 1].alongM) / 2
+            val c = lightColour(r.samples[k].light)
+            g.color = Color(c.red, c.green, c.blue, 110)
+            val path2 = Path2D.Double()
+            path2.moveTo(x(a), y(lo))
+            path2.lineTo(x(a), y(eles[maxOf(0, k - 1)].let { (it + eles[k]) / 2 }))
+            path2.lineTo(x(r.samples[k].alongM), y(eles[k]))
+            path2.lineTo(x(b), y(eles[minOf(eles.size - 1, k + 1)].let { (it + eles[k]) / 2 }))
+            path2.lineTo(x(b), y(lo))
+            path2.closePath()
+            g.fill(path2)
+        }
+        // The merged stretches as a bar below the plot.
+        for (s in r.stretches) {
+            g.color = lightColour(s.light)
+            g.fill(java.awt.geom.Rectangle2D.Double(x(s.fromM), h - bottom + 6, x(s.toM) - x(s.fromM), 12.0))
+        }
+        g.color = Color(40, 40, 40)
+        g.stroke = BasicStroke(2f)
+        val line = Path2D.Double()
+        for (k in r.samples.indices) if (k == 0) line.moveTo(x(r.samples[k].alongM), y(eles[k])) else line.lineTo(x(r.samples[k].alongM), y(eles[k]))
+        g.draw(line)
+        g.font = RenderFonts.regular(11.0)
+        var e0 = (lo / 100).toInt() * 100.0
+        while (e0 <= hi) {
+            if (e0 >= lo) {
+                g.color = Color(225, 225, 225)
+                g.stroke = BasicStroke(1f)
+                g.draw(Line2D.Double(left, y(e0), w - right, y(e0)))
+                g.color = Color(60, 60, 60)
+                g.drawString("${e0.toInt()} m", 6f, (y(e0) + 4).toFloat())
+            }
+            e0 += 100.0
+        }
+        // Distance ticks every 500 m and the clock every 15 minutes along the bottom.
+        var d = (r.fromM / 500).toInt() * 500.0
+        while (d <= r.toM) {
+            if (d >= r.fromM) {
+                g.color = Color(60, 60, 60)
+                g.drawString(if (d < 1000) "${d.toInt()} m" else "%.1f km".format(d / 1000), (x(d) - 12).toFloat(), (h - bottom + 32).toFloat())
+            }
+            d += 500.0
+        }
+        val t0 = r.samples.first().atMs
+        val t1 = r.samples.last().atMs
+        var t = (t0 / 900_000L + 1) * 900_000L
+        while (t <= t1) {
+            val i = r.samples.indexOfFirst { it.atMs >= t }.coerceAtLeast(0)
+            val xd = x(r.samples[i].alongM)
+            g.color = Color(120, 120, 120)
+            g.draw(Line2D.Double(xd, top, xd, top + 6))
+            g.drawString(Instant.ofEpochMilli(t).atZone(zone).toLocalTime().toString(), (xd - 14).toFloat(), (top - 4).toFloat())
+            t += 900_000L
+        }
+        g.font = RenderFonts.bold(12.0)
+        g.color = Color(30, 30, 30)
+        val legend = "${path.name}: ${Instant.ofEpochMilli(t0).atZone(zone).toLocalTime().withNano(0)} to ${Instant.ofEpochMilli(t1).atZone(zone).toLocalTime().withNano(0)} ($zone)" +
+            "   sun / terrain shade / sun down; bar: stretches (under ${ShadeAlong.ABSORB_M.toInt()} m absorbed)"
+        g.drawString(legend, left.toFloat(), (h - 10).toFloat())
+        g.dispose()
+        return img
+    }
+
+    private fun lightColour(l: ShadeLight): Color = when (l) {
+        ShadeLight.SUN -> Color(235, 160, 20)
+        ShadeLight.SHADE -> Color(30, 58, 110)
+        ShadeLight.DOWN -> Color(20, 20, 20)
+        ShadeLight.NO_DATA -> Color(160, 160, 160)
+    }
+
+    /**
+     * T194: the phone's sun tile time below and above the low-sun cap: every tile of the area at `--zoom` (at most
+     * `--bench-tiles`) made from the DEM pack as the phone's `ShadeService` makes it (plan, terrain read, march), once
+     * per cap in `--low-sun-km` (0: uncapped, before T194), each cap twice so the second pass reads warm DEM tiles.
+     */
+    private fun bench() {
+        val pack = packFile() ?: throw UsageError("--tile-bench needs --source <DEM pack .pmtiles>")
+        val epochMs = at?.let { parseInstant(it) ?: throw UsageError("--at must be an ISO 8601 instant (got $it)") } ?: throw UsageError("--tile-bench needs --at")
+        val (name, box) = Areas.resolve(area, bbox)
+        val caps = lowSunKm.split(",").map { it.trim().toDoubleOrNull() ?: throw UsageError("--low-sun-km must be numbers (got $lowSunKm)") }
+        val z = zoom
+        val x0 = WebMercator.lonToX(box.west, z).toInt()
+        val x1 = WebMercator.lonToX(box.east, z).toInt()
+        val y0 = WebMercator.latToY(box.north, z).toInt()
+        val y1 = WebMercator.latToY(box.south, z).toInt()
+        val tiles = (y0..y1).flatMap { y -> (x0..x1).map { x -> x to y } }.take(benchTiles)
+        val pyramid = RouteGraphs.pyramid(pack)
+        val o = io.github.jasondorjeshort.dystopo.tiles.SunShadeOptions(epochMs)
+        val runs = caps.map { km ->
+            var last: List<Map<String, Any?>> = emptyList()
+            for (pass in 1..2) {
+                last = tiles.map { (x, y) ->
+                    val t0 = System.nanoTime()
+                    val plan = ShadeTiles.sunPlan(z, x, y, pyramid.maxZoom, o, lowSunM = km * 1000)
+                    val terrain = ShadeTiles.sunSample(pyramid, plan)
+                    val t1 = System.nanoTime()
+                    val tile = ShadeTiles.sunRender(terrain, plan, o)
+                    val t2 = System.nanoTime()
+                    linkedMapOf(
+                        "tile" to "$z/$x/$y", "altitudeDeg" to round2(plan.sun.apparentAltitudeDeg), "sampleMs" to round1((t1 - t0) / 1e6),
+                        "marchMs" to round1((t2 - t1) / 1e6), "ms" to round1((t2 - t0) / 1e6),
+                        "cellsRead" to plan.windows.sumOf { it.first.width.toLong() * it.first.height }, "steps" to tile.marchSteps, "shadowPixels" to tile.shadowPixels,
+                    )
+                }
+            }
+            fun avg(k: String) = round1(last.map { (it[k] as Number).toDouble() }.average())
+            linkedMapOf(
+                "lowSunKm" to km, "tiles" to last.size, "avgMs" to avg("ms"), "maxMs" to last.maxOf { it["ms"] as Double },
+                "avgSampleMs" to avg("sampleMs"), "avgMarchMs" to avg("marchMs"), "avgCellsRead" to last.map { (it["cellsRead"] as Long).toDouble() }.average().roundToLong(),
+                "avgSteps" to last.map { (it["steps"] as Long).toDouble() }.average().roundToLong(),
+                "shadowPixels" to last.sumOf { it["shadowPixels"] as Int }, "perTile" to last,
+            )
+        }
+        val report = linkedMapOf<String, Any?>(
+            "command" to "shade", "tileBench" to true, "area" to name, "zoom" to z, "at" to Instant.ofEpochMilli(epochMs).toString(),
+            "pack" to pack.path, "packMaxZoom" to pyramid.maxZoom, "lowSunDeg" to Horizon.LOW_SUN_DEG, "runs" to runs,
         )
         echo(reportJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(MiniJson.encode(report))))
     }

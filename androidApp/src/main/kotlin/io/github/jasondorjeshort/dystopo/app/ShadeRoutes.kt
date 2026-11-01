@@ -30,7 +30,8 @@ import io.github.jasondorjeshort.dystopo.render.SlopeShading
  *   hours>`: what the Map options' controls do, in that order (a date turns the shade on and opens the day by the rule;
  *   `time` is a clock time on the day shown in the phone's zone); answers `GET /shade/sun`.
  * - `GET /shade/sun/bench?lat=&lon=&z=&at=<epoch ms or ISO>&repeat=3`: makes that tile `repeat` times past every cache
- *   and reports each run's times, the sun's altitude, the cells read and the ray samples (the phone's tile time).
+ *   and reports each run's times, the sun's altitude, the cells read and the ray samples (the phone's tile time). T194:
+ *   `lowSunKm=` the low-sun range cap for these runs (default 15, `dem/Horizon.LOW_SUN_RANGE_M`; 0 uncapped, as before T194).
  */
 object ShadeRoutes {
     private val tile = Regex("^/shade/(-?\\d+)/(-?\\d+)/(-?\\d+)\\.png$")
@@ -107,7 +108,9 @@ object ShadeRoutes {
         val z = q["z"]?.toIntOrNull()
         if (lat == null || lon == null || z == null || z !in 0..20) return Response.json(mapOf("error" to "lat, lon and z (0..20) required"), 400)
         val at = q["at"]?.let { instant(it) ?: return Response.json(mapOf("error" to "at must be epoch ms or an ISO instant"), 400) } ?: System.currentTimeMillis()
-        val res = app.tiles.shade.sunBench(lat, lon, z, at, q["repeat"]?.toIntOrNull() ?: 3)
+        val lowSunM = q["lowSunKm"]?.let { (it.toDoubleOrNull() ?: return Response.json(mapOf("error" to "lowSunKm must be a number"), 400)) * 1000 } // T194
+            ?: io.github.jasondorjeshort.dystopo.dem.Horizon.LOW_SUN_RANGE_M
+        val res = app.tiles.shade.sunBench(lat, lon, z, at, q["repeat"]?.toIntOrNull() ?: 3, lowSunM)
             ?: return Response.json(mapOf("error" to "no elevation data covers that tile"), 404)
         return Response.json(res + mapOf("atUtc" to java.time.Instant.ofEpochMilli(at).toString()))
     }
