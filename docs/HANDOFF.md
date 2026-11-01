@@ -3,7 +3,7 @@
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-11-01, after the wave 25 close commit, by main session (wave 25 closed, no release)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open
-wave once the move chore has run; Later carries wave 24's follow-ups; the record `docs/tasks/wave-24.md`), ADR 0052.
+wave; Later carries waves 24 and 25's follow-ups; the record `docs/tasks/wave-25.md`), ADR 0052.
 
 ## Now
 
@@ -21,13 +21,11 @@ wave once the move chore has run; Later carries wave 24's follow-ups; the record
 
 ## Next
 
-1. The move chore for wave 25 (`wave` skill, Close step 5; `docs/tasks/README.md` recipe) if `docs/TASKS.md`
-   still carries the wave; it lifts the three Status lines' follow-ups into Later.
-2. The next wave is unplanned. Candidates: the owner's cross-platform idea (`docs/ideas/2026-11-01-one-
+1. The next wave is unplanned. Candidates: the owner's cross-platform idea (`docs/ideas/2026-11-01-one-
    definition-of-controls-and-settings-across-platforms.md`; an inventory and a benchmark survey first, then a
    proposal), the site's follow-ups once it runs (an `-HttpsPort` for coexisting test instances, pre-built public
    packs, rate limits when load or publicity revives ADR 0052's deferral), Later's lifted follow-ups.
-3. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the sentinel rule.
+2. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the sentinel rule.
 
 ## Waiting on user
 
