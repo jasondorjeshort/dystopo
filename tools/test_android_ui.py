@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 here = os.path.dirname(os.path.abspath(__file__))
 
@@ -258,5 +259,25 @@ try:
 finally:
     shutil.rmtree(d, ignore_errors=True)
 reset_stats()
+
+# T191: a step whose process cannot be created (WinError 1455, the paging file full: the 2026-10-31 sweep's record and
+# alive steps) fails at once, says so, and tries no failure screenshot (that would need a process too).
+if os.name == "nt":
+    reset_stats()
+    dev, fake, d = fake_device([])  # no answers: a screencap attempt would fail the test by popping an empty list
+
+    def no_process():
+        raise OSError(22, "The paging file is too small for this operation to complete", None, 1455)
+    try:
+        r = ui.Run(dev)
+        t0 = time.time()
+        assert not r.step("alive", no_process)
+        s = r.steps[0]
+        assert time.time() - t0 < 2 and s.get("hostOutOfMemory") is True and "paging file" in s["error"] and "png" not in s, s
+        assert fake.cmds == [], fake.cmds
+        assert ui.host_out_of_memory(MemoryError()) and not ui.host_out_of_memory(OSError(2, "missing"))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    reset_stats()
 
 print("test_android_ui: ok")

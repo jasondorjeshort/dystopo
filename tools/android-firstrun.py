@@ -126,7 +126,7 @@ class Device:
         self.out = out
         self.shots = 0
         self.dismissed = []  # other apps' ANR dialogs closed (close_other_anr)
-        self.run = run or subprocess.run  # T185: the tests pass a fake adb here
+        self.run = run or debug.run_bounded  # T185: the tests pass a fake adb here; T191: every wait bounded
         self.sleep = sleep or time.sleep
         self.raw_frames = True  # False once the device's raw format turned out to be one raw_raster cannot read
         self.capture_retries = 0

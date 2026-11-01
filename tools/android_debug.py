@@ -30,9 +30,31 @@ def adb_path():
     return exe if os.path.isfile(exe) else None
 
 
+def run_bounded(cmd, timeout, input=None, grace=10.0, capture_output=True, **kw):
+    """T191: `subprocess.run(cmd, capture_output=True, timeout=...)` with every wait bounded. On a timeout `run()` kills
+    the child and then reads its pipes with no limit, and its `with` block waits for the exit with none: a reader thread
+    that died (MemoryError when the paging file ran out) or a grandchild holding an inherited pipe (an adb server) kept
+    the post-wave sweep waiting 9.5 h (finding 2026-10-31). Here the child is killed by its own handle, never a tree
+    (an adb client's only child can be the shared adb server), and the pipes get `grace` seconds; still open after
+    that, they are abandoned (closing them would wait on the blocked reader) and TimeoutExpired is raised as `run()`
+    would. A process that cannot be created raises OSError at once (WinError 1455 when the host is out of commit)."""
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE if input is not None else None,
+                         stdout=subprocess.PIPE if capture_output else None, stderr=subprocess.PIPE if capture_output else None, **kw)
+    try:
+        out, err = p.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        try:
+            out, err = p.communicate(timeout=grace)
+        except subprocess.TimeoutExpired:
+            out = err = None
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from None
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
 def adb(exe, serial, *args, timeout=120):
     cmd = [exe] + (["-s", serial] if serial else []) + list(args)
-    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    p = run_bounded(cmd, timeout, text=True, encoding="utf-8", errors="replace")
     return p.returncode, p.stdout + p.stderr
 
 
