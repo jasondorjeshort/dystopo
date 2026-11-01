@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-01
 
+- T197: One tap at a summit or sign calibrates the altimeter (after T192)
 - T195: A route's terrain exposure: steep ground, aspects, ridge time
 
 ### 2026-10-31
