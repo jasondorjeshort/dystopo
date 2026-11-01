@@ -75,8 +75,8 @@
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only server,notices -InjectHang server -PartTimeouts server=30   # T191: test the ceiling
 #
 # Time limits (T191, finding 2026-10-31: one stuck child once held the sweep 9.5 h). Every part has a ceiling,
-# -PartTimeout (900 s) unless the table $ceilings below (device-tour 750 s a run, update 1500, check 2400, matrix 2400)
-# or -PartTimeouts says otherwise; the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
+# -PartTimeout (900 s) unless the table $ceilings below (device-tour 750 s a run, device-boot 1500, update 1500, check
+# 2400, matrix 2400) or -PartTimeouts says otherwise (the release build has 1800 s of its own, not the part's); the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
 # at the deadline the running program's process tree is killed by its PID (taskkill /PID <pid> /T /F), the part's
 # steps.tsv line reads "timeout" with what was killed, and the sweep goes on with the next part. Cleanup after a part
 # (stopping its own emulator) has 300 s of its own. Before device-boot (and the bothunits boot) the sweep waits up to
@@ -178,9 +178,13 @@ foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allP
 # update took 230 to 513 s and builds a second release APK inside the part, which alone takes minutes under load: 1500 s;
 # check took 27 to 246 s warm, but a fresh worktree compiles everything and the part may run check twice (the
 # stale-compile retry after :androidApp:clean): 2400 s; matrix has no timing on record and boots two fresh emulators
-# (one an API 26 image) around three runs: 2400 s. Code outside a part (the devtool build, the cleanup) gets 1800 s.
+# (one an API 26 image) around three runs: 2400 s. device-boot took 123 to 159 s in those sweeps, but it builds the debug
+# APK, boots and waits up to five minutes for the app inside android-emu.ps1: 786 s in T191's run on the loaded second
+# PC (a 226 s boot and the whole style wait), so 1500 s. Code outside a part (the devtool build, the cleanup) gets 1800 s,
+# and the release build its own 1800 s wherever it runs (Build-Release).
 if ($PartTimeout -lt 1) { throw '-PartTimeout must be a number of seconds' }
-$ceilings = @{ 'device-tour' = 750 * [math]::Max(1, $DeviceTourRuns); 'update' = 1500; 'check' = 2400; 'matrix' = 2400 }
+$ceilings = @{ 'device-tour' = 750 * [math]::Max(1, $DeviceTourRuns); 'update' = 1500; 'check' = 2400; 'matrix' = 2400; 'device-boot' = 1500 }
+$releaseBuildS = 1800
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -353,21 +357,22 @@ function Tool-Text([string]$exe, [string[]]$argv, [int]$TimeoutS = 60, [switch]$
     "$(Get-Content -Raw $o)".Trim()
 }
 
-# T191: who holds a port, for a message: the listener table's owner, else (the sandbox hides it there) the processes
-# whose command line names "-port <port>", which is how an emulator is started. Read only: nothing is ever stopped by
-# this (CLAUDE.md: never stop a process found by name or command line).
-function Describe-PortHolder([int]$port) {
-    $ids = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } | Where-Object { $_ } | Sort-Object -Unique)
+# T191: who holds a console port pair, for a message: the listener table's owners, else (the sandbox hides them there)
+# the processes whose command line names "-port <console port>", which is how an emulator is started. Read only:
+# nothing is ever stopped by this (CLAUDE.md: never stop a process found by name or command line).
+function Describe-PortHolder([int[]]$ports, [int]$consolePort) {
+    $ids = @(foreach ($port in $ports) { Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $_.OwningProcess } })
+    $ids = @($ids | Where-Object { $_ } | Sort-Object -Unique)
     if (-not $ids.Count) {
-        $ids = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "(^|\s)-port\s+$port(\s|$)" } | ForEach-Object { $_.ProcessId })
+        $ids = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "(^|\s)-port\s+$consolePort(\s|$)" } | ForEach-Object { $_.ProcessId })
     }
     $who = @($ids | ForEach-Object { $n = (Get-Process -Id $_ -ErrorAction SilentlyContinue).ProcessName; "PID $_$(if ($n) { " ($n)" })" })
     if ($who.Count) { $who -join ', ' } else { 'a process the listener table does not show' }
 }
 
 # T191 (finding 2026-10-31: a rerun lost device-boot to the killed run's console ports, "ports 5640/5641 are in use",
-# 35 s in): before a boot, waits up to $timeoutS (50 s, so the part ends within a minute) for the console port pair (<port>, <port>+1) to be free and for adb to
-# list no emulator-<port>. Returns '' then, or at once when that serial already runs this very AVD (android-emu.ps1
+# 35 s in): before a boot, waits up to $timeoutS (50 s, so the part ends within a minute) for the console port pair
+# (<port>, <port>+1) to be free and for adb to list no emulator-<port>. Returns '' then, or at once when that serial already runs this very AVD (android-emu.ps1
 # reuses it); otherwise the reason, naming the serial adb lists and each holder's PID. The caller boots nothing then,
 # and stops nothing it did not start.
 function Wait-ConsolePorts([int]$emuPort, [string]$avdName, [int]$timeoutS = 50) {
@@ -393,9 +398,9 @@ function Wait-ConsolePorts([int]$emuPort, [string]$avdName, [int]$timeoutS = 50)
         if ($waited -ge $timeoutS) { break }
         Start-Sleep -Seconds 2
     }
-    $parts = @(foreach ($port in $(if ($held.Count) { $held } else { $pair[0] })) { "$port by $(Describe-PortHolder $port)" })
+    $parts = @(if ($held.Count) { "$($held -join ' and ') held by $(Describe-PortHolder $pair $emuPort)" })
     if ($listed) { $parts += "adb lists $s ($listed)" }
-    "console ports $($pair -join '/') still held after $timeoutS s ($($parts -join '; ')); not booting $s on them"
+    "console ports $($pair -join '/') not free after $timeoutS s ($($parts -join '; ')); not booting $s on them"
 }
 
 # T91: the previous release's APK, pinned and checked: downloads the first asset matching $patterns plus the release's
@@ -508,7 +513,14 @@ function Build-Release {
     if ($script:releaseBuilt) { return }
     $count = "$(& git rev-list --count HEAD 2>$null)".Trim()
     $desc = "$(& git describe --tags --always 2>$null)".Trim() -replace '^v', ''
-    $code = Run $gradle @(':androidApp:assembleRelease', "-PdystopoVersion=$desc-sweep", "-PdystopoVersionCode=$count") (Join-Path $Out 'assemble-release.log') (Join-Path $Out 'assemble-release.err.log')
+    # T191: the build is every release part's prerequisite, not the work of the part that happens to come first, so it
+    # has its own ceiling ($releaseBuildS) and the part's deadline moves on by the time it took (526 s in a fresh worktree
+    # on the loaded second PC, 2026-10-31, against the part's own 150 to 220 s).
+    $savedDeadline = $script:partDeadline; $script:partDeadline = $null; $tb = Get-Date
+    try {
+        $code = Run $gradle @(':androidApp:assembleRelease', "-PdystopoVersion=$desc-sweep", "-PdystopoVersionCode=$count") (Join-Path $Out 'assemble-release.log') (Join-Path $Out 'assemble-release.err.log') -TimeoutS $releaseBuildS
+    } finally { if ($savedDeadline) { $script:partDeadline = $savedDeadline + ((Get-Date) - $tb) } }
+    if ("$code" -eq 'timeout') { throw "assembleRelease did not finish within $releaseBuildS s (killed by PID; see assemble-release.log)" }
     if ($code -ne 0) { throw "assembleRelease failed (see assemble-release.err.log)" }
     # T105: the sweep's own copies of the release APKs, which every release part installs: the update part's second build
     # (versionCode +1) overwrites androidApp\build\outputs\apk\release, and the parts after it, and a later check of the
