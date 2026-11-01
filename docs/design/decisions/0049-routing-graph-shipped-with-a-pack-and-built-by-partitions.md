@@ -72,9 +72,22 @@ Predictions (the trigger scan reads these):
 - Prediction, check when B merges: a v0.1.14 APK pointed at a server running B lists its packs,
   downloads both archives of a new pack and builds its own graph with no error from the new fields;
   a phone downloading the Rainier pack from that server routes Paradise to Panorama Point with
-  `source: shipped` and no build started.
+  `source: shipped` and no build started. Outcome (2026-10-31, after T189 merged B, on a real
+  install): held. The v0.1.14-alpha release APK on a fresh API 35 emulator, pointed at a `devtool
+  serve --live` of `main` (5509ebb8), tested "Connected: 1 pack", listed the Rainier pack (z8 to 14,
+  103.8 MB, outdoors) with no error from the new catalog or manifest fields, downloaded both archives
+  (108,879,403 bytes, the DEM plus the outdoors file) and built its own graph (3,394 nodes, 3,793 edges,
+  1.4 s) for a Paradise to Panorama Point route. The current debug build on the same emulator downloaded
+  the pack with its graph entry (312,356 bytes, SHA-256 matching the catalog) and routed the same pair in
+  1 s with `source: shipped`; `/route/status` read `source: shipped`, `loadMs 1`, `buildMs null`, no
+  build started. Two notes: a fresh server lists no `derived` graph until a graph file exists beside
+  the pack (one `devtool route` wrote it), and the v0.1.14 build ran out of its 576 MB heap at world
+  view against a `--live` server before any pack was downloaded, a v0.1.14 problem unrelated to B.
 - Prediction, check when B merges: a shipped graph is under 10 percent of its pack as the user sees
-  it (DEM plus vector) on the Rainier pack and on the largest server build of B's task.
+  it (DEM plus vector) on the Rainier pack and on the largest server build of B's task. Outcome
+  (2026-10-31): held. The Rainier graph is 312,356 bytes against the 108.9 MB pack pair, 0.29 percent
+  (the T189 log entry: 0.3 percent with its DEM; a 1 by 0.7 degree box, the task's largest build,
+  0.6 percent).
 - Prediction, check when C merges: T149's z10 city pack builds by partitions on the 576 MB emulator
   heap with a measured peak growth under 200 MB, and the Rainier golden route is identical to the
   one-pass build's (2,953.3 m, +416.4 m, 223 points).
