@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -192,8 +194,8 @@ fun RouteControls() {
                 .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+          val plan = RouteSession.plan
           Column(Modifier.weight(1f, fill = false).scrollbar(upper).verticalScroll(upper), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val plan = RouteSession.plan
             val title = when (phase) {
                 "start" -> "Route: start set"
                 "planning" -> "Route: planning"
