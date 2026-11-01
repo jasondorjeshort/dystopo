@@ -435,6 +435,23 @@ object Horizon {
      */
     const val DEFAULT_RANGE_M = 30_000.0
 
+    /**
+     * T194 (T188's follow-up): below this apparent sun altitude, degrees, a cast-shadow ray looks at most
+     * [LOW_SUN_RANGE_M] toward the sun (`CastShadow.rangeFor`). From about 7.6 degrees down the relief rule asks for the
+     * whole [DEFAULT_RANGE_M], so a sun tile's coarse window toward a low sun grows to some 200k cells, which made a
+     * phone tile take over a second (T188).
+     */
+    const val LOW_SUN_DEG = 5.0
+
+    /**
+     * T194: how far a ray toward a sun below [LOW_SUN_DEG] looks, metres. Measured with `devtool shade --reference` on
+     * Rainier (T194's report): against the reference march, 30, 20 and 15 km left the same cells wrong at 3.9 and 1.7
+     * degrees with the sun south-west, and 15 km lit 0.26 percent more cells than 30 km 25 km west of the summit with a
+     * 2.2 degree sun behind it (0.16 percent at 20 km), while a tile's coarse window shrinks about four times. Ground
+     * that shades a cell from farther away stands over 1,300 m above it at a 5 degree sun.
+     */
+    const val LOW_SUN_RANGE_M = 15_000.0
+
     /** A ray's step grows by this share of its distance (after a first run of one-cell steps). */
     const val STEP_GROWTH = 0.02
 

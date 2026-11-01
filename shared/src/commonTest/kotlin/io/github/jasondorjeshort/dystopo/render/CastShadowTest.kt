@@ -130,7 +130,8 @@ class CastShadowTest {
 
     @Test
     fun theRangeFollowsTheSun() {
-        assertEquals(Horizon.DEFAULT_RANGE_M, CastShadow.rangeFor(2.0))
+        assertEquals(Horizon.DEFAULT_RANGE_M, CastShadow.rangeFor(6.0)) // the relief rule asks 38 km: capped
+        assertEquals(Horizon.LOW_SUN_RANGE_M, CastShadow.rangeFor(2.0)) // T194: the low-sun cap
         assertEquals(CastShadow.RELIEF_M / tan(20 * deg), CastShadow.rangeFor(20.0), 1e-6)
         assertEquals(Horizon.DEFAULT_RANGE_M, CastShadow.rangeFor(-5.0))
     }
