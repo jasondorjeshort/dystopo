@@ -27,8 +27,7 @@ wave once the move chore has run; Later carries wave 24's follow-ups; the record
    definition-of-controls-and-settings-across-platforms.md`; an inventory and a benchmark survey first, then a
    proposal), the site's follow-ups once it runs (an `-HttpsPort` for coexisting test instances, pre-built public
    packs, rate limits when load or publicity revives ADR 0052's deferral), Later's lifted follow-ups.
-3. A Hatchery-rooted session: the pending carry-backs plus T190's two and T201's (the `SubagentStop` input
-   fields for the hook spec) and the wave skill's sentinel rule.
+3. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the sentinel rule.
 
 ## Waiting on user
 
