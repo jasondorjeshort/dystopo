@@ -85,6 +85,10 @@ const DEFAULTS = {
   // a hit of any class; identities the { name, email } pairs commits may carry, the first being
   // the repository identity. An empty list switches the identity class off.
   privacy: { allow: ['user'], identities: [] },
+  // Dystopo departure (T190, ADR 0038's table): the machine-wide emulator cap, read by tools/android-emu.ps1
+  // and emulator-lock.js / emulator-stop.js. max: live emulators at once; lockDir: one folder for the whole
+  // machine (a leading ~ is the home folder), never inside a checkout.
+  emulators: { max: 2, lockDir: '~/.dystopo/emulators' },
 };
 
 const isStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string' && s !== '');
@@ -115,6 +119,7 @@ const TYPES = {
   identities: (v) => Array.isArray(v) && v.every((i) => i !== null && typeof i === 'object' && !Array.isArray(i) &&
     Object.keys(i).every((k) => k.startsWith('$') || k === 'name' || k === 'email') &&
     typeof i.name === 'string' && i.name.trim() !== '' && typeof i.email === 'string' && i.email.split('@').length === 2),
+  count: (v) => Number.isInteger(v) && v >= 1,
   formatters: (v) => v !== null && typeof v === 'object' && !Array.isArray(v) &&
     Object.keys(v).every((k) => /^\.[A-Za-z0-9]+$/.test(k) && isStrings(v[k]) && v[k].length > 0),
 };
@@ -135,6 +140,7 @@ const SCHEMA = {
   edit: { capExempt: 'patterns', anchorExempt: 'patterns', formatters: 'formatters' },
   update: { exclude: 'patterns' },
   privacy: { allow: 'literals', identities: 'identities' },
+  emulators: { max: 'count', lockDir: 'text' },
 };
 
 // Walks value against schema, merging over defaults. Throws on the first problem.
