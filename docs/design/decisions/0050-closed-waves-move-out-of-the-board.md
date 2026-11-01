@@ -56,6 +56,11 @@ record would take out of sight at resume (the idea's addition C).
 Predictions (the trigger scan reads these):
 - Prediction, check at the close of wave 23: the board is under 300 lines at every resume between
   waves, and no task heading was lost or duplicated by a move (the README's checks all passed on
-  every run).
+  every run). Outcome (2026-10-31, at the close of wave 23): held. The board's line count was read
+  at every commit touching it from step B (537c24a) to the wave 23 move: it peaked at 187 lines at
+  wave 22's close and read 88 to 105 at the resumes after the two moves, never near 300. The
+  README's checks re-run over both moves: 171 task headings before and after the wave 22 move and
+  185 before and after the wave 23 move, none duplicated, each record's title and body byte-equal
+  to the board section it came from.
 - Prediction, check when the dated log passes 1 MB: the deferred move of `docs/PLANNING.md`'s log
   has been done by the same recipe, or a finding says why not.
