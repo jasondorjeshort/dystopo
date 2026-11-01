@@ -122,7 +122,8 @@ object RouteWater {
         if (!AppSettings.waterAlongRoute) return linkedMapOf("enabled" to false)
         if (points == null || points.size < 2) return linkedMapOf("enabled" to true, "state" to "noRoute")
         val r = await(points, waitMs) ?: return linkedMapOf("enabled" to true, "state" to "computing")
-        return linkedMapOf("enabled" to true, "state" to if (r.error != null) "error" else "ready") + resultJson(r, AppSettings.units) + mapOf("open" to open)
+        return linkedMapOf("enabled" to true, "state" to if (r.error != null) "error" else "ready") + resultJson(r, AppSettings.units) +
+            mapOf("open" to open, "list" to if (open) WaterListLayout.json(points) else null) // T192: the rows as drawn
     }
 
     fun resultJson(r: Result, units: ContourUnits): Map<String, Any?> {
@@ -203,9 +204,14 @@ object WaterText {
     fun nextOnCard(items: List<WaterItem>, progressM: Double): Int =
         items.indexOfFirst { it.alongM >= progressM - PASS_M && !(it.kind == WaterKind.STREAM && it.waterClass == WaterClass.USUALLY_DRY) }
 
-    /** The navigation card's line: "Water in 1.2 km: Stream, likely flowing". */
-    fun navLine(item: WaterItem, aheadM: Double, units: ContourUnits): String =
-        if (aheadM < PASS_M) "Water here: ${item.label}" else "Water in ${UnitFormat.distance(aheadM, units)}: ${item.label}"
+    /**
+     * The navigation card's line: "Water in 1.2 km: stream, likely flowing". T192: the label in lower case after the
+     * colon, as the route card's line ("next likely flowing") and the spoken line ("water: stream, ...") have it.
+     */
+    fun navLine(item: WaterItem, aheadM: Double, units: ContourUnits): String {
+        val what = item.label.replaceFirstChar { it.lowercase() }
+        return if (aheadM < PASS_M) "Water here: $what" else "Water in ${UnitFormat.distance(aheadM, units)}: $what"
+    }
 
     /** How far ahead the spoken line is said, by travel mode, metres. */
     fun leadM(mode: TravelMode): Double = when (mode) {

@@ -51,6 +51,13 @@ class RegionPickerTest {
     }
 
     @Test
+    fun thePackPathsSizeLineCountsTheTrailGraph() {
+        // T192: the Rainier pack's ratio, 312,356 graph bytes against 2,630,059 of vector tiles.
+        assertEquals(312_000L, graphEstimateBytes(2_600_000L))
+        assertEquals("About 172 MB (1,300 tiles plus the trail graph) at full detail", packSizeLine(170L shl 20, 2L shl 20, 1_300, 8, 15))
+    }
+
+    @Test
     fun theRegionIsTheBoxAsAPolygonWithNoSpanCap() {
         val full = regionArea(stateView, AreaPicker.FULL_MAX_ZOOM, "view-2026-10-27-1")
         val less = regionArea(stateView, AreaPicker.LESS_MAX_ZOOM, null)

@@ -24,8 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.routing.PlaceName
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 
 private val Ink = Color(0xFF2B2420)
@@ -61,8 +64,23 @@ object BottomPanels {
     /** What the track panels must clear: the route card when it is shown, else the credit line. */
     val trackPanelsFloor: Dp get() = maxOf(routeCardTop, AttributionInsets.bottom)
 
+    /**
+     * T192 (T184's follow-up): the route card's height cap (dp), the top chips' lowest edge it stays under (dp from the
+     * window top), its top from the window top, and how far its upper part scrolls (px; 0 when everything fits). Reported.
+     */
+    @Volatile var routeCardCapDp = 0f
+    @Volatile var routeCardChipsBottomDp = 0f
+    @Volatile var routeCardTopFromWindowTopDp = 0f
+    @Volatile var routeCardScrollMaxPx = 0
+    @Volatile var routeCardScrollPx = 0
+
     fun json(): Map<String, Any?> = linkedMapOf(
         "creditTopDp" to AttributionInsets.bottom.value, "routeCardTopDp" to routeCardTop.value,
+        // T192: the card stays under the top chips at any font scale: capped, its upper part scrolling, the actions in view.
+        "routeCardCapDp" to routeCardCapDp, "topChipsBottomDp" to routeCardChipsBottomDp,
+        "routeCardTopFromWindowTopDp" to routeCardTopFromWindowTopDp,
+        "routeCardClearOfTopChips" to (routeCardTop <= 0.dp || routeCardTopFromWindowTopDp >= routeCardChipsBottomDp - 0.5f),
+        "routeCardScrollMaxPx" to routeCardScrollMaxPx, "routeCardScrollPx" to routeCardScrollPx,
         "trackPanelsBottomDp" to trackPanelsBottom.value, "trackPanelsTopDp" to trackPanelsTop.value,
         // The panels overlap the card when their bottom edge is below the card's top edge (and both show).
         "overlap" to (routeCardTop > 0.dp && trackPanelsTop > trackPanelsBottom && trackPanelsBottom < routeCardTop),
@@ -87,7 +105,8 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * T108: Crow joins the mode chips (they wrap at large font scales) with its one line under them, and a crow route
  * shows its bearing instead of the trails it follows.
  *
- * T114: the card names both ends under its title ("From: Your location", "To: 46.80240, -121.72890"), as the route
+ * T114: the card names both ends under its title ("From: Your location", "To: Panorama Point"; T192: by the pack's
+ * nearest named feature, no longer the coordinates), as the route
  * screens of the mainstream navigation apps do; Change on the From line offers Your location, Choose on map and Swap
  * ([RouteSession.fromChoices]). While a route to here waits for its origin the card says so, and with location off it
  * offers Turn on location (the permission prompt, or the phone's location settings). When no path is found it offers
@@ -131,22 +150,49 @@ fun RouteControls() {
     val phase = RouteSession.phase
     // T65: hidden while navigating (the stats bar has what matters; the card returns when navigation stops).
     if (phase == "idle" || io.github.jasondorjeshort.dystopo.app.nav.NavSession.ui != null) {
-        SideEffect { if (BottomPanels.routeCardTop != 0.dp) BottomPanels.routeCardTop = 0.dp }
+        SideEffect {
+            if (BottomPanels.routeCardTop != 0.dp) BottomPanels.routeCardTop = 0.dp
+            BottomPanels.routeCardTopFromWindowTopDp = 0f; BottomPanels.routeCardCapDp = 0f; BottomPanels.routeCardScrollMaxPx = 0; BottomPanels.routeCardScrollPx = 0 // T192
+        }
         return
     }
     val density = LocalDensity.current
-    Box(Modifier.fillMaxSize()) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        // T192 (T184's follow-up): the card stays under the top chips (the search box, the online indicator, the Routes
+        // chip) at any font scale: its height is capped at the room between them and its bottom gap, the upper part
+        // (title to messages) scrolls, and the mode chips and actions stay in view under it.
+        val b = AttributionInsets.bottom
+        val navBar = with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() }
+        val bottomGap = if (b > 0.dp) b + 6.dp else navBar + 28.dp
+        val chipsBottom = maxOf(
+            maxOf(io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom, io.github.jasondorjeshort.dystopo.app.TopChips.routesChipBottom),
+            with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineBottomPx.toDp() },
+            with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() },
+        )
+        val cap = (maxHeight - bottomGap - chipsBottom - CARD_CHIPS_GAP).coerceAtLeast(CARD_MIN_CAP)
+        val upper = rememberScrollState()
+        SideEffect {
+            BottomPanels.routeCardCapDp = cap.value
+            BottomPanels.routeCardChipsBottomDp = chipsBottom.value
+        }
+        LaunchedEffect(upper) {
+            androidx.compose.runtime.snapshotFlow { upper.value to upper.maxValue }.collect { (v, m) -> BottomPanels.routeCardScrollPx = v; BottomPanels.routeCardScrollMaxPx = m }
+        }
         Column(
             // T49: above the credit line (its measured top); the track panels stack above this card.
             Modifier.align(Alignment.BottomCenter).let { m ->
-                val b = AttributionInsets.bottom
                 if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
             }
                 .widthIn(max = 420.dp)
-                .onGloballyPositioned { c -> fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it } }
+                .heightIn(max = cap)
+                .onGloballyPositioned { c ->
+                    fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it }
+                    BottomPanels.routeCardTopFromWindowTopDp = with(density) { c.positionInRoot().y.toDp().value }
+                }
                 .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+          Column(Modifier.weight(1f, fill = false).scrollbar(upper).verticalScroll(upper), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val plan = RouteSession.plan
             val title = when (phase) {
                 "start" -> "Route: start set"
@@ -184,6 +230,7 @@ fun RouteControls() {
             }
             if (phase == "planning") BuildProgress()
             RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
+          }
             // T73: the mode chips (hike, bike, drive; T108: crow) on a row of their own, so the actions keep room on a phone;
             // T108: they wrap rather than squeeze at large font scales.
             ModeChips {
@@ -234,15 +281,41 @@ fun RouteControls() {
 internal const val GRAPH_TOO_LARGE = "This map is too large to route across on this phone; download a smaller area for routing"
 internal const val GRAPH_WAITING = "Waiting for memory to build the trail network"
 
+/** T192: the gap between the route card's top and the top chips' lowest edge, and the least height the cap leaves it. */
+private val CARD_CHIPS_GAP = 8.dp
+private val CARD_MIN_CAP = 200.dp
+
+/**
+ * T192: a thin thumb at the right edge of a box that scrolls ([state]), so a list cut by its height reads as one that
+ * scrolls (the water list, the card's upper part). Drawn in the box's own frame: put it before `verticalScroll`.
+ */
+internal fun Modifier.scrollbar(state: androidx.compose.foundation.ScrollState): Modifier = drawWithContent {
+    drawContent()
+    val max = state.maxValue
+    if (max > 0 && max != Int.MAX_VALUE) {
+        val h = size.height
+        val thumb = (h * h / (h + max)).coerceAtLeast(16.dp.toPx())
+        val y = (h - thumb) * state.value / max
+        val w = 3.dp.toPx()
+        drawRoundRect(ScrollThumb, androidx.compose.ui.geometry.Offset(size.width - w, y), androidx.compose.ui.geometry.Size(w, thumb), androidx.compose.ui.geometry.CornerRadius(w / 2))
+    }
+}
+
+private val ScrollThumb = Color(0x802B2420)
+
 /** T114: the card's new action labels. */
 internal const val TURN_ON_LOCATION = "Turn on location"
 internal const val TRY_CROW = "Try Crow"
 
 /**
  * T114: the From and To lines. From is "Your location" (with the fix's age when it was stale), a placed point's
- * coordinates, or "Choose on map" while the next long-press picks it; Change opens Your location, Choose on map and
- * Swap under it, as far as [RouteSession.fromChoices] allows. To is the destination's coordinates (a name when a later
- * entry brings one). Nothing shows before the first end is known.
+ * name, or "Choose on map" while the next long-press picks it; Change opens Your location, Choose on map and
+ * Swap under it, as far as [RouteSession.fromChoices] allows. To is the destination's name. Nothing shows before the
+ * first end is known.
+ *
+ * T192: a placed end is named by the nearest named feature of the pack within 100 m ([PlaceName], [EndNames]: "To:
+ * Skyline Trailhead"), else "a point on the map"; "..." while the lookup runs. The coordinates stay in `GET /route`
+ * (`from`, `to`; `ends` has the lines as drawn).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -250,9 +323,11 @@ private fun Ends(phase: String) {
     val f = RouteSession.from
     val t = RouteSession.to
     if (f == null && t == null) return
+    val fromName = endName(f)
+    val toName = endName(t)
     val fromText = when {
         phase == "pickStart" -> CHOOSE_ON_MAP
-        f != null -> f.label
+        f != null -> fromName
         else -> RouteOrigin.HERE // a route to here waiting for its origin
     }
     val choices = if (phase == "planning" || phase == "start") emptyList() else RouteSession.fromChoices()
@@ -267,7 +342,67 @@ private fun Ends(phase: String) {
             if ("swap" in choices) Action(SWAP) { RouteSession.swap() }
         }
     }
-    if (t != null) BasicText("To: ${t.label}", style = TextStyle(color = Ink, fontSize = 13.sp))
+    if (t != null) BasicText("To: $toName", style = TextStyle(color = Ink, fontSize = 13.sp))
+}
+
+/** T192: what the card calls [end]: "Your location" for a fix, else the name [EndNames] finds (looked up off the main thread). */
+@Composable
+private fun endName(end: RouteOrigin.End?): String {
+    if (end == null) return ""
+    if (end.isFix) return end.label
+    var text by remember(end.lat, end.lon) { mutableStateOf(EndNames.cachedText(end)) }
+    LaunchedEffect(end.lat, end.lon) {
+        if (text == null) text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { EndNames.text(end, 10_000) }
+    }
+    return text ?: EndNames.PENDING
+}
+
+/**
+ * T192: the names of the route's placed ends ([PlaceName.nearest] over the packs on the device, as the map reads them),
+ * on one worker thread, the last few kept by the point and the pack set, so the card and `GET /route` share one lookup.
+ */
+internal object EndNames {
+    /** The card's words while the lookup runs. */
+    const val PENDING = "..."
+
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-end-names").apply { isDaemon = true } }
+    private val cache = object : LinkedHashMap<Triple<Double, Double, Int>, java.util.concurrent.Future<PlaceName.Found?>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Triple<Double, Double, Int>, java.util.concurrent.Future<PlaceName.Found?>>?) = size > 8
+    }
+
+    private fun start(end: RouteOrigin.End): java.util.concurrent.Future<PlaceName.Found?>? {
+        val packs = runCatching { DystopoApp.instance.tiles.packs }.getOrNull() ?: return null
+        val key = Triple(end.lat, end.lon, System.identityHashCode(packs))
+        synchronized(cache) {
+            cache[key]?.let { return it }
+            val f = worker.submit(java.util.concurrent.Callable {
+                PlaceName.nearest({ z, x, y -> packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) } }, end.lat, end.lon)
+            })
+            cache[key] = f
+            return f
+        }
+    }
+
+    /** The feature found for [end], waiting up to [ms]; null when none, on a timeout, or with no packs. */
+    fun found(end: RouteOrigin.End, ms: Long): PlaceName.Found? = runCatching { start(end)?.get(ms, java.util.concurrent.TimeUnit.MILLISECONDS) }.getOrNull()
+
+    /** The card's words for [end] once the lookup is done, else null (and the lookup runs). */
+    fun cachedText(end: RouteOrigin.End): String? {
+        val f = start(end) ?: return PlaceName.NO_NAME
+        return if (f.isDone) PlaceName.label(runCatching { f.get() }.getOrNull()) else null
+    }
+
+    /** The card's words for [end], waiting up to [ms] for the lookup. */
+    fun text(end: RouteOrigin.End, ms: Long): String = PlaceName.label(found(end, ms))
+
+    /** `GET /route` `ends`: each end's line as the card draws it and the feature that named it (coordinates in `from`, `to`). */
+    fun json(from: RouteOrigin.End?, to: RouteOrigin.End?, waitMs: Long = 3_000): Map<String, Any?> {
+        fun one(prefix: String, e: RouteOrigin.End?): Map<String, Any?>? = e?.let {
+            if (it.isFix) linkedMapOf("line" to "$prefix: ${it.label}", "named" to null)
+            else found(it, waitMs).let { n -> linkedMapOf("line" to "$prefix: ${PlaceName.label(n)}", "named" to n?.json()) }
+        }
+        return linkedMapOf("from" to one("From", from), "to" to one("To", to), "radiusM" to PlaceName.RADIUS_M)
+    }
 }
 
 internal const val CHANGE = "Change"
@@ -310,6 +445,7 @@ internal object WaterUi {
  */
 @Composable
 internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, open: Boolean, onToggle: () -> Unit) {
+    val listScroll = rememberScrollState()
     val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // the setting's row recomposes the card
     if (!io.github.jasondorjeshort.dystopo.app.AppSettings.waterAlongRoute) return
     var water by remember(points, rev) { mutableStateOf(RouteWater.cached(points)) }
@@ -326,12 +462,53 @@ internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model
         )
         WaterText.longestLine(r.items, r.lengthM, units)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
         if (open && r.items.isNotEmpty()) {
-            Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                for (i in r.items.indices) BasicText(WaterText.row(r.items, i, r.lengthM, units), style = TextStyle(color = Ink, fontSize = 12.sp))
+            // T192: every item is a row; the box scrolls past about eight of them, with a thumb that says so.
+            val rows = remember(r) { WaterListLayout.Rows(points, r.items.size) }
+            Column(
+                Modifier.heightIn(max = 160.dp).onGloballyPositioned { c -> rows.box = c.boundsInRoot().let { floatArrayOf(it.left, it.top, it.right, it.bottom) } }
+                    .scrollbar(listScroll).verticalScroll(listScroll),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                for (i in r.items.indices) BasicText(
+                    WaterText.row(r.items, i, r.lengthM, units), style = TextStyle(color = Ink, fontSize = 12.sp),
+                    modifier = Modifier.onGloballyPositioned { c -> rows.rowTops[i] = c.boundsInRoot().let { floatArrayOf(it.top, it.bottom) } },
+                )
+            }
+            SideEffect { WaterListLayout.last = rows }
+            LaunchedEffect(rows) {
+                androidx.compose.runtime.snapshotFlow { listScroll.value to listScroll.maxValue }.collect { (v, m) -> rows.scrollPx = v; rows.scrollMaxPx = m }
             }
             BasicText(WaterText.HINT, style = TextStyle(color = Ink.copy(alpha = 0.75f), fontSize = 11.sp))
         }
     }
+}
+
+/**
+ * T192: the water list as drawn last ([WaterAlongLine]), for `GET /route` and `GET /route/water` `water.list`: the rows
+ * composed, which of them are inside the box now, the box's bounds (px in the window, for a swipe) and its scroll.
+ */
+internal object WaterListLayout {
+    class Rows(val points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, val count: Int) {
+        @Volatile var box: FloatArray? = null
+        val rowTops = arrayOfNulls<FloatArray>(count)
+        @Volatile var scrollPx = 0
+        @Volatile var scrollMaxPx = 0
+
+        fun json(): Map<String, Any?> {
+            val b = box
+            val inside = if (b == null) emptyList() else rowTops.indices.filter { i -> rowTops[i]?.let { it[0] >= b[1] - 0.5f && it[1] <= b[3] + 0.5f } == true }
+            return linkedMapOf(
+                "rows" to rowTops.count { it != null }, "of" to count, "boxPx" to b?.map { Math.round(it) },
+                "rowsInBox" to inside.size, "firstInBox" to inside.firstOrNull()?.plus(1), "lastInBox" to inside.lastOrNull()?.plus(1),
+                "scrollPx" to scrollPx, "scrollMaxPx" to scrollMaxPx, "scrolls" to (scrollMaxPx > 0),
+            )
+        }
+    }
+
+    @Volatile var last: Rows? = null
+
+    /** The list of [points] as drawn last, or null when it is not open for them. */
+    fun json(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>?): Map<String, Any?>? = last?.takeIf { it.points == points }?.json()
 }
 
 /**

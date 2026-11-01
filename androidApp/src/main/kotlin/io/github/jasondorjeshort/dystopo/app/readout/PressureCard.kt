@@ -327,7 +327,7 @@ object PressureWatch {
             "result" to result?.json(),
             "alert" to alert.json(),
             "card" to linkedMapOf("shown" to (c != null), "title" to c?.title, "body" to c?.body, "station" to c?.station, "raisedAtMs" to c?.raisedAtMs,
-                "dismissedAtMs" to dismissedAtMs, "boundsPx" to cardBoundsPx?.map { Math.round(it) }),
+                "dismissedAtMs" to dismissedAtMs, "boundsPx" to cardBoundsPx?.takeIf { c != null }?.map { Math.round(it) }), // T192: none once the card is gone
             "spoken" to spoken.toList(),
             "station" to st?.let { linkedMapOf("station" to it.station, "tempC" to it.tempC, "elevationM" to it.elevationM, "ageS" to (System.currentTimeMillis() - it.timeMs) / 1000) },
             "stationTendency" to (if (synthetic != null) null else PressureSource.stationTendency()?.let { linkedMapOf("hPa" to it.first, "from" to it.second) }),
@@ -357,7 +357,14 @@ object PressureWatch {
  */
 @Composable
 fun PressureCard() {
-    val c = PressureWatch.card ?: return
+    // T192: the card's bounds leave with the card (the recovery fixture's clear, Dismiss), so `GET /readout`
+    // `trend.card.boundsPx` never reports a card that is gone.
+    val c = PressureWatch.card
+    if (c == null) {
+        androidx.compose.runtime.SideEffect { PressureWatch.cardBoundsPx = null }
+        return
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PressureWatch.cardBoundsPx = null } }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     // Under everything that floats across the top (the search column, the online indicator, the chips at the right and
     // the navigation card; Compose state, so the card follows them).

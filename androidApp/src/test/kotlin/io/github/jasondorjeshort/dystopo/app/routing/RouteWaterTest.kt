@@ -65,8 +65,8 @@ class RouteWaterTest {
         assertEquals(1, WaterText.nextOnCard(walk, 1_220.0), "20 m past it: still the creek")
         assertEquals(2, WaterText.nextOnCard(walk, 1_300.0))
         assertEquals(-1, WaterText.nextOnCard(walk, 9_600.0))
-        assertEquals("Water in 900 m: Stream, may run dry", WaterText.navLine(walk[2], 900.0, m))
-        assertEquals("Water here: Mapped spring", WaterText.navLine(walk[3], 10.0, m))
+        assertEquals("Water in 900 m: stream, may run dry", WaterText.navLine(walk[2], 900.0, m)) // T192: lower case after the colon
+        assertEquals("Water here: mapped spring", WaterText.navLine(walk[3], 10.0, m))
     }
 
     @Test

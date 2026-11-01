@@ -516,6 +516,7 @@ object RouteSession {
         "restored" to restored, // T108: the unsaved route read back after the process restarted
         // T114: the two ends as the card names them, the From choices, the location state, the last route to here.
         "from" to fromEnd?.json(), "to" to toEnd?.json(), "fromOpen" to fromOpen, "fromChoices" to fromChoices(),
+        "ends" to EndNames.json(fromEnd, toEnd), // T192: the From and To lines as drawn, the feature that named each
         "location" to locationState(),
         // T122: true only while the card waits for a fix with location on (`waitingFix`); `noLocation` waits for the
         // setting first, and read true here before.

@@ -56,10 +56,14 @@ class OnlineUi(
     /** Hidden: no server and nothing downloading. */
     val hidden: Boolean get() = state == "none" && !running
 
-    /** The chip's state word and its dot (T85: not green while mobile data is off for it or the session limit is reached). */
+    /**
+     * The chip's state word and its dot (T85: not green while mobile data is off for it or the session limit is reached).
+     * T192: red only for a server the user set that does not answer; with no server set (the public sources read
+     * directly) being offline is the plain state of an offline-first map, grey.
+     */
     val label: Pair<String, Dot> get() = when (state) {
         "online" -> if (notice != null) "Paused" to Dot.GREY else "Online" to Dot.GREEN
-        "offline" -> "Offline" to Dot.RED
+        "offline" -> "Offline" to if (direct) Dot.GREY else Dot.RED
         "none" -> "No server" to Dot.GREY
         else -> "Connecting" to Dot.GREY
     }

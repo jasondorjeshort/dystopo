@@ -44,7 +44,8 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   `source`, `applied`; `limits`, `request`, `box`, `lastResponse`, `counts`), `route` (while
  *   navigating: `alongM`, `distanceM`, `onRoute`), `inputs` (counts per input, the clock offset) and `layout` (`placement`
  *   `beside` or `above`, T177 `naturalWidthPx` (the bar's one-row width it is chosen on) and `besideRoomPx`, `boundsPx`, `sizePx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
- *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`).
+ *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`, T192 `plateOpaque`). T192: in a gap of the fixes the
+ *   climb holds the last fix's value (`dimmed`, `frozen`), then a dash with `reason` `no fix` past the climb window.
  * - `POST /readout/reset`: forgets every input (between replays); answers like `GET`.
  * - `POST /readout/stations[?url=<endpoint>]` (T173's test hook): the weather station fetch reads `url` instead of the
  *   registry's (`url=` empty restores it), forgets the stations and fetches at the next refresh; answers the URL.
@@ -56,7 +57,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   `threeHour` and `oneHour` each with `mode` raw or reduced, `seaLevelChangeHPa`, `fallLowerHPa`, `interval` with its
  *   `random`, `sensor`, `height` and `temperature` terms, `datumM`, `netClimbM`, `sigmaTK`, `passes`, `reason`; or
  *   `threeHourMissing` / `oneHourMissing`), `alert` (`active`, `raisedAtMs`, `raisedBand`, `raises`, `clears`), `card`
- *   (`shown`, `title`, `body`, `station`, `boundsPx`, `dismissedAtMs`), `spoken`, `station`, `stationTendency`,
+ *   (`shown`, `title`, `body`, `station`, `boundsPx` (T192: null once the card is gone), `dismissedAtMs`), `spoken`, `station`, `stationTendency`,
  *   `persisted`, `counters`. `barometerSensor` adds `reasons` (`readout`, `trend`), `wakeUp`, `wakeUpAvailable`.
  * - T178 `POST /readout/trend?fixture=<name>` (`still-fall`, `climb-station`, `climb-standard`, `climb-1000-standard`,
  *   `last-hour-fall`, `treeline-step`, `forest-noise`, `recovery`; `shared`'s `PressureFixtures`) or a CSV body
