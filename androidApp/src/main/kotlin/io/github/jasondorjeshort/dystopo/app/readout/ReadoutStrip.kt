@@ -105,6 +105,7 @@ object StripLayout {
             "boundsPx" to b?.map { Math.round(it) },
             "maxWidthPx" to maxWidthPx,
             "naturalWidthPx" to naturalWidthPx, "besideRoomPx" to besideRoomPx, // T177
+            "plateOpaque" to PLATE_OPAQUE, // T192
             "sizePx" to b?.let { listOf(Math.round(it[2] - it[0]), Math.round(it[3] - it[1])) },
             "topDp" to b?.let { Math.round(it[1] / d * 10) / 10.0 },
             "bottomFromWindowBottomDp" to bottomDp?.let { Math.round(it * 10) / 10.0 },
@@ -219,10 +220,14 @@ private fun ValueRow(value: String, unit: String, plusMinus: String?, trend: Str
 private const val REFRESH_MS = 500L
 private const val DIM = 0.45f
 
-// The scale bar's colours (controls/ScaleBar.kt), so the two read as one line.
+/** T192: both plates are drawn at full alpha (`GET /readout` `layout.plateOpaque`). */
+internal val PLATE_OPAQUE: Boolean get() = Plate.alpha == 1f && NightPlate.alpha == 1f
+
+// The scale bar's ink (controls/ScaleBar.kt), so the two read as one line; T192: the plate opaque, as T177 specified,
+// so contours and labels never show through the numbers.
 private val Ink = Color(0xFF2B2420)
 private val Muted = Color(0xFF6B5A4A)
-private val Plate = Color(0xCCF6F1E4)
+private val Plate = Color(0xFFF6F1E4)
 private val NightInk = Color(0xFFEDE6DA)
 private val NightMuted = Color(0xFFBDB3A6)
-private val NightPlate = Color(0xB3201C1A)
+private val NightPlate = Color(0xFF201C1A)

@@ -47,7 +47,8 @@ enum class ValueState(val code: String) {
  * line over a long window) or `positions` (distance over time over at least 30 s, for fixes that carry no speed);
  * course `fix` or `positions`; climb and elevation `barometer` (fused with GNSS and the DEM), `gnss`, `gnss+dem` or
  * `dem`. [dimmed]: in a gap of the fix stream (or, for climb and elevation, with no barometer to carry them through
- * it); [frozen]: the course held from the last movement while standing still.
+ * it); [frozen]: the course held from the last movement while standing still, or (T192) the climb held from the last
+ * fix through a gap of the fixes.
  */
 data class ReadoutValue(
     val entry: ReadoutEntry,
@@ -158,7 +159,9 @@ data class Readout(
  *   ([ReadoutOptions.climbWindowS], 30 s to 10 min, 1 min by default; a dash `filling` until
  *   [ReadoutTuning.CLIMB_MIN_FILL_S] or the window is covered, then the mean over what is held); in the air it is
  *   lagged 5 to 10 s ([ReadoutTuning.climbLagS]). Near zero ([ReadoutTuning.climbGate], its band and the uncertainty
- *   test scaled with the window) it reads 0 while moving ([ValueState.ZERO]) and a dash while standing still.
+ *   test scaled with the window) it reads 0 while moving ([ValueState.ZERO]) and a dash while standing still. In a gap
+ *   of the fixes (T192) it holds the value of the last fix, dimmed and `frozen`, and is a dash (`no fix`) once the
+ *   climb window (the air: the gap rule) has passed since that fix, whatever the barometer reads meanwhile.
  * - **A gap** in the fixes (over 5 s or three intervals) dims the values and [Readout.gapS] counts it.
  *
  * @param dem the terrain height at a point (NaN for none), or null for no DEM.
@@ -203,6 +206,7 @@ class ReadoutEstimator(
     private var windowStart: Triple<Long, Double, Double>? = null
     private var disagreeRun = 0
     private var climbShown = false
+    private var climbAtFix: ReadoutValue? = null // T192: the climb at the last fix, held through a gap
     private var smoothV = 0.0
     private var smoothAt: Long? = null
 
@@ -232,6 +236,7 @@ class ReadoutEstimator(
         fixes.clear()
         moving = false
         lastCourse = null
+        climbAtFix = null
         applyBarometerSwitch(null)
     }
 
@@ -296,6 +301,7 @@ class ReadoutEstimator(
         demAtLastFix = dem?.elevation(fix.lat, fix.lon)?.takeIf { it.isFinite() }
         demUpdate(s, v)
         smooth(fix.time)
+        climbAtFix = climbValue(fix.time, heightDim = false)
     }
 
     /** One barometer sample (hPa). Samples older than the filter's time are applied at its time and counted. */
@@ -374,18 +380,14 @@ class ReadoutEstimator(
             !filter.heightKnown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = "no height yet")
             else -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, filter.heightM, filter.heightSigmaM, heightSource, heightDim)
         }
-        val climbSource = if (fused) "barometer" else "gnss"
         val windowed = climbWindowed
-        val climbV = if (windowed) climbMeanMps else smoothV
-        val climbSigma = if (windowed) climbSigmaMps ?: filter.verticalSigmaMps else filter.verticalSigmaMps
+        val held = climbAtFix
+        // T192: in a gap of the fixes the climb holds what it read at the last fix (dimmed, frozen) and is a dash once
+        // the climb window has passed since that fix; it never decays toward zero on inputs that are not fixes.
         val climb = when {
-            !options.climb.shown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "off")
-            !filter.heightKnown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "no height yet")
-            windowed && climbSpanS < minOf(ReadoutTuning.CLIMB_MIN_FILL_S, options.climbWindowS.toDouble()) ->
-                ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "filling")
-            climbShown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.SHOWN, climbV, climbSigma, climbSource, heightDim)
-            moving -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "near zero")
-            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "still")
+            gap == null || last == null || held == null || !options.climb.shown || held.state == ValueState.HIDDEN -> climbValue(nowMs, heightDim)
+            nowMs - last.t > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = held.source, dimmed = true, reason = "no fix")
+            else -> held.copy(dimmed = true, frozen = true, reason = held.reason ?: "held")
         }
 
         val baroState = when {
@@ -414,6 +416,26 @@ class ReadoutEstimator(
             climbWindowS = if (windowed) options.climbWindowS else null,
             climbFilledS = if (windowed) minOf(climbSpanS, options.climbWindowS.toDouble()) else null)
     }
+
+    /** The climb as the filter and the window give it at [nowMs] (also snapshotted at each fix for a gap, T192). */
+    private fun climbValue(nowMs: Long, heightDim: Boolean): ReadoutValue {
+        val climbSource = if (filter.fused(nowMs)) "barometer" else "gnss"
+        val windowed = climbWindowed
+        val climbV = if (windowed) climbMeanMps else smoothV
+        val climbSigma = if (windowed) climbSigmaMps ?: filter.verticalSigmaMps else filter.verticalSigmaMps
+        return when {
+            !options.climb.shown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "off")
+            !filter.heightKnown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "no height yet")
+            windowed && climbSpanS < minOf(ReadoutTuning.CLIMB_MIN_FILL_S, options.climbWindowS.toDouble()) ->
+                ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "filling")
+            climbShown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.SHOWN, climbV, climbSigma, climbSource, heightDim)
+            moving -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "near zero")
+            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "still")
+        }
+    }
+
+    /** T192: how long after the last fix a held climb stays: the climb window on the ground, the gap rule in the air. */
+    private val climbHoldMs: Long get() = if (climbWindowed) max(options.climbWindowS * 1000L, gapMs) else gapMs
 
     private val gapMs: Long get() = max((ReadoutTuning.GAP_S * 1000).toLong(), 3 * profile.intervalMs)
 
