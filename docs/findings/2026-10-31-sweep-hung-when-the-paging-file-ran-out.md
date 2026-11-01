@@ -1,6 +1,6 @@
 ---
 date: 2026-10-31
-status: open
+status: resolved (T191)
 area: tooling / sweep, android-ui, Windows host memory
 ---
 

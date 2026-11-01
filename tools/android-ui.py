@@ -134,6 +134,10 @@ class Run:
             r.setdefault("ok", True)
         except Exception as e:  # reported, never raised: the report says which step and why
             r = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            if host_out_of_memory(e):  # T191: say so, and take no screenshot (it would need a process too)
+                r.update(error=f"the host could not start a process ({type(e).__name__}: {e}); the paging file is "
+                               "probably full (finding 2026-10-31)", hostOutOfMemory=True)
+                shot = False
         if self.dev is not None and shot and "png" not in r:
             try:
                 r["png"] = self.dev.screencap(name + ("" if r["ok"] else "-failed"))[0]
@@ -152,6 +156,12 @@ class Run:
 
 def fail(msg, **kw):
     return {"ok": False, "error": msg, **kw}
+
+
+def host_out_of_memory(e):
+    """T191: the host ran out of commit (WinError 1455, "the paging file is too small", from process or pipe creation) or
+    Python out of memory. The 2026-10-31 sweep met it in `record` and `alive`: the step fails at once and says so."""
+    return isinstance(e, MemoryError) or (isinstance(e, OSError) and getattr(e, "winerror", None) == 1455)
 
 
 # --- device helpers -------------------------------------------------------------------------------------------
@@ -193,7 +203,7 @@ def cache_dir():
     own = os.path.join(REPO, "cache")
     if os.path.isdir(os.path.join(own, "glyphs")):
         return own
-    p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=REPO, capture_output=True, text=True)
+    p = debug.run_bounded(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], 60, cwd=REPO, text=True)
     main = os.path.dirname(p.stdout.strip()) if p.returncode == 0 and p.stdout.strip() else REPO
     return os.path.join(main, "cache")
 
@@ -394,8 +404,8 @@ def part_strings(args):
     t0 = time.time()
     lines, per = apk_strings(apk)
     java = os.path.join(os.environ["JAVA_HOME"], "bin", "java") if os.environ.get("JAVA_HOME") else "java"
-    p = subprocess.run([java, os.path.join("tools", "PrivacyCheck.java"), "scan"], cwd=REPO, input="\n".join(lines),
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+    p = debug.run_bounded([java, os.path.join("tools", "PrivacyCheck.java"), "scan"], 600, cwd=REPO, input="\n".join(lines),
+                          text=True, encoding="utf-8", errors="replace")
     try:
         scan = json.loads(p.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -1691,10 +1701,16 @@ class Server:
     def kill(self):
         if self.proc and self.proc.poll() is None:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
+                try:  # T191: bounded; the server's own tree by its PID (server.bat, then java)
+                    debug.run_bounded(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], 30)
+                except (OSError, subprocess.SubprocessError):
+                    self.proc.kill()
             else:
                 self.proc.kill()
-            self.proc.wait(30)
+            try:
+                self.proc.wait(30)
+            except subprocess.TimeoutExpired:
+                print(f"[ui] the server (PID {self.proc.pid}) did not exit within 30 s of its kill", file=sys.stderr)
         self.proc = None
 
 
@@ -2090,7 +2106,7 @@ def apk_badging(apk):
     """(versionCode, versionName) through aapt from the newest build-tools."""
     tools = build_tools()
     aapt = os.path.join(tools, "aapt.exe" if os.name == "nt" else "aapt")
-    out = subprocess.run([aapt, "dump", "badging", apk], capture_output=True, text=True, timeout=120).stdout
+    out = debug.run_bounded([aapt, "dump", "badging", apk], 120, text=True).stdout or ""
     m = re.search(r"versionCode='(\d+)' versionName='([^']*)'", out)
     return (int(m.group(1)), m.group(2)) if m else (None, None)
 
@@ -2150,15 +2166,15 @@ def other_key_copy(apk, out_dir):
         os.remove(ks)
     jh = os.environ.get("JAVA_HOME")
     keytool = os.path.join(jh, "bin", "keytool.exe" if os.name == "nt" else "keytool") if jh else ""
-    p = subprocess.run([keytool if os.path.isfile(keytool) else "keytool", "-genkeypair", "-keystore", ks, "-storetype", "PKCS12",
-                        "-storepass", "throwaway", "-keypass", "throwaway", "-alias", "other", "-keyalg", "RSA", "-keysize", "2048",
-                        "-validity", "30", "-dname", "CN=Dystopo update test (not the app key)"], capture_output=True, text=True, timeout=120)
+    p = debug.run_bounded([keytool if os.path.isfile(keytool) else "keytool", "-genkeypair", "-keystore", ks, "-storetype", "PKCS12",
+                           "-storepass", "throwaway", "-keypass", "throwaway", "-alias", "other", "-keyalg", "RSA", "-keysize", "2048",
+                           "-validity", "30", "-dname", "CN=Dystopo update test (not the app key)"], 120, text=True)
     if p.returncode != 0:
         raise RuntimeError(f"keytool: {(p.stderr or p.stdout).strip()[-300:]}")
     dst = os.path.join(out_dir, "other-key-signed.apk")
     signer = os.path.join(build_tools(), "apksigner.bat" if os.name == "nt" else "apksigner")
-    p = subprocess.run([signer, "sign", "--ks", ks, "--ks-pass", "pass:throwaway", "--ks-key-alias", "other",
-                        "--key-pass", "pass:throwaway", "--out", dst, apk], capture_output=True, text=True, timeout=300)
+    p = debug.run_bounded([signer, "sign", "--ks", ks, "--ks-pass", "pass:throwaway", "--ks-key-alias", "other",
+                           "--key-pass", "pass:throwaway", "--out", dst, apk], 300, text=True)
     if p.returncode != 0:
         raise RuntimeError(f"apksigner: {(p.stderr or p.stdout).strip()[-300:]}")
     return dst
@@ -2196,6 +2212,10 @@ class UpdaterLog:
                 self.proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                try:
+                    self.proc.wait(timeout=10)  # T191: bounded after the kill too
+                except subprocess.TimeoutExpired:
+                    pass
         self.file.close()
 
 
