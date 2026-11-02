@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.server
 
 import io.github.jasondorjeshort.dystopo.attribution.PackAttribution
+import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.packs.DerivedFile
 import io.github.jasondorjeshort.dystopo.packs.PackNames
 import io.github.jasondorjeshort.dystopo.packs.PackRole
@@ -42,14 +43,31 @@ import java.util.concurrent.ConcurrentHashMap
  * background at startup; [warmState] says how far it got (`/healthz`).
  *
  * T189 (ADR 0049's B): a pack whose vector archive has a routing graph beside it (`<vector archive>-graph.idx`, written
- * by the pack build's `graph` phase or by the first route there) lists it under `derived` ([DerivedFile]: kind, file,
+ * by this catalog's graph pass ([queueGraphs], T202), the pack build's `graph` phase or a route there) lists it under `derived` ([DerivedFile]: kind, file,
  * `/out/` URL, bytes, `sha256`, the `sidecar`'s name, `format`, `version` and `key` with the tile zoom and both
  * fingerprints) only when the file opens as a version 6 graph at the readers' tile zoom whose fingerprints match the
  * archives beside it ([graph]); a stale or unreadable graph is left out (phones then build their own). The graph is
  * never in `files`, `bytes`, `builtAt` or `contentHash`. Its SHA-256 sidecar follows the archives' rule (stamped with
  * the file's time, so any rewrite of the graph makes it stale and it is recomputed); [warm] and [refresh] hash graphs too.
+ *
+ * T202: with a [planner] (the server's, [RouteRoutes.planner]) and [buildGraphs] on, [warm] (after its hashing) and
+ * [refresh] run a **graph pass** ([queueGraphs]): every pack pair whose graph is missing or stale ([graphProblem]
+ * non-null) gets it built through [RoutePlanner.graph], the lock and file the routes and the build's `graph` phase use
+ * (so a graph is never built twice and a route arriving meanwhile waits for it), one pack at a time, newest pack first,
+ * and hashed into its sidecar; the catalog lists it as soon as the file is in place. A failure (an unreadable archive,
+ * an `OutOfMemoryError` on a server too small for the pack) is recorded per pack and not retried until the next start
+ * or refresh. [graphState] is the pass (`/stats` and [warmState]'s `graphs`). [RoutePlanner.graph] also queues each
+ * opened graph's drive-overlay warm-up (its own low-priority thread), so a start warms every pack's overlay cells too.
  */
-class PackCatalog(private val outDir: File, private val urlPrefix: String = "/out/") {
+class PackCatalog(
+    private val outDir: File,
+    private val urlPrefix: String = "/out/",
+    /** T202: the planner graph passes build through (null: no graph pass; the catalog only lists graphs). */
+    private val planner: (() -> RoutePlanner)? = null,
+) {
+    /** T202: whether [warm] and [refresh] build missing and stale graphs (the server's `buildGraphs`, `serve --live --no-build-graphs`). */
+    @Volatile var buildGraphs: Boolean = true
+
     /** One archive's description, cached by (length, modification time). */
     private class Described(val length: Long, val modified: Long, val json: Map<String, Any?>, val registryIds: List<String>, val profile: String?, val bounds: List<Double>, val tileType: String)
 
@@ -84,7 +102,7 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
         else -> null
     }
 
-    fun packs(): List<Map<String, Any?>> =packFiles().mapNotNull { p -> runCatching { entry(p) }.getOrNull() }
+    fun packs(): List<Map<String, Any?>> = packFiles().mapNotNull { p -> runCatching { entry(p) }.getOrNull() }
 
     /** Pairs first (a DEM plus its vector archive), then every other `.pmtiles` file as a single-file pack. */
     private fun packFiles(): List<PackFiles> {
@@ -244,6 +262,8 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
             } finally {
                 warmEnded = System.currentTimeMillis()
             }
+            // T202: then the graphs (on the pass thread; this thread waits, so a joined warm() has them).
+            runCatching { queueGraphs("start")?.get() }
         }, "catalog-hash").apply { isDaemon = true; start() }
     }
 
@@ -261,12 +281,15 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
         "hashed" to warmDone.get(),
         "hashesComputed" to hashesComputed,
         "ms" to if (warmStarted == 0L) null else (if (warmEnded == 0L) System.currentTimeMillis() else warmEnded) - warmStarted,
+        "graphs" to graphState(packs = false), // T202
     )
 
     /**
      * `POST /catalog/refresh` (T58): forgets the cached headers and rehashes every catalogued file,
      * ignoring the sidecars, so bytes changed in place (same size and time) show up. Returns the
-     * catalog plus `refresh`: files rehashed, those whose hash changed, and the time taken.
+     * catalog plus `refresh`: files rehashed, those whose hash changed, and the time taken. T202: then
+     * queues a graph pass ([queueGraphs]) and answers without waiting for it (`refresh.graphsQueued`;
+     * `/stats` `graphs` follows the pass).
      */
     fun refresh(): Map<String, Any?> {
         val started = System.nanoTime()
@@ -281,7 +304,134 @@ class PackCatalog(private val outDir: File, private val urlPrefix: String = "/ou
             count++
             if (old != null && old != now) changed += f.name
         }
-        return json() + ("refresh" to linkedMapOf("files" to count, "changed" to changed, "ms" to (System.nanoTime() - started) / 1_000_000))
+        val ms = (System.nanoTime() - started) / 1_000_000
+        val queued = queueGraphs("refresh") != null
+        return json() + ("refresh" to linkedMapOf("files" to count, "changed" to changed, "ms" to ms, "graphsQueued" to queued))
+    }
+
+    // ---- T202: the graph pass ----
+
+    /** One pack's line in the latest graph pass: `pack`, `state` (pending, building, built, current, failed), `reason`, timings. */
+    private val graphPacks = ConcurrentHashMap<String, MutableMap<String, Any?>>()
+    @Volatile private var passState = "idle"
+    @Volatile private var passTrigger: String? = null
+    @Volatile private var passStarted = 0L
+    @Volatile private var passEnded = 0L
+    private val totalBuilt = java.util.concurrent.atomic.AtomicInteger()
+    private val totalFailed = java.util.concurrent.atomic.AtomicInteger()
+    private val passQueue = Any()
+    private var queuedPass: java.util.concurrent.CompletableFuture<Unit>? = null
+    private val passThread = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "catalog-graphs").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+    }
+
+    /**
+     * Queues a graph pass ([fillGraphs]) on the pass thread, or returns the one already queued and not yet started (it
+     * will see the newest files). Null when there is no [planner] or [buildGraphs] is off.
+     */
+    fun queueGraphs(trigger: String): java.util.concurrent.Future<Unit>? {
+        if (planner == null || !buildGraphs) return null
+        synchronized(passQueue) {
+            queuedPass?.let { return it }
+            val f = java.util.concurrent.CompletableFuture<Unit>()
+            queuedPass = f
+            passThread.execute {
+                synchronized(passQueue) { if (queuedPass === f) queuedPass = null }
+                try { fillGraphs(trigger) } catch (_: Throwable) { } finally { f.complete(Unit) }
+            }
+            return f
+        }
+    }
+
+    /**
+     * One graph pass, on the caller's thread: every pack pair with a vector archive, newest first, whose graph is
+     * missing or stale is built through the [planner] and hashed; a current one is `current`. Returns [graphState].
+     */
+    fun fillGraphs(trigger: String = "call"): Map<String, Any?> {
+        val p = planner?.invoke() ?: return graphState()
+        val candidates = runCatching { packFiles() }.getOrDefault(emptyList())
+            .filter { !it.single && it.files.any { f -> f.first == PackRole.VECTOR } }
+            .sortedByDescending { pf -> pf.files.maxOf { it.second.lastModified() } }
+        graphChecks.clear()
+        graphPacks.clear()
+        for (c in candidates) graphPacks[c.name] = linkedMapOf("pack" to c.name, "state" to "pending")
+        passStarted = System.currentTimeMillis()
+        passEnded = 0L
+        passTrigger = trigger
+        passState = "running"
+        for (c in candidates) {
+            val vector = c.files.first { it.first == PackRole.VECTOR }.second
+            val dem = c.files.firstOrNull { it.first == PackRole.DEM }?.second
+            val line = graphPacks.getOrPut(c.name) { linkedMapOf("pack" to c.name) }
+            val g = graphFile(vector)
+            val problem = runCatching { graphProblem(vector, dem) }.getOrElse { it.message ?: it.toString() }
+            if (problem == null) {
+                line["state"] = "current"
+                line["file"] = g.name
+                line["bytes"] = g.length()
+                continue
+            }
+            line["reason"] = problem
+            line["state"] = "building"
+            val t0 = System.nanoTime()
+            try {
+                val b = describe(vector, PackRole.VECTOR).bounds
+                val (_, info) = p.graph(RoutePlanner.Pack(c.name, vector, dem, BoundingBox(b[0], b[1], b[2], b[3])))
+                val sha = sha256(g)
+                val listed = graph(vector, dem) != null
+                line["ms"] = (System.nanoTime() - t0) / 1_000_000
+                line["action"] = info["action"]
+                line["buildMs"] = info["buildMs"]
+                line["file"] = g.name
+                line["bytes"] = g.length()
+                line["sha256"] = sha
+                if (listed) {
+                    line["state"] = "built"
+                    totalBuilt.incrementAndGet()
+                } else {
+                    line["state"] = "failed"
+                    line["error"] = "built but not listed: " + graphProblem(vector, dem)
+                    totalFailed.incrementAndGet()
+                }
+            } catch (e: Throwable) {
+                // Never fatal to the server (ADR 0049): the pack stays listed without a graph and phones build their own.
+                line["ms"] = (System.nanoTime() - t0) / 1_000_000
+                line["state"] = "failed"
+                line["error"] = e.message ?: e.toString()
+                totalFailed.incrementAndGet()
+            }
+        }
+        passEnded = System.currentTimeMillis()
+        passState = "done"
+        return graphState()
+    }
+
+    /**
+     * The graph pass for `/stats` (`graphs`) and [warmState]: `enabled`, `state` (off, idle, running, done), `trigger`
+     * (start, refresh), the latest pass's `built`, `failed`, `skipped` (current already), `pending` and `ms`, the totals
+     * since start, and with [packs] each pack's line (`overlay`: its drive-overlay warm-up from the planner, once queued).
+     */
+    fun graphState(packs: Boolean = true): Map<String, Any?> {
+        val enabled = planner != null && buildGraphs
+        val lines = graphPacks.values.map { LinkedHashMap(it) }.sortedBy { it["pack"] as String }
+        fun count(state: String) = lines.count { it["state"] == state }
+        val m = linkedMapOf<String, Any?>(
+            "enabled" to enabled,
+            "state" to if (!enabled && passState == "idle") "off" else passState,
+            "trigger" to passTrigger,
+            "built" to count("built"),
+            "failed" to count("failed"),
+            "skipped" to count("current"),
+            "pending" to count("pending") + count("building"),
+            "ms" to if (passStarted == 0L) null else (if (passEnded == 0L) System.currentTimeMillis() else passEnded) - passStarted,
+            "totalBuilt" to totalBuilt.get(),
+            "totalFailed" to totalFailed.get(),
+        )
+        if (packs) {
+            val pl = if (passStarted != 0L) planner?.invoke() else null
+            m["packs"] = lines.onEach { l -> pl?.overlayWarm(l["pack"] as String)?.let { l["overlay"] = it } }
+        }
+        return m
     }
 
     /** T189: the graph file of [p] when it has one on disk (hashed by [warm] and [refresh] like the archives). */

@@ -4,6 +4,7 @@
   "publicUrl": null,
   "cacheDir": "cache",
   "outDir": "out",
+  "buildGraphs": true,
   "glyphsDir": null,
   "fetchGlyphs": true,
   "glyphsUrl": "https://protomaps.github.io/basemaps-assets/fonts/",

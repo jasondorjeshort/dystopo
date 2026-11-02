@@ -63,9 +63,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   its vector archive; 400 when unknown), else the first pack whose vector archive holds both ends
  *   (then the start). T76: the route runs over that pack and every other pack whose box comes within
  *   [RoutePlanner.NEAR_M] of the points, one tiled network, so it crosses pack borders. Each pack's
- *   graph is built on first use into `<vector archive>-graph.idx` next to it (the phone's and
+ *   graph is built on first use (T202: usually before, by the catalog's graph pass at start and on refresh,
+ *   [PackCatalog.queueGraphs]) into `<vector archive>-graph.idx` next to it (the phone's and
  *   `devtool route`'s file name, z11 graph tiles read on demand into one LRU), reused while both
- *   archives are unchanged. Straight legs take their elevation every 25 m from the DEM (packs first,
+ *   archives and the file are unchanged. Straight legs take their elevation every 25 m from the DEM (packs first,
  *   else the live `best` source). T77: drives whose ends are 40 km or more apart search the tiles away from them
  *   through [DriveOverlay] (`overlay=0` to compare without); the reply's `graph.searches` has each leg's search
  *   (T89: `level2Tiles`, the z8 cells it went through). T89: once a pack's graph is open its overlay cells
@@ -340,19 +341,25 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         return (listOfNotNull(first) + near).distinctBy { it.vector.absolutePath }
     }
 
-    private fun stamp(f: File?): String = if (f == null) "-" else "${f.length()}:${f.lastModified()}"
+    private fun stamp(f: File?): String = if (f == null) "-" else if (!f.isFile) "none" else "${f.length()}:${f.lastModified()}"
 
-    /** The pack's graph file: open in memory, else `<vector archive>-graph.idx` when it matches both archives, else built and written there. */
+    /** T202: what an open graph stays valid for: both archives and the graph file itself (deleted or rewritten: reopened). */
+    private fun keyOf(pack: Pack): String =
+        stamp(pack.vector) + "|" + stamp(pack.dem) + "|" + stamp(File(pack.vector.absoluteFile.parentFile, RoutingGraph.fileNameFor(pack.vector.name)))
+
+    /**
+     * The pack's graph file: open in memory, else `<vector archive>-graph.idx` when it matches both archives, else built
+     * and written there. T202: the catalog's graph pass ([PackCatalog.queueGraphs]) calls this too, under the same lock.
+     */
     fun graph(pack: Pack): Pair<GraphTileArchive, Map<String, Any?>> {
-        val key = stamp(pack.vector) + "|" + stamp(pack.dem)
         val id = pack.vector.absolutePath
-        graphs[id]?.takeIf { it.key == key }?.let { return it.archive to mapOf("action" to "cached", "file" to it.info["file"]) }
+        graphs[id]?.takeIf { it.key == keyOf(pack) }?.let { return it.archive to mapOf("action" to "cached", "file" to it.info["file"]) }
         synchronized(locks.computeIfAbsent(id) { Any() }) {
-            graphs[id]?.takeIf { it.key == key }?.let { return it.archive to mapOf("action" to "cached", "file" to it.info["file"]) }
+            graphs[id]?.takeIf { it.key == keyOf(pack) }?.let { return it.archive to mapOf("action" to "cached", "file" to it.info["file"]) }
             building += pack.name
             try {
                 val (a, info) = openOrBuild(pack)
-                graphs.put(id, Loaded(a, key, info))?.let { old ->
+                graphs.put(id, Loaded(a, keyOf(pack), info))?.let { old ->
                     tileCache.forget(old.archive)
                     driveOverlay.unregister(old.archive.source)
                     // T107: the old open's warm-up entry goes with it, so warm() below runs for this one. A pack whose
@@ -612,6 +619,9 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             ),
         )
     }
+
+    /** T202: the drive-overlay warm-up of [packName]'s open graph (`queued`, `loaded`, `done`, `failed` with timings), or null. */
+    fun overlayWarm(packName: String): Map<String, Any?>? = warm.values.lastOrNull { it["pack"] == packName }
 
     fun status(): Map<String, Any?> = linkedMapOf(
         "outDir" to outDir.path, "requests" to requests.mapValues { it.value.get() }.toSortedMap(), "errors" to errors.get(),

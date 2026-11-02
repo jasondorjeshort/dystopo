@@ -97,9 +97,11 @@ import kotlin.math.floor
  * pair; the 202 answer is the first job, and both carry `antimeridian` with the other's id.
  *
  * T189 (ADR 0049's B), the `graph` phase: after `publish`, a pack with a vector archive gets its routing graph built
- * by the server's own route planner ([RouteRoutes.planner]: today's one-pass builder and encoder, the same file a first
- * route writes), `out/<name>-outdoors-graph.idx` with its `.sha256` sidecar, so the catalog lists it under `derived`
- * ([PackCatalog.graph]) and phones download it with the pack instead of building it. The job's `graph` says how it went
+ * by the server's own route planner ([RouteRoutes.planner]: today's one-pass builder and encoder, the same file a
+ * route and the catalog's graph pass write), `out/<name>-outdoors-graph.idx` with its `.sha256` sidecar, so the catalog lists it under `derived`
+ * ([PackCatalog.graph]) and phones download it with the pack instead of building it. Packs that reach `out/` any other
+ * way (copied from `tilebuild` or `devtool tiles`) get theirs from the catalog's graph pass at start and on
+ * `POST /catalog/refresh` (T202, [PackCatalog.queueGraphs]). The job's `graph` says how it went
  * (`state` `done`, `failed` or `skipped`, the file, bytes, SHA-256, nodes, tiles, `buildMs`, `error`). The phase never
  * fails the pack: the archives are published before it starts, and a failure (an `OutOfMemoryError` on a server too
  * small for the box included) is a note on the job while the catalog lists no graph. The job stays `running` with phase
@@ -826,7 +828,7 @@ class BuildRoutes(
                 }
             }
             val vector = PackNames.fileName(name, PackRole.VECTOR)
-            // T189: the graph the build's `graph` phase wrote, when it matches the archives; else the phone builds it.
+            // T189: the graph the build's `graph` phase (or T202's catalog pass) wrote, when it matches the archives; else the phone builds it.
             val shipped = if (status == AreaManifest.STATUS_READY) File(outDir, vector).takeIf { it.isFile }?.let { v ->
                 runCatching { live.catalog.graph(v, File(outDir, PackNames.fileName(name, PackRole.DEM)).takeIf { it.isFile }) }.getOrNull()
             } else null

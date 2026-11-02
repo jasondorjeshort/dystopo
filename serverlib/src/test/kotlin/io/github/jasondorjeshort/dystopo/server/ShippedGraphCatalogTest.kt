@@ -63,12 +63,13 @@ class ShippedGraphCatalogTest {
         return File(dir, "t-outdoors.pmtiles").also { write(it, TileType.MVT, mapOf(Triple(z, tx, ty) to VectorTile(listOf(Layer("transportation", lines))).encode()), z) }
     }
 
-    /** A plane rising 1 m per pixel eastwards from 1600 m (as RouteRoutesTest). */
-    private fun dem(): File = File(dir, "t-dem.pmtiles").also { f ->
+    /** A plane rising 1 m per pixel eastwards from 1600 m (as RouteRoutesTest). T202: [small], the z14 tile alone (another fingerprint). */
+    private fun dem(small: Boolean = false): File = File(dir, "t-dem.pmtiles").also { f ->
         val img = java.awt.image.BufferedImage(256, 256, java.awt.image.BufferedImage.TYPE_INT_RGB)
         for (j in 0 until 256) for (i in 0 until 256) img.setRGB(i, j, io.github.jasondorjeshort.dystopo.dem.Terrarium.encode(1600f + i))
         val png = java.io.ByteArrayOutputStream().also { javax.imageio.ImageIO.write(img, "png", it) }.toByteArray()
-        write(f, TileType.PNG, mapOf(Triple(z, tx, ty) to png, Triple(z - 1, tx / 2, ty / 2) to png), z - 1)
+        if (small) write(f, TileType.PNG, mapOf(Triple(z, tx, ty) to png), z)
+        else write(f, TileType.PNG, mapOf(Triple(z, tx, ty) to png, Triple(z - 1, tx / 2, ty / 2) to png), z - 1)
     }
 
     /** The graph built without the DEM (a planner given no DEM file). */
@@ -141,5 +142,77 @@ class ShippedGraphCatalogTest {
         File(dir, "t-outdoors-graph.idx").writeBytes(byteArrayOf(0x44, 0x59, 0x53, 0x47, 7, 0, 0, 0, 4))
         assertNull(entry(catalog)["derived"])
         assertFalse(catalog.graphProblem(File(dir, "t-outdoors.pmtiles"), File(dir, "t-dem.pmtiles")) == null)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun line(state: Map<String, Any?>) = (state["packs"] as List<Map<String, Any?>>).single { it["pack"] == "t" }
+
+    /** T202: the warm thread builds a missing graph through the planner, the catalog lists it, and a refresh rebuilds a deleted one. */
+    @Test
+    fun warmBuildsAMissingGraphAndRefreshRebuildsADeletedOne() {
+        dem()
+        vector()
+        val planner = RoutePlanner(dir, ElevationSampler { _, _ -> 1700.0 })
+        val catalog = PackCatalog(dir, planner = { planner })
+        val g = File(dir, "t-outdoors-graph.idx")
+        assertFalse(g.isFile)
+        catalog.warm().join()
+        assertTrue(g.isFile, "warm() built the graph beside the pack")
+        assertTrue(PackCatalog.sidecar(g).readText().startsWith(PackCatalog.hashFile(g)), "and its sidecar")
+        assertNotNull(entry(catalog)["derived"], "listed with no route requested")
+        val state = catalog.graphState()
+        assertEquals(1, state["built"]); assertEquals(0, state["failed"]); assertEquals(0, state["pending"])
+        assertEquals("start", state["trigger"])
+        assertEquals("built", line(state)["state"]); assertEquals("missing", line(state)["reason"])
+        assertEquals(1, (catalog.warmState()["graphs"] as Map<*, *>)["built"])
+        // A second pass finds it current and builds nothing.
+        val mtime = g.lastModified()
+        val again = catalog.fillGraphs("again")
+        assertEquals(0, again["built"]); assertEquals(1, again["skipped"]); assertEquals(mtime, g.lastModified())
+        // Deleted while the planner holds it open: a refresh rebuilds the file (the planner does not answer from memory).
+        g.delete(); PackCatalog.sidecar(g).delete()
+        assertEquals(true, (catalog.refresh()["refresh"] as Map<*, *>)["graphsQueued"])
+        catalog.queueGraphs("wait")!!.get()
+        assertTrue(g.isFile, "rebuilt after the refresh")
+        assertNotNull(entry(catalog)["derived"])
+        assertEquals(2, catalog.graphState()["totalBuilt"])
+    }
+
+    /** T202: a graph built against another DEM is stale; the pass rebuilds it and the old bytes are gone. */
+    @Test
+    fun aStaleGraphIsRebuiltByThePass() {
+        dem(small = true)
+        vector()
+        val planner = RoutePlanner(dir, ElevationSampler { _, _ -> 1700.0 })
+        val catalog = PackCatalog(dir, planner = { planner })
+        catalog.fillGraphs("start")
+        val g = File(dir, "t-outdoors-graph.idx")
+        val oldHash = PackCatalog.hashFile(g)
+        // The DEM swapped for the full one: the elevation fingerprint no longer matches.
+        Thread.sleep(20)
+        dem().setLastModified(System.currentTimeMillis() + 2000)
+        assertNull(entry(catalog)["derived"])
+        assertTrue(catalog.graphProblem(File(dir, "t-outdoors.pmtiles"), File(dir, "t-dem.pmtiles"))!!.startsWith("elevation fingerprint mismatch"))
+        val state = catalog.fillGraphs("refresh")
+        assertEquals(1, state["built"])
+        assertTrue(line(state)["reason"].toString().startsWith("elevation fingerprint mismatch"))
+        assertFalse(oldHash == PackCatalog.hashFile(g), "the old bytes are gone")
+        @Suppress("UNCHECKED_CAST")
+        val d = (entry(catalog)["derived"] as List<Map<String, Any?>>).single()
+        assertEquals(PackCatalog.hashFile(g), d["sha256"])
+    }
+
+    /** T202: with buildGraphs off nothing is built and the catalog lists no graph. */
+    @Test
+    fun buildGraphsOffBuildsNothing() {
+        dem()
+        vector()
+        val catalog = PackCatalog(dir, planner = { RoutePlanner(dir) }).apply { buildGraphs = false }
+        catalog.warm().join()
+        assertNull(catalog.queueGraphs("refresh"))
+        assertEquals(false, (catalog.refresh()["refresh"] as Map<*, *>)["graphsQueued"])
+        assertFalse(File(dir, "t-outdoors-graph.idx").isFile)
+        assertNull(entry(catalog)["derived"])
+        assertEquals("off", catalog.graphState()["state"])
     }
 }

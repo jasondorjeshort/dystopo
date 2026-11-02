@@ -199,6 +199,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
                 )
             },
         )
+        live.catalog.buildGraphs = config.buildGraphs // T202: before the first request, so a refresh obeys it too
         val token = config.effectiveToken()
         metrics = if (config.metrics.enabled) Metrics(cacheDir, outDir, config.metrics.diskScanMinutes) else null
         val gate = Gate(users, config.corsOrigins, log, config.logRequests, metrics, config.relay.maxBlobBytes.toLong(), config.http.maxRequestSeconds * 1000L)
@@ -236,7 +237,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
 
         val stale = live.pruneStaleDemCaches()
         live.pruneNorwayTiles() // T92: Norway tiles from before the T66 zero-cell rule, once per cache
-        live.catalog.warm()
+        live.catalog.warm() // T202: after the hashes, the graph pass (buildGraphs)
         if (config.fetchGlyphs) Thread({ fetchGlyphs() }, "glyph-fetch").apply { isDaemon = true }.start()
         log.info(
             "started",
@@ -249,6 +250,7 @@ class Server(private val config: ServerConfig, private val configFile: File?, pr
                 "token" to (token != null), "corsOrigins" to config.corsOrigins,
                 "users" to users.all().size, "adminToken" to (users.adminToken != null),
                 "tilebuild" to (tilebuild.unavailable() == null),
+                "buildGraphs" to config.buildGraphs, // T202
                 "staleCachesDeleting" to stale.map { it.name },
             ),
         )
