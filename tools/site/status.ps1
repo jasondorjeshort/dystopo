@@ -6,7 +6,7 @@
   Reads <Root>\site.env (written by tools\site\install.ps1) and checks:
     - both scheduled tasks ("Dystopo site server<Name>", "Dystopo site proxy<Name>"): state, last result,
       logon type;
-    - /healthz on 127.0.0.1 (status, time, uptime, packs) and through Caddy on 127.0.0.1:443 with the
+    - /healthz on 127.0.0.1 (status, time, uptime, packs) and through Caddy on 127.0.0.1:<the HTTPS port of site.env> with the
       site's host name (the router and the dynamic-DNS name are not in the path);
     - /metrics through Caddy must be 403;
     - Caddy's certificate as served: issuer kind, hours or days left, whether Windows trusts it;
@@ -36,6 +36,8 @@ if (-not (Test-Path -LiteralPath $envFile)) { Line 'install' 'no site.env: not i
 $siteEnv = @{}
 foreach ($l in Get-Content -LiteralPath $envFile) { if ($l -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { $siteEnv[$matches[1]] = $matches[2] } }
 $port = [int]$siteEnv['DYSTOPO_SITE_PORT']
+$httpsPort = if ($siteEnv['DYSTOPO_SITE_HTTPS_PORT']) { [int]$siteEnv['DYSTOPO_SITE_HTTPS_PORT'] } else { 443 }
+$hostPort = if ($httpsPort -eq 443) { '' } else { ":$httpsPort" }
 $siteHost = $siteEnv['DYSTOPO_SITE_HOST']
 $tmp = Join-Path $env:TEMP ("dystopo-site-status-{0}.json" -f $PID)
 
@@ -79,21 +81,21 @@ if ($h.code -eq 200 -and $h.body) {
 }
 
 # --- the proxy -----------------------------------------------------------------------------------------
-# Straight to 127.0.0.1:443 with the site's name, so the check does not depend on the router or the DNS.
-$curlTls = @('--resolve', "${siteHost}:443:127.0.0.1")
+# Straight to 127.0.0.1 on the HTTPS port with the site's name, so the check does not depend on the router or the DNS.
+$curlTls = @('--resolve', "${siteHost}:${httpsPort}:127.0.0.1")
 $rootCrt = Join-Path $Root 'caddy\data\caddy\pki\authorities\local\root.crt'
 if ($siteHost -eq 'localhost' -and (Test-Path -LiteralPath $rootCrt)) { $curlTls += @('--cacert', $rootCrt) }
-$p = Get-Url "https://${siteHost}/healthz" $curlTls
+$p = Get-Url "https://${siteHost}${hostPort}/healthz" $curlTls
 if ($p.code -eq 200) { Line 'proxy' ("healthz 200 in {0} ms, certificate verified" -f $p.ms) $true }
 else { Line 'proxy' ("healthz {0} (0: no answer, or the certificate did not verify)" -f $p.code) $false }
-$m = Get-Url "https://${siteHost}/metrics" $curlTls
+$m = Get-Url "https://${siteHost}${hostPort}/metrics" $curlTls
 Line 'proxy metrics' ("{0} (403 expected: not public)" -f $m.code) ($m.code -eq 403)
 
 # --- the certificate Caddy serves ----------------------------------------------------------------------
 try {
     $tcp = New-Object Net.Sockets.TcpClient
     $tcp.ReceiveTimeout = 10000
-    $tcp.Connect('127.0.0.1', 443)
+    $tcp.Connect('127.0.0.1', $httpsPort)
     $script:tlsErrors = $null
     $cb = [Net.Security.RemoteCertificateValidationCallback] { param($s, $c, $ch, $e) $script:tlsErrors = $e; $true }
     $ssl = New-Object Net.Security.SslStream($tcp.GetStream(), $false, $cb)
@@ -113,7 +115,7 @@ try {
         Line 'certificate' ("{0}, {1}, trusted {2}" -f $issuer, $leftText, $(if ($trusted) { 'yes' } else { 'no' })) ($trusted -and $left.TotalDays -gt 10)
     }
 } catch {
-    Line 'certificate' ("no TLS answer on 443 ({0})" -f $_.Exception.GetType().Name) $false
+    Line 'certificate' ("no TLS answer on {0} ({1})" -f $httpsPort, $_.Exception.GetType().Name) $false
 }
 
 # --- counts --------------------------------------------------------------------------------------------

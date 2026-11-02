@@ -76,6 +76,8 @@ or copied, or generated into the worktree's own `out/` (never a junction; `CLAUD
 
 ## Ports
 
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\ports.ps1 [-Port <n>] [-Json]` names every listening TCP port with its PID, image (`~` for the profile folder), session and, for java, the main class or jar, and prints a "cannot read" row for a process the shell cannot see into; in the agents' sandbox the listener table omits listeners and owners, so there `-SelfTest` (a port bound in the script's own process, its row shown) is the proof and an elevated run on the PC is the real answer (T205; `sweep.ps1` already binds the wildcard address to test a port, T191).
+
 | Port | Owner | Never |
 |---|---|---|
 | 8686 | the phone's loopback tile server (device side; host side when forwarded) | used by a host server |
