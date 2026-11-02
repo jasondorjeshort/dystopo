@@ -1,7 +1,7 @@
 # 0053. One definition of the controls and settings, read by the web page, the phone and a later iOS app
 
 Date: 2026-11-02
-Status: draft
+Status: under review
 
 ## Question
 
@@ -41,6 +41,12 @@ definition, keep each platform's own layout and idioms, and make drift a failed 
 - The web page is also the public site (ADR 0052): a visitor sees the map and its layers; operator tools stay hidden.
 - Maintenance is the cost the owner named: every added option today touches up to six places on the phone (key,
   route parse, sync, row, page, help) and, when it is a map option, the page by hand.
+- What the inventory found: the web page has 62 controls, the phone 245 (57 on the settings sheet, 188 on the map, its
+  cards, menus, sheets and screens), and 25 items exist on both. Most of the phone's 188 are actions inside a flow
+  (a route card's Go, a pack row's Delete), which the idea leaves to each platform. Settings also live outside the
+  sheet: the trip corridor width (synced) only on the Offline areas screen, the cache budgets on the Storage screen,
+  the sync server and its token on the Sync status sheet (so the phone has two address fields for what is usually one
+  server, Sources for tiles and the sheet for sync), and the map's orientation on the lower right buttons.
 
 ## Prior art
 
@@ -57,7 +63,8 @@ summaries, and only OsmAnd's and Garmin's settings lists were established in ful
 - **Web against phone.** CalTopo and Gaia GPS keep the same names on web and phone ("Layers", "Settings") and the same
   split (layers on the map, units in preferences) with different chrome: side panels on the web, a top icon bar on the
   phone. That is the owner's "same categories and places, not a mirror". Garmin's and Komoot's web versions differ in
-  content (layers or units that exist on one side only), which users report as defects.
+  content: Garmin's web contours stay in feet when the units change (forum reports), and Komoot keeps two base maps
+  on its website only.
 - **Outliers.** Locus Map and OsmAnd let the user choose which buttons show; OsmAnd splits global from per-profile
   settings. No public source says any surveyed app shares one settings definition between web and phone; the
   cross-client definition has no direct precedent among them.
@@ -106,7 +113,7 @@ behaviour half; an OpenAPI document can `$ref` its map-option properties later. 
 value does, so every fact lives twice (file and code) with a test between them; the schema subset we interpret is ours
 (dependency.md: a reimplemented format answers the checklist), and a general JSON Schema validator in commonMain does
 not exist.
-Cost: medium: the file (about 150 items), a parser and validator for the subset in commonMain, the mapping tests,
+Cost: medium: the file (about 110 placed items and the per-activity keys), a parser and validator for the subset in commonMain, the mapping tests,
 the route. Risks: the subset grows into a schema engine; per-activity keys (`trackProfile.<activity>`,
 `readout.<activity>.<entry>`) need pattern properties.
 Exit cost: medium: the file is data, the mapping tests and the route go; nothing migrates (no stored data changes).
@@ -144,11 +151,18 @@ interactive element (`input`, `select`, `button`, `summary`, `addControl` calls,
 attribute in the scripts) and fails on one the manifest does not place for the web, or a web item the page lacks;
 (3) phone on-map controls: each control passes its manifest id to a small helper (`Modifier.control("<id>")`, also a
 semantics test tag for the device tour), and a source-reading test like `HelpRegistryTest` checks both ways.
+What it places: every stored option wherever its screen is (the settings sheet, the Storage and Offline areas screens,
+the Sync status sheet, the web panel), the controls that stay on the map (top row, chip column, search, lower right,
+lower left; the web's panel sections, Trips box and map corners), the entry points to screens and the long-press
+menu's entries. It does not place the actions inside a flow (a card's Go, GPX or Delete, a list row's buttons, a
+screen's own fields): the idea leaves flows to each platform, and those are most of the phone's 188 on-map rows.
+From the inventory that is about 110 items once an item both clients have counts once.
 Meets: the owner's check; each client keeps its layout and idioms; the categories are data the owner's table fills.
 Limits: part (3) catches a control that names an id the manifest lacks, not a new button that names none; only a
 runtime pass (the device tour reading the semantics tree for clickable nodes without a tag, and `demo-check.py` reading
 the live DOM) closes that, and it runs in the sweep, not in `check`.
-Cost: medium: the manifest (about 150 items from the inventory), three tests, the helper on every on-map control.
+Cost: medium: the manifest (about 110 items), three tests, the helper on the phone's 30 or so persistent on-map
+controls and entry points.
 Exit cost: low: delete the manifest's placement keys and three tests; the screens are unchanged.
 Moving parts: the manifest data, three tests, a Compose modifier, a `data-control` convention on the page.
 
@@ -208,6 +222,10 @@ for the owner (decision points below).
 - **D3.** The web panel's sections under the same category names as the phone's settings.
 - **D4.** One short label per item for both clients (S3), and whose wording wins where they differ today.
 - **D5.** Optional on-map buttons (zoom, position) as a setting, as the survey suggests (ADR 0044: apps split).
+- **D6.** Settings the phone keeps outside the sheet (the trip corridor width, the cache budgets, the sync server and
+  its token): placed in the sheet's categories as rows or links, or left on their screens with the manifest naming
+  them there. The inventory also shows two address fields on the phone (Sources, and the sync peer) for what is
+  usually one server; whether they become one is a flow change for the owner, outside the format question.
 
 ## What would change this recommendation
 
