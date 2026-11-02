@@ -12,8 +12,10 @@ wave; Later carries waves 24 to 26's follow-ups; the record `docs/tasks/wave-26.
   emulator; no phone was connected). Nothing is running: no worktree, no task branch, no emulator of ours
   (`adb devices` empty; one stray `emulator.exe` with no device was seen and left). The live viewer on 8765 is up
   (PID in `out/coordinator-pids.txt`). Meter at the close: 32 on the 7-day.
-- **The RAM rule worked** (the owner's one request for wave 26; the wave paragraph in the record): keep it for
-  waves on this PC. The sweep script has `-NoDaemon` but no Gradle-arguments switch (a small follow-up).
+- **The RAM rule worked**, and the owner clarified it (2026-11-02): "We can use ram, we just can't be using lots
+  of ram on multiple processes at once." So the next wave bounds the count of heavy processes (emulators at the
+  cap, one compile per agent, few verifiers, servers from `installDist`, no idle daemons), not any one
+  process's heap: the 3 GB compiler and 2 GB server caps of wave 26 were the coordinator's inference.
 - **The site is built but not installed.** The owner's six steps are on the board (Owner actions pending › The
   home site). The host name is a private term: never in a tracked file.
 
