@@ -746,11 +746,9 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         // T203: the terrain estimate.
         HelpText("settings.estimatePosition", "Estimated position", at(SettingsGroup.NAVIGATION, "Estimate position when GPS is poor"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "When the GPS has been poor or lost for a minute on foot, the phone estimates where you are from the barometer, " +
-                "the trails on your offline maps and your pace before the signal went. The position shows as a hollow dot with a " +
-                "dashed ring as wide as the estimate is uncertain, and points recorded from it are marked and left out of the " +
-                "distance until the GPS is back. It needs a barometer and a recent good GPS fix, and works on mapped trails only. " +
-                "Once the estimate is wider than " + (if (units == ContourUnits.FEET) "1,000 ft" else "300 m") +
-                " it stops: a grey dot stays where you were last known."
+                "your offline trails and your recent pace, shown as a hollow dot with a dashed ring. It needs a barometer and a " +
+                "recent good GPS fix. Past " + (if (units == ContourUnits.FEET) "1,000 ft" else "300 m") +
+                " of doubt it stops, and a grey dot stays where you were last known."
         },
         // end T203
     )

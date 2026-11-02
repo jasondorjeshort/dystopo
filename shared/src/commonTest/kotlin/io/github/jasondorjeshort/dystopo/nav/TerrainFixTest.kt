@@ -231,6 +231,20 @@ class TerrainFixTest {
     }
 
     @Test
+    fun aClockThatGoesBackStartsAfresh() {
+        val truth = walk1s()
+        val l = live()
+        // The device's own fixes, a day later than the replay's file times.
+        l.onPressure(86_400_000L, 1000.0)
+        l.onFix(86_400_000L, truth[0].lat, truth[0].lon, 5.0, 50.0)
+        feed(l, truth, 0, 400, { 5.0 })
+        assertEquals(1L, l.rewinds)
+        assertEquals(400L, l.goodFixes)
+        feed(l, truth, 400, 470, { null })
+        assertEquals(TerrainState.ESTIMATING, l.state)
+    }
+
+    @Test
     fun theLiveReplayHoldsTheClimb() {
         val truth = walk1s()
         val length = truth.last().alongM

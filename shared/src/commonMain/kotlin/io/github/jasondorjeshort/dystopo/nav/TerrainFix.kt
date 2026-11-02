@@ -795,6 +795,7 @@ class TerrainLive(
      * estimates made (none for a good fix: it ends the estimate).
      */
     fun onFix(t: Long, lat: Double, lon: Double, accuracyM: Double?, boundM: Double): List<TerrainLiveEstimate> {
+        rewound(t)
         if (t <= lastFixT) return emptyList() // the same fix through two paths, or out of order
         lastFixT = t
         fixes++
@@ -819,6 +820,7 @@ class TerrainLive(
     /** A barometric altitude [baroM] (m, any datum: only its changes count) at [t]. */
     fun onPressure(t: Long, baroM: Double): List<TerrainLiveEstimate> {
         if (baroM.isNaN()) return emptyList()
+        rewound(t)
         pressureSamples++
         insert(pressure, S(t, baroM))
         return advance(t)
@@ -830,6 +832,20 @@ class TerrainLive(
         headingSamples++
         insert(headings, S(t, deg))
     }
+
+    /**
+     * A time more than [REWIND_MS] behind the clock is a new clock (a replay's file times after the device's, the phone's
+     * clock set back): everything held is forgotten, as the readout starts afresh on a clock that goes back. Counted.
+     */
+    private fun rewound(t: Long) {
+        if (now == Long.MIN_VALUE || t >= now - REWIND_MS) return
+        val r = rewinds + 1
+        reset()
+        rewinds = r
+    }
+
+    var rewinds = 0L
+        private set
 
     /** The clock moved to [t] without a sample. */
     fun tick(t: Long): List<TerrainLiveEstimate> = advance(t)
@@ -1012,11 +1028,14 @@ class TerrainLive(
         "lastGoodAtMs" to lastGoodAt, "lastPoorAtMs" to lastPoorAt, "clockMs" to now.takeIf { it != Long.MIN_VALUE },
         "counts" to linkedMapOf(
             "fixes" to fixes, "good" to goodFixes, "poor" to poorFixes, "pressure" to pressureSamples, "heading" to headingSamples,
-            "starts" to starts, "steps" to steps, "headingSteps" to headingSteps, "giveUps" to giveUps, "reseeds" to reseeds, "noFix" to noFix,
+            "starts" to starts, "steps" to steps, "headingSteps" to headingSteps, "giveUps" to giveUps, "reseeds" to reseeds, "noFix" to noFix, "rewinds" to rewinds,
         ),
     )
 
     companion object {
+        /** A sample this far behind the clock starts it afresh ([rewound]). */
+        const val REWIND_MS = 120_000L
+
         /** Circular mean and spread (degrees; the spread is the circular standard deviation) of bearings. */
         fun circular(degs: List<Double>): Pair<Double, Double> {
             if (degs.isEmpty()) return Double.NaN to Double.POSITIVE_INFINITY
