@@ -56,6 +56,9 @@ object StripLayout {
     @Volatile var hiddenBecause: String? = "notComposed"
         private set
 
+    /** T204: why the bar is not drawn when even the elevation alone does not fit below the pressure warning's card. */
+    const val NO_ROOM_BELOW_WARNING_CARD = "noRoomBelowWarningCard"
+
     /** T177: why the bar is not drawn when its switch is off. */
     const val OFF = "off"
 
@@ -84,12 +87,6 @@ object StripLayout {
     @Volatile var drawnItems = 0
     @Volatile var droppedItems: List<String> = emptyList()
 
-    /** T204: the bar's top edge (window pixels) as Compose state, so the pressure warning's card keeps above it; null while hidden. */
-    var topPx by mutableStateOf<Float?>(null)
-        private set
-
-    internal fun setTop(px: Float?) { if (topPx != px) topPx = px }
-
     fun placed(where: String, maxWidth: Int, naturalWidth: Int = 0, besideRoom: Int = 0) {
         shown = true
         hiddenBecause = null
@@ -111,7 +108,6 @@ object StripLayout {
         hiddenBecause = reason
         placement = null
         boundsPx = null
-        setTop(null) // T204
     }
 
     private fun overlaps(a: FloatArray?, b: FloatArray?): Boolean? {
@@ -219,7 +215,6 @@ fun ReadoutStrip(night: Boolean) {
                 StripLayout.boundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom)
                 StripLayout.windowHeightPx = r.size.height.toFloat()
                 StripLayout.density = density.density
-                StripLayout.setTop(b.top) // T204
             }
             .background(plate, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 3.dp)
@@ -319,11 +314,13 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
     override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int): Int =
         measurables.sumOf { it.maxIntrinsicWidth(height) } + itemGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)
 
+    /** The narrowest the bar draws: the first entry (the elevation) alone, on its row; the scale bar's layout reads it. */
     override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int): Int =
-        measurables.firstOrNull()?.minIntrinsicWidth(height) ?: 0
+        measurables.firstOrNull()?.maxIntrinsicWidth(height) ?: 0
 
+    /** The lowest the bar draws: the first entry alone. */
     override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int =
-        measurables.firstOrNull()?.minIntrinsicHeight(width) ?: 0
+        measurables.firstOrNull()?.maxIntrinsicHeight(width) ?: 0
 
     override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int =
         measurables.sumOf { it.maxIntrinsicHeight(width) } + rowGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)

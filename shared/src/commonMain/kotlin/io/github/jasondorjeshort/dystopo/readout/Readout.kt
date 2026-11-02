@@ -413,7 +413,8 @@ class ReadoutEstimator(
         windowStart = null
         disagreeRun = 0
         climbShown = false
-        climbAtFix = null
+        // T192's gap rule still holds: in a gap the climb is a dash held from here, not the new offset's live value.
+        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = it.source, reason = "filling") } ?: climbAtFix
         clearClimbWindow()
     }
 
