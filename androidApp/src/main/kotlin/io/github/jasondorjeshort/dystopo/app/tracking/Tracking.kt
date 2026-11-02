@@ -237,8 +237,8 @@ class Tracking private constructor(private val app: DystopoApp) {
 
     /** Called with every GPS fix while the service runs. */
     fun onGpsFix(fix: LocationFix) {
-        TerrainSource.onFix(fix) // T203
         post { onFix(fix, fromGps = true) }
+        TerrainSource.onFix(fix) // T203: after the recorder's post, so an estimate stamped after this fix is recorded after it
     }
 
     /** T203: the terrain source's estimates kept by the recorder (see the class comment); counted in [terrainRecorded]. */

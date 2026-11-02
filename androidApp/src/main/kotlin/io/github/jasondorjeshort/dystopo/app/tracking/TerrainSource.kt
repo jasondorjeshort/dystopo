@@ -156,7 +156,7 @@ object TerrainSource : LocationSource {
                     lastInjected = fix
                     debugHeading?.let { if (debugCompass) live.onHeading(fix.time, it) }
                 }
-                after(live.onFix(fix.time, fix.lat, fix.lon, fix.accuracyM, boundM()))
+                after(live.onFix(fix.time, fix.lat, fix.lon, fix.accuracyM, boundM()), fixAt = fix.time)
             }
         }
     }
@@ -255,7 +255,26 @@ object TerrainSource : LocationSource {
 
     // ---- outputs (worker thread) ----
 
-    private fun after(made: List<TerrainLiveEstimate>) {
+    /**
+     * The estimate the recorder has not had yet. The recorder keeps a fix only when it is newer than the last one, and the
+     * poor fixes still coming in a cut are recorded too (T158: never dropped): an estimate goes to it right after the next
+     * fix, stamped a millisecond after it (that fix reached the recorder's thread first: the source hears every fix after
+     * the recorder), or with its own time once no fix has come for [SILENT_MS] (the GPS silent).
+     */
+    private var pending: TerrainLiveEstimate? = null
+    private var lastFixAt = Long.MIN_VALUE
+    private const val SILENT_MS = 2_000L
+
+    private fun record(timeMs: Long) {
+        val e = pending ?: return
+        pending = null
+        val fix = LocationFix(e.lat, e.lon, null, timeMs, e.spreadM, SOURCE)
+        emitted++
+        listeners.forEach { runCatching { it(fix) } }
+    }
+
+    private fun after(made: List<TerrainLiveEstimate>, fixAt: Long? = null) {
+        if (fixAt != null) lastFixAt = fixAt
         val st = live.state
         askCompass(st == TerrainState.WAITING || st == TerrainState.ESTIMATING)
         if (st == TerrainState.WAITING && stateBefore != TerrainState.WAITING) prepareGraph()
@@ -272,9 +291,7 @@ object TerrainSource : LocationSource {
         }
         val e = made.lastOrNull()
         if (e != null && st == TerrainState.ESTIMATING) {
-            val fix = LocationFix(e.lat, e.lon, null, e.timeMs, e.spreadM, SOURCE)
-            emitted++
-            listeners.forEach { runCatching { it(fix) } }
+            pending = e
             publish(st, e.spreadM)
             if (Foreground.started) runCatching { DystopoApp.instance.map.showEstimate(e.lat, e.lon, e.spreadM, e.timeMs) }
         } else if (st != stateBefore) {
@@ -287,12 +304,20 @@ object TerrainSource : LocationSource {
                 else -> {}
             }
         }
+        if (st != TerrainState.ESTIMATING) pending = null
+        if (pending != null) {
+            if (fixAt != null) record(maxOf(pending!!.timeMs, fixAt + 1))
+            else if (pending!!.timeMs - lastFixAt >= SILENT_MS) record(pending!!.timeMs)
+        }
         if (st != stateBefore) Log.i(TAG, "${stateBefore.code} -> ${st.code}" + (live.reason?.let { " ($it)" } ?: ""))
         stateBefore = st
     }
 
     private fun publish(st: TerrainState, spreadM: Double?, keepTime: Boolean = false) {
+        val held = holdsPuck
         holdsPuck = st == TerrainState.ESTIMATING || st == TerrainState.GAVE_UP
+        // The estimate let go of the puck without a fix on the map (the setting off, a good fix heard by the recorder only).
+        if (held && !holdsPuck) runCatching { DystopoApp.instance.map.endEstimate() }
         val at = if (keepTime) display?.atWallMs ?: System.currentTimeMillis() else System.currentTimeMillis()
         val d = if (st == TerrainState.ESTIMATING || st == TerrainState.GAVE_UP) Display(st, spreadM, at) else null
         mainHandler.post { display = d }
@@ -347,18 +372,21 @@ object TerrainSource : LocationSource {
 
     /**
      * `POST /location/terrain`: forgets what it holds and takes the compass from the replay ([compassFromReplay]) for the
-     * run the caller starts next. False when it does not watch ([off] says why).
+     * run the caller starts next; [giveUpM] lowers the give-up limit for that run (to see the give-up on a replay). False when it does not watch ([off] says why).
      */
-    fun debugRun(compassFromReplay: Boolean): Boolean {
+    fun debugRun(compassFromReplay: Boolean, giveUpM: Double? = null): Boolean {
         update()
         if (!watching) return false
         debugCompass = compassFromReplay
         worker.submit {
             safely {
                 live.reset()
+                live.giveUpM = giveUpM ?: options.giveUpM
                 log.clear()
                 lastInjected = null
                 debugHeading = null
+                pending = null
+                lastFixAt = Long.MIN_VALUE
                 stateBefore = TerrainState.IDLE
                 askCompass(false)
                 publish(TerrainState.IDLE, null)
@@ -375,7 +403,8 @@ object TerrainSource : LocationSource {
         ) + live.json() + linkedMapOf(
             "spreadM" to live.last?.spreadM?.let(::r1),
             "noFixReason" to if (live.state == TerrainState.GAVE_UP || live.state == TerrainState.NO_FIX) live.reason else if (!watching) off else null,
-            "holdsPuck" to holdsPuck, "emitted" to emitted, "debugCompass" to debugCompass, "compassAsked" to compassAsked,
+            "giveUpM" to live.giveUpM, "holdsPuck" to holdsPuck, "emitted" to emitted,
+            "recorded" to runCatching { Tracking.of(DystopoApp.instance).terrainRecorded }.getOrNull(), "debugCompass" to debugCompass, "compassAsked" to compassAsked,
             "samples" to linkedMapOf("sensor" to sensorSamples, "replay" to replaySamples, "sensorIgnored" to sensorIgnored),
             "graph" to linkedMapOf("edges" to graph?.edgeCount, "tiles" to graphKey?.second?.size, "loadMs" to graphLoadMs, "asked" to graphAsked),
             "options" to options.json(),

@@ -751,6 +751,10 @@ class TerrainLive(
 
     var now = Long.MIN_VALUE
         private set
+
+    /** The give-up limit in use: [TerrainLiveOptions.giveUpM], lowered only by a debug run (`POST /location/terrain?giveUpM=`). */
+    var giveUpM: Double = options.giveUpM
+
     var state = TerrainState.IDLE
         private set
     var reason: String? = null
@@ -938,7 +942,7 @@ class TerrainLive(
             stepAt = t
             steps++
             if (!hd.isNaN()) headingSteps++
-            if (e.spreadM > options.giveUpM || e.spreadM.isNaN()) {
+            if (e.spreadM > giveUpM || e.spreadM.isNaN()) {
                 giveUp("spread")
                 return
             }

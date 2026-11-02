@@ -543,6 +543,11 @@ class MapController {
         }
     }
 
+    /** T203: the estimate let go of the puck: back to the GPS look where it stands, until the next fix moves it. Any thread. */
+    fun endEstimate() {
+        main.post { val last = lastLocation; if (last != null && puck.installed && puck.mode != LocationPuck.Mode.GPS) puck.show(last, LocationPuck.Mode.GPS) }
+    }
+
     /** T203: the give-up: a grey dot on the last estimate, no ring, until a good fix. Any thread. */
     fun showLost() {
         main.post {

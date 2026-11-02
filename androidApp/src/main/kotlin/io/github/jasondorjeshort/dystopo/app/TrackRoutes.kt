@@ -83,7 +83,8 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   distance to the replay's own fix, `replayErrorM`). `POST /location/terrain[?compass=course|sensor]` with a GPX body
  *   (a `pressure` column, [io.github.jasondorjeshort.dystopo.app.tracking.Replay]) resets the source and starts the replay
  *   with `POST /location/replay`'s parameters (`rate`, `record`, `accuracy` ranges, `stall`); `compass=course` (the default)
- *   takes the heading from the replay's own bearing, `sensor` from the phone's compass. No body: the reset alone. 409 while
+ *   takes the heading from the replay's own bearing, `sensor` from the phone's compass; `giveUpM=30..300` lowers the give-up
+ *   limit for that run only, to see the give-up and the grey dot on a replay. No body: the reset alone. 409 while
  *   the source does not watch (the setting off, no barometer, not on foot, or in the background without a recording).
  *
  * `POST /location` (T10/T27) is observed, not handled: the fix also goes to the recorder's injected
@@ -204,7 +205,9 @@ object TrackRoutes {
                 val compass = (p.s("compass") ?: "course").lowercase()
                 if (compass != "course" && compass != "sensor") return Response.json(mapOf("error" to "compass must be course (the replay's bearing) or sensor (the phone's)"), 400)
                 val ts = io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource
-                if (!ts.debugRun(compass == "course")) return Response.json(mapOf("error" to "the terrain source is not watching (${ts.off})", "off" to ts.off), 409)
+                val giveUp = p.d("giveUpM")
+                if (giveUp != null && giveUp !in 30.0..300.0) return Response.json(mapOf("error" to "giveUpM must be 30 to 300 m (the app's limit is 300)"), 400)
+                if (!ts.debugRun(compass == "course", giveUp)) return Response.json(mapOf("error" to "the terrain source is not watching (${ts.off})", "off" to ts.off), 409)
                 if (r.body.isEmpty()) return Response.json(ts.json())
                 return replay(t, r, p)
             }
