@@ -119,6 +119,29 @@ object ReadoutTuning {
         Activity.ROAD, Activity.RAIL, Activity.AIR -> 10.0
     }
 
+    /**
+     * T204: the fastest the true height plausibly changes (m/s): a pressure step between consecutive samples larger than
+     * this times the interval (plus [STEP_MARGIN_M]) is a new barometer offset, not a climb. Derived (a read-only survey
+     * of 2026-11-01 for T204, its figures from public records and wave theory, not re-verified): on foot 3 m/s (the
+     * fastest vertical-kilometre races climb 0.5 to 0.6 m/s, steep trail descents about 1 to 2.3 m/s), by bike 5 m/s
+     * (20 m/s down a 20% grade is 4 m/s), boat 3 m/s (a 3 m swell at 8 s heaves 1.2 m/s, a 10 m one at 12 s 2.6 m/s);
+     * road and rail 10 m/s and the air 100 m/s never use the barometer and are there for completeness. No surveyed app
+     * caps by activity; they gate the innovation or reset the offset, which is what a step past the cap does here.
+     * Lifts and cable cars beat the foot cap: they read as a new offset, the height following the GNSS and the DEM.
+     */
+    fun climbCapMps(activity: Activity): Double = when (activity) {
+        Activity.FOOT, Activity.BOAT -> 3.0
+        Activity.BIKE -> 5.0
+        Activity.ROAD, Activity.RAIL -> 10.0
+        Activity.AIR -> 100.0
+    }
+
+    /** T204: the step allowed beyond the climb cap between two samples (m; about 3 sigma of two 0.5 m samples' difference). */
+    const val STEP_MARGIN_M = 2.0
+
+    /** T204: the interval the climb cap is applied over is at most this (s), so a sample after a long silence is judged as after 10 s. */
+    const val STEP_MAX_DT_S = 10.0
+
     /** No fix for longer than this (or three fix intervals) dims the values and counts the gap. */
     const val GAP_S = 5.0
 

@@ -63,6 +63,7 @@ class StripTextTest {
         fun h(e: ReadoutEntry, why: String) = v(e, null, ValueState.HIDDEN, reason = why)
         val noFix = readout(Activity.FOOT, h(ReadoutEntry.SPEED, "no fix"), h(ReadoutEntry.CLIMB, "no height yet"), h(ReadoutEntry.COURSE, "no fix"), h(ReadoutEntry.ELEVATION, "no height yet"))
         assertEquals(listOf("dash", "dash", "dash", "dash"), StripText.items(noFix, all, ContourUnits.METERS).map { it.state })
+        assertEquals(listOf("– m", "– m/h", "– km/h", "–°"), StripText.items(noFix, all, ContourUnits.METERS).map { it.full }) // T204: no stray space in the course's dash
     }
 
     @Test

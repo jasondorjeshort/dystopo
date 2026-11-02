@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -394,14 +396,20 @@ fun PressureCard() {
     // the navigation card; Compose state, so the card follows them).
     val topPx = io.github.jasondorjeshort.dystopo.app.MapInsets.topChromeBottomPx(density)
     val topDp = if (topPx > 0) topPx / density else 72f
+    // T204 (T187's note): above the readout bar at the lower left: at font scale 2.0 the card reached under the bar's
+    // top, so its height is capped at the room above the bar and its text scrolls inside it.
+    val barTopDp = StripLayout.topPx?.let { it / density }
+    val maxDp = barTopDp?.let { (it - topDp - 8f - CARD_BAR_GAP_DP).coerceAtLeast(CARD_MIN_DP) }
     Box(Modifier.fillMaxWidth().padding(top = topDp.dp + 8.dp), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
                 .padding(horizontal = 12.dp)
                 .widthIn(max = 420.dp)
                 .fillMaxWidth()
+                .let { m -> if (maxDp != null) m.heightIn(max = maxDp.dp) else m }
                 .onGloballyPositioned { l -> l.boundsInRoot().let { b -> PressureWatch.cardBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } }
                 .background(Plate, RoundedCornerShape(8.dp))
+                .verticalScroll(androidx.compose.foundation.rememberScrollState()) // T204: inside the cap
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -428,6 +436,10 @@ private val Ink = Color(0xFF2B2420)
 private val Muted = Color(0xFF6B5A4A)
 private val Accent = Color(0xFF8A4B14)
 private val Plate = Color(0xF2F6F1E4)
+
+/** T204: the gap kept between the warning card and the readout bar below it, and the least height the card is capped to (dp). */
+private const val CARD_BAR_GAP_DP = 8f
+private const val CARD_MIN_DP = 96f
 
 // ---- T196: the way down after the warning (shared `nav/WayDown`, the survey's words in `WayDownText`) ----
 

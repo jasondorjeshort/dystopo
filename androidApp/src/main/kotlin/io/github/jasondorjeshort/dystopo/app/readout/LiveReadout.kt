@@ -15,6 +15,7 @@ import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.ElevationSource
 import io.github.jasondorjeshort.dystopo.readout.KnownHeights
 import io.github.jasondorjeshort.dystopo.readout.PressureSample
+import io.github.jasondorjeshort.dystopo.readout.PressureSampleSource
 import io.github.jasondorjeshort.dystopo.readout.Readout
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEstimator
@@ -41,6 +42,10 @@ import java.util.concurrent.TimeUnit
  *   elevation, speed and accuracy; while they flow the map's own fixes are ignored, as the recorder does).
  * - **Pressure**: the [Barometer] ([onSensorPressure]) or a replay's pressure column ([onReplayPressure]); while fixes are
  *   injected the sensor's samples are ignored, so a replay's heights are not fought by the emulator's fixed pressure.
+ *   T204: each sample carries its source (`sensor`, `replay`); the estimator takes a change of source (a replay's column
+ *   ending and the sensor taking over) or a step past the activity's climb cap as a new barometer offset, never as a
+ *   climb, and once the barometer is silent past its staleness window a GNSS or DEM height re-anchors the elevation.
+ *   The station's pressure is a prior on the offset ([PressureSource]), not a sample.
  *   The sensor's samples wait for the first fix after a start or a reset: before it the fixes' clock is unknown, and
  *   a sample stamped on the wall clock would put the estimator hours ahead of a replay's file times (the fix round's
  *   stall; the estimator now also starts afresh on a clock that goes back).
@@ -139,7 +144,7 @@ object LiveReadout {
         lastReplayPressureAt = now
         bump("replayPressure")
         PressureWatch.onReplayPressure(timeMs, hPa) // T178: the trend takes the replay's column too
-        post { ensure().onPressure(PressureSample(timeMs, hPa)) }
+        post { ensure().onPressure(PressureSample(timeMs, hPa, PressureSampleSource.REPLAY)) } // T204: the source, so a switch is a new offset
     }
 
     /** A barometer sample ([Barometer], its own thread); [wallMs] on the wall clock. */
@@ -147,7 +152,7 @@ object LiveReadout {
         if (SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS) { bump("sensorPressureIgnored"); return }
         post {
             if (!clockKnown) bump("sensorPressureBeforeClock")
-            else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa)) }
+            else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa, PressureSampleSource.SENSOR)) }
         }
     }
 

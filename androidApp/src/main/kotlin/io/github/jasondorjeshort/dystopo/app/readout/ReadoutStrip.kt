@@ -2,11 +2,8 @@ package io.github.jasondorjeshort.dystopo.app.readout
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +20,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -68,6 +74,22 @@ object StripLayout {
     @Volatile var besideRoomPx = 0
     @Volatile var windowHeightPx = 0f
 
+    /**
+     * T204: the bar's room was too small for every shown entry (font scale 2.0): it draws the first [drawnItems] of
+     * them in their order (elevation first) and leaves out [droppedItems] from the end; [fits] false when even the
+     * elevation alone does not fit, and the scale bar's layout then hides the bar. Set by the bar's own measure, read
+     * by the scale bar's layout right after it.
+     */
+    @Volatile var fits = true
+    @Volatile var drawnItems = 0
+    @Volatile var droppedItems: List<String> = emptyList()
+
+    /** T204: the bar's top edge (window pixels) as Compose state, so the pressure warning's card keeps above it; null while hidden. */
+    var topPx by mutableStateOf<Float?>(null)
+        private set
+
+    internal fun setTop(px: Float?) { if (topPx != px) topPx = px }
+
     fun placed(where: String, maxWidth: Int, naturalWidth: Int = 0, besideRoom: Int = 0) {
         shown = true
         hiddenBecause = null
@@ -89,6 +111,7 @@ object StripLayout {
         hiddenBecause = reason
         placement = null
         boundsPx = null
+        setTop(null) // T204
     }
 
     private fun overlaps(a: FloatArray?, b: FloatArray?): Boolean? {
@@ -115,6 +138,7 @@ object StripLayout {
             "maxWidthPx" to maxWidthPx,
             "naturalWidthPx" to naturalWidthPx, "besideRoomPx" to besideRoomPx, // T177
             "plateOpaque" to PLATE_OPAQUE, // T192
+            "drawnItems" to drawnItems, "droppedItems" to droppedItems, "fits" to fits, // T204: entries left out for room, from the end
             "sizePx" to b?.let { listOf(Math.round(it[2] - it[0]), Math.round(it[3] - it[1])) },
             "topDp" to b?.let { Math.round(it[1] / d * 10) / 10.0 },
             "bottomFromWindowBottomDp" to bottomDp?.let { Math.round(it * 10) / 10.0 },
@@ -142,12 +166,15 @@ object StripLayout {
  * In both-units mode each entry has the other system's text under it, as the scale bar has. Only every entry switched
  * off draws nothing.
  *
+ * T204: where the room the scale bar's layout gives it is too small for every entry (font scale 2.0), entries are left
+ * out from the end of their order until the rest fits ([DroppingFlow]); it hides only when the elevation alone does
+ * not fit. `GET /readout` > `layout` says which (`drawnItems`, `droppedItems`, `fits`); the description still reads all.
+ *
  * T197: while a known height holds (`readout/KnownHeights`, [LiveReadout.pin]) a small triangle sits beside the
  * elevation's caption ([PinMark]); its description is "Set at <name>" ("Set by you" for a typed height), a tap shows the
  * time and the height, and it goes without a word when the estimate no longer trusts the set height.
  */
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
 fun ReadoutStrip(night: Boolean) {
     var items by remember { mutableStateOf(LiveReadout.snapshot?.items ?: LiveReadout.placeholder()) }
     var line by remember { mutableStateOf<String?>(null) }
@@ -182,8 +209,9 @@ fun ReadoutStrip(night: Boolean) {
     val otherStyle = TextStyle(color = muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     val markStyle = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Bold) // T197
     val context = LocalContext.current
-    FlowRow(
-        Modifier
+    val entries = items.map { it.entry.code }
+    Layout(
+        modifier = Modifier
             .onGloballyPositioned { c ->
                 val b = c.boundsInRoot()
                 var r = c
@@ -191,13 +219,13 @@ fun ReadoutStrip(night: Boolean) {
                 StripLayout.boundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom)
                 StripLayout.windowHeightPx = r.size.height.toFloat()
                 StripLayout.density = density.density
+                StripLayout.setTop(b.top) // T204
             }
             .background(plate, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 3.dp)
             .clearAndSetSemantics { contentDescription = line ?: "" },
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
+        measurePolicy = remember(entries) { DroppingFlow(entries, ITEM_GAP, ROW_GAP) },
+        content = {
         for (it in items) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
             val markSlot = it.entry == io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION && it.trendSlot
@@ -222,8 +250,88 @@ fun ReadoutStrip(night: Boolean) {
                 }
             }
         }
-    }
+        },
+    )
 }
+
+/**
+ * T204: the bar's entries flowed in rows like a flow row (gaps [itemGap] and [rowGap]), but when the rows do not fit
+ * the height the scale bar's layout leaves (font scale 2.0 with the bar above the scale bar), the entries are left out
+ * from the end of their order one by one ([entries]: the order the readout settings list them, elevation first) until
+ * the rest fits; with only the elevation left and still too tall, [StripLayout.fits] is false and the scale bar's
+ * layout hides the bar. The intrinsic width is every entry on one row (the scale bar's beside-or-above choice).
+ */
+private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGap: Dp) : MeasurePolicy {
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val gapX = itemGap.roundToPx()
+        val gapY = rowGap.roundToPx()
+        val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
+        val maxH = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
+        val placeables = measurables.map { it.measure(Constraints(maxWidth = maxW)) }
+
+        // The rows of the first k entries: (first index, width, height) per row.
+        fun rows(k: Int): List<IntArray> {
+            val out = ArrayList<IntArray>()
+            var start = 0
+            var w = 0
+            var h = 0
+            for (i in 0 until k) {
+                val p = placeables[i]
+                if (i > start && w + gapX + p.width > maxW) {
+                    out += intArrayOf(start, w, h)
+                    start = i
+                    w = 0
+                    h = 0
+                }
+                w += (if (i > start) gapX else 0) + p.width
+                h = maxOf(h, p.height)
+            }
+            if (k > start) out += intArrayOf(start, w, h)
+            return out
+        }
+
+        fun height(r: List<IntArray>) = r.sumOf { it[2] } + gapY * (r.size - 1).coerceAtLeast(0)
+        var k = placeables.size
+        var r = rows(k)
+        while (k > 1 && height(r) > maxH) {
+            k--
+            r = rows(k)
+        }
+        StripLayout.fits = k == 0 || height(r) <= maxH
+        StripLayout.drawnItems = k
+        StripLayout.droppedItems = entries.drop(k)
+        val width = (r.maxOfOrNull { it[1] } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
+        val height = height(r).coerceIn(constraints.minHeight, constraints.maxHeight)
+        return layout(width, height) {
+            var y = 0
+            for ((ri, row) in r.withIndex()) {
+                val end = if (ri + 1 < r.size) r[ri + 1][0] else k
+                var x = 0
+                for (i in row[0] until end) {
+                    placeables[i].place(x, y)
+                    x += placeables[i].width + gapX
+                }
+                y += row[2] + gapY
+            }
+        }
+    }
+
+    override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int): Int =
+        measurables.sumOf { it.maxIntrinsicWidth(height) } + itemGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)
+
+    override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int): Int =
+        measurables.firstOrNull()?.minIntrinsicWidth(height) ?: 0
+
+    override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int =
+        measurables.firstOrNull()?.minIntrinsicHeight(width) ?: 0
+
+    override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int =
+        measurables.sumOf { it.maxIntrinsicHeight(width) } + rowGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)
+}
+
+/** T161: the gap between entries; T204: and between rows, as the flow row had them. */
+private val ITEM_GAP = 10.dp
+private val ROW_GAP = 2.dp
 
 /**
  * T197: the known height's mark beside the elevation's caption: a survey point's triangle ([LiveReadout.PIN_GLYPH]),

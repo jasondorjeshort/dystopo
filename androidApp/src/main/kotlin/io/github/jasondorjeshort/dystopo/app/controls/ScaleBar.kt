@@ -373,16 +373,16 @@ fun ScaleBar() {
             val ceiling = if (topLeft > 0.dp) (topLeft + TOP_LEFT_GAP).roundToPx() else 0
             val natural = strip.maxIntrinsicWidth(constraints.maxHeight)
             if (besideMax >= STRIP_MIN_BESIDE.roundToPx() && natural <= besideMax) {
-                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = besideMax))
+                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = besideMax, maxHeight = (constraints.maxHeight - bottomPx - ceiling).coerceAtLeast(0))) // T204: the room it has
                 val y = constraints.maxHeight - bottomPx - p.height
-                if (y >= ceiling) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMax, natural, besideMax) }
+                if (y >= ceiling && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMax, natural, besideMax) }
                 else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT)
             } else {
                 val start = STRIP_START.roundToPx()
                 val aboveMax = (constraints.maxWidth - start - reserve).coerceAtLeast(0)
-                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = aboveMax))
+                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = aboveMax, maxHeight = (top - gap - ceiling).coerceAtLeast(0))) // T204: the strip leaves entries out to fit
                 val y = top - gap - p.height // the bar's top edge is its plate's (its padding is below)
-                if (room && y >= ceiling) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax, natural, besideMax) }
+                if (room && y >= ceiling && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax, natural, besideMax) }
                 else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT)
             }
         }

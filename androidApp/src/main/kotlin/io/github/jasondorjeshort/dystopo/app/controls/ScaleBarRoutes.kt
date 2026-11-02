@@ -46,6 +46,8 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   `beside` or `above`, T177 `naturalWidthPx` (the bar's one-row width it is chosen on) and `besideRoomPx`, `boundsPx`, `sizePx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
  *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`, T192 `plateOpaque`). T192: in a gap of the fixes the
  *   climb holds the last fix's value (`dimmed`, `frozen`), then a dash with `reason` `no fix` past the climb window.
+ *   T204: `layout` adds `drawnItems`, `droppedItems` (entries left out from the end of their order for room, font scale
+ *   2.0) and `fits`; `readout.counters` add `newOffsets` (`newOffsetsSource`, `newOffsetsStep`) and `baroFallbacks`.
  * - `POST /readout/reset`: forgets every input (between replays); answers like `GET`.
  * - `POST /readout/stations[?url=<endpoint>]` (T173's test hook): the weather station fetch reads `url` instead of the
  *   registry's (`url=` empty restores it), forgets the stations and fetches at the next refresh; answers the URL.

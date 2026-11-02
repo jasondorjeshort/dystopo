@@ -19,8 +19,23 @@ import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** A barometer sample: pressure in hPa at [timeMs] (the sensor's time, on the fixes' clock). */
-data class PressureSample(val timeMs: Long, val hPa: Double)
+/**
+ * A barometer sample: pressure in hPa at [timeMs] (the sensor's time, on the fixes' clock). T204: [source] is where it
+ * came from; a change of source between samples is a new barometer offset ([ReadoutEstimator.onPressure]).
+ */
+data class PressureSample(val timeMs: Long, val hPa: Double, val source: PressureSampleSource = PressureSampleSource.SENSOR)
+
+/**
+ * T204: where a pressure sample came from: the phone's own sensor, a replay's pressure column, or a weather station's
+ * pressure fed as samples (the phone feeds the station as a prior instead, [ReadoutEstimator.onStationPressure]).
+ * Two sources read different pressures for the same place (the emulator's sensor is a fixed sea-level pressure), so
+ * the estimator never reads a change of source as a climb.
+ */
+enum class PressureSampleSource(val code: String) {
+    SENSOR("sensor"),
+    REPLAY("replay"),
+    STATION("station"),
+}
 
 /** How a readout value is drawn. */
 enum class ValueState(val code: String) {
@@ -180,6 +195,15 @@ data class Readout(
  *   ([onStationPressure]). The barometer is dropped while suspect: GNSS speed over 7 m/s; its 60 s climb and the GNSS
  *   one differing by over 1 m/s in two windows in a row; jitter over 1.5 m peak to peak (0.75 m RMS about a line) in
  *   10 s on foot. It reopens 60 s after the last trigger, its offset taken afresh from the height.
+ * - **A new barometer offset** (T204): a pressure step between consecutive samples larger than the activity's climb
+ *   cap allows ([ReadoutTuning.climbCapMps] times the interval, at most [ReadoutTuning.STEP_MAX_DT_S], plus
+ *   [ReadoutTuning.STEP_MARGIN_M]), or a change of the sample's [PressureSample.source] (a replay's column ending and the
+ *   sensor taking over, the sensor back after a silence), is not a climb: the offset is taken afresh from the height
+ *   (the GNSS and DEM heights the filter holds), the climb window restarts, a pin ends, and the counters
+ *   `newOffsets`, `newOffsetsSource` and `newOffsetsStep` say so. The bar never shows the step as a rate.
+ * - **A silent barometer** (T204): once it has been silent past its staleness window ([ElevationFilter.BARO_FRESH_MS])
+ *   the height it carried no longer gates the GNSS and the DEM: a height the gate would reject re-anchors the filter
+ *   on it (`baroFallbacks`), so a height the barometer had carried away from the fixes recovers within one fix.
  * - **The climb rate** (T177) on the ground is the filter's vertical speed averaged over the climb window
  *   ([ReadoutOptions.climbWindowS], 30 s to 10 min, 1 min by default; a dash `filling` until
  *   [ReadoutTuning.CLIMB_MIN_FILL_S] or the window is covered, then the mean over what is held); in the air it is
@@ -235,6 +259,10 @@ class ReadoutEstimator(
     private var disagreeRun = 0
     private var climbShown = false
     private var climbAtFix: ReadoutValue? = null // T192: the climb at the last fix, held through a gap
+    // T204: the last pressure sample (its time, pressure altitude and source), for the new-offset rule.
+    private var lastSampleMs: Long? = null
+    private var lastSampleAltM = 0.0
+    private var lastSampleSource: PressureSampleSource? = null
     private var smoothV = 0.0
     private var smoothAt: Long? = null
 
@@ -250,6 +278,7 @@ class ReadoutEstimator(
     private val counts = linkedMapOf(
         "fixes" to 0L, "pressureSamples" to 0L, "lateInputs" to 0L, "spikesDropped" to 0L,
         "suspects" to 0L, "reopens" to 0L, "demTries" to 0L, "clockResets" to 0L,
+        "newOffsets" to 0L, "newOffsetsSource" to 0L, "newOffsetsStep" to 0L, // T204
     )
 
     init {
@@ -332,7 +361,10 @@ class ReadoutEstimator(
         climbAtFix = climbValue(fix.time, heightDim = false)
     }
 
-    /** One barometer sample (hPa). Samples older than the filter's time are applied at its time and counted. */
+    /**
+     * One barometer sample (hPa). Samples older than the filter's time are applied at its time and counted. T204: a
+     * step past the activity's climb cap or a change of [PressureSample.source] is a new offset ([newOffset]).
+     */
     fun onPressure(sample: PressureSample) {
         if (!(sample.hPa in 300.0..1100.0)) return
         bump("pressureSamples")
@@ -341,6 +373,10 @@ class ReadoutEstimator(
         if (lastT != null && sample.timeMs < lastT) bump("lateInputs")
         lastPressureHPa = sample.hPa
         val alt = Altimeter.pressureAltitudeM(sample.hPa)
+        newOffsetReason(sample, alt)?.let { newOffset(it) }
+        lastSampleMs = sample.timeMs
+        lastSampleAltM = alt
+        lastSampleSource = sample.source
         baro.addLast(sample.timeMs to alt)
         while (baro.size > 2 && sample.timeMs - baro.first().first > JITTER_WINDOW_MS) baro.removeFirst()
         if (activity == Activity.FOOT) jitter(sample.timeMs)
@@ -348,6 +384,37 @@ class ReadoutEstimator(
         applyPrior(sample.timeMs)
         filter.barometer(sample.timeMs, alt)
         smooth(sample.timeMs)
+    }
+
+    /**
+     * T204: why [sample] (at pressure altitude [altM]) starts a new offset: `source` when its source differs from the
+     * last sample's, `step` when the pressure altitude moved further than the activity's climb cap allows over the
+     * interval (capped at [ReadoutTuning.STEP_MAX_DT_S], so a sample after a long silence is judged as after 10 s) plus
+     * the sensor's noise margin; null otherwise.
+     */
+    private fun newOffsetReason(sample: PressureSample, altM: Double): String? {
+        val prevMs = lastSampleMs ?: return null
+        if (sample.source != lastSampleSource) return "source"
+        val dtS = ((sample.timeMs - prevMs) / 1000.0).coerceIn(0.0, ReadoutTuning.STEP_MAX_DT_S)
+        val allowed = ReadoutTuning.climbCapMps(activity) * dtS + ReadoutTuning.STEP_MARGIN_M
+        return if (abs(altM - lastSampleAltM) > allowed) "step" else null
+    }
+
+    /**
+     * T204: a new barometer offset ([why] `source` or `step`): the offset is taken afresh from the height at the next
+     * barometer update (this sample), so the height does not move; the climb window, the held climb, the jitter and
+     * disagreement windows restart (the step is never read as a rate), and a pin ends.
+     */
+    private fun newOffset(why: String) {
+        bump("newOffsets")
+        bump(if (why == "source") "newOffsetsSource" else "newOffsetsStep")
+        filter.newOffset()
+        baro.clear()
+        windowStart = null
+        disagreeRun = 0
+        climbShown = false
+        climbAtFix = null
+        clearClimbWindow()
     }
 
     /** A weather station's altimeter setting (T173 fetches it): a prior on the barometer offset, applied once per report. */
@@ -471,6 +538,7 @@ class ReadoutEstimator(
         c["pinReleases"] = filter.pinReleases.toLong()
         c["gnssHeldByPin"] = filter.gnssHeldByPin.toLong()
         c["demHeldByPin"] = filter.demHeldByPin.toLong()
+        c["baroFallbacks"] = filter.fallbacks.toLong() // T204
         return Readout(nowMs, activity, speed, climb, course, elevation, gapS, heights, baroState, fixSpeed?.first ?: pos?.first, route?.first, c,
             if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList(),
             climbWindowS = if (windowed) options.climbWindowS else null,
@@ -688,6 +756,8 @@ class ReadoutEstimator(
         smoothV = 0.0
         climbShown = false
         clearClimbWindow()
+        lastSampleMs = null // T204
+        lastSampleSource = null
         suspectUntilMs = null
         suspectReason = null
         filter = ElevationFilter(activity)

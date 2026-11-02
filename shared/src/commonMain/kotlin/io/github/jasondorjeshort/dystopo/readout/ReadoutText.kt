@@ -81,7 +81,8 @@ object ReadoutText {
         if (value.state == ValueState.HIDDEN) return null
         if (value.state == ValueState.ZERO) return ReadoutLabel("0", unit, null) // T177: a climb near zero while moving
         val v = value.value
-        if (value.state == ValueState.DASH || v == null) return ReadoutLabel(DASH, unit, null)
+        // T204 (T177's follow-up): the course's degree sign sits on the number, so its dash reads "–°", not "– °".
+        if (value.state == ValueState.DASH || v == null) return if (e == ReadoutEntry.COURSE) ReadoutLabel(DASH + unit, "", null) else ReadoutLabel(DASH, unit, null)
         val x = convert(e, v, options, units)
         val text = when {
             e == ReadoutEntry.SPEED && options.speed.pace -> pace(x)
