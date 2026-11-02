@@ -132,7 +132,7 @@ class TrackFormatT158Test {
         // An append version 2 point with a field bit this build does not know.
         refusedWith("unknown point fields", opBytes(TYPE_APPEND_V2) { w -> w.uvarint(0); w.uvarint(1); w.uvarint(256L or 8L); w.double(1.0); w.double(2.0); w.double(5.0) })
         // ... or a flag bit.
-        refusedWith("unknown point flags", opBytes(TYPE_APPEND_V2) { w -> w.uvarint(0); w.uvarint(1); w.uvarint(128); w.double(1.0); w.double(2.0); w.uvarint(4) })
+        refusedWith("unknown point flags", opBytes(TYPE_APPEND_V2) { w -> w.uvarint(0); w.uvarint(1); w.uvarint(128); w.double(1.0); w.double(2.0); w.uvarint(8) }) // T203: 4 is ESTIMATED now
         refusedWith("unknown gap reason \"eclipse\"", opBytes(TYPE_GAP) { w -> w.svarint(1); w.svarint(2); w.string("eclipse") })
         val e = assertFailsWith<SyncFormatException> { OpCodec.decode(opBytes(TYPE_APPEND_V2) { w -> w.uvarint(0); w.uvarint(1); w.uvarint(2); w.double(1.0); w.double(2.0); w.svarint(5) }) }
         assertEquals("append version 2 without fix fields", e.message)

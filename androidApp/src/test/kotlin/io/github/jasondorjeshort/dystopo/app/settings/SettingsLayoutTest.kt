@@ -65,6 +65,7 @@ class SettingsLayoutTest {
                 "Route times: Show as", // T184
                 "Terrain shade: Spoken", // T194
                 "Set my height now", // T197 (an action, after T184's row)
+                "Estimate position when GPS is poor", // T203
                 "Diagnostics", "Report a problem",
             ),
             later,
