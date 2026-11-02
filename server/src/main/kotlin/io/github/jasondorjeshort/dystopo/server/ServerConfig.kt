@@ -24,6 +24,12 @@ data class ServerConfig(
     val cacheDir: String = "cache",
     /** Region packs: served as packs and under `/out/`, listed by `/catalog`, written by `/build`. */
     val outDir: String = "out",
+    /**
+     * T202: build the routing graph of every pack in [outDir] that lacks a current one, at startup and on
+     * `POST /catalog/refresh` (one pack at a time, newest first; [PackCatalog.queueGraphs]), so `/catalog` ships it.
+     * False for a server too small for its packs: graphs then come only from `/build`'s phase or a route.
+     */
+    val buildGraphs: Boolean = true,
     /** Glyph PBFs (`<font>/<range>.pbf`); null: `<cacheDir>/glyphs`. */
     val glyphsDir: String? = null,
     /** Download the style's glyph ranges into [glyphsDir] at startup when missing (from [glyphsUrl]). */

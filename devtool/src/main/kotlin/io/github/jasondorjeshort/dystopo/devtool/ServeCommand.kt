@@ -37,11 +37,23 @@ class ServeCommand : CliktCommand(name = "serve") {
     private val port by option("--port").int().default(8687)
     private val textScale by option("--text-scale", help = "label size multiplier, as the app's textScale setting (default 1.0)").double().default(1.0)
     private val live by option("--live", help = "live world mode: packs in out/ first, else DEM from the cloud sources and OSM from OpenFreeMap, cached (see LiveTiles)").flag()
+    private val buildGraphs by option(
+        "--build-graphs",
+        help = "with --live: at start (after hashing the packs) and on POST /catalog/refresh, build the routing graph of every pack in out/ " +
+            "that lacks a current one, so /catalog lists it (default on; --no-build-graphs for a machine too small for its packs)",
+    ).flag("--no-build-graphs", default = true)
 
     override fun run() {
         val glyphDir = File(glyphs ?: (System.getenv("DYSTOPO_CACHE") ?: "cache") + "/glyphs")
         if (live) SourceBudget.install(SourceBudget.fromEnv()) // T92: DYSTOPO_SOURCE_CAPS=request=256,hour=8192 (MB; 0: no cap)
-        if (live) return LiveTiles.findPacks(listOf(File(dem), File(osm))).let { (d, o) -> LiveTiles(d, o, tileCacheRoot = LiveTiles.tileCacheFromEnv(), caps = LiveTiles.CacheCaps.fromEnv()).serve(port, glyphDir, textScale = textScale, extra = mapOf("/print" to PrintRoutes())) } // T167: GET /print (PrintRoutes)
+        if (live) {
+            val (d, o) = LiveTiles.findPacks(listOf(File(dem), File(osm)))
+            val lt = LiveTiles(d, o, tileCacheRoot = LiveTiles.tileCacheFromEnv(), caps = LiveTiles.CacheCaps.fromEnv())
+            lt.catalog.buildGraphs = buildGraphs // T202: before the first request, so a refresh obeys it too
+            lt.serve(port, glyphDir, textScale = textScale, extra = mapOf("/print" to PrintRoutes())) // T167: GET /print (PrintRoutes)
+            lt.catalog.warm() // T202: the standalone server's call: the hashes, then the graph pass
+            return
+        }
         PackServer(File(dem), osm.takeIf { it.isNotEmpty() }?.let { File(it) }, glyphDir, textScale).serve(port)
     }
 }

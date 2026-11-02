@@ -64,7 +64,8 @@ import kotlin.math.min
  *
  * `/` serves the browser demo (`tools/demo/index.html`) in live mode, `/phone` the phone style
  * ([MapLibreStyle] over these routes), `/live/sources` which source each tile in a box came from (the
- * demo's status box), `/stats` per-route, per-source counts and timings.
+ * demo's status box), `/stats` per-route, per-source counts and timings (T202: `graphs`, the catalog's graph pass,
+ * [PackCatalog.graphState]).
  *
  * T74: `/version` names each route's content version (also the `X-Dystopo-Version` header of `/dem` and `/osm`
  * tiles), which phones key their caches on; `/assets/manifest.json` lists glyphs and sprites with their hashes
@@ -802,8 +803,11 @@ class LiveTiles(
      */
     fun cancelBuilds(waitMs: Long): Int = if (buildsLazy.isInitialized()) builds.cancelAll(waitMs) else 0
 
-    /** `GET /catalog` (T52): the packs in [outDir] with sizes and content hashes ([PackCatalog]). */
-    val catalog: PackCatalog by lazy { PackCatalog(outDir) }
+    /**
+     * `GET /catalog` (T52): the packs in [outDir] with sizes and content hashes ([PackCatalog]). T202: its graph pass
+     * builds through the routes' own planner ([RouteRoutes.planner]), so a route and the pass share one lock per pack.
+     */
+    val catalog: PackCatalog by lazy { PackCatalog(outDir, planner = { RouteRoutes.planner(this) }) }
 
     private fun handle(ex: HttpExchange, style: (ContourUnits, Map<String, String>) -> String, glyphDir: File, demoPage: File) {
         val path = ex.requestURI.path
@@ -929,6 +933,7 @@ class LiveTiles(
             "errors" to errors.get(),
             "shadeGeneration" to shadeStats.json(),
             "staleCachePrune" to synchronized(pruned) { pruned.toMap() },
+            "graphs" to catalog.graphState(), // T202: the catalog's graph pass (built, failed, skipped, pending, ms, per pack)
             // T74: each tile store with its cap; `peakBytes` is the most it held after a trim.
             "caches" to linkedMapOf(
                 "live" to liveCache.json(), "openfreemap" to ofmCache.json(),

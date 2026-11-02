@@ -130,6 +130,7 @@ key with its default.
 | `publicUrl` | `null` | Base URL for the absolute URLs in `/style.json`, e.g. `"https://maps.example.org"`. Null: from each request's `X-Forwarded-*` / `Host` headers. |
 | `cacheDir` | `"cache"` | Downloads and generated tiles (`live/`, `openfreemap/`, `derived/`, `copernicus30/`, `3dep13/`, `3dep1m/`, `overpass/`, `glyphs/`, ...). The tile stores are capped (`cache.*`); the source downloads have a byte budget (`sources.*`). |
 | `outDir` | `"out"` | Region packs: served as packs, under `/out/`, listed by `/catalog`, written by `/build`. |
+| `buildGraphs` | `true` | T202: at startup and on `POST /catalog/refresh`, build the routing graph of every pack in `outDir` that lacks a current one (The pack's routing graph, below). `false` for a server too small for its packs. |
 | `glyphsDir` | `null` | Glyph PBFs (`<font>/<range>.pbf`); null: `<cacheDir>/glyphs`. |
 | `fetchGlyphs` | `true` | At startup, download the glyph ranges the style uses (Noto Sans, SIL OFL) when missing. |
 | `glyphsUrl` | protomaps basemaps-assets | Where those glyphs come from. |
@@ -219,7 +220,8 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   server, open like `/healthz` (no secrets, no user ids). Below, Operations.
 - `GET /healthz`: `status` (`ok`, or `stopping` with a 503), `uptimeS`, `packs`, `outDirWritable`,
   `cacheDirWritable`, `glyphs` (fonts present), `errors` (tile route exceptions so far), `catalog` (the
-  startup hash pass: `state` `cold`, `warming` or `ready`, `files`, `hashed`, `hashesComputed`, `ms`),
+  startup hash pass: `state` `cold`, `warming` or `ready`, `files`, `hashed`, `hashesComputed`, `ms`; T202:
+  `graphs`, the graph pass's counts, below),
   `users`, `routeGate` (T92: `/route*` needs a token, true while users are configured), `replicas`, `shareLinks`.
 
 ## Outdoors packs: extracts, Overpass, fallback
@@ -314,9 +316,9 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
   recomputed, and `/build` deletes the sidecars of the files it replaces, so a rebuilt pack gets a new
   hash. Bytes changed in place under the same size and time (disk corruption, a hand edit that restores
   the time) are found only by `POST /catalog/refresh`, which rehashes every file ignoring the sidecars and
-  answers the catalog plus `refresh` (`files`, `changed`: the files whose hash differed, `ms`). Hashes are
-  computed in the background at startup (about 1 s per 200 MB; progress in `/healthz` `catalog`), so the
-  first `/catalog` is fast.
+  answers the catalog plus `refresh` (`files`, `changed`: the files whose hash differed, `ms`, and T202's
+  `graphsQueued`: whether a graph pass was queued, below). Hashes are computed in the background at startup
+  (about 1 s per 200 MB; progress in `/healthz` `catalog`), so the first `/catalog` is fast.
 - `contentHash`: `sha256:` + SHA-256 of the lines `<role>:<file sha256>\n` (dem first). A client compares
   it with the one it installed to offer an update; it verifies each file against `sha256` after download.
 
@@ -344,6 +346,23 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
 
 ### The pack's routing graph (T189, ADR 0049's B)
 
+**Every pack gets its graph at start and on refresh (T202).** Packs that reach `outDir` without a build (copied
+from `tilebuild` or `devtool tiles`, or a pack whose archives changed) get theirs from the catalog's **graph
+pass**: after the startup hash pass, and after each `POST /catalog/refresh` (which answers without waiting for it),
+every pack pair (a DEM plus its vector archive) whose graph is missing or stale is built through the same route
+planner, one pack at a time, newest pack first, and hashed; the catalog lists it as soon as the file is in place
+(the Rainier pair: 312,356 bytes, listed about 5 s after a cold start, the build 1.2 to 2.3 s). A route arriving
+meanwhile waits on the same lock and reuses the graph. A failure (an unreadable archive, an `OutOfMemoryError`) is
+recorded per pack and not retried until the next start or refresh. Opening a graph also queues its drive-overlay
+warm-up (Route planning, below), so a start now warms every pack's overlay cells too (Rainier: 68 ms). The config key
+`buildGraphs` (default `true`; `devtool serve --live --no-build-graphs`) turns the pass off for a server too small for
+its packs; graphs then come only from the build phase or a route. The pass is `/stats` `graphs`: `enabled`, `state`
+(`off`, `idle`, `running`, `done`), `trigger` (`start`, `refresh`), the last pass's `built`, `failed`, `skipped`
+(current already), `pending` and `ms`, `totalBuilt` and `totalFailed` since start, and `packs` (each pack's
+`state` `pending`, `building`, `built`, `current` or `failed`, the `reason` it was built, `ms`, `buildMs`,
+`bytes`, `sha256`, `error`, and `overlay`, its warm-up); `/healthz` and `/metrics` carry the same counts under
+`catalog.graphs`, without `packs`.
+
 A pack built through `POST /build` or `POST /area` ends with a `graph` phase after `publish`: the server's route
 planner (the one `/route` uses, so a route and the phase never build one graph twice) builds the pack's routing
 graph from the published vector archive with elevations from its DEM, in one pass, and writes
@@ -364,7 +383,7 @@ already there (an identical rebuild, a route that ran first) it is reused (`acti
   for garbage), and the encoder the whole file once more. `devtool serve` runs with the JVM's default heap (a quarter
   of the machine's memory); the server image takes 60 percent of its container's (`server/Dockerfile`). A 3 degree
   box needs about 2.25 GB at the least and builds in 8 to 19 minutes depending on the heap (T149's series).
-- A graph rewritten later (by the first route after the pack changed)
+- A graph rewritten later (by the next graph pass or the first route after the pack changed)
   gets a new modification time, so its sidecar is stale and recomputed on the next catalog read.
 
 ## Areas of interest (T75)
@@ -565,9 +584,9 @@ Norway's coverage box, in the background after the stores are indexed, and write
 The browser map plans routes on the server with the phone's shared code (`RouteRoutes.kt`: T45's router, T60's
 route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each pack in
 `outDir` with a vector archive gets a trail graph on first use (T189: or at the end of its build, the `graph` phase
-above), written next to it as
+above; T202: a pack pair usually has it before, from the catalog's graph pass at start and on refresh), written next to it as
 `<vector archive>-graph.idx` (the phone's and `devtool route`'s file name, e.g. `rainier-outdoors-graph.idx`;
-reused while both archives are unchanged; the Rainier graph builds in about 2 s). Since T76 the file holds z11
+reused while both archives and the file are unchanged, so a deleted file is rebuilt; the Rainier graph builds in about 2 s). Since T76 the file holds z11
 graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every pack
 whose box comes within 5 km of its points, so it crosses from one pack into the next (docs/PLANNING.md ›
 Routing). T89: the file is `DYSG` version 5 (bridge and tunnel levels, component labels); a file of an older
@@ -1013,6 +1032,9 @@ users keep their data on their devices and push it again.
 - `jvm.openFiles` (Linux) or the process handle count (Windows), `jvm.threads`: flat under steady load.
 - `log.writeErrors` (the log file could not be written: disk full) and `log.rotations`.
 - `relay.bytes` and `relay.refused` (`full`, `rateLimited`) for the relay.
+- `catalog.graphs` (T202): `failed` above 0 means a pack ships without its graph and phones build their own
+  (`/stats` `graphs.packs` has the error; an `OutOfMemoryError` wants a larger heap or `buildGraphs: false`);
+  `state` `running` for long after a start is a large pack building, one at a time.
 
 Prometheus, scraping through the private address (the proxy need not expose `/metrics`):
 
