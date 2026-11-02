@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-02
 
+- T204: The readout's defects: the pressure-source jump, the stale-barometer gate, the strip at font scale 2.0
 - T202: The shipped graph is there before the first route: the server builds every pack's missing graph at start and on refresh
 - T206: One definition of the controls and settings across platforms: the inventory, the survey and proposal 0053
 - T205: The site's follow-ups: `-HttpsPort`, a ports script, the page's title and credits, the layout line
