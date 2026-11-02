@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-02
 
+- T206: One definition of the controls and settings across platforms: the inventory, the survey and proposal 0053
 - T205: The site's follow-ups: `-HttpsPort`, a ports script, the page's title and credits, the layout line
 
 ### 2026-11-01
