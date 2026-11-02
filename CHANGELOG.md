@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-02
+
+- T205: The site's follow-ups: `-HttpsPort`, a ports script, the page's title and credits, the layout line
+
 ### 2026-11-01
 
 - T199: The home site: the installed server and a TLS proxy as Windows scheduled tasks that start with the PC
