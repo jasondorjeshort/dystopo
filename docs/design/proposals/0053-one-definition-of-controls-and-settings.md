@@ -1,7 +1,7 @@
 # 0053. One definition of the controls and settings, read by the web page, the phone and a later iOS app
 
 Date: 2026-11-02
-Status: under review
+Status: promoted to ADR 0053
 
 ## Question
 
