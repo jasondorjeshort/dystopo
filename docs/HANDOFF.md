@@ -1,35 +1,42 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-01, after the wave 25 close commit, by main session (wave 25 closed, no release)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open
-wave; Later carries waves 24 and 25's follow-ups; the record `docs/tasks/wave-25.md`), ADR 0052.
+Updated: 2026-11-01, after the wave 26 launch, by main session (wave 26 open, five implementers running)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
+wave 26, its RAM paragraph; Later carries waves 24 and 25's follow-ups; the record `docs/tasks/wave-25.md`).
 
 ## Now
 
-- **Wave 25 is closed** (T199 to T201 merged 2026-11-01 by verifier verdict, no fix round; the close entry in
-  `docs/PLANNING.md`'s log). The sweep was green in 1015 s with the device-boot part proving T201's hook: the
-  emulator survived the sweep agent's yield for the first time since T190. No release (no app code changed).
-  Nothing is running; no worktree, no task branch, no emulator, no lock, no `Dystopo site` task registered. The
-  live viewer on 8765 is still up (PID in `out/coordinator-pids.txt`). Meter: 8 on the 7-day at the close.
+- **Wave 26 is open** (planned and launched 2026-11-01, commit 07b570a9; the critic's review in
+  `out/wave26-research/critic-wave26.md`, the T203 survey beside it, both gitignored). Five implementers run
+  in `~\Documents\src\dystopo-wt\T202` to `T206` on branches `task/T202` to `task/T206`: T202 (Opus, the
+  server builds missing graphs at start and on refresh, port 8690), T203 (Opus, the terrain position source,
+  emulator `dystopo35-T203` on console 5570, host 8694), T204 (Opus, the readout's defects, `dystopo35-T204`
+  on console 5572, host 8696), T205 (Sonnet, the site's follow-ups, ports 8698, 8699, 8443), T206 (Opus, the
+  controls inventory and proposal 0053, no code). Nothing verified or merged yet; no verifier launched.
+- **The RAM rule is binding** (the owner's one request this wave): two emulators at the cap, no-daemon
+  builds with the in-process Kotlin compiler, servers from `installDist` with `-Xmx2g`, at most two
+  verifiers at once (so the coordinator launches a verifier only when fewer than two run).
 - **The site is built but not installed.** The owner's five steps are on the board (Owner actions pending › The
-  home site): `privateTerms`, the elevated install with `-Host <name> -Firewall`, the 443 forward, the
-  dynamic-DNS updater, power settings; then a first open from a phone on mobile data. The host name is a
-  private term: never in a tracked file, brief or report.
-- **Port 80 on this PC** is held by a java process outside the project; the site's Caddy runs with the HTTP
-  redirect off (`docs/reference/home-site.md`). Ask the owner what it is.
+  home site). The host name is a private term: never in a tracked file, brief or report.
+- The live viewer on 8765 is up (PID in `out/coordinator-pids.txt`; `/catalog` 200). Meter at launch: 27 on
+  the 7-day, 3 on the 5-hour.
 
 ## Next
 
-1. The next wave is unplanned. Candidates: the owner's cross-platform idea (`docs/ideas/2026-11-01-one-
-   definition-of-controls-and-settings-across-platforms.md`; an inventory and a benchmark survey first, then a
-   proposal), the site's follow-ups once it runs (an `-HttpsPort` for coexisting test instances, pre-built public
-   packs, rate limits when load or publicity revives ADR 0052's deferral), Later's lifted follow-ups.
-2. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the sentinel rule.
+1. As each implementer reports: a Sonnet verifier (`brief` skill, `verifier.md`; ports and AVDs in the wave
+   paragraph: T202v 8692, T203v 8695 console 5574, T204v 8697 console 5576, T205v 8700/8701/8444), the
+   crossing scenario for whichever of T203 and T204 merges second. T206's report gets the proposal critic
+   (`proposal` skill, `brief-critic.md`, the most capable model), then the implementer revises.
+2. At T203's merge, the coordinator adds its two reference-doc lines (from its report) to `main`; at T205's
+   merge, an Owner actions line for the elevated `tools/ports.ps1` run.
+3. Close: README status paragraph, the sweep (`sweep` skill; its emulator under the same RAM rule), an
+   alpha (T203 and T204 change app code), the handoff, the record chore; the allowance's close reading.
+4. Later: a Hatchery-rooted session for the pending carry-backs; the 13 untriaged ideas (`triage` skill).
 
 ## Waiting on user
 
-- The home site's five steps (above) and what holds port 80.
+- The home site's five steps and what holds port 80 (the ports script of T205 helps once run elevated).
 - The paging file (12.8 GB on C:, set 32 GB or automatic); install v0.1.17-alpha and the hike checks; the
   `Question:` blocks; ADR 0051's two answers; the git housekeeping row.
 
