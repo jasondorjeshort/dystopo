@@ -9,9 +9,8 @@ wave; Later carries waves 24 to 26's follow-ups; the record `docs/tasks/wave-26.
 
 - **Wave 26 is closed** (T202 to T207 merged 2026-11-02; the close entry in `docs/PLANNING.md`'s log). The sweep
   was green after T207's fix; **v0.1.18-alpha is published** (verified and installed from the draft on an
-  emulator; no phone was connected). Nothing is running: no worktree, no task branch, no emulator of ours
-  (`adb devices` empty; one stray `emulator.exe` with no device was seen and left). The live viewer on 8765 is up
-  (PID in `out/coordinator-pids.txt`). Meter at the close: 32 on the 7-day.
+  emulator; no phone connected). Nothing is running: no worktree, task branch or emulator of ours (one stray
+  `emulator.exe` with no device, left). The live viewer on 8765 is up. Meter at the close: 32 on the 7-day.
 - **The RAM rule worked**, and the owner clarified it (2026-11-02): "We can use ram, we just can't be using lots
   of ram on multiple processes at once." So the next wave bounds the count of heavy processes (emulators at the
   cap, one compile per agent, few verifiers, servers from `installDist`, no idle daemons), not any one
@@ -33,8 +32,8 @@ wave; Later carries waves 24 to 26's follow-ups; the record `docs/tasks/wave-26.
 
 - Install v0.1.18-alpha and the phone checks on the board (the terrain estimate under trees with a real
   barometer, the readout across a barometer silence, the strip at your font size); the T203 and T204 strings.
-- The home site's six steps and what holds port 80; the inventory's Category column and ADR 0053's D1 to D6;
-  the paging file (12.8 GB on C:); the `Question:` blocks; ADR 0051's two answers; the git housekeeping row.
+- The home site's six steps; the inventory's Category column and ADR 0053's D1 to D6; the paging file; the
+  `Question:` blocks (eight new ideas of 2026-11-02 untriaged); ADR 0051's two answers; the housekeeping row.
 
 ## Open findings
 
