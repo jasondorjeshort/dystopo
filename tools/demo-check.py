@@ -863,7 +863,12 @@ def main() -> int:
             ok = ok and not (report.get("scaleRule") or {}).get("mismatches")
             if report["idle"] and (v.get("size") or (args.width, args.height))[0] <= 520:
                 # T205: at phone width nothing of the credits or the sources box may cover the scale bar.
-                report["scaleClear"] = page.evaluate(SCALE_CLEAR_JS)
+                # T207: only the viewer page has a scale control (window.dystopoScaleBar); the bare phone-style page that
+                # devtool serve answers in pack mode is the map alone, so there is no bar there to be covered.
+                if page.evaluate("() => typeof window.dystopoScaleBar === 'function'"):
+                    report["scaleClear"] = page.evaluate(SCALE_CLEAR_JS)
+                else:
+                    report["scaleClear"] = {"ok": True, "skipped": "the page has no scale control (pack-mode stand-in page)"}
                 ok = ok and report["scaleClear"]["ok"]
             report["start"] = page.evaluate("() => window.dystopoStart || null")  # T200: which view opened and why
             if v.get("nohash"):
