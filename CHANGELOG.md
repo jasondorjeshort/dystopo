@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-02
 
+- T207: Sweep finding: the pack-mode page at phone width has no scale bar
 - T203: A position from the terrain when the GPS is gone: the live source on the phone
 - T204: The readout's defects: the pressure-source jump, the stale-barometer gate, the strip at font scale 2.0
 - T202: The shipped graph is there before the first route: the server builds every pack's missing graph at start and on refresh
