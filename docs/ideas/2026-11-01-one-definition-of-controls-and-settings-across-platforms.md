@@ -20,6 +20,8 @@ keys, the on-screen zone it lives in, the platforms that have it), with a check 
 that fails when a client shows a control the manifest does not place. Layout and flows stay each
 platform's own.
 
+Proposal: `docs/design/proposals/0053-one-definition-of-controls-and-settings.md`, with the inventory for the owner's categories in `docs/design/proposals/0053-controls-inventory.md` (T206).
+
 ## Open
 
 - The categories themselves: nothing settles them. First an inventory of every control on both
