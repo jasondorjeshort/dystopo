@@ -618,6 +618,25 @@ def check_trip_sync(browser, page, page_url, shot, timeout, token="", size=(1280
     return out
 
 
+# T205: the scale bar's box against every box that could sit over it (the credits control, the sources box,
+# the panel); the overlap in pixels, per box. A hidden or absent box has no overlap.
+SCALE_CLEAR_JS = """() => {
+  const rect = sel => { const e = document.querySelector(sel); if (!e || e.hidden) return null; const r = e.getBoundingClientRect(); return r.width && r.height ? r : null; };
+  const bar = rect(".maplibregl-ctrl-scale");
+  if (!bar) return { ok: false, reason: "no scale bar" };
+  const over = {};
+  for (const [name, sel] of [["credits", ".maplibregl-ctrl-attrib"], ["sources", "#sources"], ["panel", "#panel"]]) {
+    const r = rect(sel);
+    if (!r) { over[name] = 0; continue; }
+    const w = Math.min(bar.right, r.right) - Math.max(bar.left, r.left), h = Math.min(bar.bottom, r.bottom) - Math.max(bar.top, r.top);
+    over[name] = w > 0 && h > 0 ? Math.round(w * h) : 0;
+  }
+  const attrib = document.querySelector(".maplibregl-ctrl-attrib");
+  return { ok: Object.values(over).every(v => v === 0), overlapPx2: over, creditsOpen: !!attrib && attrib.hasAttribute("open"),
+           bar: [bar.left, bar.top, bar.right, bar.bottom].map(Math.round) };
+}"""
+
+
 def check_print(page, shot, pdf_path, scale, paper, timeout):
     """T167: the viewer's Print box against GET /print: shown, the sheet downloaded, a one-page PDF."""
     out = {"step": "print", "ok": False}
@@ -842,6 +861,10 @@ def main() -> int:
                         report["scaleRule"] = rule
             ok = report["idle"] and not report["pageErrors"] and not report["failedRequests"] and not any(c["type"] == "error" for c in report["console"])
             ok = ok and not (report.get("scaleRule") or {}).get("mismatches")
+            if report["idle"] and (v.get("size") or (args.width, args.height))[0] <= 520:
+                # T205: at phone width nothing of the credits or the sources box may cover the scale bar.
+                report["scaleClear"] = page.evaluate(SCALE_CLEAR_JS)
+                ok = ok and report["scaleClear"]["ok"]
             report["start"] = page.evaluate("() => window.dystopoStart || null")  # T200: which view opened and why
             if v.get("nohash"):
                 # T200: where the page opened, read from its hash (MapLibre writes it), against the expected view.

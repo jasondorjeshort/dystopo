@@ -10,7 +10,7 @@
       checkout never alters the running site;
     - writes <Root>\server.json from tools\site\server.example.json (bind 127.0.0.1, -Port, cache, out,
       tilebuild and the rotated JSON log under the root, a generated token, publicUrl https://<Host>;
-      other keys of an existing server.json are kept) and <Root>\site.env (the host, the port, the token,
+      other keys of an existing server.json are kept) and <Root>\site.env (the host, the ports, the token,
       JAVA_HOME as it is now, JAVA_OPTS=-Xmx2g, Caddy's folders);
     - downloads Caddy (the official windows_amd64 release asset, SHA-512 checked against the release's
       checksums file) into <Root>\caddy and copies tools\site\Caddyfile there;
@@ -25,9 +25,12 @@
   with an at-logon trigger instead (no elevation; they run only while you are logged on and Caddy shows a
   console window): for test instances.
 
+  -HttpsPort <n> (default 443): the port Caddy serves HTTPS on, recorded in site.env and kept by -Update; a
+  test instance takes another (8443) so it can run beside the real site.
+
   -Update: rebuilds and re-copies the distributions, takes a newer Caddy release, rewrites the configs
   (token and host kept) and restarts both tasks. -Firewall (elevated): adds the inbound rule for TCP 80
-  and 443 to caddy.exe. -Uninstall: stops and removes both tasks and the rule; the folder (token, cache,
+  and the HTTPS port to caddy.exe. -Uninstall: stops and removes both tasks and the rule; the folder (token, cache,
   packs) stays, delete it by hand.
   A Stop-ScheduledTask is a hard kill: no graceful shutdown (docs/SERVER.md, Shutdown).
 
@@ -43,6 +46,7 @@ param(
     [string]$Root = (Join-Path $env:USERPROFILE '.dystopo\site'),
     [string]$Name = '',
     [int]$Port = 8801,
+    [int]$HttpsPort = 443,
     [Alias('Host')][string]$SiteHost = 'localhost',
     [switch]$Firewall,
     [switch]$Update,
@@ -59,7 +63,7 @@ $Root = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
 $rootFwd = $Root -replace '\\', '/'
 $serverTask = "Dystopo site server$Name"
 $proxyTask = "Dystopo site proxy$Name"
-$ruleName = "Dystopo site proxy$Name (TCP 80, 443)"
+$ruleFilter = "Dystopo site proxy$Name (TCP *"   # every rule this instance ever made, whatever its HTTPS port
 $envFile = Join-Path $Root 'site.env'
 $configFile = Join-Path $Root 'server.json'
 $caddyDir = Join-Path $Root 'caddy'
@@ -239,6 +243,7 @@ function Write-Configs([hashtable]$siteEnv, [string]$javaHome) {
         '# Caddy reads every line (caddy run --envfile); install.ps1 reads them back on -Update.',
         "DYSTOPO_SITE_HOST=$SiteHost",
         "DYSTOPO_SITE_PORT=$Port",
+        "DYSTOPO_SITE_HTTPS_PORT=$HttpsPort",
         "DYSTOPO_SITE_ROOT=$rootFwd",
         "DYSTOPO_SITE_BIND=$bind",
         "DYSTOPO_SITE_AUTO_HTTPS=$autoHttps",
@@ -261,7 +266,7 @@ function Write-Configs([hashtable]$siteEnv, [string]$javaHome) {
     }
     Set-Key $cfg 'bind' '127.0.0.1'
     Set-Key $cfg 'port' $Port
-    Set-Key $cfg 'publicUrl' "https://$SiteHost"
+    Set-Key $cfg 'publicUrl' $(if ($HttpsPort -eq 443) { "https://$SiteHost" } else { "https://${SiteHost}:$HttpsPort" })
     Set-Key $cfg 'cacheDir' "$rootFwd/cache"
     Set-Key $cfg 'outDir' "$rootFwd/out"
     Set-Key $cfg 'token' $token
@@ -303,7 +308,7 @@ function Register-SiteTasks([hashtable]$siteEnv, [string]$javaHome, [string]$jav
     $caddyArgs = "run --config `"$caddyDir\Caddyfile`" --adapter caddyfile --envfile `"$envFile`""
     try {
         Register-SiteTask $serverTask $javaw $serverArgs $Root 'the map server on 127.0.0.1'
-        Register-SiteTask $proxyTask $caddyExe $caddyArgs $caddyDir 'the Caddy TLS proxy on ports 80 and 443'
+        Register-SiteTask $proxyTask $caddyExe $caddyArgs $caddyDir "the Caddy TLS proxy on ports 80 and $HttpsPort"
     } catch {
         $denied = $_.Exception.Message -match 'denied'
         if ($denied -and -not $AtLogon) {
@@ -328,10 +333,11 @@ function Format-Args {
 
 function Set-FirewallRule {
     if (-not $isAdmin) { Fail "-Firewall needs an elevated PowerShell: run it $elevatedHint" }
-    Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    $ruleName = "Dystopo site proxy$Name (TCP 80, $HttpsPort)"
+    Get-NetFirewallRule -DisplayName $ruleFilter -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -DisplayName $ruleName -Group 'Dystopo site' -Direction Inbound -Action Allow -Protocol TCP `
-        -LocalPort 80, 443 -Program $caddyExe -Profile Any | Out-Null
-    Say "firewall: inbound TCP 80 and 443 allowed to the site's caddy.exe"
+        -LocalPort 80, $HttpsPort -Program $caddyExe -Profile Any | Out-Null
+    Say "firewall: inbound TCP 80 and $HttpsPort allowed to the site's caddy.exe"
 }
 
 function Assert-PortFree([int]$p, [int[]]$ours) {
@@ -350,7 +356,7 @@ if ($Uninstall) {
         try { Unregister-ScheduledTask -TaskName $t -TaskPath '\' -Confirm:$false; Say "removed '$t'" }
         catch { $left += $t; Say "could not remove '$t': $($_.Exception.Message)" }
     }
-    $rules = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)
+    $rules = @(Get-NetFirewallRule -DisplayName $ruleFilter -ErrorAction SilentlyContinue)
     if ($rules.Count -gt 0) {
         if ($isAdmin) { $rules | Remove-NetFirewallRule; Say "removed the firewall rule" }
         else { $left += 'the firewall rule' }
@@ -363,12 +369,14 @@ if ($Uninstall) {
 # --- install and update --------------------------------------------------------------------------------
 
 if ($Firewall -and -not $isAdmin) { Fail "-Firewall needs an elevated PowerShell: run it $elevatedHint" }
-if (@(8686, 8687, 8765) -contains $Port) { Fail "port $Port belongs to the phone or the coordinator (docs/reference/machines.md)" }
+if ($HttpsPort -lt 1 -or $HttpsPort -gt 65535 -or $HttpsPort -eq $Port -or $HttpsPort -eq 80) { Fail "-HttpsPort must be a free port other than -Port and 80" }
+if (@(8686, 8687, 8765) -contains $Port -or @(8686, 8687, 8765) -contains $HttpsPort) { Fail "port $Port belongs to the phone or the coordinator (docs/reference/machines.md)" }
 
 $siteEnv = Read-SiteEnv
 # What an earlier install recorded wins over a default; an argument given now wins over both.
 if (-not $PSBoundParameters.ContainsKey('SiteHost') -and $siteEnv['DYSTOPO_SITE_HOST']) { $SiteHost = $siteEnv['DYSTOPO_SITE_HOST'] }
 if (-not $PSBoundParameters.ContainsKey('Port') -and $siteEnv['DYSTOPO_SITE_PORT']) { $Port = [int]$siteEnv['DYSTOPO_SITE_PORT'] }
+if (-not $PSBoundParameters.ContainsKey('HttpsPort') -and $siteEnv['DYSTOPO_SITE_HTTPS_PORT']) { $HttpsPort = [int]$siteEnv['DYSTOPO_SITE_HTTPS_PORT'] }
 if (-not $PSBoundParameters.ContainsKey('AtLogon') -and $siteEnv['DYSTOPO_SITE_LOGON'] -eq 'interactive') { $AtLogon = [switch]$true }
 
 New-Item -ItemType Directory -Force -Path $Root, $caddyDir | Out-Null
@@ -392,6 +400,7 @@ if ($Firewall) { Set-FirewallRule }
 
 Stop-SiteTasks -Disable
 Assert-PortFree $Port @()
+Assert-PortFree $HttpsPort @()
 Register-SiteTasks $siteEnv $javaHome $written.javaOpts
 
 foreach ($t in @($serverTask, $proxyTask)) { Enable-ScheduledTask -TaskName $t | Out-Null; Start-ScheduledTask -TaskName $t }
@@ -401,14 +410,14 @@ Say "server up in $up s"
 # The proxy, straight to 127.0.0.1:443 under the site's name (-k: whether it answers; status.ps1 checks the certificate).
 $proxyUp = $false
 for ($i = 0; $i -lt 30 -and -not $proxyUp; $i++) {
-    $code = & curl.exe -s -k -o NUL -w '%{http_code}' --max-time 10 --resolve "${SiteHost}:443:127.0.0.1" "https://${SiteHost}/healthz" 2>$null
+    $code = & curl.exe -s -k -o NUL -w '%{http_code}' --max-time 10 --resolve "${SiteHost}:${HttpsPort}:127.0.0.1" "https://${SiteHost}:${HttpsPort}/healthz" 2>$null
     if ($code -eq '200') { $proxyUp = $true } else { Start-Sleep -Seconds 2 }
 }
-if ($proxyUp) { Say "proxy answers on 443" }
-elseif ($SiteHost -eq 'localhost') { Fail "the proxy did not answer on 443 within 60 s (task $((Get-Task $proxyTask).State)); Caddy's log is caddy\caddy.log under the site folder" }
-else { Say "the proxy does not answer on 443 yet: a public certificate needs ports 80 and 443 forwarded to this PC and the name pointing here (docs/reference/home-site.md); Caddy keeps trying" }
+if ($proxyUp) { Say "proxy answers on $HttpsPort" }
+elseif ($SiteHost -eq 'localhost') { Fail "the proxy did not answer on $HttpsPort within 60 s (task $((Get-Task $proxyTask).State)); Caddy's log is caddy\caddy.log under the site folder" }
+else { Say "the proxy does not answer on $HttpsPort yet: a public certificate needs ports 80 and $HttpsPort forwarded to this PC and the name pointing here (docs/reference/home-site.md); Caddy keeps trying" }
 Say "check it any time: powershell -NoProfile -ExecutionPolicy Bypass -File tools\site\status.ps1$(Format-Args)"
-if ($SiteHost -ne 'localhost' -and -not $Firewall -and -not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
+if ($SiteHost -ne 'localhost' -and -not $Firewall -and -not (Get-NetFirewallRule -DisplayName $ruleFilter -ErrorAction SilentlyContinue)) {
     Say "no firewall rule yet: run once with -Firewall $elevatedHint"
 }
 exit 0

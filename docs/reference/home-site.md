@@ -37,8 +37,8 @@ prints the one command to run as administrator, in the checkout:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\site\install.ps1 -Firewall
 ```
 
-That run registers both tasks, adds the firewall rule (inbound TCP 80 and 443 to the site's `caddy.exe`,
-any network profile), starts both and waits for `/healthz` on the server and through the proxy. A
+That run registers both tasks, adds the firewall rule (inbound TCP 80 and the HTTPS port to the site's `caddy.exe`, named after it,
+any network profile; the HTTPS port is `-HttpsPort`, 443 by default), starts both and waits for `/healthz` on the server and through the proxy. A
 `-Root`/`-Name` given on the first run goes on this command too (the script prints it complete).
 
 What it registers, for the current user, logon type S4U (no stored password, no window, runs before anyone
@@ -62,14 +62,18 @@ progress leaves its `*.building` file, which the next build of that name replace
 **Test instances** (agents, verifiers): `-Root <scratch> -Name " <id>" -Port <port> -AtLogon`. `-AtLogon`
 registers interactive tasks with an at-logon trigger, which needs no elevation; they run only while the
 user is logged on, and Caddy's task opens a console window (closing it stops Caddy until the next minute).
-A `localhost` instance binds only the loopback addresses and uses no port 80. Only one proxy at a time can
-hold 443, so a test instance and the real site do not run together.
+A `localhost` instance binds only the loopback addresses and uses no port 80. Give a test instance its own HTTPS port, `-HttpsPort 8443` (default 443; recorded in `site.env` as
+`DYSTOPO_SITE_HTTPS_PORT`, kept by `-Update`, read by `status.ps1`, named by the firewall rule, and the Caddyfile's
+site address is `<host>:<port>`): then it runs beside the owner's site, which keeps 443. Two instances must not share a
+HTTPS port, a server port or an `-HttpsPort` equal to 80 (the script refuses). Measured 2026-11-02: an instance on 8699
+and 8443 answered `/healthz` 200 and `/metrics` 403 with `curl -k https://localhost:8443/`, `status.ps1` read 8443
+back, and `-Update` kept it.
 
 ## The folder
 
 | Path | What |
 |---|---|
-| `site.env` | Host, port, token, the JDK path snapshotted at install, `JAVA_OPTS` (`-Xmx2g`), Caddy's folders, and two whole Caddyfile lines (`DYSTOPO_SITE_BIND`, `DYSTOPO_SITE_AUTO_HTTPS`). Caddy reads it at start; `install.ps1` reads it back. Readable only by the user, SYSTEM and Administrators. |
+| `site.env` | Host, port, HTTPS port, token, the JDK path snapshotted at install, `JAVA_OPTS` (`-Xmx2g`), Caddy's folders, and two whole Caddyfile lines (`DYSTOPO_SITE_BIND`, `DYSTOPO_SITE_AUTO_HTTPS`). Caddy reads it at start; `install.ps1` reads it back. Readable only by the user, SYSTEM and Administrators. |
 | `server.json` | The server's config, from `tools/site/server.example.json`; `install.ps1` sets bind, port, `publicUrl`, cache, out, tilebuild, token and the log file and keeps any other key you add. Same permissions. |
 | `server/`, `tilebuild/` | The snapshot of the distributions (replaced by `-Update`). |
 | `cache/`, `out/` | The site's own downloads and tiles, and its packs. |

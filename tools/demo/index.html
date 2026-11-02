@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dystopo Demo</title>
+<title>Dystopo</title>
 <!--
   Interactive viewer for local tile output. Generate the data first (from the repo root):
     ./gradlew :devtool:run --args="tiles --bbox -122.05,46.60,-121.40,47.10 --min-zoom 8 --max-zoom 14 --pmtiles out/rainier-dem.pmtiles"
@@ -758,6 +758,9 @@ if (LIVE) {
     if (credit) map.removeControl(credit);
     credit = new maplibregl.AttributionControl({ compact: phone.matches, customAttribution: html });
     map.addControl(credit, "bottom-right");
+    // T205: MapLibre's compact control starts open, and its open box ran across the bottom edge over the
+    // scale bar at phone width. Start it as the (i) button; a tap still opens it.
+    if (phone.matches) { credit._container.removeAttribute("open"); credit._container.classList.remove("maplibregl-compact-show"); }
     creditText = html;
     window.dystopoCredit = html;
   };

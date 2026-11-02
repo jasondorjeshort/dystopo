@@ -3,6 +3,7 @@
 # (caddy run --envfile), so the host name never appears in a tracked file:
 #   DYSTOPO_SITE_HOST  the site's host name (localhost for a test instance)
 #   DYSTOPO_SITE_PORT  the server's port on 127.0.0.1
+#   DYSTOPO_SITE_HTTPS_PORT  the port Caddy serves HTTPS on (443 for the real site)
 #   DYSTOPO_SITE_ROOT  the install folder (forward slashes)
 #   DYSTOPO_SITE_BIND  a whole "default_bind ..." line for a localhost instance, else empty (every interface)
 #   DYSTOPO_SITE_AUTO_HTTPS  a whole "auto_https disable_redirects" line when port 80 is not wanted (a
@@ -24,7 +25,7 @@
 	}
 }
 
-{$DYSTOPO_SITE_HOST} {
+{$DYSTOPO_SITE_HOST}:{$DYSTOPO_SITE_HTTPS_PORT} {
 	# /metrics exposes the log path and the disk figures (docs/SERVER.md, What to monitor); status.ps1
 	# reads it on 127.0.0.1. The server's /metrics context also answers any path that starts with it.
 	respond /metrics* 403
