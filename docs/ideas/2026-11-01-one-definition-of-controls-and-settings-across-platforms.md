@@ -1,6 +1,7 @@
 ---
 date: 2026-11-01
 kind: feature
+related: [2026-11-02-phone-settings-registry.md]
 ---
 
 # One definition of the controls and settings, read by the web page, the Android app and a later iOS app
@@ -20,10 +21,15 @@ keys, the on-screen zone it lives in, the platforms that have it), with a check 
 that fails when a client shows a control the manifest does not place. Layout and flows stay each
 platform's own.
 
-## Open
+Proposal: `docs/design/proposals/0053-one-definition-of-controls-and-settings.md`, with the inventory for the owner's categories in `docs/design/proposals/0053-controls-inventory.md` (T206).
 
-- The categories themselves: nothing settles them. First an inventory of every control on both
-  clients and the benchmark survey of how the established topo apps group theirs (ADR 0039), then a
-  side-by-side table for the owner to edit; the manifest follows the table.
-- A format other tools read is a major choice: proposal, critic, ADR before building.
-- Whether strings (labels, help) belong in the same definition or stay per platform.
+Plan: build ADR 0053 (`docs/design/decisions/0053-one-definition-of-controls-and-settings.md`) in its
+three steps, each a task. (1) The map options: the registry in `shared` for `MapOptions.KEYS` (types,
+choices, defaults; `MapOptions` reads them and keeps its parse), `devtool controls` writing the
+committed `tools/demo/controls.json` [no-check: written by step 1] with its staleness test under
+`./gradlew updateGoldens`, `injectLive` inlining it, the standalone build copying it, the page's
+`data-control` attributes, and the check's parts for the settings rows and the web page; today's six
+phone groups as the placeholder categories; no user-visible change. (2) The rest of the shared
+surface and every placed item of both clients, the phone's `Modifier.control` helper and its
+both-ways test, `GET /controls` on the debug port, one label per item and the help references. (3)
+The owner's adjustments D1 to D6 as they come (ADR 0031). This file stays until step 1 lands.
