@@ -1,6 +1,7 @@
 ---
 date: 2026-11-01
 kind: feature
+related: [2026-11-02-phone-settings-registry.md]
 ---
 
 # One definition of the controls and settings, read by the web page, the Android app and a later iOS app

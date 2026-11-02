@@ -27,28 +27,31 @@ here; wave 26's T205 edits the web page's title and credits (no control) and T20
 - Every phone settings row also carries a help icon (`?`, the `help = "..."` key `HelpRegistryTest` checks); the web
   has `title=` tooltips on a few controls. Neither is counted as a control.
 
-## 1. The shared surface: map options both clients offer
+## 1. The shared surface: what both clients offer, and its one-sided neighbours
+
+Nineteen items exist on both clients. The six rows marked "(one side)" exist on one client only and stand here beside
+their counterpart (corrected after the critic's review, objection 6; the first count said 25).
 
 | Item | Web: id, label, kind | Phone: row › label, kind | Key (shared) | Category |
 |---|---|---|---|---|
 | Hillshade method | `opt-hillshade` "Hillshade": select single light, multidirectional, off (Map options, panel) | Map › Hillshade: chips Off, Single, Multi | `hillshade` (`app.map.hillshade`) | |
 | Hillshade on/off | `hill` "Hillshade (from our DEM tiles)": checkbox, page only (panel top) | the Off chip above | page state; `hillshade=off` on the phone | |
-| Hillshade intensity | no control (read from `?hillshadeIntensity=`) | Map › Intensity: stepper in 10 % steps (shown when hillshade is on) | `hillshadeIntensity` | |
+| Hillshade intensity (one side) | no control (read from `?hillshadeIntensity=`) | Map › Intensity: stepper in 10 % steps (shown when hillshade is on) | `hillshadeIntensity` | |
 | Slope shading | `opt-slope` "Slope shading": select off, avalanche, steepness, with legend (live mode only; disabled in the static demo) | Map › Slope shading: chips Off, Avalanche, Steepness, with legend | `slope` | |
 | Contour interval | `opt-interval` "Contour interval": select auto and the unit's intervals | Map › Contours: chip Auto and a `<` `>` stepper | `contourInterval` | |
-| Contours on/off | `contours` "Contours, feet (computed live)": checkbox, page only | none (no way to hide contours) | page state | |
-| Contour labels | no control (the page's own style ignores it) | Map › Contour labels: chips Sparse, Normal, Dense | `contourLabels` | |
+| Contours on/off (one side) | `contours` "Contours, feet (computed live)": checkbox, page only | none (no way to hide contours) | page state | |
+| Contour labels (one side) | no control (the page's own style ignores it) | Map › Contour labels: chips Sparse, Normal, Dense | `contourLabels` | |
 | Trails | `opt-trails` "trails": checkbox | Map › Layers: chip Trails | `trails` | |
 | Water | `opt-water` "water": checkbox | Map › Layers: chip Water | `water` | |
 | Land cover | `opt-landcover` "land cover": checkbox | Map › Layers: chip Land cover | `landcover` | |
 | POIs | `opt-pois` "POIs": checkbox | Map › Layers: chip POIs | `pois` | |
 | Boundaries | `opt-boundaries` "boundaries": checkbox | Map › Layers: chip Boundaries | `boundaries` | |
-| All OSM layers | `osm` "Trails, roads, water, names (OSM)": checkbox, page only | none | page state | |
-| Drainage | no control (the page's own style has no drainage layer) | Map › Drainage: chips On, Off | `drainage` | |
+| All OSM layers (one side) | `osm` "Trails, roads, water, names (OSM)": checkbox, page only | none | page state | |
+| Drainage (one side) | no control (the page's own style has no drainage layer) | Map › Drainage: chips On, Off | `drainage` | |
 | Night | `opt-night` "Night": checkbox | Map › Night: chips On, Off | `night` | |
 | Units | `unitsel` "Units": select feet, metres, reset to the region default (panel); `?units=` for one load | Units and display › Units: Feet, Metres | browser `dystopo.units`; phone `units` (`app.units`) | |
 | Text size | `text` "Text size": slider 0.8 to 2, page only, not stored | Units and display › Text size: `-` `+` stepper | phone `textScale` (`app.textScale`) | |
-| Scale bar | display only, lower left, one unit | Map › Scale bar: chips One unit, Both units; the bar lower left | phone `scaleBar.both` (`app.scaleBar.both`) | |
+| Scale bar (one side) | display only, lower left, one unit | Map › Scale bar: chips One unit, Both units; the bar lower left | phone `scaleBar.both` (`app.scaleBar.both`) | |
 | Print a map sheet | Print box (panel, live with `GET /print`): `printscale` Scale, `printpaper` Paper, `printlandscape` landscape, `printgrid` Grid, `printsheet` "Make the sheet (PDF)" | Map › Print a map sheet: one chip per scale, paper in the system dialog | - (action) | |
 | Position | `GeolocateControl` "locate me" button, top right (live mode) | the position button, lower right (section 4) | - | |
 | Rotation and north | `NavigationControl` compass button, top right; right-drag rotates | the orientation button and "Keep north up" (sections 3 and 4) | phone `orientationLock` | |
@@ -559,7 +562,7 @@ budget (phone: the Storage screen, reached from Settings); units (web: the panel
 | Phone | the settings sheet (S1 to S57; 44 row entries) | 57 |
 | Phone | the map, its cards, menus, sheets and screens (M1 to M188) | 188 |
 | Phone | total | 245 |
-| Both | the shared surface (section 1) | 25 items |
+| Both | the shared surface (section 1: 25 rows, six marked one side) | 19 items |
 
 Counted from the files at the pinned commit by hand and by a read-only sweep of the overlays; a chip set is one row,
 help icons are not rows.
