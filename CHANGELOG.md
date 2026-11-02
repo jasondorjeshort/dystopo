@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.18-alpha (2026-11-02)
+
 ### 2026-11-02
 
 - T207: Sweep finding: the pack-mode page at phone width has no scale bar
