@@ -13,6 +13,7 @@ import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import io.github.jasondorjeshort.dystopo.gpx.Gpx
 import io.github.jasondorjeshort.dystopo.nav.TerrainFixOptions
+import io.github.jasondorjeshort.dystopo.nav.TerrainLiveOptions
 import io.github.jasondorjeshort.dystopo.nav.TerrainFixReplay
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
@@ -35,6 +36,11 @@ import java.io.File
  *
  * `--flat` replaces the DEM and the line's elevation by one constant (the case where the terrain says nothing);
  * `--no-elevation` and `--no-heading` drop one likelihood, to see what each contributes.
+ *
+ * T203, `--live`: the phone's live rules ([io.github.jasondorjeshort.dystopo.nav.TerrainLive]) instead of the bare filter:
+ * good GPS fixes before the cut (the pace and the course come from them), none in it (or `--poor-accuracy <m>` fixes),
+ * the barometer and the compass every second, the minute's wait, the heading rule and the 300 m give-up. Per cut it
+ * prints the same error figures over the estimates plus `shownAfterS`, `gaveUpAtM`, the pace used and the heading share.
  */
 class TerrainFixCommand : CliktCommand(name = "terrain-fix") {
     override fun help(context: Context) =
@@ -58,6 +64,9 @@ class TerrainFixCommand : CliktCommand(name = "terrain-fix") {
     private val headingBias by option("--heading-bias", help = "Compass bias (deg)").double().default(TerrainFixReplay.Sensors().headingBiasDeg)
     private val baroDrift by option("--baro-drift", help = "Barometer drift (m per hour)").double().default(TerrainFixReplay.Sensors().baroDriftMPerH)
     private val seedError by option("--seed-error", help = "Per-axis error of the seed fix (m)").double().default(TerrainFixReplay.Sensors().seedErrorM)
+    private val live by option("--live", help = "T203: run the phone's live rules (the minute's wait, the pace from the good fixes, the heading rule, the 300 m give-up)").flag()
+    private val poorAccuracy by option("--poor-accuracy", help = "With --live: poor fixes at this accuracy (m) during the cut instead of none").double()
+    private val paceSigma by option("--pace-sigma", help = "With --live: the particles' stride prior when the stride is the pace (fraction)").double().default(TerrainLiveOptions().paceSigma)
 
     override fun run() {
         val t0 = System.nanoTime()
@@ -91,9 +100,21 @@ class TerrainFixCommand : CliktCommand(name = "terrain-fix") {
             strideBias = strideBias, strideGrade = strideGrade, headingBiasDeg = headingBias, headingNoiseDeg = headingNoise, baroDriftMPerH = baroDrift, seedErrorM = seedError,
         )
         val t1 = System.nanoTime()
+        val truth1 = if (live) TerrainFixReplay.resample(line, 1.0) else truth
         val cutReports = cuts.map { spec ->
             val (from, to) = parseCut(spec)
             val c0 = System.nanoTime()
+            if (live) {
+                val liveRuns = (1..runs).map { seed ->
+                    try {
+                        TerrainFixReplay.runLiveCut(graph, sampler, truth1, from, to, TerrainLiveOptions(fix = options, paceSigma = paceSigma), sensors, seed, poorAccuracyM = poorAccuracy)
+                    } catch (e: IllegalArgumentException) {
+                        throw UsageError("--cut $spec: ${e.message}")
+                    }
+                }
+                return@map linkedMapOf<String, Any?>("cut" to spec, "fromM" to from, "toM" to to, "terrain" to TerrainFixReplay.terrain(truth, from, to)) +
+                    TerrainFixReplay.liveSummary(liveRuns) + linkedMapOf("elapsedMs" to (System.nanoTime() - c0) / 1_000_000)
+            }
             val results = (1..runs).map { seed ->
                 try {
                     TerrainFixReplay.runCut(graph, sampler, truth, from, to, options, sensors, seed)
@@ -111,6 +132,7 @@ class TerrainFixCommand : CliktCommand(name = "terrain-fix") {
             "graph" to linkedMapOf("edges" to graph.edgeCount, "action" to graphReport["action"]),
             "line" to linkedMapOf("points" to line.size, "lengthM" to truth.last().alongM.toLong(), "durationS" to truth.last().timeS.toLong(), "timed" to if (timed) "gpx" else "tobler", "flat" to flat),
             "stepS" to stepS, "options" to options.json(), "sensors" to sensors.json(),
+            "live" to if (live) TerrainLiveOptions(paceSigma = paceSigma).json() + mapOf("poorAccuracyM" to poorAccuracy) else null,
             "cuts" to cutReports,
             "demSamples" to demSampler.samples, "demTilesDecoded" to pyramid.tilesDecoded,
             "setupMs" to (t1 - t0) / 1_000_000, "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,

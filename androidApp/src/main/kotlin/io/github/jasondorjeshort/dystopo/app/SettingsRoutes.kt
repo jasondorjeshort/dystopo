@@ -80,6 +80,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `On hot days`; default `hot`: navigating, the line before a sunny stretch of more than 20 minutes after terrain shade
  *   is said only when the air at the walker's height is 25 C or more, the weather station's temperature lowered at 6.5 C
  *   a km; `always` says it whatever the temperature), synced as `app.shadeSpoken`. The card's line shows in every case.
+ *   T203, the terrain estimate (Settings › Navigation and tracking, `tracking/TerrainSource`): `estimatePosition=1|0`
+ *   (default on: "Estimate position when GPS is poor"), synced as `app.estimatePosition` `on`/`off`; the source starts or
+ *   stops watching at once. `GET /settings` reports it; `GET /location/terrain` shows its effect.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -213,6 +216,9 @@ class SettingsRoutes(private val app: DystopoApp) {
         // T194: the terrain shade line's setting (read at each due line).
         parsed.shadeSpoken?.let { AppSettings.setShadeSpoken(it) }
         // end T194
+        // T203: the terrain estimate's switch; the source starts or stops watching at once.
+        parsed.estimatePosition?.let { AppSettings.setEstimatePosition(it); io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.update() }
+        // end T203
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -268,6 +274,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             // T194: the spoken terrain shade line.
             val shadeSpoken: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken? = null,
             // end T194
+            // T203: the terrain estimate's switch.
+            val estimatePosition: Boolean? = null,
+            // end T203
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -294,8 +303,10 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf("waterAlongRoute", "waterSpoken") + // T187
             setOf("viewRange") + // T182
             setOf(AppSettings.KEY_TIME_ESTIMATE_FORM) + // T184
-            setOf(AppSettings.KEY_SHADE_SPOKEN) // T194
+            setOf(AppSettings.KEY_SHADE_SPOKEN) + // T194
             // end T194
+            setOf(AppSettings.KEY_ESTIMATE_POSITION) // T203
+            // end T203
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -467,6 +478,9 @@ class SettingsRoutes(private val app: DystopoApp) {
                 io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(v.toString()) ?: return Parsed.Error("${AppSettings.KEY_SHADE_SPOKEN} must be off, hot or always (got $v)")
             }
             // end T194
+            // T203: the terrain estimate's switch.
+            val estimatePosition = params[AppSettings.KEY_ESTIMATE_POSITION]?.let { flag(it) ?: return Parsed.Error("${AppSettings.KEY_ESTIMATE_POSITION} must be 1 or 0 (got $it)") }
+            // end T203
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
@@ -478,6 +492,8 @@ class SettingsRoutes(private val app: DystopoApp) {
                 timeEstimateForm = timeEstimateForm,
                 shadeSpoken = shadeSpoken, // T194
                 // end T194
+                estimatePosition = estimatePosition, // T203
+                // end T203
             )
         }
 

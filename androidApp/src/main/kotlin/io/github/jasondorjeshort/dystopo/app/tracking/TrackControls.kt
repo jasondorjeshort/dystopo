@@ -146,6 +146,7 @@ private fun BoxScope.Controls() {
                     Chip("\u00D7") { barOpen = false; listOpen = false }
                 }
             }
+            EstimateChip() // T203: the terrain estimate, recording or not
             if (barOpen) ActivityPickerPanel(onRecordStarted) // T172
             if (barOpen && ui.recording) {
                 Panel {
@@ -440,6 +441,36 @@ private fun Chip(text: String, color: Color = Ink, onClick: () -> Unit) {
             .background(color, RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
+}
+
+/**
+ * T203: the terrain estimate's chip under the top-right chips ([TerrainSource.display]): "Estimated position, about 80 m"
+ * in the puck's blue while it estimates, "No position, last known 12 min ago" in grey after the give-up (the time redrawn
+ * every 10 s); nothing otherwise. Not tappable: it says what the puck is.
+ */
+@Composable
+private fun EstimateChip() {
+    val d = TerrainSource.display ?: return
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(d) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(10_000)
+        }
+    }
+    val text = when (d.state) {
+        io.github.jasondorjeshort.dystopo.nav.TerrainState.ESTIMATING -> d.spreadM?.let { TerrainText.estimating(it, AppSettings.units) }
+        io.github.jasondorjeshort.dystopo.nav.TerrainState.GAVE_UP -> TerrainText.lost(now - d.atWallMs)
+        else -> null
+    } ?: return
+    val lost = d.state == io.github.jasondorjeshort.dystopo.nav.TerrainState.GAVE_UP
+    BasicText(
+        text,
+        style = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+        modifier = Modifier
+            .background(if (lost) Color(0xFF8F959E) else Color(0xFF1A66D9), RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
 

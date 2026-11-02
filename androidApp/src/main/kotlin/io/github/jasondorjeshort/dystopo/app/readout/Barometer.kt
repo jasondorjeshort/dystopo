@@ -24,13 +24,19 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
  * registered again when that choice changes. Each registration tells the trend ([PressureWatch.onListenerStart]) so the
  * sensor's first seconds are dropped. Samples go to the readout while it wants them and to the trend always (it keeps
  * them only while recording).
+ *
+ * T203: [Reason.TERRAIN] while the terrain source watches ([io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource]:
+ * its setting on, on foot, recording or in the foreground); its samples go to that source too. It does not change the
+ * sensor's choice: the wake-up one is still taken with the trend among the reasons (a recording holds it, so an
+ * estimate with the screen off is fed from the wake-up sensor), the plain one otherwise. The readout's and the trend's
+ * samples and their [want] are as before.
  */
 object Barometer {
     private const val SAMPLE_US = 1_000_000
     private const val BATCH_US = 4_000_000
 
     /** Who wants the barometer. */
-    enum class Reason(val code: String) { READOUT("readout"), TREND("trend") }
+    enum class Reason(val code: String) { READOUT("readout"), TREND("trend"), TERRAIN("terrain") }
 
     private val manager: SensorManager? get() = runCatching { DystopoApp.instance.getSystemService(Context.SENSOR_SERVICE) as SensorManager }.getOrNull()
     private val sensor: Sensor? by lazy { runCatching { manager?.getDefaultSensor(Sensor.TYPE_PRESSURE) }.getOrNull() }
@@ -45,6 +51,7 @@ object Barometer {
     /** The sensor registered now, or null. */
     @Volatile private var registered: Sensor? = null
     @Volatile private var readoutWanted = false
+    @Volatile private var terrainWanted = false // T203
 
     @Volatile var listening = false
         private set
@@ -67,6 +74,7 @@ object Barometer {
             lastAtWallMs = wallMs
             if (readoutWanted) LiveReadout.onSensorPressure(wallMs, hPa)
             PressureWatch.onSensorPressure(wallMs, hPa) // T178
+            if (terrainWanted) io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.onSensorPressure(wallMs, hPa) // T203
         }
 
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -80,6 +88,7 @@ object Barometer {
     fun want(reason: Reason, on: Boolean) {
         if (on) reasons += reason else reasons -= reason
         readoutWanted = Reason.READOUT in reasons
+        terrainWanted = Reason.TERRAIN in reasons // T203
         val wanted = when {
             reasons.isEmpty() -> null
             Reason.TREND in reasons -> wakeSensor ?: sensor

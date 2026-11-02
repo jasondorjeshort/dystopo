@@ -76,6 +76,16 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   before fix 100 (`stall=60`: before the middle fix), the later fixes stamped 60 s later, so the GPS goes silent;
  *   `GET /location/replay` gains `script` and `stalling`. A bad `accuracy=` or `stall=` is a 400 before anything starts.
  *
+ * - T203, the terrain estimate ([io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource]): `GET /location/terrain` is its
+ *   state (`state` `idle|waiting|estimating|gave-up|no-fix`, `noFixReason`, `watching` and `off`, `seed` with its time,
+ *   position, barometer reading, course, pace and why the heading term is on or off, `particles`, `spreadM`, `last`, the
+ *   counts, the `graph` it loaded, and `estimates`: the last 400 with their spread, heading use and, during a replay, the
+ *   distance to the replay's own fix, `replayErrorM`). `POST /location/terrain[?compass=course|sensor]` with a GPX body
+ *   (a `pressure` column, [io.github.jasondorjeshort.dystopo.app.tracking.Replay]) resets the source and starts the replay
+ *   with `POST /location/replay`'s parameters (`rate`, `record`, `accuracy` ranges, `stall`); `compass=course` (the default)
+ *   takes the heading from the replay's own bearing, `sensor` from the phone's compass. No body: the reset alone. 409 while
+ *   the source does not watch (the setting off, no barometer, not on foot, or in the background without a recording).
+ *
  * `POST /location` (T10/T27) is observed, not handled: the fix also goes to the recorder's injected
  * source and [handle] returns null so [Routes] still moves the puck. T159: `&provider=network` (or `passive`) gives the
  * fix that source, so it stands in for the recording's network fallback (taken only while the GPS is silent).
@@ -187,48 +197,16 @@ object TrackRoutes {
                 t.replay.cancel()
                 return Response.json(t.replay.json())
             }
-            "POST" to "/location/replay" -> {
-                val rate = p.d("rate") ?: 1.0
-                // T57: record= while a track is recording would leave that one behind (empty when it had just
-                // started) beside the replay's own: refuse, and say how to get either. T65: the rules are
-                // ReplayChecks.refusal, unit-tested.
-                val recording = p.s("record") != null && t.call { t.recorder.recording }
-                // T146: `route=current&kmh=` replays the current route timed in the app, no body.
-                val route = p.s("route")
-                val kmh = p.d("kmh")
-                val plan = if (route == "current") io.github.jasondorjeshort.dystopo.app.routing.RouteSession.plan else null
-                ReplayChecks.refusal(rate, r.body.isEmpty(), p.s("record"), recording, route, kmh, plan != null, TimedTrack.MAX_KMH)?.let { (status, error) ->
-                    return Response.json(if (status == 409) mapOf("error" to error, "recording" to recorderJson(t)) else mapOf("error" to error), status)
-                }
-                // T159: accuracy= may carry ranges (120@40-60) and stall= a silence; checked before anything starts.
-                val accuracy = try {
-                    ReplayScript.defaultAccuracy(p.s("accuracy")) ?: 5.0
-                } catch (e: IllegalArgumentException) {
-                    return Response.json(mapOf("error" to e.message), 400)
-                }
-                var scriptError: String? = null
-                val script = { fixes: Int ->
-                    try {
-                        ReplayScript.parse(p.s("accuracy"), p.s("stall"), fixes)
-                    } catch (e: IllegalArgumentException) {
-                        scriptError = e.message
-                        throw ScriptRefused()
-                    }
-                }
-                return try {
-                    if (plan == null) io.github.jasondorjeshort.dystopo.gpx.Gpx.parse(r.bodyText).tracks.flatMap { it.points }.size.let(script)
-                    p.s("record")?.let { t.start(it, Tracking.Mode.INJECTED) }
-                    val started = if (plan != null && kmh != null) {
-                        val track = TimedTrack.track(plan.route, kmh, System.currentTimeMillis() / 1000 * 1000)
-                        t.replay.startTracks(listOf(track), rate, accuracy, "route", kmh, script)
-                    } else t.replay.start(r.bodyText, rate, accuracy, script)
-                    Response.json(started + mapOf("recording" to t.recorder.activeId))
-                } catch (e: ScriptRefused) {
-                    Response.json(mapOf("error" to scriptError), 400)
-                } catch (e: IllegalArgumentException) {
-                    // GpxException and XmlException are IllegalArgumentExceptions too.
-                    Response.json(mapOf("error" to "bad GPX: ${e.message}"), 400)
-                }
+            "POST" to "/location/replay" -> return replay(t, r, p)
+            // T203: the terrain source's estimates; a replay with a pressure column run through it.
+            "GET" to "/location/terrain" -> return Response.json(io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.json())
+            "POST" to "/location/terrain" -> {
+                val compass = (p.s("compass") ?: "course").lowercase()
+                if (compass != "course" && compass != "sensor") return Response.json(mapOf("error" to "compass must be course (the replay's bearing) or sensor (the phone's)"), 400)
+                val ts = io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource
+                if (!ts.debugRun(compass == "course")) return Response.json(mapOf("error" to "the terrain source is not watching (${ts.off})", "off" to ts.off), 409)
+                if (r.body.isEmpty()) return Response.json(ts.json())
+                return replay(t, r, p)
             }
         }
         waypointPath.matchEntire(r.path)?.let { return waypointRoute(t, r, p, it.groupValues[1], it.groupValues[2]) }
@@ -269,6 +247,51 @@ object TrackRoutes {
             }
             "POST" to "/profile" -> Response.json(mapOf("profile" to t.showProfile(id), "shown" to t.shownId))
             else -> Response.notFound()
+        }
+    }
+
+    /** `POST /location/replay` (and T203's `POST /location/terrain` after its reset). */
+    private fun replay(t: Tracking, r: Request, p: Params): Response {
+        val rate = p.d("rate") ?: 1.0
+        // T57: record= while a track is recording would leave that one behind (empty when it had just
+        // started) beside the replay's own: refuse, and say how to get either. T65: the rules are
+        // ReplayChecks.refusal, unit-tested.
+        val recording = p.s("record") != null && t.call { t.recorder.recording }
+        // T146: `route=current&kmh=` replays the current route timed in the app, no body.
+        val route = p.s("route")
+        val kmh = p.d("kmh")
+        val plan = if (route == "current") io.github.jasondorjeshort.dystopo.app.routing.RouteSession.plan else null
+        ReplayChecks.refusal(rate, r.body.isEmpty(), p.s("record"), recording, route, kmh, plan != null, TimedTrack.MAX_KMH)?.let { (status, error) ->
+            return Response.json(if (status == 409) mapOf("error" to error, "recording" to recorderJson(t)) else mapOf("error" to error), status)
+        }
+        // T159: accuracy= may carry ranges (120@40-60) and stall= a silence; checked before anything starts.
+        val accuracy = try {
+            ReplayScript.defaultAccuracy(p.s("accuracy")) ?: 5.0
+        } catch (e: IllegalArgumentException) {
+            return Response.json(mapOf("error" to e.message), 400)
+        }
+        var scriptError: String? = null
+        val script = { fixes: Int ->
+            try {
+                ReplayScript.parse(p.s("accuracy"), p.s("stall"), fixes)
+            } catch (e: IllegalArgumentException) {
+                scriptError = e.message
+                throw ScriptRefused()
+            }
+        }
+        return try {
+            if (plan == null) io.github.jasondorjeshort.dystopo.gpx.Gpx.parse(r.bodyText).tracks.flatMap { it.points }.size.let(script)
+            p.s("record")?.let { t.start(it, Tracking.Mode.INJECTED) }
+            val started = if (plan != null && kmh != null) {
+                val track = TimedTrack.track(plan.route, kmh, System.currentTimeMillis() / 1000 * 1000)
+                t.replay.startTracks(listOf(track), rate, accuracy, "route", kmh, script)
+            } else t.replay.start(r.bodyText, rate, accuracy, script)
+            Response.json(started + mapOf("recording" to t.recorder.activeId))
+        } catch (e: ScriptRefused) {
+            Response.json(mapOf("error" to scriptError), 400)
+        } catch (e: IllegalArgumentException) {
+            // GpxException and XmlException are IllegalArgumentExceptions too.
+            Response.json(mapOf("error" to "bad GPX: ${e.message}"), 400)
         }
     }
 

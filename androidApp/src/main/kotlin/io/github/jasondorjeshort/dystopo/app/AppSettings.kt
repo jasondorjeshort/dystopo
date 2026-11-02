@@ -118,6 +118,9 @@ object AppSettings {
         // T194
         shadeSpoken = io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(p.getString(KEY_SHADE_SPOKEN, null)) ?: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT
         // end T194
+        // T203
+        estimatePosition = p.getBoolean(KEY_ESTIMATE_POSITION, true)
+        // end T203
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -343,6 +346,20 @@ object AppSettings {
         prefs?.edit()?.putString(KEY_SHADE_SPOKEN, v.key)?.apply()
     }
     // end T194
+
+    // ---- T203: a position from the terrain while the GPS is poor or gone (tracking/TerrainSource); synced ----
+
+    const val KEY_ESTIMATE_POSITION = "estimatePosition"
+
+    /** "Estimate position when GPS is poor", on by default (ADR 0044: no practice to follow, a cost in battery, a guess that can mislead). */
+    @Volatile var estimatePosition: Boolean = true
+        private set
+
+    fun setEstimatePosition(on: Boolean) {
+        estimatePosition = on
+        prefs?.edit()?.putBoolean(KEY_ESTIMATE_POSITION, on)?.apply()
+    }
+    // end T203
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
@@ -648,5 +665,7 @@ object AppSettings {
         "timeEstimateForm" to timeEstimateForm, // T184
         "shadeSpoken" to shadeSpoken.key, // T194
         // end T194
+        "estimatePosition" to estimatePosition, // T203
+        // end T203
     ) + mapOptions.json(units) // T47
 }

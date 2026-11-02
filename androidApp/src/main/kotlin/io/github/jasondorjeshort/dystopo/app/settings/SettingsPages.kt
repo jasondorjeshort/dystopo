@@ -411,8 +411,21 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T197
+        // T203: the terrain estimate (ADR 0044: a setting, on by default; the survey of 2026-11-01).
+        SettingsRow.ESTIMATE_POSITION -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.estimatePosition
+            Setting(row.label, ESTIMATE_POSITION_LINE, help = "settings.estimatePosition") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, estimatePosition = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, estimatePosition = false)) }
+            }
+        }
+        // end T203
     }
 }
+
+/** T203: the Estimate position row's line under its title (ADR 0031 string). */
+internal const val ESTIMATE_POSITION_LINE = "a position from the barometer and the trails while the GPS is poor or lost"
 
 /** T184: the Route times: Show as row's choices (ADR 0031 strings). */
 internal const val TIME_FORM_RANGE = "Range"
@@ -730,6 +743,16 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 (if (units == ContourUnits.FEET) "77 F" else "25 C") + " or more, from the nearest weather station; Always speaks every time."
         },
         // end T194
+        // T203: the terrain estimate.
+        HelpText("settings.estimatePosition", "Estimated position", at(SettingsGroup.NAVIGATION, "Estimate position when GPS is poor"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "When the GPS has been poor or lost for a minute on foot, the phone estimates where you are from the barometer, " +
+                "the trails on your offline maps and your pace before the signal went. The position shows as a hollow dot with a " +
+                "dashed ring as wide as the estimate is uncertain, and points recorded from it are marked and left out of the " +
+                "distance until the GPS is back. It needs a barometer and a recent good GPS fix, and works on mapped trails only. " +
+                "Once the estimate is wider than " + (if (units == ContourUnits.FEET) "1,000 ft" else "300 m") +
+                " it stops: a grey dot stays where you were last known."
+        },
+        // end T203
     )
 }
 

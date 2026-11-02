@@ -33,7 +33,7 @@ data class Waypoint(
  * One recorded position. T158: what the receiver said about it, null when the source gave nothing (a GPX file
  * from elsewhere, a fix without it): [accuracyM] the horizontal accuracy radius (metres, 68 %), [speedMps] the
  * receiver's own (Doppler) ground speed, [courseDeg] its course over ground (degrees clockwise from true north),
- * [verticalAccuracyM] the height's accuracy; and [flags] ([INACCURATE], [NETWORK]). A point over the profile's
+ * [verticalAccuracyM] the height's accuracy; and [flags] ([INACCURATE], [NETWORK], T203's [ESTIMATED]). A point over the profile's
  * accuracy bound is kept and flagged, never dropped: smoothing and stats weight or skip it (T171), the raw point
  * stays.
  */
@@ -52,6 +52,9 @@ data class TrackPoint(
     /** Worse than the recording profile's accuracy bound ([ActivityProfile.accuracyBoundM]) when it was recorded. */
     val inaccurate: Boolean get() = flags and INACCURATE != 0
 
+    /** T203: an estimate from the terrain, not a fix ([ESTIMATED]). */
+    val estimated: Boolean get() = flags and ESTIMATED != 0
+
     /** True when any T158 field is set (the sync codec writes such points in the newer append format). */
     val hasFixFields: Boolean get() = accuracyM != null || speedMps != null || courseDeg != null || verticalAccuracyM != null || flags != 0
 
@@ -62,8 +65,14 @@ data class TrackPoint(
         /** Bit of [flags]: a network or passive fix taken while the GPS was silent (the profile's fallback, T159). */
         const val NETWORK = 2
 
+        /**
+         * T203: bit of [flags]: an estimate from the terrain (the barometer and the trails while the GPS was poor or gone),
+         * not a fix; recorded with [INACCURATE] too. Builds before T203 refuse such a point in sync (a newer format, ADR 0033).
+         */
+        const val ESTIMATED = 4
+
         /** The bits this build knows; a point with others is refused by the sync codec (a newer format). */
-        const val KNOWN_FLAGS = INACCURATE or NETWORK
+        const val KNOWN_FLAGS = INACCURATE or NETWORK or ESTIMATED
     }
 }
 

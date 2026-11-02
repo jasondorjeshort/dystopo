@@ -343,9 +343,10 @@ class GraphTileArchive internal constructor(
 
     /**
      * Every tile stitched back into one graph: nodes of different tiles at the same position become one
-     * (the cuts). For tools and tests that want the whole network (`devtool route`'s network report).
+     * (the cuts). For tools and tests that want the whole network (`devtool route`'s network report). T203: [keep] picks
+     * the tiles (the terrain estimate stitches the few around its seed).
      */
-    fun whole(): RoutingGraph {
+    fun whole(keep: (Entry) -> Boolean = { true }): RoutingGraph {
         val nLon = IntList(); val nLat = IntList(); val nEle = FloatList()
         val nLevel = IntList(); val nFoot = IntList(); val nDrive = IntList()
         var labelled = true
@@ -357,6 +358,7 @@ class GraphTileArchive internal constructor(
         val gLon = IntList(); val gLat = IntList(); val gEle = FloatList()
         val names = ArrayList<String>(); val nameIds = HashMap<String, Int>(); val edgeName = IntList()
         entries.forEachIndexed { ti, en ->
+            if (!keep(en)) return@forEachIndexed
             val g = tile(en.x, en.y) ?: return@forEachIndexed
             if (g.footComponent == null || g.driveComponent == null) labelled = false
             val map = IntArray(g.nodeCount) { n ->

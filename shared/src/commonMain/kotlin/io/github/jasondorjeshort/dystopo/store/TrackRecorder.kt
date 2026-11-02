@@ -52,6 +52,10 @@ data class LocationFix(
  *   [ActivityProfile.gap] rule ([GapReason.NO_FIX], or [GapReason.REJECTED] when fixes in the hole were all
  *   teleports; counted in [gapSplits]), after a pause or an auto-pause, after a process death
  *   ([recoverInterrupted]) or an [interrupt]. The fix after a gap starts a new segment.
+ * - T203, **estimates**: a fix with source `terrain` (the terrain source's estimate while the GPS is poor or gone) is
+ *   kept flagged [TrackPoint.ESTIMATED] and [TrackPoint.INACCURATE]. Flagged, it adds no distance (T171's line skips
+ *   flagged fixes; they only bound it), and [liveStats] leaves the estimates no good fix (no flag) follows yet out of the
+ *   line altogether, so they do not pull its last point either; at the next good fix the line runs on to it.
  * - **Auto-pause** ([ActivityProfile.autoPause], [ActivityProfile.autoPauseRule]): the fix's own speed (else the
  *   speed between the last two fixes) under the still threshold for the rule's time pauses ([autoPaused]); over
  *   the resume threshold for its time resumes, with a [GapReason.AUTO_PAUSED] gap.
@@ -214,6 +218,10 @@ class TrackRecorder(
             flagged++
         }
         if (fix.source == "network" || fix.source == "passive") flags = flags or TrackPoint.NETWORK
+        if (fix.source == ESTIMATE_SOURCE) { // T203
+            if (flags and TrackPoint.INACCURATE == 0) flagged++
+            flags = flags or TrackPoint.ESTIMATED or TrackPoint.INACCURATE
+        }
         val point = TrackPoint(
             fix.lat, fix.lon, fix.ele, fix.time, null, acc,
             fix.speedMps?.takeIf { it.isFinite() && it >= 0 },
@@ -310,8 +318,8 @@ class TrackRecorder(
         return store.summary(id)
     }
 
-    /** Stats of the active track from the in-memory copy, or null when not recording. */
-    fun liveStats(): TrackStats? = if (activeId == null) null else TrackStats.of(live)
+    /** Stats of the active track from the in-memory copy, or null when not recording. T203: [confirmed] points only. */
+    fun liveStats(): TrackStats? = if (activeId == null) null else TrackStats.of(confirmed(live))
 
     /** Points of the active track so far (for drawing it), segment by segment. */
     fun livePoints(): List<List<TrackPoint>> = live.map { it.toList() }
@@ -363,6 +371,23 @@ class TrackRecorder(
     }
 
     companion object {
+        /** T203: the source of a terrain estimate (`app/tracking/TerrainSource`). */
+        const val ESTIMATE_SOURCE = "terrain"
+
+        /**
+         * T203, the distance rule: [segments] without the estimated points that no good point (no flag at all) follows yet;
+         * an estimate before a good fix stays (flagged, it bounds the line without adding distance). Empty segments are dropped.
+         */
+        fun confirmed(segments: List<List<TrackPoint>>): List<List<TrackPoint>> {
+            var lastGood = -1 to -1
+            for ((si, seg) in segments.withIndex()) for ((pi, p) in seg.withIndex()) if (p.flags == 0) lastGood = si to pi
+            val (gs, gp) = lastGood
+            if (segments.none { s -> s.any { it.estimated } }) return segments
+            return segments.mapIndexed { si, seg ->
+                if (si < gs) seg else seg.filterIndexed { pi, p -> !p.estimated || (si == gs && pi < gp) }
+            }.filter { it.isNotEmpty() }
+        }
+
         /** Teleports in a row after which the last kept fix is taken to be the stray one (see the class comment). */
         const val REANCHOR_AFTER = 5
     }

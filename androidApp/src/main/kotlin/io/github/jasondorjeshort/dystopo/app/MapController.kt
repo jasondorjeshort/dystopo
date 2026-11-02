@@ -477,21 +477,78 @@ class MapController {
     @Volatile var onUnitsSeeded: () -> Unit = {}
 
     private fun onFix(loc: Location) {
+        val terrain = loc.provider == io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE
+        if (!terrain) {
+            if (!injectedLocation) io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.onMapFix(loc) // T203
+            // T203: while the estimate holds the puck, a poor fix does not move it (the estimate is the better guess); it
+            // still reaches the readout and the course, as before.
+            if (io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.holdsPuck && !goodFix(loc)) {
+                terrainHeldFixes++
+                runCatching { io.github.jasondorjeshort.dystopo.app.controls.Heading.onFix(loc) }
+                return
+            }
+            lastGoodShownAt = if (goodFix(loc)) SystemClock.elapsedRealtime() else lastGoodShownAt
+        }
         val shown = lastLocation
         lastLocation = loc
-        val recorded = runCatching { LastFix.record(loc) }.getOrNull() // T162: the open view's last fix
-        if (recorded != null) runCatching { openFix(recorded) }
-        if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
+        if (!terrain) { // T203: an estimate is not a fix for the open view or the units
+            val recorded = runCatching { LastFix.record(loc) }.getOrNull() // T162: the open view's last fix
+            if (recorded != null) runCatching { openFix(recorded) }
+            if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
+        }
+        val look = if (terrain) LocationPuck.Mode.ESTIMATE else LocationPuck.Mode.GPS
         // T41: the half-second redraw on a still map was this: GPS and network each report the same fix every
         // second, and every update of the puck's source makes MapLibre draw a frame. Skip fixes that would not
         // move the puck or change its halo.
-        if (puck.installed && (shown == null || movesPuck(shown, loc))) {
-            puck.show(loc)
+        if (puck.installed && (shown == null || movesPuck(shown, loc) || puck.mode != look)) {
+            puck.show(loc, look)
             puckUpdates++
         } else {
             puckUpdatesSkipped++
         }
         runCatching { MapOrientation.onFix(loc) } // T100: the camera follows the puck; facing turns to the heading
+    }
+
+    /** T203: a GPS (or injected) fix within the activity's accuracy bound: it ends the estimate's hold on the puck. */
+    private fun goodFix(loc: Location): Boolean {
+        val p = loc.provider
+        if (p == LocationManager.NETWORK_PROVIDER || p == LocationManager.PASSIVE_PROVIDER) return false
+        return !loc.hasAccuracy() || loc.accuracy <= io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.boundM()
+    }
+
+    @Volatile private var lastGoodShownAt = 0L
+    /** T203: poor fixes kept off the puck while the estimate held it. */
+    @Volatile var terrainHeldFixes = 0L
+        private set
+    @Volatile var terrainShown = 0L
+        private set
+
+    /**
+     * T203: the terrain source's estimate ([io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource]): the puck as a
+     * hollow dot with a dashed ring at [spreadM], the camera following as for a fix. Not within a second of a good fix
+     * shown (an estimate made just before it). Any thread.
+     */
+    fun showEstimate(lat: Double, lon: Double, spreadM: Double, timeMs: Long) {
+        main.post {
+            if (SystemClock.elapsedRealtime() - lastGoodShownAt < 1_000) return@post
+            val loc = Location(io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE).apply {
+                latitude = lat
+                longitude = lon
+                accuracy = spreadM.toFloat()
+                time = timeMs
+                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+            }
+            terrainShown++
+            onFix(loc)
+        }
+    }
+
+    /** T203: the give-up: a grey dot on the last estimate, no ring, until a good fix. Any thread. */
+    fun showLost() {
+        main.post {
+            val last = lastLocation ?: return@post
+            if (puck.installed) puck.show(last, LocationPuck.Mode.LOST)
+        }
     }
 
     @Volatile var puckUpdates = 0L
@@ -583,6 +640,7 @@ class MapController {
             "deviceListening" to (deviceListener != null), // T150: false in the background
             "foreground" to Foreground.started,
             "last" to l?.let { mapOf("lat" to it.latitude, "lon" to it.longitude, "accuracy" to it.accuracy, "provider" to it.provider) },
+            "puckMode" to puck.mode.code, "terrainShown" to terrainShown, "terrainHeldFixes" to terrainHeldFixes, // T203
         )
     }
 

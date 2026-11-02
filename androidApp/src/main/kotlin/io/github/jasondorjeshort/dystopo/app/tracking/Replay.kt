@@ -24,6 +24,8 @@ import io.github.jasondorjeshort.dystopo.store.TrackExport
  * `<extensions><pressure>1013.25</pressure></extensions>`) sends that pressure to the live readout
  * ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onReplayPressure]) at the fix's time, just before the fix,
  * as the barometer would; the phone's own barometer is ignored meanwhile. [pressures] counts the points that carry one.
+ * T203: the column goes to the terrain source ([TerrainSource.onReplayPressure]) as well, which also ignores the phone's
+ * barometer meanwhile; `POST /location/terrain` is this replay with the terrain source reset first.
  */
 class Replay(private val tracking: Tracking) {
     @Volatile private var thread: Thread? = null
@@ -107,7 +109,10 @@ class Replay(private val tracking: Tracking) {
                     val wait = start + f.atMs - SystemClock.elapsedRealtime()
                     if (wait > 0) Thread.sleep(wait)
                     if (!current()) throw InterruptedException()
-                    column.getOrNull(i)?.let { io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onReplayPressure(f.fix.time, it) } // T161
+                    column.getOrNull(i)?.let {
+                        io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onReplayPressure(f.fix.time, it) // T161
+                        TerrainSource.onReplayPressure(f.fix.time, it) // T203: the terrain source reads the same column
+                    }
                     tracking.injected.publish(f.fix)
                     // Move the puck too (best effort; the map may not be attached); T159: only while the map is on screen.
                     val moved = if (!io.github.jasondorjeshort.dystopo.app.Foreground.started) Result.success(Unit)

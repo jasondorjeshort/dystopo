@@ -41,6 +41,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * [SettingsRoutes] keys.
  * T194: the spoken terrain shade line (`app.shadeSpoken`: `off`, `hot` or `always`); a [SettingsRoutes] key. Builds before
  * T194 skip it (ADR 0033).
+ * T203: the terrain estimate's switch (`app.estimatePosition`, `on` or `off`); a [SettingsRoutes] key. Builds before T203
+ * skip it (ADR 0033).
  * T182: the viewshed's range (`app.viewRange`, km: `10`, `30` or `100`); a [SettingsRoutes] key.
  * T184: the route card's time (`app.timeEstimateForm`, `range` or `one`); a [SettingsRoutes] key.
  *
@@ -96,6 +98,9 @@ object SettingsSync {
     /** T194: the spoken terrain shade line (`off`, `hot`, `always`), a [SettingsRoutes] key. */
     const val SHADE_SPOKEN = AppSettings.KEY_SHADE_SPOKEN
     // end T194
+    /** T203: the terrain estimate's switch (`on`/`off`), a [SettingsRoutes] key. */
+    const val ESTIMATE_POSITION = AppSettings.KEY_ESTIMATE_POSITION
+    // end T203
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -157,6 +162,8 @@ object SettingsSync {
         m[syncedKey(TIME_ESTIMATE_FORM)] = AppSettings.timeEstimateForm // T184
         m[syncedKey(SHADE_SPOKEN)] = AppSettings.shadeSpoken.key // T194
         // end T194
+        m[syncedKey(ESTIMATE_POSITION)] = onOff(AppSettings.estimatePosition) // T203
+        // end T203
         return m
     }
 
@@ -231,6 +238,8 @@ object SettingsSync {
         if (parsed.timeEstimateForm != null) keys += syncedKey(TIME_ESTIMATE_FORM) // T184
         if (parsed.shadeSpoken != null) keys += syncedKey(SHADE_SPOKEN) // T194
         // end T194
+        if (parsed.estimatePosition != null) keys += syncedKey(ESTIMATE_POSITION) // T203
+        // end T203
         publishKeys(app, keys)
     }
 

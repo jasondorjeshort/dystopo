@@ -78,6 +78,12 @@ import kotlinx.coroutines.launch
  *
  * The segment gap (the recorder profile's [ActivityProfile.gap] time, T158) is a setting kept in the `dystopo-tracking`
  * preferences (`gapS`, 0 = never split); `POST /tracks/settings?gapS=` changes it.
+ *
+ * T203, **the terrain estimate** ([TerrainSource], one more [LocationSource]): every GPS and injected fix also goes to it,
+ * and its estimates (source `terrain`) are recorded in every mode while recording and not paused: the recorder marks them
+ * estimated and flagged and leaves them out of the distance until the next good fix. They are not the GPS: the silence,
+ * the watchdog and the network fallback still count from the last GPS fix, and an estimate goes neither to the pressure
+ * trend nor to the readout. The state line and the notification add the estimate's line ([RecordingStatus.estimate]).
  */
 class Tracking private constructor(private val app: DystopoApp) {
     enum class Mode(val gps: Boolean, val injected: Boolean) { ALL(true, true), GPS(true, false), INJECTED(false, true) }
@@ -190,6 +196,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         injected.start { fix ->
             post { if (fix.source == "network" || fix.source == "passive") onFallbackFix(fix, device = false) else onFix(fix, fromGps = false) }
         }
+        injected.start { TerrainSource.onFix(it) } // T203: replays and POST /location feed the terrain source too
+        TerrainSource.start { fix -> post { onTerrainFix(fix) } } // T203
         shownId = call { store.list().lastOrNull()?.id }
         // Taps arrive on the main thread; selectWaypoint waits on the tracking thread, so hop off main.
         overlay.onWaypointTap = { id -> Thread { selectWaypoint(id) }.start() }
@@ -228,7 +236,24 @@ class Tracking private constructor(private val app: DystopoApp) {
     }
 
     /** Called with every GPS fix while the service runs. */
-    fun onGpsFix(fix: LocationFix): Unit = post { onFix(fix, fromGps = true) }
+    fun onGpsFix(fix: LocationFix) {
+        TerrainSource.onFix(fix) // T203
+        post { onFix(fix, fromGps = true) }
+    }
+
+    /** T203: the terrain source's estimates kept by the recorder (see the class comment); counted in [terrainRecorded]. */
+    @Volatile var terrainRecorded = 0L
+        private set
+
+    private fun onTerrainFix(fix: LocationFix) {
+        if (!recorder.recording || recorder.paused) return
+        if (recorder.onFix(fix)) {
+            terrainRecorded++
+            wayBackPoint(fix) // T180: flagged
+            refreshUiThrottled()
+            refreshOverlay()
+        }
+    }
 
     /** T159: called with every fallback (network or passive) fix while its listener runs. */
     fun onFallbackDeviceFix(fix: LocationFix): Unit = post { onFallbackFix(fix, device = true) }
@@ -240,7 +265,7 @@ class Tracking private constructor(private val app: DystopoApp) {
     private fun wayBackPoint(fix: LocationFix) {
         val id = recorder.activeId ?: return
         val bound = recorder.profile.accuracyBoundM
-        val flagged = fix.source == "network" || fix.source == "passive" || (bound != null && (fix.accuracyM ?: 0.0) > bound)
+        val flagged = fix.source == "network" || fix.source == "passive" || fix.source == TerrainSource.SOURCE || (bound != null && (fix.accuracyM ?: 0.0) > bound)
         runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onPoint(id, fix, flagged) { recordedPoints() } }
             .onFailure { Log.w(TAG, "way back", it) }
     }
@@ -320,6 +345,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             silentS = watch.silentMs(now) / 1000, lastAccuracyM = watch.lastPrimaryAccuracyM,
             fallbackAccuracyM = if (watch.fallbackRecent(now)) watch.lastFallbackAccuracyM else null,
             startedAt = active?.createdAt?.let(::clock), stoppedAt = stoppedBySystemAt?.let(::clock), serviceDown = serviceDown,
+            estimate = TerrainSource.statusLine(AppSettings.units), // T203
         )
     }
 
@@ -472,6 +498,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             recorder.start(n, profile).also { shownId = it.id; io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180
         }
         startService()
+        TerrainSource.update() // T203: recording keeps it watching in the background
         refreshUi()
         refreshOverlay(force = true)
         return s
@@ -490,6 +517,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             }
         }
         io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStop() // T180
+        TerrainSource.update() // T203
         stopService()
         refreshUi()
         refreshOverlay(force = true)

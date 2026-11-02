@@ -205,6 +205,7 @@ object Diagnostics {
         Line("Map renders", "${s.rendersAdmitted} started, ${s.rendersWaited} waited for memory"),
         Line("Trims", "${s.trims}, ${mb(s.droppedBytes)} dropped" + (s.lastTrimAt?.let { ", last at ${time(it)}" } ?: "")),
         Line("Last memory signal", s.lastSignalLevel?.let { l -> "level $l (${levelName(l)}) at ${time(s.lastSignalAt ?: 0)}" } ?: "none"),
+        Line(io.github.jasondorjeshort.dystopo.app.tracking.TerrainText.DIAGNOSTICS, io.github.jasondorjeshort.dystopo.app.tracking.TerrainText.diagnostics(runCatching { io.github.jasondorjeshort.dystopo.app.readout.Barometer.present }.getOrDefault(false), io.github.jasondorjeshort.dystopo.app.AppSettings.estimatePosition)), // T203
     )
 
     /** The row's lines about the session before: how it ended and the mark it left. */
