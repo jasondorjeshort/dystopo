@@ -1,41 +1,38 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-02, after T203's merge, by main session (wave 26: all five merged, the post-wave sweep running)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (wave 26 with
-its five Status lines; Later carries waves 24 and 25's follow-ups; the record `docs/tasks/wave-25.md`), ADR 0053.
+Updated: 2026-11-02, at the wave 26 close, by main session (wave 26 closed, v0.1.18-alpha published)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open
+wave; Later carries waves 24 to 26's follow-ups; the record `docs/tasks/wave-26.md`), ADR 0053.
 
 ## Now
 
-- **Wave 26 is merged, not closed.** T205 (ec0da360), T206 (8a402604, ADR 0053), T202 (442028b6), T204 (579ca364),
-  T203 (ad37397f) are on `main`, each logged (`docs/PLANNING.md`, the board's Status lines); every branch,
-  worktree and AVD of the wave is cleaned; the README status paragraph is updated. The post-wave sweep runs from
-  the main checkout (a Sonnet agent, `-NoDaemon`, its folder under `out/` dated 2026-11-02); no verifier or
-  implementer is running. The live viewer on 8765 is up (PID in `out/coordinator-pids.txt`).
-- **The RAM rule held** (the owner's one request): no build or emulator incident this wave; verifier checks ran
-  3 to 8 minutes under `--no-daemon` with the in-process Kotlin compiler.
+- **Wave 26 is closed** (T202 to T207 merged 2026-11-02; the close entry in `docs/PLANNING.md`'s log). The sweep
+  was green after T207's fix; **v0.1.18-alpha is published** (verified and installed from the draft on an
+  emulator; no phone was connected). Nothing is running: no worktree, no task branch, no emulator of ours
+  (`adb devices` empty; one stray `emulator.exe` with no device was seen and left). The live viewer on 8765 is up
+  (PID in `out/coordinator-pids.txt`). Meter at the close: 32 on the 7-day.
+- **The RAM rule worked** (the owner's one request for wave 26; the wave paragraph in the record): keep it for
+  waves on this PC. The sweep script has `-NoDaemon` but no Gradle-arguments switch (a small follow-up).
 - **The site is built but not installed.** The owner's six steps are on the board (Owner actions pending › The
   home site). The host name is a private term: never in a tracked file.
 
 ## Next
 
-1. Read the sweep's summary and sheet; a finding per defect (`finding` skill); green: publish v0.1.18-alpha
-   (`release` skill: CHANGELOG section, tag, the draft verified and installed from the draft, notes, publish,
-   the log and README line).
-2. Close (`wave` skill, Close the wave, steps 4 and 5): the handoff; the allowance's close reading in the wave
-   paragraph (27 at planning, 47 budgeted); the Haiku record chore (the wave 26 record under `docs/tasks/`, the
-   follow-ups lifted into Later).
-3. Next wave candidates: ADR 0053's three build steps (the map options first); T203's pass 2 (the step detector
-   and its permission prompt, flagged for the owner); T204's and T203's follow-ups; the 13 untriaged ideas
-   (`triage` skill); a Hatchery-rooted session for the pending carry-backs.
+1. The next wave is unplanned. Candidates: ADR 0053's three build steps (the map options first, no visible
+   change); T203's pass 2 (the step detector and its permission prompt, flagged for the owner); the wave 26
+   follow-ups in Later (T204's route card at font scale 2.0, the climb-cap figures' sources; T202's Prometheus
+   counter); the 13 untriaged ideas (`triage` skill, also the ADR 0012 scan); the pack-mode stand-in page's
+   scale bar if the owner wants one.
+2. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the
+   sentinel rule.
 
 ## Waiting on user
 
-- The home site's six steps and what holds port 80.
-- The inventory's Category column (`docs/design/proposals/0053-controls-inventory.md`) and ADR 0053's D1 to D6,
-  after the build; the strings of T203 and T204 (ADR 0031, in their merge commits); the paging file (12.8 GB on
-  C:); install the next alpha and the hike checks; the `Question:` blocks; ADR 0051's two answers; the git
-  housekeeping row.
+- Install v0.1.18-alpha and the phone checks on the board (the terrain estimate under trees with a real
+  barometer, the readout across a barometer silence, the strip at your font size); the T203 and T204 strings.
+- The home site's six steps and what holds port 80; the inventory's Category column and ADR 0053's D1 to D6;
+  the paging file (12.8 GB on C:); the `Question:` blocks; ADR 0051's two answers; the git housekeeping row.
 
 ## Open findings
 
