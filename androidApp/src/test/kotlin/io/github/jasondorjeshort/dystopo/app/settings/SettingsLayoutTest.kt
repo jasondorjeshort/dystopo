@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  */
 class SettingsLayoutTest {
     /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics; T145: problem reports; T164: route times; T163: the turn-around clock's two rows; T172: recording). */
-    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161", "T176", "T177", "T178", "T187", "T182", "T183", "T184", "T194", "T197") // T194: the spoken terrain shade row; T161: the readout rows; T176: the position button rows; T177: the readout bar rows; T178: the pressure-fall warning; T187: the water rows; T182: the view range; T183: the printed sheet; T184: the route time form
+    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161", "T176", "T177", "T178", "T187", "T182", "T183", "T184", "T194", "T197", "T203") // T203: the terrain estimate's switch; T194: the spoken terrain shade row; T161: the readout rows; T176: the position button rows; T177: the readout bar rows; T178: the pressure-fall warning; T187: the water rows; T182: the view range; T183: the printed sheet; T184: the route time form
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -65,6 +65,7 @@ class SettingsLayoutTest {
                 "Route times: Show as", // T184
                 "Terrain shade: Spoken", // T194
                 "Set my height now", // T197 (an action, after T184's row)
+                "Estimate position when GPS is poor", // T203
                 "Diagnostics", "Report a problem",
             ),
             later,

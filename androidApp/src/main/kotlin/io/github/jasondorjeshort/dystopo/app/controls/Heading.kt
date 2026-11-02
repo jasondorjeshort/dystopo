@@ -17,6 +17,11 @@ import io.github.jasondorjeshort.dystopo.nav.Compass
  * Fixes arrive from `MapController.onFix` (every fix the location puck shows), on the main thread. T161: each also goes
  * to the live readout ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]), which keeps its own speed and course
  * (T160's estimator, the fix's own speed over the activity's window) apart from this one's facing rules.
+ *
+ * T203: a terrain estimate (`provider` [io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE]) the puck
+ * shows moves the compass's declination only: it never reaches the readout (which would read the DEM at the estimate's
+ * own guess) nor the course (the estimate's heading term would read its own output). The terrain source asks for the
+ * compass while it waits or estimates ([setTerrainWanted]), in the background too while recording.
  */
 object Heading {
     /** A course needs fixes at least this far apart (metres); GPS jitter at a standstill stays below it. */
@@ -39,6 +44,7 @@ object Heading {
     @Volatile private var from: Location? = null
     @Volatile private var wanted = false
     @Volatile private var foreground = true
+    @Volatile private var terrainWanted = false // T203
     @Volatile var fixes = 0L
         private set
 
@@ -53,6 +59,11 @@ object Heading {
     /** One fix the puck shows (main thread): declination for the compass, speed and course over ground. */
     fun onFix(loc: Location) {
         fixes++
+        if (loc.provider == io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE) { // T203
+            terrainFixes++
+            compass.locate(loc.latitude, loc.longitude, if (loc.time > 0) loc.time else System.currentTimeMillis())
+            return
+        }
         io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.onMapFix(loc) // T161: the live readout (its own thread)
         compass.locate(loc.latitude, loc.longitude, if (loc.time > 0) loc.time else System.currentTimeMillis())
         val now = SystemClock.elapsedRealtime()
@@ -88,6 +99,19 @@ object Heading {
         }
     }
 
+    /** T203: terrain estimates seen (kept from the readout and the course). */
+    @Volatile var terrainFixes = 0L
+        private set
+
+    /** T203: true when the compass gave a reading in the last few seconds. */
+    val compassFresh: Boolean get() = runCatching { sensor.fresh }.getOrDefault(false)
+
+    /** T203: the terrain source wants the compass (waiting or estimating), whatever the facing and the foreground. */
+    fun setTerrainWanted(on: Boolean) {
+        terrainWanted = on
+        apply()
+    }
+
     /** The heading now, or null (no simulated heading, no course yet, no compass reading). */
     fun current(now: Long = SystemClock.elapsedRealtime()): HeadingReading? {
         val c = courseDeg
@@ -115,11 +139,11 @@ object Heading {
     }
 
     private fun apply() {
-        runCatching { if (wanted && foreground) sensor.start() else sensor.stop() }
+        runCatching { if ((wanted && foreground) || terrainWanted) sensor.start() else sensor.stop() }
     }
 
     fun compassJson(): Map<String, Any?> = runCatching { sensor.json() }.getOrElse { mapOf("error" to it.message) } +
-        mapOf("wanted" to wanted, "foreground" to foreground)
+        mapOf("wanted" to wanted, "foreground" to foreground, "terrainWanted" to terrainWanted)
 
     fun json(): Map<String, Any?> {
         val h = current()

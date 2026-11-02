@@ -64,7 +64,7 @@ class GpxFixFieldsTest {
                 <d:gap start="2026-09-21T14:13:21Z" end="2026-09-21T14:13:31Z" reason="no-fix"></d:gap><d:gap start="bad" end="2026-09-21T14:13:31Z" reason="no-fix"/>
                 <d:gap start="2026-09-21T14:13:21Z" end="2026-09-21T14:13:31Z" reason="eclipse"/><o:keep>1</o:keep></extensions>
                 <trkseg>
-                  <trkpt lat="46.85" lon="-121.73"><extensions><d:fix acc='7' speed="fast" flags="7"/></extensions></trkpt>
+                  <trkpt lat="46.85" lon="-121.73"><extensions><d:fix acc='7' speed="fast" flags="11"/></extensions></trkpt>
                   <trkpt lat="46.85" lon="-121.73"><extensions><o:fix acc="7"/></extensions></trkpt>
                 </trkseg></trk></gpx>"""
         val t = Gpx.parse(text).tracks.single()

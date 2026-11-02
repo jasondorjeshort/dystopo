@@ -123,6 +123,9 @@ class HelpRegistryTest {
             // T194: the spoken terrain shade line.
             "settings.shadeSpoken",
             // end T194
+            // T203: the terrain estimate's switch.
+            "settings.estimatePosition",
+            // end T203
             // T197: Set my height now.
             "settings.setHeight",
             // end T197

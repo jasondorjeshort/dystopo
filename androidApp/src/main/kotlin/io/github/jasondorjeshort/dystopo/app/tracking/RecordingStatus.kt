@@ -132,6 +132,8 @@ data class RecordingStatus(
     val stoppedAt: String? = null,
     /** The recording service is not running (the system refused or stopped it): the notification asks for a tap. */
     val serviceDown: Boolean = false,
+    /** T203: the terrain estimate's line ([TerrainText]) while it estimates or after its give-up, else null. */
+    val estimate: String? = null,
 ) {
     private val track: String get() = name?.takeIf { it.isNotBlank() } ?: "track"
     private val distance: String get() = UnitFormat.distance(distanceM, units)
@@ -149,8 +151,8 @@ data class RecordingStatus(
     val text: String
         get() = when (state) {
             RecState.IDLE -> ""
-            RecState.RECORDING -> "$distance" + (startedAt?.let { " since $it" } ?: "")
-            RecState.WAITING_FOR_GPS -> waitingLine
+            RecState.RECORDING -> "$distance" + (startedAt?.let { " since $it" } ?: "") + (estimate?.let { ". $it" } ?: "") // T203
+            RecState.WAITING_FOR_GPS -> waitingLine + (estimate?.let { ". $it" } ?: "")
             RecState.PAUSED -> "$distance so far. Resume to go on recording."
             RecState.AUTO_PAUSED -> "Not moving; recording goes on when you move. $distance so far."
             RecState.STOPPED_BY_SYSTEM ->
@@ -161,8 +163,9 @@ data class RecordingStatus(
     /** The line under the live stats on the track controls; null while recording normally. */
     val controlsLine: String?
         get() = when (state) {
-            RecState.IDLE, RecState.RECORDING -> null
-            RecState.WAITING_FOR_GPS -> "Waiting for GPS: " + waitingLine.replaceFirstChar { it.lowercase() }
+            RecState.IDLE -> null
+            RecState.RECORDING -> estimate // T203: poor fixes still come, the estimate holds the puck
+            RecState.WAITING_FOR_GPS -> "Waiting for GPS: " + waitingLine.replaceFirstChar { it.lowercase() } + (estimate?.let { ". $it" } ?: "")
             RecState.PAUSED -> "Paused"
             RecState.AUTO_PAUSED -> "Auto-paused: not moving"
             RecState.STOPPED_BY_SYSTEM -> title + (stoppedAt?.let { " at $it" } ?: "")

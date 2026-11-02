@@ -187,6 +187,10 @@ object RoutePlanner {
         }
     }
 
+    /** T203: the ready graph of the pack whose box holds ([lat], [lon]), or null (none there, or still loading or building). */
+    fun archiveAt(lat: Double, lon: Double): GraphTileArchive? =
+        states.values.firstOrNull { s -> s.archive != null && lon in s.bounds[0]..s.bounds[2] && lat in s.bounds[1]..s.bounds[3] }?.archive
+
     /** The state the worker is loading or building now, else the last one it handled (the progress line). */
     @Volatile var current: State? = null
         private set

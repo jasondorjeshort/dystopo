@@ -89,6 +89,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T197: the readout's height set from a sign (Navigation and tracking, after the readout's rows): an action, not a setting
     SET_HEIGHT(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.SET_HEIGHT, SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.readout.KnownHeights.SET_NOW, "SettingsPages", "T197"),
     // end T197
+    // T203: the terrain estimate's switch (Navigation and tracking, last)
+    ESTIMATE_POSITION(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_ESTIMATE_POSITION, SettingsGroup.NAVIGATION, "Estimate position when GPS is poor", "SettingsPages", "T203"),
+    // end T203
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */
