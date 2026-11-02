@@ -76,6 +76,8 @@ class ReadoutOptionsTest {
         assertEquals("5397 ft", ReadoutText.of(ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, 1645.0, 3.6), foot, ContourUnits.FEET)!!.full)
         assertEquals("245°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 244.6, 5.0), foot, ContourUnits.METERS)!!.full)
         assertEquals("0°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 359.7, 5.0), foot, ContourUnits.METERS)!!.full)
+        // T204 (T177's follow-up): the course's dash carries its degree sign as the number does, no space between.
+        assertEquals("–°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.DASH), foot, ContourUnits.METERS)!!.full)
     }
 
     @Test

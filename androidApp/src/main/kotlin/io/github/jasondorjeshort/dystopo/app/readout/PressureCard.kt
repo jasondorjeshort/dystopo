@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,6 +122,16 @@ object PressureWatch {
     @Volatile var dismissedAtMs: Long? = null
         private set
     @Volatile var cardBoundsPx: FloatArray? = null
+
+    /**
+     * T204 (T187's note): the card's bottom edge (window pixels) as Compose state, null with no card: the readout bar
+     * keeps below it (the scale bar's layout takes it as the bar's ceiling, so the bar leaves entries out, or hides
+     * with `noRoomBelowWarningCard`, rather than lying under the warning).
+     */
+    var cardBottomPx by mutableStateOf<Float?>(null)
+        private set
+
+    internal fun setCardBottom(px: Float?) { if (cardBottomPx != px) cardBottomPx = px }
 
     /** The bar's arrow beside the elevation, or null before the 1-hour check has data (or with the barometer switch off). */
     val arrow: String? get() = if (!AppSettings.readoutBarometer) null else result?.arrow
@@ -376,7 +387,8 @@ object PressureWatch {
 /**
  * T178: the pressure-fall warning's card: one quiet card under the chrome at the top of the map (the search box, the
  * chips at the right, the navigation card while navigating), the title, what was measured with the hedge, the nearby
- * station's own tendency when known, and Dismiss.
+ * station's own tendency when known, and Dismiss. T204: the readout bar keeps below it ([PressureWatch.cardBottomPx]),
+ * leaving entries out as it must, so the two never overlap (T187's note: at font scale 2.0 the card reached under it).
  * Nothing when no warning is raised or after Dismiss.
  */
 @Composable
@@ -385,10 +397,10 @@ fun PressureCard() {
     // `trend.card.boundsPx` never reports a card that is gone.
     val c = PressureWatch.card
     if (c == null) {
-        androidx.compose.runtime.SideEffect { PressureWatch.cardBoundsPx = null }
+        androidx.compose.runtime.SideEffect { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null) }
         return
     }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PressureWatch.cardBoundsPx = null } }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null) } }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     // Under everything that floats across the top (the search column, the online indicator, the chips at the right and
     // the navigation card; Compose state, so the card follows them).
@@ -400,8 +412,9 @@ fun PressureCard() {
                 .padding(horizontal = 12.dp)
                 .widthIn(max = 420.dp)
                 .fillMaxWidth()
-                .onGloballyPositioned { l -> l.boundsInRoot().let { b -> PressureWatch.cardBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } }
+                .onGloballyPositioned { l -> l.boundsInRoot().let { b -> PressureWatch.cardBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom); PressureWatch.setCardBottom(b.bottom) } }
                 .background(Plate, RoundedCornerShape(8.dp))
+                .verticalScroll(androidx.compose.foundation.rememberScrollState()) // T204: a card taller than the window scrolls
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

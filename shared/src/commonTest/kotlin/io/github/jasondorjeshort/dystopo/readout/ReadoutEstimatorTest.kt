@@ -357,6 +357,103 @@ class ReadoutEstimatorTest {
         assertEquals(1L, est.readout(ReadoutSim.T0 + 60_000).counters["priors"])
     }
 
+    /**
+     * T204 (a), T197's follow-up as the emulator showed it: a replay's pressure column ends with the walk's fixes, the
+     * phone's sensor takes over 12 s later (the emulator's fixed sea-level pressure, about 1990 m off) and the
+     * emulator's own fixes go on at the walker's place. Before, the elevation jumped by the pressure's difference and
+     * the climb read thousands of metres an hour; now the step is a new offset: the elevation stays with the walker and
+     * the climb never passes the activity's cap (nor, here, a walker's 1000 m/h).
+     */
+    @Test
+    fun aSwitchOfThePressureSourceIsANewOffsetNotAClimb() {
+        val sim = ReadoutSim(31)
+        val walk = sim.journey(listOf(ReadoutSim.Leg(600, 1.2, climb = 0.1, course = winding)))
+        val est = ReadoutEstimator(Activity.FOOT)
+        feed(est, sim.fixes(walk), sim.pressure(walk)) { _, _ -> } // one source throughout: the step alone must tell
+        val top = walk.last().ele + 0.1
+        val switchAt = walk.last().t + 13_000 // the replay's last input, then INJECTED_PRECEDENCE_MS, then the sensor
+        val stand = sim.journey(listOf(ReadoutSim.Leg(300, 0.0)), startEle = top, t0 = switchAt)
+        var worstEle = 0.0
+        var worstClimb = 0.0
+        val fixes = sim.fixes(stand)
+        for ((i, tr) in stand.withIndex()) {
+            est.onPressure(PressureSample(tr.t, Altimeter.STANDARD_HPA)) // the sensor, at sea level
+            val r0 = est.readout(tr.t) // read between the sample and the fix, as the phone's refresh does
+            est.onFix(fixes[i])
+            for (r in listOf(r0, est.readout(tr.t))) {
+                worstEle = maxOf(worstEle, abs(r.elevation.value!! - top))
+                r.climb.value?.takeIf { r.climb.state != ValueState.HIDDEN }?.let { worstClimb = maxOf(worstClimb, abs(it)) }
+            }
+        }
+        val end = est.readout(stand.last().t)
+        println("T204 source switch: worst elevation error ${worstEle} m, worst climb ${worstClimb * 3600} m/h after the switch; counters ${end.counters}")
+        assertTrue(worstEle < 15, "elevation off by $worstEle m after the switch")
+        assertTrue(worstClimb * 3600 < 1000, "climb ${worstClimb * 3600} m/h") // under a walker's 1000 m/h, so under the 3 m/s cap
+        assertEquals(1L, end.counters["newOffsets"])
+        assertEquals(BarometerState.IN_USE, end.barometer.state)
+    }
+
+    /** T204 (a): a change of source alone (a step the climb cap allows) is a new offset too; a step past the cap with one source as well. */
+    @Test
+    fun aChangeOfSourceAndAStepPastTheCapAreCountedApart() {
+        val sim = ReadoutSim(32)
+        val walk = sim.journey(listOf(ReadoutSim.Leg(400, 1.2, course = winding)))
+        val step = ReadoutSim.T0 + 200_000
+        val est = ReadoutEstimator(Activity.FOOT)
+        // A replay's column, then the sensor 0.2 hPa (about 2 m) apart: the cap allows it, the source does not.
+        val p = sim.pressure(walk, sigma = 0.0).map { if (it.timeMs < step) it.copy(source = PressureSampleSource.REPLAY) else it.copy(hPa = it.hPa + 0.2) }
+        feed(est, sim.fixes(walk), p) { _, _ -> }
+        val r = est.readout(walk.last().t)
+        assertEquals(1L, r.counters["newOffsetsSource"])
+        assertEquals(0L, r.counters["newOffsetsStep"])
+        // One source, 20 hPa (about 180 m) at once: past the cap.
+        val est2 = ReadoutEstimator(Activity.FOOT)
+        feed(est2, sim.fixes(walk), sim.pressure(walk).map { if (it.timeMs < step) it else it.copy(hPa = it.hPa + 20) }) { _, _ -> }
+        val r2 = est2.readout(walk.last().t)
+        println("T204 counted apart: source ${r.counters}, step ${r2.counters}")
+        assertEquals(0L, r2.counters["newOffsetsSource"])
+        assertEquals(1L, r2.counters["newOffsetsStep"])
+        assertTrue(abs(r2.elevation.value!! - walk.last().ele) < 10, "elevation ${r2.elevation.value}")
+    }
+
+    /**
+     * T204 (b), the stale gate as the emulator showed it after `POST /readout/reset`: the emulator's own fixes (at
+     * 0 m) and its sea-level sensor set the height, then a replay's fixes at 1600 m flow and the sensor falls silent
+     * (ignored while fixes are injected). Before, every GNSS height was rejected by the gate the silent barometer's
+     * narrow spread set, for about 20 minutes; now, once the barometer is past its staleness window, the first rejected
+     * height re-anchors the filter and the GNSS (and the DEM) carry it on.
+     */
+    @Test
+    fun aSilentBarometerFallsBackToTheGnssWithinOneFix() {
+        val sim = ReadoutSim(33)
+        // 120 s with the sensor, then its last sample and 10 s more of the emulator's fixes (the staleness window).
+        val still = sim.journey(listOf(ReadoutSim.Leg(130, 0.0)), startEle = 0.0)
+        val lastBaro = still[119].t
+        val est = ReadoutEstimator(Activity.FOOT)
+        feed(est, sim.fixes(still), sim.pressure(still, offset = { 0.0 }).filter { it.timeMs <= lastBaro }) { _, _ -> }
+        val walk = sim.journey(listOf(ReadoutSim.Leg(600, 1.2, climb = 0.05, course = winding)), startEle = 1600.0, t0 = still.last().t + 1000)
+        val staleAt = lastBaro + ElevationFilter.BARO_FRESH_MS
+        var recoveredAt: Long? = null
+        var rejectedAtRecovery = -1L
+        var worstAfter = 0.0
+        feed(est, sim.fixes(walk)) { f, r ->
+            val truth = walk[((f.time - walk.first().t) / 1000).toInt()].ele
+            if (f.time > staleAt && recoveredAt == null) {
+                recoveredAt = f.time
+                rejectedAtRecovery = r.counters.getValue("gnssRejected")
+            }
+            if (recoveredAt != null) {
+                worstAfter = maxOf(worstAfter, abs(r.elevation.value!! - truth))
+                assertEquals(rejectedAtRecovery, r.counters["gnssRejected"], "rejected grew at ${(f.time - staleAt) / 1000} s after the barometer went stale")
+            }
+        }
+        val end = est.readout(walk.last().t)
+        println("T204 silent barometer: recovered at the first fix ${(recoveredAt!! - staleAt) / 1000.0} s past staleness, worst elevation error after ${worstAfter} m; counters ${end.counters}")
+        assertTrue(worstAfter < 25, "elevation off by $worstAfter m after the fallback")
+        assertEquals(1L, end.counters["baroFallbacks"])
+        assertEquals("gnss", end.elevation.source)
+    }
+
     private fun solveQnh(hPa: Double, heightM: Double): Double {
         var lo = 900.0
         var hi = 1100.0

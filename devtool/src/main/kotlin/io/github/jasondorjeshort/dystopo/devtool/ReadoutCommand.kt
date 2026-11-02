@@ -76,6 +76,15 @@ import kotlin.math.sqrt
  * `againstStation`, how long the pin stays surer than a weather station's prior at 0, 25 and 50 km.
  *
  *   devtool readout --gpx track.gpx --pressure track-pressure.csv --calibrate 2097@+90min --calibrate-name "Panorama Point"
+ *
+ * T204: `--pressure-step <hPa>@<s>` adds hPa to every pressure sample from s seconds after the first fix on (a source
+ * switched, a sensor stepped); without `--pressure` the column is synthesised, one sample per fix, from the DEM's height
+ * at the fix (`--dem`, else the GPX's) averaged over a minute as a barometer reads, 30 m of offset added. The report adds `pressureStep`: the elevation
+ * against the DEM a minute after the step, the largest climb shown after it against the activity's cap
+ * (`ReadoutTuning.climbCapMps`), and the estimator's `newOffsets`. `--climb-window <s>` (30, 60, 300 or 600) sets the
+ * climb window (T177).
+ *
+ *   devtool readout --gpx shared/src/commonTest/resources/gpx/paradise-out-and-back.gpx --dem out/rainier-dem.pmtiles --pressure-step 20@600
  */
 class ReadoutCommand : CliktCommand(name = "readout") {
     override fun help(context: Context) =
@@ -102,6 +111,9 @@ class ReadoutCommand : CliktCommand(name = "readout") {
     // T197: a known height set during the replay.
     private val calibrate by option("--calibrate", help = "Set the height during the replay: <ele>@<time>, ele in metres (or 5940ft), time ISO 8601, epoch ms or +<s>|+<n>min from the first fix")
     private val calibrateName by option("--calibrate-name", help = "The place --calibrate sets the height from (none: a typed height)")
+    // T204: a pressure step injected into the column, the climb window.
+    private val pressureStep by option("--pressure-step", help = "Add <hPa> to every pressure sample from <s> seconds after the first fix on: <hPa>@<s> (a source switch); without --pressure the column is synthesised from the DEM's heights (else the GPX's), smoothed over a minute")
+    private val climbWindow by option("--climb-window", help = "The climb window in seconds: ${ReadoutOptions.CLIMB_WINDOWS_S.joinToString(", ")} (default ${ReadoutOptions.DEFAULT_CLIMB_WINDOW_S})").int()
     private val calibrateKind by option("--calibrate-kind", help = "peak (3 m, the default with a name), saddle, pass or sign (5 m, the default without)").choice("peak", "volcano", "hill", "saddle", "pass", "sign")
 
     override fun run() {
@@ -121,11 +133,20 @@ class ReadoutCommand : CliktCommand(name = "readout") {
         var options = ReadoutOptions.defaults(act).copy(barometer = !noBarometer)
         for (e in ReadoutEntry.entries) options = options.with(e, options[e].copy(damping = d))
         options = options.with(ReadoutEntry.SPEED, options.speed.copy(pace = pace, knots = knots))
+        climbWindow?.let { cw -> // T204 (T177's note)
+            if (cw !in ReadoutOptions.CLIMB_WINDOWS_S) throw UsageError("--climb-window must be one of ${ReadoutOptions.CLIMB_WINDOWS_S.joinToString(", ")}")
+            options = options.copy(climbWindowS = cw)
+        }
         val u = if (units == "ft") ContourUnits.FEET else ContourUnits.METERS
 
         val dem = demFile?.let { DemElevation(RouteGraphs.pyramid(it)) }
         val est = ReadoutEstimator(ActivityProfile.of(act), options, dem)
-        val pressure = pressureFile?.let(::readPressure).orEmpty().sortedBy { it.timeMs }
+        // T204: the column read or synthesised, and the step injected into it.
+        val step = pressureStep?.let { PressureStep.parse(it, points.first().time!!) }
+        val synthesised = pressureFile == null && step != null
+        val read = pressureFile?.let(::readPressure)
+            ?: if (synthesised) PressureStep.synthesise(points.map { pt -> pt.time!! to (dem?.elevation(pt.lat, pt.lon)?.takeIf { it.isFinite() } ?: pt.ele) }) else emptyList()
+        val pressure = read.map { step?.apply(it) ?: it }.sortedBy { it.timeMs }
         val nav = pathFile?.let { f ->
             val pdoc = Gpx.parse(f.readText(Charsets.UTF_8))
             val route = pdoc.routes.firstOrNull()
@@ -175,6 +196,7 @@ class ReadoutCommand : CliktCommand(name = "readout") {
                 v.source?.takeIf { v.state != ValueState.HIDDEN }?.let { count("${e.code}.source.$it") }
             }
             if (r.speed.state == ValueState.SHOWN) maxSpeed = maxOf(maxSpeed, r.speed.value!!)
+            step?.afterFix(r, dem?.elevation(pt.lat, pt.lon)?.takeIf { it.isFinite() }) // T204
             val ele = r.elevation.value
             if (ele != null && pt.ele != null) { sq += (ele - pt.ele!!) * (ele - pt.ele!!); nEle++ }
             if (i % every == 0 || i == points.size - 1) {
@@ -195,6 +217,7 @@ class ReadoutCommand : CliktCommand(name = "readout") {
             "inputs" to linkedMapOf(
                 "fixes" to points.size, "pressureSamples" to pressure.size, "dem" to demFile?.path, "path" to pathFile?.path,
                 "stationReport" to stationReport, "fixesWithSpeed" to points.count { it.speedMps != null },
+                "pressureSynthesised" to synthesised, // T204: from the DEM's heights (else the GPX's), a minute's mean, plus a 30 m offset
             ),
             "summary" to linkedMapOf(
                 "readouts" to points.size, "printed" to series.size, "states" to counts.toSortedMap(),
@@ -203,6 +226,8 @@ class ReadoutCommand : CliktCommand(name = "readout") {
             "counters" to last?.counters, "provenance" to last?.provenance,
             "trend" to if (pressure.isEmpty()) null else trend.evaluate(points.last().time!! + 1, w, station(null)).json(), // T178
             "calibrate" to cal?.json(points.last().time!!), // T197
+            "pressureStep" to step?.json(act, last), // T204
+            "climbWindowS" to options.climbWindowS, // T204 (T177's note)
             "series" to series,
             "elapsedMs" to (System.nanoTime() - t0) / 1_000_000,
         )
@@ -377,6 +402,94 @@ internal class Calibration(val eleM: Double, val tMs: Long, val name: String?, v
             } ?: throw UsageError("--calibrate: $ts is not a time (ISO 8601, epoch ms, +<s> or +<n>min)")
             val k = kind ?: if (name != null) "peak" else "sign"
             return Calibration(ele, t, name, k, KnownHeights.sigmaFor(k))
+        }
+
+        private fun r3(v: Double) = Math.round(v * 1000) / 1000.0
+    }
+}
+
+/**
+ * T204: `devtool readout --pressure-step <hPa>@<s>`: [hPa] added to every pressure sample from [tMs] on (the replay's
+ * column switched to a source reading differently, or a sensor stepped), and what the readout made of it: the
+ * elevation against the DEM a minute after the step, the largest climb shown (or read as 0) after it against the
+ * activity's cap, and the estimator's new-offset counters.
+ */
+internal class PressureStep(val hPa: Double, val tMs: Long, val afterS: Long) {
+    private var worstClimb = 0.0
+    private var worstClimbAt: Long? = null
+    private var atMinute: Readout? = null
+    private var demAtMinute: Double? = null
+
+    fun apply(p: PressureSample): PressureSample = if (p.timeMs >= tMs) p.copy(hPa = p.hPa + hPa) else p
+
+    fun afterFix(r: Readout, demM: Double?) {
+        if (r.timeMs < tMs) return
+        r.climb.value?.takeIf { r.climb.state != ValueState.HIDDEN && r.climb.state != ValueState.DASH }?.let {
+            if (kotlin.math.abs(it) > worstClimb) { worstClimb = kotlin.math.abs(it); worstClimbAt = r.timeMs }
+        }
+        if (atMinute == null && r.timeMs >= tMs + 60_000) { atMinute = r; demAtMinute = demM }
+    }
+
+    fun json(activity: Activity, last: Readout?): Map<String, Any?> {
+        val cap = io.github.jasondorjeshort.dystopo.readout.ReadoutTuning.climbCapMps(activity)
+        val m = atMinute
+        val ele = m?.elevation?.value
+        val dem = demAtMinute
+        return linkedMapOf(
+            "hPa" to hPa, "atS" to afterS, "time" to GpxFormat.formatTime(tMs),
+            "climbCapMps" to cap,
+            "maxClimbAfterMps" to r3(worstClimb), "maxClimbAfterPerHour" to Math.round(worstClimb * 3600),
+            "maxClimbAt" to worstClimbAt?.let { GpxFormat.formatTime(it) },
+            "underCap" to (worstClimb <= cap),
+            "minuteAfter" to m?.let {
+                linkedMapOf(
+                    "time" to GpxFormat.formatTime(it.timeMs), "elevationM" to ele?.let(::r3), "source" to it.elevation.source,
+                    "demM" to dem?.let(::r3), "minusDemM" to if (ele != null && dem != null) r3(ele - dem) else null,
+                    "withinTenMetres" to if (ele != null && dem != null) kotlin.math.abs(ele - dem) <= 10.0 else null,
+                    "barometer" to it.barometer.state.code,
+                )
+            },
+            "newOffsets" to last?.counters?.get("newOffsets"), "newOffsetsStep" to last?.counters?.get("newOffsetsStep"),
+            "newOffsetsSource" to last?.counters?.get("newOffsetsSource"),
+        )
+    }
+
+    companion object {
+        /** The barometer offset a synthesised column carries (m): pressure altitude minus true height. */
+        const val SYNTH_OFFSET_M = 30.0
+
+        /** A synthesised column smooths the heights over this many seconds each side, as a barometer reads (a GPX's GNSS heights jump 10 to 25 m between fixes). */
+        const val SYNTH_SMOOTH_S = 30
+
+        /**
+         * One sample per fix ([heights]: time and height, null where none): the pressure of the heights' centred mean
+         * over [SYNTH_SMOOTH_S] each side, plus [SYNTH_OFFSET_M].
+         */
+        fun synthesise(heights: List<Pair<Long, Double?>>): List<PressureSample> {
+            val known = heights.filter { it.second != null }
+            var lo = 0
+            var hi = 0
+            var sum = 0.0
+            return known.map { (t, _) ->
+                while (hi < known.size && known[hi].first <= t + SYNTH_SMOOTH_S * 1000L) sum += known[hi++].second!!
+                while (known[lo].first < t - SYNTH_SMOOTH_S * 1000L) sum -= known[lo++].second!!
+                PressureSample(t, hPaAt(sum / (hi - lo) + SYNTH_OFFSET_M))
+            }
+        }
+
+        /** The pressure whose pressure altitude is [altM] (the standard atmosphere). */
+        fun hPaAt(altM: Double): Double = Altimeter.STANDARD_HPA * Math.pow(1 - altM / 44_330.77, 1 / 0.190263)
+
+        /** `<hPa>@<s>`: hPa (signed), seconds after [firstMs] (`600`, `+600`, `600s` or `10min`). */
+        fun parse(raw: String, firstMs: Long): PressureStep {
+            val at = raw.lastIndexOf('@')
+            if (at <= 0) throw UsageError("--pressure-step must be <hPa>@<s>")
+            val hPa = raw.substring(0, at).trim().toDoubleOrNull()?.takeIf { it.isFinite() && kotlin.math.abs(it) < 200 }
+                ?: throw UsageError("--pressure-step: ${raw.substring(0, at)} is not a pressure step in hPa (under 200)")
+            val ts = raw.substring(at + 1).trim().removePrefix("+")
+            val s = (if (ts.endsWith("min")) ts.removeSuffix("min").toDoubleOrNull()?.times(60) else ts.removeSuffix("s").toDoubleOrNull())
+                ?.takeIf { it >= 0 } ?: throw UsageError("--pressure-step: $ts is not seconds after the first fix (600, 600s or 10min)")
+            return PressureStep(hPa, firstMs + (s * 1000).toLong(), s.toLong())
         }
 
         private fun r3(v: Double) = Math.round(v * 1000) / 1000.0

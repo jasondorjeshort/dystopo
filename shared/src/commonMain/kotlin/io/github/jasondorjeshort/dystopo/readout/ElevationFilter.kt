@@ -28,6 +28,13 @@ import kotlin.math.sqrt
  *   [PIN_HOLD_FACTOR] times the pin's (no timer), when the barometer closes or goes silent, or when [RECAL_AFTER]
  *   watched GNSS heights in a row lie over [GATE] sigmas off on one side (a wrong tag, a mistyped height). A weather
  *   station's prior is still applied while pinned.
+ * - **A new offset** ([newOffset], T204: the pressure's source changed or it stepped past the activity's climb cap):
+ *   the next barometer sample takes the offset afresh from the height, which does not move.
+ * - **A silent barometer** (T204): the height the barometer carried is kept once it falls silent, but past
+ *   [BARO_FRESH_MS] it no longer gates the GNSS and the DEM: the first height the gate would reject re-anchors the
+ *   filter on it ([fallbacks]; the offset is then taken afresh when the barometer returns). Before, a height carried
+ *   away from the fixes (the emulator's sea-level sensor under a replay) rejected every GNSS height until the spread
+ *   had grown over the gap, about 20 minutes for 2 km.
  *
  * Not thread-safe; times are the inputs' own (no clock).
  */
@@ -67,6 +74,13 @@ internal class ElevationFilter(var activity: Activity) {
     var priors = 0
         private set
     var lastDemMs: Long? = null
+        private set
+
+    /** T204: the barometer carried the height since the last GNSS or DEM height accepted on its own ([fallbacks]). */
+    private var carriedByBaro = false
+
+    /** T204: re-anchors on a GNSS or DEM height after the barometer fell silent (or closed) with the height it carried. */
+    var fallbacks = 0
         private set
 
     // T197: the known height kept while it holds ([knownHeight]), and how pins ended.
@@ -193,6 +207,34 @@ internal class ElevationFilter(var activity: Activity) {
         return true
     }
 
+    /** T204: a new barometer offset: the next sample takes it afresh from the height (the height does not move); a pin ends. */
+    fun newOffset() {
+        offsetKnown = false
+        residuals.clear()
+        endPin("barometer")
+    }
+
+    /**
+     * T204: the barometer carried the height and is now silent past [BARO_FRESH_MS] or closed: a GNSS or DEM height the
+     * gate would reject re-anchors the filter instead ([reanchor]).
+     */
+    private fun fallingBack(tMs: Long): Boolean = carriedByBaro && !fused(tMs)
+
+    /**
+     * T204: the height re-anchored on [eleM] with variance [r] (a cold start's spread, the vertical speed's prior), the
+     * offset to be taken afresh when the barometer returns.
+     */
+    private fun reanchor(eleM: Double, r: Double) {
+        x[0] = eleM
+        x[1] = 0.0
+        val vv = ReadoutTuning.verticalSpeedPriorMps(activity).let { it * it }
+        set(r, 0.0, 0.0, vv, 0.0, p[8])
+        offsetKnown = false
+        residuals.clear()
+        carriedByBaro = false
+        fallbacks++
+    }
+
     /** A barometer sample as pressure altitude [altM] at [tMs]. */
     fun barometer(tMs: Long, altM: Double) {
         lastBaroAltM = altM
@@ -200,6 +242,7 @@ internal class ElevationFilter(var activity: Activity) {
         predictTo(tMs)
         lastBaroMs = tMs
         checkPin(tMs)
+        if (heightKnown) carriedByBaro = true // T204
         when {
             !heightKnown && offsetKnown -> {
                 // A height from the barometer and the prior offset: h = z - b, so cov(h, b) = -var(b).
@@ -247,6 +290,7 @@ internal class ElevationFilter(var activity: Activity) {
             return true
         }
         if (pin != null) return heldByPin(tMs, eleM, r0, corrMs)
+        val fallingBack = fallingBack(tMs) // T204
         val r = if (fused) {
             // One per correlation time; one per FAST_EVERY_MS for the first FAST_MS after the offset was (re)set.
             val fast = offsetSinceMs?.let { tMs - it < FAST_MS } == true
@@ -279,9 +323,11 @@ internal class ElevationFilter(var activity: Activity) {
             offsetSinceMs = tMs
             residuals.clear()
         } else if (y * y > GATE * GATE * s) {
+            if (fallingBack) { reanchor(eleM, r0); gnssUpdates++; return true } // T204: the silent barometer's height gives way
             gnssRejected++
             return false
         }
+        if (fallingBack) carriedByBaro = false
         update(1.0, 0.0, 0.0, eleM, r)
         gnssUpdates++
         return true
@@ -330,10 +376,13 @@ internal class ElevationFilter(var activity: Activity) {
             return true
         }
         val y = eleM - x[0]
+        val fallingBack = fallingBack(tMs) // T204
         if (y * y > GATE * GATE * (p[0] + r)) {
+            if (fallingBack) { reanchor(eleM, r); lastDemMs = tMs; demUpdates++; return true }
             demRejected++
             return false
         }
+        if (fallingBack) carriedByBaro = false
         update(1.0, 0.0, 0.0, eleM, r)
         lastDemMs = tMs
         demUpdates++
