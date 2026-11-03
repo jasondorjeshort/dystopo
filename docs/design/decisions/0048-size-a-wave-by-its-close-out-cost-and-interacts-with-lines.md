@@ -85,6 +85,12 @@ Hatchery-rooted session (`docs/HANDOFF.md` › Next), where the 0003 critic's ob
   readings.
 - Prediction, check when wave 24 closes: the per-task figure has been revised at least once from the
   recorded closes, and no closed wave missed its figure by more than five points twice in a row.
+  Outcome 2026-11-02 (checked by the triage scan of 2026-11-02, after waves 24 to 26 closed): failed on
+  both clauses. The figure was never revised (wave 26's close declined on one reading), and the closes
+  read 24 against 56 (wave 22), 25 against 47 (wave 23) and about 5 against 23 (wave 26), each more
+  than five under; wave 24's close fell across the weekly reset and left no comparable reading. Revised
+  in the same commit to 1.5 points a task and 3 a wave (the `wave` skill, Plan and launch, step 3);
+  finding `../../findings/2026-11-02-wave-cost-figure-overstated-three-closes.md`.
 - Prediction, check by 2026-12-01: at least one verifier report has run a crossing scenario, and no
   defect of the T74/T75 kind (two merged tasks of one wave, disjoint Owns, wrong together) has been
   found after its wave closed.

@@ -61,9 +61,12 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    why not in the wave paragraph; launch after the edits, re-plan on a blocking one.
 3. Size the wave by its whole cost, not by whether its launch fits (ADR 0048): per task an
    implementer, a verifier, one fix round with its re-verify and the merge, plus the wave's fixed cost
-   of research agents, the critic, the post-wave sweep and the release. Starting figures: 3 points of
-   the 7-day meter per task and 5 per wave, read off waves 20 and 21 (two data points, not a model);
-   revised at each close from the readings the allowance sentences collect. Launch only when the
+   of research agents, the critic, the post-wave sweep and the release. Figures: 1.5 points of the
+   7-day meter per task and 3 per wave (revised 2026-11-02 from the closes of waves 22, 23 and 26, which
+   read 24, 25 and about 5 points for 18, 14 and 6 tasks against the starting 3 and 5 read off waves 20
+   and 21; the ADR 0048 scan outcome and finding
+   `docs/findings/2026-11-02-wave-cost-figure-overstated-three-closes.md`); revised at each close from the
+   readings the allowance sentences collect, in the commit that writes the close's reading. Launch only when the
    meter at planning plus that cost is at or under the 7-day hold `policy.json` sets, and otherwise
    plan a smaller wave or wait for the reset (the 5-hour meter keeps its own line, Resume step 4).
    Write the allowance into the wave paragraph as one sentence: the meter at planning, the task
@@ -133,8 +136,9 @@ and the caches are regenerable; the only files on the machine that are not are t
 3. When the sweep is green, publish an alpha (`release` skill); the owner need not be asked again
    (ADR 0024).
 4. Rewrite the handoff (`handoff` skill) and commit it. Add the meter at the close to the wave
-   paragraph's allowance sentence; when it is more than five points over the figure, raise the
-   per-task figure in step 3 of Plan and launch in the same commit and say so in the handoff.
+   paragraph's allowance sentence; when it is more than five points off the figure in either direction,
+   revise the per-task figure in step 3 of Plan and launch in the same commit and say so in the handoff
+   (finding 2026-11-02: three closes went unrevised while this said "over" and named no owner step).
 5. A Haiku chore moves the closed wave to `docs/tasks/wave-NN.md` by the recipe in that README and
    adds its index line (`brief` skill, `chore.md`; the chore works in the main checkout and commits
    nothing). The recipe first lifts the wave's follow-ups from its Status lines into the board's
