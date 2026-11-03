@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-03
 
+- T210: The glance view: the readout's figures fill the screen in huge type
 - T208: One definition of the shared controls, step 1: the map options' registry, the generated document and the first checks
 
 ### 2026-11-02
