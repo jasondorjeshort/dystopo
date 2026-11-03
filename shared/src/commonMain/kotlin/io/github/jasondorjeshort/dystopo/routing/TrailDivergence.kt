@@ -29,7 +29,7 @@ import kotlin.math.sqrt
  *    snapped with [TrackMatch]'s [TrackSnapper]. A fix is off the network when no line lies within [offM]: the larger of
  *    [ACCURACY_FACTOR] times its own accuracy and [MIN_OFF_M]. Not capped as [TrackMatch.toleranceM] is at 50 m, so a fix
  *    with a 40 m accuracy under trees needs 80 m before it counts (drift is not flagged). A run of consecutive off fixes
- *    of [MIN_LENGTH_M] or more along the track is a candidate stretch; a jump of over [TrackMatch.JUMP_M] between fixes,
+ *    of [MIN_LENGTH_M] or more along the track (measured on a running mean of the fixes thinned to [LINE_STEP_M]) is a candidate stretch; a jump of over [TrackMatch.JUMP_M] between fixes,
  *    a stop, or a fix outside the network's coverage ends a run. A run must touch the network at one end at least (it
  *    leaves or joins a mapped line), so a track wholly outside the graph is not one. A track that stays within the
  *    threshold is never a candidate. Tracks on a road, rail, boat or plane are not read.
@@ -63,8 +63,13 @@ object TrailDivergence {
     const val NEAR_M = 500.0
     /** The lines are compared at samples this far apart, metres. */
     const val SAMPLE_M = 10.0
-    /** The record's line keeps a point at least this far from the last one kept, metres. */
-    const val LINE_STEP_M = 5.0
+    /**
+     * Lengths are measured, and the record's line drawn, along the fixes thinned to one at least this far from the last
+     * one kept, metres: at a walking pace a fix every few seconds with metres of jitter otherwise doubles the length.
+     */
+    const val LINE_STEP_M = 20.0
+    /** And on a running mean of this many fixes either side of each ([steady]). */
+    const val STEADY_HALF = 3
 
     private const val M_PER_DEG = 111_195.0
     private const val DAY_MS = 86_400_000L
@@ -233,7 +238,8 @@ object TrailDivergence {
             var last: Pt? = null
             fun flush(joins: Boolean) {
                 if (pts.size >= 2 && len >= MIN_LENGTH_M && (leaves || joins)) {
-                    out += Stretch(track.id, track.name, pts.toList(), start, len, worst, offsets.toList(), leaves, joins)
+                    val length = lengthOf(thin(steady(pts)))
+                    if (length >= MIN_LENGTH_M) out += Stretch(track.id, track.name, pts.toList(), start, length, worst, offsets.toList(), leaves, joins)
                 }
                 pts.clear(); offsets.clear(); start = null; worst = 0.0; len = 0.0; leaves = false
             }
@@ -294,7 +300,7 @@ object TrailDivergence {
         val out = groups.map { idx ->
             val ms = idx.map { all[it] }
             val best = ms.minWith(compareBy<Stretch> { it.worstAccuracyM ?: Double.MAX_VALUE }.thenByDescending { it.lengthM })
-            val line = thin(best.points)
+            val line = thin(steady(best.points))
             val days = ms.mapNotNull { it.startMs?.let { s -> (s + utcOffsetMs).floorDiv(DAY_MS) } }.toSet().size
             val by = when {
                 days >= MIN_DAYS -> "days"
@@ -378,8 +384,22 @@ object TrailDivergence {
         return out
     }
 
+    /** [line] with each point the mean of the [STEADY_HALF] points either side of it (its ends kept): the fixes' jitter out. */
+    fun steady(line: List<Pt>): List<Pt> {
+        if (line.size <= 2) return line
+        return List(line.size) { i ->
+            if (i == 0 || i == line.size - 1) line[i] else {
+                val from = maxOf(0, i - STEADY_HALF)
+                val to = minOf(line.size - 1, i + STEADY_HALF)
+                var la = 0.0; var lo = 0.0
+                for (k in from..to) { la += line[k].lat; lo += line[k].lon }
+                Pt(la / (to - from + 1), lo / (to - from + 1))
+            }
+        }
+    }
+
     /** [line] with a point kept only [LINE_STEP_M] or more from the last one kept (its ends always). */
-    private fun thin(line: List<Pt>): List<Pt> {
+    fun thin(line: List<Pt>): List<Pt> {
         if (line.size <= 2) return line
         val out = ArrayList<Pt>()
         out += line[0]

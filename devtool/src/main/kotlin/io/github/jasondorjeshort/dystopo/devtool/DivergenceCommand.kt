@@ -139,11 +139,15 @@ class DivergenceCommand : CliktCommand(name = "divergence") {
         val base = plan.route.points.map { TrackPoint(it.lat, it.lon, it.ele ?: throw UsageError("the pack's graph has no heights (no DEM next to it)")) }
         val line = resample(base, 5.0)
         val total = (line.size - 1) * 5.0
-        // The stretch: the first place (from 300 m in) where the offset line on one side keeps 40 m from every line.
+        // The stretch: the first fairly straight place (from 300 m in) where the offset line on one side keeps 40 m from every line.
         val ramp = 40.0
         var pick: Pair<Double, Int>? = null
         var s0 = 300.0
         search@ while (s0 + lengthM + ramp < total - 200) {
+            // A fairly straight stretch, so the offset line is a parallel walk and not a loop round a bend.
+            val (aLat, aLon) = offsetAt(line, s0 - ramp, 0.0)
+            val (bLat, bLon) = offsetAt(line, s0 + lengthM + ramp, 0.0)
+            if (TrackStats.distanceM(aLat, aLon, bLat, bLon) < 0.95 * (lengthM + 2 * ramp)) { s0 += 25.0; continue }
             for (side in listOf(1, -1)) {
                 var clear = true
                 var s = s0
@@ -223,9 +227,11 @@ class DivergenceCommand : CliktCommand(name = "divergence") {
 
     /** The trails near the tracks (grey), the tracks (blue) and the stretches (dashed purple, a dot at the midpoint, confirmed only). */
     private fun draw(g: RoutingGraph, tracks: List<Track>, report: TrailDivergence.Report, out: File): Map<String, Any?> {
-        val pts = tracks.flatMap { it.points }
+        // Around the confirmed stretches (300 m on each side) when there are some, else every track.
+        val focus = report.confirmed.flatMap { d -> d.line.map { TrackPoint(it.lat, it.lon) } }
+        val pts = focus.ifEmpty { tracks.flatMap { it.points } }
         if (pts.isEmpty()) return linkedMapOf("error" to "no points")
-        val pad = 0.002
+        val pad = if (focus.isNotEmpty()) 0.003 else 0.002
         val minLat = pts.minOf { it.lat } - pad; val maxLat = pts.maxOf { it.lat } + pad
         val minLon = pts.minOf { it.lon } - pad; val maxLon = pts.maxOf { it.lon } + pad
         val k = cos((minLat + maxLat) / 2 * PI / 180)
