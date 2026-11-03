@@ -21,3 +21,16 @@ live ones stop.
 
 Recorded 2026-11-02 at the close of wave 26 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): the give-up state and its wording exist (`tracking/TerrainSource.kt`, `lost()`), but
+the last position, heading and spread live in memory only: nothing stores a give-up record, so the sheet
+and the report cannot carry it today. ADR 0051's group channel is decided and unbuilt (stage 1b waits on
+your two answers); no `GROUP` frame or `DPOS` record exists.
+
+Question: sent to the group automatically when the estimate gives up, or only on a tap? Recommendation:
+the local half now as one pass without asking (keep the record on the phone, show it on the paper sheet
+and the trip report, no format phones exchange); the group record after stage 1b as one more record type
+in its proposal's format, sent automatically only while the group sharing you turned on for the trip is
+running (then it is the same flow, not a new one), and carrying the point, its time, heading and spread,
+not the path.
+Answer:
