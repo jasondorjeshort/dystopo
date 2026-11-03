@@ -159,7 +159,12 @@ class AttestationPolicy(
         // 3. The key description: its first occurrence from the root, which must be the leaf.
         var description: KeyDescription? = null
         val extIndex = own.indices.reversed().firstOrNull { own[it].extension(KeyDescription.OID) != null }
-        val provIndex = own.indices.reversed().firstOrNull { own[it].extension(KeyDescription.PROVISIONING_INFO_OID) != null }
+        // T216: a self-signed root left in `own` (no anchor matched) is not an attestation key's certificate; the RKP test
+        // CA of the API 35 emulator ("Droid Unregistered Device CA") carries the provisioning extension on its root too,
+        // which read as an extended chain and hid the attestation's fields.
+        val provIndex = own.indices.reversed().firstOrNull { i ->
+            own[i].extension(KeyDescription.PROVISIONING_INFO_OID) != null && !(i == own.lastIndex && i > 0 && own[i].issuer.contentEquals(own[i].subject))
+        }
         when {
             extIndex == null -> reasons += Refusal(Reason.NO_ATTESTATION, "no certificate carries ${KeyDescription.OID}")
             extIndex != 0 -> reasons += Refusal(Reason.EXTENDED_CHAIN, "the first attestation from the root is in certificate $extIndex, not the leaf")
