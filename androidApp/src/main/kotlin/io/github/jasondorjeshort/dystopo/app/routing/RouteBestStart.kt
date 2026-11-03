@@ -73,7 +73,19 @@ object RouteBestStart {
         val line: String? get() = best?.let { ShadeText.bestStartLine(it, ::clock) }
     }
 
-    private data class Key(val points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, val mode: TravelMode, val aim: BestStartAim, val date: String, val packs: Int)
+    /**
+     * The cache's key: everything the sweep reads that can change under the same plan. [marginMin] is the turn-back
+     * margin the deadline is counted with (`turnMarginMin`; the verifier's FIX: without it a changed margin kept the old
+     * line); `turnDeadline` is not read (the sweep always counts to the terrain sunset).
+     */
+    internal data class Key(
+        val points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, val mode: TravelMode, val aim: BestStartAim,
+        val date: String, val packs: Int, val marginMin: Int,
+    )
+
+    /** The key of [plan]'s sweep at [nowMs] (its local date) for [aim], [packs] (the pack set's identity) and [marginMin]. */
+    internal fun keyOf(plan: PlannedRoute, aim: BestStartAim, nowMs: Long, packs: Int, marginMin: Int): Key =
+        Key(plan.route.points, plan.mode, aim, dateKey(nowMs), packs, marginMin)
 
     private const val CACHE = 6
     private const val TAG = "DystopoBestStart"
@@ -113,10 +125,11 @@ object RouteBestStart {
         val aim = BestStartAim.of(temp["tempC"] as Double?)
         val now = NavShade.now()
         val packs = runCatching { System.identityHashCode(app.tiles.packs) }.getOrDefault(0)
-        val key = Key(plan.route.points, plan.mode, aim, dateKey(now), packs)
+        val margin = AppSettings.turnMarginMin
+        val key = keyOf(plan, aim, now, packs, margin)
         synchronized(cache) {
             cache[key]?.let { return it }
-            val f = worker.submit(Callable { compute(plan, path, aim, temp, now) })
+            val f = worker.submit(Callable { compute(plan, path, aim, temp, now, margin) })
             cache[key] = f
             return f
         }
@@ -128,7 +141,7 @@ object RouteBestStart {
     /** Waits up to [ms] for the result (off the main thread); null for drive or on a timeout. */
     fun await(plan: PlannedRoute, ms: Long = 10_000): Result? = runCatching { start(plan)?.get(ms, TimeUnit.MILLISECONDS) }.getOrNull()
 
-    private fun compute(plan: PlannedRoute, path: NavPath, aim: BestStartAim, temp: Map<String, Any?>, now: Long): Result {
+    private fun compute(plan: PlannedRoute, path: NavPath, aim: BestStartAim, temp: Map<String, Any?>, now: Long, marginMin: Int): Result {
         val t0 = SystemClock.elapsedRealtime()
         try {
             val first = path.points.first()
@@ -142,7 +155,7 @@ object RouteBestStart {
             }
             val timing = TurnAround(path, TurnPace.of(CostModel(plan.mode)))
             val r = BestStart.suggest(
-                path, timing, aim, now, deadlineFor, AppSettings.turnMarginMin, minOf(pyramid.maxZoom, ShadeAlong.MAX_ZOOM),
+                path, timing, aim, now, deadlineFor, marginMin, minOf(pyramid.maxZoom, ShadeAlong.MAX_ZOOM),
                 read = { w -> pyramid.window(w.zoom, w.x0, w.y0, w.width, w.height) }, tileSize = pyramid.tileSize,
             )
             val ms = SystemClock.elapsedRealtime() - t0
