@@ -21,3 +21,15 @@ whoever its owner typed in.
 
 Recorded 2026-11-01 at the close of wave 25 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): the catalog is JSON and carries each file's SHA-256, attribution and licence from the
+archive's metadata (`PackCatalog.kt`); the sidecar is a checksum from the same server, not a signature.
+The phone's peer sources (T78) are other phones behind a share code while the Share screen is open, and
+the phone holds one configured server; no instance polls another, and no catalog field names an origin.
+
+Question: do you want your PC to fetch and serve other people's packs, and on what trust (typed-in peers
+with hashes only, or packs signed by a publisher key)? Recommendation: not now. It is a catalog-format
+change phones read, a trust scheme and a redistribution question (who is the publisher of a mirrored
+pack under ODbL attribution), so a proposal when a second instance exists; until then the phone's
+single server and the site's own packs are enough.
+Answer:
