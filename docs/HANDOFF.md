@@ -1,39 +1,39 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-02, at the wave 26 close, by main session (wave 26 closed, v0.1.18-alpha published)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open
-wave; Later carries waves 24 to 26's follow-ups; the record `docs/tasks/wave-26.md`), ADR 0053.
+Updated: 2026-11-02, after the triage and the wave 27 plan, by main session (planned, critic taken, not launched)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` › Wave 27
+(T208 to T216; the critic's review and the four surveys under `out/wave27-research/`, gitignored), ADR 0053, ADR 0051.
 
 ## Now
 
-- **Wave 26 is closed** (T202 to T207 merged 2026-11-02; the close entry in `docs/PLANNING.md`'s log). The sweep
-  was green after T207's fix; **v0.1.18-alpha is published** (verified and installed from the draft on an
-  emulator; no phone connected). Nothing is running: no worktree, task branch or emulator of ours (one stray
-  `emulator.exe` with no device, left). The live viewer on 8765 is up. Meter at the close: 32 on the 7-day.
-- **The RAM rule worked**, and the owner clarified it (2026-11-02): "We can use ram, we just can't be using lots
-  of ram on multiple processes at once." So the next wave bounds the count of heavy processes (emulators at the
-  cap, one compile per agent, few verifiers, servers from `installDist`, no idle daemons), not any one
-  process's heap: the 3 GB compiler and 2 GB server caps of wave 26 were the coordinator's inference.
-- **The site is built but not installed.** The owner's six steps are on the board (Owner actions pending › The
-  home site). The host name is a private term: never in a tracked file.
+- **Triage of 2026-11-02 done:** the 25 untriaged ideas read against the code by four read-only agents; 5 got a
+  `Plan:` (best start time, glance view, phone-style toggle, phone settings registry, plus ADR 0053's existing
+  one), 20 a `Question:` with a blank `Answer:`. The ADR 0048 scan prediction fired and failed: the wave cost
+  figure is now 1.5 points a task and 3 a wave (finding of 2026-11-02; the `wave` skill's close step revises in
+  either direction). The hook tests pass (two SKIPs are the base's own, no chore).
+- **Wave 27 is planned and not launched.** Nine tasks on the board: T208 (ADR 0053 step 1), T209 (best start
+  time), T210 (glance view), T211 and T216 (ADR 0051 stage 1a in two halves; T216 after T211 merges), T212
+  (the cards at large font scales), T213 (trail divergence marker), T214 and T215 (proposals: bushwhacking,
+  the dwell box). Critic (Fable): 1 blocking, 7 serious, 9 minor, all taken; "launch after the edits".
+  Allowance: 41 on the 7-day at planning, 55 at the revised figure (69 at the old) against the hold of 97.
+- Nothing running of ours but the live viewer on 8765; no worktree, task branch or emulator (`origin/task/T138` is housekeeping).
 
 ## Next
 
-1. The next wave is unplanned. Candidates: ADR 0053's three build steps (the map options first, no visible
-   change); T203's pass 2 (the step detector and its permission prompt, flagged for the owner); the wave 26
-   follow-ups in Later (T204's route card at font scale 2.0, the climb-cap figures' sources; T202's Prometheus
-   counter); the 13 untriaged ideas (`triage` skill, also the ADR 0012 scan); the pack-mode stand-in page's
-   scale bar if the owner wants one.
-2. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the
+1. On the owner's go: launch T208 to T215 with the `brief` skill (Opus-class implementers; T214 and T215 are
+   proposal writers, most capable model), each with its own worktree, ports and AVD name; the emulator rule of
+   the wave paragraph (device check last, two slots, T216 asks for both). Launch T216 when T211 has merged.
+2. Owner answers to the twenty `Question:` blocks as they come; the ones that unblock the most: estimated points
+   in exports, trip-report v2's storage, physical limits (pressure recorded with tracks).
+3. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the
    sentinel rule.
 
 ## Waiting on user
 
-- Install v0.1.18-alpha and the phone checks on the board (the terrain estimate under trees with a real
-  barometer, the readout across a barometer silence, the strip at your font size); the T203 and T204 strings.
-- The home site's six steps; the inventory's Category column and ADR 0053's D1 to D6; the paging file; the
-  `Question:` blocks (eight new ideas of 2026-11-02 untriaged); ADR 0051's two answers; the housekeeping row.
+- The go for wave 27; T203's pass 2 needs a yes on its `ACTIVITY_RECOGNITION` prompt before it is planned.
+- The `Answer:` lines of the twenty Questions in `docs/ideas/` (triage 2026-11-02); ADR 0051's two answers.
+- Install v0.1.18-alpha and the phone checks on the board; the home site's six steps; the housekeeping row.
 
 ## Open findings
 
