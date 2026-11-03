@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-03
 
+- T216: The attested install identity, the phone half (ADR 0051, stage 1a: the Keystore key, the routes, the cross-phone check), launched when T211 has merged
 - T209: The best start time for a route: the start with the most terrain shade on a hot day, the most sun otherwise
 - T210: The glance view: the readout's figures fill the screen in huge type
 - T208: One definition of the shared controls, step 1: the map options' registry, the generated document and the first checks
