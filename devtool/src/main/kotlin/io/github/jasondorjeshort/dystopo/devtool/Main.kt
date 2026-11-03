@@ -48,4 +48,7 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     // T195: a route's terrain, steep ground, the sides it faces and ridges.
     .subcommands(ExposureCommand())
     // end T195
+    // T211: an attestation chain judged by the attested-identity policy (ADR 0051).
+    .subcommands(AttestCommand())
+    // end T211
     .main(args)

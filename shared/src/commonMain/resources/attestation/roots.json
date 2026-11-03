@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "updated": "2026-11-02",
+  "platform": "android-key-attestation-v1",
+  "about": "Trust anchors for Android key attestation (ADR 0051): every root Google publishes, anchored on its public key (spki, DER SubjectPublicKeyInfo in base64); the root's own dates are ignored and the root a phone presents is stripped. Four certificates share one RSA key, so the anchors are two keys. Replaced by an app update or a policy file signed by a listed signer.",
+  "roots": [
+    {
+      "name": "Google hardware attestation root (RSA 4096, reissued 2022)",
+      "subject": "serialNumber=f92009e853b6b045",
+      "serial": "f1c172a699eaf51d",
+      "notBefore": "Mar 20 18:07:48 2022 GMT",
+      "notAfter": "Mar 15 18:07:48 2042 GMT",
+      "certSha256": "cedb1cb6dc896ae5ec797348bce9286753c2b38ee71ce0fbe34a9a1248800dfc",
+      "spkiSha256": "feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae",
+      "spki": "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAQ==",
+      "origin": "https://android.googleapis.com/attestation/root and https://developer.android.com/privacy-and-security/security-key-attestation (Root Certificates), fetched 2026-11-02 (T211); the published certificate's SHA-256 is certSha256"
+    },
+    {
+      "name": "Key Attestation CA1 (EC P-384), signs chains from 2026-02-01",
+      "subject": "C=US,O=Google LLC,OU=Android,CN=Key Attestation CA1",
+      "serial": "84a9d0297b0eb58ae7ff0e80de760605",
+      "notBefore": "Jul 17 22:32:18 2025 GMT",
+      "notAfter": "Jul 15 22:32:18 2035 GMT",
+      "certSha256": "6d9db4ce6c5c0b293166d08986e05774a8776ceb525d9e4329520de12ba4bcc0",
+      "spkiSha256": "3ee44512a1af2beb39c889490c60ea3f82e43f5d5a5532f5ab9419f676cd07ec",
+      "spki": "MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI9ojcU7fPlsFCjxy6IRqzgeOoK0b+YsV9FPQywiyw8EQRTkJ9u3qwfnI4DGoSLlBqClTXJfgfCcZvs60FikNMHnu4fkRzObfgDkU2KNXezT9/RQ+XvNslxPHrHCowhGr",
+      "origin": "https://android.googleapis.com/attestation/root and https://developer.android.com/privacy-and-security/security-key-attestation (Root Certificates), fetched 2026-11-02 (T211); the published certificate's SHA-256 is certSha256"
+    },
+    {
+      "name": "Google hardware attestation root (RSA 4096, issued 2016)",
+      "subject": "serialNumber=f92009e853b6b045",
+      "serial": "e8fa196314d2fa18",
+      "notBefore": "May 26 16:28:52 2016 GMT",
+      "notAfter": "May 24 16:28:52 2026 GMT",
+      "certSha256": "c1984a3ef45c1e2a918551de10603c86f7051b2249c4891cae3230eabd0c97d5",
+      "spkiSha256": "feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae",
+      "spki": "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAQ==",
+      "origin": "https://developer.android.com/privacy-and-security/security-key-attestation (Previously Issued Root Certificates), fetched 2026-11-02 (T211); the published certificate's SHA-256 is certSha256"
+    },
+    {
+      "name": "Google hardware attestation root (RSA 4096, reissued 2019)",
+      "subject": "serialNumber=f92009e853b6b045",
+      "serial": "d50ff25ba3f2d6b3",
+      "notBefore": "Nov 22 20:37:58 2019 GMT",
+      "notAfter": "Nov 18 20:37:58 2034 GMT",
+      "certSha256": "1ef1a04b8ba58ab94589ac498c8982a783f24ea7307e0159a0c3a73b377d87cc",
+      "spkiSha256": "feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae",
+      "spki": "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAQ==",
+      "origin": "https://developer.android.com/privacy-and-security/security-key-attestation (Previously Issued Root Certificates), fetched 2026-11-02 (T211); the published certificate's SHA-256 is certSha256"
+    },
+    {
+      "name": "Google hardware attestation root (RSA 4096, reissued 2021)",
+      "subject": "serialNumber=f92009e853b6b045",
+      "serial": "c36b7c44b9ae1831",
+      "notBefore": "Nov 17 23:10:42 2021 GMT",
+      "notAfter": "Nov 13 23:10:42 2036 GMT",
+      "certSha256": "ab6641178a36e179aa0c1cdddf9a16eb45fa20943e2b8cd7c7c05c26cf8b487a",
+      "spkiSha256": "feb2ea7551ee316ed4bb443c8293b884dbfdea40b603ee3e4f4a897e4580fbae",
+      "spki": "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAQ==",
+      "origin": "https://developer.android.com/privacy-and-security/security-key-attestation (Previously Issued Root Certificates), fetched 2026-11-02 (T211); the published certificate's SHA-256 is certSha256"
+    }
+  ]
+}

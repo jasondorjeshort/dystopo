@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "updated": "2026-11-02",
+  "platform": "android-key-attestation-v1",
+  "about": "The signed app (ADR 0051): the packages an attestation may name and the SHA-256 digests of the signing certificates it may carry. Release lists only: debug builds add the debug signer and the test root at run time, and ReleaseListsTest fails if either is here. Replaced by an app update or a policy file signed by a listed signer.",
+  "packages": [
+    "io.github.jasondorjeshort.dystopo"
+  ],
+  "signers": [
+    {
+      "name": "Dystopo release",
+      "sha256": "47313810a4313ca3d679a0a18d09d9f80a74a17c07cf6cb226cf035895e258ad",
+      "origin": "the signing certificate (CN=Dystopo release, O=Dystopo) of the published v0.1.17-alpha universal APK, read with apksigner verify --print-certs on 2026-11-02 (T211)"
+    },
+    {
+      "name": "second release signer",
+      "sha256": null,
+      "origin": "placeholder: the owner generates this key and keeps it offline (ADR 0051, an owner action); only its SHA-256 goes here"
+    }
+  ]
+}
