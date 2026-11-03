@@ -67,7 +67,7 @@ import java.util.concurrent.Executors
  * flips ([NavState.headingBack], which the clock reads as the way back). Without navigation, a recording's clock is
  * [WayBackClock]'s (`GET /nav/turnaround` reads it).
  * T187: the water along the line ([RouteWater], computed when navigation starts, never stored): the card names the next
- * water that is not a dry gully ("Water in 1.2 km: Stream, likely flowing"), and with the `waterSpoken` setting on the
+ * water that is not a dry gully ("Water in 1.2 km: stream, likely flowing"), and with the `waterSpoken` setting on the
  * last source before a stretch of more than 5 km without one is said once at its lead distance ([WaterText.dueSpoken],
  * [NavSpeech.sayWater]); `GET /nav` `water`.
  * T193: with the `terrain` deadline the clock counts to the sun behind the terrain at the line's end when that is earlier
@@ -122,7 +122,7 @@ object NavSession {
         val turnBackColour: String = TurnAround.NORMAL,
         /** T180: the direction flipped to the way back of a loop or out-and-back: "Heading back" on the card. */
         val headingBack: Boolean = false,
-        /** T187: the next water ahead ("Water in 1.2 km: Stream, likely flowing"); null when none is left or the setting is off. */
+        /** T187: the next water ahead ("Water in 1.2 km: stream, likely flowing"); null when none is left or the setting is off. */
         val water: String? = null,
         /** T194: the next terrain shade ("Terrain shade in 400 m for 10 min"); null before the first answer or with the sun down. */
         val shade: String? = null,
@@ -766,7 +766,7 @@ object NavSession {
             "turnAround" to turnJson(), // T163
             "water" to waterJson(s), // T187
             "shadeAlong" to shadeJson(), // T194
-            "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null)), // T65
+            "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null), "navCard" to navCardJson()), // T65; T212: the card's band, font scale and scroll
         )
     }
 

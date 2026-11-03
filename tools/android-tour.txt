@@ -15,3 +15,8 @@
 16/46.7686/-121.7295:reflection-lakes-z16
 # T127: after these views and the background step, android-check.py opens a cold direct view (no pack, no server) at
 # Mont Blanc z9 and checks the Java heap's peak (--direct-view, --direct-heap-share; --direct-view none skips it).
+# T212: after the views, the cards at font scale 2.0 (android-check.py cards_step; --no-cards skips it, --cards-only runs
+# only it): plans Paradise to Panorama Point, raises the pressure warning (POST /readout/trend?fixture=), navigates the
+# route, and checks from the routes' bounds that the cards, the top chips, the scale bar, the readout strip and the
+# compass do not overlap. Options: scale=, fixture=, bearing= (a turned map shows the compass), density= (wm density).
+@cards 46.7864,-121.7366;46.8024,-121.7289 scale=2.0 fixture=still-fall bearing=30
