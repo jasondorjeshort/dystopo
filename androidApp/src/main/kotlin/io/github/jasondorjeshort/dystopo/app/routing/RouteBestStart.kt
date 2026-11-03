@@ -198,18 +198,27 @@ object RouteBestStart {
 
 private val BestStartInk = Color(0xFF2B2420)
 
+/** How often the card's line asks again for its answer, ms (see [BestStartLine]). */
+private const val RECHECK_MS = 5_000L
+
 /**
  * T209: the route card's start-time line under the route's terrain line: "Start at 7:30 for the most terrain shade (about
  * 1 h 10 min in shade)", "Start at 10:00 for the most sun", "Start by 6:30 to finish before terrain sunset", "Your start
  * time is the shadiest" ([ShadeText.bestStartLine]), with its help icon. Nothing until the sweep answers, for drive
- * routes, or without elevation data under the route.
+ * routes, or without elevation data under the route. It follows a changed turn-back margin, hot-day reading or date
+ * within [RECHECK_MS] of the new sweep's answer.
  */
 @Composable
 internal fun BestStartLine(plan: PlannedRoute) {
     if (!RouteBestStart.applies(plan.mode)) return
     var res by remember(plan) { mutableStateOf(RouteBestStart.cached(plan)) }
+    // Asked again every few seconds: a changed margin, aim or date is a new key (a new sweep), and the line follows it
+    // (the verifier's FIX: the line kept the old margin's answer); an unchanged key answers from the cache at once.
     LaunchedEffect(plan) {
-        if (res == null) res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteBestStart.await(plan, 120_000) }
+        while (true) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteBestStart.await(plan, 120_000) }?.let { res = it }
+            kotlinx.coroutines.delay(RECHECK_MS)
+        }
     }
     val line = res?.line ?: return
     Row(verticalAlignment = Alignment.CenterVertically) {
