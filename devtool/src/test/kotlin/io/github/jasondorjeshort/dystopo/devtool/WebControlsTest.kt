@@ -77,7 +77,7 @@ class WebControlsTest {
         assertEquals(listOf("summary", "button", "button", "button", "input", "maplibregl.NavigationControl", "maplibregl.GeolocateControl"), els.map { it.tag })
         assertEquals("hillshade", els[1].control)
         assertEquals("flow:slope", els[3].control)
-        assertEquals(4, els[4].line)
+        assertEquals(5, els[4].line)
         // Every element in scope: the summary, the bare input and the two map controls lack the attribute; the
         // button inside the flow list does not.
         val r = WebControls.refusals(mapOf("t.js" to js), MapControls.items, allInScope = true)
