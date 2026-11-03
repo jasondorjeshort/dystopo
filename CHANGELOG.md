@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-03
 
+- T212: The cards at large font scales: the route card caps and scrolls, the warning card keeps off the scale bar and compass
 - T213: Your tracks leave the mapped trail here: the divergence detector and its marker
 - T216: The attested install identity, the phone half (ADR 0051, stage 1a: the Keystore key, the routes, the cross-phone check), launched when T211 has merged
 - T209: The best start time for a route: the start with the most terrain shade on a hot day, the most sun otherwise
