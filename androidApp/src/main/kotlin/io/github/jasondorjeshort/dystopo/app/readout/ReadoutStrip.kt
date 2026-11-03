@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app.readout
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,7 +35,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -164,16 +167,21 @@ object StripLayout {
  *
  * T204: where the room the scale bar's layout gives it is too small for every entry (font scale 2.0), entries are left
  * out from the end of their order until the rest fits ([DroppingFlow]); it hides only when the elevation alone does
- * not fit. `GET /readout` > `layout` says which (`drawnItems`, `droppedItems`, `fits`); the description still reads all.
+ * not fit. `GET /readout` > `layout` says which (`drawnItems`, `droppedItems`, `fits`); T210: the description reads the entries drawn only.
  *
  * T197: while a known height holds (`readout/KnownHeights`, [LiveReadout.pin]) a small triangle sits beside the
  * elevation's caption ([PinMark]); its description is "Set at <name>" ("Set by you" for a typed height), a tap shows the
  * time and the height, and it goes without a word when the estimate no longer trusts the set height.
+ *
+ * T210: a tap on the bar (the mark keeps its own) opens the glance view ([GlanceView], every entry in the largest type
+ * that fits); a screen reader offers it as the bar's action. The description reads the entries drawn only (T204's
+ * follow-up: it read the ones left out for room too); the glance view reads them all.
  */
 @Composable
 fun ReadoutStrip(night: Boolean) {
     var items by remember { mutableStateOf(LiveReadout.snapshot?.items ?: LiveReadout.placeholder()) }
-    var line by remember { mutableStateOf<String?>(null) }
+    var markLabel by remember { mutableStateOf<String?>(null) } // T210: the description's last words while the mark shows
+    var drawn by remember { mutableStateOf(Int.MAX_VALUE) } // T210: the entries the bar's measure kept ([DroppingFlow])
     var mark by remember { mutableStateOf(false) } // T197
     DisposableEffect(Unit) {
         LiveReadout.setComposed(true)
@@ -187,7 +195,7 @@ fun ReadoutStrip(night: Boolean) {
             LiveReadout.refresh()
             val s = LiveReadout.snapshot
             items = s?.items ?: LiveReadout.placeholder()
-            line = s?.line
+            markLabel = if (s?.markShown == true) io.github.jasondorjeshort.dystopo.readout.KnownHeights.markLabel(s.readout.barometer.pinnedName) else null
             mark = s?.markShown == true // T197
             if (!mark) StripLayout.markBoundsPx = null
             Foreground.delay(REFRESH_MS)
@@ -206,6 +214,7 @@ fun ReadoutStrip(night: Boolean) {
     val markStyle = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Bold) // T197
     val context = LocalContext.current
     val entries = items.map { it.entry.code }
+    val description = StripText.line(items.take(drawn), markLabel) ?: "" // T210
     Layout(
         modifier = Modifier
             .onGloballyPositioned { c ->
@@ -218,8 +227,13 @@ fun ReadoutStrip(night: Boolean) {
             }
             .background(plate, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 3.dp)
-            .clearAndSetSemantics { contentDescription = line ?: "" },
-        measurePolicy = remember(entries) { DroppingFlow(entries, ITEM_GAP, ROW_GAP) },
+            // T210: a tap opens the glance view; the mark's own tap (a child's) is taken first and does not open it.
+            .pointerInput(Unit) { detectTapGestures(onTap = { Glance.show("bar") }) }
+            .clearAndSetSemantics {
+                contentDescription = description
+                onClick(label = GLANCE_OPEN_LABEL) { Glance.show("bar"); true }
+            },
+        measurePolicy = remember(entries) { DroppingFlow(entries, ITEM_GAP, ROW_GAP) { k -> if (drawn != k) drawn = k } },
         content = {
         for (it in items) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
@@ -256,7 +270,7 @@ fun ReadoutStrip(night: Boolean) {
  * the rest fits; with only the elevation left and still too tall, [StripLayout.fits] is false and the scale bar's
  * layout hides the bar. The intrinsic width is every entry on one row (the scale bar's beside-or-above choice).
  */
-private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGap: Dp) : MeasurePolicy {
+private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGap: Dp, val onDrawn: (Int) -> Unit = {}) : MeasurePolicy {
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
         val gapX = itemGap.roundToPx()
         val gapY = rowGap.roundToPx()
@@ -295,6 +309,7 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
         StripLayout.fits = k == 0 || height(r) <= maxH
         StripLayout.drawnItems = k
         StripLayout.droppedItems = entries.drop(k)
+        onDrawn(k) // T210: the description reads these
         val width = (r.maxOfOrNull { it[1] } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
         val height = height(r).coerceIn(constraints.minHeight, constraints.maxHeight)
         return layout(width, height) {
