@@ -51,4 +51,7 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     // T211: an attestation chain judged by the attested-identity policy (ADR 0051).
     .subcommands(AttestCommand())
     // end T211
+    // T208: the controls document (ADR 0053), tools/demo/controls.json from the shared registry.
+    .subcommands(ControlsCommand())
+    // end T208
     .main(args)

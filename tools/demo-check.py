@@ -52,6 +52,12 @@ makes it answer with a denial (as a user's Block; navigator.permissions says den
 its hash within --tolerance degrees (default 0.01) and 0.05 zoom (`expect` in the JSON; VIEW's |src=, |req=, |WxH apply).
 Every report carries `start` (window.dystopoStart: which view opened and why). --token sets the page's field through the
 page, since it shows only with a stored token or ?tools=1.
+T208: the first view's `controls` entry is ADR 0053's DOM rule: every control of the Map options section and every
+element the controls document places on the web carries `data-control` (`missing`, `absent` name the element and the
+attribute); skipped on a page with no controls document.
+T208 (T205's follow-up): a tour view whose width crosses the 520 px breakpoint from the page's last load is loaded again
+at its size (`reloaded` in its report), since the page picks its phone layout on load; `scaleClear` also reports
+`creditsCompact`.
 In a tour, a view inside the generated coverage (region box at z8+, core box at z13+) also fails when
 the contour layers rendered no features; views outside coverage are expected to be blank and only
 fail on errors.
@@ -633,7 +639,35 @@ SCALE_CLEAR_JS = """() => {
   }
   const attrib = document.querySelector(".maplibregl-ctrl-attrib");
   return { ok: Object.values(over).every(v => v === 0), overlapPx2: over, creditsOpen: !!attrib && attrib.hasAttribute("open"),
+           creditsCompact: !!attrib && attrib.classList.contains("maplibregl-compact"), // T208: false on a page loaded wide
            bar: [bar.left, bar.top, bar.right, bar.bottom].map(Math.round) };
+}"""
+
+
+# T208 (ADR 0053 §5 part b, the DOM rule): every interactive element in scope carries data-control="<id>" (an item of
+# the controls document, window.dystopoControls) or sits inside an element with data-control="flow:<parent-id>"; and
+# every element the document places on the web is on the page. Build step 1's scope, as WebControlsTest's: the
+# controls inside the Map options section (details#options, not its own summary) and the elements the document names.
+# null when the page has no controls document (the pack-mode stand-in page).
+CONTROLS_JS = """() => {
+  const doc = window.dystopoControls;
+  if (!doc) return null;
+  const placed = new Map();
+  for (const item of doc.items) for (const id of ((item.placement || {}).web || {}).elements || []) placed.set(id, item.id);
+  const section = document.getElementById("options");
+  if (!section) return { ok: false, reason: "the page has no details#options (step 1's scope): restore it, or move the scope in demo-check.py and WebControls.kt" };
+  const own = section.querySelector(":scope > summary");
+  const scope = new Set([...section.querySelectorAll("input, select, button, summary")].filter(e => e !== own));
+  for (const id of placed.keys()) { const e = document.getElementById(id); if (e) scope.add(e); }
+  const name = e => "<" + e.tagName.toLowerCase() + (e.id ? ' id="' + e.id + '"' : "") + ">";
+  const missing = [];
+  for (const e of scope) {
+    if (e.hasAttribute("data-control") || e.closest('[data-control^="flow:"]')) continue;
+    missing.push({ element: name(e), attribute: 'data-control="' + (placed.get(e.id) || "<id>") + '" (an item of the controls document) or data-control="flow:<parent-id>"' });
+  }
+  const absent = [...placed.entries()].filter(([id, item]) => { const e = document.getElementById(id); return !e || e.getAttribute("data-control") !== item; })
+    .map(([id, item]) => ({ element: id, attribute: 'data-control="' + item + '"' }));
+  return { ok: !missing.length && !absent.length, checked: scope.size, missing, absent, items: doc.items.length };
 }"""
 
 
@@ -776,6 +810,7 @@ def main() -> int:
         if args.late_trips:
             page.route(re.compile(r".*/trips\.js(\?.*)?$"), lambda route: held.append(route))
 
+        loaded_width = None  # T208: the viewport width the page was last loaded at
         for i, v in enumerate(views):
             url = args.url + ("#" + v["view"] if v["view"] and not v.get("nohash") else "")
             report = {"url": url, "console": [], "pageErrors": [], "failedRequests": [], "idle": False, "map": None, "missingTiles": 0, "tile404": []}
@@ -787,6 +822,7 @@ def main() -> int:
             cur.update(report)
             report = cur  # share the lists/counters the handlers mutate
             t0 = time.time()
+            width = (v.get("size") or (args.width, args.height))[0]
             if v.get("nohash"):
                 # T200: a full load of the page with no hash, in the same context (localStorage, permissions kept).
                 if i > 0:
@@ -794,9 +830,19 @@ def main() -> int:
                 page.goto(url, wait_until="load", timeout=args.timeout * 1000)
             elif i == 0:
                 page.goto(url, wait_until="load", timeout=args.timeout * 1000)
+            elif (width <= 520) != (loaded_width <= 520):
+                # T208 (T205's follow-up): the page picks its phone layout when it loads (the credits as the compact (i)
+                # button, the panel collapsed), so a view that crosses the 520 px breakpoint is loaded again at its size,
+                # as a phone opens the page. Resized in place, the wide page's full credits box stayed open over the
+                # bottom of a 390 px view (creditsOpen true) while scaleClear passed.
+                page.goto("about:blank")
+                page.goto(url, wait_until="load", timeout=args.timeout * 1000)
+                report["reloaded"] = f"crossed the 520 px breakpoint ({loaded_width} to {width} px wide): loaded again at this size"
             else:
                 page.evaluate("h => { location.hash = h; }", v["view"])
                 page.wait_for_timeout(500)  # let the hash handler start the jump and new tile requests
+            if "reloaded" in report or i == 0 or v.get("nohash"):
+                loaded_width = width
             # The page exposes nothing by default; poll MapLibre through the global `map` once it exists.
             # Idle means two polls in a row (0.5 s apart) with the style and every tile loaded at the view's
             # zoom, so the gap between one batch of tile requests and the next does not count. Under load a
@@ -870,6 +916,11 @@ def main() -> int:
                 else:
                     report["scaleClear"] = {"ok": True, "skipped": "the page has no scale control (pack-mode stand-in page)"}
                 ok = ok and report["scaleClear"]["ok"]
+            if i == 0:
+                # T208: the DOM rule of ADR 0053 (CONTROLS_JS), once per page load.
+                dom = page.evaluate(CONTROLS_JS)
+                report["controls"] = dom if dom is not None else {"ok": True, "skipped": "the page has no controls document (pack-mode stand-in page)"}
+                ok = ok and report["controls"]["ok"]
             report["start"] = page.evaluate("() => window.dystopoStart || null")  # T200: which view opened and why
             if v.get("nohash"):
                 # T200: where the page opened, read from its hash (MapLibre writes it), against the expected view.

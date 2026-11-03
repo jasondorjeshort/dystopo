@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.maplibre
 
+import io.github.jasondorjeshort.dystopo.controls.MapControls
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import io.github.jasondorjeshort.dystopo.tiles.HillshadeMode
@@ -24,21 +25,24 @@ enum class ContourLabelDensity(val key: String, val spacingFactor: Double) {
  * [contourInterval] is in the user's units (feet or metres), null for the per-zoom table; it applies to
  * contour tiles from [FIXED_INTERVAL_FROM_ZOOM] up (below that the table's coarser lines keep a
  * whole-range overview readable). The defaults reproduce the map as it was before T47.
+ *
+ * T208 (ADR 0053 build step 1): the keys ([KEYS]), the defaults and the choices come from the controls registry
+ * ([MapControls]); the parse stays here.
  */
 data class MapOptions(
-    val hillshade: HillshadeMode = HillshadeMode.SINGLE,
-    val hillshadeIntensity: Double = 1.0,
-    val slope: SlopeShading = SlopeShading.OFF,
-    val contourInterval: Double? = null,
-    val contourLabels: ContourLabelDensity = ContourLabelDensity.NORMAL,
-    val trails: Boolean = true,
-    val water: Boolean = true,
-    val landcover: Boolean = true,
-    val pois: Boolean = true,
-    val boundaries: Boolean = true,
-    val night: Boolean = false,
+    val hillshade: HillshadeMode = Defaults.hillshade,
+    val hillshadeIntensity: Double = Defaults.hillshadeIntensity,
+    val slope: SlopeShading = Defaults.slope,
+    val contourInterval: Double? = Defaults.contourInterval,
+    val contourLabels: ContourLabelDensity = Defaults.contourLabels,
+    val trails: Boolean = Defaults.trails,
+    val water: Boolean = Defaults.water,
+    val landcover: Boolean = Defaults.landcover,
+    val pois: Boolean = Defaults.pois,
+    val boundaries: Boolean = Defaults.boundaries,
+    val night: Boolean = Defaults.night,
     /** T174: the streams derived from the elevation grid (`drainage` layer of a rewritten pack); off unless turned on. */
-    val drainage: Boolean = false,
+    val drainage: Boolean = Defaults.drainage,
 ) {
     init {
         require(hillshadeIntensity in 0.0..1.0) { "hillshadeIntensity must be in 0..1" }
@@ -70,10 +74,10 @@ data class MapOptions(
         "hillshade" to hillshade.key,
         "hillshadeIntensity" to hillshadeIntensity,
         "slope" to slope.key,
-        "slopeChoices" to SlopeShading.entries.map { it.key }, // T104
+        "slopeChoices" to MapControls.SLOPE.choices, // T104
         "contourInterval" to (contourInterval?.let { fmt(it) } ?: "auto"),
         "contourIntervalUnits" to units.symbol,
-        "contourIntervalChoices" to listOf("auto") + intervals(units).map { fmt(it) },
+        "contourIntervalChoices" to MapControls.CONTOUR_INTERVAL.choices + intervals(units).map { fmt(it) },
         "contourLabels" to contourLabels.key,
         "trails" to trails,
         "water" to water,
@@ -112,16 +116,14 @@ data class MapOptions(
         /** Contour tile zoom from which a fixed [contourInterval] replaces the table. */
         const val FIXED_INTERVAL_FROM_ZOOM = 11
 
-        val FEET_INTERVALS = listOf(10.0, 20.0, 40.0, 50.0, 80.0, 100.0, 200.0, 250.0, 500.0, 1000.0)
-        val METRE_INTERVALS = listOf(2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0)
+        val FEET_INTERVALS: List<Double> get() = MapControls.FEET_INTERVALS
+        val METRE_INTERVALS: List<Double> get() = MapControls.METRE_INTERVALS
 
         /** The fixed intervals offered in [units]. */
         fun intervals(units: ContourUnits): List<Double> = if (units == ContourUnits.FEET) FEET_INTERVALS else METRE_INTERVALS
 
-        val KEYS = setOf(
-            "hillshade", "hillshadeIntensity", "slope", "contourInterval", "contourLabels",
-            "trails", "water", "landcover", "pois", "boundaries", "drainage", "night",
-        )
+        /** The option keys, from the controls registry ([MapControls.ids]). */
+        val KEYS: Set<String> get() = MapControls.ids
 
         /**
          * [base] with the options in [params] applied (keys from [KEYS] only; others are ignored here and
@@ -130,24 +132,24 @@ data class MapOptions(
          */
         fun parse(params: Map<String, Any?>, base: MapOptions, units: ContourUnits): MapOptions {
             var o = base
-            params["hillshade"]?.let { o = o.copy(hillshade = HillshadeMode.parse(it.toString()) ?: bad("hillshade must be off, single or multi (got $it)")) }
+            params["hillshade"]?.let { o = o.copy(hillshade = HillshadeMode.parse(it.toString()) ?: bad("hillshade must be ${MapControls.choicesText("hillshade")} (got $it)")) }
             params["hillshadeIntensity"]?.let { raw ->
                 val v = (raw as? Number)?.toDouble() ?: raw.toString().trim().toDoubleOrNull()
                 if (v == null || !v.isFinite() || v < 0.0 || v > 1.0) bad("hillshadeIntensity must be a number from 0 to 1 (got $raw)")
                 o = o.copy(hillshadeIntensity = kotlin.math.round(v * 1000) / 1000)
             }
-            params["slope"]?.let { o = o.copy(slope = SlopeShading.parse(it.toString()) ?: bad("slope must be off, avalanche or steepness (got $it)")) }
+            params["slope"]?.let { o = o.copy(slope = SlopeShading.parse(it.toString()) ?: bad("slope must be ${MapControls.choicesText("slope")} (got $it)")) }
             params["contourInterval"]?.let { raw ->
                 val s = raw.toString().trim().lowercase()
-                o = if (s == "auto" || s.isEmpty()) o.copy(contourInterval = null) else {
+                o = if (s == MapControls.AUTO || s.isEmpty()) o.copy(contourInterval = null) else {
                     val v = (raw as? Number)?.toDouble() ?: s.removeSuffix(units.symbol).trim().toDoubleOrNull()
                     if (v == null || intervals(units).none { it == v }) {
-                        bad("contourInterval must be auto or one of ${intervals(units).map { fmt(it) }} (${units.symbol}; got $raw)")
+                        bad("contourInterval must be ${MapControls.AUTO} or one of ${intervals(units).map { fmt(it) }} (${units.symbol}; got $raw)")
                     }
                     o.copy(contourInterval = v)
                 }
             }
-            params["contourLabels"]?.let { o = o.copy(contourLabels = ContourLabelDensity.parse(it.toString()) ?: bad("contourLabels must be sparse, normal or dense (got $it)")) }
+            params["contourLabels"]?.let { o = o.copy(contourLabels = ContourLabelDensity.parse(it.toString()) ?: bad("contourLabels must be ${MapControls.choicesText("contourLabels")} (got $it)")) }
             params["trails"]?.let { o = o.copy(trails = bool("trails", it)) }
             params["water"]?.let { o = o.copy(water = bool("water", it)) }
             params["landcover"]?.let { o = o.copy(landcover = bool("landcover", it)) }
@@ -169,4 +171,20 @@ data class MapOptions(
         /** 100.0 → "100", 2.5 → "2.5". */
         fun fmt(d: Double): String = if (d == kotlin.math.floor(d)) d.toLong().toString() else d.toString()
     }
+}
+
+/** T208: the constructor's defaults, read once from the controls registry ([MapControls]). */
+private object Defaults {
+    val hillshade = HillshadeMode.parse(MapControls.choiceDefault("hillshade"))!!
+    val hillshadeIntensity = MapControls.numberDefault("hillshadeIntensity")
+    val slope = SlopeShading.parse(MapControls.choiceDefault("slope"))!!
+    val contourInterval: Double? = MapControls.choiceDefault("contourInterval").let { if (it == MapControls.AUTO) null else it.toDouble() }
+    val contourLabels = ContourLabelDensity.parse(MapControls.choiceDefault("contourLabels"))!!
+    val trails = MapControls.booleanDefault("trails")
+    val water = MapControls.booleanDefault("water")
+    val landcover = MapControls.booleanDefault("landcover")
+    val pois = MapControls.booleanDefault("pois")
+    val boundaries = MapControls.booleanDefault("boundaries")
+    val night = MapControls.booleanDefault("night")
+    val drainage = MapControls.booleanDefault("drainage")
 }

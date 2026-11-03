@@ -9,6 +9,7 @@ import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.geo.TileId
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.controls.ControlsDocument
 import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
@@ -62,7 +63,8 @@ import kotlin.math.min
  *   under `<cache>/openfreemap/<build>/`. Outdoors-only layers simply have no data there. Below z10
  *   OpenFreeMap tiles go out without their glacier polygons ([GLACIER_MIN_ZOOM], T66).
  *
- * `/` serves the browser demo (`tools/demo/index.html`) in live mode, `/phone` the phone style
+ * `/` serves the browser demo (`tools/demo/index.html`) in live mode (T208: with the controls document inlined;
+ * `/controls.json` answers it on its own, ADR 0053), `/phone` the phone style
  * ([MapLibreStyle] over these routes), `/live/sources` which source each tile in a box came from (the
  * demo's status box), `/stats` per-route, per-source counts and timings (T202: `graphs`, the catalog's graph pass,
  * [PackCatalog.graphState]).
@@ -817,6 +819,9 @@ class LiveTiles(
             val f = listOf(File(demoPage.absoluteFile.parentFile, "trip-sync.js"), File("tools/demo/trip-sync.js")).firstOrNull { it.isFile }
             return if (f == null) reply(ex, null, "text/plain") else reply(ex, f.readBytes(), "text/javascript; charset=utf-8")
         }
+        if (path == "/controls.json" || path == "/tools/demo/controls.json") { // T208: the controls document (ADR 0053), from the registry
+            return reply(ex, ControlsDocument.text().toByteArray(), "application/json; charset=utf-8")
+        }
         if (RouteRoutes.handle(ex, this, demoPage)) return // T68: /route* (route planning in the browser), /trips.js
         if (path == "/build" || path.startsWith("/build/") || path == "/area") return builds.handle(ex, path) // T75: /area
         catalog.route(path, ex.requestMethod)?.let { (status, body) -> return reply(ex, JsonWriter.write(body).toByteArray(), "application/json", status) }
@@ -911,11 +916,15 @@ class LiveTiles(
         "versions" to linkedMapOf<String, Any?>("dem" to demVersion).also { v -> osmVersion()?.let { v["osm"] = it } }, // T74
     )
 
-    /** The demo page with the live settings injected ahead of its module script, so it needs no extra request to know it is live. */
+    /**
+     * The demo page with the live settings injected ahead of its module script, so it needs no extra request to know it
+     * is live; T208: with the controls document (ADR 0053, [ControlsDocument]) as `window.DYSTOPO_CONTROLS`, the same
+     * document `tools/demo/controls.json` holds and `/controls.json` answers.
+     */
     fun injectLive(html: String): String {
         val tag = "<script type=\"module\">"
         val at = html.indexOf(tag)
-        val script = "<script>window.DYSTOPO_LIVE = ${JsonWriter.write(info())};</script>\n"
+        val script = "<script>window.DYSTOPO_LIVE = ${JsonWriter.write(info())};\nwindow.DYSTOPO_CONTROLS = ${ControlsDocument.compact()};</script>\n"
         return if (at < 0) html else html.substring(0, at) + script + html.substring(at)
     }
 

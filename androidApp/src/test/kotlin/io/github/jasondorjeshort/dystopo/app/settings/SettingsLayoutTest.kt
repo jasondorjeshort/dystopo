@@ -131,3 +131,53 @@ class SettingsLayoutTest {
         SettingsUi.visible = false
     }
 }
+
+// T208: ADR 0053 part (a) for the map options. The placement manifest (shared/.../controls/MapControls.kt) places each
+// map option in zone `settings` on the row that draws it; that row must exist in SettingsLayout.kt, in the item's
+// category, and every row that draws map options must be named by an item. The categories are the settings groups.
+class SettingsLayoutMapControlsTest {
+    private val manifest = "shared/src/commonMain/kotlin/io/github/jasondorjeshort/dystopo/controls/MapControls.kt"
+    private val layout = "androidApp/src/main/kotlin/io/github/jasondorjeshort/dystopo/app/settings/SettingsLayout.kt"
+    private val android = io.github.jasondorjeshort.dystopo.controls.Platform.ANDROID
+
+    @Test
+    fun everyMapOptionRowIsAManifestItemAndBack() {
+        val items = io.github.jasondorjeshort.dystopo.controls.MapControls.items
+        val rows = SettingsRow.entries.associateBy { it.id }
+        for (item in items) {
+            val place = item.placements[android] ?: continue
+            if (place.zone != "settings") continue
+            val row = kotlin.test.assertNotNull(
+                rows[place.row],
+                "The map option \"${item.id}\" is placed on the settings row \"${place.row}\", which $layout has no longer. " +
+                    "Fix: give that row its id \"${place.row}\" back in $layout, or set the item's android row in $manifest to the row that draws it",
+            )
+            assertEquals(
+                row.group.id, place.category,
+                "The map option \"${item.id}\" is in category \"${place.category}\" in $manifest, but its row \"${row.id}\" is in group " +
+                    "\"${row.group.id}\" in $layout. Fix: move the item's android category in $manifest, or the row's group in $layout",
+            )
+            assertEquals(item.syncKey, io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.syncedKey(item.id), "${item.id}'s sync key")
+        }
+        val named = items.mapNotNull { it.placements[android]?.row }.toSet()
+        for (row in SettingsRow.entries.filter { it.drawnBy == "MapOptionsSection" }) {
+            assertTrue(
+                row.id in named,
+                "The settings row \"${row.id}\" in $layout draws map options (MapOptionsSection), and no item of $manifest names it. " +
+                    "Fix: set the android row of the items it draws to \"${row.id}\" in $manifest, or draw it with another section in $layout",
+            )
+        }
+    }
+
+    @Test
+    fun theCategoriesAreTheSettingsGroups() {
+        val categories = io.github.jasondorjeshort.dystopo.controls.Controls.categories
+        assertEquals(
+            SettingsGroup.entries.mapIndexed { i, g -> Triple(g.id, g.title, i + 1) },
+            categories.map { Triple(it.id, it.title, it.order) },
+            "The manifest's placeholder categories (shared/.../controls/Controls.kt) are the settings groups of $layout, in order " +
+                "(ADR 0053 §4): change both together until the owner's categories replace them",
+        )
+    }
+}
+// end T208
