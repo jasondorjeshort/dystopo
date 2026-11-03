@@ -1,8 +1,11 @@
 # 0002. Repository layout for agent-driven projects
 
 Date: 2026-10-11
-Status: accepted, superseded in part by 0014, 0016 and 0017
+Status: accepted, superseded in part by 0014, 0016, 0017 and 0023
 
+Superseded in part by 0023 (`0023-length-threshold-not-cap.md`), 2026-11-03: the 300-line cap on
+`docs/**/*.md` ("File shapes and caps"; the "refuses a push while any cap is broken" and "Two caps
+(300, 40)" bullets) is a threshold that demands a stated `[length: <reason>]` marker; the 40 stands.
 Superseded in part by 0014 (`0014-handoff-layout.md`): Session continuity's Updated line and handoff commit; the 40-line cap now also covers `docs/handoff/*.md`, 120 in total.
 Superseded in part by 0016 (`0016-base-owned-and-project-owned-files.md`), 2026-10-17: the layout
 gains the base-owned subtree `docs/hatchery/` (Hatchery's records), and `CLAUDE.md` becomes a

@@ -28,8 +28,10 @@
 // always "claude-check: <n> files, <m> FAIL". post-edit.js prints the same FAIL lines; the parser
 // is imports.js.
 // Cap check: node .claude/hooks/policy.js --cap-check <listfile>  reads a newline list of
-// repo-relative docs paths (relative to the current directory) and prints one
-// "FAIL <path>: <n> lines, cap <cap>" per file over its docCap; exit 1 on any FAIL, a malformed
+// repo-relative docs paths (relative to the current directory) and prints one FAIL per file over
+// its docCap: "FAIL <path>: <n> lines, cap 40" for a handoff file, "FAIL <path>: <n> lines, over
+// 300 without [length: <reason>]" for any other doc over the threshold that lacks the marker
+// (hasLengthMarker; ADR 0023), a marked one passing; exit 1 on any FAIL, a malformed
 // policy or an unreadable file included (a listed file absent from the working tree is skipped),
 // else 0. The last stdout line is always "cap-check: <N> files, <M> over cap" (N files checked
 // against a cap, M FAIL lines), on every exit: a run without it is a failed run (an older policy.js
@@ -369,10 +371,12 @@ function matches(patterns, name) {
   return patterns.some((p) => new RegExp(`^${p.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(name));
 }
 
-// Doc size caps (ADR 0002, ADR 0014, .claude/rules/docs.md). docCap(edit, rel) is the cap for one
-// docs/ path, rel from the root with forward slashes: 40 for docs/HANDOFF.md and docs/handoff/*.md
-// whatever edit.capExempt says; null (no cap) under docs/design/proposals/ or matching
-// edit.capExempt; else 300. The post-edit hook and pusher check 7 both read it, so they agree.
+// Doc size limits (ADR 0002, ADR 0014, ADR 0023, .claude/rules/docs.md). docCap(edit, rel) is the
+// limit for one docs/ path, rel from the root with forward slashes: HANDOFF_CAP (40, hard) for
+// docs/HANDOFF.md and docs/handoff/*.md whatever edit.capExempt says; null (none) under
+// docs/design/proposals/ or matching edit.capExempt; else DOCS_CAP, the 300-line threshold, which a
+// doc passes over only with the [length: <reason>] marker (hasLengthMarker). The post-edit hook and
+// pusher check 7 both read it, so they agree.
 const DOCS_CAP = 300;
 const HANDOFF_CAP = 40;
 function docCap(edit, rel) {
@@ -381,6 +385,18 @@ function docCap(edit, rel) {
   return DOCS_CAP;
 }
 const lineCount = (text) => (text.match(/\n/g) || []).length; // same as wc -l
+// The length marker (ADR 0023, item 2): the literal "[length:", a reason with at least one
+// non-blank character, then "]", anywhere in the first LENGTH_MARKER_LINES lines. "[length: ]" is
+// no marker. The reason is not judged here; the reviewer judges it.
+const LENGTH_MARKER_LINES = 10;
+const hasLengthMarker = (text) => /\[length:[^\]\n]*[^\]\s][^\]\n]*\]/
+  .test(text.replace(/\r/g, '').split('\n').slice(0, LENGTH_MARKER_LINES).join('\n'));
+// Whether a doc of n lines at rel breaks its limit: always over the handoff cap; over the threshold
+// only without the marker. text is read only in the second case.
+function overLimit(cap, n, text) {
+  if (cap === null || n <= cap) return false;
+  return cap === HANDOFF_CAP || !hasLengthMarker(text);
+}
 
 // The project CLAUDE.md caps (ADR 0016): the file itself, and what it loads at every hop (itself and
 // each file reached once, docs/HANDOFF.md and its chain excepted, which keep the 120 of ADR 0014).
@@ -405,8 +421,8 @@ function capCheck(listFile) {
   for (const rel of list.replace(/\r/g, '').split('\n').filter((l) => l !== '')) {
     const cap = docCap(r.policy.edit, rel);
     if (cap === null) continue;
-    let n;
-    try { n = lineCount(fs.readFileSync(rel, 'utf8')); } catch (e) {
+    let text;
+    try { text = fs.readFileSync(rel, 'utf8'); } catch (e) {
       // Listed but deleted in the working tree (a closed stream mid-update): no size to cap. The
       // pusher's own clean-tree check 1 stops before this matters; other read errors are a FAIL.
       if (e.code === 'ENOENT') continue;
@@ -414,7 +430,10 @@ function capCheck(listFile) {
       continue;
     }
     files += 1;
-    if (n > cap) out.push(`FAIL ${rel}: ${n} lines, cap ${cap}`);
+    const n = lineCount(text);
+    if (!overLimit(cap, n, text)) continue;
+    out.push(cap === HANDOFF_CAP ? `FAIL ${rel}: ${n} lines, cap ${cap}`
+      : `FAIL ${rel}: ${n} lines, over ${cap} without [length: <reason>]`);
   }
   return { lines: out, files, code: out.length ? 1 : 0 };
 }
@@ -478,7 +497,7 @@ function claudeCheck(root, edit) {
   return { lines, info, files: files.size, code: lines.length ? 1 : 0 };
 }
 
-module.exports = { load, matches, docCap, lineCount, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
+module.exports = { load, matches, docCap, lineCount, hasLengthMarker, overLimit, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
 
 if (require.main === module && process.argv[2] === '--cap-check') {
   const c = process.argv[3] ? capCheck(process.argv[3])

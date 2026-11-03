@@ -1,7 +1,9 @@
 # ADR 0002 companion: hook specifications
 
+[length: its length is the exact commands, messages and harness cases a pass needs]
+
 Behaviour of the scripts under `.claude/hooks/` and of `.claude/statusline.js`, as implemented and
-tested on 2026-10-13 (`node .claude/hooks/test-hooks.js`, 325 cases). The code is the reference;
+tested on 2026-10-13 (`node .claude/hooks/test-hooks.js` runs every case and prints the count). The code is the reference;
 this document describes it exactly enough to re-implement or extend it. What each project may choose
 lives in `.claude/hooks/policy.json`, read through `policy.js`; its schema, defaults and fail modes
 are ADR 0006. Every script: Node, `'use strict'`, standard library only, SPDX header, reads all of
@@ -203,9 +205,13 @@ USERPROFILE set to it, `CLAUDE_CONFIG_DIR` removed) and `--config-dir <dir>` (`C
 set to it).
 `node .claude/hooks/policy.js [file]` prints the effective policy or the error;
 `node .claude/hooks/policy.js --cap-check <listfile>` is pusher check 7's per-file cap line (one
-`FAIL <path>: N lines, cap C` per file over its cap, a `FAIL policy:` line for a policy that does
-not load, exit 1 on any `FAIL`; stdout always ends with `cap-check: <N> files, <M> over cap`, and a run without that line is a FAIL). Group CAP runs it on a scratch tree and the pusher's line through
-the guard.
+FAIL per file over its limit: `FAIL <path>: N lines, cap 40` for a handoff file, marker or not, and
+`FAIL <path>: N lines, over 300 without [length: <reason>]` for any other doc over the threshold
+whose first 10 lines lack the marker (ADR 0023: the literal `[length:`, a reason with a non-blank
+character, `]`; `[length: ]` is none); a `FAIL policy:` line for a policy that does not load, exit
+1 on any `FAIL`; stdout always ends with `cap-check: <N> files, <M> over cap`, `N` counting the
+files checked, a marked doc over 300 included and exempt ones not, and a run without that line is
+a FAIL). Group CAP runs it on a scratch tree and the pusher's line through the guard.
 
 ## 2. `post-edit.js` (PostToolUse, matcher `Write|Edit`, no `onFailure`)
 
@@ -219,15 +225,16 @@ exception is swallowed. On Windows the `cwd` must be a Windows path (`C:/...`); 
 `/c/...` path resolves to a missing file and the hook stays silent. A malformed policy means the
 base defaults here, since the hook only advises.
 
-`CLAUDE.md` at the root over 150 lines: `post-edit: CLAUDE.md is N lines; cap is 150
-(.claude/rules/docs.md). Move facts to docs/reference/ and path-scoped rules to .claude/rules/.`
-An `@` line of the root `CLAUDE.md` whose target is absent: the import message below.
+An edit to the root `CLAUDE.md`, `.claude/agreement/*.md` or `.claude/project/*.md` prints, as they
+are, the FAIL lines of `node .claude/hooks/policy.js --claude-check` for the whole tree (`CLAUDE.md`
+over 40 lines or loading over 190, a section not imported once, an `@` line that does not resolve;
+ADR 0016).
 
 Checks on `docs/**/*.md` (`<path>` from the root with forward slashes; line count as `wc -l`):
 
 | Check | Message (one line each, joined with newlines) |
 |---|---|
-| over 300 lines, except under `docs/design/proposals/`, paths matching `edit.capExempt`, and the two handoff paths of the next row (`docCap` in `policy.js`, shared with pusher check 7) | `post-edit: <path> is N lines; cap is 300 (.claude/rules/docs.md). Split by topic; the pusher will refuse to push.` |
+| over 300 lines without `[length: <reason>]` in the first 10 lines (ADR 0023), except under `docs/design/proposals/`, paths matching `edit.capExempt`, and the two handoff paths of the next row (`docCap` and `overLimit` in `policy.js`, shared with pusher check 7) | `post-edit: <path> is N lines, over the 300-line threshold without [length: <reason>] (ADR 0023, .claude/rules/docs.md). Ask what the doc is made of: cut an inventory or a settled deliberation, move rationale or a phase only some runs use one level deep; if it is one procedure read start to finish, or its length is the exact commands and checks a pass needs, put [length: <reason>] in its first 10 lines. Without it the pusher will refuse to push.` |
 | `docs/HANDOFF.md` or `docs/handoff/*.md` over 40 lines, `edit.capExempt` notwithstanding | `post-edit: <path> is N lines; cap is 40. Move detail to docs/ideas/ or a finding.` |
 | when the edited file is either, `docs/HANDOFF.md` plus every `docs/handoff/*.md` on disk (`.md` only) over 120 lines in total | `post-edit: the handoff loads N lines in total (docs/HANDOFF.md plus docs/handoff/*.md); cap is 120. Close a stream or trim.` |
 | a `docs/handoff/*.md` with no line `@handoff/<name>` in `docs/HANDOFF.md` (this replaces the README row for that directory, which has no README) | `post-edit: <path> is not imported by docs/HANDOFF.md. Add the line @handoff/<name> or delete the file.` |
@@ -248,6 +255,12 @@ with `*`, `<`, `>`, `{`, `}`, `$`, `NNNN` or `YYYY`, and elided paths, a token w
 exactly `...` (`src/.../X.kt`, a task board's shorthand); a `#anchor` or `:line` suffix is dropped
 before the lookup. Each missing path is listed once.
 
+An edited `.claude/skills/<name>/SKILL.md` over 500 lines (whole file, as `wc -l`; not matching
+`edit.capExempt`; a skill's other files are not counted; ADR 0023, item 5): `post-edit: <path> is N
+lines; Anthropic advises a SKILL.md body under 500 lines, so split content into files the skill
+names, one level deep (Claude may read only part of a file referenced from a referenced file).
+Nothing fails.` No marker exists for it.
+
 Frontmatter means the file starts with `---`, closes with `---` within 20 lines, and each named key
 starts a line between them. Lines split on LF or CRLF.
 
@@ -260,9 +273,10 @@ first 5 non-empty stderr lines, else the spawn error, else `killed by <signal> (
 
 Output with at least one message, exit 0:
 `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"<messages>"}}`; none:
-exit 0, no stdout. Harness cases P01 to P04 and PX01 to PX14 cover the checks above, the
-formatter and the `CLAUDE.md` cap; PA the path anchors, closed records, list-item scope and elided
-paths (PA09); PC cap exemptions and formatters from a policy file, a malformed policy, and the task-branches example;
+exit 0, no stdout. Harness cases P01 to P04 and PX01 to PX20 cover the checks above, the
+formatter, the `CLAUDE.md` cap, the `[length:]` marker (present, blank, on line 11) and the
+`SKILL.md` warning; PA the path anchors, closed records, list-item scope and elided
+paths (PA09); PC cap exemptions (an exempt unmarked doc, an exempt `SKILL.md`) and formatters from a policy file, a malformed policy, and the task-branches example;
 PH the handoff paths (ADR 0014): the stream and total caps, the map import, and the `@` line
 resolution, each case in its own scratch root (`ph-<id>`) so P02 keeps its tree; Q the queue
 listing and the marker switch (ADR 0017): `queue-list.js` run from scratch roots (Q01 to Q09) and

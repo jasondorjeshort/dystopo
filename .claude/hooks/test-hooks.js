@@ -1063,8 +1063,19 @@ const write = (rel, text) => {
 };
 const lines = (n, prefix) => Array.from({ length: n }, (_, i) => `${prefix || 'line'} ${i + 1}\n`).join('');
 
-write('docs/reference/README.md', '# Reference\n\n| `big.md` | `clean.md` | `noverified.md` |\n');
+// The post-edit warning for a docs/**/*.md over the 300 threshold without [length:] (ADR 0023).
+const overDoc = (rel, n) => `post-edit: ${rel} is ${n} lines, over the 300-line threshold without [length: <reason>] (ADR 0023, .claude/rules/docs.md). Ask what the doc is made of: cut an inventory or a settled deliberation, move rationale or a phase only some runs use one level deep; if it is one procedure read start to finish, or its length is the exact commands and checks a pass needs, put [length: <reason>] in its first 10 lines. Without it the pusher will refuse to push.`;
+// A 301-line reference doc whose line 7 (after frontmatter, title and a blank) is mark.
+const markedDoc = (mark) => `---\nverified: 2026-10-11\nsource: observed\n---\n# Long\n\n${mark}\n${lines(294)}`;
+write('docs/reference/README.md', '# Reference\n\n| `big.md` | `clean.md` | `noverified.md` | `marked.md` | `blankmark.md` | `latemark.md` |\n');
 write('docs/reference/big.md', `---\nverified: 2026-10-11\nsource: observed\n---\n${lines(297)}`); // 301 newlines
+write('docs/reference/marked.md', markedDoc('[length: the exact commands and checks a pass needs]'));
+write('docs/reference/blankmark.md', markedDoc('[length: ]'));
+// The marker on line 11, one past the first 10: 4 frontmatter lines, the title, then 5 more.
+write('docs/reference/latemark.md', `---\nverified: 2026-10-11\nsource: observed\n---\n# Long\n${lines(5, 'pad')}[length: one procedure read start to finish]\n${lines(290)}`);
+write('.claude/skills/long/SKILL.md', lines(501));
+write('.claude/skills/long/reference.md', lines(600));
+write('.claude/skills/fits/SKILL.md', lines(500));
 write('docs/reference/clean.md', '---\nverified: 2026-10-11\nsource: observed\n---\n\n# Clean\n');
 write('docs/reference/noverified.md', '---\nsource: observed\n---\n# No verified\n');
 write('docs/reference/unlisted.md', '---\nverified: 2026-10-11\n---\n# Unlisted\n');
@@ -1095,7 +1106,7 @@ const fmtBad = { '.txt': [NODE, '-e', 'console.error("bad formatter output");pro
 const P = [
   // The four cases the spec asks for.
   ['P01', '301-line docs/reference file', absOf('docs/reference/big.md'),
-    'post-edit: docs/reference/big.md is 301 lines; cap is 300 (.claude/rules/docs.md). Split by topic; the pusher will refuse to push.'],
+    overDoc('docs/reference/big.md', 301)],
   ['P02', '41-line docs/HANDOFF.md', absOf('docs/HANDOFF.md'),
     'post-edit: docs/HANDOFF.md is 41 lines; cap is 40. Move detail to docs/ideas/ or a finding.'],
   ['P03', 'findings file without frontmatter', absOf('docs/findings/2026-01-01-nofm.md'),
@@ -1112,7 +1123,7 @@ const P = [
   ['PX04', 'ADR listed only in docs/design/README.md', absOf('docs/design/decisions/0009-something.md'), null],
   ['PX05', '320-line proposal (exempt from cap)', absOf('docs/design/proposals/0009-long.md'), null],
   ['PX06', 'relative file_path resolved against cwd', 'docs/reference/big.md',
-    'post-edit: docs/reference/big.md is 301 lines; cap is 300 (.claude/rules/docs.md). Split by topic; the pusher will refuse to push.'],
+    overDoc('docs/reference/big.md', 301)],
   ['PX07', '400-line .md outside docs/', absOf('README.md'), null],
   ['PX08', 'non-doc file, empty formatter table', absOf('src/app.txt'), null],
   ['PX09', 'malformed stdin', '(n/a)', null, 'not json'],
@@ -1121,6 +1132,16 @@ const P = [
     'FAIL CLAUDE.md: 41 lines, cap 40; lift: edit.capExempt naming CLAUDE.md'],
   ['PX13', '40-line CLAUDE.md at another root', absOf('root40/CLAUDE.md'), null, null, null, null, absOf('root40')],
   ['PX14', '41-line CLAUDE.md below the root', absOf('src/CLAUDE.md'), null],
+  // ADR 0023: the 300 threshold and its [length: <reason>] marker; the SKILL.md 500 warning.
+  ['PX15', '301-line doc carrying [length: <reason>] on line 7', absOf('docs/reference/marked.md'), null],
+  ['PX16', '301-line doc whose marker is [length: ] (no reason, no marker)', absOf('docs/reference/blankmark.md'),
+    overDoc('docs/reference/blankmark.md', 301)],
+  ['PX17', '301-line doc whose marker is on line 11 (not read)', absOf('docs/reference/latemark.md'),
+    overDoc('docs/reference/latemark.md', 301)],
+  ['PX18', '501-line .claude/skills/<name>/SKILL.md', absOf('.claude/skills/long/SKILL.md'),
+    'post-edit: .claude/skills/long/SKILL.md is 501 lines; Anthropic advises a SKILL.md body under 500 lines, so split content into files the skill names, one level deep (Claude may read only part of a file referenced from a referenced file). Nothing fails.'],
+  ['PX19', '500-line SKILL.md', absOf('.claude/skills/fits/SKILL.md'), null],
+  ['PX20', '600-line file beside a SKILL.md (not counted)', absOf('.claude/skills/long/reference.md'), null],
   ['PX11', 'formatter that fails', absOf('src/app.txt'),
     `post-edit: formatter ${NODE} failed on src/app.txt: bad formatter output`, null, fmtBad],
   // Path anchors: backtick-quoted repo paths must exist.
@@ -1134,15 +1155,19 @@ const P = [
     scratchPolicy('capexempt', { edit: { capExempt: ['docs/reference/big.md'] } })],
   ['PC02', 'cap exemption by pattern', absOf('docs/reference/big.md'), null, null, null,
     scratchPolicy('capglob', { edit: { capExempt: ['docs/reference/*'] } })],
+  ['PC07', 'exempt by pattern, an unmarked 301-line doc needs no marker', absOf('docs/reference/latemark.md'), null, null, null,
+    scratchPolicy('capglob', { edit: { capExempt: ['docs/reference/*'] } })],
+  ['PC08', 'a SKILL.md over 500 matching edit.capExempt', absOf('.claude/skills/long/SKILL.md'), null, null, null,
+    scratchPolicy('capskill', { edit: { capExempt: ['.claude/skills/*'] } })],
   ['PC03', 'formatter from the policy', absOf('src/app.txt'),
     `post-edit: formatter ${NODE} failed on src/app.txt: bad formatter output`, null, null,
     scratchPolicy('formatter', { edit: { formatters: fmtBad } })],
   ['PC04', 'malformed policy: base defaults', absOf('docs/reference/big.md'),
-    'post-edit: docs/reference/big.md is 301 lines; cap is 300 (.claude/rules/docs.md). Split by topic; the pusher will refuse to push.',
+    overDoc('docs/reference/big.md', 301),
     null, null, scratchPolicy('pe-bad', '{ nope')],
   ['PC05', 'task-branches example exempts docs/PLANNING.md', absOf('docs/PLANNING.md'), null, null, null, POLICIES.taskBranches],
   ['PC06', 'docs/PLANNING.md under the Hatchery policy', absOf('docs/PLANNING.md'),
-    'post-edit: docs/PLANNING.md is 320 lines; cap is 300 (.claude/rules/docs.md). Split by topic; the pusher will refuse to push.'],
+    overDoc('docs/PLANNING.md', 320)],
   // Closed records are exempt from the path check by default; list items scope [no-check:].
   ['PA05', 'a finding naming a gone path (closed record)', absOf('docs/findings/2026-01-03-gone.md'), null],
   ['PA06', 'the same finding with anchorExempt emptied', absOf('docs/findings/2026-01-03-gone.md'),
@@ -1280,13 +1305,19 @@ const PUSHER_CAP_LINE = 'l=$(mktemp); git -c core.quotePath=false ls-files -- \'
     'docs/HANDOFF.md': lines(41),
     'docs/handoff/x.md': lines(41),
     'docs/handoff/huge.md': lines(301),
+    'docs/reference/marked.md': `# Long\n\n[length: one procedure read start to finish]\n${lines(298)}`,
+    'docs/reference/blankmark.md': `# Long\n\n[length: ]\n${lines(298)}`,
+    'docs/reference/latemark.md': `# Long\n${lines(9, 'pad')}[length: one procedure read start to finish]\n${lines(290)}`,
+    'docs/reference/nospace.md': `# Long\n\n[length:x]\n${lines(298)}`,
+    'docs/reference/fenced.md': `# Long\n\`\`\`\n[length: one procedure read start to finish]\n\`\`\`\n${lines(297)}`,
+    'docs/handoff/marked.md': `# Stream\n[length: one procedure read start to finish]\n${lines(39)}`,
   };
   for (const [rel, text] of Object.entries(files)) {
     const f = path.join(root, ...rel.split('/'));
     fs.mkdirSync(path.dirname(f), { recursive: true });
     fs.writeFileSync(f, text);
   }
-  const BIG = 'FAIL docs/reference/big.md: 301 lines, cap 300\n';
+  const BIG = 'FAIL docs/reference/big.md: 301 lines, over 300 without [length: <reason>]\n';
   const CAP = [
     ['CAP01', 'exempt doc over 300', ['docs/reference/big.md', 'docs/reference/small.md'],
       scratchPolicy('cap-exempt', { edit: { capExempt: ['docs/reference/big.md'] } }), 0, 'cap-check: 1 files, 0 over cap\n'],
@@ -1308,6 +1339,20 @@ const PUSHER_CAP_LINE = 'l=$(mktemp); git -c core.quotePath=false ls-files -- \'
       POLICIES.hatchery, 1, `${BIG}cap-check: 1 files, 1 over cap\n`],
     ['CAP12', 'listed path unreadable (a directory)', ['docs/reference'], POLICIES.hatchery, 1,
       (out) => /^FAIL docs\/reference: cannot read \(E[A-Z]+\)\ncap-check: 0 files, 1 over cap\n$/.test(out) || 'expected one "FAIL docs/reference: cannot read" line and the sentinel'],
+    // ADR 0023: over 300 FAILs only without [length: <reason>] in the first 10 lines; a marked doc
+    // is checked (counted in N) and passes; the handoff 40 is hard, marker or not.
+    ['CAP16', 'marked doc over 300 is checked and passes', ['docs/reference/marked.md', 'docs/reference/small.md'],
+      POLICIES.hatchery, 0, 'cap-check: 2 files, 0 over cap\n'],
+    ['CAP17', '[length: ] is no marker', ['docs/reference/blankmark.md'], POLICIES.hatchery, 1,
+      'FAIL docs/reference/blankmark.md: 301 lines, over 300 without [length: <reason>]\ncap-check: 1 files, 1 over cap\n'],
+    ['CAP18', 'the marker on line 11 is not read', ['docs/reference/latemark.md'], POLICIES.hatchery, 1,
+      'FAIL docs/reference/latemark.md: 301 lines, over 300 without [length: <reason>]\ncap-check: 1 files, 1 over cap\n'],
+    ['CAP21', '[length:x] without a space is a marker', ['docs/reference/nospace.md'], POLICIES.hatchery, 0, 'cap-check: 1 files, 0 over cap\n'],
+    ['CAP22', 'a marker inside a code fence in the first 10 lines counts', ['docs/reference/fenced.md'], POLICIES.hatchery, 0, 'cap-check: 1 files, 0 over cap\n'],
+    ['CAP19', 'a marked handoff stream still FAILs its 40', ['docs/handoff/marked.md'], POLICIES.hatchery, 1,
+      'FAIL docs/handoff/marked.md: 41 lines, cap 40\ncap-check: 1 files, 1 over cap\n'],
+    ['CAP20', 'exempt by pattern, an unmarked doc over 300 is not checked', ['docs/reference/latemark.md', 'docs/reference/big.md'],
+      scratchPolicy('cap-ref', { edit: { capExempt: ['docs/reference/*'] } }), 0, 'cap-check: 0 files, 0 over cap\n'],
   ];
   for (const [id, label, listed, policy, code, expect] of CAP) {
     if (!selected(id)) continue;
@@ -1351,7 +1396,7 @@ const PUSHER_CAP_LINE = 'l=$(mktemp); git -c core.quotePath=false ls-files -- \'
     git(repo, 'add', '--', 'docs/café-big.md');
     const line = PUSHER_CAP_LINE.replace('.claude/hooks/policy.js', `"${path.join(HOOKS, 'policy.js').replace(/\\/g, '/')}"`);
     const r = spawnSync('bash', ['-c', line], { cwd: repo, encoding: 'utf8', timeout: 30000, env: envWith({ HOOK_POLICY_FILE: POLICIES.hatchery }) });
-    const want = 'FAIL docs/café-big.md: 301 lines, cap 300\ncap-check: 1 files, 1 over cap\n';
+    const want = 'FAIL docs/café-big.md: 301 lines, over 300 without [length: <reason>]\ncap-check: 1 files, 1 over cap\n';
     report('CAP14', 'a non-ASCII doc over 300 FAILs through the pusher line', r.stdout === want,
       `expected ${JSON.stringify(want)}; stderr ${(r.stderr || '').trim()}`, r.stdout);
   }

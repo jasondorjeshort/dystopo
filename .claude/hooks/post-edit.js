@@ -4,9 +4,11 @@
 // and never denies. It returns hookSpecificOutput.additionalContext when an edit to CLAUDE.md,
 // .claude/agreement/*.md or .claude/project/*.md leaves a --claude-check FAIL (claudeCheck in
 // policy.js: sections, the 40 and 190 caps, unresolved imports), or an edited docs/**/*.md file
-// breaks a size cap, lacks required frontmatter, is missing from its directory index (or, in a
-// queue directory listed on demand, would list as ? in queue-list.js), or names a repository path
-// that does not exist, and it runs the formatter for the file's extension if one is set. Every @
+// breaks a size cap or passes the 300 threshold without its [length:] marker, lacks required
+// frontmatter, is missing from its directory index (or, in a queue directory listed on demand,
+// would list as ? in queue-list.js), or names a repository path that does not exist, or an edited
+// .claude/skills/*/SKILL.md passes 500 lines, and it runs the formatter for the file's extension
+// if one is set. Every @
 // import is read by imports.js, the one parser; every queue file by queue-list.js's read().
 // Spec: docs/hatchery/decisions/0002-hook-specs.md section 2; policy: ADR 0006; CLAUDE.md: ADR 0016;
 // queue directories: ADR 0017.
@@ -15,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
-const { load, matches, docCap, lineCount, claudeCheck, DOCS_CAP, HANDOFF_CAP } = require('./policy');
+const { load, matches, docCap, lineCount, overLimit, claudeCheck, DOCS_CAP, HANDOFF_CAP } = require('./policy');
 // The parser is loaded lazily and guarded, as policy.js loads it: a missing or broken imports.js
 // drops the import checks, never the hook's other messages, and never makes it exit non-zero.
 function resolve(root, file, opts) {
@@ -56,9 +58,14 @@ if (process.env.POST_EDIT_FORMATTERS_JSON) {
   try { Object.assign(FORMATTERS, JSON.parse(process.env.POST_EDIT_FORMATTERS_JSON)); } catch (_) { /* ignore */ }
 }
 
-// The per-file caps (DOCS_CAP 300, HANDOFF_CAP 40) and which applies are docCap in policy.js, the
-// one rule this hook and pusher check 7 share.
+// The per-file limits (DOCS_CAP, the 300 threshold a [length: <reason>] marker passes; HANDOFF_CAP
+// 40) and which applies are docCap and overLimit in policy.js, the one rule this hook and pusher
+// check 7 share.
 const HANDOFF_TOTAL_CAP = 120; // docs/HANDOFF.md plus every docs/handoff/*.md
+// .claude/skills/<name>/SKILL.md over this many lines (the whole file, as wc -l) is warned, never
+// failed, and has no marker (ADR 0023, item 5); a path matching edit.capExempt is not warned. The
+// docs rule does not load for skills, so the message carries its own guidance.
+const SKILL_THRESHOLD = 500;
 // The CLAUDE.md caps (40, and 190 loaded) are CLAUDE_MD_CAP and CLAUDE_LOADED_CAP in policy.js.
 const INDEX_EXEMPT = new Set(['README.md', 'HANDOFF.md']);
 
@@ -88,8 +95,8 @@ function checkDocs(root, rel, abs) {
   const base = parts[parts.length - 1];
 
   const cap = docCap(edit, rel);
-  if (cap === DOCS_CAP && n > cap) {
-    msgs.push(`post-edit: ${rel} is ${n} lines; cap is ${cap} (.claude/rules/docs.md). Split by topic; the pusher will refuse to push.`);
+  if (cap === DOCS_CAP && overLimit(cap, n, text)) {
+    msgs.push(`post-edit: ${rel} is ${n} lines, over the ${cap}-line threshold without [length: <reason>] (ADR 0023, .claude/rules/docs.md). Ask what the doc is made of: cut an inventory or a settled deliberation, move rationale or a phase only some runs use one level deep; if it is one procedure read start to finish, or its length is the exact commands and checks a pass needs, put [length: <reason>] in its first 10 lines. Without it the pusher will refuse to push.`);
   }
   if (cap === HANDOFF_CAP && n > cap) {
     msgs.push(`post-edit: ${rel} is ${n} lines; cap is ${cap}. Move detail to docs/ideas/ or a finding.`);
@@ -241,6 +248,12 @@ function main(raw) {
   // policy.js --claude-check, for the whole tree, since an edit to one file can break another's line.
   if (inside && (rel === 'CLAUDE.md' || /^\.claude\/(agreement|project)\/[^/]+\.md$/.test(rel))) {
     msgs.push(...claudeLines(root));
+  }
+  if (inside && /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(rel) && !matches(edit.capExempt, rel)) {
+    const n = lineCount(fs.readFileSync(abs, 'utf8'));
+    if (n > SKILL_THRESHOLD) {
+      msgs.push(`post-edit: ${rel} is ${n} lines; Anthropic advises a SKILL.md body under ${SKILL_THRESHOLD} lines, so split content into files the skill names, one level deep (Claude may read only part of a file referenced from a referenced file). Nothing fails.`);
+    }
   }
   const fmt = FORMATTERS[path.extname(abs).toLowerCase()];
   if (Array.isArray(fmt) && fmt.length > 0) msgs.push(...runFormatter(fmt, abs, rel));

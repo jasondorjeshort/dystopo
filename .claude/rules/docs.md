@@ -33,19 +33,31 @@ their one-line replacements. From the Hatchery base, with this project's exempti
    closed waves: `docs/tasks/`, one record each (the recipe in its README).
    What a merged task did: the dated log in `docs/PLANNING.md` (the coordinator, `tools/merge-log.py`).
 
-## Size caps (the post-edit hook warns)
+## Size thresholds and caps (post-edit warns; `--cap-check` fails)
 
-- Any `docs/**/*.md`: at most 300 lines. Split by topic, never by date, never by "part 2". Exempt:
-  `docs/PLANNING.md`, `docs/SERVER.md` (dated records and the server manual, ADR 0020 as amended by
-  ADR 0050, which takes the board off the list: closed waves move to `docs/tasks/`) and
-  `docs/design/proposals/`; the list is `edit.capExempt` in `.claude/hooks/policy.json`,
-  which the post-edit hook reads.
-- `docs/HANDOFF.md`: at most 40 lines. Detail goes to a finding or the board; the handoff links.
+- Any `docs/**/*.md`: 300 lines is the threshold where the writer asks what the doc is made of
+  (Hatchery ADR 0023). Cut an inventory the rule could generate, and the record of a settled
+  deliberation. Move rationale, history and dated rulings to `docs/reference/` or the ADR that chose
+  the practice, leaving the procedure in place with one pointer; move a phase only some runs use to
+  a file the doc names, one level deep. Never split one procedure's steps across files, and split a
+  reference doc only when it covers two subsystems. Staying long is right when the doc is one
+  procedure read start to finish, or when its length is the exact commands and checks a pass needs.
+  A file over 300 then carries `[length: <reason>]` in its first 10 lines, naming which case
+  applies; the post-edit hook warns about a file over 300 without it, and
+  `node .claude/hooks/policy.js --cap-check` (run by the `update-from-hatchery` skill, step 9)
+  FAILs on one. Split by topic, never by date, never by "part 2".
+  Exempt, needing no marker: `docs/PLANNING.md`, `docs/SERVER.md` (dated records and the server
+  manual, ADR 0020 as amended by ADR 0050, which takes the board off the list: closed waves move to
+  `docs/tasks/`) and `docs/design/proposals/`; the list is `edit.capExempt` in
+  `.claude/hooks/policy.json`, which the post-edit hook and `--cap-check` both read.
+- `docs/HANDOFF.md`: at most 40 lines, hard. Detail goes to a finding or the board; the handoff links.
 - `CLAUDE.md`: under 130 lines (ADR 0020). The base's 40-line and 190-loaded caps are lifted here by
   `edit.capExempt` naming `CLAUDE.md`; `node .claude/hooks/policy.js --claude-check` still fails when
   an agreement section is neither imported nor replaced (ADR 0038). A new paragraph of facts goes to
   `docs/reference/` with a pointer.
 - ADRs and findings: under 150 lines; a longer specification goes in a sibling file.
+- `.claude/skills/*/SKILL.md`: 500 lines is a threshold (Anthropic's guidance for skills); the
+  post-edit hook warns, nothing fails. Split content into files the skill names, one level deep.
 
 ## Indexes
 
