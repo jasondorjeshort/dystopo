@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.19-alpha (2026-11-03)
+
 ### 2026-11-03
 
 - T212: The cards at large font scales: the route card caps and scrolls, the warning card keeps off the scale bar and compass
