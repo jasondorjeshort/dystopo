@@ -20,3 +20,15 @@ the list of what syncs; nothing else is new on the wire.
 
 Recorded 2026-11-02 at the close of wave 26 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): "nothing else is new on the wire" is false. The phone's settings travel as ops in the
+sync log sealed under the share code through the relay (ChaCha20-Poly1305, HKDF); the page has no crypto,
+WebCrypto has no ChaCha20-Poly1305, and the page's own sync (`trip-sync.js`) pulls routes with a bearer
+token and never settings. ADR 0053's registry, which would list what syncs, is not built yet (step 1).
+
+Question: read-only or two-way, and through the share code (the relay, crypto in the browser) or the server
+token (the sync peer, no crypto)? Recommendation: wait for ADR 0053's steps 1 and 2, then one pass on the
+token path, read-only: the page pulls the settings ops for the token's user and applies units, text size
+and map options; writing from the page and the share-code path only if you want the page to work
+without a token. A shared computer keeps nothing: the token is already in the browser only.
+Answer:
