@@ -88,6 +88,15 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * `row`). Drive routes answer `state` `mode`.
  * - `GET /route/exposure`: the same for the route on the map; 404 with none.
  * - `POST /route/exposure?open=1|0`: opens or closes the sheet under the card's terrain line (a tap on it); like the GET.
+ * T209, the start time ([io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart]; computed once per plan, never
+ * stored): `POST /route` and `GET /route` gain `bestStart` (waits up to 10 s; the sweep of a 10 km route takes longer on a
+ * phone, so poll): `state` `ready|computing|noRoute|mode|noData|error`, the card's `line`, `ms`, `temperature` (`tempC`
+ * at the route's lowest point and its `source` `station|synthetic|noStation|stale|noHeight`), `now` and `clockOffsetMs`
+ * (`POST /nav/shade` `at=` and `tempC=` apply), and as `devtool shade --best-start` prints them `aim` `shade|sun`, `kind`
+ * `pick|current|deadline|none|noDay`, `pick`, `current`, `tomorrow`, the window (`from`, `to`), `walkMin`, `deadline`
+ * (the terrain sunset at the end: `kind`, `at`, `terrain`, `byTerrain`), `marginMin`, `latestStart`, `rule`, `table`
+ * (each start: `start`, `shadeFraction`, `sunFraction`, the minutes in each light, `deadlineMet`, `pass`
+ * `grid|refine|current|latest`) and `stats` (`starts`, `rays`, `msPerStart`, `readMs`, `marchMs`, `rereads`).
  */
 object RouteRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -112,7 +121,8 @@ object RouteRoutes {
                     is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
                         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)), // T187
                         "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to PaceSettings.pastEffortJson(result.plan), // T184
-                        "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(result.plan.route.points, result.plan.mode, exposureOpen(app)))) // T195
+                        "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(result.plan.route.points, result.plan.mode, exposureOpen(app)), // T195
+                        "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(result.plan))) // T209
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
@@ -211,6 +221,7 @@ object RouteRoutes {
         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false)), // T187
         "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to PaceSettings.pastEffortJson(RouteSession.plan), // T184
         "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(RouteSession.plan?.route?.points, RouteSession.plan?.mode, exposureOpen(app)), // T195
+        "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(RouteSession.plan), // T209
     )
 
     /** T195: `GET|POST /route/exposure[?open=1|0]`: the terrain of the route on the map. */

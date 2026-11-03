@@ -135,6 +135,9 @@ class HelpRegistryTest {
             // T210: the glance view.
             "readout.glance",
             // end T210
+            // T209: the route card's start-time line.
+            "route.bestStart",
+            // end T209
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
