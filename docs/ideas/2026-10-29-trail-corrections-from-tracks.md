@@ -39,6 +39,9 @@ finds the few hundred metres worth looking at. Anchors: the track store and GPX
   users' divergent stretches vote on trail geometry on a server, and the pack build ships the
   corrected lines as a correction layer over OSM until the mappers catch up; the map corrects
   itself. After the send exists and the trail-conditions transport settles attestation.
+- 2026-11-02: T213 built the detection and the marker (`routing/TrailDivergence.kt`, `devtool divergence`,
+  `app/divergence/`, the setting "Show trail disagreements"; `docs/PLANNING.md` › Your tracks against the mapped
+  trails). Left: the opt-in send of a stretch to OpenStreetMap, after ADR 0042's build.
 
 Question: sending divergent stretches to OpenStreetMap is a second outward data flow beyond ADR 0042's one-track upload, and the detection reads the user's own movements: do you want it, and with the send or detection only? Recommendation: detection and the marker only first ("Your tracks leave the mapped trail here", built in alpha under ADR 0031), after the track activity profiles land (they share the map matching) and after ADR 0042's build task has shipped and been used, so a send would reuse its confirmation and trimming; the send as a second task on your word.
 Answer: yes, with connecting to OpenStreetMap opt-in (owner, 2026-10-29).

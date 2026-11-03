@@ -221,4 +221,16 @@ class SettingsRoutesTest {
         assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT, "the default is On hot days (ADR 0044)")
     }
     // end T194
+
+    // T213: the trail disagreements' layer switch, on by default, synced.
+    @Test
+    fun theShowDivergenceSetting() {
+        assertEquals(false, ok("showDivergence" to "0").showDivergence)
+        assertEquals(true, ok("showDivergence" to "on").showDivergence)
+        assertEquals(null, ok("units" to "m").showDivergence)
+        assertTrue(bad("showDivergence" to "maybe").message.contains("1 or 0"))
+        assertTrue(AppSettings.KEY_SHOW_DIVERGENCE in SettingsRoutes.KEYS)
+        assertEquals("app.showDivergence", io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.syncedKey(io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.SHOW_DIVERGENCE))
+    }
+    // end T213
 }

@@ -421,8 +421,21 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T203
+        // T213: the trail disagreements' layer switch (the survey of 2026-11-02: a layer switch, on, as every overlay has).
+        SettingsRow.SHOW_DIVERGENCE -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.showDivergence
+            Setting(row.label, SHOW_DIVERGENCE_LINE, help = "settings.showDivergence") {
+                Option("On", on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, showDivergence = true)) }
+                Option("Off", !on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, showDivergence = false)) }
+            }
+        }
+        // end T213
     }
 }
+
+/** T213: the Show trail disagreements row's line under its title (ADR 0031 string). */
+internal const val SHOW_DIVERGENCE_LINE = "where your recorded tracks keep leaving the mapped trail, worked out on this phone"
 
 /** T203: the Estimate position row's line under its title (ADR 0031 string). */
 internal const val ESTIMATE_POSITION_LINE = "a position from the barometer and the trails while the GPS is poor or lost"
@@ -751,6 +764,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 " of doubt it stops, and a grey dot stays where you were last known."
         },
         // end T203
+        // T213: the trail disagreements' layer switch.
+        HelpText("settings.showDivergence", "Trail disagreements", at(SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING), show = page(SettingsGroup.MAP)) {
+            "Marks where your recorded tracks keep following a line that is not on the map, such as a reroute or an unmapped " +
+                "path: two tracks on different days, or one with a good GPS fix all the way. Long-press a mark to read it or " +
+                "dismiss it. It is worked out on this phone and sends nothing."
+        },
+        // end T213
     )
 }
 

@@ -171,6 +171,9 @@ class Routes(private val app: DystopoApp) {
         // T216: the attested install identity
         io.github.jasondorjeshort.dystopo.app.identity.IdentityRoutes.handle(app, r)?.let { return it } // GET /identity, POST /identity/verify|rotate|test-chain
         // end T216
+        // T213: GET /divergence, POST /divergence/run|dismiss|undismiss
+        io.github.jasondorjeshort.dystopo.app.divergence.DivergenceRoutes.handle(app, r)?.let { return it }
+        // end T213
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

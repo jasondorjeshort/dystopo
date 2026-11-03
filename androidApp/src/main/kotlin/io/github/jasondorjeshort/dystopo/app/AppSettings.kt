@@ -121,6 +121,9 @@ object AppSettings {
         // T203
         estimatePosition = p.getBoolean(KEY_ESTIMATE_POSITION, true)
         // end T203
+        // T213
+        showDivergence = p.getBoolean(KEY_SHOW_DIVERGENCE, true)
+        // end T213
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
@@ -360,6 +363,20 @@ object AppSettings {
         prefs?.edit()?.putBoolean(KEY_ESTIMATE_POSITION, on)?.apply()
     }
     // end T203
+
+    // ---- T213: where the user's tracks leave the mapped trails, on the map (divergence/DivergenceLayer); synced ----
+
+    const val KEY_SHOW_DIVERGENCE = "showDivergence"
+
+    /** "Show trail disagreements", on by default: a layer switch as every overlay has (the survey of 2026-11-02). */
+    @Volatile var showDivergence: Boolean = true
+        private set
+
+    fun setShowDivergence(on: Boolean) {
+        showDivergence = on
+        prefs?.edit()?.putBoolean(KEY_SHOW_DIVERGENCE, on)?.apply()
+    }
+    // end T213
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
@@ -667,5 +684,7 @@ object AppSettings {
         // end T194
         "estimatePosition" to estimatePosition, // T203
         // end T203
+        KEY_SHOW_DIVERGENCE to showDivergence, // T213
+        // end T213
     ) + mapOptions.json(units) // T47
 }

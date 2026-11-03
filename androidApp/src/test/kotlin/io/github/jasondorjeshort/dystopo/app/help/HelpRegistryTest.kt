@@ -138,6 +138,9 @@ class HelpRegistryTest {
             // T209: the route card's start-time line.
             "route.bestStart",
             // end T209
+            // T213: the trail disagreements' switch and the long-press card's lines.
+            "settings.showDivergence", "longPress.divergence",
+            // end T213
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

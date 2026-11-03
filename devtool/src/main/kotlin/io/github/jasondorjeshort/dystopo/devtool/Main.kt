@@ -54,4 +54,7 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     // T208: the controls document (ADR 0053), tools/demo/controls.json from the shared registry.
     .subcommands(ControlsCommand())
     // end T208
+    // T213: where tracks leave the mapped trails.
+    .subcommands(DivergenceCommand())
+    // end T213
     .main(args)
