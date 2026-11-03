@@ -40,6 +40,8 @@ tasks.named<JavaExec>("run") {
 tasks.named<Test>("test") {
     systemProperty("java.awt.headless", "true")
     inputs.files(rootProject.file("areas.json"), rootProject.file("tools/demo/index.html"), rootProject.file("tools/android-push-pack.ps1")) // read by TourChecksTest, MarkerTableTest, GlyphFontsTest
+    // T208: read by ControlsDocumentTest and WebControlsTest (the controls document and the page's data-control attributes)
+    inputs.files(rootProject.file("tools/demo/controls.json"), rootProject.file("tools/demo/trips.js"), rootProject.file("tools/demo/trip-sync.js"))
     systemProperty("dystopo.goldens.diffDir", layout.buildDirectory.dir("golden-diffs").get().asFile.path)
     // Print failure messages in full: golden failures list the actual/diff image paths.
     testLogging {
@@ -68,5 +70,18 @@ tasks.register<JavaExec>("updateGoldens") {
     mainClass = "io.github.jasondorjeshort.dystopo.devtool.UpdateGoldensKt"
     systemProperty("java.awt.headless", "true")
     args(layout.projectDirectory.dir("src/test/resources/goldens").asFile.path)
+    dependsOn("controlsDocument") // T208: the controls document is refreshed with the goldens
+}
+
+// T208 (ADR 0053 §2): writes tools/demo/controls.json from the shared registry (`devtool controls`); updateGoldens
+// runs it, and ControlsDocumentTest fails when the committed file differs. View the diff before committing.
+tasks.register<JavaExec>("controlsDocument") {
+    group = "verification"
+    description = "Regenerates tools/demo/controls.json from the shared controls registry (devtool controls)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass = "io.github.jasondorjeshort.dystopo.devtool.MainKt"
+    workingDir = rootDir
+    jvmArgs("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
+    args("controls", "--out", rootProject.file("tools/demo/controls.json").path)
 }
 
