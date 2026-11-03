@@ -1,0 +1,5 @@
+{
+  "about": "The synthetic test attestation root (ADR 0051): an EC P-256 key made by T211 with openssl on 2026-11-02 for tests, devtool attest --anchors test and debug builds. Its private key is public on purpose; it is never in a release list (ReleaseListsTest).",
+  "privateKeyPkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZsDJxOGUj5lB8FinX/RS6+tpLA2jbkz70TDg0u1+Qy+hRANCAASDUjDoV+K1D+Piq4tudDXjfxW6yHIBcKV/BpRLaFzmuUN+/VgqE90L83V1LEhueHXQ+yanF0YaBjfqMhjpKiAi",
+  "certificate": "MIIBqDCCAU2gAwIBAgIUR7l138GFO1xQXO/Nd5IQg/GnKSswCgYIKoZIzj0EAwIwKDEmMCQGA1UEAwwdRHlzdG9wbyB0ZXN0IGF0dGVzdGF0aW9uIHJvb3QwIBcNMjYxMTAzMDYxNjIzWhgPMjEyNjEwMTAwNjE2MjNaMCgxJjAkBgNVBAMMHUR5c3RvcG8gdGVzdCBhdHRlc3RhdGlvbiByb290MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg1Iw6FfitQ/j4quLbnQ1438VushyAXClfwaUS2hc5rlDfv1YKhPdC/N1dSxIbnh10PsmpxdGGgY36jIY6SogIqNTMFEwHQYDVR0OBBYEFHGBXCBrWEZ6Latiwqc4xDvqADTaMB8GA1UdIwQYMBaAFHGBXCBrWEZ6Latiwqc4xDvqADTaMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAMUPLf2PeWWONMI/xRhVYDADkBLL9zjkX41x3VmQpwS+AiEAsBlh4cgDqQMOT6GYVUXSRlIAgQN/P/kEBT9yX1rAeZg="
+}
