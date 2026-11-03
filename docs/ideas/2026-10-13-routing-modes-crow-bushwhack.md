@@ -48,3 +48,10 @@ needs a source the app does not have yet: a global 10 m land cover raster under 
 a registry entry in `sources.json` first, and its classes (water, glacier, dense forest, shrub, open)
 become cost factors. The off-trail time model should come from the user's own tracks once those are
 fitted (`2026-10-29-route-times-fitted-to-your-tracks.md`).
+2026-11-02 (T214): proposal `docs/design/proposals/0054-bushwhacking-grid-routing.md` written and through the
+critic: a hybrid A* over the trail graph and a grid window around the corridor (DEM at z13, 1.5 million cells
+admitted by the heap guard, a plain refusal past it), the existing hike cost model plus land-cover factors and
+an impassable mask (water, cliffs, 40 degrees; glaciers by default), ESA WorldCover as an optional
+`landcover` archive after the pack's own OSM layers, the stretches carried by two new directions maneuvers
+(no path version step), a mode with one setting; the safety wording and the glacier rule wait on the owner
+before the ADR.
