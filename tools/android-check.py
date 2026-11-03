@@ -1101,11 +1101,11 @@ def swipe_to_end(exe, serial, box, times=6):
     """T212: swipes up inside `box` (px) to scroll a region to its end."""
     if not box:
         return
-    x = int((box[0] + box[2]) / 2)
+    x = int(box[2] - 6)  # at the thumb's edge, clear of the lines' taps (a slow swipe on one reads as a tap on a busy host)
     y0 = int(box[1] + (box[3] - box[1]) * 0.85)
     y1 = int(box[1] + (box[3] - box[1]) * 0.15)
     for _ in range(times):
-        adb(exe, serial, "shell", f"input swipe {x} {y0} {x} {y1} 250", timeout=30)
+        adb(exe, serial, "shell", f"input swipe {x} {y0} {x} {y1} 120", timeout=30)  # quick: a fling carries a small box further
         time.sleep(0.3)
 
 
@@ -1119,7 +1119,9 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
     map turned to `bearing`, so MapLibre draws its compass; `GET /camera` `orientation.heading.compass.boundsPx`); the
     navigation card at the user's font scale (`layout.navCard.fontScale`), capped at its band and clear of the scale
     bar and the online indicator. Screenshots `<stem>-cards-<name>.png` (adb screencap: the cards are not in /screenshot).
-    The font scale (and the density, when the step sets one) is restored afterwards."""
+    The warning is raised with the route cleared: with a planning card up at 2.0 no band is left for it, and it then keeps
+    its title, advice and actions and reaches over the card (`trend.card.layout.overRoom`). The font scale (and the
+    density, when the step sets one) is restored afterwards."""
     rep = {"scale": step["scale"], "route": f"{step['from']};{step['to']}", "checks": {}, "shots": {}}
     c = rep["checks"]
     _, before_scale = adb(exe, serial, "shell", "settings get system font_scale", timeout=30)
@@ -1133,6 +1135,14 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
             adb(exe, serial, "shell", f"wm density {step['density']}", timeout=30)
         time.sleep(4)  # the configuration change recreates the activity
         wait_activity(server, True, 30)
+        until = time.time() + 60
+        while time.time() < until:  # the map after the activity's recreation (a camera request before it answers 500)
+            try:
+                if server.json("/camera").get("ready"):
+                    break
+            except (urllib.error.URLError, OSError, ValueError):
+                pass
+            time.sleep(1)
         server.json("/route/clear", method="POST")
         lat0, lon0 = (float(x) for x in step["from"].split(","))
         server.json(f"/camera?lat={lat0 + 0.006}&lon={lon0 + 0.003}&zoom=14&bearing={step['bearing']}&tilt=0", method="POST")
@@ -1160,14 +1170,23 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         rep["shots"]["planning"] = screencap(exe, serial, f"{shot_stem}-cards-planning{ext}")
         body = (lay.get("routeCard") or {}).get("bodyPx")
         if (lay.get("routeCardScrollMaxPx") or 0) > 0:
-            swipe_to_end(exe, serial, body)
-            time.sleep(1)
-            lay2 = ((server.json("/route", timeout=60).get("ui") or {}).get("layout")) or {}
-            rep["planning"]["scrolledTo"] = [lay2.get("routeCardScrollPx"), lay2.get("routeCardScrollMaxPx")]
+            # Swipes until the scroll is at its end (lines that arrive late, such as the terrain line, lengthen it).
+            lay2, swipes = lay, 0
+            while swipes < 30:
+                swipe_to_end(exe, serial, body, times=2)
+                swipes += 2
+                time.sleep(0.8)
+                lay2 = ((server.json("/route", timeout=60).get("ui") or {}).get("layout")) or {}
+                if (lay2.get("routeCardScrollPx") or 0) >= (lay2.get("routeCardScrollMaxPx") or 0) > 0:
+                    break
+            rep["planning"]["scrolledTo"] = [lay2.get("routeCardScrollPx"), lay2.get("routeCardScrollMaxPx"), swipes]
             c["planEveryLineReached"] = (lay2.get("routeCardScrollPx") or 0) >= (lay2.get("routeCardScrollMaxPx") or 0) > 0
             rep["shots"]["planningScrolled"] = screencap(exe, serial, f"{shot_stem}-cards-planning-scrolled{ext}")
 
-        # The warning card over the planned route, with the map turned so the compass shows.
+        # The warning card on the map alone (with a planning card up at 2.0 there is no band left for it; it keeps its
+        # summary then and reaches over the card, `overRoom`), the map turned so the compass shows.
+        server.json("/route/clear", method="POST")
+        server.json("/readout/trend?clear=1", method="POST", timeout=60)
         server.json(f"/readout/trend?fixture={step['fixture']}", method="POST", timeout=60)
         time.sleep(2.5)
         trend = server.json("/readout").get("trend") or {}
@@ -1187,6 +1206,7 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         server.json("/readout/trend?clear=1", method="POST", timeout=60)
 
         # Navigation of the same route at the user's font scale.
+        server.json(f"/route?from={step['from']}&to={step['to']}&mode=hike&wait=180000", method="POST", timeout=240)
         server.json("/nav/start?route=current", method="POST", timeout=60)
         try:
             server.json("/location/replay?route=current&kmh=4", method="POST", timeout=60)
@@ -1584,7 +1604,7 @@ def main():
         http_ok = g["served"] >= len(fonts) and len(fonts) > 0
         summary["glyphs"] = {"fontsInStyle": fonts, "glyphRangesServed": g["served"], "glyphRangesEmpty": g["notFound"],
                              "viewsWithDrawnText": drawn, "glyphDir": (health.get("packs") or {}).get("glyphs"),
-                             "ok": http_ok or drawn > 0 or args.direct_only,  # T127: no tour views, nothing to check
+                             "ok": http_ok or drawn > 0 or args.direct_only or args.cards_only,  # T127, T212: no tour views, nothing to check
                              "evidence": "http" if http_ok else "drawn text" if drawn else "none"}
         cg = final["contourGeneration"]
         summary["contourGeneration"] = {k: cg[k] for k in ("count", "minMs", "avgMs", "maxMs")}

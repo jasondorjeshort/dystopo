@@ -464,8 +464,13 @@ fun PressureCard() {
             WarningCardLayout.compassMoved = compassMoves; WarningCardLayout.expanded = expanded; WarningCardLayout.fits = fits
             WarningCardLayout.collapsible = collapsible; WarningCardLayout.detailDp = if (detailPx < 0) null else detailPx / density.density
         }
+        // The title, the advice and the actions always show: with less room than they take (a planning card up at font
+        // scale 2.0) the card keeps their height and reaches over what is below rather than cutting them (the warning first).
+        val summary = with(density) { (layout.headerPx + layout.footerPx).toDp() } + 4.dp * 2
+        val cap = maxOf(room - padV * 2, summary)
+        androidx.compose.runtime.SideEffect { WarningCardLayout.overRoom = cap > room - padV * 2 }
         io.github.jasondorjeshort.dystopo.app.routing.CappedCard(
-            cap = (room - padV * 2).coerceAtLeast(0.dp), layout = layout, scroll = scroll, description = WARNING_DETAILS, paper = PaperOpaque, spacing = 4.dp,
+            cap = cap, layout = layout, scroll = scroll, description = WARNING_DETAILS, paper = PaperOpaque, spacing = 4.dp, pinned = true,
             modifier = Modifier
                 .padding(top = top, start = leftDp)
                 .width(widthDp)
@@ -541,6 +546,7 @@ internal object WarningCardLayout {
     @Volatile var fits = true
     @Volatile var expanded = true
     @Volatile var collapsible = false
+    @Volatile var overRoom = false
     @Volatile var detailDp: Float? = null
     @Volatile var toggleBoundsPx: FloatArray? = null
     val layout = io.github.jasondorjeshort.dystopo.app.routing.CardLayout()
@@ -549,7 +555,7 @@ internal object WarningCardLayout {
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "roomDp" to roomDp, "topDp" to topDp, "bottomLimitDp" to bottomLimitDp, "compassMoved" to compassMoved,
-        "fits" to fits, "expanded" to expanded, "collapsible" to collapsible, "detailDp" to detailDp,
+        "fits" to fits, "expanded" to expanded, "collapsible" to collapsible, "detailDp" to detailDp, "overRoom" to overRoom,
         "toggle" to if (collapsible) (if (expanded) HIDE_DETAILS else SHOW_DETAILS) else null,
         "toggleBoundsPx" to toggleBoundsPx?.takeIf { collapsible }?.map { Math.round(it) },
         "compassPx" to CompassView.json(),

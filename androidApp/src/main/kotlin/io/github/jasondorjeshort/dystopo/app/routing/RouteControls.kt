@@ -101,12 +101,19 @@ object BottomPanels {
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
         val bar = 6.dp + 12.sp.toDp() * LINE * (if (both) 2 else 1) + (if (both) 14.dp else 8.dp)
         val strip = if (!io.github.jasondorjeshort.dystopo.app.AppSettings.readoutBar) 0.dp
-        else 6.dp + 6.dp + (10.sp.toDp() + 15.sp.toDp() + (if (both) 11.sp.toDp() else 0.dp)) * LINE
+        else 6.dp + 6.dp + (10.sp.toDp() + (if (both) 11.sp.toDp() else 0.dp)) * LINE + 15.sp.toDp() * VALUE_LINE
         6.dp + bar + strip + 8.dp
     }
 
     /** T212: a text line's height for its size (the platform font's ascent and descent, rounded up). */
     private const val LINE = 1.2f
+
+    /**
+     * T212: the strip's value row's height for its 15 sp type: the value with its unit, its interval and the trend arrow,
+     * whose glyph comes from a taller fallback font (the entry's plate measured 72.6 dp at font scale 2.0, display size
+     * largest, for a 20 dp caption and 27 dp value).
+     */
+    private const val VALUE_LINE = 1.6f
 
     /** T212: the bottom edge of the top-left column (the search box, the online indicator), dp from the window top. */
     fun topLeftBottom(density: androidx.compose.ui.unit.Density): Dp = with(density) {
@@ -131,14 +138,14 @@ object BottomPanels {
 
 /**
  * T212: how a card capped by [CappedCard] was last laid out, for the debug routes: the cap (dp), its fixed header's and
- * actions' natural heights (px), whether it is compact (all of it in the one scroll, when header and actions leave the
- * body less than two lines of the cap), the scrolling region's bounds in the window (px) and its scroll.
+ * actions' natural heights (px), its [mode] ([CardBands.mode]; `compact` is any mode but `fixed`), the scrolling
+ * region's bounds in the window (px) and its scroll.
  */
 internal class CardLayout {
     var headerPx by mutableStateOf(0)
     var footerPx by mutableStateOf(0)
     @Volatile var shown = false
-    @Volatile var compact = false
+    @Volatile var mode = CardBands.FIXED
     @Volatile var capDp = 0f
     @Volatile var density = 1f
     @Volatile var bodyPx: FloatArray? = null
@@ -151,7 +158,7 @@ internal class CardLayout {
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "shown" to shown, "capDp" to capDp, "compact" to compact,
+        "shown" to shown, "capDp" to capDp, "mode" to mode, "compact" to (mode != CardBands.FIXED),
         "headerDp" to Math.round(headerPx / density * 10) / 10.0, "actionsDp" to Math.round(footerPx / density * 10) / 10.0,
         "bodyPx" to bodyPx?.takeIf { shown }?.map { Math.round(it) },
         "scrollPx" to scrollPx, "scrollMaxPx" to scrollMaxPx, "scrolls" to (scrollMaxPx > 0), "description" to description,
@@ -163,22 +170,24 @@ internal class CardLayout {
  * scrolling in one dimension): a card at most [cap] tall whose [header] (the primary line) and [footer] (the actions)
  * stay in view while the [body] between them scrolls, with a thumb at its right edge and a fade where more lies above or
  * below, and [description] as the scroll region's content description (", scroll for more" added while it scrolls).
- * When the header and the actions would leave the body less than two lines (landscape at font scale 2.0), all three go
- * in the one scroll ([CardLayout.compact]), so nothing is ever cut. Type is never shrunk: the user's scale stands.
+ * When the header and the actions would leave the body less than two lines (landscape at font scale 2.0), the header
+ * scrolls with the body above the actions, and when even the actions leave less than that, all three are one scroll
+ * ([CardBands.mode]), so nothing is ever cut. With [pinned] the header and the actions always stay (the warning card,
+ * whose caller makes the cap at least their height). Type is never shrunk: the user's scale stands.
  */
 @Composable
 internal fun CappedCard(
     cap: Dp, layout: CardLayout, scroll: androidx.compose.foundation.ScrollState, description: String, paper: Color,
-    spacing: Dp, modifier: Modifier,
+    spacing: Dp, modifier: Modifier, pinned: Boolean = false,
     header: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
     body: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
     footer: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
-    val compact = with(density) { CardBands.compact(layout.headerPx, layout.footerPx, MIN_BODY.toPx(), spacing.toPx(), cap.toPx()) }
+    val mode = if (pinned) CardBands.FIXED else with(density) { CardBands.mode(layout.headerPx, layout.footerPx, MIN_BODY.toPx(), spacing.toPx(), cap.toPx()) }
     val desc = if (scroll.maxValue in 1 until Int.MAX_VALUE) "$description, scroll for more" else description
     SideEffect {
-        layout.shown = true; layout.compact = compact; layout.capDp = cap.value; layout.density = density.density; layout.description = desc
+        layout.shown = true; layout.mode = mode; layout.capDp = cap.value; layout.density = density.density; layout.description = desc
     }
     DisposableEffect(layout) { onDispose { layout.hidden() } }
     LaunchedEffect(scroll) {
@@ -190,13 +199,42 @@ internal fun CappedCard(
         .fadeEdges(scroll, paper).scrollbar(scroll).verticalScroll(scroll)
     val measuredHeader = Modifier.onSizeChanged { if (it.height != layout.headerPx) layout.headerPx = it.height }
     val measuredFooter = Modifier.onSizeChanged { if (it.height != layout.footerPx) layout.footerPx = it.height }
+    if (mode == CardBands.FIXED) {
+        // The header and the actions at their whole height (a wrapping row of actions is never clipped to the room left,
+        // as a Column's later children are), the body given what remains of the cap.
+        androidx.compose.ui.layout.Layout(
+            content = {
+                Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
+                Column(region, verticalArrangement = Arrangement.spacedBy(spacing), content = body)
+                Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
+            },
+            modifier = modifier,
+        ) { ms, c ->
+            val loose = androidx.compose.ui.unit.Constraints(maxWidth = c.maxWidth)
+            val gap = spacing.roundToPx()
+            val h = ms[0].measure(loose)
+            val f = ms[2].measure(loose)
+            val b = ms[1].measure(loose.copy(maxHeight = (cap.roundToPx() - h.height - f.height - gap * 2).coerceAtLeast(0)))
+            val width = maxOf(h.width, b.width, f.width).coerceIn(c.minWidth, c.maxWidth)
+            val height = (h.height + gap + b.height + gap + f.height).coerceIn(c.minHeight, c.maxHeight)
+            layout(width, height) {
+                h.place(0, 0)
+                b.place(0, h.height + gap)
+                f.place(0, h.height + gap + b.height + gap)
+            }
+        }
+        return
+    }
     Column(modifier.heightIn(max = cap), verticalArrangement = Arrangement.spacedBy(spacing)) {
-        if (!compact) {
-            Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
-            Column(Modifier.weight(1f, fill = false).then(region), verticalArrangement = Arrangement.spacedBy(spacing), content = body)
-            Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
-        } else {
-            Column(Modifier.weight(1f, fill = false).then(region), verticalArrangement = Arrangement.spacedBy(spacing)) {
+        when (mode) {
+            CardBands.HEADER_SCROLLS -> {
+                Column(Modifier.weight(1f, fill = false).then(region), verticalArrangement = Arrangement.spacedBy(spacing)) {
+                    Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
+                    body()
+                }
+                Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
+            }
+            else -> Column(Modifier.weight(1f, fill = false).then(region), verticalArrangement = Arrangement.spacedBy(spacing)) {
                 Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
                 body()
                 Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
@@ -217,9 +255,27 @@ internal object CardBands {
     fun planningCap(band: Float, reserve: Float, needs: Float): Pair<Float, Boolean> =
         if (band - reserve >= needs) (band - reserve) to true else band to false
 
-    /** Whether a card with a fixed header and actions goes compact (one scroll): they leave less than [minBodyPx] of its cap. */
-    fun compact(headerPx: Int, footerPx: Int, minBodyPx: Float, spacingPx: Float, capPx: Float): Boolean =
-        headerPx + footerPx + minBodyPx + spacingPx * 2 > capPx
+    /** A cap of at least [least] (the card's own minimum, measured), but never past [room] (the whole window's height for it). */
+    fun atLeast(cap: Float, least: Float, room: Float): Float = maxOf(cap, minOf(least, room)).coerceAtLeast(0f)
+
+    /** [mode]: the header and the actions fixed, the body scrolling between them. */
+    const val FIXED = "fixed"
+
+    /** [mode]: the header scrolls with the body, the actions fixed under them. */
+    const val HEADER_SCROLLS = "headerScrolls"
+
+    /** [mode]: the header, the body and the actions are one scroll. */
+    const val ALL_SCROLLS = "allScrolls"
+
+    /**
+     * How a card with a header and actions is laid out in its cap ([capPx]): [FIXED] while both leave the body at least
+     * [minBodyPx], else [HEADER_SCROLLS] while the actions alone do, else [ALL_SCROLLS].
+     */
+    fun mode(headerPx: Int, footerPx: Int, minBodyPx: Float, spacingPx: Float, capPx: Float): String = when {
+        headerPx + footerPx + minBodyPx + spacingPx * 2 <= capPx -> FIXED
+        footerPx + minBodyPx + spacingPx <= capPx -> HEADER_SCROLLS
+        else -> ALL_SCROLLS
+    }
 
     /** The navigation card's band: from its [top] down to the bottom chrome's pad, less the taller stack under the card. */
     fun navBand(maxHeight: Float, top: Float, bottomPad: Float, belowLeft: Float, belowRight: Float): Float =
@@ -298,6 +354,10 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * T184: the time in the range form (the `timeEstimateForm` setting, default): the headline's time "about 4:30" and the
  * line under it "4:10 to 4:50, based on your last 5 hikes" ([PaceSettings.headline], [PaceSettings.secondLine]), or
  * "typical 4:30" without a range; under the water line, [PastEffortLine]: "You did this trail in 3:52, June".
+ *
+ * T212: a [CappedCard]: the title and the headline stay in view at the top and the actions at the bottom, everything else
+ * (the range line, From and To, the trails, directions, water, terrain, past effort, messages, the mode chips) scrolls
+ * between them, capped at the measured band that leaves the scale bar's line above the card ([BottomPanels.mapRowDp]).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -376,7 +436,11 @@ fun RouteControls() {
         val padV = 10.dp
         val needs = with(density) { (card.headerPx + card.footerPx).toDp() + 36.sp.toDp() } + 6.dp * 2 + padV * 2
         val (capValue, keepRow) = CardBands.planningCap(band.value, reserve.value, needs.value)
-        val cap = capValue.dp
+        // The least the card keeps, measured (T192's fixed 200 dp is gone): its actions and two lines, within the window
+        // under the status bar (landscape at font scale 2.0 leaves a band of about 50 dp under the chips; the card then
+        // reaches over the chips' lower edge rather than shrinking to one line, `routeCardClearOfTopChips` false).
+        val least = with(density) { card.footerPx.toDp() + 36.sp.toDp() } + 6.dp + padV * 2
+        val cap = CardBands.atLeast(capValue, least.value, (maxHeight - bottomGap - statusBar).value).dp
         val upper = rememberScrollState()
         SideEffect {
             BottomPanels.routeCardCapDp = cap.value

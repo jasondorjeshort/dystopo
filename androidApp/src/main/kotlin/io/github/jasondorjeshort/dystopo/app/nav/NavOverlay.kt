@@ -110,8 +110,15 @@ private fun navCardCap(maxHeight: Dp, top: Dp): Dp {
     val left = 6.dp + online + panels.mapRowDp(density)
     val lowestRight = maxOf(chips.routesChipBottom, chips.trackColumnBottom)
     val right = if (chips.navCardBottom > 0.dp && lowestRight > chips.navCardBottom) lowestRight - chips.navCardBottom + 8.dp else 0.dp
-    val band = io.github.jasondorjeshort.dystopo.app.routing.CardBands.navBand(maxHeight.value, top.value, bottomPad.value, left.value, right.value).dp
+    val bands = io.github.jasondorjeshort.dystopo.app.routing.CardBands
+    val measured = bands.navBand(maxHeight.value, top.value, bottomPad.value, left.value, right.value)
+    // The least the card keeps (landscape at font scale 2.0 leaves no band at all under it): its header, actions and two
+    // lines, within the window down to the bottom chrome; the chips that follow it then move down with it.
+    val l = NavCardBand.layout
+    val least = with(density) { (l.headerPx + l.footerPx).toDp() + 36.sp.toDp() } + 4.dp * 2 + 20.dp
+    val band = bands.atLeast(measured, least.value, (maxHeight - top - bottomPad).value).dp
     SideEffect {
+        NavCardBand.measuredBandDp = measured
         NavCardBand.bandDp = band.value; NavCardBand.belowLeftDp = left.value; NavCardBand.belowRightDp = right.value; NavCardBand.bottomPadDp = bottomPad.value
         NavCardBand.fontScale = density.fontScale
     }
@@ -124,6 +131,7 @@ private fun navCardCap(maxHeight: Dp, top: Dp): Dp {
  */
 internal object NavCardBand {
     @Volatile var bandDp = 0f
+    @Volatile var measuredBandDp = 0f
     @Volatile var belowLeftDp = 0f
     @Volatile var belowRightDp = 0f
     @Volatile var bottomPadDp = 0f
@@ -131,7 +139,7 @@ internal object NavCardBand {
     val layout = io.github.jasondorjeshort.dystopo.app.routing.CardLayout()
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "fontScale" to fontScale, "bandDp" to bandDp, "belowLeftDp" to belowLeftDp, "belowRightDp" to belowRightDp,
+        "fontScale" to fontScale, "bandDp" to bandDp, "measuredBandDp" to measuredBandDp, "belowLeftDp" to belowLeftDp, "belowRightDp" to belowRightDp,
         "bottomPadDp" to bottomPadDp,
     ) + layout.json()
 }
@@ -174,16 +182,15 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                     // T128: the header's height as laid out (`GET /nav` `layout.navHeaderDp`), 48 dp at 1.0 before the flat help icon
                     modifier = Modifier.onGloballyPositioned { c -> chips.navHeaderDp = c.size.height / density.density },
                 ) {
-                    BasicText(
-                        if (u.arrived) "Arrived" else "Navigating",
-                        style = TextStyle(color = Purple, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-                    )
-                    // T212: the route's name wraps rather than being cut at one line.
-                    BasicText(
-                        "  " + u.name,
-                        style = TextStyle(color = Ink, fontSize = 13.sp),
-                        modifier = Modifier.weight(1f),
-                    )
+                    // T212: the route's name goes under "Navigating" when the row has no room for it, wrapping rather than
+                    // being cut at one line.
+                    FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BasicText(
+                            if (u.arrived) "Arrived" else "Navigating",
+                            style = TextStyle(color = Purple, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                        )
+                        BasicText(u.name, style = TextStyle(color = Ink, fontSize = 13.sp))
+                    }
                     u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
                     // T137: mute this navigation's spoken directions (the setting stays on); hidden while speech is off or the
                     // engine cannot speak (the notice below says why).

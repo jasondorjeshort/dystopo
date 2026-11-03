@@ -26,9 +26,21 @@ class CardBandsTest {
     }
 
     @Test
-    fun aCardGoesCompactOnlyWhenTheHeaderAndActionsLeaveLessThanTwoLines() {
-        assertFalse(CardBands.compact(headerPx = 300, footerPx = 200, minBodyPx = 120f, spacingPx = 20f, capPx = 700f))
-        assertTrue(CardBands.compact(headerPx = 300, footerPx = 200, minBodyPx = 120f, spacingPx = 20f, capPx = 600f))
+    fun theHeaderScrollsBeforeTheActionsDo() {
+        // Header 300, actions 200, two lines 120, gaps 20 px: fixed from 660 px up, the header scrolling from 340 px up.
+        assertEquals(CardBands.FIXED, CardBands.mode(headerPx = 300, footerPx = 200, minBodyPx = 120f, spacingPx = 20f, capPx = 700f))
+        assertEquals(CardBands.HEADER_SCROLLS, CardBands.mode(headerPx = 300, footerPx = 200, minBodyPx = 120f, spacingPx = 20f, capPx = 600f))
+        assertEquals(CardBands.ALL_SCROLLS, CardBands.mode(headerPx = 300, footerPx = 200, minBodyPx = 120f, spacingPx = 20f, capPx = 300f))
+    }
+
+    @Test
+    fun aCardKeepsItsLeastWithinTheWindow() {
+        // Landscape at font scale 2.0: no band under the navigation card; it keeps its header, actions and two lines.
+        assertEquals(290f, CardBands.atLeast(cap = 0f, least = 290f, room = 400f))
+        // Even that is more than the window has under the card's top: the window's room.
+        assertEquals(145f, CardBands.atLeast(cap = 0f, least = 290f, room = 145f))
+        // A band larger than the least stands.
+        assertEquals(338f, CardBands.atLeast(cap = 338f, least = 120f, room = 600f))
     }
 
     @Test
