@@ -1200,6 +1200,9 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         c["warnRouteShown"] = card.get("shown") is True and bool(wb)
         c["warnRouteClearOfRouteCard"] = bool(wb) and wb[3] <= route_top_px + 1 and lay3.get("routeCardClearOfWarningCard") is True
         c["warnRouteScaleBarClear"] = bb is None or (overlaps(bb, wb) is False and bb[3] <= route_top_px + 1 and bar.get("clear") is True)
+        rc = ((server.json("/readout").get("layout")) or {}).get("recentreBoundsPx")
+        rep["warningWithRoute"]["recentrePx"] = rc
+        c["warnRouteRecentreClear"] = overlaps(rc, wb) is not True
         rep["shots"]["warningWithRoute"] = screencap(exe, serial, f"{shot_stem}-cards-warning-route{ext}")
 
         # The warning card on the map alone, the map turned so the compass shows.

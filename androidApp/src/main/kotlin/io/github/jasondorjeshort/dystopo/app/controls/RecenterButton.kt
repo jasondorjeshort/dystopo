@@ -85,6 +85,9 @@ object RecenterLayout {
     @Volatile var icon: Map<String, Any?>? = null
 
     /** T110: not shown (no stale bounds kept); `noRoomBelowChips` when the bottom panels reach up to the top-right chips. */
+    /** T212: the pressure warning's card's bottom edge the column stays below (dp from the window top; 0 when it does not reach it). */
+    @Volatile var warningCardBottomDp = 0f
+
     fun hide(reason: String) {
         shown = false
         hiddenBecause = reason
@@ -119,11 +122,13 @@ object RecenterLayout {
             "bottomFromWindowBottomDp" to bottomDp?.let { Math.round(it * 10) / 10.0 },
             "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "navCardBottomDp" to TopChips.navCardBottom.value,
             "topRightBottomDp" to navBottom, // T110
+            "warningCardBottomDp" to warningCardBottomDp, // T212: the pressure warning's card, where it reaches the column
             "tripCardTopDp" to io.github.jasondorjeshort.dystopo.app.MapInsets.tripCardTop.value, "updateCardTopDp" to io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop.value, // T106
             // Clear: the column's bottom is above every bottom panel's top edge, and its top below the nav card and (T110)
             // the top-right chips.
             "clear" to if (!visible || bottomDp == null || topDp == null) null else
-                bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards && (navBottom == 0f || topDp >= navBottom),
+                bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards && (navBottom == 0f || topDp >= navBottom) &&
+                    (warningCardBottomDp <= 0f || topDp >= warningCardBottomDp - 0.5f),
             "icon" to icon,
         )
     }
@@ -184,10 +189,16 @@ fun RecenterButton() {
         // the button up over the Tracks chip. The column now never reaches up to the top-right chips (the track controls
         // with their list, the Routes chip, the navigation card): T176 drops the extra buttons first, then hides.
         val bottomGap = if (floor > 0.dp) floor + 8.dp else with(density) { WindowInsets.navigationBars.getBottom(density).toDp() } + 32.dp
-        val ceiling = TopChips.topRightBottom
+        // T212 (the verifier's note): and below the pressure warning's card where it reaches the button's column (with a
+        // planning card up the warning sits low enough at font scale 2.0 for the button to land on its Dismiss).
+        val warn = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx
+            ?.takeIf { (io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBoundsPx?.get(2) ?: 0f) > with(density) { (maxWidth - 68.dp).toPx() } }
+            ?.let { with(density) { it.toDp() } } ?: 0.dp
+        val ceiling = maxOf(TopChips.topRightBottom, warn)
+        SideEffect { RecenterLayout.warningCardBottomDp = warn.value }
         val n = OrientationRules.shownButtons(o.layout) { k -> ceiling <= 0.dp || maxHeight - bottomGap - columnHeight(k) >= ceiling + CHIP_GAP }
         if (n == 0) {
-            SideEffect { RecenterLayout.hide("noRoomBelowChips") }
+            SideEffect { RecenterLayout.hide(if (warn > TopChips.topRightBottom) "noRoomBelowWarningCard" else "noRoomBelowChips") }
             return@BoxWithConstraints
         }
         val badge = o.locked && n < 3 // the lock has no button of its own: the orientation icon carries the padlock
