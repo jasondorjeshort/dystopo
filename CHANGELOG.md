@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-02
+
+- T215: Proposal: the dwell box, an area kept after you linger zoomed in
+
 ## v0.1.18-alpha (2026-11-02)
 
 ### 2026-11-02

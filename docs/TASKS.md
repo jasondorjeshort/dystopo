@@ -62,6 +62,7 @@ Planned 2026-11-02 after the triage of the 25 untriaged ideas (five `Plan:` bloc
 **Goal:** the answered `Question:` of `docs/ideas/2026-10-13-auto-download-when-zoomed-in.md` (owner, 2026-10-23: the route corridor first, done by T130; "the dwell box after it as a short proposal"). A short proposal by the `proposal` skill: the trigger (zoom and dwell time), the box's size and zoom range, cache or pin (ADR 0027 and ADR 0030), its daily limit as a visible limit under ADR 0023 (no Wi-Fi gate), the indicator and its wording, the settings under ADR 0044 with researched defaults (a benchmark survey of how the outdoor apps auto-save viewed areas, ADR 0039), the interaction with `pinnedCacheMb` and T130's corridor; a critic round and the revision. No code.
 **Owns:** new `docs/design/proposals/0055-dwell-box.md` and `0055-critic-review.md`, a dated line in the idea file. [no-check: files this task creates]
 **Done when:** as T214's, for this proposal.
+**Status: merged.** Proposal 0055 and its critic review (2 blocking, 7 serious, 5 minor, all taken), option E recommended, Status under review: the shape, defaults, trigger constants and strings are the owner's before an ADR. Follow-ups: a finding on T130's corridors fetching synthesised z14 and z15 DEM tiles in direct mode; the ADR 0030 amendment with the ADR.
 
 ## Owner actions pending (as of 2026-10-27)
 
