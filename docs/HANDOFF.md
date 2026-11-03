@@ -32,7 +32,7 @@ wave; Later carries wave 27's follow-ups; the record `docs/tasks/wave-27.md`), A
   the board's phone checks; the new strings in the T209, T210, T212, T213 and T216 merge commits.
 - Proposals 0054 and 0055's choices; T122's navigation-card font cap, lifted by T212 (keep or restore).
 - The second signer's key; the twenty `Answer:` lines in `docs/ideas/`; ADR 0051's two answers; the home site's
-  steps; the force-deletes on the housekeeping row (`task/T208`, `task/T213`, `task/T216`, `v208`, and more).
+  steps; the older force-deletes on the housekeeping row (wave 27's are done).
 
 ## Open findings
 
