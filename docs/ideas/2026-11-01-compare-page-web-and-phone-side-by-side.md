@@ -23,3 +23,14 @@ out of the first run.
 
 Recorded 2026-11-01 at the close of wave 25 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): both halves exist as tools (`demo-check.py --width 390`, `android-check.py` through
+`GET /screenshot`, the sweep's contact sheet of sheets), nothing pairs them; the inventory this page would
+produce was done by hand in proposal 0053, and ADR 0053's check (same ids, same categories, in `./gradlew
+check`) is the automated form of "same labels in the same order".
+
+Question: is a paired sheet still wanted once ADR 0053's check exists, as a human read? Recommendation:
+not as its own build; after ADR 0053's step 2, one sweep chore pairs the 390 px page shot and the
+emulator's shot of the same view, with the panel and the settings screen open on each, into one image
+beside the sweep's sheet. The settings-screen capture is the only new piece (today's capture is the map).
+Answer:
