@@ -230,6 +230,7 @@ fun RouteControls() {
                 Directions(plan)
                 WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
                 ExposureLine(plan.route.points, plan.mode) // T195
+                BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
                 PastEffortLine(plan) // T184
             }
             if (phase == "planning") BuildProgress()

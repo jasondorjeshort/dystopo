@@ -48,8 +48,11 @@ object HelpRegistry {
             NAV_HELP + // T122: the navigation card
             io.github.jasondorjeshort.dystopo.app.readout.PRESSURE_CARD_HELP + // T196: the pressure warning card's way down
             // T210: the glance view
-            io.github.jasondorjeshort.dystopo.app.readout.GLANCE_HELP
+            io.github.jasondorjeshort.dystopo.app.readout.GLANCE_HELP +
             // end T210
+            // T209: the route card's start-time line.
+            io.github.jasondorjeshort.dystopo.app.routing.BEST_START_HELP
+            // end T209
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }
