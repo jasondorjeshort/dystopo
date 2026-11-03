@@ -21,3 +21,17 @@ limits feed the recorder's flagged-fix rule and the terrain estimate's stride pr
 
 Recorded 2026-11-02 at the close of wave 26 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): a stored track carries position, GPS or fused elevation, time, accuracy, Doppler speed,
+course and flags per point (`model/UserData.kt`); no barometric column (the recorder writes `fix.ele`, and
+only the replay reads a pressure column). The caps are per activity in `readout/ReadoutTuning.kt` (foot 3,
+bike 5, road 10, air 100 m/s). So a climb-rate percentile from the store would measure GPS height noise,
+not the barometric rate the cap guards; the speed bound could be fitted from the stored speed today, but
+the stored points are already filtered by the current bounds (points over them are flagged).
+
+Question: should the recorder store the barometer's pressure with each point (a format change phones
+sync, ADR 0033, a few bytes a point), which is what a fitted climb cap needs? Recommendation: yes, as the
+first pass of this idea and the prerequisite of the self-test idea's honesty too; the fitting (the 99th
+percentile per activity with the constants as the floor, shown in Diagnostics with the track count) as the
+second pass, always on, no setting: a limit from your own data has no wrong default to escape.
+Answer:
