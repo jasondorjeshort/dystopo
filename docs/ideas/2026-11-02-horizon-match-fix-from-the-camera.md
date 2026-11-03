@@ -32,3 +32,17 @@ third axis. No network, no new data: the DEM pack and the sensors.
 
 Recorded 2026-11-02 at the close of wave 26 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): the skyline exists (`dem/Horizon.kt`, `sweep` gives an angle per bearing with earth
+curvature and refraction; T182 uses it), the camera permission and CameraX are already in the app for the
+QR scanner, and the terrain fix is a particle filter over trail edges, so its cloud is trail-bound and
+two thousand particles are too many skyline sweeps: candidates would be clustered. No sky/ground edge
+detection, no scoring and no pitch reading exist. The viewshed idea's stage 3 is the same matching with a
+different output (peak names), and waits on its own proposal on your word.
+
+Question: do you want a measurement pass first, before any camera flow: a devtool command that scores
+synthetic skyline frames and a handful of photos you take at a known public summit against the DEM's
+skyline, reporting the position error and the failure cases (canopy, fog, a flat horizon)? Recommendation:
+yes, as T166 was for the terrain fix; the camera screen, the fix as a terrain-fix measurement and the
+viewshed's stage 3 then share one proposal built on the numbers.
+Answer:
