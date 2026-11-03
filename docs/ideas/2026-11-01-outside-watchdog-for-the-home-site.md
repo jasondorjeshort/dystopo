@@ -20,3 +20,15 @@ right endpoint (200 serving, 503 shutting down, `docs/SERVER.md` › What to mon
 
 Recorded 2026-11-01 at the close of wave 25 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): `/healthz` is the right probe (200 serving, 503 stopping, unauthenticated through the
+proxy); `status.ps1` checks it from the PC only. The updater's daily check (`update/Updater.kt`) goes to
+the GitHub releases API once a day and refuses other hosts, so it is not a probe.
+
+Question: where should the check run and how should it reach you? The choices are an outside service
+with an account (a free-tier uptime monitor that fetches `/healthz` every few minutes and mails or
+pushes on two failures), your own phone, or the sweep host, which is the same PC. Recommendation: the
+uptime monitor, which needs no code: you sign up and point it at the URL; a task then adds the setup
+lines to `docs/reference/home-site.md` and `docs/SERVER.md` › What to monitor without naming the host.
+Nothing from every user's phone (a new data flow for no gain).
+Answer:
