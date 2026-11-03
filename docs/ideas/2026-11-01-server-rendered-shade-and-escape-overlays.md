@@ -21,3 +21,15 @@ derived-data layer the horizon-and-shade idea wants to ship to the phone.
 
 Recorded 2026-11-01 at the close of wave 25 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): `/shade/{z}/{x}/{y}.png` is lit-face hillshade and slope with no time; the derived
+cache keys by options and DEM version only. `CastShadow` (T181) computes shadow at an instant over a
+terrain window with far-ridge horizons, used by shared and devtool, not by serverlib. `WayDown` answers
+from one ridge point along a line, 5 km each way; no area-wide form exists (the escape-time idea).
+
+Question: is a time-scrubbable shade map on the site worth the home PC's CPU at z12 to z14 (unmeasured;
+the phone's T188 figures were 0.5 to 1.3 s a tile toward a low sun)? Recommendation: yes, one task in two
+passes: `/overlay/shade/{z}/{x}/{y}.png?at=` through `CastShadow`, cached by 15-minute bucket and day
+beside the derived files, measured first at the three zooms on the Rainier pack, then the page's slider;
+the escape overlay stays with its own idea, which needs a design.
+Answer:
