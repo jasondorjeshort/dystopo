@@ -2,6 +2,7 @@
 
 Date: 2026-10-30
 Status: accepted (the technical decision after the critic; stage 1b's launch waits on the owner's two answers below)
+2026-11-03 (T216): the policy file's fetch is deferred: the project's site is not installed yet, so the root and signer lists ship in the APK and change only with an app update; the phone's one request stays the revocation list's GET. The fetch returns with the site, as its own task.
 
 Record: proposal `../proposals/0051-phone-to-phone-transport.md` (T186, wave 23) and
 `../proposals/0051-critic-review.md` (0 blocking, 9 serious, 13 minor; all answered in the proposal, one
