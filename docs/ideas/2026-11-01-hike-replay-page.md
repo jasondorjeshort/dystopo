@@ -21,3 +21,15 @@ peer the phone already pushes to.
 
 Recorded 2026-11-01 at the close of wave 25 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): what syncs today is the track's points (position, elevation, time, accuracy, speed,
+course, flags), its gaps and its activity (`model/UserData.kt`, the `AppendPoints` op); barometer samples,
+the pressure trend and the turn events are not stored with a track (the trip-report v2 idea). The server
+has the DEM and `Sun`, but `CastShadow` is used by shared and devtool only; `/s/<token>` is a page for a
+planned route, not a recording.
+
+Question: public by link, or under the user's token only? Recommendation: token only (a recording is where
+you were, hour by hour), and after the trip-report v2 question is answered, since the pressure and the
+decisions on this page need that storage; the slider over position, profile, speed and the sun recomputed
+from the DEM needs no new field and is two passes (a track-as-JSON route on the sync peer, then the page).
+Answer:
