@@ -149,6 +149,17 @@ object StripText {
         return ReadoutLabel(value, if (e == ReadoutEntry.COURSE) "" else unit, pm)
     }
 
+    /**
+     * T210 (T204's follow-up): the bar's description for a screen reader, the entries in [drawn] only ("elevation 1650 m ·
+     * climb ↑320 m/h"), with the trend's words and the known height's [mark] label as `GET /readout` `line` has them.
+     * Where the bar leaves entries out for room it no longer reads them; a tap (a double tap with a screen reader) opens
+     * the glance view, which shows and reads every entry. Null with nothing drawn.
+     */
+    fun line(drawn: List<StripItem>, mark: String? = null): String? = drawn.takeIf { it.isNotEmpty() }?.let { l ->
+        l.joinToString(" · ") { "${it.caption} ${it.full}" + (it.trendLabel?.let { t -> ", pressure $t" } ?: "") } +
+            (if (mark != null && l.any { it.entry == ReadoutEntry.ELEVATION }) " · $mark" else "")
+    }
+
     /** How long the fixes have been missing, or null when they are not: "8 s", "3 min", "2 h". */
     fun gap(gapS: Double?): String? {
         val s = gapS ?: return null

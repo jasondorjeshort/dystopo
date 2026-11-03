@@ -132,6 +132,9 @@ class HelpRegistryTest {
             // T196: the pressure warning card's way down.
             "readout.wayDown",
             // end T196
+            // T210: the glance view.
+            "readout.glance",
+            // end T210
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

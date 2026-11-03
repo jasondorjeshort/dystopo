@@ -46,7 +46,10 @@ object HelpRegistry {
     val all: List<HelpText> by lazy {
         MAP_OPTIONS_HELP + SETTINGS_HELP + DIRECT_SOURCES_HELP + AREAS_HELP + TRACK_BAR_HELP + LONG_PRESS_HELP + STORAGE_HELP + // T115: Storage
             NAV_HELP + // T122: the navigation card
-            io.github.jasondorjeshort.dystopo.app.readout.PRESSURE_CARD_HELP // T196: the pressure warning card's way down
+            io.github.jasondorjeshort.dystopo.app.readout.PRESSURE_CARD_HELP + // T196: the pressure warning card's way down
+            // T210: the glance view
+            io.github.jasondorjeshort.dystopo.app.readout.GLANCE_HELP
+            // end T210
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }
