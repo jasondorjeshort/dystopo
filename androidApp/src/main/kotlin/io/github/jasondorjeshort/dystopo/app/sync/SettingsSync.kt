@@ -43,6 +43,8 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T194 skip it (ADR 0033).
  * T203: the terrain estimate's switch (`app.estimatePosition`, `on` or `off`); a [SettingsRoutes] key. Builds before T203
  * skip it (ADR 0033).
+ * T213: the trail disagreements' layer switch (`app.showDivergence`, `on` or `off`); a [SettingsRoutes] key. Builds before
+ * T213 skip it (ADR 0033).
  * T182: the viewshed's range (`app.viewRange`, km: `10`, `30` or `100`); a [SettingsRoutes] key.
  * T184: the route card's time (`app.timeEstimateForm`, `range` or `one`); a [SettingsRoutes] key.
  *
@@ -101,6 +103,9 @@ object SettingsSync {
     /** T203: the terrain estimate's switch (`on`/`off`), a [SettingsRoutes] key. */
     const val ESTIMATE_POSITION = AppSettings.KEY_ESTIMATE_POSITION
     // end T203
+    /** T213: the trail disagreements' layer switch (`on`/`off`), a [SettingsRoutes] key. */
+    const val SHOW_DIVERGENCE = AppSettings.KEY_SHOW_DIVERGENCE
+    // end T213
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
     val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
@@ -164,6 +169,8 @@ object SettingsSync {
         // end T194
         m[syncedKey(ESTIMATE_POSITION)] = onOff(AppSettings.estimatePosition) // T203
         // end T203
+        m[syncedKey(SHOW_DIVERGENCE)] = onOff(AppSettings.showDivergence) // T213
+        // end T213
         return m
     }
 
@@ -240,6 +247,8 @@ object SettingsSync {
         // end T194
         if (parsed.estimatePosition != null) keys += syncedKey(ESTIMATE_POSITION) // T203
         // end T203
+        if (parsed.showDivergence != null) keys += syncedKey(SHOW_DIVERGENCE) // T213
+        // end T213
         publishKeys(app, keys)
     }
 

@@ -51,8 +51,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.readout.GLANCE_HELP +
             // end T210
             // T209: the route card's start-time line.
-            io.github.jasondorjeshort.dystopo.app.routing.BEST_START_HELP
+            io.github.jasondorjeshort.dystopo.app.routing.BEST_START_HELP +
             // end T209
+            // T213: the long-press card's lines on a stretch the tracks leave the trail.
+            io.github.jasondorjeshort.dystopo.app.divergence.DIVERGENCE_HELP
+            // end T213
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

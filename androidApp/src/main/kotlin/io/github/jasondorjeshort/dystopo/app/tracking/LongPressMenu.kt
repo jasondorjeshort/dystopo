@@ -180,6 +180,9 @@ object LongPressMenu {
     /** T114: the card's actions in their order (`GET /map/longpress` `actions`). */
     val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE, io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION, "Cancel") // T182: the viewshed
 
+    /** T213 (T197's follow-up): the actions the card draws now, T197's "I am at <name>, <height>" before Cancel when offered. */
+    fun actions(): List<String> = withKnown(ACTIONS, known?.let { KnownHeights.menuLabel(it, AppSettings.units) })
+
     /** Takes the map's long-press from the route session (idempotent). */
     fun install() {
         RouteSession.overlay.onLongPress = { lat, lon -> longPress(lat, lon) }
@@ -261,11 +264,15 @@ object LongPressMenu {
     fun json(): Map<String, Any?> = linkedMapOf(
         "open" to (point != null), "lat" to point?.first, "lon" to point?.second,
         "presses" to presses, "lastAction" to lastAction, "routePhase" to RouteSession.phase,
-        "actions" to ACTIONS, // T114
+        "actions" to actions(), // T114; T213: with T197's "I am at" item when the card draws it
         "sun" to sun?.json(), // T188: the sun line and the terrain day behind it
         "knownHeight" to (if (point != null) knownInfo else null), // T197: "I am at <name>, <height>" and why (not)
     )
 }
+
+/** T213 (T197's follow-up): [actions] with the "I am at" item before Cancel when [knownLabel] is offered (pure). */
+internal fun withKnown(actions: List<String>, knownLabel: String?): List<String> =
+    if (knownLabel == null) actions else actions.dropLast(1) + knownLabel + actions.last()
 
 /** T114: the card's first action. */
 internal const val ROUTE_TO = "Route to here"
@@ -311,6 +318,7 @@ internal fun LongPressCard() {
  */
 @Composable
 private fun PointLines() {
+    io.github.jasondorjeshort.dystopo.app.divergence.DivergenceCardLine() // T213: on a stretch where the tracks leave the trail
     val sun = LongPressMenu.sun ?: return
     Row(verticalAlignment = Alignment.CenterVertically) {
         BasicText(

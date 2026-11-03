@@ -92,6 +92,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T203: the terrain estimate's switch (Navigation and tracking, last)
     ESTIMATE_POSITION(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_ESTIMATE_POSITION, SettingsGroup.NAVIGATION, "Estimate position when GPS is poor", "SettingsPages", "T203"),
     // end T203
+    // T213: the trail disagreements' layer switch (the Map page, last)
+    SHOW_DIVERGENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SHOW_DIVERGENCE, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING, "SettingsPages", "T213"),
+    // end T213
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

@@ -83,6 +83,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   T203, the terrain estimate (Settings › Navigation and tracking, `tracking/TerrainSource`): `estimatePosition=1|0`
  *   (default on: "Estimate position when GPS is poor"), synced as `app.estimatePosition` `on`/`off`; the source starts or
  *   stops watching at once. `GET /settings` reports it; `GET /location/terrain` shows its effect.
+ *   T213, where the user's tracks leave the mapped trails (Settings › Map options, `divergence/DivergenceLayer`):
+ *   `showDivergence=1|0` (default on: "Show trail disagreements"), synced as `app.showDivergence` `on`/`off`; the
+ *   markers go or come at once, and off stops the run after a recording (`POST /divergence/run` still runs).
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
  * - T103 `GET /settings/layout`: the sheet's groups in list order ([io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup]:
  *   `id`, `title`, `summary`), each with its rows in page order (`id`, `label` as drawn, `drawnBy`: the composable
@@ -219,6 +222,9 @@ class SettingsRoutes(private val app: DystopoApp) {
         // T203: the terrain estimate's switch; the source starts or stops watching at once.
         parsed.estimatePosition?.let { AppSettings.setEstimatePosition(it); io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.update() }
         // end T203
+        // T213: the trail disagreements' layer switch; the markers follow at once.
+        parsed.showDivergence?.let { AppSettings.setShowDivergence(it); io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer.refresh() }
+        // end T213
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }
@@ -277,6 +283,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             // T203: the terrain estimate's switch.
             val estimatePosition: Boolean? = null,
             // end T203
+            // T213: the trail disagreements' layer switch.
+            val showDivergence: Boolean? = null,
+            // end T213
         ) : Parsed()
         class Error(val message: String) : Parsed()
     }
@@ -305,8 +314,10 @@ class SettingsRoutes(private val app: DystopoApp) {
             setOf(AppSettings.KEY_TIME_ESTIMATE_FORM) + // T184
             setOf(AppSettings.KEY_SHADE_SPOKEN) + // T194
             // end T194
-            setOf(AppSettings.KEY_ESTIMATE_POSITION) // T203
+            setOf(AppSettings.KEY_ESTIMATE_POSITION) + // T203
             // end T203
+            setOf(AppSettings.KEY_SHOW_DIVERGENCE) // T213
+            // end T213
 
         private fun cacheMb(params: Map<String, Any?>, key: String): Pair<Long?, String?> {
             val raw = params[key] ?: return null to null
@@ -481,6 +492,9 @@ class SettingsRoutes(private val app: DystopoApp) {
             // T203: the terrain estimate's switch.
             val estimatePosition = params[AppSettings.KEY_ESTIMATE_POSITION]?.let { flag(it) ?: return Parsed.Error("${AppSettings.KEY_ESTIMATE_POSITION} must be 1 or 0 (got $it)") }
             // end T203
+            // T213: the trail disagreements' layer switch.
+            val showDivergence = params[AppSettings.KEY_SHOW_DIVERGENCE]?.let { flag(it) ?: return Parsed.Error("${AppSettings.KEY_SHOW_DIVERGENCE} must be 1 or 0 (got $it)") }
+            // end T213
             return Parsed.Ok(textScale, unitsGiven, units, warmup, map, online, contour, routeSnapM, debugFixedPort, navStaleS, navStartM, navSnoozeMin, pinned, navSpeech, tripCorridorM, paceStandard, paceFit, paceSince, turnDeadline = turnDeadline, turnMarginMin = turnMarginMin,
                 trackActivity = trackActivity, trackProfiles = trackProfiles, trackEdit = trackEdit,
                 readoutBarometer = readoutBarometer, readoutValues = readoutValues, readoutEdits = readoutEdits,
@@ -494,6 +508,8 @@ class SettingsRoutes(private val app: DystopoApp) {
                 // end T194
                 estimatePosition = estimatePosition, // T203
                 // end T203
+                showDivergence = showDivergence, // T213
+                // end T213
             )
         }
 

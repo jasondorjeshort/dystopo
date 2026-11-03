@@ -521,6 +521,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         stopService()
         refreshUi()
         refreshOverlay(force = true)
+        runCatching { io.github.jasondorjeshort.dystopo.app.divergence.DivergenceStore.runSoon(app, "recordingStopped") } // T213: where this track left the trails
         return s
     }
 
