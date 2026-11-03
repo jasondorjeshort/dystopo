@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-03
+
+- T208: One definition of the shared controls, step 1: the map options' registry, the generated document and the first checks
+
 ### 2026-11-02
 
 - T211: The attested install identity, the shared half (ADR 0051, stage 1a: the parser, the records, the policy, the verifier, `devtool attest`)

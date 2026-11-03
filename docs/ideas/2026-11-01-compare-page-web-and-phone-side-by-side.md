@@ -1,7 +1,6 @@
 ---
 date: 2026-11-01
 kind: feature
-related: [2026-11-01-one-definition-of-controls-and-settings-across-platforms.md]
 ---
 
 # A compare page: the web panel and the phone's screen of the same place, side by side

@@ -1,7 +1,6 @@
 ---
 date: 2026-11-02
 kind: feature
-related: [2026-11-01-one-definition-of-controls-and-settings-across-platforms.md]
 ---
 
 # One registry for the phone's own settings, so a new setting is not ten edits

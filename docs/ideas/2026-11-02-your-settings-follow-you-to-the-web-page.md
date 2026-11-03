@@ -1,7 +1,7 @@
 ---
 date: 2026-11-02
 kind: feature
-related: [2026-11-01-one-definition-of-controls-and-settings-across-platforms.md, 2026-11-01-share-links-carry-the-map-options.md]
+related: [2026-11-01-share-links-carry-the-map-options.md]
 ---
 
 # Your phone's settings follow you to the web page
