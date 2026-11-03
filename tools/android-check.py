@@ -1183,8 +1183,26 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
             c["planEveryLineReached"] = (lay2.get("routeCardScrollPx") or 0) >= (lay2.get("routeCardScrollMaxPx") or 0) > 0
             rep["shots"]["planningScrolled"] = screencap(exe, serial, f"{shot_stem}-cards-planning-scrolled{ext}")
 
-        # The warning card on the map alone (with a planning card up at 2.0 there is no band left for it; it keeps its
-        # summary then and reaches over the card, `overRoom`), the map turned so the compass shows.
+        # T212 (the verifier's note): the warning raised with the route still planned: the two cards share the band (the
+        # warning above, the planning card under it), and the scale bar is either drawn clear of both or hidden.
+        server.json("/readout/trend?clear=1", method="POST", timeout=60)
+        server.json(f"/readout/trend?fixture={step['fixture']}", method="POST", timeout=60)
+        time.sleep(3)
+        card = ((server.json("/readout").get("trend") or {}).get("card")) or {}
+        lay3 = ((server.json("/route", timeout=60).get("ui") or {}).get("layout")) or {}
+        bar = server.json("/scalebar")
+        wb = card.get("boundsPx")
+        route_top_px = (lay3.get("routeCardTopFromWindowTopDp") or 0) * d
+        bb = bar.get("boundsPx") if bar.get("shown") else None
+        rep["warningWithRoute"] = {"warningPx": wb, "routeCardTopPx": round(route_top_px), "routeCardCapDp": lay3.get("routeCardCapDp"),
+                                   "routeCardMode": (lay3.get("routeCard") or {}).get("mode"), "warningOverRoom": (card.get("layout") or {}).get("overRoom"),
+                                   "scaleBar": {k: bar.get(k) for k in ("shown", "hiddenBecause", "boundsPx", "clear", "clearOfWarningCard")}}
+        c["warnRouteShown"] = card.get("shown") is True and bool(wb)
+        c["warnRouteClearOfRouteCard"] = bool(wb) and wb[3] <= route_top_px + 1 and lay3.get("routeCardClearOfWarningCard") is True
+        c["warnRouteScaleBarClear"] = bb is None or (overlaps(bb, wb) is False and bb[3] <= route_top_px + 1 and bar.get("clear") is True)
+        rep["shots"]["warningWithRoute"] = screencap(exe, serial, f"{shot_stem}-cards-warning-route{ext}")
+
+        # The warning card on the map alone, the map turned so the compass shows.
         server.json("/route/clear", method="POST")
         server.json("/readout/trend?clear=1", method="POST", timeout=60)
         server.json(f"/readout/trend?fixture={step['fixture']}", method="POST", timeout=60)
@@ -1224,6 +1242,10 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         c["navCappedAtBand"] = (nl.get("navCardPx") is not None and nc.get("bandDp") is not None
                                 and (nl["navCardPx"][3] - nl["navCardPx"][1]) / d <= nc["bandDp"] + 1)
         c["navClearOfChips"] = nl.get("onlineClearOfNavCard") is not False and nl.get("tracksClearOfNavCard") is not False
+        # T212 (the verifier's note): and under the search box, which wraps to two lines at display size largest.
+        sb = (nl.get("searchBottomDp") or 0) * d
+        c["navClearOfSearch"] = nl.get("navCardPx") is not None and nl["navCardPx"][1] >= sb - 1 and nc.get("clearOfSearch") is not False
+        rep["navigation"]["searchBottomPx"] = round(sb)
         c["navScaleBarClear"] = bar.get("clearOfNavCard") is not False
         c["navTurnWhole"] = (nl.get("navTurnText") or {}).get("cut") is not True
         descs = ui_descriptions(exe, serial)
@@ -1356,12 +1378,17 @@ def main():
     ap.add_argument("--direct-keep-sources", action="store_true", help="T127: keep the phone's source range cache (cache/sources) before a direct view")
     ap.add_argument("--no-cards", action="store_true",
                     help="T212: skip the tour file's @cards step (the planning, warning and navigation cards at font scale 2.0)")
-    ap.add_argument("--cards-only", action="store_true", help="T212: only the @cards step (no views, no background or direct step)")
+    ap.add_argument("--cards-only", action="store_true",
+                    help="T212: only the @cards step of --views-file (no views, no background or direct step); with no "
+                         "--views-file it reads tools/android-tour.txt")
     args = ap.parse_args()
 
     views = [] if (args.direct_only or args.cards_only) else read_views(args)
     card_steps = [] if args.no_cards or args.direct_only else read_steps(args)  # T212
     if args.cards_only:
+        if not args.views_file:
+            args.views_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "android-tour.txt")
+            card_steps = read_steps(args)
         args.no_background, args.direct_view = True, "none"
     direct_views = [] if args.direct_view.strip().lower() == "none" else [parse_view(x) for x in args.direct_view.split(",") if x.strip()]
     if args.direct_only and not direct_views:

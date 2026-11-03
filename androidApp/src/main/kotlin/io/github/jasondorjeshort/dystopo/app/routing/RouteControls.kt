@@ -88,6 +88,22 @@ object BottomPanels {
     @Volatile var routeCardBandDp = 0f
     @Volatile var mapRowReservedDp = 0f
     @Volatile var mapRowKept = true
+
+    /** T212: the pressure warning's card's bottom edge (dp from the window top) the card stayed under; 0 with none. */
+    @Volatile var warningCardBottomDp = 0f
+
+    /**
+     * T212 (the verifier's note): the planning card's least while the pressure warning's card shows above it: one
+     * scrolling 13 sp line pair (the card goes all one scroll) and its padding. The warning card leaves this much and the
+     * scale bar's plate ([barRowDp]) above the bottom gap.
+     */
+    fun warnedLeastDp(density: androidx.compose.ui.unit.Density): Dp = with(density) { 36.sp.toDp() } + 20.dp
+
+    /** T212: the scale bar's plate alone with its gaps (under a card above, over a card below), at the font scale. */
+    fun barRowDp(density: androidx.compose.ui.unit.Density): Dp = with(density) {
+        val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
+        6.dp + 6.dp + 12.sp.toDp() * LINE * (if (both) 2 else 1) + (if (both) 14.dp else 8.dp) + 8.dp
+    }
     internal val routeCard = CardLayout()
 
     /**
@@ -126,6 +142,9 @@ object BottomPanels {
         "routeCardCapDp" to routeCardCapDp, "topChipsBottomDp" to routeCardChipsBottomDp,
         "routeCardTopFromWindowTopDp" to routeCardTopFromWindowTopDp,
         "routeCardClearOfTopChips" to (routeCardTop <= 0.dp || routeCardTopFromWindowTopDp >= routeCardChipsBottomDp - 0.5f),
+        // T212: and of the pressure warning's card while it shows (the warning above, the two sharing the band).
+        "warningCardBottomDp" to warningCardBottomDp,
+        "routeCardClearOfWarningCard" to (routeCardTop <= 0.dp || warningCardBottomDp <= 0f || routeCardTopFromWindowTopDp >= warningCardBottomDp - 0.5f),
         "routeCardScrollMaxPx" to routeCardScrollMaxPx, "routeCardScrollPx" to routeCardScrollPx,
         // T212: the band, the scale bar's line left above the card, and the card's fixed header, scrolling body and actions.
         "routeCardBandDp" to routeCardBandDp, "mapRowReservedDp" to mapRowReservedDp, "mapRowKept" to mapRowKept,
@@ -423,14 +442,17 @@ fun RouteControls() {
         val navBar = with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() }
         val statusBar = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
         val bottomGap = if (b > 0.dp) b + 6.dp else navBar + 28.dp
+        val warnBottom = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx?.let { with(density) { it.toDp() } } ?: 0.dp
         val chipsBottom = maxOf(
             maxOf(io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom, io.github.jasondorjeshort.dystopo.app.TopChips.routesChipBottom),
             with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineBottomPx.toDp() },
             statusBar,
+            warnBottom, // T212 (the verifier's note): the pressure warning's card above this one, the two sharing the band
         )
         val band = (maxHeight - bottomGap - chipsBottom - CARD_CHIPS_GAP).coerceAtLeast(0.dp)
-        // The card's top must stay this far down for the scale bar's line to fit between it and the top-left column.
-        val rowTop = maxOf(BottomPanels.topLeftBottom(density), statusBar) + BottomPanels.mapRowDp(density)
+        // The card's top must stay this far down for the scale bar's line to fit between it and the top-left column (or
+        // the warning's card).
+        val rowTop = maxOf(BottomPanels.topLeftBottom(density), statusBar, warnBottom) + BottomPanels.mapRowDp(density)
         val reserve = (rowTop - (chipsBottom + CARD_CHIPS_GAP)).coerceAtLeast(0.dp)
         val card = BottomPanels.routeCard
         val padV = 10.dp
@@ -439,8 +461,11 @@ fun RouteControls() {
         // The least the card keeps, measured (T192's fixed 200 dp is gone): its actions and two lines, within the window
         // under the status bar (landscape at font scale 2.0 leaves a band of about 50 dp under the chips; the card then
         // reaches over the chips' lower edge rather than shrinking to one line, `routeCardClearOfTopChips` false).
-        val least = with(density) { card.footerPx.toDp() + 36.sp.toDp() } + 6.dp + padV * 2
-        val cap = CardBands.atLeast(capValue, least.value, (maxHeight - bottomGap - statusBar).value).dp
+        // While the warning's card shows, the least is one scrolling line ([BottomPanels.warnedLeastDp], what the warning
+        // leaves it) and the card never reaches up over the warning.
+        val least = if (warnBottom > 0.dp) BottomPanels.warnedLeastDp(density) else with(density) { card.footerPx.toDp() + 36.sp.toDp() } + 6.dp + padV * 2
+        val roomTop = if (warnBottom > 0.dp) warnBottom + CARD_CHIPS_GAP else statusBar
+        val cap = CardBands.atLeast(capValue, least.value, (maxHeight - bottomGap - roomTop).coerceAtLeast(padV * 2).value).dp
         val upper = rememberScrollState()
         SideEffect {
             BottomPanels.routeCardCapDp = cap.value
@@ -448,6 +473,7 @@ fun RouteControls() {
             BottomPanels.routeCardBandDp = band.value
             BottomPanels.mapRowReservedDp = if (keepRow) reserve.value else 0f
             BottomPanels.mapRowKept = keepRow
+            BottomPanels.warningCardBottomDp = warnBottom.value
         }
         LaunchedEffect(upper) {
             androidx.compose.runtime.snapshotFlow { upper.value to upper.maxValue }.collect { (v, m) -> BottomPanels.routeCardScrollPx = v; BottomPanels.routeCardScrollMaxPx = m }

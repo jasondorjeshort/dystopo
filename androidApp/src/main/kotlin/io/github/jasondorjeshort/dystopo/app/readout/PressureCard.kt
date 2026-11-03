@@ -441,7 +441,13 @@ fun PressureCard() {
         val floor = maxOf(io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom, panels.routeCardTop, shownPanels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop)
         val bottomPad = if (floor > 0.dp) floor + 6.dp else with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + 32.dp
         // The scale bar's line above the bottom chrome: mapRowDp less its top gap (6 dp), which the bottom pad already is.
-        val bottomLimit = maxHeight - bottomPad - (panels.mapRowDp(density) - 6.dp)
+        // T212 (the verifier's note): with a planning card up the two cards share the band, the warning above: it leaves
+        // the planning card its least while warned (one scrolling line) at the bottom and the scale bar's plate between.
+        val planningUp = panels.routeCardTop > 0.dp
+        val floor0 = maxOf(io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom, shownPanels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop)
+        val bottomPad0 = if (floor0 > 0.dp) floor0 + 6.dp else with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + 28.dp
+        val bottomLimit = if (planningUp) maxHeight - bottomPad0 - panels.warnedLeastDp(density) - panels.barRowDp(density)
+        else maxHeight - bottomPad - (panels.mapRowDp(density) - 6.dp)
         val sideDp = 12.dp
         val widthDp = minOf(maxWidth - sideDp * 2, 420.dp)
         val leftDp = (maxWidth - widthDp) / 2

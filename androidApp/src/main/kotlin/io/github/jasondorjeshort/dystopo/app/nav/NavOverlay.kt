@@ -132,6 +132,8 @@ private fun navCardCap(maxHeight: Dp, top: Dp): Dp {
 internal object NavCardBand {
     @Volatile var bandDp = 0f
     @Volatile var measuredBandDp = 0f
+    @Volatile var topDp = 0f
+    @Volatile var searchBottomDp = 0f
     @Volatile var belowLeftDp = 0f
     @Volatile var belowRightDp = 0f
     @Volatile var bottomPadDp = 0f
@@ -139,7 +141,9 @@ internal object NavCardBand {
     val layout = io.github.jasondorjeshort.dystopo.app.routing.CardLayout()
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "fontScale" to fontScale, "bandDp" to bandDp, "measuredBandDp" to measuredBandDp, "belowLeftDp" to belowLeftDp, "belowRightDp" to belowRightDp,
+        "fontScale" to fontScale, "bandDp" to bandDp, "measuredBandDp" to measuredBandDp,
+        // T212: the card's top and the search column's bottom it stays under (dp from the window top).
+        "topDp" to topDp, "searchBottomDp" to searchBottomDp, "clearOfSearch" to (searchBottomDp <= 0f || topDp >= searchBottomDp - 0.5f), "belowLeftDp" to belowLeftDp, "belowRightDp" to belowRightDp,
         "bottomPadDp" to bottomPadDp,
     ) + layout.json()
 }
@@ -161,13 +165,14 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val statusBar = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
         val padV = 10.dp
-        val cap = navCardCap(maxHeight, statusBar + NAV_CARD_TOP)
+        val topPad = navCardTop(statusBar)
+        val cap = navCardCap(maxHeight, statusBar + topPad)
         io.github.jasondorjeshort.dystopo.app.routing.CappedCard(
             cap = (cap - padV * 2).coerceAtLeast(0.dp), layout = NavCardBand.layout, scroll = scroll, description = NAV_DETAILS,
             paper = PaperOpaque, spacing = 4.dp,
             // Below the top chip row (search, Settings, Packs), which stays usable while navigating; T65: the Tracks
             // and Routes chips move below this card (TopChips), so they stay reachable.
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = NAV_CARD_TOP)
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = topPad)
                 .widthIn(max = 520.dp).fillMaxWidth()
                 .navCardEdge() // T146: the chips below it move in the same layout pass (TopChips.followNavCard)
                 .onGloballyPositioned { c ->
@@ -284,6 +289,19 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
 private val NAV_CARD_TOP = 60.dp
 
 /**
+ * T212 (the verifier's note): the card's top under the status bar: [NAV_CARD_TOP], or lower when the search box above it
+ * wraps to two lines (display size largest at font scale 2.0, where the card at the user's scale reached 35 px over it):
+ * 6 dp under the search column's measured bottom (`TopChips.searchBottom`, from the window top).
+ */
+private fun navCardTop(statusBar: Dp): Dp {
+    val search = io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom
+    val top = if (search > 0.dp) maxOf(NAV_CARD_TOP, search + 6.dp - statusBar) else NAV_CARD_TOP
+    NavCardBand.topDp = (statusBar + top).value
+    NavCardBand.searchBottomDp = search.value
+    return top
+}
+
+/**
  * T180: the free-tracking turn-around clock in the navigation card's place, while a track records and no route is
  * navigated: the clock's line and its label in [TurnBack]'s colours, and "Heading back" once the direction flips. The
  * chips below move under it as under the navigation card ([TopChips]); `GET /nav/turnaround` `ui` and `layout`. T212: at
@@ -296,11 +314,12 @@ private fun WayBackCard(w: WayBackClock.Ui, chips: io.github.jasondorjeshort.dys
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val statusBar = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
         val padV = 8.dp
-        val cap = navCardCap(maxHeight, statusBar + NAV_CARD_TOP)
+        val topPad = navCardTop(statusBar)
+        val cap = navCardCap(maxHeight, statusBar + topPad)
         io.github.jasondorjeshort.dystopo.app.routing.CappedCard(
             cap = (cap - padV * 2).coerceAtLeast(0.dp), layout = NavCardBand.layout, scroll = scroll, description = NAV_DETAILS,
             paper = PaperOpaque, spacing = 4.dp,
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = NAV_CARD_TOP)
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = topPad)
                 .widthIn(max = 520.dp).fillMaxWidth()
                 .navCardEdge()
                 .onGloballyPositioned { c ->
