@@ -225,7 +225,7 @@ class DivergenceCommand : CliktCommand(name = "divergence") {
         return (a.lat + north / mPerLat) to (a.lon + east / mPerLon)
     }
 
-    /** The trails near the tracks (grey), the tracks (blue) and the stretches (dashed purple, a dot at the midpoint, confirmed only). */
+    /** The trails near the tracks (grey), the tracks (blue) and the stretches (dashed teal, a dot at the midpoint, confirmed only). */
     private fun draw(g: RoutingGraph, tracks: List<Track>, report: TrailDivergence.Report, out: File): Map<String, Any?> {
         // Around the confirmed stretches (300 m on each side) when there are some, else every track.
         val focus = report.confirmed.flatMap { d -> d.line.map { TrackPoint(it.lat, it.lon) } }
@@ -268,21 +268,21 @@ class DivergenceCommand : CliktCommand(name = "divergence") {
             }
             if (i > 40) break
         }
-        val purple = Color(0x7B, 0x32, 0x94)
+        val teal = Color(0x00, 0x83, 0x8F)
         for (d in report.records) {
             val p = Path2D.Double()
             d.line.forEachIndexed { j, q -> if (j == 0) p.moveTo(x(q.lon), y(q.lat)) else p.lineTo(x(q.lon), y(q.lat)) }
             gr.color = Color.WHITE
             gr.stroke = BasicStroke(8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             if (d.confirmed) gr.draw(p)
-            gr.color = if (d.confirmed) purple else Color(0x99, 0x99, 0x99)
+            gr.color = if (d.confirmed) teal else Color(0x99, 0x99, 0x99)
             gr.stroke = BasicStroke(5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10f, floatArrayOf(14f, 9f), 0f)
             gr.draw(p)
             if (d.confirmed) {
                 val m = d.mid
                 gr.color = Color.WHITE
                 gr.fillOval((x(m.lon) - 10).toInt(), (y(m.lat) - 10).toInt(), 20, 20)
-                gr.color = purple
+                gr.color = teal
                 gr.fillOval((x(m.lon) - 7).toInt(), (y(m.lat) - 7).toInt(), 14, 14)
                 gr.font = Font(Font.SANS_SERIF, Font.BOLD, 16)
                 gr.drawString("${d.tracks} tracks, ${Math.round(d.lengthM)} m", (x(m.lon) + 14).toInt(), (y(m.lat) + 5).toInt())
@@ -290,7 +290,7 @@ class DivergenceCommand : CliktCommand(name = "divergence") {
         }
         gr.color = Color(0x2B, 0x24, 0x20)
         gr.font = Font(Font.SANS_SERIF, Font.PLAIN, 15)
-        gr.drawString("T213 divergence: grey trails, blue tracks in a record, green tracks in none, dashed purple the confirmed stretches (grey: unconfirmed)", 10, hgt - 12)
+        gr.drawString("T213 divergence: grey trails, blue tracks in a record, green tracks in none, dashed teal the confirmed stretches (grey: unconfirmed)", 10, hgt - 12)
         gr.dispose()
         ImageIO.write(img, "png", out)
         return linkedMapOf("width" to w, "height" to hgt, "edges" to edges, "stretches" to report.records.size)

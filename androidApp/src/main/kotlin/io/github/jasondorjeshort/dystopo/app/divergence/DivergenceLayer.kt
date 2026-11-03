@@ -18,8 +18,10 @@ import org.maplibre.geojson.Point
 
 /**
  * T213: the stretches where the user's tracks leave the mapped trails ([DivergenceStore.shown]) on the map: each stretch
- * dashed in purple over a white casing, drawn over the mapped lines beside it, and a purple dot with a white ring at its
- * midpoint, which a long-press opens ([DivergenceCardLine]). Its own GeoJSON source and three layers, added on every
+ * dashed in teal over a white casing, drawn over the mapped lines beside it, and a teal dot with a white ring at its
+ * midpoint, which a long-press opens ([DivergenceCardLine]). Teal because purple is the trips' and magenta the tracks';
+ * kept above the track, route and trip overlays ([raise]), which would otherwise hide it under the very track that
+ * left the trail. Its own GeoJSON source and three layers, added on every
  * style load as [io.github.jasondorjeshort.dystopo.app.routing.RouteOverlay] adds its water markers; installed from
  * [io.github.jasondorjeshort.dystopo.app.MapController.attach]. Empty with the "Show trail disagreements" setting off.
  * [refresh] can be called from any thread.
@@ -29,7 +31,9 @@ object DivergenceLayer {
     const val CASING = "dystopo-divergence-casing"
     const val LINE = "dystopo-divergence-line"
     const val DOTS = "dystopo-divergence-dots"
-    const val COLOR = "#7b3294"
+    const val COLOR = "#00838f"
+    /** Overlays the stretches stay above (their layer ids start so). */
+    private val BELOW = listOf("dystopo-track", "dystopo-route", "dystopo-trip")
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private var view: MapView? = null
@@ -112,13 +116,32 @@ object DivergenceLayer {
         v.getMapAsync { map ->
             val style = map.style ?: return@getMapAsync
             if (!style.isFullyLoaded) return@getMapAsync
+            raise(style)
             (style.getSource(SOURCE) as? GeoJsonSource)?.setGeoJson(data)
             updates++
         }
     }
 
+    /** Moves the three layers above the track, route and trip overlays when one was added after them. */
+    private fun raise(style: Style) {
+        val ids = style.layers.map { it.id }
+        val mine = ids.indexOf(CASING)
+        if (mine < 0) return
+        val top = ids.indexOfLast { id -> BELOW.any { id.startsWith(it) } }
+        if (top < mine) return
+        val anchor = ids[top]
+        val layers = listOf(CASING, LINE, DOTS).mapNotNull { style.getLayer(it) }
+        layers.forEach { style.removeLayer(it) }
+        var above = anchor
+        for (l in layers) { style.addLayerAbove(l, above); above = l.id }
+        raised++
+    }
+
+    @Volatile var raised = 0
+        private set
+
     fun json(): Map<String, Any?> = linkedMapOf(
-        "installedOnStyle" to installedOnStyle, "stretches" to stretches, "updates" to updates,
+        "installedOnStyle" to installedOnStyle, "stretches" to stretches, "updates" to updates, "raised" to raised,
         "source" to SOURCE, "layers" to listOf(CASING, LINE, DOTS),
     )
 }

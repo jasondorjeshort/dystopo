@@ -21,7 +21,7 @@ import io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu
 import io.github.jasondorjeshort.dystopo.routing.DivergenceText
 
 private val Ink = Color(0xFF2B2420)
-private val Purple = Color(0xFF7B3294)
+private val Teal = Color(0xFF00838F)
 private val Link = Color(0xFF2C7BB6)
 
 /** A press within this of a stretch's line opens it, or a fingertip at the map's zoom when that is wider (metres). */
@@ -45,7 +45,7 @@ fun DivergenceCardLine() {
     val d = DivergenceStore.near(lat, lon, pressRadiusM(lat)) ?: return
     Column(Modifier.padding(vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(DivergenceText.TITLE, Modifier.weight(1f), style = TextStyle(color = Purple, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+            BasicText(DivergenceText.TITLE, Modifier.weight(1f), style = TextStyle(color = Teal, fontSize = 14.sp, fontWeight = FontWeight.Bold))
             HelpIcon("longPress.divergence")
         }
         BasicText(DivergenceText.body(d, AppSettings.units), style = TextStyle(color = Ink, fontSize = 13.sp))
@@ -59,7 +59,7 @@ fun DivergenceCardLine() {
 
 /** T213: the help pop-up of the card's lines above (the survey's hedged wording: a line not on the map, not a mistake). */
 internal val DIVERGENCE_HELP: List<HelpText> = listOf(
-    HelpText("longPress.divergence", "Your tracks and the map", "The map: long-press a purple mark") {
+    HelpText("longPress.divergence", "Your tracks and the map", "The map: long-press a dashed teal mark") {
         "Your recorded tracks keep following a line the map does not have here: perhaps a reroute, a new switchback or an " +
             "unmapped path, or perhaps a GPS that strayed. It needs two tracks on different days, or one with a good fix " +
             "all the way. Dismiss hides it. Nothing is sent."
