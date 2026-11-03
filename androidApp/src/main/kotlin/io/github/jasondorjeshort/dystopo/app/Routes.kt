@@ -168,6 +168,9 @@ class Routes(private val app: DystopoApp) {
         // T210: the glance view
         io.github.jasondorjeshort.dystopo.app.readout.GlanceRoutes.handle(app, r)?.let { return it } // GET|POST /readout/glance
         // end T210
+        // T216: the attested install identity
+        io.github.jasondorjeshort.dystopo.app.identity.IdentityRoutes.handle(app, r)?.let { return it } // GET /identity, POST /identity/verify|rotate|test-chain
+        // end T216
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

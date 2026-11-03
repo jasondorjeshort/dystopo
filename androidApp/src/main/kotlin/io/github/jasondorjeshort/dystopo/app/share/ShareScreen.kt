@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.identity.InstallIdentity
 import io.github.jasondorjeshort.dystopo.sync.crypto.ShareCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -140,6 +141,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
             "While this screen is open, a phone on the same network can sync tracks, waypoints and routes with this one. Give it the code. Farther away: sync via server, below.",
             style = TextStyle(color = Muted, fontSize = 14.sp),
         )
+        IdentityLine() // T216: the attested identity's self-check (ADR 0051)
 
         // This phone: code, address, QR.
         val listeningNow = status["listening"] == true
@@ -215,6 +217,27 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
         PeerMapsSection(status, addr, code) // T78
         RelaySection(status)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * T216: the self-check line (ADR 0051, stage 1a): whether this phone can prove it runs the signed app, by the release
+ * policy, with the reason and its lift when it cannot. Opening the Share screen is the identity's first use: the key is
+ * made then (online only), off the main thread ([InstallIdentity.ensure]).
+ */
+@Composable
+private fun IdentityLine() {
+    val identity = remember { InstallIdentity.get(DystopoApp.instance) }
+    var line by remember { mutableStateOf(identity.line()) }
+    LaunchedEffect(Unit) {
+        line = withContext(Dispatchers.IO) {
+            runCatching { identity.ensure("share screen") }
+            identity.line()
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        BasicText(line.text, style = TextStyle(color = if (line.ok) Accent else Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+        line.detail?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
     }
 }
 

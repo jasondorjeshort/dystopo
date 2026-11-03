@@ -190,6 +190,9 @@ val bundleMapAssets by tasks.registering {
     }
 }
 android.sourceSets.getByName("main").assets.srcDir(bundleMapAssets) // the task's output dir, with the task as its builder
+// T216: the attestation test root (ADR 0051) goes into debug builds only, so two debug phones share it for
+// POST /identity/test-chain; release builds never hold it (ReleaseListsTest). The one committed copy is shared's test resource.
+android.sourceSets.getByName("debug").assets.srcDir(rootProject.file("shared/src/jvmTest/resources/identity"))
 tasks.withType<Test>().configureEach {
     dependsOn(bundleMapAssets)
     systemProperty("dystopo.mapAssets", mapAssetsDir.get().asFile.path) // BundledAssetsTest reads the bundled glyphs
