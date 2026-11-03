@@ -22,3 +22,15 @@ list is the announcement; old phones ignore it and download whole, as with the g
 
 Recorded 2026-11-02 at the close of wave 26 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): the hashes are whole-file (`.sha256` sidecars, `contentHash` over them), no per-tile
+hash exists; `derived` is additive and old phones ignore it, as the idea says. An in-place rewrite is not
+realistic: `PmtilesWriter` deduplicates, run-length-merges and clusters data in tile-id order, so one
+changed tile shifts every later offset; the update is a new file written from old plus changed tiles and
+swapped. The graph is one whole file; ADR 0049's partitioned builder (C) is unbuilt and conditional.
+
+Question: wanted, given that the packs are rebuilt by you by hand today and no refresh cadence exists?
+Recommendation: not now. It is a new derived file format both sides read, a catalog field, an update
+protocol and a graph rebuild that depends on C: a proposal, worth writing when the site rebuilds its
+packs on a schedule and the phones' update traffic is measured.
+Answer:
