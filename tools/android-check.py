@@ -151,9 +151,21 @@ def read_views(args):
         with open(args.views_file, encoding="utf-8") as f:
             for line in f:
                 line = line.split("#", 1)[0].strip()
-                if line:
+                if line and not line.startswith("@"):  # T212: `@` lines are steps (read_steps)
                     items.append(line)
     return [parse_view(s) for s in items]
+
+
+def read_steps(args):
+    """T212: the tour file's step lines (`@cards ...`, parse_cards)."""
+    steps = []
+    if args.views_file:
+        with open(args.views_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if line.startswith("@cards"):
+                    steps.append(parse_cards(line))
+    return steps
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -1038,6 +1050,225 @@ def direct_view(server, exe, serial, view, bound_share, wait_ms, restart=False, 
     return rep
 
 
+# ---------------------------------------------------------------------------------------------------
+# T212: the cards at a large font scale
+
+def parse_cards(text):
+    """T212: `@cards <fromLat>,<fromLon>;<toLat>,<toLon> [scale=2.0] [fixture=still-fall] [bearing=30] [density=<dpi>]`
+    from the tour file: the font-scale step's route, the scale, the warning's fixture, the camera's bearing (a turned
+    map shows the compass) and, optionally, a display density to set for the step (`wm density`, restored after)."""
+    parts = text.split()
+    ends = parts[1].split(";")
+    step = {"from": ends[0], "to": ends[1], "scale": "2.0", "fixture": "still-fall", "bearing": "30", "density": None}
+    for p in parts[2:]:
+        k, _, v = p.partition("=")
+        if k not in step:
+            raise ValueError(f"@cards: unknown option {k!r}")
+        step[k] = v
+    return step
+
+
+def overlaps(a, b, slack=0):
+    """T212: whether two `[left, top, right, bottom]` rectangles (px) share more than `slack` px in both directions; None
+    when either is missing."""
+    if not a or not b:
+        return None
+    return a[0] < b[2] - slack and b[0] < a[2] - slack and a[1] < b[3] - slack and b[1] < a[3] - slack
+
+
+def screencap(exe, serial, path):
+    """T212: the whole screen as the user sees it (the cards are Compose, which `/screenshot`'s map snapshot leaves out)."""
+    r = subprocess.run([exe, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
+    if r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
+        with open(path, "wb") as f:
+            f.write(r.stdout)
+        return path
+    return None
+
+
+def ui_descriptions(exe, serial):
+    """T212: the content descriptions `uiautomator dump` lists (the scroll regions carry theirs; TalkBack itself cannot be
+    driven on an emulator, the critic's objection 17)."""
+    code, _ = adb(exe, serial, "shell", "uiautomator dump /sdcard/dystopo-ui.xml", timeout=60)
+    code2, xml = adb(exe, serial, "exec-out", "cat /sdcard/dystopo-ui.xml", timeout=60)
+    if code != 0 or code2 != 0:
+        return None
+    import re
+    return sorted(set(re.findall(r'content-desc="([^"]+)"', xml)))
+
+
+def swipe_to_end(exe, serial, box, times=6):
+    """T212: swipes up inside `box` (px) to scroll a region to its end."""
+    if not box:
+        return
+    x = int(box[2] - 6)  # at the thumb's edge, clear of the lines' taps (a slow swipe on one reads as a tap on a busy host)
+    y0 = int(box[1] + (box[3] - box[1]) * 0.85)
+    y1 = int(box[1] + (box[3] - box[1]) * 0.15)
+    for _ in range(times):
+        adb(exe, serial, "shell", f"input swipe {x} {y0} {x} {y1} 120", timeout=30)  # quick: a fling carries a small box further
+        time.sleep(0.3)
+
+
+def cards_step(server, exe, serial, step, shot_stem, ext):
+    """T212 (the research `cards-at-large-font-scales`): at the system font scale `step["scale"]` (2.0), plans the route,
+    raises the pressure warning through `POST /readout/trend?fixture=` and navigates the route, and checks from the
+    bounds the debug routes give that nothing overlaps: the planning card under the top chips (`routeCardClearOfTopChips`)
+    and under the scale bar's line, the scale bar and the readout strip (at least the elevation) drawn and clear of the
+    card, every line reachable (a swipe in the card's scrolling region reaches `routeCardScrollMaxPx`), the scroll region's
+    content description in `uiautomator dump`; the warning card clear of the scale bar, the strip and the compass (the
+    map turned to `bearing`, so MapLibre draws its compass; `GET /camera` `orientation.heading.compass.boundsPx`); the
+    navigation card at the user's font scale (`layout.navCard.fontScale`), capped at its band and clear of the scale
+    bar and the online indicator. Screenshots `<stem>-cards-<name>.png` (adb screencap: the cards are not in /screenshot).
+    The warning is raised with the route cleared: with a planning card up at 2.0 no band is left for it, and it then keeps
+    its title, advice and actions and reaches over the card (`trend.card.layout.overRoom`). The font scale (and the
+    density, when the step sets one) is restored afterwards."""
+    rep = {"scale": step["scale"], "route": f"{step['from']};{step['to']}", "checks": {}, "shots": {}}
+    c = rep["checks"]
+    _, before_scale = adb(exe, serial, "shell", "settings get system font_scale", timeout=30)
+    rep["fontScaleBefore"] = before_scale.strip()
+    density_before = None
+    try:
+        adb(exe, serial, "shell", f"settings put system font_scale {step['scale']}", timeout=30)
+        if step.get("density"):
+            _, d = adb(exe, serial, "shell", "wm density", timeout=30)
+            density_before = "reset" if "Override" not in d else d.strip().splitlines()[-1].split()[-1]
+            adb(exe, serial, "shell", f"wm density {step['density']}", timeout=30)
+        time.sleep(4)  # the configuration change recreates the activity
+        wait_activity(server, True, 30)
+        until = time.time() + 60
+        while time.time() < until:  # the map after the activity's recreation (a camera request before it answers 500)
+            try:
+                if server.json("/camera").get("ready"):
+                    break
+            except (urllib.error.URLError, OSError, ValueError):
+                pass
+            time.sleep(1)
+        server.json("/route/clear", method="POST")
+        lat0, lon0 = (float(x) for x in step["from"].split(","))
+        server.json(f"/camera?lat={lat0 + 0.006}&lon={lon0 + 0.003}&zoom=14&bearing={step['bearing']}&tilt=0", method="POST")
+        planned = server.json(f"/route?from={step['from']}&to={step['to']}&mode=hike&wait=180000", method="POST", timeout=240)
+        rep["planned"] = (planned.get("route") or {}).get("distanceM") is not None or planned.get("error") is None
+        time.sleep(4)  # the water, terrain and past-effort lines arrive on their workers
+        route = server.json("/route", timeout=60)
+        lay = (route.get("ui") or {}).get("layout") or {}
+        bar = server.json("/scalebar")
+        strip = (server.json("/readout").get("layout")) or {}
+        d = bar.get("density") or 1.0
+        card_top_px = (lay.get("routeCardTopFromWindowTopDp") or 0) * d
+        rep["planning"] = {k: lay.get(k) for k in ("routeCardCapDp", "routeCardBandDp", "mapRowReservedDp", "mapRowKept", "topChipsBottomDp",
+                                                   "routeCardTopFromWindowTopDp", "routeCardClearOfTopChips", "routeCardScrollMaxPx", "routeCard")}
+        rep["planning"]["scaleBar"] = {k: bar.get(k) for k in ("shown", "hiddenBecause", "boundsPx", "clear")}
+        rep["planning"]["strip"] = {k: strip.get(k) for k in ("shown", "hiddenBecause", "boundsPx", "drawnItems", "droppedItems", "placement")}
+        c["planClearOfTopChips"] = lay.get("routeCardClearOfTopChips") is True
+        c["planScaleBarShown"] = bar.get("shown") is True and bar.get("clear") is not False
+        c["planElevationShown"] = strip.get("shown") is True and (strip.get("drawnItems") or 0) >= 1 and strip.get("clearOfBottomPanels") is not False
+        bb, sb = bar.get("boundsPx"), strip.get("boundsPx")
+        c["planCardClearOfScaleBarLine"] = all(b is None or b[3] <= card_top_px + 1 for b in (bb, sb))
+        descs = ui_descriptions(exe, serial)
+        rep["planning"]["descriptions"] = [x for x in (descs or []) if "details" in x.lower()]
+        c["planScrollDescribed"] = descs is None or any(x.startswith("Route details") for x in descs)
+        rep["shots"]["planning"] = screencap(exe, serial, f"{shot_stem}-cards-planning{ext}")
+        body = (lay.get("routeCard") or {}).get("bodyPx")
+        if (lay.get("routeCardScrollMaxPx") or 0) > 0:
+            # Swipes until the scroll is at its end (lines that arrive late, such as the terrain line, lengthen it).
+            lay2, swipes = lay, 0
+            while swipes < 30:
+                swipe_to_end(exe, serial, body, times=2)
+                swipes += 2
+                time.sleep(0.8)
+                lay2 = ((server.json("/route", timeout=60).get("ui") or {}).get("layout")) or {}
+                if (lay2.get("routeCardScrollPx") or 0) >= (lay2.get("routeCardScrollMaxPx") or 0) > 0:
+                    break
+            rep["planning"]["scrolledTo"] = [lay2.get("routeCardScrollPx"), lay2.get("routeCardScrollMaxPx"), swipes]
+            c["planEveryLineReached"] = (lay2.get("routeCardScrollPx") or 0) >= (lay2.get("routeCardScrollMaxPx") or 0) > 0
+            rep["shots"]["planningScrolled"] = screencap(exe, serial, f"{shot_stem}-cards-planning-scrolled{ext}")
+
+        # T212 (the verifier's note): the warning raised with the route still planned: the two cards share the band (the
+        # warning above, the planning card under it), and the scale bar is either drawn clear of both or hidden.
+        server.json("/readout/trend?clear=1", method="POST", timeout=60)
+        server.json(f"/readout/trend?fixture={step['fixture']}", method="POST", timeout=60)
+        time.sleep(3)
+        card = ((server.json("/readout").get("trend") or {}).get("card")) or {}
+        lay3 = ((server.json("/route", timeout=60).get("ui") or {}).get("layout")) or {}
+        bar = server.json("/scalebar")
+        wb = card.get("boundsPx")
+        route_top_px = (lay3.get("routeCardTopFromWindowTopDp") or 0) * d
+        bb = bar.get("boundsPx") if bar.get("shown") else None
+        rep["warningWithRoute"] = {"warningPx": wb, "routeCardTopPx": round(route_top_px), "routeCardCapDp": lay3.get("routeCardCapDp"),
+                                   "routeCardMode": (lay3.get("routeCard") or {}).get("mode"), "warningOverRoom": (card.get("layout") or {}).get("overRoom"),
+                                   "scaleBar": {k: bar.get(k) for k in ("shown", "hiddenBecause", "boundsPx", "clear", "clearOfWarningCard")}}
+        c["warnRouteShown"] = card.get("shown") is True and bool(wb)
+        c["warnRouteClearOfRouteCard"] = bool(wb) and wb[3] <= route_top_px + 1 and lay3.get("routeCardClearOfWarningCard") is True
+        c["warnRouteScaleBarClear"] = bb is None or (overlaps(bb, wb) is False and bb[3] <= route_top_px + 1 and bar.get("clear") is True)
+        rc = ((server.json("/readout").get("layout")) or {}).get("recentreBoundsPx")
+        rep["warningWithRoute"]["recentrePx"] = rc
+        c["warnRouteRecentreClear"] = overlaps(rc, wb) is not True
+        rep["shots"]["warningWithRoute"] = screencap(exe, serial, f"{shot_stem}-cards-warning-route{ext}")
+
+        # The warning card on the map alone, the map turned so the compass shows.
+        server.json("/route/clear", method="POST")
+        server.json("/readout/trend?clear=1", method="POST", timeout=60)
+        server.json(f"/readout/trend?fixture={step['fixture']}", method="POST", timeout=60)
+        time.sleep(2.5)
+        trend = server.json("/readout").get("trend") or {}
+        card = trend.get("card") or {}
+        bar = server.json("/scalebar")
+        strip = (server.json("/readout").get("layout")) or {}
+        cam = server.json("/camera")
+        compass = ((((cam.get("orientation") or {}).get("heading") or {}).get("compass")) or {}).get("boundsPx")
+        rep["warning"] = {"boundsPx": card.get("boundsPx"), "layout": card.get("layout"), "scaleBarPx": bar.get("boundsPx"),
+                          "stripPx": strip.get("boundsPx"), "stripHiddenBecause": strip.get("hiddenBecause"), "compassPx": compass}
+        c["warningShown"] = card.get("shown") is True and bool(card.get("boundsPx"))
+        c["warningClearOfScaleBar"] = bar.get("shown") is True and overlaps(card.get("boundsPx"), bar.get("boundsPx")) is False
+        c["warningClearOfStrip"] = overlaps(card.get("boundsPx"), strip.get("boundsPx")) is not True
+        c["warningClearOfCompass"] = overlaps(card.get("boundsPx"), compass) is not True
+        rep["warning"]["compassDrawn"] = compass is not None
+        rep["shots"]["warning"] = screencap(exe, serial, f"{shot_stem}-cards-warning{ext}")
+        server.json("/readout/trend?clear=1", method="POST", timeout=60)
+
+        # Navigation of the same route at the user's font scale.
+        server.json(f"/route?from={step['from']}&to={step['to']}&mode=hike&wait=180000", method="POST", timeout=240)
+        server.json("/nav/start?route=current", method="POST", timeout=60)
+        try:
+            server.json("/location/replay?route=current&kmh=4", method="POST", timeout=60)
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            rep["replayError"] = str(e)[:200]
+        time.sleep(8)
+        nav = server.json("/nav", timeout=60)
+        nl = nav.get("layout") or {}
+        bar = server.json("/scalebar")
+        rep["navigation"] = {"navCardPx": nl.get("navCardPx"), "navCard": nl.get("navCard"), "onlineClearOfNavCard": nl.get("onlineClearOfNavCard"),
+                             "tracksClearOfNavCard": nl.get("tracksClearOfNavCard"), "scaleBar": {k: bar.get(k) for k in ("shown", "hiddenBecause", "boundsPx", "clearOfNavCard")},
+                             "turnText": nl.get("navTurnText")}
+        nc = nl.get("navCard") or {}
+        c["navAtUserScale"] = abs(float(nc.get("fontScale") or 0) - float(step["scale"])) < 0.05
+        c["navCappedAtBand"] = (nl.get("navCardPx") is not None and nc.get("bandDp") is not None
+                                and (nl["navCardPx"][3] - nl["navCardPx"][1]) / d <= nc["bandDp"] + 1)
+        c["navClearOfChips"] = nl.get("onlineClearOfNavCard") is not False and nl.get("tracksClearOfNavCard") is not False
+        # T212 (the verifier's note): and under the search box, which wraps to two lines at display size largest.
+        sb = (nl.get("searchBottomDp") or 0) * d
+        c["navClearOfSearch"] = nl.get("navCardPx") is not None and nl["navCardPx"][1] >= sb - 1 and nc.get("clearOfSearch") is not False
+        rep["navigation"]["searchBottomPx"] = round(sb)
+        c["navScaleBarClear"] = bar.get("clearOfNavCard") is not False
+        c["navTurnWhole"] = (nl.get("navTurnText") or {}).get("cut") is not True
+        descs = ui_descriptions(exe, serial)
+        c["navScrollDescribed"] = descs is None or any(x.startswith("Navigation details") for x in descs)
+        rep["shots"]["navigation"] = screencap(exe, serial, f"{shot_stem}-cards-navigation{ext}")
+    finally:
+        for method, path in (("DELETE", "/location/replay"), ("POST", "/nav/stop"), ("POST", "/route/clear"), ("POST", "/readout/trend?clear=1")):
+            try:
+                server.json(path, method=method, timeout=60)
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+                pass
+        adb(exe, serial, "shell", f"settings put system font_scale {rep['fontScaleBefore'] or '1.0'}", timeout=30)
+        if density_before:
+            adb(exe, serial, "shell", f"wm density {density_before}", timeout=30)
+        time.sleep(3)
+    rep["failed"] = [k for k, ok in c.items() if not ok]
+    rep["ok"] = not rep["failed"]
+    return rep
+
+
 def set_app_server(server, value, timeout=60.0):
     """T105: the app's server (POST /settings?server=, persisted; '' for none), then the style the setting reloads.
     Returns the server the app reports."""
@@ -1148,13 +1379,24 @@ def main():
     ap.add_argument("--direct-only", action="store_true",
                     help="T127: only the direct views, each in a new process (the per-zoom peak table); no tour views, no background step")
     ap.add_argument("--direct-keep-sources", action="store_true", help="T127: keep the phone's source range cache (cache/sources) before a direct view")
+    ap.add_argument("--no-cards", action="store_true",
+                    help="T212: skip the tour file's @cards step (the planning, warning and navigation cards at font scale 2.0)")
+    ap.add_argument("--cards-only", action="store_true",
+                    help="T212: only the @cards step of --views-file (no views, no background or direct step); with no "
+                         "--views-file it reads tools/android-tour.txt")
     args = ap.parse_args()
 
-    views = [] if args.direct_only else read_views(args)
+    views = [] if (args.direct_only or args.cards_only) else read_views(args)
+    card_steps = [] if args.no_cards or args.direct_only else read_steps(args)  # T212
+    if args.cards_only:
+        if not args.views_file:
+            args.views_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "android-tour.txt")
+            card_steps = read_steps(args)
+        args.no_background, args.direct_view = True, "none"
     direct_views = [] if args.direct_view.strip().lower() == "none" else [parse_view(x) for x in args.direct_view.split(",") if x.strip()]
     if args.direct_only and not direct_views:
         ap.error("--direct-only needs --direct-view")
-    if not views and not args.direct_only:
+    if not views and not args.direct_only and not (args.cards_only and card_steps):
         ap.error("no views: pass --views or --views-file")
     stem, ext = os.path.splitext(args.out)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
@@ -1392,7 +1634,7 @@ def main():
         http_ok = g["served"] >= len(fonts) and len(fonts) > 0
         summary["glyphs"] = {"fontsInStyle": fonts, "glyphRangesServed": g["served"], "glyphRangesEmpty": g["notFound"],
                              "viewsWithDrawnText": drawn, "glyphDir": (health.get("packs") or {}).get("glyphs"),
-                             "ok": http_ok or drawn > 0 or args.direct_only,  # T127: no tour views, nothing to check
+                             "ok": http_ok or drawn > 0 or args.direct_only or args.cards_only,  # T127, T212: no tour views, nothing to check
                              "evidence": "http" if http_ok else "drawn text" if drawn else "none"}
         cg = final["contourGeneration"]
         summary["contourGeneration"] = {k: cg[k] for k in ("count", "minMs", "avgMs", "maxMs")}
@@ -1401,6 +1643,17 @@ def main():
         summary["memory"] = final.get("memory")
     except (urllib.error.URLError, OSError, ValueError) as e:
         summary["glyphs"] = {"ok": False, "error": str(e)}
+    if card_steps and exe and serial:
+        # T212: the cards at a large font scale, after the views (it plans, warns and navigates, then clears all three).
+        steps = []
+        for k, st in enumerate(card_steps):
+            try:
+                steps.append(cards_step(server, exe, serial, st, stem + (f"-{k}" if k else ""), ext))
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError, subprocess.SubprocessError, http.client.HTTPException) as e:
+                steps.append({"ok": False, "error": str(e)[:200], "route": f"{st['from']};{st['to']}"})
+        summary["cardsStep"] = {"ok": all(r["ok"] for r in steps), "steps": steps}
+    else:
+        summary["cardsStep"] = {"skipped": "--no-cards" if args.no_cards else "no @cards line" if not card_steps else "no adb device"}
     if exe and serial and not args.no_background and not args.direct_only:
         # T123: the tour never left the foreground; activity-bound routes hung there until their own timeouts.
         try:
@@ -1435,7 +1688,7 @@ def main():
     summary["sheet"] = contact_sheet(reports, rasters, f"{stem}-sheet{ext}")
     summary["connection"] = {**server.counters, "events": server.events}  # T185: forwards restored, cut reads asked again
     summary["ok"] = (summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
-                     and summary["directStep"].get("ok", True) is not False)
+                     and summary["directStep"].get("ok", True) is not False and summary["cardsStep"].get("ok", True) is not False)
     with open(stem + ".json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
@@ -1466,6 +1719,9 @@ def main():
               + ", ".join(f"{r['path'].split('?')[0]} {r['status']} {r['seconds']} s" for r in bg["background"])
               + f"; back {bg.get('activityAfterReturn')}: " + ", ".join(f"{r['path'].split('?')[0]} {r['status']}" for r in bg["foreground"]) + ")",
               file=sys.stderr)
+    for r in summary["cardsStep"].get("steps", []):  # T212
+        print(f"cards {r.get('route')} at font scale {r.get('scale')}: {'ok' if r['ok'] else 'FAIL'}"
+              + (f" failed {' '.join(r.get('failed') or [])}" if r.get("failed") else "") + (f" error {r['error']}" if r.get("error") else ""), file=sys.stderr)
     for r in summary["directStep"].get("views", []):
         mb = lambda b: f"{b / 1048576:.0f}" if b else "-"
         sw = r.get("serverSwitch")

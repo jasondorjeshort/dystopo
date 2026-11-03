@@ -131,6 +131,9 @@ object ScaleBarLayout {
     /** T128: the navigation card's bottom edge the bar also stays below, dp from the window top (0 when not navigating). */
     @Volatile var navCardBottomDp = 0f
 
+    /** T212: the pressure warning's card's bottom edge the bar also stays below, dp from the window top (0 with none). */
+    @Volatile var warningCardBottomDp = 0f
+
     /**
      * T110: a hidden bar keeps no fit, bounds or drawn lengths, so nothing reads the last shown bar against a camera that
      * has moved since (`GET /scalebar`'s `readBack` did, T101); the next show fits and draws them again.
@@ -196,9 +199,13 @@ object ScaleBarLayout {
             "topLeftBottomDp" to topLeftBottomDp, // T115: the search box and the online indicator, from the window top
             "navCardBottomDp" to navCardBottomDp, // T128: the navigation card, from the window top (0 when not navigating)
             "clearOfNavCard" to if (!visible || b == null) null else navCardBottomDp <= 0f || b[1] / d >= navCardBottomDp,
+            "warningCardBottomDp" to warningCardBottomDp, // T212
+            "clearOfWarningCard" to if (!visible || b == null) null else warningCardBottomDp <= 0f || b[1] / d >= warningCardBottomDp - 0.5f,
             "topDp" to b?.let { round((it[1] / d).toDouble(), 1) }, // T115: the bar's top edge, from the window top
             // Clear: the bar's bottom edge is above the credit line, the route card, the track panels, the trip card and the update offer.
-            "clear" to if (!visible || bottomDp == null) null else bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards,
+            // T212: and its top edge below the pressure warning's card.
+            "clear" to if (!visible || bottomDp == null || b == null) null else bottomDp >= credit && bottomDp >= routeCard && bottomDp >= trackPanels && bottomDp >= cards &&
+                (warningCardBottomDp <= 0f || b[1] / d >= warningCardBottomDp - 0.5f),
         )
     }
 
@@ -302,7 +309,10 @@ fun ScaleBar() {
     // T128 (T122's follow-up): and below the navigation card, which spans the top of the map. Above the card's 1.5 font
     // scale cap a tall bottom panel pushed the bar up over the card, since only the top-left column bounded it.
     val navCard = TopChips.navCardBottom
-    val topLeft = maxOf(topLeftColumn, navCard)
+    // T212 (the verifier's note): and below the pressure warning's card, which with a planning card up at font scale 2.0 can
+    // leave the bar no room (it hides, `noRoomBelowWarningCard`, rather than being drawn under the card).
+    val warnCard = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx?.let { with(density) { it.toDp() } } ?: 0.dp
+    val topLeft = maxOf(topLeftColumn, navCard, warnCard)
     Layout(
         content = { Column(
             Modifier
@@ -356,6 +366,7 @@ fun ScaleBar() {
         val room = topLeft <= 0.dp || top >= (topLeft + TOP_LEFT_GAP).roundToPx()
         ScaleBarLayout.topLeftBottomDp = topLeftColumn.value
         ScaleBarLayout.navCardBottomDp = navCard.value
+        ScaleBarLayout.warningCardBottomDp = warnCard.value // T212
         // T161: the readout strip to the bar's right on its line, bottoms level, clear of the recentre button's column on
         // the right; where the line leaves it less than STRIP_MIN_BESIDE it goes above the bar instead. Like the bar it
         // never reaches up to the top-left column or the navigation card. T177: beside only when the whole bar fits on
@@ -391,7 +402,10 @@ fun ScaleBar() {
                 else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(noRoom)
             }
         }
-        if (!room) ScaleBarLayout.hide(if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT)
+        if (!room) ScaleBarLayout.hide(
+            if (warnCard > maxOf(topLeftColumn, navCard)) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BELOW_WARNING_CARD // T212
+            else if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT,
+        )
         else if (ScaleBarLayout.bars.isEmpty()) { // shown again by a layout pass alone: the fit hide() dropped comes back
             ScaleBarLayout.zoom = v.zoom
             ScaleBarLayout.lat = v.lat

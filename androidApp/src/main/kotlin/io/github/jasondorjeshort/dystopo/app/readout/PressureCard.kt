@@ -8,9 +8,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
@@ -23,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -361,7 +366,8 @@ object PressureWatch {
             "result" to result?.json(),
             "alert" to alert.json(),
             "card" to linkedMapOf("shown" to (c != null), "title" to c?.title, "body" to c?.body, "station" to c?.station, "raisedAtMs" to c?.raisedAtMs,
-                "dismissedAtMs" to dismissedAtMs, "boundsPx" to cardBoundsPx?.takeIf { c != null }?.map { Math.round(it) }), // T192: none once the card is gone
+                "dismissedAtMs" to dismissedAtMs, "boundsPx" to cardBoundsPx?.takeIf { c != null }?.map { Math.round(it) }, // T192: none once the card is gone
+                "layout" to WarningCardLayout.json().takeIf { c != null }), // T212: its room, collapse and scroll
             "spoken" to spoken.toList(),
             "wayDown" to WayDownWatch.json(), // T196
             "station" to st?.let { linkedMapOf("station" to it.station, "tempC" to it.tempC, "elevationM" to it.elevationM, "ageS" to (System.currentTimeMillis() - it.timeMs) / 1000) },
@@ -390,6 +396,16 @@ object PressureWatch {
  * station's own tendency when known, and Dismiss. T204: the readout bar keeps below it ([PressureWatch.cardBottomPx]),
  * leaving entries out as it must, so the two never overlap (T187's note: at font scale 2.0 the card reached under it).
  * Nothing when no warning is raised or after Dismiss.
+ *
+ * T212 (the research `cards-at-large-font-scales`: a collapsed summary with an expand tap is the answer to a card too
+ * tall for its room): the title (the severity) and the advice line ("Weather may turn worse; check your plans.") are
+ * always shown, the actions (Show the way down, Dismiss) always in view under them. The detail (what was measured, the
+ * station's tendency, the way-down lines) shows in place when the whole card fits its room; when it does not, the card
+ * starts collapsed with "Show details", which expands the detail in place, scrolling between the advice and the actions
+ * ("Hide details" folds it again). The room is measured ([WarningCardLayout]): from under the top chrome down to the
+ * scale bar's line on the left (the bar and the readout strip's elevation, `BottomPanels.mapRowDp`), and below the
+ * map's compass when it reaches into that band ([CompassView.boundsPx]), so the card never covers the scale bar or the
+ * compass at any font or display size.
  */
 @Composable
 fun PressureCard() {
@@ -397,45 +413,191 @@ fun PressureCard() {
     // `trend.card.boundsPx` never reports a card that is gone.
     val c = PressureWatch.card
     if (c == null) {
-        androidx.compose.runtime.SideEffect { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null) }
+        androidx.compose.runtime.SideEffect { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null); WarningCardLayout.gone() }
         return
     }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null) } }
-    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null); WarningCardLayout.gone() } }
+    val density = androidx.compose.ui.platform.LocalDensity.current
     // Under everything that floats across the top (the search column, the online indicator, the chips at the right and
     // the navigation card; Compose state, so the card follows them).
-    val topPx = io.github.jasondorjeshort.dystopo.app.MapInsets.topChromeBottomPx(density)
-    val topDp = if (topPx > 0) topPx / density else 72f
-    Box(Modifier.fillMaxWidth().padding(top = topDp.dp + 8.dp), contentAlignment = Alignment.TopCenter) {
-        Column(
-            Modifier
-                .padding(horizontal = 12.dp)
-                .widthIn(max = 420.dp)
-                .fillMaxWidth()
-                .onGloballyPositioned { l -> l.boundsInRoot().let { b -> PressureWatch.cardBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom); PressureWatch.setCardBottom(b.bottom) } }
-                .background(Plate, RoundedCornerShape(8.dp))
-                .verticalScroll(androidx.compose.foundation.rememberScrollState()) // T204: a card taller than the window scrolls
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            BasicText(c.title, style = TextStyle(color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
-            BasicText(c.body, style = TextStyle(color = Ink, fontSize = 14.sp))
-            c.station?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) }
-            WayDownLines() // T196: on a ridge, the walk to lower ground
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                WayDownAction() // T196
-                BasicText(
-                    "Dismiss",
-                    Modifier
-                        .clickable(role = Role.Button) { PressureWatch.dismiss() }
-                        .semantics { contentDescription = "Dismiss the pressure warning" }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-                )
-            }
+    val topPx = io.github.jasondorjeshort.dystopo.app.MapInsets.topChromeBottomPx(density.density)
+    val chromeDp = if (topPx > 0) topPx / density.density else 72f
+    // T212: the compass (MapLibre's own, top right while the map is turned) when it reaches below the chrome: the card
+    // starts below it. Polled with the card's other inputs: the view is not Compose state.
+    var compass by androidx.compose.runtime.remember { mutableStateOf(CompassView.boundsPx()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(500)
+            val now = CompassView.boundsPx()
+            if (!now.contentEquals(compass)) compass = now
         }
     }
+    var expandedByUser by androidx.compose.runtime.remember(c.raisedAtMs) { mutableStateOf<Boolean?>(null) }
+    var detailPx by androidx.compose.runtime.remember(c.raisedAtMs) { mutableStateOf(-1) }
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    androidx.compose.foundation.layout.BoxWithConstraints(androidx.compose.ui.Modifier.fillMaxSize()) {
+        val panels = io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
+        val shownPanels = if (panels.trackPanelsTop > panels.trackPanelsBottom) panels.trackPanelsTop else 0.dp
+        val floor = maxOf(io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom, panels.routeCardTop, shownPanels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop)
+        val bottomPad = if (floor > 0.dp) floor + 6.dp else with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + 32.dp
+        // The scale bar's line above the bottom chrome: mapRowDp less its top gap (6 dp), which the bottom pad already is.
+        // T212 (the verifier's note): with a planning card up the two cards share the band, the warning above: it leaves
+        // the planning card its least while warned (one scrolling line) at the bottom and the scale bar's plate between.
+        val planningUp = panels.routeCardTop > 0.dp
+        val floor0 = maxOf(io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom, shownPanels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop)
+        val bottomPad0 = if (floor0 > 0.dp) floor0 + 6.dp else with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + 28.dp
+        val bottomLimit = if (planningUp) maxHeight - bottomPad0 - panels.warnedLeastDp(density) - panels.barRowDp(density)
+        else maxHeight - bottomPad - (panels.mapRowDp(density) - 6.dp)
+        val sideDp = 12.dp
+        val widthDp = minOf(maxWidth - sideDp * 2, 420.dp)
+        val leftDp = (maxWidth - widthDp) / 2
+        val chromeTop = chromeDp.dp + 8.dp
+        val compassDp = compass?.let { b -> FloatArray(4) { b[it] / density.density } }
+        val bands = io.github.jasondorjeshort.dystopo.app.routing.CardBands
+        val top = bands.warningTop(chromeTop.value, compassDp, leftDp.value, (leftDp + widthDp).value, bottomLimit.value).dp
+        val compassMoves = top > chromeTop
+        val room = (bottomLimit - top).coerceAtLeast(0.dp)
+        val padV = 10.dp
+        val layout = WarningCardLayout.layout
+        // The whole card fits when its header, its detail as last measured whole and its actions do.
+        val fits = with(density) {
+            bands.warningFits(if (detailPx < 0) null else detailPx.toDp().value, layout.headerPx.toDp().value, layout.footerPx.toDp().value, (4.dp * 2 + padV * 2).value, room.value)
+        } == true
+        val expanded = expandedByUser ?: (detailPx < 0 || fits)
+        val collapsible = !fits || expandedByUser != null
+        androidx.compose.runtime.SideEffect {
+            WarningCardLayout.roomDp = room.value; WarningCardLayout.topDp = top.value; WarningCardLayout.bottomLimitDp = bottomLimit.value
+            WarningCardLayout.compassMoved = compassMoves; WarningCardLayout.expanded = expanded; WarningCardLayout.fits = fits
+            WarningCardLayout.collapsible = collapsible; WarningCardLayout.detailDp = if (detailPx < 0) null else detailPx / density.density
+        }
+        // The title, the advice and the actions always show: with less room than they take (a planning card up at font
+        // scale 2.0) the card keeps their height and reaches over what is below rather than cutting them (the warning first).
+        val summary = with(density) { (layout.headerPx + layout.footerPx).toDp() } + 4.dp * 2
+        val cap = maxOf(room - padV * 2, summary)
+        androidx.compose.runtime.SideEffect { WarningCardLayout.overRoom = cap > room - padV * 2 }
+        io.github.jasondorjeshort.dystopo.app.routing.CappedCard(
+            cap = cap, layout = layout, scroll = scroll, description = WARNING_DETAILS, paper = PaperOpaque, spacing = 4.dp, pinned = true,
+            modifier = Modifier
+                .padding(top = top, start = leftDp)
+                .width(widthDp)
+                .onGloballyPositioned { l -> l.boundsInRoot().let { b -> PressureWatch.cardBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom); PressureWatch.setCardBottom(b.bottom) } }
+                .background(Plate, RoundedCornerShape(8.dp))
+                .padding(horizontal = 14.dp, vertical = padV),
+            header = {
+                BasicText(c.title, style = TextStyle(color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
+                BasicText(PressureText.ADVICE, style = TextStyle(color = Ink, fontSize = 14.sp))
+            },
+            body = {
+                if (expanded) {
+                    Column(
+                        Modifier.onSizeChanged { if (it.height != detailPx) detailPx = it.height },
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        BasicText(measuredLine(c.body), style = TextStyle(color = Ink, fontSize = 14.sp))
+                        c.station?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) }
+                        WayDownLines() // T196: on a ridge, the walk to lower ground
+                    }
+                } else androidx.compose.runtime.SideEffect { WayDownWatch.linesBoundsPx = null }
+            },
+            footer = {
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (collapsible) {
+                        val label = if (expanded) HIDE_DETAILS else SHOW_DETAILS
+                        BasicText(
+                            label,
+                            Modifier
+                                .onGloballyPositioned { l -> WarningCardLayout.toggleBoundsPx = l.boundsInRoot().let { b -> floatArrayOf(b.left, b.top, b.right, b.bottom) } }
+                                .clickable(role = Role.Button) { expandedByUser = !expanded }
+                                .semantics { contentDescription = label }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                        )
+                    } else androidx.compose.runtime.SideEffect { WarningCardLayout.toggleBoundsPx = null }
+                    WayDownAction() // T196
+                    BasicText(
+                        "Dismiss",
+                        Modifier
+                            .clickable(role = Role.Button) { PressureWatch.dismiss() }
+                            .semantics { contentDescription = "Dismiss the pressure warning" }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    )
+                }
+            },
+        )
+    }
 }
+
+/** T212: the card's body less its closing advice, which the card shows on its own line under the title. */
+internal fun measuredLine(body: String): String = body.removeSuffix(" " + PressureText.ADVICE).removeSuffix(PressureText.ADVICE).trim()
+
+/** T212: the warning card's expand and fold actions, and its scrolling detail's content description. */
+internal const val SHOW_DETAILS = "Show details"
+internal const val HIDE_DETAILS = "Hide details"
+internal const val WARNING_DETAILS = "Pressure warning details"
+
+/**
+ * T212: the warning card as last laid out, for `GET /readout` `trend.card.layout`: its room (dp, from [topDp] under the
+ * chrome or the compass down to [bottomLimitDp], the scale bar's line), whether the compass moved it down, whether the
+ * whole card [fits] (else it starts collapsed), [expanded], the detail's whole height, the toggle's bounds (px) and the
+ * header, scrolling detail and actions ([layout]).
+ */
+internal object WarningCardLayout {
+    @Volatile var roomDp = 0f
+    @Volatile var topDp = 0f
+    @Volatile var bottomLimitDp = 0f
+    @Volatile var compassMoved = false
+    @Volatile var fits = true
+    @Volatile var expanded = true
+    @Volatile var collapsible = false
+    @Volatile var overRoom = false
+    @Volatile var detailDp: Float? = null
+    @Volatile var toggleBoundsPx: FloatArray? = null
+    val layout = io.github.jasondorjeshort.dystopo.app.routing.CardLayout()
+
+    fun gone() { toggleBoundsPx = null }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "roomDp" to roomDp, "topDp" to topDp, "bottomLimitDp" to bottomLimitDp, "compassMoved" to compassMoved,
+        "fits" to fits, "expanded" to expanded, "collapsible" to collapsible, "detailDp" to detailDp, "overRoom" to overRoom,
+        "toggle" to if (collapsible) (if (expanded) HIDE_DETAILS else SHOW_DETAILS) else null,
+        "toggleBoundsPx" to toggleBoundsPx?.takeIf { collapsible }?.map { Math.round(it) },
+        "compassPx" to CompassView.json(),
+    ) + layout.json()
+}
+
+/**
+ * T212: MapLibre's compass on the map (its own view, top right, shown while the map is turned from north): its bounds in
+ * window pixels while it is drawn, else null. Read by the warning card's placement and `GET /camera` › `heading.compass`
+ * `boundsPx` (`controls/Heading.compassJson`). Main thread; null off it.
+ */
+object CompassView {
+    fun boundsPx(): FloatArray? {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return null
+        val map = runCatching { DystopoApp.instance.map.mapView }.getOrNull() ?: return null
+        val v = find(map) ?: return null
+        if (!v.isShown || v.alpha <= 0f || v.width == 0) return null
+        val at = IntArray(2)
+        v.getLocationInWindow(at)
+        return floatArrayOf(at[0].toFloat(), at[1].toFloat(), (at[0] + v.width).toFloat(), (at[1] + v.height).toFloat())
+    }
+
+    /** The bounds from any thread (on the main thread through the map's handler, at most 2 s). */
+    fun json(): List<Int>? = runCatching { DystopoApp.instance.map.onMain { boundsPx() } }.getOrNull()?.map { Math.round(it) }
+
+    private fun find(g: android.view.ViewGroup): android.view.View? {
+        for (i in 0 until g.childCount) {
+            val v = g.getChildAt(i)
+            if (v is org.maplibre.android.maps.widgets.CompassView) return v
+            if (v is android.view.ViewGroup) find(v)?.let { return it }
+        }
+        return null
+    }
+}
+
+private val PaperOpaque = Color(0xFFF6F1E4)
 
 private val Ink = Color(0xFF2B2420)
 private val Muted = Color(0xFF6B5A4A)

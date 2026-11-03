@@ -15,12 +15,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +42,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
@@ -78,37 +77,102 @@ fun NavOverlay() {
     if (u == null) {
         val wb = NavUiState.wayBack
         if (wb != null) {
-            val sys = LocalDensity.current
-            CompositionLocalProvider(LocalDensity provides if (sys.fontScale <= NAV_MAX_FONT_SCALE) sys else Density(sys.density, NAV_MAX_FONT_SCALE)) {
-                WayBackCard(wb, chips)
-            }
+            WayBackCard(wb, chips)
             SideEffect { chips.navHeaderDp = 0f; SpeakerLayout.boundsPx = null }
             return
         }
-        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f; chips.navCardPx = null; SpeakerLayout.boundsPx = null; WayBackLayout.boundsPx = null }
+        SideEffect { if (chips.navCardBottom != 0.dp) chips.navCardBottom = 0.dp; chips.navHeaderDp = 0f; chips.navCardPx = null; SpeakerLayout.boundsPx = null; WayBackLayout.boundsPx = null; NavCardBand.bandDp = 0f }
         return
     }
-    // T122: the card's type is large already (28 sp numbers); at the system's font scale 2.0 the card with the off-route
-    // banner covered the whole screen, so it follows the font scale up to NAV_MAX_FONT_SCALE, as the map chips cap theirs.
-    val sys = LocalDensity.current
-    CompositionLocalProvider(LocalDensity provides if (sys.fontScale <= NAV_MAX_FONT_SCALE) sys else Density(sys.density, NAV_MAX_FONT_SCALE)) {
-        NavCard(u, chips)
-    }
+    // T122 capped the card's font scale at 1.5 (at 2.0 the card with the off-route banner covered the whole screen). T212
+    // (the research `cards-at-large-font-scales`: a capped font scale fails WCAG 1.4.4) lifts that cap, departing from
+    // T122's choice: the card is drawn at the user's scale, its height capped at the measured band ([navCardCap]) with the
+    // header (the next turn, the off-route banner) and the camera actions in view and the other lines scrolling between.
+    NavCard(u, chips)
 }
 
-/** T122: the font scale the navigation card follows at most (the map chips stop at 1.3, `TopChips.MAX_FONT_SCALE`). */
-const val NAV_MAX_FONT_SCALE = 1.5f
+/**
+ * T212: the navigation card's (and the free-tracking card's) height cap, dp: from its top (under the status bar and the
+ * top chip row) down to the bottom chrome (the credit line, the track panels, the trip card and the update offer, as the
+ * scale bar reads them), less what stacks under the card: on the left the online indicator and the scale bar's line
+ * ([BottomPanels.mapRowDp]), on the right the chips that follow the card (Waypoint, Tracks, Routes; measured from the
+ * card's bottom to the lowest of them). Measured, never a fixed height; [NavCardBand] reports the parts.
+ */
+@Composable
+private fun navCardCap(maxHeight: Dp, top: Dp): Dp {
+    val density = LocalDensity.current
+    val chips = io.github.jasondorjeshort.dystopo.app.TopChips
+    val panels = io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
+    val shownPanels = if (panels.trackPanelsTop > panels.trackPanelsBottom) panels.trackPanelsTop else 0.dp
+    val floor = maxOf(io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom, shownPanels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop)
+    val bottomPad = if (floor > 0.dp) floor + 6.dp else with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + 32.dp
+    val online = io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChips?.let { with(density) { (it[3] - it[1]).toDp() } } ?: 0.dp
+    val left = 6.dp + online + panels.mapRowDp(density)
+    val lowestRight = maxOf(chips.routesChipBottom, chips.trackColumnBottom)
+    val right = if (chips.navCardBottom > 0.dp && lowestRight > chips.navCardBottom) lowestRight - chips.navCardBottom + 8.dp else 0.dp
+    val bands = io.github.jasondorjeshort.dystopo.app.routing.CardBands
+    val measured = bands.navBand(maxHeight.value, top.value, bottomPad.value, left.value, right.value)
+    // The least the card keeps (landscape at font scale 2.0 leaves no band at all under it): its header, actions and two
+    // lines, within the window down to the bottom chrome; the chips that follow it then move down with it.
+    val l = NavCardBand.layout
+    val least = with(density) { (l.headerPx + l.footerPx).toDp() + 36.sp.toDp() } + 4.dp * 2 + 20.dp
+    val band = bands.atLeast(measured, least.value, (maxHeight - top - bottomPad).value).dp
+    SideEffect {
+        NavCardBand.measuredBandDp = measured
+        NavCardBand.bandDp = band.value; NavCardBand.belowLeftDp = left.value; NavCardBand.belowRightDp = right.value; NavCardBand.bottomPadDp = bottomPad.value
+        NavCardBand.fontScale = density.fontScale
+    }
+    return band
+}
+
+/**
+ * T212: the navigation card's band as last computed ([navCardCap]) and the font scale it was drawn at (the system's,
+ * since T122's 1.5 cap is lifted), with its [layout] (header, scrolling lines, actions); `GET /nav` `layout.navCard`.
+ */
+internal object NavCardBand {
+    @Volatile var bandDp = 0f
+    @Volatile var measuredBandDp = 0f
+    @Volatile var topDp = 0f
+    @Volatile var searchBottomDp = 0f
+    @Volatile var belowLeftDp = 0f
+    @Volatile var belowRightDp = 0f
+    @Volatile var bottomPadDp = 0f
+    @Volatile var fontScale = 1f
+    val layout = io.github.jasondorjeshort.dystopo.app.routing.CardLayout()
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "fontScale" to fontScale, "bandDp" to bandDp, "measuredBandDp" to measuredBandDp,
+        // T212: the card's top and the search column's bottom it stays under (dp from the window top).
+        "topDp" to topDp, "searchBottomDp" to searchBottomDp, "clearOfSearch" to (searchBottomDp <= 0f || topDp >= searchBottomDp - 0.5f), "belowLeftDp" to belowLeftDp, "belowRightDp" to belowRightDp,
+        "bottomPadDp" to bottomPadDp,
+    ) + layout.json()
+}
+
+/** T212: `GET /nav` `layout.navCard` (also while the free-tracking card shows in its place). */
+fun navCardJson(): Map<String, Any?> = NavCardBand.json()
+
+/** T212: the content description of the navigation card's scrolling lines. */
+internal const val NAV_DETAILS = "Navigation details"
+
+private val PaperOpaque = Color(0xFFFFFCF5)
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
     androidx.compose.runtime.DisposableEffect(Unit) { chips.navCardShown(); onDispose { } } // T146: the draw check counts from here (before the first draw)
-    Box(Modifier.fillMaxSize()) {
-        Column(
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val statusBar = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
+        val padV = 10.dp
+        val topPad = navCardTop(statusBar)
+        val cap = navCardCap(maxHeight, statusBar + topPad)
+        io.github.jasondorjeshort.dystopo.app.routing.CappedCard(
+            cap = (cap - padV * 2).coerceAtLeast(0.dp), layout = NavCardBand.layout, scroll = scroll, description = NAV_DETAILS,
+            paper = PaperOpaque, spacing = 4.dp,
             // Below the top chip row (search, Settings, Packs), which stays usable while navigating; T65: the Tracks
             // and Routes chips move below this card (TopChips), so they stay reachable.
-            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 60.dp)
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = topPad)
                 .widthIn(max = 520.dp).fillMaxWidth()
                 .navCardEdge() // T146: the chips below it move in the same layout pass (TopChips.followNavCard)
                 .onGloballyPositioned { c ->
@@ -116,129 +180,157 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
                     c.boundsInRoot().let { b -> chips.navCardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } // T137: `GET /nav` `layout.navCardPx`
                 }
                 .drawWithContent { drawContent(); chips.navCardDrawn(density.density) } // T146: `GET /nav` `layout.drawCheck`
-                .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                // T128: the header's height as laid out (`GET /nav` `layout.navHeaderDp`), 48 dp at 1.0 before the flat help icon
-                modifier = Modifier.onGloballyPositioned { c -> chips.navHeaderDp = c.size.height / density.density },
-            ) {
-                BasicText(
-                    if (u.arrived) "Arrived" else "Navigating",
-                    style = TextStyle(color = Purple, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-                )
-                BasicText(
-                    "  " + u.name, maxLines = 1,
-                    style = TextStyle(color = Ink, fontSize = 13.sp),
-                    modifier = Modifier.weight(1f),
-                )
-                u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
-                // T137: mute this navigation's spoken directions (the setting stays on); hidden while speech is off or the
-                // engine cannot speak (the notice below says why).
-                val speech = NavSpeech.ui
-                if (io.github.jasondorjeshort.dystopo.app.AppSettings.navSpeech && speech.failure == null) SpeakerButton(speech.muted)
-                else SideEffect { SpeakerLayout.boundsPx = null }
-                HelpIcon("nav.card", flat = true) // T122: what the card shows; T128: flat, so the header is its text's height
-            }
-            // T137: once per navigation, when the phone cannot say the directions (no engine, or no voice for them).
-            NavSpeech.ui.notice?.let { text ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics(mergeDescendants = true) {}) {
-                    BasicText(text, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 14.sp, fontWeight = FontWeight.Bold))
-                    Spacer(Modifier.size(8.dp))
-                    Action("Dismiss") { NavSpeech.dismissNotice() }
-                }
-            }
-            if (u.waiting) {
-                BasicText("Waiting for a location fix", style = TextStyle(color = Ink, fontSize = 18.sp))
-            }
-            // T65: an old position says so (the numbers below are as of the last fix).
-            u.fixAge?.let {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    BasicText(it, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-                    // T128: not flat: its target would overlap the header icon's and take taps on that icon's lower part
-                    HelpIcon("nav.fixLost") // T122: why the fix is lost and what the card does meanwhile
-                }
-            }
-            u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102
-            if (u.next != null && u.nextDistance != null) {
-                Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
-            }
-            Stat("End", null, u.endDistance, u.endTime + if (u.endClock.isNotEmpty()) "  (${u.endClock})" else "")
-            u.shade?.let { ShadeNext(it) } // T194: above the turn-back block, whose label grows when the terrain sunset lands
-            u.turnBack?.let { TurnBack(it, u.turnBackLabel, u.turnBackColour) } // T163
-            if (u.headingBack && !u.arrived) HeadingBack() // T180
-            u.water?.let { WaterNext(it) } // T187
-            if (u.rejoin != null) {
+                .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = padV),
+            header = {
                 Row(
-                    Modifier.fillMaxWidth().background(if (u.offRoute) Alert else Color(0xFFFDAE61), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    // T128: the header's height as laid out (`GET /nav` `layout.navHeaderDp`), 48 dp at 1.0 before the flat help icon
+                    modifier = Modifier.onGloballyPositioned { c -> chips.navHeaderDp = c.size.height / density.density },
                 ) {
-                    u.rejoinArrowDeg?.let { Arrow(it) }
-                    Spacer(Modifier.size(8.dp))
-                    Column(Modifier.weight(1f)) {
+                    // T212: the route's name goes under "Navigating" when the row has no room for it, wrapping rather than
+                    // being cut at one line.
+                    FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         BasicText(
-                            if (u.offRoute) "OFF ROUTE" else "Leaving the route",
-                            style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                            if (u.arrived) "Arrived" else "Navigating",
+                            style = TextStyle(color = Purple, fontSize = 13.sp, fontWeight = FontWeight.Bold),
                         )
-                        BasicText(u.rejoin, style = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold))
-                        // T65: silence the alert for a while, or until back on the route.
-                        if (u.offRoute && u.snoozed == null) {
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) { // T122: each action whole, wrapping
-                                Action("Snooze ${io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin} min", Color.White) { NavSession.snooze(io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin.toDouble()) } // T91: a setting
-                                Action("Quiet until back", Color.White) { NavSession.snooze(null) }
+                        BasicText(u.name, style = TextStyle(color = Ink, fontSize = 13.sp))
+                    }
+                    u.heading?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)) }
+                    // T137: mute this navigation's spoken directions (the setting stays on); hidden while speech is off or the
+                    // engine cannot speak (the notice below says why).
+                    val speech = NavSpeech.ui
+                    if (io.github.jasondorjeshort.dystopo.app.AppSettings.navSpeech && speech.failure == null) SpeakerButton(speech.muted)
+                    else SideEffect { SpeakerLayout.boundsPx = null }
+                    HelpIcon("nav.card", flat = true) // T122: what the card shows; T128: flat, so the header is its text's height
+                }
+                // T212: the off-route banner is the primary line while it shows: in the header, above the turn.
+                if (u.rejoin != null) {
+                    Row(
+                        Modifier.fillMaxWidth().background(if (u.offRoute) Alert else Color(0xFFFDAE61), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        u.rejoinArrowDeg?.let { Arrow(it) }
+                        Spacer(Modifier.size(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            BasicText(
+                                if (u.offRoute) "OFF ROUTE" else "Leaving the route",
+                                style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                            )
+                            BasicText(u.rejoin, style = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold))
+                            // T65: silence the alert for a while, or until back on the route.
+                            if (u.offRoute && u.snoozed == null) {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) { // T122: each action whole, wrapping
+                                    Action("Snooze ${io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin} min", Color.White) { NavSession.snooze(io.github.jasondorjeshort.dystopo.app.AppSettings.navSnoozeMin.toDouble()) } // T91: a setting
+                                    Action("Quiet until back", Color.White) { NavSession.snooze(null) }
+                                }
                             }
                         }
+                        HelpIcon("nav.offRoute") // T122: what the banner means and what Snooze does
                     }
-                    HelpIcon("nav.offRoute") // T122: what the banner means and what Snooze does
                 }
-            }
-            u.snoozed?.let { text ->
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText(text, style = TextStyle(color = Ink, fontSize = 13.sp))
-                    Action("Unsnooze") { NavSession.snooze(null, off = true) }
+                u.turn?.let { Turn(it, u.turnDistance, u.turnDeg, u.turnType, u.turnSoon) } // T102
+            },
+            body = {
+                // T137: once per navigation, when the phone cannot say the directions (no engine, or no voice for them).
+                NavSpeech.ui.notice?.let { text ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics(mergeDescendants = true) {}) {
+                        BasicText(text, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                        Spacer(Modifier.size(8.dp))
+                        Action("Dismiss") { NavSpeech.dismissNotice() }
+                    }
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                // T100: the app's one orientation state, as the recentre button shows it: Recenter when the camera
-                // is off the fix (the orientation stays), else the change of orientation (from north-up to heading
-                // up; from heading up or free rotate to north-up).
-                val o = io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.state
-                when {
-                    !o.following -> Action("Recenter") { io.github.jasondorjeshort.dystopo.app.controls.Recenter.tap(source = "navCard") }
-                    o.orientation == Orientation.NORTH_UP -> Action("Heading up") { MapOrientation.set(Orientation.FACING, "navCard") }
-                    else -> Action("North up") { MapOrientation.set(Orientation.NORTH_UP, "navCard") }
+                if (u.waiting) {
+                    BasicText("Waiting for a location fix", style = TextStyle(color = Ink, fontSize = 18.sp))
                 }
-                Action("Stop", Alert) { NavSession.stop() }
-            }
-        }
+                // T65: an old position says so (the numbers below are as of the last fix).
+                u.fixAge?.let {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BasicText(it, Modifier.weight(1f), style = TextStyle(color = Alert, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                        // T128: not flat: its target would overlap the header icon's and take taps on that icon's lower part
+                        HelpIcon("nav.fixLost") // T122: why the fix is lost and what the card does meanwhile
+                    }
+                }
+                if (u.next != null && u.nextDistance != null) {
+                    Stat("Next", u.next, u.nextDistance, u.nextTime ?: "")
+                }
+                Stat("End", null, u.endDistance, u.endTime + if (u.endClock.isNotEmpty()) "  (${u.endClock})" else "")
+                u.shade?.let { ShadeNext(it) } // T194: above the turn-back block, whose label grows when the terrain sunset lands
+                u.turnBack?.let { TurnBack(it, u.turnBackLabel, u.turnBackColour) } // T163
+                if (u.headingBack && !u.arrived) HeadingBack() // T180
+                u.water?.let { WaterNext(it) } // T187
+                u.snoozed?.let { text ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        BasicText(text, style = TextStyle(color = Ink, fontSize = 13.sp))
+                        Action("Unsnooze") { NavSession.snooze(null, off = true) }
+                    }
+                }
+            },
+            footer = {
+                Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // T100: the app's one orientation state, as the recentre button shows it: Recenter when the camera
+                    // is off the fix (the orientation stays), else the change of orientation (from north-up to heading
+                    // up; from heading up or free rotate to north-up).
+                    val o = io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.state
+                    when {
+                        !o.following -> Action("Recenter") { io.github.jasondorjeshort.dystopo.app.controls.Recenter.tap(source = "navCard") }
+                        o.orientation == Orientation.NORTH_UP -> Action("Heading up") { MapOrientation.set(Orientation.FACING, "navCard") }
+                        else -> Action("North up") { MapOrientation.set(Orientation.NORTH_UP, "navCard") }
+                    }
+                    Action("Stop", Alert) { NavSession.stop() }
+                }
+            },
+        )
     }
+}
+
+/** The navigation card's top under the status bar: below the top chip row (search, Settings, Packs). */
+private val NAV_CARD_TOP = 60.dp
+
+/**
+ * T212 (the verifier's note): the card's top under the status bar: [NAV_CARD_TOP], or lower when the search box above it
+ * wraps to two lines (display size largest at font scale 2.0, where the card at the user's scale reached 35 px over it):
+ * 6 dp under the search column's measured bottom (`TopChips.searchBottom`, from the window top).
+ */
+private fun navCardTop(statusBar: Dp): Dp {
+    val search = io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom
+    val top = if (search > 0.dp) maxOf(NAV_CARD_TOP, search + 6.dp - statusBar) else NAV_CARD_TOP
+    NavCardBand.topDp = (statusBar + top).value
+    NavCardBand.searchBottomDp = search.value
+    return top
 }
 
 /**
  * T180: the free-tracking turn-around clock in the navigation card's place, while a track records and no route is
  * navigated: the clock's line and its label in [TurnBack]'s colours, and "Heading back" once the direction flips. The
- * chips below move under it as under the navigation card ([TopChips]); `GET /nav/turnaround` `ui` and `layout`.
+ * chips below move under it as under the navigation card ([TopChips]); `GET /nav/turnaround` `ui` and `layout`. T212: at
+ * the user's font scale (T122's 1.5 cap lifted), capped at the navigation card's band, "Heading back" scrolling under the clock.
  */
 @Composable
 private fun WayBackCard(w: WayBackClock.Ui, chips: io.github.jasondorjeshort.dystopo.app.TopChips) {
     val density = LocalDensity.current
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = 60.dp)
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val statusBar = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
+        val padV = 8.dp
+        val topPad = navCardTop(statusBar)
+        val cap = navCardCap(maxHeight, statusBar + topPad)
+        io.github.jasondorjeshort.dystopo.app.routing.CappedCard(
+            cap = (cap - padV * 2).coerceAtLeast(0.dp), layout = NavCardBand.layout, scroll = scroll, description = NAV_DETAILS,
+            paper = PaperOpaque, spacing = 4.dp,
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = topPad)
                 .widthIn(max = 520.dp).fillMaxWidth()
                 .navCardEdge()
                 .onGloballyPositioned { c ->
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> floatArrayOf(b.left, b.top, b.right, b.bottom).let { px -> chips.navCardPx = px; WayBackLayout.boundsPx = px } }
                 }
-                .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            TurnBack(w.text, w.label, w.colour)
-            if (w.headingBack) HeadingBack()
-        }
+                .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = padV),
+            header = { TurnBack(w.text, w.label, w.colour) },
+            body = { if (w.headingBack) HeadingBack() },
+            footer = {},
+        )
     }
 }
 
@@ -248,22 +340,22 @@ internal object WayBackLayout {
 }
 
 /**
- * T187: the next water ahead ("Water in 1.2 km: Stream, likely flowing"), one line cut with an ellipsis, so the card
- * grows by one short line at most (the clearance of T176's and T177's scenario).
+ * T187: the next water ahead ("Water in 1.2 km: stream, likely flowing"), one line at font scale 1.0. T212: it wraps
+ * rather than being cut with an ellipsis (the card's lines scroll at large font scales, so nothing is lost).
  */
 @Composable
 private fun WaterNext(text: String) {
-    BasicText(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Color(0xFF1F78B4), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+    BasicText(text, style = TextStyle(color = Color(0xFF1F78B4), fontSize = 14.sp, fontWeight = FontWeight.Bold))
 }
 
 /**
- * T194: the next terrain shade along the line ("Terrain shade in 400 m for 10 min"), one line cut with an ellipsis in the
- * shade overlay's blue, under the end and above the turn-back block (whose label can run to three lines at font scale
- * 2.0 and changes when the terrain sunset lands), so the card grows by one short line and the line never moves then.
+ * T194: the next terrain shade along the line ("Terrain shade in 400 m for 10 min") in the shade overlay's blue, under the
+ * end and above the turn-back block (whose label can run to three lines at font scale 2.0 and changes when the terrain
+ * sunset lands), so the line never moves then. T212: it wraps rather than being cut with an ellipsis.
  */
 @Composable
 private fun ShadeNext(text: String) {
-    BasicText(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Color(0xFF1E3A6E), fontSize = 14.sp, fontWeight = FontWeight.Bold))
+    BasicText(text, style = TextStyle(color = Color(0xFF1E3A6E), fontSize = 14.sp, fontWeight = FontWeight.Bold))
 }
 
 /** T180: the direction flipped to the way back (the notice the survey's users ask for). */
@@ -324,13 +416,10 @@ internal object SpeakerLayout {
     @Volatile var boundsPx: FloatArray? = null
 }
 
-/** T122: the turn text's line cap, and the smallest size (sp) it steps down to before it takes the last line or is cut. */
-private const val TURN_MAX_LINES = 3
-private const val TURN_MIN_SP = 13
-
 /**
  * T122: how the turn text was last laid out on the card (`GET /nav` `ui.turnLayout`): its lines, whether it was cut and
  * the size it was drawn at (sp, before the font scale), so a check at font scale 2.0 needs no screenshot to say it is whole.
+ * T212: always 18 sp now and never cut (it no longer steps down to 13 sp nor stops at three lines).
  */
 internal object TurnText {
     @Volatile var last: Map<String, Any?>? = null
@@ -381,7 +470,7 @@ private fun Stat(label: String, name: String?, distance: String, time: String) {
         BasicText(distance, softWrap = false, style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold))
         if (time.isNotBlank()) BasicText(time.trim(), softWrap = false, style = TextStyle(color = Ink, fontSize = 22.sp), modifier = Modifier.padding(bottom = 1.dp))
         if (name != null) {
-            BasicText(name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
+            BasicText(name, style = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.padding(bottom = 3.dp))
         }
     }
 }
@@ -427,11 +516,11 @@ private fun Turn(text: String, distance: String?, turnDeg: Int?, type: String?, 
         Column(Modifier.weight(1f)) {
             distance?.let { BasicText(it, style = TextStyle(color = ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)) }
             // T122: a cued text ("Head northeast, then bear left", T116) at font scale 2.0 ran past the two lines the card
-            // allowed and lost its end; the text now steps down to fit, and takes a third line before it is ever cut.
+            // allowed and lost its end. T212: the text keeps the user's size and takes the lines it needs (T122 stepped it
+            // down to 13 sp and cut it past three lines; the card's lines now scroll instead, so nothing shrinks or is cut).
             BasicText(
-                text, maxLines = TURN_MAX_LINES, overflow = TextOverflow.Ellipsis,
+                text,
                 style = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Bold),
-                autoSize = TextAutoSize.StepBased(minFontSize = TURN_MIN_SP.sp, maxFontSize = 18.sp, stepSize = 1.sp),
                 onTextLayout = { r -> TurnText.measured(text, r.lineCount, r.hasVisualOverflow, r.layoutInput.style.fontSize.value) },
             )
         }

@@ -31,8 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -76,18 +79,266 @@ object BottomPanels {
     @Volatile var routeCardScrollMaxPx = 0
     @Volatile var routeCardScrollPx = 0
 
+    /**
+     * T212: the free band the card had (dp: from under the top chips to its bottom gap), the scale bar's line it leaves
+     * above itself on the left ([mapRowDp]: the bar and the readout strip's elevation) and whether that line was kept
+     * (false when keeping it would leave the card less than its header, actions and two body lines). The card's parts are
+     * in [routeCard].
+     */
+    @Volatile var routeCardBandDp = 0f
+    @Volatile var mapRowReservedDp = 0f
+    @Volatile var mapRowKept = true
+
+    /** T212: the pressure warning's card's bottom edge (dp from the window top) the card stayed under; 0 with none. */
+    @Volatile var warningCardBottomDp = 0f
+
+    /**
+     * T212 (the verifier's note): the planning card's least while the pressure warning's card shows above it: one
+     * scrolling 13 sp line pair (the card goes all one scroll) and its padding. The warning card leaves this much and the
+     * scale bar's plate ([barRowDp]) above the bottom gap.
+     */
+    fun warnedLeastDp(density: androidx.compose.ui.unit.Density): Dp = with(density) { 36.sp.toDp() } + 20.dp
+
+    /** T212: the scale bar's plate alone with its gaps (under a card above, over a card below), at the font scale. */
+    fun barRowDp(density: androidx.compose.ui.unit.Density): Dp = with(density) {
+        val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
+        6.dp + 6.dp + 12.sp.toDp() * LINE * (if (both) 2 else 1) + (if (both) 14.dp else 8.dp) + 8.dp
+    }
+    internal val routeCard = CardLayout()
+
+    /**
+     * T212: the height the scale bar's line takes on the left of the map above a bottom card (or under a top card): the
+     * gap under the card above it, the bar's plate (its label lines and ruler) and, with the readout bar on, the strip's
+     * elevation entry alone above the bar (caption, value and, with both unit systems, the other system's line) with the
+     * gap between them, and the gap the bar keeps under the top-left column; at the font scale of [density] (sp sizes
+     * as `controls/ScaleBar.kt` and `readout/ReadoutStrip.kt` draw them, so it follows the system's font scale curve).
+     */
+    fun mapRowDp(density: androidx.compose.ui.unit.Density): Dp = with(density) {
+        val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
+        val bar = 6.dp + 12.sp.toDp() * LINE * (if (both) 2 else 1) + (if (both) 14.dp else 8.dp)
+        val strip = if (!io.github.jasondorjeshort.dystopo.app.AppSettings.readoutBar) 0.dp
+        else 6.dp + 6.dp + (10.sp.toDp() + (if (both) 11.sp.toDp() else 0.dp)) * LINE + 15.sp.toDp() * VALUE_LINE
+        6.dp + bar + strip + 8.dp
+    }
+
+    /** T212: a text line's height for its size (the platform font's ascent and descent, rounded up). */
+    private const val LINE = 1.2f
+
+    /**
+     * T212: the strip's value row's height for its 15 sp type: the value with its unit, its interval and the trend arrow,
+     * whose glyph comes from a taller fallback font (the entry's plate measured 72.6 dp at font scale 2.0, display size
+     * largest, for a 20 dp caption and 27 dp value).
+     */
+    private const val VALUE_LINE = 1.6f
+
+    /** T212: the bottom edge of the top-left column (the search box, the online indicator), dp from the window top. */
+    fun topLeftBottom(density: androidx.compose.ui.unit.Density): Dp = with(density) {
+        maxOf(io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom, io.github.jasondorjeshort.dystopo.app.TopChips.onlineBottomPx.toDp())
+    }
+
     fun json(): Map<String, Any?> = linkedMapOf(
         "creditTopDp" to AttributionInsets.bottom.value, "routeCardTopDp" to routeCardTop.value,
         // T192: the card stays under the top chips at any font scale: capped, its upper part scrolling, the actions in view.
         "routeCardCapDp" to routeCardCapDp, "topChipsBottomDp" to routeCardChipsBottomDp,
         "routeCardTopFromWindowTopDp" to routeCardTopFromWindowTopDp,
         "routeCardClearOfTopChips" to (routeCardTop <= 0.dp || routeCardTopFromWindowTopDp >= routeCardChipsBottomDp - 0.5f),
+        // T212: and of the pressure warning's card while it shows (the warning above, the two sharing the band).
+        "warningCardBottomDp" to warningCardBottomDp,
+        "routeCardClearOfWarningCard" to (routeCardTop <= 0.dp || warningCardBottomDp <= 0f || routeCardTopFromWindowTopDp >= warningCardBottomDp - 0.5f),
         "routeCardScrollMaxPx" to routeCardScrollMaxPx, "routeCardScrollPx" to routeCardScrollPx,
+        // T212: the band, the scale bar's line left above the card, and the card's fixed header, scrolling body and actions.
+        "routeCardBandDp" to routeCardBandDp, "mapRowReservedDp" to mapRowReservedDp, "mapRowKept" to mapRowKept,
+        "routeCard" to routeCard.json(),
         "trackPanelsBottomDp" to trackPanelsBottom.value, "trackPanelsTopDp" to trackPanelsTop.value,
         // The panels overlap the card when their bottom edge is below the card's top edge (and both show).
         "overlap" to (routeCardTop > 0.dp && trackPanelsTop > trackPanelsBottom && trackPanelsBottom < routeCardTop),
     )
 }
+
+/**
+ * T212: how a card capped by [CappedCard] was last laid out, for the debug routes: the cap (dp), its fixed header's and
+ * actions' natural heights (px), its [mode] ([CardBands.mode]; `compact` is any mode but `fixed`), the scrolling
+ * region's bounds in the window (px) and its scroll.
+ */
+internal class CardLayout {
+    var headerPx by mutableStateOf(0)
+    var footerPx by mutableStateOf(0)
+    @Volatile var shown = false
+    @Volatile var mode = CardBands.FIXED
+    @Volatile var capDp = 0f
+    @Volatile var density = 1f
+    @Volatile var bodyPx: FloatArray? = null
+    @Volatile var scrollPx = 0
+    @Volatile var scrollMaxPx = 0
+    @Volatile var description: String? = null
+
+    fun hidden() {
+        shown = false; bodyPx = null; scrollPx = 0; scrollMaxPx = 0; description = null
+    }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "shown" to shown, "capDp" to capDp, "mode" to mode, "compact" to (mode != CardBands.FIXED),
+        "headerDp" to Math.round(headerPx / density * 10) / 10.0, "actionsDp" to Math.round(footerPx / density * 10) / 10.0,
+        "bodyPx" to bodyPx?.takeIf { shown }?.map { Math.round(it) },
+        "scrollPx" to scrollPx, "scrollMaxPx" to scrollMaxPx, "scrolls" to (scrollMaxPx > 0), "description" to description,
+    )
+}
+
+/**
+ * T212 (the research `cards-at-large-font-scales`: WCAG 1.4.4 and 1.4.10, nothing clipped or dropped at 200 percent,
+ * scrolling in one dimension): a card at most [cap] tall whose [header] (the primary line) and [footer] (the actions)
+ * stay in view while the [body] between them scrolls, with a thumb at its right edge and a fade where more lies above or
+ * below, and [description] as the scroll region's content description (", scroll for more" added while it scrolls).
+ * When the header and the actions would leave the body less than two lines (landscape at font scale 2.0), the header
+ * scrolls with the body above the actions, and when even the actions leave less than that, all three are one scroll
+ * ([CardBands.mode]), so nothing is ever cut. With [pinned] the header and the actions always stay (the warning card,
+ * whose caller makes the cap at least their height). Type is never shrunk: the user's scale stands.
+ */
+@Composable
+internal fun CappedCard(
+    cap: Dp, layout: CardLayout, scroll: androidx.compose.foundation.ScrollState, description: String, paper: Color,
+    spacing: Dp, modifier: Modifier, pinned: Boolean = false,
+    header: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+    body: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+    footer: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    val mode = if (pinned) CardBands.FIXED else with(density) { CardBands.mode(layout.headerPx, layout.footerPx, MIN_BODY.toPx(), spacing.toPx(), cap.toPx()) }
+    val desc = if (scroll.maxValue in 1 until Int.MAX_VALUE) "$description, scroll for more" else description
+    SideEffect {
+        layout.shown = true; layout.mode = mode; layout.capDp = cap.value; layout.density = density.density; layout.description = desc
+    }
+    DisposableEffect(layout) { onDispose { layout.hidden() } }
+    LaunchedEffect(scroll) {
+        androidx.compose.runtime.snapshotFlow { scroll.value to scroll.maxValue }.collect { (v, m) -> layout.scrollPx = v; layout.scrollMaxPx = m }
+    }
+    val region = Modifier
+        .onGloballyPositioned { c -> layout.bodyPx = c.boundsInRoot().let { floatArrayOf(it.left, it.top, it.right, it.bottom) } }
+        .semantics { contentDescription = desc }
+        .fadeEdges(scroll, paper).scrollbar(scroll).verticalScroll(scroll)
+    val measuredHeader = Modifier.onSizeChanged { if (it.height != layout.headerPx) layout.headerPx = it.height }
+    val measuredFooter = Modifier.onSizeChanged { if (it.height != layout.footerPx) layout.footerPx = it.height }
+    if (mode == CardBands.FIXED) {
+        // The header and the actions at their whole height (a wrapping row of actions is never clipped to the room left,
+        // as a Column's later children are), the body given what remains of the cap.
+        androidx.compose.ui.layout.Layout(
+            content = {
+                Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
+                Column(region, verticalArrangement = Arrangement.spacedBy(spacing), content = body)
+                Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
+            },
+            modifier = modifier,
+        ) { ms, c ->
+            val loose = androidx.compose.ui.unit.Constraints(maxWidth = c.maxWidth)
+            val gap = spacing.roundToPx()
+            val h = ms[0].measure(loose)
+            val f = ms[2].measure(loose)
+            val b = ms[1].measure(loose.copy(maxHeight = (cap.roundToPx() - h.height - f.height - gap * 2).coerceAtLeast(0)))
+            val width = maxOf(h.width, b.width, f.width).coerceIn(c.minWidth, c.maxWidth)
+            val height = (h.height + gap + b.height + gap + f.height).coerceIn(c.minHeight, c.maxHeight)
+            layout(width, height) {
+                h.place(0, 0)
+                b.place(0, h.height + gap)
+                f.place(0, h.height + gap + b.height + gap)
+            }
+        }
+        return
+    }
+    Column(modifier.heightIn(max = cap), verticalArrangement = Arrangement.spacedBy(spacing)) {
+        when (mode) {
+            CardBands.HEADER_SCROLLS -> {
+                Column(Modifier.weight(1f, fill = false).then(region), verticalArrangement = Arrangement.spacedBy(spacing)) {
+                    Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
+                    body()
+                }
+                Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
+            }
+            else -> Column(Modifier.weight(1f, fill = false).then(region), verticalArrangement = Arrangement.spacedBy(spacing)) {
+                Column(measuredHeader, verticalArrangement = Arrangement.spacedBy(spacing), content = header)
+                body()
+                Column(measuredFooter, verticalArrangement = Arrangement.spacedBy(spacing), content = footer)
+            }
+        }
+    }
+}
+
+/**
+ * T212 (pure, `CardBandsTest`): the arithmetic of the cards' caps at large font scales, in dp unless named px. The
+ * composables measure the inputs (the window, the chips, the bottom chrome, the cards' own header and actions).
+ */
+internal object CardBands {
+    /**
+     * The planning card's cap: the free [band] less the scale bar's line [reserve] while what is left still holds [needs]
+     * (its header, actions and two body lines, with its padding); else the whole band, the line yielding. Second: kept.
+     */
+    fun planningCap(band: Float, reserve: Float, needs: Float): Pair<Float, Boolean> =
+        if (band - reserve >= needs) (band - reserve) to true else band to false
+
+    /** A cap of at least [least] (the card's own minimum, measured), but never past [room] (the whole window's height for it). */
+    fun atLeast(cap: Float, least: Float, room: Float): Float = maxOf(cap, minOf(least, room)).coerceAtLeast(0f)
+
+    /** [mode]: the header and the actions fixed, the body scrolling between them. */
+    const val FIXED = "fixed"
+
+    /** [mode]: the header scrolls with the body, the actions fixed under them. */
+    const val HEADER_SCROLLS = "headerScrolls"
+
+    /** [mode]: the header, the body and the actions are one scroll. */
+    const val ALL_SCROLLS = "allScrolls"
+
+    /**
+     * How a card with a header and actions is laid out in its cap ([capPx]): [FIXED] while both leave the body at least
+     * [minBodyPx], else [HEADER_SCROLLS] while the actions alone do, else [ALL_SCROLLS].
+     */
+    fun mode(headerPx: Int, footerPx: Int, minBodyPx: Float, spacingPx: Float, capPx: Float): String = when {
+        headerPx + footerPx + minBodyPx + spacingPx * 2 <= capPx -> FIXED
+        footerPx + minBodyPx + spacingPx <= capPx -> HEADER_SCROLLS
+        else -> ALL_SCROLLS
+    }
+
+    /** The navigation card's band: from its [top] down to the bottom chrome's pad, less the taller stack under the card. */
+    fun navBand(maxHeight: Float, top: Float, bottomPad: Float, belowLeft: Float, belowRight: Float): Float =
+        (maxHeight - top - bottomPad - maxOf(belowLeft, belowRight)).coerceAtLeast(0f)
+
+    /**
+     * The warning card's top: [chromeTop] (under the top chrome), or under the [compass] (left, top, right, bottom) when
+     * it reaches into the card's band (across [cardLeft] to [cardRight], down to [bottomLimit]) below that top.
+     */
+    fun warningTop(chromeTop: Float, compass: FloatArray?, cardLeft: Float, cardRight: Float, bottomLimit: Float, gap: Float = 8f): Float {
+        val c = compass ?: return chromeTop
+        val inBand = c[0] < cardRight && c[2] > cardLeft && c[3] > chromeTop && c[1] < bottomLimit
+        return if (inBand) c[3] + gap else chromeTop
+    }
+
+    /** Whether the whole warning card fits its [room]: null before its [detail] was measured (it is drawn whole first). */
+    fun warningFits(detail: Float?, header: Float, actions: Float, chrome: Float, room: Float): Boolean? =
+        detail?.let { header + it + actions + chrome <= room }
+}
+
+/** T212: the least body a [CappedCard] keeps between its header and actions before it goes compact: two 13 sp lines. */
+private val MIN_BODY = 36.sp
+
+/**
+ * T212: the scroll's visible cue besides [scrollbar]'s thumb: the region's edge fades into the card's [paper] where more
+ * content lies beyond it (the bottom while it can scroll down, the top once scrolled). Before `verticalScroll`.
+ */
+internal fun Modifier.fadeEdges(state: androidx.compose.foundation.ScrollState, paper: Color): Modifier = drawWithContent {
+    drawContent()
+    val max = state.maxValue
+    if (max <= 0 || max == Int.MAX_VALUE) return@drawWithContent
+    val h = minOf(FADE.toPx(), size.height / 4)
+    val clear = paper.copy(alpha = 0f)
+    if (state.value < max) drawRect(
+        androidx.compose.ui.graphics.Brush.verticalGradient(listOf(clear, paper), startY = size.height - h, endY = size.height),
+        topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - h), size = androidx.compose.ui.geometry.Size(size.width, h),
+    )
+    if (state.value > 0) drawRect(
+        androidx.compose.ui.graphics.Brush.verticalGradient(listOf(paper, clear), startY = 0f, endY = h),
+        size = androidx.compose.ui.geometry.Size(size.width, h),
+    )
+}
+
+private val FADE = 18.dp
 
 /** Distance of [c]'s top (or bottom) edge from the bottom of the window. */
 fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Density, top: Boolean = true): Dp {
@@ -122,6 +373,10 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * T184: the time in the range form (the `timeEstimateForm` setting, default): the headline's time "about 4:30" and the
  * line under it "4:10 to 4:50, based on your last 5 hikes" ([PaceSettings.headline], [PaceSettings.secondLine]), or
  * "typical 4:30" without a range; under the water line, [PastEffortLine]: "You did this trail in 3:52, June".
+ *
+ * T212: a [CappedCard]: the title and the headline stay in view at the top and the actions at the bottom, everything else
+ * (the range line, From and To, the trails, directions, water, terrain, past effort, messages, the mode chips) scrolls
+ * between them, capped at the measured band that leaves the scale bar's line above the card ([BottomPanels.mapRowDp]).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -156,128 +411,185 @@ fun RouteControls() {
         SideEffect {
             if (BottomPanels.routeCardTop != 0.dp) BottomPanels.routeCardTop = 0.dp
             BottomPanels.routeCardTopFromWindowTopDp = 0f; BottomPanels.routeCardCapDp = 0f; BottomPanels.routeCardScrollMaxPx = 0; BottomPanels.routeCardScrollPx = 0 // T192
+            BottomPanels.routeCardBandDp = 0f; BottomPanels.mapRowReservedDp = 0f // T212
         }
         return
     }
+    // T212 (T187's follow-up): a setting changed outside the sheet (`POST /settings`, a sync) bumps no revision, so the card
+    // kept the old figures until its next update: while the card shows, the settings are compared each tick and a change
+    // recomposes everything that reads them (the card's lines, the water and terrain lines, the sheet).
+    LaunchedEffect(Unit) {
+        var last = runCatching { io.github.jasondorjeshort.dystopo.app.AppSettings.json() }.getOrNull()
+        while (true) {
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(SETTINGS_TICK_MS)
+            val now = runCatching { io.github.jasondorjeshort.dystopo.app.AppSettings.json() }.getOrNull()
+            if (now != last) {
+                last = now
+                io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++
+            }
+        }
+    }
+    @Suppress("UNUSED_VARIABLE") val settingsRev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // T212: the whole card recomposes
     val density = LocalDensity.current
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         // T192 (T184's follow-up): the card stays under the top chips (the search box, the online indicator, the Routes
-        // chip) at any font scale: its height is capped at the room between them and its bottom gap, the upper part
-        // (title to messages) scrolls, and the mode chips and actions stay in view under it.
+        // chip) at any font scale, its height capped at the room between them and its bottom gap. T212: the cap is that
+        // measured band less the scale bar's line on the left ([BottomPanels.mapRowDp]: the bar and the readout strip's
+        // elevation, which at font scale 2.0 had no room left above the card), unless that would leave the card less than
+        // its header, actions and two body lines; no fixed least height. The title and the headline (distance, climb,
+        // time) stay in view at the top, the actions at the bottom, and every other line scrolls between them.
         val b = AttributionInsets.bottom
         val navBar = with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() }
+        val statusBar = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
         val bottomGap = if (b > 0.dp) b + 6.dp else navBar + 28.dp
+        val warnBottom = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx?.let { with(density) { it.toDp() } } ?: 0.dp
         val chipsBottom = maxOf(
             maxOf(io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom, io.github.jasondorjeshort.dystopo.app.TopChips.routesChipBottom),
             with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineBottomPx.toDp() },
-            with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() },
+            statusBar,
+            warnBottom, // T212 (the verifier's note): the pressure warning's card above this one, the two sharing the band
         )
-        val cap = (maxHeight - bottomGap - chipsBottom - CARD_CHIPS_GAP).coerceAtLeast(CARD_MIN_CAP)
+        val band = (maxHeight - bottomGap - chipsBottom - CARD_CHIPS_GAP).coerceAtLeast(0.dp)
+        // The card's top must stay this far down for the scale bar's line to fit between it and the top-left column (or
+        // the warning's card).
+        val rowTop = maxOf(BottomPanels.topLeftBottom(density), statusBar, warnBottom) + BottomPanels.mapRowDp(density)
+        val reserve = (rowTop - (chipsBottom + CARD_CHIPS_GAP)).coerceAtLeast(0.dp)
+        val card = BottomPanels.routeCard
+        val padV = 10.dp
+        val needs = with(density) { (card.headerPx + card.footerPx).toDp() + 36.sp.toDp() } + 6.dp * 2 + padV * 2
+        val (capValue, keepRow) = CardBands.planningCap(band.value, reserve.value, needs.value)
+        // The least the card keeps, measured (T192's fixed 200 dp is gone): its actions and two lines, within the window
+        // under the status bar (landscape at font scale 2.0 leaves a band of about 50 dp under the chips; the card then
+        // reaches over the chips' lower edge rather than shrinking to one line, `routeCardClearOfTopChips` false).
+        // While the warning's card shows, the least is one scrolling line ([BottomPanels.warnedLeastDp], what the warning
+        // leaves it) and the card never reaches up over the warning.
+        val least = if (warnBottom > 0.dp) BottomPanels.warnedLeastDp(density) else with(density) { card.footerPx.toDp() + 36.sp.toDp() } + 6.dp + padV * 2
+        val roomTop = if (warnBottom > 0.dp) warnBottom + CARD_CHIPS_GAP else statusBar
+        val cap = CardBands.atLeast(capValue, least.value, (maxHeight - bottomGap - roomTop).coerceAtLeast(padV * 2).value).dp
         val upper = rememberScrollState()
         SideEffect {
             BottomPanels.routeCardCapDp = cap.value
             BottomPanels.routeCardChipsBottomDp = chipsBottom.value
+            BottomPanels.routeCardBandDp = band.value
+            BottomPanels.mapRowReservedDp = if (keepRow) reserve.value else 0f
+            BottomPanels.mapRowKept = keepRow
+            BottomPanels.warningCardBottomDp = warnBottom.value
         }
         LaunchedEffect(upper) {
             androidx.compose.runtime.snapshotFlow { upper.value to upper.maxValue }.collect { (v, m) -> BottomPanels.routeCardScrollPx = v; BottomPanels.routeCardScrollMaxPx = m }
         }
-        Column(
+        val plan = RouteSession.plan
+        CappedCard(
+            cap = (cap - padV * 2).coerceAtLeast(0.dp), layout = card, scroll = upper, description = ROUTE_DETAILS, paper = PaperOpaque, spacing = 6.dp,
             // T49: above the credit line (its measured top); the track panels stack above this card.
-            Modifier.align(Alignment.BottomCenter).let { m ->
+            modifier = Modifier.align(Alignment.BottomCenter).let { m ->
                 if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
             }
                 .widthIn(max = 420.dp)
-                .heightIn(max = cap)
                 .onGloballyPositioned { c ->
                     fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it }
                     BottomPanels.routeCardTopFromWindowTopDp = with(density) { c.positionInRoot().y.toDp().value }
                 }
-                .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          val plan = RouteSession.plan
-          Column(Modifier.weight(1f, fill = false).scrollbar(upper).verticalScroll(upper), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val title = when (phase) {
-                "start" -> "Route: start set"
-                "planning" -> "Route: planning"
-                "failed" -> "No route"
-                "waitingFix", "noLocation" -> "Route: waiting" // T114
-                "pickStart" -> "Route: choose the start"
-                else -> plan?.route?.name ?: "Route"
-            }
-            BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
-            Ends(phase) // T114: From and To
-            if (plan != null && phase == "route") {
-                @Suppress("UNUSED_VARIABLE") val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // T184: the form's row recomposes the card
-                // T184: "about 4:30" in the range form (PaceSettings.headline), the single number in the other.
-                BasicText(PaceSettings.headline(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-                // T164: whose pace the time is ("Based on your last 5 hikes", or the standard estimate); a refit when the tracks changed.
-                // T184: with a range, the range first ("4:10 to 4:50, based on your last 5 hikes").
-                PaceSettings.secondLine(plan)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
-                LaunchedEffect(plan) { PaceSettings.refitSoon(app, "route") }
-                // T108: a crow line's bearing (it follows no trail).
-                if (plan.mode == TravelMode.CROW) {
-                    val b = plan.route.points.let { io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) }
-                    BasicText("Bearing $b° (${io.github.jasondorjeshort.dystopo.routing.Directions.compass(b.toDouble())})", style = TextStyle(color = Ink, fontSize = 13.sp))
+                .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = padV),
+            header = {
+                val title = when (phase) {
+                    "start" -> "Route: start set"
+                    "planning" -> "Route: planning"
+                    "failed" -> "No route"
+                    "waitingFix", "noLocation" -> "Route: waiting" // T114
+                    "pickStart" -> "Route: choose the start"
+                    else -> plan?.route?.name ?: "Route"
                 }
-                // T49: the trails it follows, by name.
-                if (plan.via.isNotEmpty()) {
-                    BasicText(
-                        "via " + plan.via.take(4).joinToString(", ") { it.first } + if (plan.via.size > 4) ", ..." else "",
-                        style = TextStyle(color = Ink, fontSize = 13.sp), maxLines = 2,
-                    )
+                BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+                // T184: "about 4:30" in the range form (PaceSettings.headline), the single number in the other. T212: the
+                // card's primary line (distance, climb, time), kept in view above the scrolling lines.
+                if (plan != null && phase == "route") {
+                    BasicText(PaceSettings.headline(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
                 }
-                Directions(plan)
-                WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
-                ExposureLine(plan.route.points, plan.mode) // T195
-                BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
-                PastEffortLine(plan) // T184
-            }
-            if (phase == "planning") BuildProgress()
-            RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
-          }
-            // T73: the mode chips (hike, bike, drive; T108: crow) on a row of their own, so the actions keep room on a phone;
-            // T108: they wrap rather than squeeze at large font scales.
-            ModeChips {
-                for (m in TravelMode.entries) {
-                    val on = RouteSession.mode == m
-                    BasicText(
-                        m.label.replaceFirstChar { it.uppercase() },
-                        style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-                        modifier = Modifier.background(if (on) Ink else Color.Transparent, RoundedCornerShape(12.dp))
-                            .clickable { RouteSession.changeMode(m) }.padding(horizontal = 10.dp, vertical = 4.dp),
-                    )
+            },
+            body = {
+                if (plan != null && phase == "route") {
+                    // T164: whose pace the time is ("Based on your last 5 hikes", or the standard estimate); a refit when the tracks changed.
+                    // T184: with a range, the range first ("4:10 to 4:50, based on your last 5 hikes").
+                    PaceSettings.secondLine(plan)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+                    LaunchedEffect(plan) { PaceSettings.refitSoon(app, "route") }
                 }
-            }
-            if (RouteSession.mode == TravelMode.DRIVE) {
-                BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
-            }
-            if (RouteSession.mode == TravelMode.CROW) BasicText(TravelMode.CROW_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T108
-            // T114: the actions wrap (Turn on location and Try Crow join them), and Go comes first.
-            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (phase == "route") {
-                    Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
-                    Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
-                    Action("Save") { Thread { RouteSession.save() }.start() }
-                    Action("GPX") { Thread { RouteSession.exportGpx() }.start() }
+                Ends(phase) // T114: From and To
+                if (plan != null && phase == "route") {
+                    // T108: a crow line's bearing (it follows no trail).
+                    if (plan.mode == TravelMode.CROW) {
+                        val b = plan.route.points.let { io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) }
+                        BasicText("Bearing $b° (${io.github.jasondorjeshort.dystopo.routing.Directions.compass(b.toDouble())})", style = TextStyle(color = Ink, fontSize = 13.sp))
+                    }
+                    // T49: the trails it follows, by name. T212: whole, wrapping (it was cut at two lines).
+                    if (plan.via.isNotEmpty()) {
+                        BasicText(
+                            "via " + plan.via.take(4).joinToString(", ") { it.first } + if (plan.via.size > 4) ", ..." else "",
+                            style = TextStyle(color = Ink, fontSize = 13.sp),
+                        )
+                    }
+                    Directions(plan)
+                    WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
+                    ExposureLine(plan.route.points, plan.mode) // T195
+                    BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
+                    PastEffortLine(plan) // T184
                 }
-                if (phase == "noLocation") {
-                    Action(TURN_ON_LOCATION) {
-                        when (RouteSession.locationState()) {
-                            "noPermission" -> askLocation.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
-                            "off" -> runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
-                        }
+                if (phase == "planning") BuildProgress()
+                RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
+                // T73: the mode chips (hike, bike, drive; T108: crow) on a row of their own; T108: they wrap rather than
+                // squeeze at large font scales. T212: in the scrolling part, under the lines, so the actions keep their room.
+                ModeChips {
+                    for (m in TravelMode.entries) {
+                        val on = RouteSession.mode == m
+                        BasicText(
+                            m.label.replaceFirstChar { it.uppercase() },
+                            style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                            modifier = Modifier.background(if (on) Ink else Color.Transparent, RoundedCornerShape(12.dp))
+                                .clickable { RouteSession.changeMode(m) }.padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
                     }
                 }
-                // T114: no path between the two ends: the straight line (its notice shows under the chips once chosen).
-                if (phase == "failed" && RouteSession.failure != null && RouteSession.mode != TravelMode.CROW) {
-                    Action(TRY_CROW) { RouteSession.changeMode(TravelMode.CROW) }
+                if (RouteSession.mode == TravelMode.DRIVE) {
+                    BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
                 }
-                Action("Clear") { RouteSession.clear() }
-            }
-        }
+                if (RouteSession.mode == TravelMode.CROW) BasicText(TravelMode.CROW_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T108
+            },
+            footer = {
+                // T114: the actions wrap (Turn on location and Try Crow join them), and Go comes first.
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (phase == "route") {
+                        Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
+                        Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
+                        Action("Save") { Thread { RouteSession.save() }.start() }
+                        Action("GPX") { Thread { RouteSession.exportGpx() }.start() }
+                    }
+                    if (phase == "noLocation") {
+                        Action(TURN_ON_LOCATION) {
+                            when (RouteSession.locationState()) {
+                                "noPermission" -> askLocation.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                                "off" -> runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+                            }
+                        }
+                    }
+                    // T114: no path between the two ends: the straight line (its notice shows under the chips once chosen).
+                    if (phase == "failed" && RouteSession.failure != null && RouteSession.mode != TravelMode.CROW) {
+                        Action(TRY_CROW) { RouteSession.changeMode(TravelMode.CROW) }
+                    }
+                    Action("Clear") { RouteSession.clear() }
+                }
+            },
+        )
     }
 }
+
+/** T212: how often the card compares the settings with the ones it drew (`POST /settings` reaches it within this). */
+private const val SETTINGS_TICK_MS = 500L
+
+/** T212: the content description of the card's scrolling lines (`uiautomator dump`; ", scroll for more" while it scrolls). */
+internal const val ROUTE_DETAILS = "Route details"
+
+/** T212: the card's paper without its slight transparency, for the scroll region's fade. */
+private val PaperOpaque = Color(0xFFFFFCF5)
 
 /**
  * T149: the card's line when the heap guard refused the trail network's build ([RoutePlanner]: the build's estimated
@@ -286,9 +598,11 @@ fun RouteControls() {
 internal const val GRAPH_TOO_LARGE = "This map is too large to route across on this phone; download a smaller area for routing"
 internal const val GRAPH_WAITING = "Waiting for memory to build the trail network"
 
-/** T192: the gap between the route card's top and the top chips' lowest edge, and the least height the cap leaves it. */
+/**
+ * T192: the gap between the route card's top and the top chips' lowest edge. T212: T192's fixed least height (200 dp)
+ * is gone: the cap is the measured band, and a band too small for the header and actions makes the card one scroll.
+ */
 private val CARD_CHIPS_GAP = 8.dp
-private val CARD_MIN_CAP = 200.dp
 
 /**
  * T192: a thin thumb at the right edge of a box that scrolls ([state]), so a list cut by its height reads as one that
