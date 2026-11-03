@@ -618,6 +618,33 @@ object ShadeText {
         val m = minutesSpoken(s.minutes)
         return "$head " + if (toEnd) "Then sun to the end, $m." else "Then sun for $m."
     }
+
+    /**
+     * T209: the planning card's start-time line ([BestStart]; the survey of 2026-11-02: the time first, the reason second,
+     * no "best", no "should"; "terrain shade" in full, trees are not counted): "Start at 7:30 for the most terrain shade
+     * (about 1 h 10 min in shade)", "Start at 10:00 for the most sun", "Start by 6:30 to finish before terrain sunset"
+     * ("before sunset" when the flat sunset counts), "Your start time is the shadiest" (or "the sunniest"), "No terrain
+     * shade along this route today" ("No sun ..."); " tomorrow" after the time when the day swept is tomorrow. [clock]
+     * formats a time ("7:30"). Null with no daylight to sweep.
+     */
+    fun bestStartLine(r: BestStartResult, clock: (Long) -> String): String? {
+        val day = if (r.tomorrow) " tomorrow" else ""
+        val shade = r.aim == BestStartAim.SHADE
+        return when (r.kind) {
+            BestStartKind.PICK -> {
+                val p = r.pick ?: return null
+                if (shade) "Start at ${clock(p.startMs)}$day for the most terrain shade (about ${about(p.shadeMin)} in shade)"
+                else "Start at ${clock(p.startMs)}$day for the most sun"
+            }
+            BestStartKind.CURRENT -> if (shade) "Your start time is the shadiest" else "Your start time is the sunniest"
+            BestStartKind.DEADLINE -> r.latestStartMs?.let { "Start by ${clock(it)}$day to finish before ${if (r.byTerrain) "terrain sunset" else "sunset"}" }
+            BestStartKind.NONE -> (if (shade) "No terrain shade along this route " else "No sun along this route ") + if (r.tomorrow) "tomorrow" else "today"
+            BestStartKind.NO_DAY -> null
+        }
+    }
+
+    /** T209: "about" minutes: to 5 from 10 on ("1 h 10 min"), to the minute below. */
+    private fun about(m: Double): String = minutes(if (m >= 10) (m / 5).roundToInt() * 5.0 else m)
 }
 
 private fun r1(v: Double) = kotlin.math.round(v * 10) / 10
