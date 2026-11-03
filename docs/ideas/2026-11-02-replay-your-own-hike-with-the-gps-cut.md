@@ -22,3 +22,16 @@ the aggregate ("on your last 20 hikes") is the calibration the step-detector pas
 
 Recorded 2026-11-02 at the close of wave 26 from the coordinator's list at the owner's invitation
 ("moonshots welcome"). Untriaged and not sanity checked: the premises have not been read against the code.
+
+2026-11-02 (triage): `TerrainFixReplay.runLiveCut` (`nav/TerrainFix.kt`) already returns, for a line and a
+cut, the errors, the spread, when the estimate showed and where it gave up: the numbers the idea wants.
+But a stored track has no barometer, step or compass column, so the self-test simulates those sensors from
+the track's geometry (a barometer from the elevation plus drift and noise, a compass from the bearing). It
+would measure the filter against your trails and the trail graph, not your phone's sensors; the phone
+also needs the graph and DEM for the track's area.
+
+Question: still wanted knowing it tests the trails, not the sensors, until pressure is recorded with
+tracks (the physical-limits idea's first pass)? Recommendation: yes, after that pass: a Tracks-list action
+with its own result screen (one line per cut, the aggregate over recent tracks), recomputed on demand
+and not stored, run as a foreground job with progress since a track takes about a minute; two passes.
+Answer:
