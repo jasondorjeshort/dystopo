@@ -17,10 +17,16 @@ import io.github.jasondorjeshort.dystopo.dem.Terrain
 import io.github.jasondorjeshort.dystopo.dem.TerrainLayer
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.nav.Deadline
+import io.github.jasondorjeshort.dystopo.nav.DeadlineKind
+import io.github.jasondorjeshort.dystopo.nav.DeadlineSetting
 import io.github.jasondorjeshort.dystopo.nav.NavPath
 import io.github.jasondorjeshort.dystopo.nav.TurnAround
 import io.github.jasondorjeshort.dystopo.nav.TurnPace
+import io.github.jasondorjeshort.dystopo.routing.BestStart
+import io.github.jasondorjeshort.dystopo.routing.BestStartAim
 import io.github.jasondorjeshort.dystopo.routing.CostModel
+import io.github.jasondorjeshort.dystopo.routing.HotDay
 import io.github.jasondorjeshort.dystopo.routing.ShadeAlong
 import io.github.jasondorjeshort.dystopo.routing.ShadeAlongResult
 import io.github.jasondorjeshort.dystopo.routing.ShadeEvent
@@ -61,13 +67,19 @@ import kotlin.math.sin
  * card's line and the spoken line's candidates, with a PNG of the route over the overlay at the start instant above the
  * elevation profile in the light met (`--frozen`: every sample at the start, to check against the overlay); `--source`
  * also takes a DEM pack. `--tile-bench` times the sun tiles of the area over a pack for each `--low-sun-km` cap.
+ *
+ * T209: `--gpx <route> --start <ISO> --best-start --temp-c <C>` sweeps the start times of `--start`'s day ([BestStart]:
+ * every 30 minutes across daylight, then 15 either side of the pick; terrain shade on a hot day by [HotDay], else sun;
+ * starts that miss the terrain sunset at the route's end less `--margin-min` excluded) and prints the table, the pick and
+ * the planning card's line as JSON (no PNG).
  */
 class ShadeCommand : AreaCommand("shade") {
     override fun help(context: Context) =
         "Shade on the terrain at an instant (cast and attached shadows, night as shade): PNG with the shade as a translucent cool tint " +
             "over the hillshade + JSON; --point adds the point answer (terrain sunrise and sunset, the gaps when a peak blocks the sun). " +
             "T194: --gpx <route> --start <ISO> gives the terrain shade along the route at the time the walker reaches each point " +
-            "(stretches, the first sun-loss and sun-gain, a map and profile PNG); --tile-bench times the sun tiles over a DEM pack."
+            "(stretches, the first sun-loss and sun-gain, a map and profile PNG); --tile-bench times the sun tiles over a DEM pack. " +
+            "T209: with --best-start --temp-c <C>, the start time of --start's day with the most terrain shade (a hot day) or sun."
 
     private val at by option("--at", help = "The instant, ISO 8601 (2026-10-30T16:00Z); not with --gpx")
     private val source by option("--source", help = "Elevation source id, or (T194) a DEM pack .pmtiles read as the phone reads its pack").default("best")
@@ -90,6 +102,10 @@ class ShadeCommand : AreaCommand("shade") {
     private val growth by option("--growth", help = "A ray's step as a share of its distance").double().default(Horizon.STEP_GROWTH)
     private val opacity by option("--opacity", help = "Opacity of the shade tint").double().default(ShadeTiles.SUN_SHADE_OPACITY)
     private val reference by option("--reference", help = "Also march a reference (40 km, steps of 0.5 percent, coarse layer 2 zooms down, 128 near cells) and count the cells that differ").flag()
+    private val bestStart by option("--best-start", help = "T209: with --gpx and --start, sweep the start times of that day for the most terrain shade on a hot day, else the most sun (JSON table and pick, no PNG)").flag()
+    private val tempC by option("--temp-c", help = "T209: with --best-start, the weather station's air temperature, C (the phone's; a hot day is ${HotDay.THRESHOLD_C} C at the route's lowest point; unset: not hot)").double()
+    private val stationEleM by option("--station-ele-m", help = "T209: with --best-start, the station's height, m, for the lapse to the route's lowest point (default: that point's height, no lapse)").double()
+    private val marginMin by option("--margin-min", help = "T209: with --best-start, minutes the walk must end before the terrain sunset (the turn-back margin; default ${TurnAround.DEFAULT_MARGIN_MIN})").int().default(TurnAround.DEFAULT_MARGIN_MIN)
     private val out by option("--out", help = "Output PNG (default out/<area>-shade-z<zoom>-<instant>.png)").file()
 
     override fun run() {
@@ -241,6 +257,7 @@ class ShadeCommand : AreaCommand("shade") {
             else src!!.fetch(w).also { provenance += it.provenance }.grid
         }
         val maxZoom = minOf(pyramid?.maxZoom ?: ShadeAlong.MAX_ZOOM, ShadeAlong.MAX_ZOOM)
+        if (bestStart) return bestStartReport(file, path, timing, startMs, clockZone, maxZoom, pyramid, read, provenance, timings)
         val r = timings.time("along") { ShadeAlong.compute(path, timing, fromM, startMs, maxZoom, read, frozen = frozen) }
         // The overlay at the start instant over the route's box, as the phone's shade tiles draw it.
         val (mapImage, overlayAgree) = timings.time("overlay") { drawRouteMap(r, startMs, r.stats.zoom, read) }
@@ -273,6 +290,56 @@ class ShadeCommand : AreaCommand("shade") {
             }.map { i -> linkedMapOf("index" to i, "fromM" to round1(r.stretches[i].fromM), "text" to ShadeText.spoken(r, i, ShadeText.LEAD_M, units)) },
             "overlayAtStart" to overlayAgree,
             "output" to outFile.path, "timingsMs" to timings.ms, "provenance" to provenance.toList(),
+        )
+        echo(reportJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(MiniJson.encode(report))))
+    }
+
+    /**
+     * T209: the start-time sweep for [path] on the local day of [startMs] at the route's start: the daylight there, the
+     * deadline (the terrain sunset at the route's end, [Deadline.resolve] over the point answer, less `--margin-min`), the
+     * aim from `--temp-c` lapsed from `--station-ele-m` to the route's lowest point, the table, the pick and the line.
+     */
+    private fun bestStartReport(
+        file: File, path: NavPath, timing: TurnAround, startMs: Long, clockZone: ZoneId, maxZoom: Int,
+        pyramid: io.github.jasondorjeshort.dystopo.tiles.DemPyramid?, read: (MercatorWindow) -> io.github.jasondorjeshort.dystopo.dem.ElevationGrid,
+        provenance: Set<String>, timings: Timings,
+    ) {
+        val (fromMs, toMs) = BestStart.daylight(path, startMs) ?: throw UsageError("no sunrise or sunset at the route's start that day")
+        val end = path.points.last()
+        val endDay = Sun.dayAt(end.lat, end.lon, startMs)
+        val terrainDay = timings.time("deadline") {
+            runCatching {
+                if (pyramid != null) ShadeTiles.pointAnswer(pyramid, end.lat, end.lon, endDay.noonMs)
+                else ShadeTiles.pointAnswer(Horizon.terrainAround(end.lat, end.lon, minOf(maxZoom, ShadeTiles.POINT_ZOOM), read = read), end.lat, end.lon, endDay.noonMs)
+            }.getOrNull()
+        }
+        val deadline = Deadline.resolve(DeadlineSetting(DeadlineKind.TERRAIN), end.lat, end.lon, endDay.noonMs, 0L, terrainDay?.day, noTerrainData = terrainDay == null)
+        val lowest = path.points.mapNotNull { it.ele }.minOrNull()
+        val atRoute = tempC?.let { t -> if (lowest == null) t else HotDay.atHeight(t, stationEleM ?: lowest, lowest) }
+        val aim = BestStartAim.of(atRoute)
+        val r = timings.time("sweep") { BestStart.sweep(path, timing, aim, fromMs, toMs, deadline, marginMin, maxZoom, read, currentMs = startMs) }
+        val clock: (Long) -> String = { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).toLocalTime().withNano(0).toString() }
+        // The card's own clock form ("7:30"), as the phone formats it.
+        val cardClock: (Long) -> String = { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).let { "%d:%02d".format(it.hour, it.minute) } }
+        // The pick's light as ShadeAlong.compute gives it with its own terrain read (the phone's navigation answer).
+        val agree = r.pick?.let { p ->
+            val own = timings.time("pickByCompute") { ShadeAlong.compute(path, timing, 0.0, p.startMs, maxZoom, read) }
+            val shade = own.stretches.filter { it.light == ShadeLight.SHADE }.sumOf { it.minutes }
+            val sun = own.stretches.filter { it.light == ShadeLight.SUN }.sumOf { it.minutes }
+            linkedMapOf("shadeMin" to round1(shade), "sunMin" to round1(sun), "sweepShadeMin" to round1(p.shadeMin), "sweepSunMin" to round1(p.sunMin))
+        }
+        val report = linkedMapOf<String, Any?>(
+            "command" to "shade", "bestStart" to true, "gpx" to file.path, "name" to path.name, "lengthM" to round1(path.totalM),
+            "ascentM" to round1(path.totalAscentM), "mode" to mode, "pace" to timing.pace.label, "walkTimeS" to timing.totalS.roundToLong(),
+            "zone" to zone, "source" to source, "start" to Instant.ofEpochMilli(startMs).toString(), "startClock" to clock(startMs),
+            "temperature" to linkedMapOf(
+                "stationC" to tempC, "stationEleM" to stationEleM, "routeLowestM" to lowest?.let(::round1), "atRouteC" to atRoute?.let(::round1),
+                "thresholdC" to HotDay.THRESHOLD_C, "hot" to HotDay.hot(atRoute),
+            ),
+            "card" to ShadeText.bestStartLine(r, cardClock),
+        ) + r.json(clock) + linkedMapOf(
+            "pickByCompute" to agree,
+            "timingsMs" to timings.ms, "provenance" to provenance.toList(),
         )
         echo(reportJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(MiniJson.encode(report))))
     }
