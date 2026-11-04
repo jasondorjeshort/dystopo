@@ -1,38 +1,36 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-03, at the wave 27 close, by main session (wave 27 closed, v0.1.19-alpha published)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open
-wave; Later carries wave 27's follow-ups; the record `docs/tasks/wave-27.md`), ADR 0051, ADR 0053.
+Updated: 2026-11-04, at commit d4b87c33, by main session (wave 28 planned, not launched)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
+wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Now
 
-- **Wave 27 is closed** (T208 to T216, merged 2026-11-02 and 11-03; the close entry in `docs/PLANNING.md`'s log).
-  The sweep was green (25 of 25 parts) and **v0.1.19-alpha is published** (verified and installed from the draft
-  on an emulator; no phone connected). Nothing of ours is running: no worktree, task branch or wave AVD (only the
-  main checkout; `dystopo35-V1` is not this wave's). The live viewer on 8765 is up. Meter at the close: 52 on the
-  7-day, inside the revised figure of 1.5 a task and 3 a wave, which stands.
-- **Triaged:** every idea carries a block (the triage of 2026-11-02: five Plans, twenty Questions). Ready Plans
-  left: the phone-style toggle, the phone settings registry (both waited on T208, now merged).
-- **Two proposals wait on the owner:** 0054 (bushwhacking) and 0055 (the dwell box), each `under review` with
-  its "for the owner" list; Owner actions › Decisions has them.
+- **Wave 28 is planned and nothing is launched** (the owner's theme, 2026-11-04: usability of the phone app).
+  The board's wave paragraph carries the ownership, the slot order, the critic's answers and the allowance; the
+  audit, the premise checks, the surveys and the critic's review are gitignored reports on the second PC, in the
+  folder that paragraph names.
+- **The owner's go is pending.** The plan was shown in chat with its flagged changes; no worktree, task branch or
+  wave AVD exists. The live viewer on 8765 was up at the last close and was not re-checked this session.
+- Meter after planning: 70 on the 7-day, 11 on the 5-hour; the wave is figured at 16.5 points.
 
 ## Next
 
-1. The next wave is unplanned. Candidates: ADR 0053's build step 2 (the rest of the shared surface,
-   `GET /controls`); the two ready Plans above; wave 27's follow-ups in Later (T209's typed deadline, T212's
-   landscape and chip overlaps, T216's futile-rotation guard, the tour's glance step); the ADRs for 0054 and 0055
-   once the owner answers; ADR 0051 stage 1b once the owner answers its two questions and phones pass stage 1a.
-2. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's (`SubagentStop` fields), the
-   sentinel rule.
+1. On the owner's go: launch T217, T218 and T220 to T225 (implementers, Opus-class; T225 writes a proposal) by
+   the `brief` skill, a common brief for the wave's rules first. T219 is launched when T217 has merged.
+2. Verifiers (Sonnet-class) in the slot order of the wave paragraph: T223 and T218 first, T217 early.
+3. After the last merge: the sweep (it checks the labels `tools/android-ui.py` taps), the release, the close.
+4. The next wave's candidates: the layout authority's second half with ADR 0053's build step 2 and the top-row
+   regroup (T224's design note), T225's build tasks once the owner chooses, the two ready Plans.
+5. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's, the sentinel rule.
 
 ## Waiting on user
 
-- Install v0.1.19-alpha: `GET /identity` or the Share screen's line on your phone (ADR 0051's first prediction);
-  the board's phone checks; the new strings in the T209, T210, T212, T213 and T216 merge commits.
-- Proposals 0054 and 0055's choices; T122's navigation-card font cap, lifted by T212 (keep or restore).
-- The second signer's key; the twenty `Answer:` lines in `docs/ideas/`; ADR 0051's two answers; the home site's
-  steps; the older force-deletes on the housekeeping row (wave 27's are done).
+- The go for wave 28, and any change to its "For the owner" list (the board's wave paragraph).
+- "Keep north up": rename or keep (T176). The map screen's top row: regroup behind a Menu or not.
+- v0.1.19-alpha on the phone (`GET /identity`, the board's phone checks); proposals 0054 and 0055's choices;
+  ADR 0053's Category column; the rest of the board's Owner actions.
 
 ## Open findings
 
