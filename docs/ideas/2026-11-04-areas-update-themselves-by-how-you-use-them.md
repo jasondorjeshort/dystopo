@@ -32,5 +32,31 @@ asked.
 - Cost on the server side: how often upstream data really changes (OpenFreeMap builds, the owner's pack rebuilds),
   which bounds how much an eager policy would fetch.
 
-2026-11-04: recorded from the owner's words in conversation; a read-only research agent on how the established
-apps schedule and prioritise map updates is next (`benchmark.md`, ADR 0039 and ADR 0044). Untriaged.
+2026-11-04: recorded from the owner's words in conversation. Untriaged.
+
+## First survey (2026-11-04, web-only, read-only; thin in places)
+
+- No app found weights updates by use. Google's offline maps refresh in the background on Wi-Fi once an area is
+  within 15 days of expiry (expiry age is the only signal; toggle for auto-update and for Wi-Fi only; help page
+  support.google.com/maps/answer/6291838). Mapy.cz updates automatically while charging, overnight, with a
+  Wi-Fi-only switch (one secondary article; paid tier). OsmAnd Live pulls small patches hourly, daily or weekly
+  for the maps the user picks (the only delta approach found; secondary sources). Organic Maps has "update all"
+  and plans automatic updates only with incremental updates (issue #12841); Locus Map and Gaia GPS update by
+  hand. HERE and Sygic Professional alert and offer update-all, with a network choice.
+- MapFactor Navigator's actual mechanism was not established from any public source; "all-at-once, irregular" is
+  the owner's observation. Not established either: Apple Maps, Komoot, AllTrails, CalTopo, Avenza, Maps.me,
+  OpenFreeMap's versioning, OsmAnd's Wi-Fi option.
+- Technical: Android WorkManager periodic work has a 15-minute minimum and constraints for network type, battery
+  not low, charging, idle and storage not low; a run can be delayed while constraints are unmet. Protomaps
+  rebuilds its planet file daily and keeps a week; no official PMTiles diff format exists.
+- The survey's recommendation, for the owner to weigh: a user setting (Off, Places I use as the default, All
+  downloaded areas) with a visible daily data limit in place of any Wi-Fi gate (ADR 0023); a daily background job
+  plus a check on app open and on opening a route or saved area; priority: the area of the route or place being
+  started or open now (immediately), saved routes and favourites, recently viewed places (the dwell box), pinned
+  areas within their budget, and never-visited areas on manual Update only; whole-area updates now, per-tile
+  deltas later; quiet feedback such as "Updated automatically: 3 places, 42 MB today" and "Update waiting: daily
+  data limit reached".
+
+The owner wants a fuller research pass on this later (more apps established from primary sources, the real
+update cadence of the upstream data, battery and data cost of the polling, how use-weighting could be measured);
+this survey is the starting point, not the answer.
