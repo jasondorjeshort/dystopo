@@ -55,7 +55,7 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         h["description"]?.takeIf { it.isNotBlank() }?.let { out += "System's note: $it" }
         h["exception"]?.let { out += "Exception: $it" }
         h["thread"]?.let { out += "Thread: $it" }
-        h["silentMs"]?.let { out += "UI thread silent for: $it ms (threshold ${h["freezeMs"] ?: "?"} ms)" }
+        h["silentMs"]?.let { out += "UI thread silent for: ${if (h["ended"] == "true") "" else "at least "}$it ms (threshold ${h["freezeMs"] ?: "?"} ms)" }
         h["samples"]?.let { out += "Samples: ${h["topStackShare"] ?: "?"} of $it had the stack below" }
         (h["appFrame"] ?: h["blockingFrame"])?.takeIf { it != "-" }?.let { out += "App frame: $it" }
         h["pssKb"]?.toLongOrNull()?.takeIf { it > 0 }?.let { out += "Memory at the last system sample: PSS ${it / 1024} MB" + (h["rssKb"]?.toLongOrNull()?.takeIf { it > 0 }?.let { r -> ", RSS ${r / 1024} MB" } ?: "") }
