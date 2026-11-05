@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -113,7 +115,9 @@ fun SettingsSheet() {
         // Back: from a page to the list (one pane), else closes the sheet.
         BackHandler { if (group != null && !wide) SettingsUi.group = null else SettingsUi.visible = false }
         Column(
-            Modifier.align(Alignment.BottomCenter).widthIn(max = 960.dp).fillMaxWidth().navigationBarsPadding().padding(8.dp)
+            Modifier.align(Alignment.BottomCenter).widthIn(max = 960.dp).fillMaxWidth()
+                .pointerInput(Unit) { detectTapGestures { } } // T226: outside the margins, so a tap on them or on its paper stays out of the credit line
+                .navigationBarsPadding().padding(8.dp)
                 .heightIn(max = min(640.dp, maxHeight * 0.8f)) // T47: the map stays in sight above the sheet
                 .background(Paper, RoundedCornerShape(12.dp)).border(1.dp, Line, RoundedCornerShape(12.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp),

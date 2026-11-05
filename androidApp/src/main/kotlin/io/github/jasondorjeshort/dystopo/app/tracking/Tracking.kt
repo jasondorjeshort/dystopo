@@ -175,8 +175,10 @@ class Tracking private constructor(private val app: DystopoApp) {
      */
     val interrupted: List<String>
 
-    var ui by mutableStateOf(UiState())
-        private set
+    /** T226: the state itself is [TrackingUiState]'s, made before any composition; see there. */
+    var ui: UiState
+        get() = TrackingUiState.ui
+        private set(value) { TrackingUiState.ui = value }
 
     private var lastOverlayAt = 0L
     @Volatile private var overlayPending = false
@@ -824,8 +826,43 @@ class Tracking private constructor(private val app: DystopoApp) {
 
         @Volatile private var instance: Tracking? = null
 
+        /**
+         * T226: makes, on the main thread from `Application.onCreate`, the Compose state that the first thread to reach this
+         * class would otherwise make, without opening the store: [TrackingUiState]; [TerrainSource]'s, which this class's
+         * constructor starts, and through it the pressure trend's (`TerrainSource.update`, `Barometer.want`,
+         * `PressureWatch.onListenerStart`); [Trips]' and [TripCorridors]', since the corridors' thread is what gets here first
+         * at launch (`TripCorridors.reconcile`, `Trips.store`); and this package's objects, which `TrackRoutes` touches on a
+         * debug thread.
+         */
+        fun prepare() {
+            TrackingUiState.prepare()
+            TerrainSource.display
+            io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.card
+            io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen
+            io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.queued
+            ActivityPicker.target
+            BatteryExemption.cardOpen
+            TrackBar.open
+            LongPressMenu.sun
+        }
+
         fun of(context: Context): Tracking = instance ?: synchronized(this) {
             instance ?: Tracking(context.applicationContext as DystopoApp).also { instance = it }
         }
     }
+}
+
+/**
+ * T226: the Compose state behind [Tracking.ui], in an object of its own, as [io.github.jasondorjeshort.dystopo.app.nav.NavUiState]
+ * does (T86). It was a field of [Tracking], so the thread that built [Tracking] made it, and at launch that is usually
+ * `dystopo-corridors` (`TripCorridors.reconcile` reaching the store through `Trips`), in the global snapshot. The constructor
+ * opens the track database first, which is slowest on a fresh install. When the first composition's snapshot opened before
+ * the state was made, `remember { Tracking.of(app) }` waited for the constructor and the read beside it threw
+ * "Reading a state that was created after the snapshot was taken". [Tracking.prepare] now makes it before any composition.
+ */
+internal object TrackingUiState {
+    var ui by mutableStateOf(Tracking.UiState())
+
+    /** Forces creation now (call from the main thread, before the first composition). */
+    fun prepare() {}
 }

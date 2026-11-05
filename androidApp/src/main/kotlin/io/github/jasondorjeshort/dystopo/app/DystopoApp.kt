@@ -39,6 +39,7 @@ class DystopoApp : Application() {
         io.github.jasondorjeshort.dystopo.app.nav.NavSession.prepare() // T86: its Compose state is made here, on the main thread, before any composition
         io.github.jasondorjeshort.dystopo.app.areas.Areas.prepare() // T87: the same for the offline areas' state (AheadPrefetch's thread reads Areas)
         io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.prepare() // T110: the same for the scale bar's option (sync reads it on its threads)
+        io.github.jasondorjeshort.dystopo.app.tracking.Tracking.prepare() // T226: the same for the tracks' and trips' state (the corridors' thread builds Tracking at launch)
         MapLibre.getInstance(this)
         MapLibre.setConnected(true) // T38: every tile comes from our loopback server; MapLibre's own offline check would stop even those
         AppSettings.load(this)
