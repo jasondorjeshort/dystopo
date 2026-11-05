@@ -15,9 +15,11 @@ import java.util.TimeZone
 /**
  * T144: the UI-thread watchdog, in every build (release too; no setting: the research found one practice). A worker
  * thread posts a heartbeat to the main looper every [beatMs] (1 s); when one stays unanswered for [freezeMs] (3 s) it
- * writes one dump per freeze to `files/reports/` and rearms when a heartbeat runs again. From the first silent second
- * the main thread's stack is sampled every [FreezeDetector.sampleEveryMs] (200 ms), so the dump names the frame the
- * main thread spent the freeze in rather than wherever it happened to be at 3 s. It ticks only between the activity's
+ * writes one dump per freeze to `files/reports/`, rewrites that file every [FreezeDetector.rewriteEveryMs] (5 s) while
+ * the freeze lasts and once more when a heartbeat runs again (T227), so a freeze's true length reaches the report even
+ * when the process is killed in it. From the first silent second the main thread's stack is sampled every
+ * [FreezeDetector.sampleEveryMs] (200 ms), so the dump names the frame the main thread spent the whole freeze in
+ * rather than wherever it happened to be at 3 s. It ticks only between the activity's
  * `onResume` and `onPause` ([resumed], [paused]; the clock restarts on resume), never before the first frame after
  * the process started (the cold start's long first frame is not a freeze), and skips while a debugger is attached.
  * Both thresholds are overridable for tests (`POST /debug/watchdog?beatMs=&freezeMs=`, not persisted). The rule it
@@ -28,12 +30,15 @@ import java.util.TimeZone
  * ```
  * dystopo-report 1                      first line: the format and its version
  * kind: freeze                          header lines `key: value` up to the first empty line, in this order:
- * atMs: 1761400000000                   epoch ms when the dump was written
+ * atMs: 1761400000000                   epoch ms of the freeze's first write (the file's stamp; a rewrite keeps it)
  * at: 2026-10-25T20:00:00.000Z          the same, ISO 8601 UTC
- * silentMs: 3012                        how long the heartbeat had gone unanswered then
+ * silentMs: 12004                       how long the heartbeat had gone unanswered at this write; the freeze's length if ended
+ * ended: true                           T227: true once the heartbeat returned; false: still frozen at this write, so
+ *                                       silentMs is a lower bound (the process died in the freeze, or was still in it).
+ *                                       A file from before T227 has no such key and its silentMs is the 3 s of its one write
  * beatMs: 1000                          the heartbeat interval and the threshold in force
  * freezeMs: 3000
- * samples: 10                           main-stack samples taken during the silence
+ * samples: 10                           main-stack samples taken during the whole silence so far
  * topStackShare: 9                      samples that had the most common stack
  * blockingFrame: io.github...debug.DebugRoutes.freezeUi(DebugRoutes.kt:70)   topmost app frame of that stack, or of the main
  *                                       stack at the dump when there was no sample; `-` when no app frame
@@ -42,12 +47,15 @@ import java.util.TimeZone
  * sdk: 35
  * device: sdk_gphone64_x86_64
  *
- * main (most common sampled stack):     sections: a line naming the thread and its state, then one frame per
+ * main (most common sampled stack)      sections: a line naming the thread and its state, then one frame per
  * \tat java.lang.Thread.sleep(Native Method)   line, tab then `at `, as Java prints them; an empty line ends it
  *
- * thread main (TIMED_WAITING)           every thread of `Thread.getAllStackTraces()`, main first
+ * main (sampled 3 of 60)                T227: the histogram's next stacks, by count, [FreezeFile.STACKS_WRITTEN] in all
  * \tat ...
- * ```
+ *
+ * thread main (TIMED_WAITING)           every thread of `Thread.getAllStackTraces()`, main first, as of the last
+ * \tat ...                              write inside the freeze: the write after it ended keeps them (by then they
+ * ```                                   no longer show what the main thread waited on)
  * A reader skips header keys and sections it does not know; a later version only adds them.
  */
 object MainWatchdog {
@@ -62,6 +70,7 @@ object MainWatchdog {
     private val detector = FreezeDetector(DEFAULT_BEAT_MS, DEFAULT_FREEZE_MS)
     private val main by lazy { Handler(Looper.getMainLooper()) }
     @Volatile private var dir: File? = null
+    private var file: FreezeFile? = null // the worker's alone
     @Volatile private var resumed = false
     @Volatile private var firstFrameSeen = false
     @Volatile private var thread: Thread? = null
@@ -75,12 +84,13 @@ object MainWatchdog {
     @Synchronized
     fun start(app: android.app.Application) {
         if (thread != null) return
-        dir = File(app.filesDir, REPORTS_DIR)
+        dir = File(app.filesDir, REPORTS_DIR).also { file = FreezeFile(it) }
         thread = Thread(::loop, "ui-watchdog").apply { isDaemon = true; priority = Thread.NORM_PRIORITY + 1 }.also { it.start() }
     }
 
     /** The activity resumed (main thread): the clock restarts; the first frame after the process started arms it. */
     fun resumed() {
+        detector.mainRan(SystemClock.elapsedRealtime())
         detector.reset()
         resumed = true
         // A frame callback runs before that frame's layout and draw; the message posted from it runs after them, so the
@@ -92,6 +102,7 @@ object MainWatchdog {
     /** The activity paused (main thread): no heartbeats until it resumes. */
     fun paused() {
         resumed = false
+        detector.mainRan(SystemClock.elapsedRealtime())
         detector.reset()
     }
 
@@ -116,7 +127,7 @@ object MainWatchdog {
                     main.post { detector.answered(seq, SystemClock.elapsedRealtime()) }
                 }
                 if (step.sample) detector.addSample(mainThread.stackTrace.map(StackTraceElement::toString))
-                if (step.dump) runCatching { dump(now, mainThread) }.onFailure { Log.w(TAG, "freeze dump failed", it) }
+                step.dump?.let { freeze -> runCatching { dump(freeze, mainThread) }.onFailure { Log.w(TAG, "freeze dump failed", it) } }
                 step.sleepMs
             } catch (e: Throwable) {
                 Log.w(TAG, "watchdog step failed", e)
@@ -130,39 +141,17 @@ object MainWatchdog {
         }
     }
 
-    private fun dump(now: Long, mainThread: Thread) {
-        val d = dir ?: return
-        val silent = detector.silentMs(now)
-        val all = Thread.getAllStackTraces()
-        val mainNow = all[mainThread]?.map(StackTraceElement::toString) ?: mainThread.stackTrace.map(StackTraceElement::toString)
-        val (top, share, samples) = detector.topStack()
-        val stack = top ?: mainNow
-        val epoch = System.currentTimeMillis()
-        val header = linkedMapOf(
-            "kind" to "freeze", "atMs" to epoch.toString(), "at" to iso(epoch), "silentMs" to silent.toString(),
-            "beatMs" to detector.beatMs.toString(), "freezeMs" to detector.freezeMs.toString(),
-            "samples" to samples.toString(), "topStackShare" to share.toString(), "blockingFrame" to (blockingFrame(stack) ?: "-"),
+    private fun dump(freeze: FreezeDetector.Freeze, mainThread: Thread) {
+        val f = file ?: return
+        val written = f.write(freeze, System.currentTimeMillis(), detector.beatMs, detector.freezeMs, linkedMapOf(
             "version" to BuildConfig.VERSION_NAME, "build" to if (BuildConfig.DEBUG) "debug" else "release",
             "sdk" to Build.VERSION.SDK_INT.toString(), "device" to Build.MODEL,
-        )
-        val threads = ArrayList<Pair<String, List<String>>>()
-        threads += "main (most common sampled stack)" to stack
-        val ordered = all.entries.sortedWith(compareBy({ it.key !== mainThread }, { it.key.name }))
-        for ((t, frames) in ordered) threads += "thread ${t.name} (${t.state})" to frames.map(StackTraceElement::toString)
-        val text = Dump.format(header, threads)
-        d.mkdirs()
-        val file = File(d, PREFIX + fileStamp(epoch) + ".txt")
-        val tmp = File(d, file.name + ".tmp")
-        tmp.writeText(text)
-        if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
-        prune(d)
-        lastDump = linkedMapOf("file" to file.name, "silentMs" to silent, "blockingFrame" to header["blockingFrame"], "samples" to samples)
-        Log.w(TAG, "UI thread unanswered for $silent ms; dump ${file.name}, blocking frame ${header["blockingFrame"]}")
-    }
-
-    private fun prune(d: File) {
-        val dumps = list(d)
-        dumps.drop(KEEP).forEach { it.delete() }
+        )) {
+            Thread.getAllStackTraces().entries.sortedWith(compareBy({ it.key !== mainThread }, { it.key.name }))
+                .map { (t, frames) -> "thread ${t.name} (${t.state})" to frames.map(StackTraceElement::toString) }
+        }
+        lastDump = linkedMapOf("file" to written.name, "silentMs" to freeze.silentMs, "ended" to freeze.ended, "blockingFrame" to f.blockingFrame, "samples" to freeze.samples)
+        Log.w(TAG, "UI thread silent for ${freeze.silentMs} ms; dump ${written.name}, ended ${freeze.ended}, blocking frame ${f.blockingFrame}")
     }
 
     /** The freeze dumps in [d], newest first. */
@@ -187,6 +176,50 @@ object MainWatchdog {
 
     private fun iso(epoch: Long) = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(epoch))
     private fun fileStamp(epoch: Long) = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ROOT).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date(epoch))
+
+    /**
+     * T227: the one file of each freeze, on the worker thread only. Every write of a freeze goes to the file its first write
+     * named, whole and atomically (`tmp` then rename), so a kill leaves the last complete one. The threads are read while
+     * the freeze lasts; the write after it ended keeps the last ones read. Pure but for the folder ([MainWatchdogTest]).
+     */
+    class FreezeFile(private val dir: File, private val keep: Int = KEEP) {
+        private class Open(val id: Long, val file: File, val atMs: Long, var threads: List<Pair<String, List<String>>>)
+        private var open: Open? = null
+
+        /** The `blockingFrame` of the last write. */
+        var blockingFrame = "-"
+            private set
+
+        /** [threads] gives the sections of every thread, the main thread's first. */
+        fun write(f: FreezeDetector.Freeze, epochMs: Long, beatMs: Long, freezeMs: Long, system: Map<String, String>, threads: () -> List<Pair<String, List<String>>>): File {
+            val first = open?.id != f.id
+            val o = if (first) Open(f.id, File(dir, PREFIX + fileStamp(epochMs) + ".txt"), epochMs, emptyList()).also { open = it } else open!!
+            if (!f.ended) o.threads = threads()
+            val top = f.stacks.firstOrNull()
+            val stack = top?.first ?: o.threads.firstOrNull()?.second.orEmpty()
+            blockingFrame = blockingFrame(stack) ?: "-"
+            val header = linkedMapOf(
+                "kind" to "freeze", "atMs" to o.atMs.toString(), "at" to iso(o.atMs), "silentMs" to f.silentMs.toString(), "ended" to f.ended.toString(),
+                "beatMs" to beatMs.toString(), "freezeMs" to freezeMs.toString(),
+                "samples" to f.samples.toString(), "topStackShare" to (top?.second ?: 0).toString(), "blockingFrame" to blockingFrame,
+            ) + system
+            val sections = ArrayList<Pair<String, List<String>>>()
+            sections += "main (most common sampled stack)" to stack
+            for ((frames, n) in f.stacks.drop(1).take(STACKS_WRITTEN - 1)) sections += "main (sampled $n of ${f.samples})" to frames
+            sections += o.threads
+            dir.mkdirs()
+            val tmp = File(dir, o.file.name + ".tmp")
+            tmp.writeText(Dump.format(header, sections))
+            if (!tmp.renameTo(o.file)) { o.file.delete(); tmp.renameTo(o.file) }
+            if (first) list(dir).drop(keep).forEach { it.delete() }
+            if (f.ended) open = null
+            return o.file
+        }
+
+        companion object {
+            const val STACKS_WRITTEN = 5
+        }
+    }
 
     /** A parsed report file: its header (`key: value` lines) and its sections (a title line, then frames). Pure, tested. */
     class Dump(val format: String, val header: Map<String, String>, val sections: List<Pair<String, List<String>>>) {
@@ -235,16 +268,20 @@ object MainWatchdog {
 /**
  * T144: the watchdog's clock, pure so it is tested without a looper ([MainWatchdog] drives it). One heartbeat is out at a
  * time; [step] says what the worker does now (post a heartbeat, sample the main stack, write the dump) and how long it
- * sleeps; [answered] is the heartbeat running on the main thread, which rearms the report. A freeze is reported once,
- * however long it lasts.
+ * sleeps; [answered] is the heartbeat running on the main thread, which ends the silence. T227: a freeze is one [Freeze.id]
+ * and is written at [freezeMs], every [rewriteEveryMs] while it lasts and once more after the heartbeat returns; each
+ * [Step.dump] is a copy of the samples, so the last write has them all whatever the main thread does meanwhile.
  */
-class FreezeDetector(beatMs: Long, freezeMs: Long, val sampleAfterMs: Long = 1_000L, val sampleEveryMs: Long = 200L) {
+class FreezeDetector(beatMs: Long, freezeMs: Long, val sampleAfterMs: Long = 1_000L, val sampleEveryMs: Long = 200L, val rewriteEveryMs: Long = 5_000L) {
     @Volatile var beatMs = beatMs
         private set
     @Volatile var freezeMs = freezeMs
         private set
 
-    class Step(val post: Boolean, val seq: Long, val sample: Boolean, val dump: Boolean, val sleepMs: Long)
+    class Step(val post: Boolean, val seq: Long, val sample: Boolean, val dump: Freeze?, val sleepMs: Long)
+
+    /** What one write of a freeze's dump says: [stacks] is the histogram with its counts, the most common first. */
+    class Freeze(val id: Long, val silentMs: Long, val ended: Boolean, val stacks: List<Pair<List<String>, Int>>, val samples: Int)
 
     private var seq = 0L
     private var outstanding = -1L // seq of the heartbeat not yet answered, -1 none
@@ -252,7 +289,9 @@ class FreezeDetector(beatMs: Long, freezeMs: Long, val sampleAfterMs: Long = 1_0
     private var nextBeatAt = 0L
     private var lastSampleAt = 0L
     private var reported = false
-    private val samples = HashMap<List<String>, Int>()
+    private var lastWriteAt = 0L
+    private var closing: Freeze? = null // the write owed after the heartbeat returned; a reset does not lose it
+    private val samples = LinkedHashMap<List<String>, Int>()
     private var sampleCount = 0
 
     var beats = 0L
@@ -285,43 +324,65 @@ class FreezeDetector(beatMs: Long, freezeMs: Long, val sampleAfterMs: Long = 1_0
 
     @Synchronized
     fun step(now: Long, armed: Boolean): Step {
+        closing?.let {
+            closing = null
+            return Step(false, 0, false, it, 0)
+        }
         if (!armed) {
             reset()
-            return Step(false, 0, false, false, beatMs)
+            return Step(false, 0, false, null, beatMs)
         }
         if (outstanding < 0) {
-            if (now < nextBeatAt) return Step(false, 0, false, false, nextBeatAt - now)
+            if (now < nextBeatAt) return Step(false, 0, false, null, nextBeatAt - now)
             outstanding = ++seq
             sentAt = now
             beats++
-            return Step(true, outstanding, false, false, minOf(beatMs, sampleAfterMs))
+            return Step(true, outstanding, false, null, minOf(beatMs, sampleAfterMs))
         }
         val silent = now - sentAt
         longestSilentMs = maxOf(longestSilentMs, silent)
         val sample = silent >= sampleAfterMs && now - lastSampleAt >= sampleEveryMs
         if (sample) lastSampleAt = now
-        val dump = !reported && silent >= freezeMs
-        if (dump) {
+        val write = silent >= freezeMs && (!reported || now - lastWriteAt >= rewriteEveryMs)
+        if (write) {
+            if (!reported) freezes++
             reported = true
-            freezes++
+            lastWriteAt = now
         }
         val untilSampling = (sampleAfterMs - silent).coerceAtLeast(0)
-        return Step(false, 0, sample, dump, if (untilSampling > 0) minOf(untilSampling, sampleEveryMs) else sampleEveryMs)
+        return Step(false, 0, sample, if (write) freeze(silent, ended = false) else null, if (untilSampling > 0) minOf(untilSampling, sampleEveryMs) else sampleEveryMs)
     }
 
-    /** The heartbeat [seq] ran on the main thread at [now]: the next one goes one interval after it was sent. */
+    /**
+     * The heartbeat [seq] ran on the main thread at [now]: the next one goes one interval after it was sent. A freeze
+     * already written owes its last write, with its true length and every sample.
+     */
     @Synchronized
     fun answered(seq: Long, now: Long) {
         if (seq != outstanding) return
+        val silent = now - sentAt
+        longestSilentMs = maxOf(longestSilentMs, silent)
+        if (reported) closing = freeze(silent, ended = true)
         outstanding = -1L
         nextBeatAt = sentAt + beatMs
         reported = false
         clearSamples()
     }
 
+    /**
+     * The main thread ran something other than the heartbeat at [now] (`onPause`, `onResume`, which then reset the clock):
+     * the silence is over, even if the heartbeat lost its place in the queue.
+     */
+    @Synchronized
+    fun mainRan(now: Long) {
+        if (outstanding >= 0) answered(outstanding, now)
+    }
+
+    /** One more main stack of this silence. A sample that lost the race with the heartbeat is not part of any freeze. */
     @Synchronized
     fun addSample(stack: List<String>) {
-        samples.merge(stack, 1, Int::plus)
+        if (outstanding < 0) return
+        if (stack in samples || samples.size < MAX_STACKS) samples.merge(stack, 1, Int::plus)
         sampleCount++
     }
 
@@ -332,9 +393,17 @@ class FreezeDetector(beatMs: Long, freezeMs: Long, val sampleAfterMs: Long = 1_0
         return Triple(top?.key, top?.value ?: 0, sampleCount)
     }
 
+    private fun freeze(silent: Long, ended: Boolean) =
+        Freeze(outstanding, silent, ended, samples.entries.sortedByDescending { it.value }.map { it.key to it.value }, sampleCount)
+
     @Synchronized
     fun silentMs(now: Long): Long = if (outstanding < 0) 0L else now - sentAt
 
     @Synchronized
     fun json(): Map<String, Any?> = linkedMapOf("beats" to beats, "freezes" to freezes, "longestSilentMs" to longestSilentMs, "beatOutstanding" to (outstanding >= 0))
+
+    private companion object {
+        /** Distinct stacks kept in one silence (a stack past it still counts in the total): a long busy freeze stays small. */
+        const val MAX_STACKS = 100
+    }
 }

@@ -200,7 +200,7 @@ class ReportTest {
 
     @Test
     fun aFreezeDumpShowsTheMainStackAndBlockedThreads() {
-        val header = linkedMapOf("kind" to "freeze", "atMs" to "7", "at" to "2026-10-25T13:46:40.000Z", "silentMs" to "3012", "beatMs" to "1000", "freezeMs" to "3000",
+        val header = linkedMapOf("kind" to "freeze", "atMs" to "7", "at" to "2026-10-25T13:46:40.000Z", "silentMs" to "3012", "ended" to "true", "beatMs" to "1000", "freezeMs" to "3000",
             "samples" to "10", "topStackShare" to "9", "blockingFrame" to "io.github.jasondorjeshort.dystopo.app.Routes.freezeUi(Routes.kt:207)") + system
         val sections = listOf(
             "main (most common sampled stack)" to listOf("java.lang.Thread.sleep(Native Method)", "io.github.jasondorjeshort.dystopo.app.Routes.freezeUi(Routes.kt:207)"),
@@ -219,5 +219,17 @@ class ReportTest {
         assertTrue("thread gen-1 (RUNNABLE)" in shown, "a running worker in app code is shown")
         assertTrue("Android: 15 (API 35), Pixel 8" in shown, shown)
         assertEquals("Freeze: at Routes.freezeUi (0.1.13-alpha)", r.title())
+    }
+
+    /** T227: the true figure once the freeze ended; "at least" when it did not, and for a file from before the key existed. */
+    @Test
+    fun aFreezeThatDidNotEndReadsAtLeast() {
+        fun silentLine(vararg extra: Pair<String, String>): String {
+            val header = linkedMapOf("kind" to "freeze", "atMs" to "7", "silentMs" to "13012", "freezeMs" to "3000") + extra
+            return Report("freeze-1", MainWatchdog.Dump.parse(MainWatchdog.Dump.format(header, emptyList()))).shown().lines().first { it.startsWith("UI thread silent") }
+        }
+        assertEquals("UI thread silent for: 13012 ms (threshold 3000 ms)", silentLine("ended" to "true"))
+        assertEquals("UI thread silent for: at least 13012 ms (threshold 3000 ms)", silentLine("ended" to "false"))
+        assertEquals("UI thread silent for: at least 13012 ms (threshold 3000 ms)", silentLine())
     }
 }
