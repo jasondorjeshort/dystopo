@@ -75,6 +75,14 @@ class DiagnosticsTest {
     }
 
     @Test
+    fun oneRejectedFixIsSingular() { // T223
+        fun gaps(n: Int) = List(n) { io.github.jasondorjeshort.dystopo.model.TrackGap(it * 1_000L, it * 1_000L + 500, io.github.jasondorjeshort.dystopo.model.GapReason.REJECTED) }
+        fun line(n: Int) = Diagnostics.trackLines(snapshot().copy(track = Diagnostics.TrackDiag(false, 1_700_000_000_000, null, null, 10, 0, 0, gaps(n), null)))[3].toString()
+        assertTrue(line(1).endsWith(": 1 fix rejected"), line(1))
+        assertTrue(line(2).endsWith(": 2 fixes rejected"), line(2))
+    }
+
+    @Test
     fun theTrackLinesCountMarkedPointsAndGapsByReason() { // T172
         val gaps = listOf(
             io.github.jasondorjeshort.dystopo.model.TrackGap(1_000, 181_000, io.github.jasondorjeshort.dystopo.model.GapReason.NO_FIX),

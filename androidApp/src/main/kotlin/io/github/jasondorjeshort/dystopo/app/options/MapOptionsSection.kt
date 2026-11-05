@@ -45,6 +45,8 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
+import io.github.jasondorjeshort.dystopo.app.settings.OnOff
+import io.github.jasondorjeshort.dystopo.app.settings.Option
 import io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup
 import io.github.jasondorjeshort.dystopo.maplibre.ContourLabelDensity
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
@@ -68,6 +70,9 @@ import kotlin.math.roundToInt
  * a tapped chip applied its setting while the chips, caption and legend kept showing the old one until the sheet
  * was reopened. Reading [SettingsUi.revision] (bumped after every applied change) here makes the section recompose
  * with the sheet.
+ *
+ * T223: every boolean here is the settings rows' [OnOff] pair, and every other choice their [Option]: a layer was a chip
+ * told on from off by its colour alone.
  */
 @Composable
 fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
@@ -78,7 +83,7 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         BasicText("Map", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
         OptionRow("Hillshade", null, help = "map.hillshade") {
             for (m in HillshadeMode.entries) {
-                Chip(m.key.replaceFirstChar { it.uppercase() }, o.hillshade == m) { change(mapOf("hillshade" to m.key)) }
+                Option(m.key.replaceFirstChar { it.uppercase() }, o.hillshade == m) { change(mapOf("hillshade" to m.key)) }
             }
         }
         if (o.hillshade != HillshadeMode.OFF) {
@@ -91,9 +96,9 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
             }
         }
         OptionRow("Slope shading", SAFETY_LINE, help = "map.slope") {
-            Chip("Off", o.slope == SlopeShading.OFF) { change(mapOf("slope" to SlopeShading.OFF.key)) }
-            Chip("Avalanche", o.slope == SlopeShading.AVALANCHE) { change(mapOf("slope" to SlopeShading.AVALANCHE.key)) }
-            Chip("Steepness", o.slope == SlopeShading.STEEPNESS) { change(mapOf("slope" to SlopeShading.STEEPNESS.key)) }
+            Option("Off", o.slope == SlopeShading.OFF) { change(mapOf("slope" to SlopeShading.OFF.key)) }
+            Option("Avalanche", o.slope == SlopeShading.AVALANCHE) { change(mapOf("slope" to SlopeShading.AVALANCHE.key)) }
+            Option("Steepness", o.slope == SlopeShading.STEEPNESS) { change(mapOf("slope" to SlopeShading.STEEPNESS.key)) }
         }
         if (o.slope != SlopeShading.OFF) SlopeLegend(o.slope)
         // Terrain overlays worked out on the phone for a moment or a point: T188's shade first (the viewshed, T182, after it).
@@ -101,7 +106,7 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         ViewshedRows() // T182
         val choices = MapOptions.intervals(units)
         OptionRow("Contours", "fixed interval from map zoom ${MapOptions.FIXED_INTERVAL_FROM_ZOOM}; coarser below", help = "map.contours") {
-            Chip("Auto", o.contourInterval == null) { change(mapOf("contourInterval" to "auto")) }
+            Option("Auto", o.contourInterval == null) { change(mapOf("contourInterval" to "auto")) }
             val i = o.contourInterval?.let { choices.indexOf(it) } ?: -1
             Stepper(
                 o.contourInterval?.let { MapOptions.fmt(it) + " " + units.symbol } ?: "-", 64,
@@ -112,30 +117,27 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         }
         OptionRow("Contour labels", null, help = "map.contourLabels") {
             for (d in ContourLabelDensity.entries) {
-                Chip(d.key.replaceFirstChar { it.uppercase() }, o.contourLabels == d) { change(mapOf("contourLabels" to d.key)) }
+                Option(d.key.replaceFirstChar { it.uppercase() }, o.contourLabels == d) { change(mapOf("contourLabels" to d.key)) }
             }
         }
-        OptionRow("Layers", "tap to show or hide", help = "map.layers") {
-            Chip("Trails", o.trails) { change(mapOf("trails" to !o.trails)) }
-            Chip("Water", o.water) { change(mapOf("water" to !o.water)) }
-            Chip("Land cover", o.landcover) { change(mapOf("landcover" to !o.landcover)) }
-            Chip("POIs", o.pois) { change(mapOf("pois" to !o.pois)) }
-            Chip("Boundaries", o.boundaries) { change(mapOf("boundaries" to !o.boundaries)) }
+        OptionRow("Layers", null, help = "map.layers") {
+            LayerRow("Trails", o.trails) { change(mapOf("trails" to it)) }
+            LayerRow("Water", o.water) { change(mapOf("water" to it)) }
+            LayerRow("Land cover", o.landcover) { change(mapOf("landcover" to it)) }
+            LayerRow("POIs", o.pois) { change(mapOf("pois" to it)) }
+            LayerRow("Boundaries", o.boundaries) { change(mapOf("boundaries" to it)) }
         }
         // T174: the streams derived from the elevation grid, beside the layers; off unless turned on.
         OptionRow("Drainage", "streams worked out from the terrain, where an offline area has them", help = "map.drainage") {
-            Chip("On", o.drainage) { change(mapOf("drainage" to "on")) }
-            Chip("Off", !o.drainage) { change(mapOf("drainage" to "off")) }
+            OnOff(o.drainage) { change(mapOf("drainage" to if (it) "on" else "off")) }
         }
         OptionRow("Night", "dark base, dimmed relief", help = "map.night") {
-            Chip("On", o.night) { change(mapOf("night" to "on")) }
-            Chip("Off", !o.night) { change(mapOf("night" to "off")) }
+            OnOff(o.night) { change(mapOf("night" to if (it) "on" else "off")) }
         }
         // T101: the scale bar lower left on the map; a device setting of its own (POST /scalebar?both=on|off).
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
-        OptionRow("Scale bar", "both units adds the other system below the line, as on printed maps", help = "map.scaleBar") {
-            Chip("One unit", !both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(false) }
-            Chip("Both units", both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(true) }
+        OptionRow("Scale bar: Both units", "adds the other system below the line, as on printed maps", help = "map.scaleBar") {
+            OnOff(both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(it) }
         }
     }
 }
@@ -151,8 +153,7 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
 private fun SunShadeRow() {
     val on = SunShade.on
     OptionRow("Shade", SHADE_HINT, help = "map.shade") {
-        Chip("On", on) { SunShade.turn(true) }
-        Chip("Off", !on) { SunShade.turn(false) }
+        OnOff(on) { SunShade.turn(it) }
     }
     if (!on) return
     val zone = SunShade.zone()
@@ -161,7 +162,7 @@ private fun SunShadeRow() {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Wraps at large font scales (Today drops to a second line).
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Chip("<", false) { SunShade.pickDate(date.minusDays(1)) }
+            Option("<", false) { SunShade.pickDate(date.minusDays(1)) }
             BasicText(
                 SunClock.dateLabel(date),
                 Modifier.widthIn(min = 92.dp).clickable {
@@ -169,8 +170,8 @@ private fun SunShadeRow() {
                 }.padding(vertical = 7.dp),
                 style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center), softWrap = false, maxLines = 1,
             )
-            Chip(">", false) { SunShade.pickDate(date.plusDays(1)) }
-            if (date != SunShade.today()) Chip("Today", false) { SunShade.pickDate(SunShade.today()) }
+            Option(">", false) { SunShade.pickDate(date.plusDays(1)) }
+            if (date != SunShade.today()) Option("Today", false) { SunShade.pickDate(SunShade.today()) }
         }
         var drag by remember { mutableStateOf<Long?>(null) }
         val shown = drag ?: SunShade.instantMs
@@ -193,7 +194,7 @@ private fun ViewshedRows() {
     @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
     val t = io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText
     OptionRow(t.TITLE, t.ROW_HINT, help = "map.viewshed") {
-        Chip(t.FROM_POSITION, false) {
+        Option(t.FROM_POSITION, false) {
             SettingsUi.visible = false
             io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.startAtPosition("options")
         }
@@ -201,7 +202,7 @@ private fun ViewshedRows() {
     OptionRow(t.RANGE_ROW, null) {
         val km = io.github.jasondorjeshort.dystopo.app.AppSettings.viewRangeKm
         for (k in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM) {
-            Chip(t.range(k, io.github.jasondorjeshort.dystopo.app.AppSettings.units), km == k) { io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.setRange(k) }
+            Option(t.range(k, io.github.jasondorjeshort.dystopo.app.AppSettings.units), km == k) { io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.setRange(k) }
         }
     }
 }
@@ -316,25 +317,19 @@ private fun OptionRow(label: String, hint: String?, help: String? = null, option
 @Composable
 private fun Stepper(value: String, minWidthDp: Int, minus: () -> Unit, plus: () -> Unit, minusLabel: String = "-", plusLabel: String = "+") {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Chip(minusLabel, false, minus)
+        Option(minusLabel, false, minus)
         BasicText(value, Modifier.widthIn(min = minWidthDp.dp), style = TextStyle(color = Ink, fontSize = 14.sp, textAlign = TextAlign.Center), softWrap = false, maxLines = 1)
-        Chip(plusLabel, false, plus)
+        Option(plusLabel, false, plus)
     }
 }
 
+/** T223: one layer of the Layers row: its name, then [OnOff] at the row's end, so the pairs line up down the list. */
 @Composable
-private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
-    BasicText(
-        label,
-        style = TextStyle(color = if (selected) Paper else Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-        softWrap = false,
-        maxLines = 1,
-        modifier = Modifier
-            .background(if (selected) Accent else Color(0xEEFFFCF5), RoundedCornerShape(16.dp))
-            .border(1.dp, if (selected) Accent else Line, RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-    )
+private fun LayerRow(label: String, on: Boolean, set: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        BasicText(label, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp))
+        OnOff(on, set)
+    }
 }
 
 private val Ink = Color(0xFF2B2420)
@@ -401,7 +396,7 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
         HelpText("map.night", "Night", "$place › Night", show = show) {
             "A dark map for use in the dark: a dark base with dimmed relief, easier on your eyes than a bright screen."
         },
-        HelpText("map.scaleBar", "Scale bar", "$place › Scale bar", show = show) {
+        HelpText("map.scaleBar", "Scale bar", "$place › Scale bar: Both units", show = show) {
             "The bar in the lower left shows a round distance at the map's zoom, in your units. Both units adds the " +
                 "other system below the line, as on printed maps."
         },

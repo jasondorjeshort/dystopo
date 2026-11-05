@@ -52,6 +52,18 @@ object RecordingProfiles {
     /** The accuracy bound's choices, metres (null: off), from the research: off, 20, 50, 100, 200 m. */
     val ACCURACY_CHOICES: List<Double?> = listOf(null, 20.0, 50.0, 100.0, 200.0)
 
+    /**
+     * T223: an accuracy choice as its row shows it: "Off" for null, in metres as stored, in feet a round number and not a
+     * conversion that reads as precise (the nearest 5 ft below 500 ft, the nearest 50 ft above: 65, 165, 330 and 650 ft).
+     */
+    fun accuracyLabel(m: Double?, units: io.github.jasondorjeshort.dystopo.render.ContourUnits): String {
+        if (m == null) return "Off"
+        if (units != io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET) return "${Math.round(m)} m"
+        val ft = m * io.github.jasondorjeshort.dystopo.render.UnitFormat.FEET_PER_METER
+        val step = if (ft < 500) 5 else 50
+        return "${Math.round(ft / step) * step} ft"
+    }
+
     /** The interval's choices, seconds (the interval survey of 2026-10-30: every second by default, 5 s as OsmAnd's default, 1 min the long end). */
     val INTERVAL_CHOICES_S: List<Int> = listOf(1, 2, 5, 10, 30, 60)
 

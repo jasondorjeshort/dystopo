@@ -248,7 +248,7 @@ object PhoneSheet {
         val text = packs.joinToString(" ")
         val extra = credits.sources.filter { c -> c.usedBy.none { it == "osm" || it == "dem" } }
             .map { plain(it.source.attribution) }.filter { it.isNotEmpty() && it !in text }.distinct()
-        return (packs + extra).joinToString(" ").ifEmpty { credits.compact }
+        return (packs + extra).joinToString(" · ").ifEmpty { credits.compact } // T223: as the map's line, so "Elevation:" does not run on
     }
 
     /**

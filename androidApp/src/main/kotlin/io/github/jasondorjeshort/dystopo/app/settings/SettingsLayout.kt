@@ -10,11 +10,11 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
-    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, contours, labels, layers, night, scale bar, position button, view range, print"), // T176: position button; T182: view range; T183: print
+    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements"), // T223: names what the page holds
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
-    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout"), // T164: route times; T163: turn-back time; T172: recording; T161: readout
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate"), // T223: names what the page holds
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
-    ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, diagnostics, problem reports, contour warm-up, credits"),
+    ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, technical details, problem reports, contour warm-up, credits"),
     ;
 
     companion object {
@@ -48,7 +48,7 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     SYNC_STATUS("syncStatus", SettingsGroup.SYNC, "Sync status", "SettingsPages", "T103"),
     SHARE("share", SettingsGroup.SYNC, Screens.SHARE, "SettingsPages", "T103"),
     UPDATES("updates", SettingsGroup.ABOUT, "Updates", "UpdateRow", "T83"),
-    DIAGNOSTICS("diagnostics", SettingsGroup.ABOUT, "Diagnostics", "DiagnosticsRow", "T143"),
+    DIAGNOSTICS("diagnostics", SettingsGroup.ABOUT, "Technical details", "DiagnosticsRow", "T143"), // T223: the fold's heading; the id is unchanged
     REPORTS("reports", SettingsGroup.ABOUT, "Report a problem", "ReportRow", "T145"),
     WARMUP("warmup", SettingsGroup.ABOUT, "Contour warm-up", "SettingsPages", "T33"),
     CREDITS("credits", SettingsGroup.ABOUT, "Credits", "SettingsPages", "T103"),

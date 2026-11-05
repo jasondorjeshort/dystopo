@@ -205,7 +205,7 @@ object Updater {
         val name = UpdateFeed.versionName(release.tag)
         if (!verdict.newer) {
             dropDownloads(keep = null)
-            done(State(Phase.UP_TO_DATE, release.tag, name, info?.versionCode, "Up to date ($ownName; newest release ${release.tag})", manual = manual))
+            done(State(Phase.UP_TO_DATE, release.tag, name, info?.versionCode, UpdateText.upToDate(ownName), manual = manual))
             return
         }
         if (!manual && p.getString("declinedTag", null) == release.tag) {

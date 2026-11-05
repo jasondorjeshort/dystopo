@@ -67,7 +67,7 @@ class SettingsLayoutTest {
                 "Terrain shade: Spoken", // T194
                 "Set my height now", // T197 (an action, after T184's row)
                 "Estimate position when GPS is poor", // T203
-                "Diagnostics", "Report a problem",
+                "Technical details", "Report a problem", // T143, the fold's heading since T223; T145
             ),
             later,
         )
@@ -90,6 +90,27 @@ class SettingsLayoutTest {
         assertEquals("Sources (server, mobile data), offline areas, storage with a 128\u00A0GB cache budget", SettingsLayout.summary(SettingsGroup.DATA, 131072))
         assertEquals(SettingsGroup.MAP.summary, SettingsLayout.summary(SettingsGroup.MAP, 1024))
         assertTrue((groups().first()["summary"] as String).endsWith("cache budget"), "GET /settings/layout reports the line as drawn")
+    }
+
+    @Test
+    fun theSummariesNameWhatTheGroupsHold() { // T223
+        val navigation = SettingsGroup.NAVIGATION.summary.lowercase()
+        for (word in listOf("water", "pressure", "shade", "estimate")) assertTrue(word in navigation, "'$word' is not in \"$navigation\"")
+        assertTrue("technical details" in SettingsGroup.ABOUT.summary, SettingsGroup.ABOUT.summary)
+    }
+
+    @Test
+    fun everyBooleanIsTheOneControl() { // T223: On then Off, in one composable; ADR 0053's ids are the keys these rows set
+        val src = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app")
+        val pages = File(src, "settings/SettingsPages.kt").readText()
+        val options = File(src, "options/MapOptionsSection.kt").readText()
+        assertEquals(1, Regex("""Option\("On"""").findAll(pages).count(), "the pair is drawn in OnOff, and only there")
+        assertEquals(0, Regex("""Option\("On"""").findAll(options).count(), "the Map page uses OnOff")
+        assertTrue("Chip(" !in options, "the Map page's choices are the settings rows' Option")
+        for (key in listOf("trails", "water", "landcover", "pois", "boundaries")) {
+            assertTrue("change(mapOf(\"$key\" to it))" in options, "the layer '$key' sets a state rather than flipping it")
+        }
+        assertEquals(5, Regex("""\bOnOff\(""").findAll(options).count(), "the layers' row, Shade, Drainage, Night and the scale bar's both units")
     }
 
     @Test

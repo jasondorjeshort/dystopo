@@ -1,16 +1,26 @@
 package io.github.jasondorjeshort.dystopo.app.update
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.settings.LinkBlue
 import java.util.Locale
 import kotlin.concurrent.thread
 
@@ -20,6 +30,8 @@ import kotlin.concurrent.thread
  * T106: the two buttons wrap (a row that did not wrap could push Install off the sheet at font scale 2.0).
  * T110: Install while navigating waits for the session to end (installing replaces the running app); the row then says
  * so and offers "Install now".
+ * T223: the version line is short ("This build: 0.1.19-alpha", "Up to date · 0.1.19-alpha" after a check, in the same
+ * place); a tap on it or on Details shows the full build id, the version code and the newest release.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -28,7 +40,22 @@ fun UpdateRow() {
     val s = Updater.state
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         BasicText("Updates", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-        BasicText("This build: ${Updater.ownName} (${Updater.ownCode}). New alphas come from the GitHub releases page; checked daily on any network.", style = TextStyle(color = Muted, fontSize = 11.sp))
+        var details by remember { mutableStateOf(false) }
+        val upToDate = s.phase == Updater.Phase.UP_TO_DATE
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BasicText(
+                if (upToDate) s.message.orEmpty() else UpdateText.thisBuild(Updater.ownName),
+                Modifier.weight(1f, fill = false).clickable { details = !details }.padding(vertical = 4.dp),
+                style = TextStyle(color = if (upToDate) Accent else Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+            )
+            BasicText(
+                if (details) "Hide" else "Details",
+                Modifier.clickable { details = !details }.padding(vertical = 4.dp),
+                style = TextStyle(color = LinkBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+            )
+        }
+        if (details) BasicText(UpdateText.fullBuild(Updater.ownName, Updater.ownCode, s.tag), style = TextStyle(color = Ink, fontSize = 12.sp))
+        BasicText("New alphas come from the GitHub releases page; checked daily on any network.", style = TextStyle(color = Muted, fontSize = 11.sp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val busy = s.phase == Updater.Phase.CHECKING || s.phase == Updater.Phase.DOWNLOADING
             Button(if (busy) "Checking..." else "Check for updates", false) { if (!busy) thread(name = "dystopo-update-check") { Updater.check(manual = true) } }
@@ -38,7 +65,7 @@ fun UpdateRow() {
             }
         }
         val line = when (s.phase) {
-            Updater.Phase.IDLE -> null
+            Updater.Phase.IDLE, Updater.Phase.UP_TO_DATE -> null // T223: the line above says it
             Updater.Phase.DOWNLOADING -> s.message + if (s.totalBytes > 0) String.format(Locale.US, ": %.1f of %.1f MB", s.bytes / 1048576.0, s.totalBytes / 1048576.0) else ""
             else -> s.message
         }
@@ -47,4 +74,21 @@ fun UpdateRow() {
             BasicText(it, style = TextStyle(color = if (bad) Red else Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium))
         }
     }
+}
+
+/** T223: the Updates row's version text (pure, unit-tested). `GET /update`'s `message` is what the row shows. */
+internal object UpdateText {
+    /** What `git describe` adds to a build past its tag: "-81-g0b74b66f-sweep". */
+    private val PAST_THE_TAG = Regex("-\\d+-g[0-9a-f]+.*$")
+
+    /** "0.1.18-alpha-81-g0b74b66f-sweep" reads "0.1.18-alpha"; a release's name is already short. */
+    fun shortVersion(name: String): String = name.replace(PAST_THE_TAG, "")
+
+    fun thisBuild(name: String): String = "This build: ${shortVersion(name)}"
+
+    fun upToDate(name: String): String = "Up to date · ${shortVersion(name)}"
+
+    /** Behind the tap: the whole build id and code, and the newest release when a check has found one. */
+    fun fullBuild(name: String, code: Long, newest: String?): String =
+        "Full build: $name ($code)" + if (newest != null) "; newest release $newest" else ""
 }

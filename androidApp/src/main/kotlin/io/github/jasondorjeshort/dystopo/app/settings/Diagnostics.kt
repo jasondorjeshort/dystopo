@@ -257,15 +257,15 @@ object Diagnostics {
         out += Line(
             "Gaps",
             if (d.gaps.isEmpty()) "none" else "${d.gaps.size}, ${span(d.gaps.sumOf { it.durationMs })} in all: " +
-                d.gaps.groupingBy { it.reason }.eachCount().entries.joinToString(", ") { (r, n) -> "$n ${reasonWords(r)}" },
+                d.gaps.groupingBy { it.reason }.eachCount().entries.joinToString(", ") { (r, n) -> "$n ${reasonWords(r, n)}" },
         )
         d.watchdogRestarts?.let { out += Line("GPS restarts by the watchdog", "$it") }
         return out
     }
 
-    private fun reasonWords(r: GapReason): String = when (r) {
+    private fun reasonWords(r: GapReason, n: Int): String = when (r) {
         GapReason.NO_FIX -> "no fix"
-        GapReason.REJECTED -> "fixes rejected"
+        GapReason.REJECTED -> if (n == 1) "fix rejected" else "fixes rejected" // T223
         GapReason.PAUSED -> "paused"
         GapReason.AUTO_PAUSED -> "auto-paused"
         GapReason.STOPPED_BY_SYSTEM -> "stopped by the system"
