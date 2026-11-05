@@ -1,16 +1,19 @@
 package io.github.jasondorjeshort.dystopo.app.routing
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -78,6 +82,9 @@ object BottomPanels {
     @Volatile var routeCardTopFromWindowTopDp = 0f
     @Volatile var routeCardScrollMaxPx = 0
     @Volatile var routeCardScrollPx = 0
+
+    /** T217: the header line the card last drew (`GET /route` `card.drawnHeadline`), null while it draws none. */
+    @Volatile var routeCardHeadline: String? = null
 
     /**
      * T212: the free band the card had (dp: from under the top chips to its bottom gap), the scale bar's line it leaves
@@ -351,7 +358,7 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
 /**
  * The route card (T45): binds [RouteSession.overlay] to the map (long-press start, long-press end),
  * then shows what is happening: waiting for the end point, planning (with the trail-network build
- * progress on first use), the route's distance, climb and time with Hike/Bike, Save, GPX and Clear,
+ * progress on first use), the route's distance, climb and time with the mode chips and the actions,
  * or why no route was found. Nothing shows until the first long-press, nor while navigating (T65). The
  * distance, climb and time are [RouteSession.summaryOf], the figures the kept route shows (T65). T102: "Show N
  * directions" opens the turn directions (the default detail level), each with the distance it then runs.
@@ -365,7 +372,7 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * offers Turn on location (the permission prompt, or the phone's location settings). When no path is found it offers
  * Try Crow (the straight line, with its notice under the chips). Go comes first among the actions.
  *
- * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, next likely flowing in
+ * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, the next is likely flowing in
  * 1.2 km" and the longest stretch without water, the first line opening the list ([WaterText.row]); the next card line
  * (T184) sits under that one composable. T195: under the water line, the route's terrain ([ExposureLine]): "1.2 km on
  * slopes over 30 degrees, facing north and east; 0.4 km over 35 degrees", opening its sheet.
@@ -377,6 +384,14 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * T212: a [CappedCard]: the title and the headline stay in view at the top and the actions at the bottom, everything else
  * (the range line, From and To, the trails, directions, water, terrain, past effort, messages, the mode chips) scrolls
  * between them, capped at the measured band that leaves the scale bar's line above the card ([BottomPanels.mapRowDp]).
+ *
+ * T217 (the audit's finding 1, the survey `route-card-and-lists`): with a route the header is its one line of figures
+ * ([PaceSettings.headline]; the title stays for the other phases), and the line under it says what the time rests on
+ * ([RouteFigures.basis]). The actions ([CardActions]): a filled Go, an outlined Save (the route stored as a trip, T60's
+ * Keep), Clear as a text action and a three-dot overflow holding Export GPX, whose items open in a row just above the
+ * actions, inside the card: the app has no popup windows, and `/screenshot?mode=window` and the tools' taps see this one.
+ * The file-only Save of `files/routes/` left the card (`POST /route/save`, `GET /route/saved` and the navigation key stay).
+ * The water and terrain lines say they are working until their answer ([WorkingLine]).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -412,6 +427,7 @@ fun RouteControls() {
             if (BottomPanels.routeCardTop != 0.dp) BottomPanels.routeCardTop = 0.dp
             BottomPanels.routeCardTopFromWindowTopDp = 0f; BottomPanels.routeCardCapDp = 0f; BottomPanels.routeCardScrollMaxPx = 0; BottomPanels.routeCardScrollPx = 0 // T192
             BottomPanels.routeCardBandDp = 0f; BottomPanels.mapRowReservedDp = 0f // T212
+            BottomPanels.routeCardHeadline = null // T217
         }
         return
     }
@@ -500,16 +516,20 @@ fun RouteControls() {
                     "pickStart" -> "Route: choose the start"
                     else -> plan?.route?.name ?: "Route"
                 }
-                BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                 // T184: "about 4:30" in the range form (PaceSettings.headline), the single number in the other. T212: the
-                // card's primary line (distance, climb, time), kept in view above the scrolling lines.
+                // card's primary line (distance, climb, time), kept in view above the scrolling lines. T217: alone with a route.
                 if (plan != null && phase == "route") {
-                    BasicText(PaceSettings.headline(plan), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                    val figures = PaceSettings.headline(plan)
+                    SideEffect { BottomPanels.routeCardHeadline = figures }
+                    BasicText(figures, style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold))
+                } else {
+                    SideEffect { BottomPanels.routeCardHeadline = null }
+                    BasicText(title, style = TextStyle(color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                 }
             },
             body = {
                 if (plan != null && phase == "route") {
-                    // T164: whose pace the time is ("Based on your last 5 hikes", or the standard estimate); a refit when the tracks changed.
+                    // T164: whose pace the time is ("Based on your last 5 hikes", or a typical pace); a refit when the tracks changed.
                     // T184: with a range, the range first ("4:10 to 4:50, based on your last 5 hikes").
                     PaceSettings.secondLine(plan)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
                     LaunchedEffect(plan) { PaceSettings.refitSoon(app, "route") }
@@ -522,9 +542,11 @@ fun RouteControls() {
                         BasicText("Bearing $b° (${io.github.jasondorjeshort.dystopo.routing.Directions.compass(b.toDouble())})", style = TextStyle(color = Ink, fontSize = 13.sp))
                     }
                     // T49: the trails it follows, by name. T212: whole, wrapping (it was cut at two lines).
-                    if (plan.via.isNotEmpty()) {
+                    // T217: each name once (a trail the route leaves and rejoins was named twice).
+                    val trails = plan.via.map { it.first }.distinct()
+                    if (trails.isNotEmpty()) {
                         BasicText(
-                            "via " + plan.via.take(4).joinToString(", ") { it.first } + if (plan.via.size > 4) ", ..." else "",
+                            "via " + trails.take(4).joinToString(", ") + if (trails.size > 4) ", ..." else "",
                             style = TextStyle(color = Ink, fontSize = 13.sp),
                         )
                     }
@@ -555,27 +577,39 @@ fun RouteControls() {
                 if (RouteSession.mode == TravelMode.CROW) BasicText(TravelMode.CROW_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp)) // T108
             },
             footer = {
-                // T114: the actions wrap (Turn on location and Try Crow join them), and Go comes first.
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    if (phase == "route") {
-                        Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
-                        Action("Keep") { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } } // T60: keep as a trip
-                        Action("Save") { Thread { RouteSession.save() }.start() }
-                        Action("GPX") { Thread { RouteSession.exportGpx() }.start() }
+                // T114: the actions wrap (Turn on location and Try Crow join them), and Go comes first. T217: one list
+                // ([CardActions]) for what is drawn here and what `GET /route` `card.actions` lists.
+                val actions = CardActions.of(phase, RouteSession.canTryCrow())
+                val more = actions.firstOrNull { it.id == CardActions.MORE.id }
+                if (more != null && RouteSession.moreOpen) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                        for (item in more.items) OverflowItem(item) {
+                            RouteSession.moreOpen = false
+                            when (item.id) {
+                                CardActions.EXPORT_GPX.id -> Thread { RouteSession.exportGpx() }.start() // T219 switches this line to the save dialog
+                            }
+                        }
                     }
-                    if (phase == "noLocation") {
-                        Action(TURN_ON_LOCATION) {
+                }
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val row = Modifier.align(Alignment.CenterVertically)
+                    for (a in actions) when (a.id) {
+                        CardActions.GO.id -> CardAction(a, row) { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
+                        // T60's Keep: stored as a trip (synced, its corridor offline), clearing the plan.
+                        CardActions.SAVE.id -> CardAction(a, row) { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } }
+                        CardActions.TURN_ON.id -> CardAction(a, row) {
                             when (RouteSession.locationState()) {
                                 "noPermission" -> askLocation.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
                                 "off" -> runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
                             }
                         }
+                        // T114: no path between the two ends: the straight line (its notice shows under the chips once chosen).
+                        CardActions.TRY_CROW_ACTION.id -> CardAction(a, row) { RouteSession.changeMode(TravelMode.CROW) }
+                        CardActions.CLEAR.id -> CardAction(a, row) { RouteSession.clear() }
+                        CardActions.MORE.id -> Box(Modifier.weight(1f).align(Alignment.CenterVertically), contentAlignment = Alignment.CenterEnd) {
+                            OverflowDots(a.label) { RouteSession.moreOpen = !RouteSession.moreOpen }
+                        }
                     }
-                    // T114: no path between the two ends: the straight line (its notice shows under the chips once chosen).
-                    if (phase == "failed" && RouteSession.failure != null && RouteSession.mode != TravelMode.CROW) {
-                        Action(TRY_CROW) { RouteSession.changeMode(TravelMode.CROW) }
-                    }
-                    Action("Clear") { RouteSession.clear() }
                 }
             },
         )
@@ -625,6 +659,69 @@ private val ScrollThumb = Color(0x802B2420)
 /** T114: the card's new action labels. */
 internal const val TURN_ON_LOCATION = "Turn on location"
 internal const val TRY_CROW = "Try Crow"
+
+/**
+ * T217 (pure, `RouteFiguresTest`): the planning card's actions for its phase, one list for what the card draws and what
+ * `GET /route` `card.actions` lists. One primary, as the survey `route-card-and-lists` found on every app (Go, Start, Start
+ * Navigation) and as Material's button hierarchy has it: filled, then outlined, then text; export in an overflow, as on
+ * Organic Maps, Gaia, OsmAnd, Locus and CalTopo.
+ */
+internal object CardActions {
+    const val FILLED = "filled"
+    const val OUTLINED = "outlined"
+    const val TEXT = "text"
+    const val OVERFLOW = "overflow"
+
+    class Item(val id: String, val label: String, val style: String, val items: List<Item> = emptyList()) {
+        val primary: Boolean get() = style == FILLED
+
+        fun json(): Map<String, Any?> = linkedMapOf<String, Any?>("id" to id, "label" to label, "primary" to primary, "style" to style) +
+            (if (items.isEmpty()) emptyMap() else mapOf("items" to items.map { it.json() }))
+    }
+
+    val GO = Item("go", "Go", FILLED)
+    val SAVE = Item("save", "Save", OUTLINED)
+    val CLEAR = Item("clear", "Clear", TEXT)
+    val EXPORT_GPX = Item("exportGpx", "Export GPX", TEXT)
+    val MORE = Item("more", "More actions", OVERFLOW, listOf(EXPORT_GPX))
+    val TURN_ON = Item("turnOnLocation", TURN_ON_LOCATION, TEXT)
+    val TRY_CROW_ACTION = Item("tryCrow", TRY_CROW, TEXT)
+
+    fun of(phase: String, canTryCrow: Boolean): List<Item> = when (phase) {
+        "idle" -> emptyList()
+        "route" -> listOf(GO, SAVE, CLEAR, MORE)
+        else -> listOfNotNull(TURN_ON.takeIf { phase == "noLocation" }, TRY_CROW_ACTION.takeIf { canTryCrow }, CLEAR)
+    }
+}
+
+/**
+ * T217: a computed line's state in `GET /route` `card.lines` (`working` until the answer, `ready` with a line to show, `none`
+ * when there is none: the setting off, the mode, no data, or a failed computation), read from its [future] without waiting.
+ */
+internal object LineState {
+    const val WORKING = "working"
+    const val READY = "ready"
+    const val NONE = "none"
+    val NONE_JSON: Map<String, Any?> = linkedMapOf("state" to NONE, "text" to null)
+
+    fun <T> of(future: java.util.concurrent.Future<T>?, working: String?, text: (T) -> String?): Map<String, Any?> {
+        val f = future ?: return NONE_JSON
+        if (!f.isDone) return linkedMapOf("state" to WORKING, "text" to working)
+        val line = runCatching { f.get() }.getOrNull()?.let(text) ?: return NONE_JSON
+        return linkedMapOf("state" to READY, "text" to line)
+    }
+
+    /** Debug only (`POST /route/lines?holdMs=`): the water and terrain computations wait this long first, so a test can read and view their working state. */
+    @Volatile var holdMs = 0L
+
+    fun hold() {
+        val ms = holdMs
+        if (ms > 0) runCatching { Thread.sleep(ms) }
+    }
+
+    /** How long a line waits for its answer (one worker per kind, possibly busy with an earlier route) before showing nothing. */
+    const val WAIT_MS = 300_000L
+}
 
 /**
  * T114: the From and To lines. From is "Your location" (with the fix's age when it was stale), a placed point's
@@ -756,11 +853,11 @@ internal object WaterUi {
 }
 
 /**
- * T187: water along a route on a card ([RouteWater], [WaterText]): the line "Water: 3 crossings, next likely flowing in
+ * T187: water along a route on a card ([RouteWater], [WaterText]): the line "Water: 3 crossings, the next is likely flowing in
  * 1.2 km", which opens and closes the list ([onToggle]), and "Longest stretch without water: 6.2 km" under it; open, each
  * item in route order with its distance along the route, its class and basis, and the gap to the next (scrolls past a
- * few rows), then where the words come from. Nothing until the water is computed, nor with the `waterAlongRoute` setting
- * off. One composable, shared by the route card and the trip card.
+ * few rows), then where the words come from. T217: "Looking for water along the route" until the water is computed. Nothing
+ * with the `waterAlongRoute` setting off. One composable, shared by the route card and the trip card.
  */
 @Composable
 internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, open: Boolean, onToggle: () -> Unit) {
@@ -768,9 +865,14 @@ internal fun WaterAlongLine(points: List<io.github.jasondorjeshort.dystopo.model
     val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // the setting's row recomposes the card
     if (!io.github.jasondorjeshort.dystopo.app.AppSettings.waterAlongRoute) return
     var water by remember(points, rev) { mutableStateOf(RouteWater.cached(points)) }
+    var settled by remember(points, rev) { mutableStateOf(water != null || RouteWater.start(points) == null) } // T217
     LaunchedEffect(points, rev) {
-        if (water == null) water = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteWater.await(points, 60_000) }
+        if (!settled) {
+            water = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteWater.await(points, LineState.WAIT_MS) }
+            settled = true
+        }
     }
+    if (!settled) return WorkingLine(RouteWater.WORKING)
     val r = water ?: return
     val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -811,17 +913,22 @@ internal object ExposureUi {
  * T195: the route's terrain on the card ([RouteExposure], [io.github.jasondorjeshort.dystopo.routing.ExposureText]): the
  * line "1.2 km on slopes over 30 degrees, facing north and east; 0.4 km over 35 degrees" (or "No slopes over 30 degrees
  * along the route"), which opens and closes the sheet behind it: the times on that ground, the distance and time along
- * ridges, each stretch in route order (scrolls past a few rows), then what the figures measure. Nothing until it is
- * computed, nor for drive routes or without a DEM under the route.
+ * ridges, each stretch in route order (scrolls past a few rows), then what the figures measure. T217: "Checking exposure"
+ * until it is computed. Nothing for drive routes or without a DEM under the route.
  */
 @Composable
 internal fun ExposureLine(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, mode: TravelMode) {
     val listScroll = rememberScrollState()
     if (!RouteExposure.applies(mode)) return
     var res by remember(points, mode) { mutableStateOf(RouteExposure.cached(points, mode)) }
+    var settled by remember(points, mode) { mutableStateOf(res != null || RouteExposure.start(points, mode) == null) } // T217
     LaunchedEffect(points, mode) {
-        if (res == null) res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteExposure.await(points, mode, 60_000) }
+        if (!settled) {
+            res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteExposure.await(points, mode, LineState.WAIT_MS) }
+            settled = true
+        }
     }
+    if (!settled) return WorkingLine(RouteExposure.WORKING)
     val e = res?.exposure ?: return
     val units = io.github.jasondorjeshort.dystopo.app.AppSettings.units
     val line = io.github.jasondorjeshort.dystopo.routing.ExposureText.cardLine(e, units) ?: return
@@ -924,4 +1031,55 @@ private fun Action(text: String, onClick: () -> Unit) {
         style = TextStyle(color = Link, fontSize = 13.sp, fontWeight = FontWeight.Bold),
         modifier = Modifier.clickable(onClick = onClick).padding(vertical = 4.dp),
     )
+}
+
+/** T217: a computed line's words until its answer, at the answer's height so the lines under it do not jump. */
+@Composable
+private fun WorkingLine(text: String) {
+    BasicText(text, style = TextStyle(color = Ink.copy(alpha = 0.75f), fontSize = 13.sp), modifier = Modifier.padding(vertical = 2.dp))
+}
+
+/** T217: the least height of the card's action row, the touch target of each action (the drawn button is a little smaller). */
+private val ACTION_TARGET = 48.dp
+private val ButtonShape = RoundedCornerShape(10.dp)
+
+/** T217: one of the card's actions, by its [CardActions.Item.style]: filled, outlined or text. */
+@Composable
+private fun CardAction(item: CardActions.Item, modifier: Modifier, onClick: () -> Unit) {
+    val weight = FontWeight.Bold
+    Box(modifier.heightIn(min = ACTION_TARGET).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        when (item.style) {
+            CardActions.FILLED -> BasicText(
+                item.label, style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = weight),
+                modifier = Modifier.background(Link, ButtonShape).padding(horizontal = 26.dp, vertical = 9.dp),
+            )
+            CardActions.OUTLINED -> BasicText(
+                item.label, style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = weight),
+                modifier = Modifier.border(1.dp, Link, ButtonShape).padding(horizontal = 18.dp, vertical = 9.dp),
+            )
+            else -> BasicText(item.label, style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = weight), modifier = Modifier.padding(horizontal = 8.dp))
+        }
+    }
+}
+
+/** T217: the overflow's three dots, named for a screen reader and `uiautomator dump` by [label]. */
+@Composable
+private fun OverflowDots(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(ACTION_TARGET).semantics { contentDescription = label }.clickable(onClick = onClick).drawBehind {
+            val r = 2.dp.toPx()
+            for (k in -1..1) drawCircle(Link, r, center.copy(y = center.y + k * 6.dp.toPx()))
+        },
+    )
+}
+
+/** T217: an item of the overflow, in the row it opens just above the actions (right-aligned, under the dots' column). */
+@Composable
+private fun OverflowItem(item: CardActions.Item, onClick: () -> Unit) {
+    Box(Modifier.heightIn(min = ACTION_TARGET).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        BasicText(
+            item.label, style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+            modifier = Modifier.background(Color.White, ButtonShape).border(1.dp, Link.copy(alpha = 0.4f), ButtonShape).padding(horizontal = 14.dp, vertical = 9.dp),
+        )
+    }
 }
