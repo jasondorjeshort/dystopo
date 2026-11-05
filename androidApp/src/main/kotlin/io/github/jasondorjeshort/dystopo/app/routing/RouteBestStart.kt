@@ -252,10 +252,9 @@ private const val HOT_C = HotDay.THRESHOLD_C
 /** T209: the start-time line's help text (`HelpRegistry`), here beside its icon. */
 internal val BEST_START_HELP: List<HelpText> = listOf(
     HelpText("route.bestStart", "Start time", "The map: route card", needs = "a planned hike or bike route") {
-        "The start time today with the most terrain shade along the route on a hot day, else the most sun, keeping starts " +
-            "that finish before your Turn back by time with your turn-back margin. \"Start by\" shows only when the walk " +
-            "would finish within ${BestStart.START_BY_WITHIN_MIN / 60} hours of that time or after it, and there is no line when " +
-            "every start is as good. A hot day is ${HOT_C.toInt()} °C (${Math.round(HOT_C * 9 / 5 + 32)} °F) or more at the " +
-            "route's lowest point, from the weather station. Trees are not counted."
+        "The start with the most terrain shade on a hot day (${HOT_C.toInt()} °C, ${Math.round(HOT_C * 9 / 5 + 32)} °F, at the route's lowest point, from the " +
+            "weather station), else the most sun, finishing before your Turn back by time and margin. \"Start by\" shows " +
+            "only when you would finish within ${BestStart.START_BY_WITHIN_MIN / 60} hours of it or after it. No line when all starts are equal. " +
+            "Trees are not counted."
     },
 )

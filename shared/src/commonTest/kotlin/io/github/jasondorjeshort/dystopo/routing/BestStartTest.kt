@@ -191,7 +191,7 @@ class BestStartTest {
     fun startByShowsOnlyWhenTheFinishIsNearTheDeadline() {
         // The east trail is in shade until mid-morning, so on a cool day a deadline then binds: the later a start that
         // meets it, the more sun, and a start that misses it has more.
-        val at = day.sunriseMs!! + 330 * 60_000L
+        val at = day.sunriseMs!! + 264 * 60_000L
         val oneHourBefore = at - 60 * 60_000L - walkMs
         val near = sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0, current = oneHourBefore)
         assertEquals(BestStartKind.DEADLINE, near.kind, near.json(clock).toString())
@@ -215,7 +215,7 @@ class BestStartTest {
     @Test
     fun aTypedDeadlineEarlierThanTheTerrainSunsetMovesTheLatestStartAndIsNamed() {
         val terrain = Deadline(DeadlineKind.TERRAIN, day.sunsetMs!! - 3_600_000L, Deadline.BEHIND_RIDGE, day.sunsetMs, day.sunsetMs!! - 3_600_000L, TerrainSunset.BEHIND)
-        val at = day.sunriseMs!! + 330 * 60_000L
+        val at = day.sunriseMs!! + 264 * 60_000L
         val byTerrain = sweep(eastTrail, BestStartAim.SUN, deadline = terrain, margin = 0)
         val typed = sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0)
         assertTrue(typed.latestStartMs!! < byTerrain.latestStartMs!!, "${typed.latestStartMs} against ${byTerrain.latestStartMs}")
