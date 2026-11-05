@@ -19,4 +19,10 @@
 # only it): plans Paradise to Panorama Point, raises the pressure warning (POST /readout/trend?fixture=), navigates the
 # route, and checks from the routes' bounds that the cards, the top chips, the scale bar, the readout strip and the
 # compass do not overlap. Options: scale=, fixture=, bearing= (a turned map shows the compass), density= (wm density).
+# T224: the step reads GET /layout at each view (the pairs in `overlaps`; a chip column under the credit line or the strip
+# reaching a right-hand chip fails it), checks the strip's rectangle against its drawn plate and opens the glance view, at
+# two font scales and two rotations (rotation=1: the phone on its side), one boot; <stem>-cards-sheet.png holds them all.
 @cards 46.7864,-121.7366;46.8024,-121.7289 scale=2.0 fixture=still-fall bearing=30
+@cards 46.7864,-121.7366;46.8024,-121.7289 scale=2.0 fixture=still-fall bearing=30 rotation=1
+@cards 46.7864,-121.7366;46.8024,-121.7289 scale=1.0 fixture=still-fall bearing=30
+@cards 46.7864,-121.7366;46.8024,-121.7289 scale=1.0 fixture=still-fall bearing=30 rotation=1

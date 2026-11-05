@@ -90,6 +90,27 @@ object StripLayout {
     @Volatile var drawnItems = 0
     @Volatile var droppedItems: List<String> = emptyList()
 
+    /** T224: why the bar is not drawn when the right-hand chips leave even the elevation no room. */
+    const val NO_ROOM_BESIDE_CHIPS = "noRoomBesideChips"
+
+    /**
+     * T224: the elevation entry's plate as last measured by the bar's own layout (px, its height with the plate's padding;
+     * 0 before the first measure), kept while the bar is hidden. Compose state: the cards' reservation for the scale bar's
+     * line (`BottomPanels.mapRowDp`) reads it, measured where T212 estimated it from line-height constants.
+     */
+    var elevationPlatePx by mutableStateOf(0)
+        private set
+
+    /** T224: every entry's measured size in drawn order (px, without the plate's padding), for `GET /layout`'s function. */
+    @Volatile var entrySizesPx: List<IntArray> = emptyList()
+        private set
+
+    internal fun entriesMeasured(sizes: List<IntArray>, platePaddingPx: Int) {
+        entrySizesPx = sizes
+        val plate = (sizes.firstOrNull()?.get(1) ?: return) + platePaddingPx
+        if (plate != elevationPlatePx) elevationPlatePx = plate
+    }
+
     fun placed(where: String, maxWidth: Int, naturalWidth: Int = 0, besideRoom: Int = 0) {
         shown = true
         hiddenBecause = null
@@ -226,7 +247,7 @@ fun ReadoutStrip(night: Boolean) {
                 StripLayout.density = density.density
             }
             .background(plate, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .padding(horizontal = 6.dp, vertical = PLATE_PADDING_Y)
             // T210: a tap opens the glance view; the mark's own tap (a child's) is taken first and does not open it.
             .pointerInput(Unit) { detectTapGestures(onTap = { Glance.show("bar") }) }
             .clearAndSetSemantics {
@@ -277,6 +298,7 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
         val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
         val maxH = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
         val placeables = measurables.map { it.measure(Constraints(maxWidth = maxW)) }
+        StripLayout.entriesMeasured(placeables.map { intArrayOf(it.width, it.height) }, PLATE_PADDING_Y.roundToPx() * 2) // T224
 
         // The rows of the first k entries: (first index, width, height) per row.
         fun rows(k: Int): List<IntArray> {
@@ -344,6 +366,9 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
 /** T161: the gap between entries; T204: and between rows, as the flow row had them. */
 private val ITEM_GAP = 10.dp
 private val ROW_GAP = 2.dp
+
+/** T224: the plate's padding above and below the entries ([StripLayout.elevationPlatePx] adds it to the measured entry). */
+private val PLATE_PADDING_Y = 3.dp
 
 /**
  * T197: the known height's mark beside the elevation's caption: a survey point's triangle ([LiveReadout.PIN_GLYPH]),

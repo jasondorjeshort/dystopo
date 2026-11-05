@@ -119,7 +119,7 @@ private fun BoxScope.Controls() {
             val onlineRight = with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineRightPx.toDp() }
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             androidx.compose.foundation.layout.FlowRow(
-                Modifier.widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW),
+                io.github.jasondorjeshort.dystopo.app.TopChips.trackRow().widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW), // T224: the row's height, for the clamp
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 itemVerticalAlignment = Alignment.CenterVertically, // T109: the chips centred on the help icon's taller target

@@ -1056,10 +1056,11 @@ def direct_view(server, exe, serial, view, bound_share, wait_ms, restart=False, 
 def parse_cards(text):
     """T212: `@cards <fromLat>,<fromLon>;<toLat>,<toLon> [scale=2.0] [fixture=still-fall] [bearing=30] [density=<dpi>]`
     from the tour file: the font-scale step's route, the scale, the warning's fixture, the camera's bearing (a turned
-    map shows the compass) and, optionally, a display density to set for the step (`wm density`, restored after)."""
+    map shows the compass) and, optionally, a display density to set for the step (`wm density`, restored after).
+    T224: `rotation=0|1` the phone upright or on its side (`user_rotation`, restored after)."""
     parts = text.split()
     ends = parts[1].split(";")
-    step = {"from": ends[0], "to": ends[1], "scale": "2.0", "fixture": "still-fall", "bearing": "30", "density": None}
+    step = {"from": ends[0], "to": ends[1], "scale": "2.0", "fixture": "still-fall", "bearing": "30", "density": None, "rotation": "0"}
     for p in parts[2:]:
         k, _, v = p.partition("=")
         if k not in step:
@@ -1074,6 +1075,82 @@ def overlaps(a, b, slack=0):
     if not a or not b:
         return None
     return a[0] < b[2] - slack and b[0] < a[2] - slack and a[1] < b[3] - slack and b[1] < a[3] - slack
+
+
+# T224: the pairs `GET /layout` must never name: a chip column under the credit line, the strip reaching a right-hand chip.
+LAYOUT_CHIPS = ("M8", "M11", "M41")
+LAYOUT_FORBIDDEN = [(chip, "M99") for chip in LAYOUT_CHIPS] + [("M98", "M11"), ("M98", "M41")]
+
+
+def layout_forbidden(overlap_list):
+    """T224: the entries of `GET /layout` `overlaps` that name a forbidden pair, either way round."""
+    bad = []
+    for o in overlap_list or []:
+        pair = (o.get("a"), o.get("b"))
+        if pair in LAYOUT_FORBIDDEN or pair[::-1] in LAYOUT_FORBIDDEN:
+            bad.append(o)
+    return bad
+
+
+def layout_read(server):
+    """T224: `GET /layout` cut down for a report: the window, the pairs that overlap today, the hidden elements with their
+    reasons, what the pure rule would change and whether its own rectangles overlap; `error` when the route did not answer."""
+    try:
+        lay = server.json("/layout", timeout=30)
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+        return {"error": str(e)[:200], "overlaps": []}
+    rule = lay.get("rule") or {}
+    return {"window": lay.get("window"), "fontScale": lay.get("fontScale"), "overlaps": lay.get("overlaps") or [],
+            "hidden": {e["id"]: e.get("reason") for e in lay.get("elements") or [] if e.get("state") == "hidden" and e.get("reason") not in ("notUp", "mapFacingNorth")},
+            "compact": {e["id"]: e.get("reason") for e in lay.get("elements") or [] if e.get("state") == "compact"},
+            "rects": {e["id"]: e.get("rectPx") for e in lay.get("elements") or [] if e.get("rectPx")},
+            "ruleOverlaps": rule.get("overlaps") or [], "ruleDiffers": rule.get("differs") or [], "ruleSideColumn": rule.get("sideColumn"), "ruleCardColumns": rule.get("cardColumns")}
+
+
+def pair_names(overlap_list):
+    """T224: `a x b` per overlap, for the summary line."""
+    return sorted({f"{o.get('aName') or o.get('a')} x {o.get('bName') or o.get('b')}" for o in overlap_list or []})
+
+
+def plate_edges(ras, rect, colour, reach=6, tolerance=3):
+    """T224: where a plate of one colour is really drawn around `rect` ([left, top, right, bottom], px): along several lines
+    through each side, away from its rounded corners, the first pixel within `reach` of the side that has the colour, moving
+    from outside in, so the text inside the plate is not reached; the innermost over the lines, since a map the colour of
+    the plate reads as plate on some of them. None for a side with no such pixel (covered, or off the picture)."""
+    def is_plate(x, y):
+        if not (0 <= x < ras.w and 0 <= y < ras.h):
+            return False
+        return all(abs(a - b) <= tolerance for a, b in zip(ras.px(x, y)[:3], colour))
+    left, top, right, bottom = [int(v) for v in rect]
+    rows = [top + (bottom - top) * k // 8 for k in range(2, 7)]
+    cols = [left + (right - left) * k // 8 for k in range(2, 7)]
+    def first(line, is_inside):
+        for p in line:
+            if is_inside(p):
+                return p
+        return None
+    def side(lines, pick):
+        found = [v for v in lines if v is not None]
+        return pick(found) if found else None
+    return [
+        side([first(range(left - reach, left + reach + 1), lambda x: is_plate(x, y)) for y in rows], max),
+        side([first(range(top - reach, top + reach + 1), lambda y: is_plate(x, y)) for x in cols], max),
+        (lambda v: None if v is None else v + 1)(side([first(range(right + reach - 1, right - reach - 1, -1), lambda x: is_plate(x, y)) for y in rows], min)),
+        (lambda v: None if v is None else v + 1)(side([first(range(bottom + reach - 1, bottom - reach - 1, -1), lambda y: is_plate(x, y)) for x in cols], min)),
+    ]
+
+
+def strip_drawn_check(path, rect, night=False):
+    """T224: the strip's published rectangle against its plate in a screenshot: the drawn edges, the largest difference in
+    px (None when a side could not be read). `rect` is `GET /layout`'s, the plate `readout/ReadoutStrip.kt`'s opaque colour."""
+    if not path or not rect:
+        return None
+    with open(path, "rb") as f:
+        ras = decode_png(f.read())
+    colour = (0x20, 0x1C, 0x1A) if night else (0xF6, 0xF1, 0xE4)
+    edges = plate_edges(ras, rect, colour)
+    diff = None if any(e is None for e in edges) else max(abs(a - b) for a, b in zip(edges, rect))
+    return {"rectPx": rect, "drawnPx": edges, "maxDiffPx": diff}
 
 
 def screencap(exe, serial, path):
@@ -1121,14 +1198,34 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
     bar and the online indicator. Screenshots `<stem>-cards-<name>.png` (adb screencap: the cards are not in /screenshot).
     The warning is raised with the route cleared: with a planning card up at 2.0 no band is left for it, and it then keeps
     its title, advice and actions and reaches over the card (`trend.card.layout.overRoom`). The font scale (and the
-    density, when the step sets one) is restored afterwards."""
-    rep = {"scale": step["scale"], "route": f"{step['from']};{step['to']}", "checks": {}, "shots": {}}
+    density, when the step sets one) is restored afterwards.
+
+    T224: reads `GET /layout` at every view of the step (`layout` per view: the pairs in `overlaps`, what is hidden and
+    why, what the pure rule would change), fails a view whose `overlaps` names a chip column under the credit line or the
+    strip reaching a right-hand chip, checks the strip's rectangle against its drawn plate within 1 px, and runs in
+    `rotation=1` too: T212's checks written for the upright phone are then reported in `landscapeNotes`, not failed, since
+    `overlaps` is the record there. T210's glance step: opens the glance view while navigating, checks `legible`, closes it."""
+    rep = {"scale": step["scale"], "rotation": step.get("rotation", "0"), "route": f"{step['from']};{step['to']}", "checks": {}, "shots": {}, "layout": {}}
     c = rep["checks"]
+    landscape = str(step.get("rotation", "0")) != "0"
+
+    def view_layout(name):
+        lay = layout_read(server)
+        rep["layout"][name] = lay
+        c[f"layout{name[0].upper()}{name[1:]}Answers"] = "error" not in lay and bool(lay.get("window"))
+        c[f"layout{name[0].upper()}{name[1:]}NoForbiddenPair"] = not layout_forbidden(lay.get("overlaps"))
+        c[f"layout{name[0].upper()}{name[1:]}RuleClear"] = not lay.get("ruleOverlaps")
+        return lay
+
     _, before_scale = adb(exe, serial, "shell", "settings get system font_scale", timeout=30)
     rep["fontScaleBefore"] = before_scale.strip()
+    _, before_auto = adb(exe, serial, "shell", "settings get system accelerometer_rotation", timeout=30)
+    _, before_rotation = adb(exe, serial, "shell", "settings get system user_rotation", timeout=30)
     density_before = None
     try:
         adb(exe, serial, "shell", f"settings put system font_scale {step['scale']}", timeout=30)
+        adb(exe, serial, "shell", "settings put system accelerometer_rotation 0", timeout=30)
+        adb(exe, serial, "shell", f"settings put system user_rotation {step.get('rotation', '0')}", timeout=30)
         if step.get("density"):
             _, d = adb(exe, serial, "shell", "wm density", timeout=30)
             density_before = "reset" if "Override" not in d else d.strip().splitlines()[-1].split()[-1]
@@ -1168,6 +1265,12 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         rep["planning"]["descriptions"] = [x for x in (descs or []) if "details" in x.lower()]
         c["planScrollDescribed"] = descs is None or any(x.startswith("Route details") for x in descs)
         rep["shots"]["planning"] = screencap(exe, serial, f"{shot_stem}-cards-planning{ext}")
+        lay_plan = view_layout("planning")
+        # T224: the strip's rectangle against its plate as drawn, within 1 px, wherever the strip shows.
+        strip_drawn = strip_drawn_check(rep["shots"]["planning"], (lay_plan.get("rects") or {}).get("M98"), bool(bar.get("night")))
+        rep["stripDrawn"] = strip_drawn
+        if strip_drawn and strip_drawn.get("maxDiffPx") is not None:
+            c["stripRectMatchesDrawn"] = strip_drawn["maxDiffPx"] <= 1
         body = (lay.get("routeCard") or {}).get("bodyPx")
         if (lay.get("routeCardScrollMaxPx") or 0) > 0:
             # Swipes until the scroll is at its end (lines that arrive late, such as the terrain line, lengthen it).
@@ -1204,6 +1307,7 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         rep["warningWithRoute"]["recentrePx"] = rc
         c["warnRouteRecentreClear"] = overlaps(rc, wb) is not True
         rep["shots"]["warningWithRoute"] = screencap(exe, serial, f"{shot_stem}-cards-warning-route{ext}")
+        view_layout("warningWithRoute")
 
         # The warning card on the map alone, the map turned so the compass shows.
         server.json("/route/clear", method="POST")
@@ -1224,6 +1328,7 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         c["warningClearOfCompass"] = overlaps(card.get("boundsPx"), compass) is not True
         rep["warning"]["compassDrawn"] = compass is not None
         rep["shots"]["warning"] = screencap(exe, serial, f"{shot_stem}-cards-warning{ext}")
+        view_layout("warning")
         server.json("/readout/trend?clear=1", method="POST", timeout=60)
 
         # Navigation of the same route at the user's font scale.
@@ -1254,6 +1359,16 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         descs = ui_descriptions(exe, serial)
         c["navScrollDescribed"] = descs is None or any(x.startswith("Navigation details") for x in descs)
         rep["shots"]["navigation"] = screencap(exe, serial, f"{shot_stem}-cards-navigation{ext}")
+        view_layout("navigation")
+        rep["navigation"]["drawCheck"] = nl.get("drawCheck")  # T146: frames drawn with a chip column under the card
+        rep["navigation"]["chipsHidden"] = nl.get("chipsHidden")  # T224
+        # T224 (T210's glance step): the glance view at this font scale and rotation, while navigating; closed again.
+        glance = server.json("/readout/glance?open=1", method="POST", timeout=60)
+        time.sleep(1)
+        rep["glance"] = {k: glance.get(k) for k in ("open", "count", "legible", "clipped", "fontScale", "inside")}
+        c["glanceLegible"] = glance.get("legible") is True
+        rep["shots"]["glance"] = screencap(exe, serial, f"{shot_stem}-cards-glance{ext}")
+        server.json("/readout/glance?open=0", method="POST", timeout=60)
     finally:
         for method, path in (("DELETE", "/location/replay"), ("POST", "/nav/stop"), ("POST", "/route/clear"), ("POST", "/readout/trend?clear=1")):
             try:
@@ -1261,12 +1376,37 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
             except (urllib.error.URLError, OSError, ValueError, RuntimeError):
                 pass
         adb(exe, serial, "shell", f"settings put system font_scale {rep['fontScaleBefore'] or '1.0'}", timeout=30)
+        adb(exe, serial, "shell", f"settings put system user_rotation {before_rotation.strip() if before_rotation.strip().isdigit() else '0'}", timeout=30)
+        adb(exe, serial, "shell", f"settings put system accelerometer_rotation {before_auto.strip() if before_auto.strip().isdigit() else '0'}", timeout=30)
         if density_before:
             adb(exe, serial, "shell", f"wm density {density_before}", timeout=30)
         time.sleep(3)
-    rep["failed"] = [k for k, ok in c.items() if not ok]
+    failed = [k for k, ok in c.items() if not ok]
+    # T224: on its side `overlaps` is the record; T212's checks for the upright phone are reported, the second half's list.
+    rep["landscapeNotes"] = [k for k in failed if k in UPRIGHT_ONLY] if landscape else []
+    rep["failed"] = [k for k in failed if k not in rep["landscapeNotes"]]
     rep["ok"] = not rep["failed"]
+    rep["overlapPairs"] = pair_names([o for lay in rep["layout"].values() for o in lay.get("overlaps") or []])
     return rep
+
+
+# T224: T212's checks written for the upright phone: bounds it read before `GET /layout` existed.
+UPRIGHT_ONLY = {"planClearOfTopChips", "planScaleBarShown", "planElevationShown", "planCardClearOfScaleBarLine", "planEveryLineReached",
+                "warnRouteShown", "warnRouteClearOfRouteCard", "warnRouteScaleBarClear", "warnRouteRecentreClear", "warningClearOfScaleBar",
+                "warningClearOfStrip", "warningClearOfCompass", "navCappedAtBand", "navClearOfSearch", "navScaleBarClear"}
+
+
+def cards_sheet(steps, path):
+    """T224: one contact sheet of every cards step's screenshots, labelled scale, rotation and view."""
+    reports, rasters = [], []
+    for st in steps:
+        for name, shot in (st.get("shots") or {}).items():
+            if not shot:
+                continue
+            with open(shot, "rb") as f:
+                rasters.append(decode_png(f.read()))
+            reports.append({"index": f"{st.get('scale')}r{st.get('rotation')}", "label": name, "ok": st.get("ok"), "failed": (st.get("failed") or [])[:1]})
+    return contact_sheet(reports, rasters, path, cols=6)
 
 
 def set_app_server(server, value, timeout=60.0):
@@ -1620,6 +1760,10 @@ def main():
         else:
             rep["rendered"] = None
             rep["featuresUnavailable"] = feats.get("error", "map not ready")
+        rep["layout"] = layout_read(server)  # T224: the pairs that overlap at this view, reported
+        rep["overlapPairs"] = pair_names(rep["layout"].get("overlaps"))
+        c["layoutAnswers"] = "error" not in rep["layout"]
+        c["layoutNoForbiddenPair"] = not layout_forbidden(rep["layout"].get("overlaps"))
         rep["failed"] = [k for k, ok in c.items() if not ok]
         rep["ok"] = not rep["failed"]
         reports.append(rep)
@@ -1652,6 +1796,10 @@ def main():
             except (urllib.error.URLError, OSError, ValueError, RuntimeError, subprocess.SubprocessError, http.client.HTTPException) as e:
                 steps.append({"ok": False, "error": str(e)[:200], "route": f"{st['from']};{st['to']}"})
         summary["cardsStep"] = {"ok": all(r["ok"] for r in steps), "steps": steps}
+        try:
+            summary["cardsStep"]["sheet"] = cards_sheet(steps, f"{stem}-cards-sheet{ext}")  # T224
+        except (OSError, ValueError) as e:
+            summary["cardsStep"]["sheetError"] = str(e)[:200]
     else:
         summary["cardsStep"] = {"skipped": "--no-cards" if args.no_cards else "no @cards line" if not card_steps else "no adb device"}
     if exe and serial and not args.no_background and not args.direct_only:
@@ -1721,7 +1869,10 @@ def main():
               file=sys.stderr)
     for r in summary["cardsStep"].get("steps", []):  # T212
         print(f"cards {r.get('route')} at font scale {r.get('scale')}: {'ok' if r['ok'] else 'FAIL'}"
-              + (f" failed {' '.join(r.get('failed') or [])}" if r.get("failed") else "") + (f" error {r['error']}" if r.get("error") else ""), file=sys.stderr)
+              + (f" rotation {r.get('rotation')}" if r.get("rotation") else "")
+              + (f" failed {' '.join(r.get('failed') or [])}" if r.get("failed") else "") + (f" error {r['error']}" if r.get("error") else "")
+              + (f"; overlaps {', '.join(r.get('overlapPairs'))}" if r.get("overlapPairs") else "; overlaps none")  # T224
+              + (f"; upright-only {' '.join(r.get('landscapeNotes'))}" if r.get("landscapeNotes") else ""), file=sys.stderr)
     for r in summary["directStep"].get("views", []):
         mb = lambda b: f"{b / 1048576:.0f}" if b else "-"
         sw = r.get("serverSwitch")

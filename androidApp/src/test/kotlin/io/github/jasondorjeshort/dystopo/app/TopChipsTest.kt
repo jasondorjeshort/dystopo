@@ -44,6 +44,24 @@ class TopChipsTest {
     }
 
     @Test
+    fun theClampIsAgainstTheCreditLine() {
+        // T224: a window of 1000 px, the credit line 90 px from its bottom, a 16 px gap: 894 px down is the last row free.
+        assertEquals(894 - 700, TopChips.chipRoomPx(windowPx = 1000, creditFromBottomPx = 90, topPx = 700, gapPx = 16))
+        assertEquals(300, TopChips.chipRoomPx(1000, 0, 700, 16), "no credit line measured yet: down to the window's bottom")
+        assertTrue(TopChips.chipFits(roomPx = 100, ownPx = 100))
+        assertFalse(TopChips.chipFits(roomPx = 99, ownPx = 100), "it hides, it never goes under the line")
+        assertFalse(TopChips.chipFits(roomPx = -40, ownPx = 0), "a column that starts past the line")
+        assertFalse(TopChips.chipFits(roomPx = 0, ownPx = 0))
+    }
+
+    @Test
+    fun theStackUnderTheCardCountsOnlyWhatIsUp() {
+        assertEquals(16 + 100 + 16 + 90, TopChips.stackPx(tracksPx = 100, routesPx = 90, gapPx = 16))
+        assertEquals(16 + 100, TopChips.stackPx(100, 0, 16))
+        assertEquals(0, TopChips.stackPx(0, 0, 16))
+    }
+
+    @Test
     fun overlap() {
         val card = floatArrayOf(21f, 210f, 1059f, 900f)
         assertTrue(TopChips.overlap(card, floatArrayOf(21f, 330f, 500f, 420f)))

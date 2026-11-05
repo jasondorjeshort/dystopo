@@ -122,8 +122,12 @@ object BottomPanels {
      */
     fun mapRowDp(density: androidx.compose.ui.unit.Density): Dp = with(density) {
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits
-        val bar = 6.dp + 12.sp.toDp() * LINE * (if (both) 2 else 1) + (if (both) 14.dp else 8.dp)
+        // T224: as measured once they have been (the plates' own layouts), else T212's estimate for the first frame.
+        val measuredBar = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarLayout.plateHeightPx
+        val measuredStrip = io.github.jasondorjeshort.dystopo.app.readout.StripLayout.elevationPlatePx
+        val bar = if (measuredBar > 0) measuredBar.toDp() else 6.dp + 12.sp.toDp() * LINE * (if (both) 2 else 1) + (if (both) 14.dp else 8.dp)
         val strip = if (!io.github.jasondorjeshort.dystopo.app.AppSettings.readoutBar) 0.dp
+        else if (measuredStrip > 0) 6.dp + measuredStrip.toDp()
         else 6.dp + 6.dp + (10.sp.toDp() + (if (both) 11.sp.toDp() else 0.dp)) * LINE + 15.sp.toDp() * VALUE_LINE
         6.dp + bar + strip + 8.dp
     }
@@ -505,6 +509,7 @@ fun RouteControls() {
                 .onGloballyPositioned { c ->
                     fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it }
                     BottomPanels.routeCardTopFromWindowTopDp = with(density) { c.positionInRoot().y.toDp().value }
+                    io.github.jasondorjeshort.dystopo.app.MapInsets.routeCardPx = io.github.jasondorjeshort.dystopo.app.TopChips.px(c) // T224: GET /layout
                 }
                 .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = padV),
             header = {
