@@ -450,12 +450,12 @@ object StartupTrace {
                 when (StartupLeftover.verdict(dump.header, finals)) {
                     StartupLeftover.Verdict.REPORT -> {
                         val pid = dump.header["pid"]?.toIntOrNull() ?: 0
-                        val exit = if (Build.VERSION.SDK_INT >= 30) runCatching {
-                            (ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getHistoricalProcessExitReasons(ctx.packageName, pid, 1).firstOrNull { it.pid == pid }
+                        val exitReason = if (Build.VERSION.SDK_INT >= 30) runCatching {
+                            (ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getHistoricalProcessExitReasons(ctx.packageName, pid, 1).firstOrNull { it.pid == pid }?.reason
                         }.getOrNull() else null
                         val line = StartupText.historyLine(dump, StartupWindow.ENDED)
                         val history = addHistory(dir, line)
-                        val text = StartupLeftover.report(dump, exit?.reason, exit?.reason?.let { StartupText.exitName(it, Diagnostics.reasonName(it)) }, history)
+                        val text = StartupLeftover.report(dump, exitReason, exitReason?.let { StartupText.exitName(it, Diagnostics.reasonName(it)) }, history)
                         val name = StartupText.fileName(dump.header)
                         Reports.write(File(dir, PREFIX + name), text)
                         Reports.write(File(dir, TRACE_PREFIX + name), text)
