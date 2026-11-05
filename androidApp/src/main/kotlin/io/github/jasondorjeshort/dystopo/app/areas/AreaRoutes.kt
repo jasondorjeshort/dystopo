@@ -49,6 +49,8 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   stays in `GET /areas` and `GET /areas/{id}` with `state` `removing` and `removing` (`done`, `total`, `line` as the row reads
  *   it, `ms`). `chunkDelayMs=N` (0 to 10000) waits after each chunk of 256 tiles, so a screenshot can catch the row.
  *   Each area in `GET /areas` has `detailOpen` and `detailLines` (what a tap on its row opens). The removal is in memory only.
+ *   `GET /areas/picker` `fit`: the camera's last fitted `box` (a country's: `countryBox`) and its `centre`, the point at the middle
+ *   of the band above the card; `GET /camera`'s centre lies below that point, since the card covers the map's lower part.
  * - T130, the corridor every trip keeps ([TripCorridors]): `GET /areas/trips` (the width setting `widthM`, `notKept`
  *   trips, `notes` (why a trip has none: over the budget, no source), `queued`, `refusals`, `lastRun` and every trip's
  *   `corridors` with their width); `POST /areas/trips[?wait=ms]` runs a reconcile (answers after it with `wait`). A

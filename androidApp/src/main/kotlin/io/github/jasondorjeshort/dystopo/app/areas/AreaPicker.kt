@@ -413,6 +413,8 @@ object AreaPicker {
             },
             "country" to (m as? Mode.Country)?.let { c -> Countries.byCode(c.code)?.let { linkedMapOf("code" to it.code, "name" to it.name, "nameLong" to it.nameLong, "toleranceM" to it.toleranceM) } },
             "filter" to filter,
+            // T221: what the camera fitted, and the point at the middle of the band above the card (`GET /camera`'s centre lies below it, under the card's share).
+            "fit" to lastFit?.let { linkedMapOf("box" to listOf(it.minLon, it.minLat, it.maxLon, it.maxLat), "centre" to listOf(it.centerLat, it.centerLon)) },
             "region" to (m as? Mode.Region)?.let { r -> // T153
                 linkedMapOf(
                     "bbox" to listOf(r.box.minLon, r.box.minLat, r.box.maxLon, r.box.maxLat), "viewZoom" to r.viewZoom,
@@ -425,8 +427,12 @@ object AreaPicker {
         )
     }
 
+    /** T221: the box of the last [fit], for `GET /areas/picker` `fit`. */
+    @Volatile private var lastFit: PackBounds? = null
+
     /** The camera on [b] in the band above the card. */
     private fun fit(b: PackBounds) {
+        lastFit = b
         runCatching { io.github.jasondorjeshort.dystopo.app.packs.fitAbove(b, 1.0 - CARD_SHARE) }
     }
 
