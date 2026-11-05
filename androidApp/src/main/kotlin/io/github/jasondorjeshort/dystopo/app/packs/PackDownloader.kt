@@ -307,6 +307,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     executor.execute { run(job) }
                 }
                 Log.i(PackManager.TAG, "resuming download of ${source.name} (restart ${job.restarts})")
+                // T222: whichever comes first at launch, this or the region job's own look at [regionJobs], it ends up followed.
+                if (job.region != null && job === job(source.name)) follower?.invoke(job)
             } catch (e: Exception) {
                 Log.w(PackManager.TAG, "unreadable download state ${f.name}; dropped", e)
                 f.delete()
