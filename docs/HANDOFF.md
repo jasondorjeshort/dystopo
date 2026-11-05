@@ -1,15 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-04, at commit f409ab01, by main session (wave 28, 4 of 9 merged)
+Updated: 2026-11-04, at commit a9c9825b, by main session (wave 28, 5 of 9 merged)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
 wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Now
 
 - **Wave 28 runs one Gradle-using agent at a time** (the owner, 2026-11-04, after seven builds left 2 GB free; the
-  board's wave paragraph). T225, T223, T218 and T217 are merged; T219 is running. Then T220, T221, T222, T224.
-  T220, T221, T222 and T224 were stopped part-way: their work is in their worktrees, unpushed and unchecked
+  board's wave paragraph). T225, T223, T218, T217 and T219 are merged; T220 is running. Then T221, T222, T224.
+  T221, T222 and T224 were stopped part-way: their work is in their worktrees, unpushed and unchecked
   (T224's uncommitted). Resume each with its agent, or a new one in its worktree.
 - The wave's common brief and wait script are outside the repo, in the `.scratch` folder of the worktrees' folder
   [no-check: outside the repo]. Host ports 8701 to 8708 and consoles 5570 to 5584 went to the implementers in task
@@ -18,7 +18,7 @@ wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Next
 
-1. As T219 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence, then T220.
+1. As T220 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence, then T221.
 2. Go on down the order, one at a time.
 3. After the last merge: the sweep (it checks the labels `tools/android-ui.py` taps), the release, the close.
 4. The next wave's candidates: the layout authority's second half with ADR 0053's build step 2 and the top-row
