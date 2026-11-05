@@ -57,6 +57,13 @@ import java.util.concurrent.atomic.AtomicLong
  * fails its hash or fails to download is left out with the reason (`graph` in the job's JSON): never a failed pack;
  * the phone builds its own (ADR 0033 §2). [startGraph] fetches a graph alone for a pack already on the device (the
  * route planner's third fetch point, [ShippedGraphs]).
+ *
+ * T222: a job says what happened in plain words ([DownloadStatus], `word`, `sentence` and `actions` in its JSON). A job picked up
+ * at launch reads as paused until its first new bytes: with no network it stays `paused`, without trying, and goes on when a
+ * default network appears ([watchNetwork]) or on Resume now ([retry]). A job that fails in a running session is `failed`, with
+ * Retry ([retry]) and Remove. Before bytes are written the known sizes are checked against the free space ([freeBytes]; a plain
+ * URL's size is known at the first response), which fails the job with [NotEnoughSpace]. A region job's wrap-up ([Job.region],
+ * the area's record) is saved with the job, so it runs when the download finishes, whatever happened in between.
  */
 class PackDownloader(private val manager: PackManager, private val dir: File) {
     private val stateDir = File(dir, ".downloads").apply { mkdirs() }
@@ -106,6 +113,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         /** T189: a job that fetches only the graph of a pack already on the device ([startGraph]), beside [graphTarget]. */
         val graphOnly: Boolean = false,
         graphTarget: File? = null,
+        /** T222: a region job's wrap-up ([io.github.jasondorjeshort.dystopo.app.online.RegionDownload.regionBlock]), saved with the job. */
+        @Volatile var region: Map<String, Any?>? = null,
     ) {
         val name get() = source.name
         // The (small, optional) vector archive first: the DEM getting its final name is what makes the
@@ -130,6 +139,35 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         @Volatile var sessionStartedAt = 0L
         @Volatile var sessionStartBytes = 0L
         @Volatile var finishedAt: Long? = null
+        /** T222: why it stopped, in the words of [DownloadStatus]. */
+        @Volatile var failure: DownloadStatus.Failure? = null
+        /** T222: bytes short of what it needs ([NotEnoughSpace]). */
+        @Volatile var shortBytes: Long? = null
+        /** T222: picked up again at launch; until its first new bytes it reads as paused and an offline phone pauses it. */
+        @Volatile var resumedAtLaunch = false
+
+        /** T222: picked up at launch and nothing new has arrived yet (a hash being checked has its bytes). */
+        val awaitingFirstBytes get() = resumedAtLaunch && bytesDone == sessionStartBytes && files.none { it.status == "verifying" }
+
+        val percent: Double? get() = bytesTotal?.takeIf { it > 0 }?.let { Math.round(bytesDone * 1000.0 / it) / 10.0 }
+
+        /** T222: what the row says. */
+        fun status(): DownloadStatus.Row = DownloadStatus.of(state, failure, shortBytes, percent, awaitingFirstBytes)
+
+        /** T222: the bytes still to come, of the sizes known now. */
+        fun remainingBytes(): Long = all.filter { it.status != "missing" && it.status != "unchanged" && it.status != "skipped" }.sumOf { f ->
+            ((f.total ?: f.expectBytes) ?: 0L).minus(f.done.get()).coerceAtLeast(0L)
+        }
+
+        /** T222: back to the start of the loop in [run], the part files kept (a hash failure has already deleted its own). */
+        fun rearm() {
+            all.filter { it.status != "missing" && it.status != "unchanged" }.forEach { it.status = "pending"; it.reason = null }
+            error = null
+            failure = null
+            shortBytes = null
+            finishedAt = null
+            state = "queued"
+        }
 
         val bytesDone get() = all.filter { it.status != "unchanged" && it.status != "skipped" }.sumOf { it.done.get() }
         val bytesTotal: Long? get() = all.filter { it.status != "missing" && it.status != "unchanged" && it.status != "skipped" && it.status != "failed" }
@@ -143,9 +181,11 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 "name" to name, "state" to state, "error" to error, "activate" to activate, "createdAt" to createdAt, // T96: the Share screen hides a peer's failure from before its state changed
                 "update" to update, "catalog" to catalog,
                 "bytesDone" to done, "bytesTotal" to total,
-                "percent" to total?.takeIf { it > 0 }?.let { Math.round(done * 1000.0 / it) / 10.0 },
+                "percent" to percent,
                 "bytesPerSec" to if (elapsed > 0) (done - sessionStartBytes) * 1000 / elapsed else null,
                 "restarts" to restarts,
+                "failure" to failure?.key, "shortBytes" to shortBytes, "resumedAtLaunch" to resumedAtLaunch,
+            ) + status().json() + linkedMapOf(
                 "files" to files.map { it.json() },
                 "graph" to graph?.json(), "graphOnly" to graphOnly, // T189
             )
@@ -153,11 +193,11 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     }
 
     /** Starts (or resumes) downloading the pack [url] names. */
-    fun start(url: String, name: String? = null, activate: Boolean = false): Job {
+    fun start(url: String, name: String? = null, activate: Boolean = false, region: Map<String, Any?>? = null): Job {
         val source = PackDownload.resolve(url.trim(), name)
             ?: throw IllegalArgumentException("not a pack URL: '$url' (want http(s)://host/path/<name>-dem.pmtiles or .../<name>)")
         io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.problem(url)?.let { throw IllegalArgumentException(it) } // T79: refuse at once, not after retries
-        return enqueue(source) { Job(source, activate, System.currentTimeMillis()) }
+        return enqueue(source) { Job(source, activate, System.currentTimeMillis(), region = region) }
     }
 
     /**
@@ -174,13 +214,15 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         /** T189: the routing graph shipped with the pack and its absolute URL; fetched after the archives when it matches them. */
         shipped: DerivedFile? = null,
         shippedUrl: String? = null,
+        /** T222: the region job's wrap-up, run when this download finishes. */
+        region: Map<String, Any?>? = null,
     ): Job {
         require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
         // T65: a vector-only pack (a server's single-file pack) is map data drawn where the DEM comes from another pack or online.
         require(files.isNotEmpty() || (update && unchanged.isNotEmpty())) { "pack '$name' has no archive to download" }
         val source = PackSource(name, files[PackRole.DEM]?.first.orEmpty(), files[PackRole.VECTOR]?.first.orEmpty())
         return enqueue(source, update) {
-            Job(source, activate, System.currentTimeMillis(), update, catalog, shipped, shippedUrl).also { job ->
+            Job(source, activate, System.currentTimeMillis(), update, catalog, shipped, shippedUrl, region = region).also { job ->
                 for (f in job.files) {
                     val e = files[f.role]
                     when {
@@ -219,6 +261,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             val existing = PackRole.entries.any { File(dir, PackNames.fileName(source.name, it)).exists() } // T65: or its vector archive alone
             require(update || !existing || File(stateDir, "${source.name}.json").exists()) { "pack '${source.name}' is already on the device; DELETE /packs/${source.name} first" }
             val job = make()
+            if (job.region == null) job.region = jobs[source.name]?.region // T222: a new start of a stopped job keeps its wrap-up
             jobs[source.name] = job
             save(job)
             executor.execute { run(job) }
@@ -231,25 +274,22 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         val files = stateDir.listFiles { f -> f.name.endsWith(".json") }.orEmpty()
         for (f in files) {
             try {
-                val m = MiniJson.parseObject(f.readText())
-                val source = PackSource(m["name"] as String, m["demUrl"] as String, m["vectorUrl"] as String)
-                @Suppress("UNCHECKED_CAST")
-                val g = m["graph"] as? Map<String, Any?>
+                val m = DownloadStatus.Saved.parse(f.readText())
+                val source = PackSource(m.name, m.demUrl, m.vectorUrl)
+                val g = m.graph
                 @Suppress("UNCHECKED_CAST")
                 val shipped = (g?.get("entry") as? Map<String, Any?>)?.let(DerivedFile::parse)
-                @Suppress("UNCHECKED_CAST")
                 val job = Job(
-                    source, m["activate"] == true, (m["createdAt"] as? Number)?.toLong() ?: 0L, m["update"] == true, m["catalog"] as? Map<String, Any?>,
-                    shipped, g?.get("url") as? String, m["graphOnly"] == true, (g?.get("target") as? String)?.let(::File),
+                    source, m.activate, m.createdAt, m.update, m.catalog,
+                    shipped, g?.get("url") as? String, m.graphOnly, (g?.get("target") as? String)?.let(::File), m.region,
                 )
                 job.graph?.let { gj ->
                     gj.total = (g?.get("total") as? Number)?.toLong()
                     gj.etag = g?.get("etag") as? String
                     gj.lastModified = g?.get("lastModified") as? String
                 }
-                job.restarts = ((m["restarts"] as? Number)?.toInt() ?: 0) + 1
-                @Suppress("UNCHECKED_CAST")
-                for (fm in (m["files"] as? List<Map<String, Any?>>).orEmpty()) {
+                job.restarts = m.restarts + 1
+                for (fm in m.files) {
                     val fj = job.files.firstOrNull { it.role?.label == fm["role"] } ?: continue
                     fj.total = (fm["total"] as? Number)?.toLong()
                     fj.etag = fm["etag"] as? String
@@ -258,6 +298,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     fj.expectSha256 = fm["expectSha256"] as? String
                     fj.expectBytes = (fm["expectBytes"] as? Number)?.toLong()
                 }
+                job.resumedAtLaunch = true // T222: paused until the bytes flow
+                prime(job)
                 synchronized(jobs) {
                     if (jobs[source.name]?.state.let { it == "queued" || it == "running" }) return@synchronized
                     jobs[source.name] = job
@@ -265,6 +307,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     executor.execute { run(job) }
                 }
                 Log.i(PackManager.TAG, "resuming download of ${source.name} (restart ${job.restarts})")
+                // T222: whichever comes first at launch, this or the region job's own look at [regionJobs], it ends up followed.
+                if (job.region != null && job === job(source.name)) follower?.invoke(job)
             } catch (e: Exception) {
                 Log.w(PackManager.TAG, "unreadable download state ${f.name}; dropped", e)
                 f.delete()
@@ -272,11 +316,94 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         }
     }
 
+    /**
+     * T222: Retry and Resume now: the stopped or paused job runs again from its part files. A job that failed starts as any
+     * running download does (its retries, then a stop); a paused one stays paused while the phone is offline.
+     */
+    fun retry(name: String): Job {
+        val job = synchronized(jobs) {
+            val job = jobs[name] ?: throw NoSuchElementException("no download '$name'")
+            if (job.state != "failed" && job.state != "paused") return job
+            if (job.state == "failed") job.resumedAtLaunch = false
+            job.rearm()
+            save(job) // a hash failure deleted the state file
+            executor.execute { run(job) }
+            job
+        }
+        follower?.invoke(job)
+        return job
+    }
+
+    /** T222: told when a job runs again after a stop: the region job follows it. */
+    @Volatile var follower: ((Job) -> Unit)? = null
+
+    /** T222: the jobs carrying a region's wrap-up that have not ended. */
+    fun regionJobs(): List<Job> = synchronized(jobs) { jobs.values.filter { it.region != null && it.state in setOf("queued", "running", "paused") } }
+
+    private var watching = false
+
+    /** T222: from the first paused job on, a default network appearing resumes the paused jobs. */
+    private fun watchNetwork() {
+        synchronized(jobs) {
+            if (watching) return
+            watching = true
+        }
+        runCatching {
+            io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.net.ConnectivityManager::class.java)
+                .registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: android.net.Network) {
+                        // After a moment: the active network a job's check reads may not be this one yet.
+                        Thread({ Thread.sleep(1_500); resumePaused() }, "dystopo-pack-online").apply { isDaemon = true }.start()
+                    }
+                })
+        }.onFailure { Log.w(PackManager.TAG, "no network callback; a paused download waits for Resume now", it) }
+    }
+
+    private fun resumePaused() {
+        val paused = synchronized(jobs) { jobs.values.filter { it.state == "paused" }.map { it.name } }
+        paused.forEach { runCatching { retry(it) } }
+    }
+
+    private fun online(): Boolean = io.github.jasondorjeshort.dystopo.app.areas.DownloadWorker.networkUsable()
+
+    /** T222: a debug figure for the free space (`POST /packs/download/free`), null for the phone's own. */
+    @Volatile var freeOverride: Long? = null
+
+    /**
+     * T222: bytes the app can have on the packs' volume: free, plus cached files the system would clear for it. The reference's
+     * measure (StorageManager.getAllocatableBytes); it may take seconds, so on a worker thread only, and not in a route's JSON.
+     */
+    fun freeBytes(): Long = freeOverride ?: try {
+        val sm = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.os.storage.StorageManager::class.java)
+        sm.getAllocatableBytes(sm.getUuidForPath(dir))
+    } catch (e: Exception) {
+        dir.usableSpace // no such volume known to the system: what the file system says
+    }
+
+    /** T222: bytes short of [needBytes], or null when they fit (the free-space check on a known size; a worker thread's call). */
+    fun shortBy(needBytes: Long): Long? = DownloadStatus.shortBy(needBytes, freeBytes())
+
+    /** T222: throws [NotEnoughSpace] when [needBytes] do not fit; when they fit only with cached files cleared, has them cleared. */
+    private fun ensureSpace(needBytes: Long) {
+        if (needBytes <= 0) return
+        shortBy(needBytes)?.let { throw NotEnoughSpace(it) }
+        if (freeOverride == null && dir.usableSpace < needBytes) runCatching {
+            val sm = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.os.storage.StorageManager::class.java)
+            sm.allocateBytes(sm.getUuidForPath(dir), needBytes)
+        }
+    }
+
+    /** Sets each archive's progress from what is on disk. */
+    private fun prime(job: Job) {
+        job.files.forEach { it.done.set(if (!job.update && it.target.isFile) it.target.length() else it.part.length()) }
+        job.sessionStartBytes = job.bytesDone
+    }
+
     /** Cancels [name]'s download and removes its partial files. True if there was one. */
     fun cancel(name: String): Boolean {
         val job = synchronized(jobs) { jobs.remove(name) }
         val state = File(stateDir, "$name.json")
-        val had = job?.state.let { it == "queued" || it == "running" || it == "failed" } || state.exists()
+        val had = job?.state.let { it == "queued" || it == "running" || it == "failed" || it == "paused" } || state.exists()
         job?.let { it.cancelled = true; it.state = "cancelled" }
         state.delete()
         // The worker may still hold a part file open for a moment; delete what is there now and again after it stops.
@@ -291,7 +418,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     fun snapshot(): List<Map<String, Any?>> = synchronized(jobs) { jobs.values.toList() }.map { it.json() }
 
-    fun json(): Map<String, Any?> = linkedMapOf("active" to activeCount(), "jobs" to snapshot())
+    fun json(): Map<String, Any?> = linkedMapOf("active" to activeCount(), "freeBytes" to (freeOverride ?: dir.usableSpace), "freeOverride" to (freeOverride != null), "jobs" to snapshot())
 
     private fun save(job: Job) {
         if (job.cancelled) return
@@ -305,6 +432,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                 )
             },
             "graphOnly" to job.graphOnly,
+            "region" to job.region, // T222: a build before T222 ignores the key
             // T189: the shipped graph: its entry, URL, target and resume validators (a build before T189 ignores the key).
             "graph" to job.graph?.let { g ->
                 mapOf("entry" to job.shipped?.json(), "url" to g.url, "target" to g.target.path, "total" to g.total, "etag" to g.etag, "lastModified" to g.lastModified)
@@ -318,6 +446,12 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     private class Cancelled : Exception()
 
+    /** T222: a job picked up at launch finds the phone offline: it waits, paused. */
+    private class Offline : Exception()
+
+    /** T222: the phone is [shortBytes] short of what this download needs. Not retried; the row has Storage and Retry. */
+    class NotEnoughSpace(val shortBytes: Long) : IOException(DownloadStatus.spaceSentence(shortBytes))
+
     /** T53: the downloaded bytes are not what the catalog promised. Not retried, not resumed. */
     class HashMismatch(message: String) : IOException(message)
     /** T79: a redirect the cleartext policy refuses, or too many redirects: not retried. */
@@ -327,9 +461,10 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         if (job.cancelled) return
         job.state = "running"
         job.sessionStartedAt = SystemClock.elapsedRealtime()
-        job.files.forEach { it.done.set(if (!job.update && it.target.isFile) it.target.length() else it.part.length()) }
-        job.sessionStartBytes = job.bytesDone
+        prime(job)
         try {
+            if (job.awaitingFirstBytes && !online()) throw Offline()
+            ensureSpace(job.remainingBytes())
             for (f in job.files) {
                 if (f.status == "missing" || f.status == "unchanged") continue
                 if (!job.update && f.expectSha256 == null && f.target.isFile && f.total == f.target.length()) { f.status = "done"; continue }
@@ -343,6 +478,10 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             job.graph?.takeIf { it.status == "verified" }?.let { installGraph(job, it) }
             job.finishedAt = SystemClock.elapsedRealtime()
             if (!job.graphOnly) job.catalog?.let { c -> manager.catalogClient.recordInstalled(job.name, c, job.files.filter { it.sha256 != null && it.role != null }.associate { it.role!! to (it.target to it.sha256!!) }) }
+            job.region?.let { r -> // T222: the wrap-up, here so that it runs after a kill and after a Retry too; never fails the job
+                runCatching { io.github.jasondorjeshort.dystopo.app.online.RegionDownload.recordFinished(manager, job.name, r) }
+                    .onFailure { Log.w(PackManager.TAG, "the area of ${job.name} was not recorded", it) }
+            }
             job.state = "done"
             File(stateDir, "${job.name}.json").delete()
             Log.i(PackManager.TAG, "downloaded pack ${job.name}: ${job.bytesDone} bytes${if (job.update) " (update)" else ""}${job.graph?.let { ", graph ${it.status}${it.reason?.let { r -> " ($r)" } ?: ""}" } ?: ""}")
@@ -353,10 +492,14 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             }
         } catch (_: Cancelled) {
             job.state = "cancelled"
+        } catch (_: Offline) {
+            job.state = "paused"
+            watchNetwork()
         } catch (e: HashMismatch) {
             Log.w(PackManager.TAG, "download of ${job.name} rejected: ${e.message}")
             job.finishedAt = SystemClock.elapsedRealtime()
             job.error = e.message
+            job.failure = DownloadStatus.Failure.DAMAGED
             job.state = "failed"
             // Wrong bytes: nothing to resume. The parts of the other archives go too.
             File(stateDir, "${job.name}.json").delete()
@@ -366,6 +509,8 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
             Log.w(PackManager.TAG, "download of ${job.name} failed", e)
             job.finishedAt = SystemClock.elapsedRealtime()
             job.error = e.message ?: e.javaClass.simpleName
+            job.failure = DownloadStatus.classify(e)
+            job.shortBytes = (e as? NotEnoughSpace)?.shortBytes ?: if (job.failure == DownloadStatus.Failure.SPACE) shortBy(job.remainingBytes()) else null
             job.state = "failed"
             // The state file stays, so the next app start (or a new POST) resumes from the part file.
         }
@@ -443,6 +588,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                         }
                         f.total = total
                         save(job)
+                        if (f.expectBytes == null && total != null) ensureSpace(total - (if (append) have else 0L)) // T222: a plain URL's size is known now
                         copy(job, f, conn, append = append)
                         if (total != null && f.part.length() < total) continue // connection ended early: resume
                     }
@@ -464,8 +610,9 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
                     is PackDownload.Plan.Fail -> throw IOException("${f.url}: ${plan.reason}")
                 }
             } catch (e: IOException) {
-                if (e is HashMismatch || e is RedirectRefused) throw e
+                if (e is HashMismatch || e is RedirectRefused || DownloadStatus.classify(e) == DownloadStatus.Failure.SPACE) throw e
                 if (job.cancelled) throw Cancelled()
+                if (job.awaitingFirstBytes && !online()) throw Offline() // T222
                 if (++failures > 5) throw e
                 synchronized(f.responses) { f.responses += "error: ${e.message}" }
                 Thread.sleep(2000L * failures)

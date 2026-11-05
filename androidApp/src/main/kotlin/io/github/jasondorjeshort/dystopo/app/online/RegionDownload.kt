@@ -8,6 +8,7 @@ import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
 import io.github.jasondorjeshort.dystopo.packs.PackCatalog
 import io.github.jasondorjeshort.dystopo.packs.PackRole
+import io.github.jasondorjeshort.dystopo.app.packs.DownloadStatus
 import io.github.jasondorjeshort.dystopo.app.packs.PackDownloader
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
@@ -47,10 +48,26 @@ import kotlin.math.floor
  * for the visible box (`AreaPicker.openRegion`), which takes this pack path only for a box within the server's build limits
  * at full detail ([packFits]: [MAX_SPAN_DEG] a side, [TILE_LIMIT] tiles at z8 to z14), and the area path (tiles only,
  * `AreaDownload`) for anything wider or at less detail. [start] keeps its limits, which mirror the server's.
+ *
+ * T222, what a kill or a dropped connection leaves. The build phase (the server's job followed here, or [LocalPackBuild]) lives
+ * in memory only: a failure there reads "Download stopped" with [retry], which builds again, and a kill leaves nothing. From the
+ * download phase on, the job's state file carries the wrap-up ([regionBlock], run by [PackDownloader] through [recordFinished]),
+ * so the area's record is written when the download finishes, after a kill or a Retry too. This object follows such a job at
+ * launch and after a Retry ([adopt]), so the map's overlay shows it as it shows one it started: `paused` is a state here too.
+ * Space is checked on known sizes only: the downloader's check on the manifest's exact sizes (or a plain URL's first response),
+ * and for a pack built on the phone the finished archives before they are copied in. Nothing is refused before a build: the only
+ * figure then is [AreaManifest.estimate]'s, an upper end for the DEM, which would refuse a box that fits; a disk that fills during
+ * a build reads Not enough space too ([DownloadStatus.classify]).
  */
 class RegionDownload(private val service: OnlineService, private val app: DystopoApp) {
     init {
         Areas.attach(service) // T75: pinned areas' tiles are skipped by the tile cache's eviction
+        // T222: on a thread of its own, as the pack manager may be asking for this service while it starts.
+        Thread({
+            val downloads = PackManager.get(app).downloads
+            downloads.follower = ::adopt
+            downloads.regionJobs().firstOrNull()?.let(::adopt)
+        }, "online-region-adopt").apply { isDaemon = true }.start()
     }
 
     /** T75: the area this job downloads (the box and zooms) and the server's manifest once it is ready. */
@@ -65,8 +82,14 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
     @Volatile private var buildId: String? = null
     @Volatile private var build: Map<String, Any?>? = null
     @Volatile private var download: PackDownloader.Job? = null
+    /** T222: the reason in plain words, what the first-run card prints after "Download failed: "; [errorDetail] is the raw text. */
     @Volatile var error: String? = null
         private set
+    @Volatile private var errorDetail: String? = null
+    @Volatile private var failure: DownloadStatus.Failure? = null
+    @Volatile private var shortBytes: Long? = null
+    /** T222: the job a thread is following now. */
+    @Volatile private var following: PackDownloader.Job? = null
     @Volatile private var cancelled = false
     @Volatile private var startedAt = 0L
     @Volatile private var builtAt = 0L
@@ -104,7 +127,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         buildId = null
         build = null
         download = null
-        error = null
+        clearStop()
         note = null
         cancelled = false
         this.profile = wanted
@@ -128,9 +151,116 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         return (packs + areas).toSet()
     }
 
+    /**
+     * T222: Retry, or Resume now: a job stopped or paused in its download phase runs on from its part files; one stopped before
+     * it had a download builds again.
+     */
+    @Synchronized
+    fun retry(): Map<String, Any?> {
+        if (state != "failed" && state != "paused") return json()
+        val n = name ?: return json()
+        val downloads = PackManager.get(app).downloads
+        if (download != null && downloads.job(n) === download) {
+            downloads.retry(n)
+            return json()
+        }
+        val b = bounds ?: return json()
+        return start(b, zooms?.first, zooms?.last, n, profile)
+    }
+
+    /** T222: Remove on a stopped job: its line goes. The caller has dealt with any download ([PackManager.delete]). */
+    @Synchronized
+    fun dismiss(packName: String?): Map<String, Any?> {
+        if (!running && (packName == null || packName == name)) {
+            state = "idle"
+            clearStop()
+            download = null
+            cancelled = true // a thread still following the removed job leaves the state alone
+        }
+        return json()
+    }
+
+    /**
+     * T222: follows [job], a download with a region's wrap-up that this object did not just start: one picked up at launch, or
+     * one that runs again after a stop. A running region job is left alone: [PackDownloader] writes the record either way.
+     */
+    @Synchronized
+    private fun adopt(job: PackDownloader.Job) {
+        val block = job.region ?: return
+        if (following === job || (running && download !== job)) return
+        if (download !== job) {
+            val a = runCatching { @Suppress("UNCHECKED_CAST") AreaOfInterest.parse(block["area"] as Map<String, Any?>) }.getOrNull() ?: return
+            name = job.name
+            area = a
+            bounds = a.bounds
+            zooms = a.minZoom..a.maxZoom
+            startedAt = (block["startedAt"] as? Number)?.toLong() ?: job.createdAt
+            builtAt = startedAt
+            build = null
+            buildId = null
+            note = null
+            download = job
+        }
+        clearStop()
+        cancelled = false
+        finishedAt = 0L
+        state = if (job.state == "paused" || job.awaitingFirstBytes) "paused" else "downloading"
+        following = job // here, so that a second call does not start a second thread
+        Thread({ follow(job, PackManager.get(app)) }, "online-region-follow").apply { isDaemon = true }.start()
+    }
+
+    /** T222: until [job] ends, this object's state follows it; then the job is `done`, `failed` or `cancelled` here too. */
+    private fun follow(job: PackDownloader.Job, packs: PackManager) {
+        following = job
+        try {
+            while (job.state == "queued" || job.state == "running" || job.state == "paused") {
+                if (cancelled) return
+                state = if (job.state == "paused" || job.awaitingFirstBytes) "paused" else "downloading"
+                Thread.sleep(POLL_MS)
+            }
+            if (cancelled) return
+            when (job.state) {
+                "done" -> {
+                    // The downloader opens the pack on its own thread just after it reports done (T41: next to the others).
+                    val deadline = System.currentTimeMillis() + 10_000
+                    while (job.name !in packs.inUse() && System.currentTimeMillis() < deadline) Thread.sleep(200)
+                    state = "done"
+                }
+                "cancelled" -> state = "cancelled"
+                else -> {
+                    failure = job.failure
+                    shortBytes = job.shortBytes
+                    errorDetail = job.error
+                    error = reasonOf(job.failure, job.shortBytes)
+                    state = "failed"
+                }
+            }
+        } finally {
+            if (following === job) following = null
+            if (finishedAt == 0L) finishedAt = System.currentTimeMillis()
+        }
+    }
+
+    private fun clearStop() {
+        error = null
+        errorDetail = null
+        failure = null
+        shortBytes = null
+    }
+
+    /** T222: why the job stopped, in [DownloadStatus]'s words; a failure in the build phase with no better word is the build's. */
+    private fun stop(e: Exception, build: Boolean) {
+        val f = DownloadStatus.classify(e).let { if (build && it == DownloadStatus.Failure.OTHER) DownloadStatus.Failure.BUILD else it }
+        failure = f
+        shortBytes = (e as? PackDownloader.NotEnoughSpace)?.shortBytes
+        errorDetail = e.message ?: e.javaClass.simpleName
+        error = reasonOf(f, shortBytes)
+        state = "failed"
+    }
+
     /** Stops the job: cancels the server build or the device download. */
     fun cancel(): Map<String, Any?> {
-        if (!running) return json()
+        if (!running && state != "paused") return json()
         cancelled = true
         val server = service.fetcher?.server
         buildId?.let { id -> if (server != null) runCatching { http("DELETE", "$server/build/$id") } }
@@ -158,8 +288,8 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
                         role to Triple(PackCatalog.resolveUrl(server, f.url), f.sha256, f.bytes)
                     }.toMap()
                     val g = m.items.filterIsInstance<io.github.jasondorjeshort.dystopo.areas.LocalItem>().firstOrNull { it.kind == "graph" }?.shipped // T189: the server's graph, fetched when it matches
-                    packs.downloads.startCatalog(packName, files, emptySet(), update = false, activate = true, catalog = linkedMapOf("server" to server, "id" to packName, "area" to m.id), shipped = g, shippedUrl = g?.let { PackCatalog.resolveUrl(server, it.url) })
-                } else packs.downloads.start("$server/out/$packName-dem.pmtiles", packName, activate = true)
+                    packs.downloads.startCatalog(packName, files, emptySet(), update = false, activate = true, catalog = linkedMapOf("server" to server, "id" to packName, "area" to m.id), shipped = g, shippedUrl = g?.let { PackCatalog.resolveUrl(server, it.url) }, region = wrapUp(server))
+                } else packs.downloads.start("$server/out/$packName-dem.pmtiles", packName, activate = true, region = wrapUp(server))
             } catch (e: IllegalArgumentException) {
                 if (packs.find(packName) == null) throw e
                 note = "already on the device; activated"
@@ -167,21 +297,13 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
                 null
             }
             download = job
-            while (job != null && (job.state == "queued" || job.state == "running")) {
-                if (cancelled) return
-                Thread.sleep(POLL_MS)
-            }
-            if (job != null && job.state != "done") throw IOException("download ${job.state}: ${job.error}")
-            // The downloader opens the pack on its own thread just after it reports done (T41: next to the others).
-            val deadline = System.currentTimeMillis() + 10_000
-            while (packName !in packs.inUse() && System.currentTimeMillis() < deadline) Thread.sleep(200)
+            if (job != null) return follow(job, packs) // T222: the downloader writes the area's record
             recordArea(server, packName)
             state = "done"
         } catch (e: Exception) {
             if (cancelled) return
             Log.w(OnlineService.TAG, "region download $packName failed", e)
-            error = e.message ?: e.javaClass.simpleName
-            state = "failed"
+            stop(e, build = download == null)
         } finally {
             if (finishedAt == 0L) finishedAt = System.currentTimeMillis()
         }
@@ -202,6 +324,11 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             builtAt = System.currentTimeMillis()
             state = "downloading" // installing: the archives are copied into the packs dir and opened
             build = result
+            // T222: the archives' sizes are known now; they are copied in beside the build's own files.
+            PackManager.get(app).downloads.shortBy(local.outputs().sumOf { it.length() })?.let { short ->
+                local.cleanUp()
+                throw PackDownloader.NotEnoughSpace(short)
+            }
             PackManager.get(app).importFiles(local.outputs().map { file ->
                 PackManager.ImportSource(file.name, file.length()) { file.inputStream() }
             }, packName)
@@ -212,8 +339,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         } catch (e: Exception) {
             if (cancelled) return
             Log.w(OnlineService.TAG, "local region build $packName failed", e)
-            error = e.message ?: e.javaClass.simpleName
-            state = "failed"
+            stop(e, build = true)
         } finally {
             if (finishedAt == 0L) finishedAt = System.currentTimeMillis()
         }
@@ -226,15 +352,11 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
      * manifest says (the graph by the first route, `RoutePlanner`; the index when the search box is used, `PlaceSearch`).
      */
     private fun recordArea(source: String, packName: String) {
-        val a = area ?: return
-        val bytes = runCatching { PackManager.get(app).find(packName)?.files?.files?.sumOf { it.length() } }.getOrNull() ?: 0L
-        Areas.put(
-            Areas.Record(
-                id = a.id, name = packName, area = a, createdAt = startedAt, pinned = true, state = "done", source = source, pack = packName,
-                bytes = bytes, estimateBytes = manifest?.bytes ?: bytes, downloadMs = System.currentTimeMillis() - startedAt,
-            ),
-        )
+        recordFinished(PackManager.get(app), packName, wrapUp(source) ?: return)
     }
+
+    /** T222: what the area's record needs, saved with the download; null for no area. */
+    private fun wrapUp(source: String): Map<String, Any?>? = area?.let { regionBlock(it, source, startedAt, manifest?.bytes) }
 
     /**
      * T75: `POST /area` for the box: follows the `/build` job it starts (or finds) and asks again once it is done,
@@ -362,6 +484,8 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         val now = System.currentTimeMillis()
         return linkedMapOf(
             "state" to state, "name" to name, "error" to error, "note" to note,
+            "phase" to if (download != null) "download" else "build", "failure" to failure?.key, "shortBytes" to shortBytes, "errorDetail" to errorDetail, // T222
+        ) + DownloadStatus.of(state, failure, shortBytes, job?.percent).json() + linkedMapOf(
             "bbox" to bounds?.let { listOf(it.minLon, it.minLat, it.maxLon, it.maxLat) },
             "zooms" to zooms?.let { listOf(it.first, it.last) },
             "profile" to profile,
@@ -394,6 +518,35 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         const val PROFILE_OUTDOORS = "outdoors"
         const val PROFILE_OPENMAPTILES = "openmaptiles"
         const val DEFAULT_MIN_ZOOM = 8
+
+        /** T222: what the first-run card prints after "Download failed: ": the sentence's reason, or the whole sentence for space. */
+        internal fun reasonOf(f: DownloadStatus.Failure?, shortBytes: Long?): String = when (f) {
+            null -> DownloadStatus.Failure.OTHER.reason
+            DownloadStatus.Failure.SPACE -> DownloadStatus.spaceSentence(shortBytes)
+            else -> f.reason
+        }
+
+        /** T222: the area's record as a download carries it through a kill: the area, where it came from, when it began, its estimate. */
+        fun regionBlock(area: AreaOfInterest, source: String, startedAt: Long, estimateBytes: Long?): Map<String, Any?> =
+            linkedMapOf("area" to area.json(), "source" to source, "startedAt" to startedAt, "estimateBytes" to estimateBytes)
+
+        /** T222: the record [block] says (T75: a pinned area backed by the pack), [bytes] of pack finished at [nowMs]. Pure, tested. */
+        internal fun recordOf(packName: String, block: Map<String, Any?>, bytes: Long, nowMs: Long): Areas.Record {
+            @Suppress("UNCHECKED_CAST")
+            val a = AreaOfInterest.parse(block["area"] as Map<String, Any?>)
+            val startedAt = (block["startedAt"] as? Number)?.toLong() ?: nowMs
+            return Areas.Record(
+                id = a.id, name = packName, area = a, createdAt = startedAt, pinned = true, state = "done", source = block["source"] as? String, pack = packName,
+                bytes = bytes, estimateBytes = (block["estimateBytes"] as? Number)?.toLong() ?: bytes, downloadMs = nowMs - startedAt,
+            )
+        }
+
+        /** T222: writes the area's record of a finished pack; [PackDownloader] calls it, whatever the region job's own state. */
+        fun recordFinished(packs: PackManager, packName: String, block: Map<String, Any?>) {
+            val bytes = runCatching { packs.find(packName)?.files?.files?.sumOf { it.length() } }.getOrNull() ?: 0L
+            Areas.put(recordOf(packName, block, bytes, System.currentTimeMillis()))
+        }
+
 
         /**
          * What the overlay says about the vector half of a server build job ([build] is its JSON): `outdoors,
