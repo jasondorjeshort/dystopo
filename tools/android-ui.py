@@ -15,10 +15,10 @@ Parts:
                or a coordinate pair inside a local box (devtool.local.json, read by PrivacyCheck itself; this script
                never opens it); the lenient single-value rule is reported, not failed (see `valueRule` in the report).
   features     the release feature pass (R8 has never seen these paths in a test): with the Rainier pack pushed,
-               search (type, pick a hit), routing (long-press start and end, the card, Keep as a trip, the Routes
-               list; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
+               search (type, pick a hit), routing (long-press start and end, the card, T219: its Export GPX through the
+               system's save dialog, Save (Keep before T217) as a trip, the Routes list under the route's place names; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
                "From: Your location"), a waypoint with no recording (long-press, Waypoint here,
-               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Stop, the list, GPX export), the sync sheet
+               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Stop, the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -73,7 +73,7 @@ Parts:
                (GET /scalebar's bothUnits, GET /sync/status' settingsSync `synced`); then B back to one unit, to A.
                T139: a screenshot of both phones after each carry under --out; the sweep runs it with -BothUnits.
                T143: the trip corridor's width too (--width-m set on A, read on B, then both put back).
-  diagnostics  (T143) Settings > About and advanced > Diagnostics: every line of the row (the max heap equal to the
+  diagnostics  (T143) Settings > About and advanced, T223's Technical details opened, Diagnostics: every line of the row (the max heap equal to the
                system's large heap), Copy report and Refresh; after a force-stop and a cold start, "Last session"
                says how the app ended (API 30 and up) and the peak it reached.
 
@@ -836,7 +836,12 @@ def part_search(args):
 
 PTS = re.compile(r"(\d+) pts")
 CODE = re.compile(r"^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$")
-CARD = r"^[\d.,]+ (mi|km) · \+"
+# The route card's header and a Routes row: distance, then " · " (T217: "1.8 mi · up 1318 ft · 1:15", a downhill route has no
+# "up"; before it, "1.8 mi · +1318 ft").
+CARD = r"^[\d.,]+ (mi|km|ft|m) · "
+# T219: the Tracks sheet's title; before it, the list under the bar showed Sync status.
+TRACKS_LIST = r"^(Tracks · \d+|Sync status)$"
+SAVED_GPX = r"^Saved .* as a GPX file$"
 FIRST_RUN = "No map on this phone yet"
 
 
@@ -878,13 +883,25 @@ def tracks_bar(dev):
 
 
 def tracks_list(dev):
-    """The tracks list under the bar (Sync now, Sync status, Share, the tracks)."""
+    """The Tracks sheet (before T219, the list under the bar)."""
     for _ in range(4):
         nodes = tracks_bar(dev)
-        if dev.find("^Sync status$", nodes):
+        if dev.find(TRACKS_LIST, nodes):
             return nodes
         dev.tap(dev.find("^Tracks$", nodes))
     raise RuntimeError(f"no tracks list (texts: {dev.texts()[:20]})")
+
+
+def tracks_more(dev):
+    """The Tracks sheet with Sync now, Sync status and Share on screen: under its overflow since T219."""
+    nodes = tracks_list(dev)
+    if dev.find("^Sync status$", nodes):
+        return nodes
+    dev.tap(dev.find("^More actions$", nodes))
+    n, nodes = dev.wait_for("^Sync status$", 5)
+    if not n:
+        raise RuntimeError(f"no Sync status under the Tracks sheet's overflow (texts: {dev.texts(nodes)[:20]})")
+    return nodes
 
 
 def close_tracks(dev):
@@ -927,14 +944,72 @@ def record_track(dev, points, interval=1.0):
     return pts
 
 
-def track_rows(dev):
-    """(name, points) of every track in the list."""
+def parse_track_rows(texts):
+    """(name, line) of every track row among [texts]: the line is the date and distance since T219, "12 pts" before."""
     rows = []
-    for t in dev.texts(tracks_list(dev)):
-        m = re.match(r"^\W*(Track [^\n]+)\n(\d+) pts", t)
+    for t in texts:
+        m = re.match(r"^\W*(Track [^\n]+)\n([^\n]+)", t)
         if m:
-            rows.append((m.group(1).strip(), int(m.group(2))))
+            rows.append((m.group(1).strip(), m.group(2).strip()))
     return rows
+
+
+def track_rows(dev):
+    """(name, line) of every track in the list."""
+    return parse_track_rows(dev.texts(tracks_list(dev)))
+
+
+def same_first_track(before, after):
+    """Whether two lists of [track_rows] start with the same track: by name, and by its line when both builds print the
+    same kind of line (a build before T219 prints points, one after it the date and distance)."""
+    if not before or not after or before[0][0] != after[0][0]:
+        return False
+    return before[0][1] == after[0][1] or ("pts" in before[0][1]) != ("pts" in after[0][1])
+
+
+def tap_save_route(dev):
+    """The route card's way to keep the route: "Keep" before T217 (when "Save" was a file), "Save" since."""
+    nodes = dev.nodes()
+    n = dev.find("^Keep$", nodes) or dev.find("^Save$", nodes)
+    if not n:
+        raise RuntimeError(f"no Save or Keep on the route card (texts: {dev.texts(nodes)[:25]})")
+    dev.tap(n)
+
+
+def is_save_button(node):
+    """The system's save dialog's button (the documents app's, never the app's own Save)."""
+    return "documentsui" in (node.get("pkg") or "") and (node.get("text") or "").strip().lower() == "save" and bool(node.get("bounds"))
+
+
+def save_dialog(dev, name, folder="/sdcard/Download"):
+    """T219: after Export GPX: the system's save dialog in a screenshot, its Save tapped, the app's sentence read, and the
+    file in the folder the dialog opened on listed with `adb shell ls` (a dialog that remembers another folder fails here)."""
+    deadline = time.time() + 20
+    button = None
+    while time.time() < deadline and not button:
+        nodes = dev.nodes()
+        button = next((n for n in nodes if is_save_button(n)), None)
+        if not button:
+            time.sleep(1)
+    if not button:
+        return {"ok": False, "error": "no save dialog after Export GPX", "texts": dev.texts()[:25]}
+    png = dev.screencap(f"{name}-save-dialog")[0]
+    file_name = next((n["text"] for n in nodes if n["cls"].endswith("EditText") and n["text"]), None)
+    before = set(dev.shell("ls", folder, check_ok=False).splitlines())
+    dev.tap(button)
+    line, nodes = dev.wait_for(SAVED_GPX, 15)
+    listing = [t.strip() for t in dev.shell("ls", folder, check_ok=False).splitlines() if t.strip()]
+    new = [t for t in listing if t not in before and t.endswith(".gpx")]
+    ok = bool(line) and bool(new)
+    return {"ok": ok, "dialogPng": png, "fileOffered": file_name, "line": line and line["text"], "folder": folder, "newFiles": new,
+            **({} if ok else {"error": f"after the dialog's Save: line {bool(line)}, new files {new}", "texts": dev.texts(nodes)[:25]})}
+
+
+def export_route_card(dev):
+    """T219: the route card's overflow, Export GPX, the save dialog. The card stays."""
+    dev.tap_text("^More actions$", timeout=10)
+    dev.tap_text("^Export GPX$", timeout=10)
+    return save_dialog(dev, "route-card")
 
 
 ROUTE_LINE = (0xe6, 0x61, 0x01)  # routing/RouteOverlay.kt COLOR: the planned route
@@ -970,10 +1045,11 @@ def line_frame(dev, name, rgb, timeout=20, min_px=150):
         time.sleep(0.5)
 
 
-def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None):
-    """Long-press start and end on the map, read the route card, tap Keep; returns the card's numbers line. With
-    [shots] (a dict), also screenshots the route card with its line (`routePng`, `routeLinePx`) and the kept trip in
-    its editor (`tripPng`, `tripLinePx`) before Done."""
+def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None, export=False):
+    """Long-press start and end on the map, read the route card, tap Save (Keep before T217); returns the card's numbers
+    line. With [shots] (a dict), also screenshots the route card with its line (`routePng`, `routeLinePx`) and the kept
+    trip in its editor (`tripPng`, `tripLinePx`) before Done; T219: with [export], first the card's Export GPX through the
+    system's save dialog (its result in `shots["export"]`)."""
     c = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)  # centred between the two, away from the chips and the card
     open_map(dev, *c, z)
     time.sleep(5)  # the link's camera move ends before the presses
@@ -999,8 +1075,10 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None):
     via = next((t for t in dev.texts(nodes) if t.startswith("via ")), None)
     if shots is not None:
         shots["routePng"], shots["routeLinePx"] = line_frame(dev, "route-card", ROUTE_LINE)
-    dev.tap_text("^Keep$")
-    done, _ = dev.wait_for("^Done$", 8)  # Keep opens the kept route's editor
+    if export and shots is not None:
+        shots["export"] = export_route_card(dev)
+    tap_save_route(dev)
+    done, _ = dev.wait_for("^Done$", 8)  # Save opens the kept route's editor
     if shots is not None and done:
         shots["tripPng"], shots["tripLinePx"] = line_frame(dev, "route-kept", TRIP_LINE)
     if done:
@@ -1034,12 +1112,24 @@ def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
             **({} if ok else {"error": f"route to here: card {bool(card)}, {frm!r}, line {px} samples"})}
 
 
-def routes_list(dev):
-    """Opens the Routes list; returns the rows (name and numbers lines) and closes it."""
+def route_rows(texts):
+    """The Routes list's rows among [texts]: (their numbers lines, the name above each)."""
+    rows, names = [], []
+    for i, t in enumerate(texts):
+        if re.match(CARD, t):
+            rows.append(t)
+            names.append(texts[i - 1] if i else None)
+    return rows, names
+
+
+def routes_list(dev, names=None):
+    """Opens the Routes list; returns the rows' numbers lines and the screenshot, and closes it. The rows' names go in
+    the list [names] when one is passed."""
     dev.tap_text("^Routes$")
-    head, nodes = dev.wait_for(r"^(No routes yet\.|.* · \+.*)$", 10)
-    texts = dev.texts(nodes)
-    rows = [t for t in texts if re.match(r"^[\d.,]+ (mi|km) · \+", t)]
+    head, nodes = dev.wait_for(r"^(No routes yet\.|No saved routes yet\.)|" + CARD, 10)
+    rows, found = route_rows(dev.texts(nodes))
+    if names is not None:
+        names.extend(found)
     png = dev.screencap("routes-list")[0]
     n = dev.find("^Close$", nodes)
     if n:
@@ -1078,8 +1168,15 @@ def open_settings(dev, group="Data and storage", anchor="^Sources$"):
     raise RuntimeError(f"Settings > {group} has no {anchor} (texts: {dev.texts(nodes)[:25]})")
 
 
+def top_close(nodes):
+    """The Close of the sheet on top: the last in the tree, the one drawn last (T219: the Tracks sheet keeps its Close under the
+    Sync status sheet and the Share screen, where a tap on it lands on them and closes nothing)."""
+    closes = [n for n in nodes if n.get("text") == "Close" and n.get("bounds")]
+    return closes[-1] if closes else None
+
+
 def close_sheet(dev):
-    n = dev.find("^Close$")
+    n = top_close(dev.nodes())
     if n:
         dev.tap(n)
 
@@ -1178,13 +1275,16 @@ def part_features(args):
     def route():
         clear_search(dev)
         shots = {}
-        line, via = plan_and_keep(dev, shots=shots)
+        line, via = plan_and_keep(dev, shots=shots, export=True)
         st["route"] = line
-        # T105: the step's screenshot is the route card with its line (before Keep); the kept trip's line is in
+        # T105: the step's screenshot is the route card with its line (before Save); the kept trip's line is in
         # route-kept. Before, the screenshot came after Done, which closes the trip and its line by design.
         drawn = shots.get("routeLinePx", 0) >= 150 and shots.get("tripLinePx", 0) >= 150
-        return {"ok": drawn, "card": line, "via": via, "png": shots.get("routePng"), **shots,
-                **({} if drawn else {"error": f"route line not drawn (route {shots.get('routeLinePx')}, kept {shots.get('tripLinePx')} samples)"})}
+        saved = shots.get("export", {}).get("ok")  # T219: the card's Export GPX, the system's dialog, the file
+        ok = drawn and saved
+        return {"ok": ok, "card": line, "via": via, "png": shots.get("routePng"), **shots,
+                **({} if ok else {"error": f"route line not drawn (route {shots.get('routeLinePx')}, kept {shots.get('tripLinePx')} samples)" if not drawn
+                                  else f"the card's Export GPX: {shots.get('export', {}).get('error')}"})}
 
     def route_to():
         # T114: Route to here from the GPS fix, one long-press and one tap; the card names "From: Your location". Before
@@ -1194,9 +1294,13 @@ def part_features(args):
         return route_to_here(dev)
 
     def trips():
-        rows, png = routes_list(dev)
-        ok = any(r.split(" · ")[0] == st.get("route", "").split(" · ")[0] for r in rows)
-        return {"ok": ok, "rows": rows, "png": png, **({} if ok else {"error": "the kept route is not in the Routes list"})}
+        names = []
+        rows, png = routes_list(dev, names)
+        # T219: the row prints the card's figures, and the route is called after its two ends.
+        ok = any(r.startswith(st.get("route", "?")) for r in rows)
+        named = any(n and " to " in n for n in names)
+        return {"ok": ok and named, "rows": rows, "names": names, "png": png,
+                **({} if ok and named else {"error": "the kept route is not in the Routes list" if not ok else f"the kept route has no place-to-place name: {names}"})}
 
     def waypoint():
         # T91: a waypoint with no recording: long-press the map, "Waypoint here", the sheet opens to name it.
@@ -1217,16 +1321,23 @@ def part_features(args):
     def track():
         pts = record_track(dev, walk(*PARADISE, 46.7950, -121.7330, 12))
         rows = track_rows(dev)
-        ok = bool(rows) and rows[0][1] >= 8
+        ok = bool(rows) and (pts or 0) >= 8
         st["track"] = rows[0] if rows else None
         return {"ok": ok, "pointsWhileRecording": pts, "tracks": rows[:3], **({} if ok else {"error": "no track with at least 8 points"})}
 
     def gpx():
+        # T219: a row's overflow, Export GPX, the system's save dialog; "GPX" in the row before it.
         nodes = tracks_list(dev)
-        g = dev.find("^GPX$", nodes)
-        dev.tap(g)
-        n, _ = dev.wait_for(r"^Saved .*\.gpx$", 15)
-        return {"ok": bool(n), "message": n and n["text"], **({} if n else {"error": "no 'Saved ....gpx' line"})}
+        old = dev.find("^GPX$", nodes)
+        if old:
+            dev.tap(old)
+            n, _ = dev.wait_for(r"^Saved .*\.gpx$", 15)
+            return {"ok": bool(n), "message": n and n["text"], **({} if n else {"error": "no 'Saved ....gpx' line"})}
+        dev.tap(dev.find("^More actions for ", nodes))
+        dev.wait_for("^Export GPX$", 5)
+        png = dev.screencap("tracks-row-overflow")[0]
+        dev.tap_text("^Export GPX$", timeout=5)
+        return {**save_dialog(dev, "track"), "png": png}
 
     def sync():
         if not args.server:
@@ -1235,14 +1346,14 @@ def part_features(args):
         line = set_server(dev, args.server)
         if not line or not line.startswith("Connected"):
             return fail(f"Settings > Sources: {line}")
-        nodes = tracks_list(dev)
+        nodes = tracks_more(dev)
         dev.tap(dev.find("^Sync now$", nodes))
         n, nodes = dev.wait_for(r"^(Synced with|Sync failed|.*(failed|error|refused).*)", 60)
         ok = bool(n) and n["text"].startswith("Synced with")
         return {"ok": ok, "settings": line, "result": n and n["text"], **({} if ok else {"error": n["text"] if n else "no sync result"})}
 
     def sync_sheet():
-        nodes = tracks_list(dev)
+        nodes = tracks_more(dev)
         dev.tap(dev.find("^Sync status$", nodes))
         n, nodes = dev.wait_for("^This device$", 10)
         texts = dev.texts(nodes)
@@ -1251,12 +1362,12 @@ def part_features(args):
         return {"ok": bool(line), "thisDevice": line, **({} if line else {"error": "no 'This device' line in the sync sheet"})}
 
     def share():
-        nodes = tracks_list(dev)
+        nodes = tracks_more(dev)
         dev.tap(dev.find("^Share$", nodes))
         n, nodes = dev.wait_for(CODE.pattern, 20)
         png = dev.screencap("share")[0]
         addr = next((t for t in dev.texts(nodes) if t.startswith("Address:")), None)
-        dev.tap_text("^Close$")
+        close_sheet(dev)
         return {"ok": bool(n), "codeShape": bool(n), "address": bool(addr), "png": png,
                 **({} if n else {"error": "no 16-character code on the Share screen"})}
 
@@ -1333,7 +1444,7 @@ def part_upgrade(args):
         tracks = track_rows(dev)
         close_tracks(dev)
         rows, png = routes_list(dev)
-        checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": tracks[:1] == st["tracks"][:1],
+        checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": same_first_track(st["tracks"], tracks),
                   "trip": len(rows) == len(st["routes"]) and all("km" in x for x in rows), "metric": all("km" in x for x in rows)}
         return {"ok": all(checks.values()), "checks": checks, "tracks": tracks, "routes": rows, "png": r.get("png"),
                 **({} if all(checks.values()) else {"error": "lost in the upgrade: " + ", ".join(k for k, v in checks.items() if not v)})}
@@ -1818,7 +1929,8 @@ def throttle(dev, speed, delay):
     return {"speed": speed, "delay": delay, "accepted": a.startswith("OK") and b.startswith("OK")}
 
 
-FAILED = r"(?i)(fail|error|could not|couldn.t|interrupted|refused|unreachable|timed out|timeout|reset)"
+# T222's "Download stopped: the connection dropped." as well as the older failure lines.
+FAILED = r"(?i)(fail|error|could not|couldn.t|interrupted|refused|unreachable|timed out|timeout|reset|stopped)"
 
 
 def part_network(args):
@@ -1913,7 +2025,7 @@ def part_network(args):
     def kill_mid_sync():
         record_track(dev, walk(*PARADISE, 46.7900, -121.7350, 6))
         throttle(dev, args.net_speed, args.net_delay)
-        nodes = tracks_list(dev)
+        nodes = tracks_more(dev)
         if proxy:
             proxy.arm("/sync")
         dev.tap(dev.find("^Sync now$", nodes))
@@ -1938,7 +2050,7 @@ def part_network(args):
     def retry_sync():
         srv.start()
         throttle(dev, "full", "none")
-        nodes = tracks_list(dev)
+        nodes = tracks_more(dev)
         dev.tap(dev.find("^Sync now$", nodes))
         n, nodes = dev.wait_for(r"^(Synced with|Sync failed)", 60)
         ok = bool(n) and n["text"].startswith("Synced with")
@@ -2314,6 +2426,8 @@ ABOVE = {"wrong-checksum": 1, "wrong-certificate": 2, "offer": 3}
 # and lower-quiet (below --apk's), each one patch step down ([tag_below]).
 BELOW = {"install-previous": ("previous", 1), "lower-quiet": ("current", 1)}
 
+# T223: the Updates row's version line, short; the whole build id behind Details ("This build: 0.1.19-alpha", before it the whole id).
+VERSION_LINE = r"^(This build: |Up to date · )"
 UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|Update check failed.*|No release with an APK.*)$"
 
 
@@ -2352,6 +2466,21 @@ def check_for_updates(dev, timeout=240):
                 return n["text"], dev.screencap("updates-row")[0]
         time.sleep(2)
     raise RuntimeError(f"no update result within {timeout} s (texts: {dev.texts()[:30]})")
+
+
+def build_version(dev):
+    """Settings > About and advanced: the Updates row's build id: since T223 the short line opened with Details, whose
+    "Full build: <id> (<code>)" has what `git describe` adds; before it, the line itself."""
+    nodes = open_settings(dev, "About and advanced", "^Updates$")
+    line = dev.find(VERSION_LINE, nodes)
+    if not line:
+        return None
+    details = dev.find("^Details$", nodes)
+    if not details:
+        return line["text"]
+    dev.tap(details)
+    full, _ = dev.wait_for("^Full build: ", 5)
+    return full["text"] if full else line["text"]
 
 
 def installs_allowed(dev):
@@ -2560,12 +2689,12 @@ def part_update(args):
         nodes = open_settings(dev, "Units and display", "^Units$")
         metric = dev.find("^Metres$", nodes) is not None
         close_sheet(dev)
-        version_line = dev.find(r"^This build: ", open_settings(dev, "About and advanced", "^Updates$"))
+        version = build_version(dev)
         close_sheet(dev)
-        checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": tracks[:1] == st["tracks"][:1],
-                  "runningNew": bool(version_line and new_name in version_line["text"])}
+        checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": same_first_track(st["tracks"], tracks),
+                  "runningNew": bool(version and new_name in version)}
         ok = all(checks.values())
-        return {"ok": ok, "checks": checks, "tracks": tracks, "png": r.get("png"), "versionLine": version_line["text"] if version_line else None,
+        return {"ok": ok, "checks": checks, "tracks": tracks, "png": r.get("png"), "versionLine": version,
                 **({} if ok else {"error": "after the update: " + ", ".join(k for k, v in checks.items() if not v)})}
 
     def real_api():
@@ -2639,20 +2768,47 @@ def mb_of(value):
     return float(m.group(1)) if m else None
 
 
+def settled(dev, pattern, timeout=10):
+    """The node matching [pattern] once two dumps agree on where it is: after a swipe the page can still be moving, and a tap
+    at the first dump's place then lands on the row that moved there (T223's longer page: Map data and sources)."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        n = dev.find(pattern, dev.nodes())
+        if n and last and n["bounds"] == last["bounds"]:
+            return n
+        last = n
+        time.sleep(0.5)
+    raise RuntimeError(f"'{pattern}' did not settle on screen within {timeout} s (texts: {dev.texts()[:25]})")
+
+
 def read_diagnostics(dev, timeout=40):
-    """Settings > About and advanced, scrolled down to the Diagnostics row until its Copy report: the row's lines in
-    order (read across the scrolls) and the screenshots on the way."""
+    """Settings > About and advanced, scrolled down to the Diagnostics row until its Copy report, T223's "Technical
+    details" fold opened on the way (a tap on its heading or Show; "Hide" can show twice on the page, the Updates row has
+    one, so the fold is never read by that): the row's lines in order (read across the scrolls) and the screenshots on the
+    way."""
     open_settings(dev, "About and advanced", "^Updates$")
-    dev.wait_for("^Diagnostics$|^Max heap: ", 5)
+    dev.wait_for("^Technical details$|^Diagnostics$|^Max heap: ", 5)
     lines, shots = [], []
     w, h, _d = screen(dev)
     deadline = time.time() + timeout
+    fold_opened = False
     while time.time() < deadline:
         nodes = dev.nodes()
+        if not fold_opened and not dev.find("^Max heap: ", nodes):
+            fold = dev.find("^Technical details$", nodes) or dev.find("^Show$", nodes)
+            if fold:
+                dev.tap(fold)
+                fold_opened = True
+                time.sleep(1)
+                nodes = dev.nodes()
         lines = merge_screens(lines, dev.texts(nodes))
         if dev.find("^Max heap: ", nodes):
             shots.append(dev.screencap("diagnostics")[0])
-        if dev.find("^Copy report$", nodes) and "Max heap" in diagnostics_sections(lines)["now"]:
+        # Well inside the page: at the sheet's lower edge its node is taller than what shows, and a tap at the node's centre
+        # falls through the sheet's padding to the map's credit line, which opens Map data and sources.
+        copy_row = dev.find("^Copy report$", nodes)
+        if copy_row and copy_row["bounds"][3] <= h * 9 // 10 and "Max heap" in diagnostics_sections(lines)["now"]:
             return lines, shots, nodes
         dev.shell("input", "swipe", str(w // 2), str(h * 3 // 4), str(w // 2), str(h * 2 // 5), "600")
         time.sleep(1)
@@ -2687,15 +2843,16 @@ def part_diagnostics(args):
                 "pngs": shots, **({} if ok else {"error": "Diagnostics row: " + ", ".join(k for k, v in checks.items() if not v)})}
 
     def copy():
-        dev.tap_text("^Copy report$")
+        dev.tap(settled(dev, "^Copy report$"))
         time.sleep(1.5)
         png = dev.screencap("copied")[0]  # Android 13 and up show their own copy confirmation; below, the app's toast
         return {**alive_and_clean(dev), "png": png}
 
     def refresh():
-        dev.tap_text("^Refresh$")
-        n, _nodes = dev.wait_for("^Max heap: ", 10)
-        return {"ok": n is not None, **({} if n else {"error": "no Max heap line after Refresh"})}
+        dev.tap(settled(dev, "^Refresh$"))
+        # Any live line: with the fold's page scrolled to Refresh, the first of them can be above the screen.
+        n, _nodes = dev.wait_for("^(" + "|".join(DIAG_NOW) + "): ", 10)
+        return {"ok": n is not None, **({} if n else {"error": "no Diagnostics line after Refresh"})}
 
     def after_force_stop():
         close_sheet(dev)

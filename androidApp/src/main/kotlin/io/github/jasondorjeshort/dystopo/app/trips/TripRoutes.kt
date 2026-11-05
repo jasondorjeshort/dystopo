@@ -104,7 +104,7 @@ object TripRoutes {
             }
             "POST" to "/routes/keep" -> {
                 val planned = RouteSession.plan ?: return Response.json(mapOf("error" to "no planned route"), 404)
-                return Response.json(planJson(Trips.keep(planned, q["name"] ?: planned.route.name), false))
+                return Response.json(planJson(Trips.keep(planned, q["name"], io.github.jasondorjeshort.dystopo.app.routing.RouteSession.from, io.github.jasondorjeshort.dystopo.app.routing.RouteSession.to), false))
             }
             "POST" to "/routes/import" -> {
                 require(r.body.isNotEmpty()) { "POST a GPX file as the body" }

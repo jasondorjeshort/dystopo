@@ -6,6 +6,7 @@ quiet fixtures' tags, the Diagnostics row's reading and the corridor width case.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -279,5 +280,59 @@ if os.name == "nt":
     finally:
         shutil.rmtree(d, ignore_errors=True)
     reset_stats()
+
+# T219: the wave's labels, old and new. The route card's header: distance then " · ", with or without a climb.
+for line in ("1.8 mi · up 1318 ft · typical 1:15", "2.1 km · 0:40", "1.8 mi · +1318 ft · 1:15", "900 ft · down 300 ft · 0:20"):
+    assert re.match(ui.CARD, line), line
+for line in ("Nov 3 · 1.2 mi", "Tracks · 3", "From: Paradise"):
+    assert not re.match(ui.CARD, line), line
+assert ui.route_rows(["Routes", "Paradise to Panorama Point", "1.8 mi · up 1318 ft · 1:15 hike", "Route", "2.1 km · 0:40 bike", "1 via point"]) == \
+    (["1.8 mi · up 1318 ft · 1:15 hike", "2.1 km · 0:40 bike"], ["Paradise to Panorama Point", "Route"])
+# The Tracks sheet's title and the older list; the row's line, new and old, and one track across the upgrade.
+assert re.match(ui.TRACKS_LIST, "Tracks · 12") and re.match(ui.TRACKS_LIST, "Sync status") and not re.match(ui.TRACKS_LIST, "Tracks")
+new = ui.parse_track_rows(["Tracks · 1", "● Track 2026-11-03 04:39\nNov 3 · 312 ft", "On foot ›"])
+old = ui.parse_track_rows(["Track 2026-11-03 04:39\n14 pts  312 ft\nrecording", "Share"])
+assert new == [("Track 2026-11-03 04:39", "Nov 3 · 312 ft")] and old == [("Track 2026-11-03 04:39", "14 pts  312 ft")], (new, old)
+assert ui.same_first_track(old, new) and ui.same_first_track(new, new) and not ui.same_first_track(new, [("Track 2026-11-03 04:39", "Nov 3 · 1 mi")])
+assert not ui.same_first_track([], new) and not ui.same_first_track(new, [("Track 2026-11-04 09:00", "Nov 4 · 1 mi")])
+# T222's failure line and the older ones; a sentence that says it worked is no failure.
+for line in ("Download stopped: the connection dropped.", "Sync failed: could not reach your server", "Download failed: timeout"):
+    assert re.search(ui.FAILED, line), line
+for line in ("Synced with your server: 14 sent, nothing new received", "Syncing with your server", "Paused at 40%. Continues when you are online"):
+    assert not re.search(ui.FAILED, line), line
+# T223's version lines and the update line.
+for line in ("This build: 0.1.19-alpha", "Up to date · 0.1.19-alpha"):
+    assert re.match(ui.VERSION_LINE, line), line
+assert re.match(ui.UPDATE_LINE, "Up to date · 0.1.19-alpha")
+# Only the documents app's button is the save dialog's: the route card has a Save of its own.
+assert ui.is_save_button({"pkg": "com.google.android.documentsui", "text": "SAVE", "bounds": [0, 0, 1, 1]})
+assert ui.is_save_button({"pkg": "com.android.documentsui", "text": "Save", "bounds": [0, 0, 1, 1]})
+assert not ui.is_save_button({"pkg": "io.github.jasondorjeshort.dystopo", "text": "Save", "bounds": [0, 0, 1, 1]})
+
+# The Close of the sheet on top is the last in the tree.
+closes = [{"text": "Close", "bounds": [0, 0, 1, 1], "id": "tracks"}, {"text": "Done", "bounds": [0, 0, 1, 1]}, {"text": "Close", "bounds": [2, 2, 3, 3], "id": "status"}]
+assert ui.top_close(closes)["id"] == "status" and ui.top_close([]) is None
+
+# A node's place counts once two dumps agree: a page still moving is not tapped.
+class Moving:
+    def __init__(self):
+        self.tops = iter([300, 200, 100, 100])
+
+    def nodes(self):
+        return [{"text": "Refresh", "bounds": [0, next(self.tops), 10, 10]}]
+
+    def find(self, pattern, nodes):
+        return nodes[0]
+
+    def texts(self):
+        return []
+
+
+real_sleep = ui.time.sleep
+ui.time.sleep = lambda s: None
+try:
+    assert ui.settled(Moving(), "^Refresh$")["bounds"][1] == 100
+finally:
+    ui.time.sleep = real_sleep
 
 print("test_android_ui: ok")

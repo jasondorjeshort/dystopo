@@ -9,6 +9,8 @@ import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Pack
 import io.github.jasondorjeshort.dystopo.app.TileService
+import io.github.jasondorjeshort.dystopo.app.routing.EndNames
+import io.github.jasondorjeshort.dystopo.app.routing.RouteOrigin
 import io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner
 import io.github.jasondorjeshort.dystopo.app.sync.ShareLinkClient
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
@@ -191,14 +193,30 @@ object Trips {
 
     /**
      * Keeps the T45 planned route as a trip: its start and end become via points, its line one trail leg (T108: crow,
-     * one straight leg). T108: with the plan's own directions (local, or the server's for a route it planned).
+     * one straight leg). T108: with the plan's own directions (local, or the server's for a route it planned). T219: with
+     * no [givenName] and no name of its own, called after its ends ([nameFor], [from] and [to] being the card's). Reads the packs.
      */
-    fun keep(p: PlannedRoute, name: String = p.route.name): RoutePlan {
+    fun keep(p: PlannedRoute, givenName: String? = null, from: RouteOrigin.End? = null, to: RouteOrigin.End? = null): RoutePlan {
+        val name = givenName ?: nameFor(p, from, to)
         val path = RoutePath.planned(p.route.points, p.mode.label, p.timeS) // T89: a drive keeps the router's time
         val directions = p.instructions.takeIf { it.isNotEmpty() }?.let { SavedDirections.of(it, path) }
         val plan = RoutePlan(p.route.id, name, path, type = p.mode.label, description = p.route.description, directions = directions)
         store { it.putRoutePlan(plan, System.currentTimeMillis()) }
         return opened(plan.id)
+    }
+
+    /**
+     * T219: the name of a route the user did not name: its own if it has one, else [routeNameFor] of the nearest named
+     * places at its ends ([EndNames], the lookup the card's From and To lines use: the card's words), [from] and [to] being
+     * the card's placed ends, the route's first and last points without them. New routes only: nothing stored is renamed.
+     * Not on the main thread: it reads the packs, waiting at most [NAME_WAIT_MS] per end.
+     */
+    fun nameFor(p: PlannedRoute, from: RouteOrigin.End?, to: RouteOrigin.End?): String {
+        p.route.name.takeUnless { it.isBlank() || it == UNNAMED }?.let { return it }
+        val pts = p.route.points
+        val a = from ?: pts.firstOrNull()?.let { RouteOrigin.End(it.lat, it.lon) }
+        val b = to ?: pts.lastOrNull()?.let { RouteOrigin.End(it.lat, it.lon) }
+        return routeNameFor(a?.let { EndNames.found(it, NAME_WAIT_MS)?.name }, b?.let { EndNames.found(it, NAME_WAIT_MS)?.name }, shortDate(System.currentTimeMillis()))
     }
 
     private fun edit(id: String, what: String, change: (RouteEditor, RoutePath) -> RoutePath): RoutePlan {
@@ -264,6 +282,9 @@ object Trips {
         }
 
     fun gpx(id: String): String? = plan(id)?.let(RouteGpx::gpx)
+
+    /** T219: a line on the trip card ([io.github.jasondorjeshort.dystopo.app.SaveFile]'s, an import's). */
+    fun say(text: String?) = ui { message = text }
 
     /**
      * T67: a read-only share link for route [id] on the sync server ([ShareLinkClient]: syncs first so the
@@ -529,6 +550,12 @@ object Trips {
     /** T130: how long a change off the main thread waits for its Compose state to be applied (a stuck main thread). */
     const val UI_WAIT_MS = 5_000L
 
+    /** T219: what a plan is called until it has a name of its own (the route card's, `POST /route`'s default). */
+    const val UNNAMED = "Route"
+
+    /** T219: how long [nameFor] waits for each end's place lookup. */
+    const val NAME_WAIT_MS = 3_000L
+
     /** T122: how long after opening the editor fits the trip, so the trip card has been measured; its height assumed before. */
     const val FIT_AFTER_MS = 250L
     const val CARD_MIN_DP = 150f
@@ -537,6 +564,31 @@ object Trips {
 
     /** T108: how long [open]'s background migration waits for the packs' graphs (a first use builds them, about 3 to 6 s for Rainier). */
     const val MIGRATE_WAIT_MS = 60_000L
+}
+
+/**
+ * T219: the name of a route kept without one: "<start place> to <end place>", "Route from <place>" or "Route to <place>"
+ * with one named end (or both ends the same place, a loop), "Route, <date>" with none (the survey's fallback,
+ * `route-card-and-lists.md`; the one-end forms are the project's own). Pure, tested.
+ */
+internal fun routeNameFor(start: String?, end: String?, date: String): String {
+    val a = start?.trim()?.takeIf { it.isNotEmpty() }
+    val b = end?.trim()?.takeIf { it.isNotEmpty() }
+    return when {
+        a != null && b != null && !a.equals(b, ignoreCase = true) -> "$a to $b"
+        a != null -> "Route from $a"
+        b != null -> "Route to $b"
+        else -> "Route, $date"
+    }
+}
+
+/** T219: a short date in the phone's locale's order ("Nov 3", "3 Nov"), with the year when it is not this year's. */
+internal fun shortDate(ms: Long): String {
+    val locale = java.util.Locale.getDefault()
+    val thisYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+    val year = java.util.Calendar.getInstance().apply { timeInMillis = ms }.get(java.util.Calendar.YEAR)
+    val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, if (year == thisYear) "MMMd" else "yMMMd")
+    return java.text.SimpleDateFormat(pattern, locale).format(java.util.Date(ms))
 }
 
 /**

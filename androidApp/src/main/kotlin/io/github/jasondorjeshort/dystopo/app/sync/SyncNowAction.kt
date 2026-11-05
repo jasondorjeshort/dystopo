@@ -66,8 +66,8 @@ object SyncUi {
 }
 
 /**
- * "Sync now" and "Status" in the tracks list (T44, T51): one sync with the default peer
- * ([AppSync.defaultPeer]) off the main thread (the result shows in the list's message line), and the
+ * "Sync now" and "Sync status" under the Tracks sheet's overflow (T44, T51, T219): one sync with the default peer
+ * ([AppSync.defaultPeer]) off the main thread (the result shows in the sheet's message line), and the
  * sync status sheet ([SyncStatusSheet]).
  */
 @Composable
@@ -86,8 +86,32 @@ fun SyncNowAction() {
 
 private fun syncInBackground() {
     val sync = AppSync.of(DystopoApp.instance)
-    if (!sync.running) Thread { runCatching { sync.syncNow() } }.start()
+    val tracking = Tracking.of(DystopoApp.instance)
+    val peer = sync.defaultPeer
+    if (peer.isBlank()) { // T219: said, where it was silent
+        tracking.refreshUi(SYNC_NO_PEER)
+        return
+    }
+    if (sync.running) return
+    tracking.refreshUi("Syncing with ${AppSync.peerLabel(peer)}") // T219
+    Thread { runCatching { sync.syncNow() } }.start()
 }
+
+/** T219: Sync now with no server and no peer set. */
+internal const val SYNC_NO_PEER = "Set your server in Settings › Sources to sync"
+
+/**
+ * T219: what a sync says: "Synced with Pixel: 14 sent, nothing new received". Starts "Synced": the Share screen colours its
+ * line by that. [label] is the phone's name or "your server", never an address (Sync status has that). Pure, tested.
+ */
+internal fun syncedSentence(label: String, received: Int, sent: Int, conflicts: Int = 0): String =
+    "Synced with $label: " + (if (sent > 0) "$sent sent" else "nothing sent") + ", " +
+        (if (received > 0) "$received received" else "nothing new received") +
+        if (conflicts > 0) (if (conflicts == 1) ", 1 edited on two devices" else ", $conflicts edited on two devices") else ""
+
+/** T219: a failed sync without the exception's address: the words, the detail staying in Sync status. Pure, tested. */
+internal fun syncFailedSentence(label: String, e: Exception): String =
+    if (e is java.io.IOException) "Sync failed: could not reach $label" else "Sync failed: $label answered with an error"
 
 /**
  * The "edited on two devices" note on a track in the list (T51): shown when a merge found a field of it
@@ -180,7 +204,8 @@ fun SyncStatusSheet() {
 
 private fun lastLine(last: Map<String, Any?>?): String {
     if (last == null) return "never"
-    val at = (last["at"] as? Number)?.toLong()?.let { SimpleDateFormat("MMM d HH:mm", Locale.US).format(Date(it)) } ?: "?"
+    // T219: the time by the phone's 12/24-hour setting (the wave's clock rule), no seconds.
+    val at = (last["at"] as? Number)?.toLong()?.let { SimpleDateFormat("MMM d", Locale.US).format(Date(it)) + " " + android.text.format.DateFormat.getTimeFormat(DystopoApp.instance).format(Date(it)) } ?: "?"
     val with = (last["peer"] as? String)?.let { " with ${AppSync.shortName(it)}" } ?: "" // T57: which peer
     return if (last["ok"] == true) "$at$with, ${(last["ms"] as? Number)?.toLong() ?: 0} ms" else "$at$with failed: ${last["error"]}"
 }

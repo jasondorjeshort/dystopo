@@ -693,11 +693,10 @@ class Tracking private constructor(private val app: DystopoApp) {
         if (id == recorder.activeId) Track(id, "", recorder.livePoints().map { TrackSegment(it) }) else store.track(id)
 
     /** Imports GPX text into the store and shows the first new track. Throws IllegalArgumentException for a bad file. */
-    fun importGpx(text: String, fallbackName: String): TrackImport.Result {
+    fun importGpx(text: String, fallbackName: String, file: String = fallbackName): TrackImport.Result {
         val r = call { TrackImport.import(store, text, System.currentTimeMillis(), fallbackName) }
         r.imported.firstOrNull()?.let { shownId = it.id }
-        val msg = "Imported ${r.imported.size} track(s), ${r.waypoints} waypoint(s)" +
-            if (r.skippedTracks.isNotEmpty()) "; ${r.skippedTracks.size} already here" else ""
+        val msg = io.github.jasondorjeshort.dystopo.app.routing.ImportText.tracks(r.imported.size, r.skippedTracks.size, r.waypoints, file) // T219
         refreshUi(msg)
         refreshOverlay(force = true)
         return r
@@ -712,7 +711,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         require(name.isNotEmpty() && '/' !in name && '\\' !in name && name != "." && name != "..") { "file must be a name in ${filesDir.path}" }
         val f = File(filesDir, name)
         require(f.isFile) { "no file $name in ${filesDir.path}" }
-        return importGpx(f.readText(Charsets.UTF_8), f.nameWithoutExtension)
+        return importGpx(f.readText(Charsets.UTF_8), f.nameWithoutExtension, f.name)
     }
 
     /** Writes the track as GPX into `files/tracks/`; returns the file. */
