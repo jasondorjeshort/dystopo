@@ -1168,8 +1168,15 @@ def open_settings(dev, group="Data and storage", anchor="^Sources$"):
     raise RuntimeError(f"Settings > {group} has no {anchor} (texts: {dev.texts(nodes)[:25]})")
 
 
+def top_close(nodes):
+    """The Close of the sheet on top: the last in the tree, the one drawn last (T219: the Tracks sheet keeps its Close under the
+    Sync status sheet and the Share screen, where a tap on it lands on them and closes nothing)."""
+    closes = [n for n in nodes if n.get("text") == "Close" and n.get("bounds")]
+    return closes[-1] if closes else None
+
+
 def close_sheet(dev):
-    n = dev.find("^Close$")
+    n = top_close(dev.nodes())
     if n:
         dev.tap(n)
 
@@ -1360,7 +1367,7 @@ def part_features(args):
         n, nodes = dev.wait_for(CODE.pattern, 20)
         png = dev.screencap("share")[0]
         addr = next((t for t in dev.texts(nodes) if t.startswith("Address:")), None)
-        dev.tap_text("^Close$")
+        close_sheet(dev)
         return {"ok": bool(n), "codeShape": bool(n), "address": bool(addr), "png": png,
                 **({} if n else {"error": "no 16-character code on the Share screen"})}
 

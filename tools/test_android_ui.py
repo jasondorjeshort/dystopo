@@ -309,4 +309,8 @@ assert ui.is_save_button({"pkg": "com.google.android.documentsui", "text": "SAVE
 assert ui.is_save_button({"pkg": "com.android.documentsui", "text": "Save", "bounds": [0, 0, 1, 1]})
 assert not ui.is_save_button({"pkg": "io.github.jasondorjeshort.dystopo", "text": "Save", "bounds": [0, 0, 1, 1]})
 
+# The Close of the sheet on top is the last in the tree.
+closes = [{"text": "Close", "bounds": [0, 0, 1, 1], "id": "tracks"}, {"text": "Done", "bounds": [0, 0, 1, 1]}, {"text": "Close", "bounds": [2, 2, 3, 3], "id": "status"}]
+assert ui.top_close(closes)["id"] == "status" and ui.top_close([]) is None
+
 print("test_android_ui: ok")

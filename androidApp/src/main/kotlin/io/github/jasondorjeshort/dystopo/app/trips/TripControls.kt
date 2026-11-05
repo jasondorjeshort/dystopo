@@ -151,8 +151,8 @@ private fun RouteRow(r: RouteListItem) {
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            // T219: two lines: a place-to-place name is long.
-            BasicText(r.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // T219: room for a place-to-place name, which is long.
+            BasicText(r.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 3, overflow = TextOverflow.Ellipsis)
             // T219: the card's figures (T217's formatter), then the mode by its own name (T108).
             BasicText(
                 io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(r.distanceM, r.ascentM, r.descentM, r.timeS, TravelMode.of(r.mode)) + " " + TravelMode.labelOf(r.mode),
