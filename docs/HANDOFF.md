@@ -1,13 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-05, by main session (wave 28 closed, v0.1.20-alpha published)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open wave; Later),
+Updated: 2026-11-05, by main session (wave 29 planned, T227 launching)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (wave 29),
 `docs/tasks/wave-28.md`, ADR 0056, ADR 0057.
 
 ## Now
 
-- **No wave is open.** Wave 28 is closed and v0.1.20-alpha is published (T217 to T226). The sweep was green.
+- **Wave 29 is open: trace the startup freezes.** T227 (readable release stacks, a freeze's true length), then T228 (a trace of every start, through Report a problem), one at a time. The critic has been answered in the plan. `git branch -r --list 'origin/task/*'` shows what is pushed.
+- Wave 28 is closed and v0.1.20-alpha is published (T217 to T226).
 - **New rule, ADR 0057:** one Gradle-using agent at a time unless the owner says wider. The `wave` skill's per-task
   figure is now 1.25 points (wave 28's close read 5.5 under its figure).
 - The live viewer on 8765 was up at the last check. The T224b design note is in the body of T224's merge commit.
