@@ -39,7 +39,8 @@ class ShareScreenRulesTest {
         assertEquals("Wrong code", shareSyncFailed(ShareClient.WrongCodeException("no")))
         assertEquals("Sync failed: could not reach the other phone", shareSyncFailed(java.io.IOException("10.0.2.2 timed out")))
         assertFalse("10.0.2.2" in shareSyncFailed(java.io.IOException("10.0.2.2 timed out")))
-        assertTrue(shareSyncFailed(IllegalArgumentException("the code is 16 letters")).startsWith("Sync failed:"))
+        assertEquals("Sync failed: the code is 16 letters", shareSyncFailed(IllegalArgumentException("the code is 16 letters")))
+        assertEquals("Sync failed: check the address", shareSyncFailed(IllegalArgumentException("no host in http://10.0.2.2x:8841/share/sealed")))
     }
 
     @Test

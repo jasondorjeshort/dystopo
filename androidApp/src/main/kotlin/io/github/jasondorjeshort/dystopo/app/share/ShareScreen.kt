@@ -160,6 +160,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
+    LaunchedEffect(addr) { if (addr.isNotBlank() && message == NO_PHONE_YET) message = null } // T220: it is answered
     LaunchedEffect(Unit) {
         while (true) {
             status = withContext(Dispatchers.IO) { session.status() }
@@ -279,7 +280,7 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
  */
 internal fun shareSyncFailed(e: Throwable): String = when (e) {
     is ShareClient.WrongCodeException -> "Wrong code"
-    is IllegalArgumentException -> "Sync failed: ${e.message}"
+    is IllegalArgumentException -> if (e.message.orEmpty().startsWith("the code is") || e.message.orEmpty().startsWith("an address is")) "Sync failed: ${e.message}" else "Sync failed: check the address" // ShareClient says what is wrong with what was typed; anything else carries a URL
     is Exception -> io.github.jasondorjeshort.dystopo.app.sync.syncFailedSentence("the other phone", e)
     else -> "Sync failed: ${e.javaClass.simpleName}"
 }
