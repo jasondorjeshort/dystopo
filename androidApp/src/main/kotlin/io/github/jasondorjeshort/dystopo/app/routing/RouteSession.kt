@@ -15,7 +15,6 @@ import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
-import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
@@ -77,6 +76,9 @@ object RouteSession {
 
     /** T114: the From choices (Your location, Choose on map, Swap) are open under the From line. Main thread. */
     var fromOpen by mutableStateOf(false)
+
+    /** T217: the card's three-dot overflow is open (Compose state; `POST /route/more?open=` sets it). */
+    var moreOpen by mutableStateOf(false)
 
     @Volatile private var fromEnd: RouteOrigin.End? = null
     @Volatile private var toEnd: RouteOrigin.End? = null
@@ -438,7 +440,7 @@ object RouteSession {
         setEnds(null, null)
         failure = null
         persist(null) // T108: Clear and Keep drop the saved route (a small file delete)
-        ui { phase = "idle"; plan = null; message = null; directionsOpen = false; fromOpen = false }
+        ui { phase = "idle"; plan = null; message = null; directionsOpen = false; fromOpen = false; moreOpen = false }
         overlay.show(null, null, null)
     }
 
@@ -496,19 +498,35 @@ object RouteSession {
         )
     }
 
-    /** One line for the card: distance, climb, time, in the user's units ([summaryOf]: the numbers the kept route shows too). */
-    fun summary(p: PlannedRoute): String {
-        val u = AppSettings.units
-        val s = summaryOf(p)
-        val climb = s.ascentM?.let { " · +${UnitFormat.elevation(it, u)} −${UnitFormat.elevation(s.descentM ?: 0.0, u)}" } ?: ""
-        return "${UnitFormat.distance(s.distanceM, u)}$climb · ${RouteSummary.hm(s.timeS)} ${p.mode.label}"
+    /**
+     * T217: `card` in `GET /route` and `POST /route`: the header and the line under it (`headline`, what the settings say now;
+     * `drawnHeadline`, what the card last drew), the actions as drawn ([CardActions]), the overflow's state and each computed
+     * line's `state` (`working`, `ready`, `none`) with its words ([LineState]). Never waits for an answer.
+     */
+    fun cardJson(): Map<String, Any?> {
+        val p = plan
+        val units = AppSettings.units
+        return linkedMapOf(
+            "headline" to p?.let { PaceSettings.headline(it) }, "drawnHeadline" to BottomPanels.routeCardHeadline,
+            "basis" to p?.let { PaceSettings.secondLine(it) },
+            "actions" to CardActions.of(phase, canTryCrow()).map { it.json() }, "moreOpen" to moreOpen,
+            "lines" to linkedMapOf(
+                "water" to if (p == null) LineState.NONE_JSON else RouteWater.lineJson(p.route.points, units),
+                "exposure" to if (p == null) LineState.NONE_JSON else RouteExposure.lineJson(p.route.points, p.mode, units),
+                "bestStart" to LineState.of(p?.let { RouteBestStart.start(it) }, null) { it.line },
+                "pastEffort" to LineState.of(p?.let { PaceSettings.pastEffortStarted(it.route.points, it.mode) }, null) { PaceSettings.pastEffortLine(it) },
+            ),
+        )
     }
+
+    /** T114: no path between the two ends, and the card offers the straight line. */
+    fun canTryCrow(): Boolean = phase == "failed" && failure != null && mode != TravelMode.CROW
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "phase" to phase, "message" to message, "mode" to mode.label,
         "start" to start?.let { listOf(it.latitude, it.longitude) }, "end" to end?.let { listOf(it.latitude, it.longitude) },
         "longPresses" to longPresses, "overlayFeatures" to overlay.features, "overlayInstalled" to overlay.installedOnStyle,
-        "summary" to plan?.let { summary(it) }, "lastFile" to lastFile?.path,
+        "summary" to plan?.let { PaceSettings.headline(it) }, "lastFile" to lastFile?.path,
         "cardHidden" to (io.github.jasondorjeshort.dystopo.app.nav.NavSession.active && phase != "idle"), // T65: hidden while navigating
         "via" to plan?.via?.map { it.first }, // T49: trail names
         "directions" to plan?.let { shownDirections(it).size }, "directionsOpen" to directionsOpen, // T102

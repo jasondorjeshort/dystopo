@@ -8,6 +8,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
 import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
+import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
@@ -60,6 +61,9 @@ import kotlin.math.roundToLong
  * ([PastEfforts], on its own worker, the last [EFFORT_CACHE] results kept by the route's points and the track list; a
  * track whose box is nowhere near the route is not read again) for the line under the water line ([pastEffortLine]).
  * `GET /route` and `POST /route` carry both ([rangeJson], [pastEffortJson]).
+ *
+ * T217: one formatter for a route's figures ([figures], over the pure [RouteFigures]): the card's header and, from T219,
+ * the Routes list's row. "Standard estimate" on the card became what the estimate rests on ([RouteFigures.basis]).
  */
 object PaceSettings {
     private const val TAG = "DystopoPace"
@@ -88,19 +92,14 @@ object PaceSettings {
     }
 
     /** The plural noun of a mode's tracks: "hikes", "rides". */
-    fun noun(mode: TravelMode, n: Int): String = when (mode) {
-        TravelMode.BIKE -> if (n == 1) "ride" else "rides"
-        else -> if (n == 1) "hike" else "hikes"
-    }
+    fun noun(mode: TravelMode, n: Int): String = RouteFigures.noun(mode, n)
 
-    /** The route card's line under the time (hike and bike; null for drive and crow, which have no fit). */
-    fun cardLine(mode: TravelMode): String? {
-        if (mode !in PaceFits.FITTED) return null
-        PaceFits.active[mode]?.let { return basedOn(it) }
-        return if (AppSettings.paceStandard && stored().fit(mode)?.ready == true) STANDARD_BY_SETTING else STANDARD
-    }
+    /** The route card's line under the time: what the estimate rests on, in the mode's words ([RouteFigures.basis]). */
+    fun cardLine(mode: TravelMode): String =
+        PaceFits.active[mode]?.let { basedOn(it) }
+            ?: RouteFigures.basis(mode, fitTracks = null, bySetting = AppSettings.paceStandard && stored().fit(mode)?.ready == true)
 
-    fun basedOn(f: PaceFit): String = "Based on your last ${f.tracks} ${noun(f.mode, f.tracks)}"
+    fun basedOn(f: PaceFit): String = RouteFigures.basis(f.mode, fitTracks = f.tracks)
 
     /** The Settings row's text under its heading. */
     fun rowText(units: ContourUnits = AppSettings.units): String {
@@ -235,14 +234,19 @@ object PaceSettings {
     /** True when the card shows the estimate's form ("about", "typical", the range); false for the single exact number. */
     fun rangeForm(): Boolean = AppSettings.timeEstimateForm == AppSettings.TIME_RANGE
 
-    /** The card's headline: distance, climb and time, the time "about 4:30" or "typical 4:30" in the range form. */
-    fun headline(plan: PlannedRoute): String {
-        val e = estimate(plan)?.takeIf { rangeForm() } ?: return RouteSession.summary(plan)
-        val u = AppSettings.units
-        val s = RouteSession.summaryOf(plan)
-        val climb = s.ascentM?.let { " · +${UnitFormat.elevation(it, u)} −${UnitFormat.elevation(s.descentM ?: 0.0, u)}" } ?: ""
-        return "${UnitFormat.distance(s.distanceM, u)}$climb · ${e.headline} ${plan.mode.label}"
+    /**
+     * T217: a route's figures in the user's units and `timeEstimateForm`: "1.8 mi · up 1318 ft · typical 1:15", the card's
+     * header ([headline]) and the Routes list's row (T219), so the two read the same. [mode] null (a stored mode this build
+     * does not know) is the plain time.
+     */
+    fun figures(distanceM: Double, ascentM: Double?, descentM: Double?, timeS: Double, mode: TravelMode?, units: ContourUnits = AppSettings.units): String {
+        val e = mode?.takeIf { it in PaceFits.FITTED }?.let { PaceRange.estimate(timeS, PaceFits.active[it]) }
+        return RouteFigures.line(distanceM, ascentM, descentM, RouteFigures.time(timeS, e, rangeForm()), units)
     }
+
+    /** The card's header: [figures] of the route's one set of numbers ([RouteSession.summaryOf]). */
+    fun headline(plan: PlannedRoute): String =
+        RouteSession.summaryOf(plan).let { s -> figures(s.distanceM, s.ascentM, s.descentM, s.timeS, plan.mode) }
 
     /** The line under it: "4:10 to 4:50, based on your last 5 hikes" with a range, else whose pace it is ([cardLine]). */
     fun secondLine(plan: PlannedRoute): String? {
@@ -331,6 +335,10 @@ object PaceSettings {
         }
     }
 
+    /** T217: the computation for [points] (started when new) for `GET /route` `card.lines`; null for drive and crow. */
+    fun pastEffortStarted(points: List<RoutePoint>, mode: TravelMode, app: DystopoApp = DystopoApp.instance): Future<EffortResult>? =
+        if (mode in PaceFits.FITTED) startEffort(app, points, mode) else null
+
     /** The result for [points] when it is ready now, else null (and the computation runs); for the card's first frame. */
     fun pastEffortCached(points: List<RoutePoint>, mode: TravelMode, app: DystopoApp = DystopoApp.instance): EffortResult? {
         if (mode !in PaceFits.FITTED) return null
@@ -366,11 +374,60 @@ object PaceSettings {
         )
     }
 
-    /** The card's lines (ADR 0031 strings). */
-    const val STANDARD = "Standard estimate"
-    const val STANDARD_BY_SETTING = "Standard estimate (your setting)"
     /** The row's chips. */
     const val YOUR_PACE = "Your pace"
     const val USE_STANDARD = "Use the standard estimate"
     const val RESET = "Reset"
+}
+
+/**
+ * T217 (the audit's finding 1, the survey `route-card-and-lists`; pure, `RouteFiguresTest`; ADR 0031, the owner adjusts the
+ * words): a route's figures in one line, "1.8 mi · up 1318 ft · typical 1:15", and the words for what its time rests on.
+ * The numbers are [UnitFormat]'s, one unit system at a time. The survey found OsmAnd labelling Uphill and Downhill by word
+ * and no app printing a sign pair; the 30 m floor under "down" is its suggested figure, nothing documents one.
+ */
+object RouteFigures {
+    /** Under this much descent the line says nothing about it (an almost level end of a climb is not news). */
+    const val DOWN_SHOWN_FROM_M = 30.0
+
+    /**
+     * Distance, climb and [time], in [units]: "up N" when the climb prints above zero, "down N" when the descent is at least
+     * [DOWN_SHOWN_FROM_M]. Null heights (a route with no elevation data) leave the climb out.
+     */
+    fun line(distanceM: Double, ascentM: Double?, descentM: Double?, time: String, units: ContourUnits): String {
+        val up = ascentM?.takeIf { UnitFormat.elevationValue(it, units) > 0 }?.let { "up ${UnitFormat.elevation(it, units)}" }
+        val down = descentM?.takeIf { it >= DOWN_SHOWN_FROM_M }?.let { "down ${UnitFormat.elevation(it, units)}" }
+        val climb = listOfNotNull(up, down).joinToString(", ").ifEmpty { null }
+        return listOfNotNull(UnitFormat.distance(distanceM, units), climb, time).joinToString(" · ")
+    }
+
+    /**
+     * The time as the line prints it: the estimate's hedge ("about 4:30", "typical 4:30") with [estimate] in the range form
+     * (the `timeEstimateForm` setting, T184), else the one exact number (that setting's other value; drive and crow).
+     */
+    fun time(timeS: Double, estimate: TimeEstimate?, rangeForm: Boolean): String =
+        estimate?.takeIf { rangeForm }?.headline ?: RouteSummary.hm(timeS)
+
+    /** The plural noun of a mode's tracks: "hikes", "rides". */
+    fun noun(mode: TravelMode, n: Int): String = when (mode) {
+        TravelMode.BIKE -> if (n == 1) "ride" else "rides"
+        else -> if (n == 1) "hike" else "hikes"
+    }
+
+    /**
+     * What the time rests on: "Based on your last 5 hikes" with a fit of [fitTracks] tracks in use, else the mode's standard
+     * figures, said as such ("(your setting)" when a ready fit is set aside by "Use the standard estimate"). A crow route's
+     * time is the hike model's over the straight line ([io.github.jasondorjeshort.dystopo.routing.Crow]); a drive's comes
+     * from the roads' speeds.
+     */
+    fun basis(mode: TravelMode, fitTracks: Int? = null, bySetting: Boolean = false): String {
+        if (fitTracks != null) return "Based on your last $fitTracks ${noun(mode, fitTracks)}"
+        val words = when (mode) {
+            TravelMode.HIKE -> "Based on a typical hiking pace"
+            TravelMode.BIKE -> "Based on a typical cycling pace"
+            TravelMode.DRIVE -> "Based on typical driving speeds"
+            TravelMode.CROW -> "Based on a typical hiking pace along the straight line"
+        }
+        return if (bySetting) "$words (your setting)" else words
+    }
 }

@@ -16,7 +16,9 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   request right after it (`GET /route`, `GET /nav/directions?route=current`, `POST /nav/start?route=current`) has it.
  *   T108: `mode=crow` is the straight line with the DEM pack's heights (no graph, never 503); its `route` has
  *   `bearingDeg` and one arrival in `instructions`.
- * - `GET /route[?profile=1]`: the current route (or failure) and the card's state.
+ * - `GET /route[?profile=1][&wait=ms]`: the current route (or failure) and the card's state. T217: `wait` is how long the
+ *   computed blocks (`water`, `exposure`, `bestStart`, `pastEffort`) wait for their answer (default 10 s each; `wait=0`
+ *   answers at once, `computing` until then).
  * - `GET /route/status`: the graph for the active pack (status, build progress, timings, size). T149: `guard` (the last
  *   build's admission: `estimateBytes`, `limitBytes`, `refused`, `stage` `now|afterTrim|afterWait|refused|forced`,
  *   `waitedMs`, `testLimit`, and `size`, what `RoutingGraphBuilder.measure` read), `heapStartBytes` and `peakHeapBytes`
@@ -45,6 +47,14 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   in the picker; it is imported as routes and the last one opens); `GET /route/import`: the last pick's result.
  * - `POST /route/clear`: clear the route, the markers and the card; T65: also closes the route editor, so a
  *   kept route's line leaves the map too (`closedTrip` names it; the route stays in the trip store).
+ * T217, the planning card: `POST /route` and `GET /route` gain `card` (read first, never waiting): `headline` (the header
+ * line by the settings now), `drawnHeadline` (the one the card last drew), `basis` (the line under it), `actions` (each
+ * `id`, `label`, `primary`, `style` `filled|outlined|text|overflow`; the overflow's `items`), `moreOpen`, and `lines`:
+ * `water`, `exposure`, `bestStart`, `pastEffort`, each `state` `working|ready|none` and `text`, the words on the card (null
+ * for a line that draws no working state of its own here). `ui.summary` is `headline`.
+ * - `POST /route/more?open=1|0`: opens or closes the card's three-dot overflow (a tap on it); answers `card`.
+ * - `POST /route/lines?holdMs=<n>`: the next water and terrain computations wait `n` ms first (0 clears), so the working
+ *   state can be read and viewed; answers `holdMs`. An answer already computed for the same points still shows at once.
  * T65: `route` (in `POST /route` and `GET /route`) has the route's one set of numbers, distance, `ascentM`,
  * `descentM` and `timeS` from [io.github.jasondorjeshort.dystopo.model.RouteSummary] of its points (what the card,
  * the kept route, the trip card and navigation show); the router's own graph-based climb and time are under `graph`.
@@ -118,7 +128,7 @@ object RouteRoutes {
                 }
                 val ms = (System.nanoTime() - t0) / 1_000_000
                 when (result) {
-                    is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
+                    is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "card" to RouteSession.cardJson(), "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
                         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)), // T187
                         "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to PaceSettings.pastEffortJson(result.plan), // T184
                         "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(result.plan.route.points, result.plan.mode, exposureOpen(app)), // T195
@@ -126,7 +136,17 @@ object RouteRoutes {
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
-            "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1"))
+            "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1", r.query["wait"]?.toLongOrNull()?.coerceIn(0, 60_000) ?: 10_000))
+            "POST" to "/route/more" -> { // T217: the card's three-dot overflow
+                val open = when (r.query["open"]) { "1", "true" -> true; "0", "false" -> false; else -> return bad("open=1|0 required") }
+                app.map.onMain { RouteSession.moreOpen = open }
+                Response.json(RouteSession.cardJson())
+            }
+            "POST" to "/route/lines" -> { // T217: holds the water and terrain computations, to see the card's working state
+                val ms = r.query["holdMs"]?.toLongOrNull()?.takeIf { it in 0..60_000 } ?: return bad("holdMs=0..60000 required")
+                io.github.jasondorjeshort.dystopo.app.routing.LineState.holdMs = ms
+                Response.json(mapOf("holdMs" to ms))
+            }
 "GET" to "/route/water", "POST" to "/route/water" -> water(app, r) // T187
             "GET" to "/route/exposure", "POST" to "/route/exposure" -> exposure(app, r) // T195
             "GET" to "/route/status" -> Response.json(RoutePlanner.json(app) ?: mapOf("error" to "active pack has no vector archive"))
@@ -213,15 +233,16 @@ object RouteRoutes {
         }
     }
 
-    private fun current(app: DystopoApp, profile: Boolean): Map<String, Any?> = linkedMapOf(
+    private fun current(app: DystopoApp, profile: Boolean, waitMs: Long = 10_000): Map<String, Any?> = linkedMapOf(
+        "card" to RouteSession.cardJson(), // T217: first, so it says what the card shows at the request, before the waits below
         "ui" to RouteSession.json(),
         "route" to RouteSession.plan?.let { RouteSession.routeJson(it, profile) },
         "failure" to RouteSession.failure?.json(),
         "graph" to RoutePlanner.json(app),
-        "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false)), // T187
-        "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to PaceSettings.pastEffortJson(RouteSession.plan), // T184
-        "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(RouteSession.plan?.route?.points, RouteSession.plan?.mode, exposureOpen(app)), // T195
-        "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(RouteSession.plan), // T209
+        "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false), waitMs), // T187
+        "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to PaceSettings.pastEffortJson(RouteSession.plan, waitMs), // T184
+        "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(RouteSession.plan?.route?.points, RouteSession.plan?.mode, exposureOpen(app), waitMs), // T195
+        "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(RouteSession.plan, waitMs), // T209
     )
 
     /** T195: `GET|POST /route/exposure[?open=1|0]`: the terrain of the route on the map. */

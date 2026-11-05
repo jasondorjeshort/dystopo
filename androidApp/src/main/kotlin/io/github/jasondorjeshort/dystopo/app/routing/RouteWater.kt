@@ -96,6 +96,7 @@ object RouteWater {
     }
 
     private fun compute(points: List<RoutePoint>, packs: PackSet): Result {
+        LineState.hold()
         val t0 = SystemClock.elapsedRealtime()
         val lengthM = (1 until points.size).sumOf { TrackStats.distanceM(points[it - 1].lat, points[it - 1].lon, points[it].lat, points[it].lon) }
         val lat0 = points.minOf { it.lat }; val lat1 = points.maxOf { it.lat }
@@ -116,6 +117,13 @@ object RouteWater {
             computed++
         }
     }
+
+    /** T217: `GET /route` `card.lines.water`: the card's line now ([LineState]); never waits. */
+    fun lineJson(points: List<RoutePoint>, units: ContourUnits): Map<String, Any?> =
+        LineState.of(start(points), WORKING) { WaterText.cardLine(it.items, units) }
+
+    /** T217: the card's line from the plan's first frame until the answer. */
+    const val WORKING = "Looking for water along the route"
 
     /** `GET /route` `water` and `GET /route/water`: the card's words, the list with each row's gap, the counters. */
     fun json(points: List<RoutePoint>?, open: Boolean, waitMs: Long = 10_000): Map<String, Any?> {
@@ -152,14 +160,14 @@ object WaterText {
     /** Under the list: where the words come from. */
     const val HINT = "From the map and the terrain, not reports: check locally, conditions change."
 
-    /** The route card's line, which opens the list: "Water: 3 crossings, next likely flowing in 1.2 km". */
+    /** The route card's line, which opens the list: "Water: 3 crossings, the next likely flowing in 1.2 km". */
     fun cardLine(items: List<WaterItem>, units: ContourUnits): String {
         if (items.isEmpty()) return "Water: none found along the route"
         val n = items.size
         val noun = if (items.all { it.kind == WaterKind.STREAM }) (if (n == 1) "crossing" else "crossings") else (if (n == 1) "place" else "places")
         val next = items.firstOrNull { it.isSource } ?: return "Water: $n $noun, none likely flowing"
         val at = if (next.alongM < PASS_M) "at the start" else "in ${UnitFormat.distance(next.alongM, units)}"
-        return "Water: $n $noun, next ${sourceWords(next)} $at"
+        return "Water: $n $noun, the next ${sourceWords(next)} $at"
     }
 
     /** The route card's second line: "Longest stretch without water: 6.2 km" (null with no source at all, the card says so). */
@@ -206,7 +214,7 @@ object WaterText {
 
     /**
      * The navigation card's line: "Water in 1.2 km: stream, likely flowing". T192: the label in lower case after the
-     * colon, as the route card's line ("next likely flowing") and the spoken line ("water: stream, ...") have it.
+     * colon, as the route card's line ("the next likely flowing") and the spoken line ("water: stream, ...") have it.
      */
     fun navLine(item: WaterItem, aheadM: Double, units: ContourUnits): String {
         val what = item.label.replaceFirstChar { it.lowercase() }

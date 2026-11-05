@@ -82,6 +82,7 @@ object RouteExposure {
     }
 
     private fun compute(points: List<RoutePoint>, mode: TravelMode, packs: PackSet): Result {
+        LineState.hold()
         val t0 = SystemClock.elapsedRealtime()
         val dem = demFor(points, packs)
         if (dem == null) return Result(null, SystemClock.elapsedRealtime() - t0, null).also { computed++ }
@@ -112,6 +113,13 @@ object RouteExposure {
         val r = if (waitMs > 0) await(points, mode, waitMs) else cached(points, mode)
         return r?.exposure?.let { ExposureText.cardLine(it, units) }
     }
+
+    /** T217: `GET /route` `card.lines.exposure`: the card's line now ([LineState]); never waits. */
+    fun lineJson(points: List<RoutePoint>, mode: TravelMode, units: ContourUnits): Map<String, Any?> =
+        LineState.of(start(points, mode), WORKING) { r -> r.exposure?.let { ExposureText.cardLine(it, units) } }
+
+    /** T217: the card's line from the plan's first frame until the answer. */
+    const val WORKING = "Checking exposure"
 
     /** `GET /route` `exposure` and `GET /route/exposure`: the card's and the sheet's words, the figures, the stretches. */
     fun json(points: List<RoutePoint>?, mode: TravelMode?, open: Boolean, waitMs: Long = 10_000): Map<String, Any?> {
