@@ -24,9 +24,10 @@ import java.util.TimeZone
  * app frame, then one line counting the threads left out; at most [FRAMES_SHOWN] frames a section.
  *
  * T228, a `startup` file ([io.github.jasondorjeshort.dystopo.app.StartupTrace]): "Startup freeze", or "Last start" when it
- * passed the thresholds. Its text puts the stalls and what held the main thread first, then the timeline, then the
- * start-length figures among the header's, then the stacks, and the recent starts last ([startupParts]); its title names
- * the longest hold, not the start's length. A body ([startupBody]) carries what fits the link in that order.
+ * passed the thresholds. The owner's freeze is the screen stuck on the splash (2026-11-05), so its text leads with what held
+ * the main thread before the first frame, step by step, the longest first, then the stalls after it, the timeline, the
+ * header's figures, the stacks, and the recent starts last ([startupShown]); its title names the time to the first frame at the
+ * step that took longest of it, or else the longest stall. A body ([startupBody]) carries what fits the link in that order.
  */
 class Report(val id: String, val dump: MainWatchdog.Dump) {
     val kind: String get() = dump.kind ?: "unknown"
@@ -61,16 +62,19 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
     }
 
     /**
-     * T228: what a start's title says after the kind: the longest hold of the main thread and its frame (or step), whichever
-     * reason brought the report, since the complaint is the freezing: `14.2 s, at PackSet.open`; the blank map's and the
-     * start that ended's own words when nothing held it; the first frame's length only on a start with no reason at all.
+     * T228: what a start's title says after the kind: stuck before the first frame, the time to it and the step that took longest
+     * of it, by its frame (`14.2 s, at PackSet.open`); else the longest stall the same way; the blank map's and the start that
+     * ended's own words when nothing held it; the first frame's length on a start with no reason at all.
      */
     private fun startupWhat(): String? {
         val h = dump.header
         val ended = h["outcome"] == StartupWindow.ENDED
         val reasons = startupReasons
         val top = h["topFreezeMs"]?.toLongOrNull()
-        val where = h["blockingFrame"]?.takeIf { it != "-" }?.let(::shortFrame) ?: h["topFreezeMark"]
+        // A frame only when the samples agree on it: spread over many stacks, the step's own name says more.
+        val share = h["topFreezeShare"]?.split(" of ")?.mapNotNull { it.toIntOrNull() }.orEmpty()
+        val agreed = share.size == 2 && share[1] > 0 && share[0] * 3 >= share[1]
+        val where = (if (agreed) h["blockingFrame"]?.takeIf { it != "-" }?.let(::shortFrame) else null) ?: h["topFreezeMark"]
         val held = if (top != null && where != null) String.format(Locale.ROOT, "%.1f s, at %s", top / 1000.0, where) else null
         val onlyMap = reasons == listOf(StartupWindow.REASON_MAP)
         return when {
@@ -83,14 +87,15 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         }
     }
 
-    /** T228: why this report exists, in words; a stall first, the start's length last. */
+    /** T228: why this report exists, in words; the splash first. */
     private fun startupWhy(): List<String> {
         val h = dump.header
         val out = ArrayList<String>()
         val secs = { key: String -> h[key]?.toLongOrNull()?.let(StartupText::seconds) ?: "?" }
         val reasons = startupReasons
         val kindName = h["startKind"] ?: "?"
-        if (StartupWindow.REASON_STALL in reasons) out += "The main thread stopped answering for ${secs("longestStallMs")} after the first frame."
+        if (StartupWindow.REASON_FIRST_FRAME in reasons) out += if (h["firstFrameMs"] != null) "The first frame took ${secs("firstFrameMs")}, over the ${secs("thresholdMs")} limit for a $kindName start."
+            else "No first frame yet, past the ${secs("thresholdMs")} limit for a $kindName start."
         when (h["outcome"]) {
             StartupWindow.ENDED -> out += "Outcome: the process ended during the start, after ${secs("elapsedMs")}" +
                 (h["exitReasonName"]?.let { n -> " (${n}, reason ${h["exitReason"] ?: "?"})" } ?: "") + "."
@@ -98,8 +103,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
             StartupWindow.LEFT -> if (StartupWindow.REASON_NOT_FINISHED in reasons) out += "Outcome: the app was left after ${secs("elapsedMs")}, before its first frame."
             StartupWindow.RUNNING -> out += "Outcome: still measuring when this was written (${secs("elapsedMs")} so far)."
         }
+        if (StartupWindow.REASON_STALL in reasons) out += "The main thread stopped answering for ${secs("longestStallMs")} after the first frame."
         if (StartupWindow.REASON_MAP in reasons) out += "The map was not fully drawn ${(h["mapMs"]?.toLongOrNull() ?: 15_000L) / 1000} s after the first frame."
-        if (StartupWindow.REASON_FIRST_FRAME in reasons) out += "The first frame took ${secs("firstFrameMs").takeIf { h["firstFrameMs"] != null } ?: "over " + secs("thresholdMs")}, over the ${secs("thresholdMs")} limit for a $kindName start."
         if (reasons.isEmpty()) out += "Passed the thresholds: ${kindName} start, first frame ${secs("firstFrameMs")}, longest stall ${secs("longestStallMs")}."
         return out
     }
@@ -147,8 +152,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
             append('\n').append(title).append('\n')
             for (l in lines) append("  ").append(l).append('\n')
         }
-        part(STALLS_TITLE, info(StartupText.S_STALLS))
         part(BLOCKED_TITLE, info(StartupText.S_BLOCKED))
+        part(STALLS_TITLE, info(StartupText.S_STALLS))
         part(TIMELINE_TITLE, info(StartupText.S_TIMELINE))
         append('\n')
         for (l in startupHeader()) append(l).append('\n')
@@ -163,7 +168,7 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
     }
 
     /** T228: how much of a start's report one link's body carries, the rest going to the clipboard. */
-    class Rung(val frames: Int, val history: Int, val minStepMs: Long, val stalls: Int = 5, val blocked: Int = 3)
+    class Rung(val frames: Int, val history: Int, val minStepMs: Long, val stalls: Int = 3, val blocked: Int = 6)
 
     private fun longEnough(line: String, minMs: Long): Boolean {
         val m = STEP.find(line) ?: return true
@@ -180,8 +185,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
                 append('\n').append(title).append('\n')
                 for (l in lines) append("  ").append(l).append('\n')
             }
-            part(STALLS_TITLE, info(StartupText.S_STALLS).take(rung.stalls))
             part(BLOCKED_TITLE, info(StartupText.S_BLOCKED).take(rung.blocked))
+            part(STALLS_TITLE, info(StartupText.S_STALLS).take(rung.stalls))
             val timeline = info(StartupText.S_TIMELINE)
             val steps = timeline.filter { longEnough(it, rung.minStepMs) }
             part(TIMELINE_TITLE, steps + if (steps.size < timeline.size) listOf("(${timeline.size - steps.size} steps under ${rung.minStepMs} ms left out)") else emptyList())
@@ -209,8 +214,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
                 append(title).append('\n')
                 for (l in lines) append("  ").append(l).append('\n')
             }
-            part(STALLS_TITLE, info(StartupText.S_STALLS).drop(rung.stalls))
             part(BLOCKED_TITLE, info(StartupText.S_BLOCKED).drop(rung.blocked))
+            part(STALLS_TITLE, info(StartupText.S_STALLS).drop(rung.stalls))
             val timeline = info(StartupText.S_TIMELINE)
             if (timeline.any { !longEnough(it, rung.minStepMs) }) part(TIMELINE_TITLE, timeline)
             val (sections, left) = startupStacks()
@@ -318,15 +323,15 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         const val FRAMES_SHOWN = 40
         const val APP_PACKAGE = MainWatchdog.APP_PACKAGE
         private const val STALLS_TITLE = "Main thread stalls after the first frame (500 ms and up, the longest first):"
-        private const val BLOCKED_TITLE = "What held the main thread before the first frame:"
+        private const val BLOCKED_TITLE = "What held the main thread before the first frame (the longest first):"
         private const val TIMELINE_TITLE = "Timeline, from the start of the window:"
         private const val HISTORY_TITLE = "Recent starts, the newest last:"
         private val STEP = Regex("^(\\d+\\.\\d+) s to (\\d+\\.\\d+) s ")
 
-        /** T228: what a start's body carries, the most first (the history is the clue to "sometimes", the top stack is named in its first lines). */
+        /** T228: what a start's body carries, the most first (the top stack before the small steps and the history; the clipboard has the rest). */
         val RUNGS = listOf(
-            Rung(12, 20, 20), Rung(8, 20, 20), Rung(12, 10, 20), Rung(8, 10, 20), Rung(8, 5, 20), Rung(4, 5, 50), Rung(4, 0, 50), Rung(0, 5, 50),
-            Rung(0, 0, 100), Rung(0, 0, 500, stalls = 3, blocked = 2),
+            Rung(12, 20, 20), Rung(8, 20, 20), Rung(12, 10, 50), Rung(8, 10, 50), Rung(8, 5, 50), Rung(8, 5, 100), Rung(8, 5, 100, blocked = 4),
+            Rung(6, 0, 100, blocked = 4), Rung(6, 0, 200, blocked = 3), Rung(4, 0, 500, blocked = 3), Rung(0, 0, 500, stalls = 2, blocked = 3),
         )
 
         val KIND_LABELS = linkedMapOf(
@@ -345,7 +350,8 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         fun keep(title: String, frames: List<String>): Boolean {
             val t = title.lowercase()
             if (t.startsWith("main") || t.startsWith("thread main ") || t.startsWith("\"main\"")) return true
-            if ("blocked" in t || "waiting to lock" in t) return true
+            if ("(blocked" in t || " blocked" in t.substringBefore(", while main") || "waiting to lock" in t) return true
+            if (StartupText.LOCK_HOLDER in t) return true
             val running = "runnable" in t || "native" in t || "(running" in t
             // The watchdog's own thread runs app code while it dumps; it is not a worker the UI waited on.
             return running && frames.any(MainWatchdog::isAppFrame)

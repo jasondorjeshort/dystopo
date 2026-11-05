@@ -57,7 +57,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Header keys beyond the common ones: `startId`, `pid`, `startKind`, `kindSource`, `outcome` (`finished`, `running`,
  * `ended`, `noFirstFrame`, `left`), `reasons` (comma-separated `stall`, `mapNotDrawn`, `firstFrame`, `notFinished`, or `-`),
- * `thresholdMs`, `firstFrameMs`, `longestStallMs`, `topFreezeMs`, `topFreezeMark`, `blockingFrame`, `activity`,
+ * `thresholdMs`, `firstFrameMs`, `longestStallMs`, `topFreezeMs` (the title's figure), `topFreezeMark` and `topFreezeMarkMs` (the step
+ * or stall it names), `topFreezeShare`, `blockingFrame`, `mapMs`, `activity`,
  * `processStartToAttachMs` (loading and field initialisers, not sampled), `importance`, `firstStart`, `sinceBootS`,
  * `ramAvailMb`, `ramTotalMb`, `lowMemory`, `thermal`, `batterySaver`, `heapMaxMb`, `heapUsedMb`, `gcCount`, `packs`,
  * `packBytes`, `startInfoReason`, `startInfoType`, `startInfoTimes`, `exitReason`, `exitReasonName`.
@@ -70,6 +71,7 @@ object StartupTrace {
     const val TRACE_PREFIX = "trace-"
     const val PROGRESS_PREFIX = ".startup-progress-"
     const val HISTORY = ".startup-history"
+    private const val PACKAGE_SEEN = ".startup-package"
     const val KEEP_TRACES = 3
 
     /** Debug routes override these (`POST /debug/startup/thresholds`). */
@@ -112,7 +114,7 @@ object StartupTrace {
         val now = SystemClock.elapsedRealtime()
         val start = runCatching { Process.getStartElapsedRealtime() }.getOrDefault(now).coerceAtMost(now)
         open(StartupWindow(newId(start), start, System.currentTimeMillis() - (now - start), StartupWindow.PROVISIONAL) { thresholds }, leftovers = true)
-        mark("attachBaseContext")
+        mark("attachBaseContext and content providers")
     }
 
     /** The end of `DystopoApp.onCreate`. */
@@ -125,6 +127,12 @@ object StartupTrace {
     fun mark(name: String) {
         val a = current ?: return
         if (Thread.currentThread() === mainThread) a.window.mark(name, SystemClock.elapsedRealtime())
+    }
+
+    /** A step of the first composition (a composable's body, so it can run again): a mark only until the first frame. */
+    fun composing(name: String) {
+        val w = current?.window ?: return
+        if (!w.firstFrameSeen) mark(name)
     }
 
     /** The top of `MainActivity.onCreate`. */
@@ -164,7 +172,7 @@ object StartupTrace {
         a.framePosted = true
         runCatching {
             Choreographer.getInstance().postFrameCallback {
-                mark("first frame's composition, layout and draw")
+                mark("first traversal: attach and Compose's setup")
                 main.post { firstFrame(a) }
             }
         }
@@ -219,6 +227,7 @@ object StartupTrace {
         val pid = Process.myPid()
         var lastCpuMs = -1L
         var frameHandled = false
+        var startInfoRead = Build.VERSION.SDK_INT < 35
         io("the header") { readHead(a) }
         if (leftovers) io("the leftovers") { processLeftovers() }
         while (true) {
@@ -231,8 +240,12 @@ object StartupTrace {
                 val cpu = stat?.let { it.ticks * 1000 / ThreadCpu.clockTicks } ?: -1L
                 val delta = if (lastCpuMs >= 0 && cpu >= 0) cpu - lastCpuMs else 0L
                 lastCpuMs = cpu
+                val inForce = w.markInForce() // read before the stack: the main thread may pass a mark while the stack is read
                 val stack = mainThread.stackTrace.map(StackTraceElement::toString)
-                w.addSample(StartupWindow.classify(mainThread.state.name, stat?.state ?: '?', delta, stack.firstOrNull()), delta, stack)
+                val state = StartupWindow.classify(mainThread.state.name, stat?.state ?: '?', delta, stack.firstOrNull())
+                w.addSample(state, delta, stack, inForce)
+                // The lock's holder is named by its stack now, while it holds it: the report's own stacks are main's.
+                if (state == StartupWindow.LOCK && w.wantsLockDump(inForce)) runCatching { w.addLockDump(inForce, stack, otherThreads()) }.onFailure { Log.w(TAG, "lock dump failed", it) }
             }
             if (!frameHandled && w.firstFrameSeen) {
                 frameHandled = true
@@ -240,6 +253,10 @@ object StartupTrace {
                 a.head["heapMaxMb"] = (rt.maxMemory() / MB).toString()
                 a.head["heapUsedMb"] = ((rt.totalMemory() - rt.freeMemory()) / MB).toString()
                 runCatching { Debug.getRuntimeStat("art.gc.gc-count") }.getOrNull()?.let { a.head["gcCount"] = it }
+            }
+            // The system finishes its record just after the first frame, so a moment later.
+            if (!startInfoRead && w.firstFrameAge(now) >= START_INFO_AFTER_MS) {
+                startInfoRead = true
                 if (Build.VERSION.SDK_INT >= 35) io("the start record") { readStartInfo(a) }
             }
             if (step.snapshot > 0) runCatching { snapshot(a, step.snapshot) }.onFailure { Log.w(TAG, "snapshot failed", it) }
@@ -264,13 +281,20 @@ object StartupTrace {
         }
     }
 
+    /** Every thread but this one and the main thread, as sections. */
+    private fun otherThreads(): List<Pair<String, List<String>>> = Thread.getAllStackTraces().entries
+        .filter { (t, _) -> t !== mainThread && t !== Thread.currentThread() }.sortedBy { it.key.name }
+        .map { (t, frames) -> "thread ${t.name} (${t.state})" to frames.map(StackTraceElement::toString).take(StartupText.MAX_FRAMES) }
+
     /** Every thread, the tile counters and why the map is not idle: counts and reason names only, never a tile path. */
     private fun snapshot(a: Active, afterMs: Int) {
-        val threads = Thread.getAllStackTraces().entries.sortedWith(compareBy({ it.key !== mainThread }, { it.key.name }))
+        val all = Thread.getAllStackTraces().entries.sortedWith(compareBy({ it.key !== mainThread }, { it.key.name }))
             .map { (t, frames) -> "thread ${t.name} (${t.state})" to frames.map(StackTraceElement::toString).take(StartupText.MAX_FRAMES) }
+        val threads = StartupText.collapseThreads(all)
         val app = context?.applicationContext as? DystopoApp
         val c = app?.tileCounters
         val counters = ArrayList<String>()
+        counters += "threads: ${all.size}"
         if (c != null) {
             counters += "tiles served: dem ${c.dem.served.get()}, osm ${c.osm.served.get()}, contours ${c.contours.served.get()}, glyphs ${c.glyphs.served.get()}"
             counters += "tiles missing: ${c.dem.notFound.get() + c.osm.notFound.get() + c.contours.notFound.get()}, errors: ${c.dem.errors.get() + c.osm.errors.get() + c.contours.errors.get()}"
@@ -304,7 +328,10 @@ object StartupTrace {
         a.head["packBytes"] = packs.sumOf { p -> p.files.sumOf { it.length() } }.toString()
         val dir = reportsDir() ?: return
         val info = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull()
-        a.head["firstStart"] = StartupText.firstStart(readHistory(dir).lastOrNull(), BuildConfig.VERSION_NAME, info?.firstInstallTime ?: 0L, info?.lastUpdateTime ?: 0L)
+        val seen = File(dir, PACKAGE_SEEN)
+        val update = info?.lastUpdateTime ?: 0L
+        a.head["firstStart"] = StartupText.firstStart(runCatching { seen.readText().trim().toLong() }.getOrNull(), info?.firstInstallTime ?: 0L, update)
+        Reports.write(seen, update.toString())
     }
 
     @androidx.annotation.RequiresApi(35)
@@ -317,19 +344,15 @@ object StartupTrace {
         val slack = if (w.processWindow) 5_000L else 2_000L
         val r = records.firstOrNull { rec ->
             val launch = rec.startupTimestamps[ApplicationStartInfo.START_TIMESTAMP_LAUNCH] ?: rec.startupTimestamps[ApplicationStartInfo.START_TIMESTAMP_FORK]
-            rec.pid == pid && launch != null && kotlin.math.abs(launch / 1_000_000 - w.openAt) <= slack
+            // An API 35 emulator's records read pid 0, so the pid only rules one out when it is there; the time decides.
+            (rec.pid == 0 || rec.pid == pid) && launch != null && kotlin.math.abs(launch / 1_000_000 - w.openAt) <= slack
         } ?: return
         a.head["startInfoReason"] = StartupText.startReasonName(r.reason)
         val type = StartupText.startTypeKind(r.startType)
         a.head["startInfoType"] = type ?: "unset"
         type?.let(w::startInfoKind)
-        val names = linkedMapOf(
-            ApplicationStartInfo.START_TIMESTAMP_LAUNCH to "launch", ApplicationStartInfo.START_TIMESTAMP_FORK to "fork",
-            ApplicationStartInfo.START_TIMESTAMP_BIND_APPLICATION to "bind", ApplicationStartInfo.START_TIMESTAMP_APPLICATION_ONCREATE to "application created",
-            ApplicationStartInfo.START_TIMESTAMP_FIRST_FRAME to "first frame", ApplicationStartInfo.START_TIMESTAMP_FULLY_DRAWN to "fully drawn",
-        )
         a.head["startInfoTimes"] = r.startupTimestamps.entries.sortedBy { it.value }.joinToString(", ") { (k, v) ->
-            "${names[k] ?: "stamp $k"} ${StartupText.seconds(v / 1_000_000 - w.openAt)}"
+            "${StartupText.startStampName(k)} ${StartupText.seconds(v / 1_000_000 - w.openAt)}"
         }
     }
 
@@ -432,7 +455,7 @@ object StartupTrace {
                         }.getOrNull() else null
                         val line = StartupText.historyLine(dump, StartupWindow.ENDED)
                         val history = addHistory(dir, line)
-                        val text = StartupLeftover.report(dump, exit?.reason, exit?.reason?.let(Diagnostics::reasonName), history)
+                        val text = StartupLeftover.report(dump, exit?.reason, exit?.reason?.let { StartupText.exitName(it, Diagnostics.reasonName(it)) }, history)
                         val name = StartupText.fileName(dump.header)
                         Reports.write(File(dir, PREFIX + name), text)
                         Reports.write(File(dir, TRACE_PREFIX + name), text)
@@ -473,6 +496,7 @@ object StartupTrace {
     }
 
     private const val MB = 1024L * 1024L
+    private const val START_INFO_AFTER_MS = 1_000L
 }
 
 /** What counts as slow: Android vitals' excessive start times (ADR 0044: one practice, no setting), and this wave's stall and map figures. */
@@ -517,21 +541,43 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
 
     class Snapshot(val afterMs: Int, val threads: List<Pair<String, List<String>>>, val counters: List<String>, val blockers: List<String>)
 
+    /**
+     * Every other thread at the first sample that found the main thread blocked under [mark], with the lock's [holder] when its
+     * stack shows it ([StartupText.likelyHolder]), so a report says what the holder was doing.
+     */
+    class LockDump(val mark: String, val mainStack: List<String>, val threads: List<Pair<String, List<String>>>) {
+        val holder: Pair<String, List<String>>? get() = StartupText.likelyHolder(mainStack, threads)
+    }
+
+    /** What a title names: [ms] its figure, [markMs] the length of the step or stall it names, the top app frame of that one's most common stack, its mark, that stack's share of its samples. */
+    class TopFreeze(val ms: Long, val markMs: Long, val frame: String?, val mark: String, val top: Int, val samples: Int)
+
     /** The window at one moment: all a file or a route says. */
     class Record(
         val id: String, val epochAt: Long, val kind: String, val kindSource: String, val processWindow: Boolean, val activitySeen: Boolean,
         val marks: List<MarkLine>, val firstFrameMs: Long?, val elapsedMs: Long, val stalls: List<StallLine>, val snapshots: List<Snapshot>,
-        val outcome: String, val mapNotDrawn: Boolean, val thresholdMs: Long, val reasons: List<String>,
+        val outcome: String, val mapNotDrawn: Boolean, val thresholdMs: Long, val mapMs: Long, val reasons: List<String>,
+        val lockDumps: List<LockDump> = emptyList(),
     ) {
         val longestStallMs: Long get() = stalls.maxOfOrNull { it.ms } ?: 0L
 
-        /** The longest time the main thread was held: a stall, or a step before the first frame. Length, frame, mark. */
-        fun topFreeze(): Triple<Long, String?, String>? {
+        /**
+         * The screen stuck on the splash is the owner's freeze (2026-11-05), so this start's own trouble before its first frame
+         * leads: no first frame, or one over the limit.
+         */
+        val frozeBeforeFrame: Boolean get() = firstFrameMs == null || REASON_FIRST_FRAME in reasons
+
+        /**
+         * What a report's title names. When it [frozeBeforeFrame], the time to the first frame (so far), at the step that took
+         * longest of it. Otherwise the longest stall; a healthy start, its longest step.
+         */
+        fun topFreeze(): TopFreeze? {
             val stall = stalls.maxByOrNull { it.ms }
             val step = marks.filter { it.ms != null && it.samples > 0 }.maxByOrNull { it.ms!! }
-            if (stall == null && step == null) return null
-            return if (step == null || (stall != null && stall.ms >= step.ms!!)) Triple(stall!!.ms, MainWatchdog.blockingFrame(stall.stack), stall.mark)
-            else Triple(step.ms!!, MainWatchdog.blockingFrame(step.stack), step.name)
+            if (step != null && (frozeBeforeFrame || stall == null)) {
+                return TopFreeze(if (frozeBeforeFrame) firstFrameMs ?: elapsedMs else step.ms!!, step.ms!!, MainWatchdog.blockingFrame(step.stack), step.name, step.top, step.samples)
+            }
+            return stall?.let { TopFreeze(it.ms, it.ms, MainWatchdog.blockingFrame(it.stack), it.mark, it.top, it.samples) }
         }
     }
 
@@ -563,6 +609,8 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
     private var stallSamples = 0
     private var stallCpuMs = 0L
     private val snapshots = ArrayList<Snapshot>()
+    private val lockDumps = ArrayList<LockDump>()
+    private val lockDumped = HashSet<String>()
     private var snapshotsDue = SNAPSHOT_AT.toMutableList()
     private var mapNotDrawn = false
 
@@ -573,6 +621,9 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
 
     val firstFrameSeen: Boolean get() = firstFrameAt >= 0
     val fullyLoadedSeen: Boolean get() = fullyLoadedAt >= 0
+
+    /** How long ago the first frame was, or -1. */
+    fun firstFrameAge(now: Long): Long = firstFrameAt.let { if (it < 0) -1L else now - it }
     @get:Synchronized val closing: Boolean get() = requested != null || closed
 
     @Synchronized
@@ -655,12 +706,16 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         return StallLine(sentAt - openAt, silent, mark, top?.key.orEmpty(), top?.value ?: 0, stallSamples, stallCpuMs, LinkedHashMap(stallStates), ended)
     }
 
-    /** One sample of the main thread: to the mark in force before the first frame, to the stall after it. */
+    /** The mark a sample taken now belongs to. */
     @Synchronized
-    fun addSample(state: String, cpuDeltaMs: Long, stack: List<String>) {
+    fun markInForce(): Int = marks.lastIndex
+
+    /** One sample of the main thread: to the mark in force before the first frame ([mark], read before the stack), to the stall after it. */
+    @Synchronized
+    fun addSample(state: String, cpuDeltaMs: Long, stack: List<String>, mark: Int = marks.lastIndex) {
         if (closed) return
         if (firstFrameAt < 0) {
-            val m = marks.lastOrNull() ?: return
+            val m = marks.getOrNull(mark) ?: return
             m.samples++
             m.cpuMs += cpuDeltaMs
             m.states.merge(state, 1, Int::plus)
@@ -671,6 +726,18 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
             stallStates.merge(state, 1, Int::plus)
             if (stack in stallStacks || stallStacks.size < MAX_STACKS) stallStacks.merge(stack, 1, Int::plus)
         }
+    }
+
+    private fun lockKey(mark: Int): String = if (firstFrameAt < 0) "mark $mark" else "stall $seq"
+
+    /** Whether the first blocked sample of this step or stall still owes its dump: one each, [MAX_LOCK_DUMPS] a window. */
+    @Synchronized
+    fun wantsLockDump(mark: Int): Boolean = !closed && lockDumps.size < MAX_LOCK_DUMPS && lockKey(mark) !in lockDumped
+
+    @Synchronized
+    fun addLockDump(mark: Int, mainStack: List<String>, threads: List<Pair<String, List<String>>>) {
+        if (closed || !lockDumped.add(lockKey(mark))) return
+        lockDumps += LockDump(marks.getOrNull(mark)?.name ?: "-", mainStack, threads)
     }
 
     @Synchronized
@@ -809,7 +876,7 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         return Record(
             id, epochAt, if (kind == PROVISIONAL) COLD else kind, kindSource, processWindow, activitySeen, lines,
             if (firstFrameAt >= 0) firstFrameAt - openAt else null, at - openAt, all, ArrayList(snapshots), out, mapNotDrawn,
-            thresholds().of(kind), reasons(at, out),
+            thresholds().of(kind), thresholds().mapMs, reasons(at, out), ArrayList(lockDumps),
         )
     }
 
@@ -823,6 +890,7 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
             "marks" to r.marks.map { linkedMapOf("name" to it.name, "atMs" to it.atMs, "ms" to it.ms, "samples" to it.samples, "cpuMs" to it.cpuMs, "states" to it.states, "frame" to MainWatchdog.blockingFrame(it.stack)) },
             "stalls" to r.stalls.map { linkedMapOf("atMs" to it.atMs, "ms" to it.ms, "mark" to it.mark, "frame" to MainWatchdog.blockingFrame(it.stack), "top" to it.top, "samples" to it.samples, "cpuMs" to it.cpuMs, "states" to it.states, "ended" to it.ended) },
             "snapshots" to r.snapshots.map { linkedMapOf("afterMs" to it.afterMs, "threads" to it.threads.size, "counters" to it.counters, "blockers" to it.blockers) },
+            "lockDumps" to r.lockDumps.map { d -> linkedMapOf("mark" to d.mark, "main" to MainWatchdog.blockingFrame(d.mainStack), "threads" to d.threads.size, "holder" to d.holder?.first, "holderFrame" to d.holder?.second?.let(MainWatchdog::blockingFrame)) },
         )
     }
 
@@ -857,12 +925,14 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         const val PROGRESS_EVERY_MS = 1_000L
         const val FLUSH_AFTER_FRAME_MS = 5_000L
         val SNAPSHOT_AT = listOf(5_000, 15_000)
-        const val MAX_MARKS = 64
+        const val MAX_MARKS = 96
+        const val MAX_LOCK_DUMPS = 3
+        const val LOCK = "lock"
         const val MAX_STACKS = 100
 
         /** What the main thread was doing, from Java's state, `/proc`'s state and whether it used CPU since the last sample. */
         fun classify(javaState: String, procState: Char, cpuDeltaMs: Long, topFrame: String?): String = when {
-            javaState == "BLOCKED" -> "lock"
+            javaState == "BLOCKED" -> LOCK
             procState == 'D' -> "disk"
             cpuDeltaMs > 0 -> "running"
             procState == 'R' -> "starved"
@@ -893,6 +963,7 @@ object StartupText {
     const val S_TIMELINE = "timeline"
     const val S_SNAPSHOT = "snapshot"
     const val S_HISTORY = "history"
+    const val LOCK_HOLDER = "the lock's likely holder"
 
     fun seconds(ms: Long): String = String.format(Locale.ROOT, "%.2f s", ms / 1000.0)
 
@@ -907,10 +978,8 @@ object StartupText {
     private fun states(states: Map<String, Int>): String =
         states.entries.sortedByDescending { it.value }.joinToString(", ") { "${it.key} ${it.value}" }
 
-    fun timelineLine(m: StartupWindow.MarkLine): String {
-        val detail = if (m.samples >= 2) " (CPU ${seconds(m.cpuMs)}, ${states(m.states)})" else ""
-        return if (m.ms != null) "${seconds(m.atMs)} to ${seconds(m.atMs + m.ms)} ${m.name}$detail" else "${seconds(m.atMs)} ${m.name}"
-    }
+    fun timelineLine(m: StartupWindow.MarkLine): String =
+        if (m.ms != null) "${seconds(m.atMs)} to ${seconds(m.atMs + m.ms)} ${m.name}" else "${seconds(m.atMs)} ${m.name}"
 
     fun stallLine(s: StartupWindow.StallLine): String {
         val frame = MainWatchdog.blockingFrame(s.stack)?.let { ", at ${brief(it)}" } ?: ""
@@ -918,9 +987,26 @@ object StartupText {
         return "${seconds(s.atMs)} to ${seconds(s.atMs + s.ms)} (${seconds(s.ms)}) under ${s.mark}$frame$share${if (s.ended) "" else ", still running"}"
     }
 
-    fun blockedLine(m: StartupWindow.MarkLine): String {
+    fun blockedLine(m: StartupWindow.MarkLine, dump: StartupWindow.LockDump? = null): String {
         val frame = MainWatchdog.blockingFrame(m.stack)?.let { ", at ${brief(it)}" } ?: ""
-        return "${seconds(m.ms ?: 0)} under ${m.name}$frame, ${m.top} of ${m.samples} samples, ${states(m.states)}, CPU ${seconds(m.cpuMs)}"
+        return "${seconds(m.ms ?: 0)} under ${m.name}$frame, ${m.top} of ${m.samples} samples, ${states(m.states)}, CPU ${seconds(m.cpuMs)}${holderWords(dump)}"
+    }
+
+    private fun holderWords(dump: StartupWindow.LockDump?): String {
+        val holder = dump?.holder ?: return ""
+        val name = holder.first.removePrefix("thread ").substringBefore(" (")
+        val at = MainWatchdog.blockingFrame(holder.second)?.let { " at ${brief(it)}" } ?: ""
+        return ", the lock held by $name$at"
+    }
+
+    /**
+     * The thread that holds what the main thread is blocked on, as far as stacks can say (Android has no API for a monitor's
+     * owner): one not blocked itself that is inside the method the main thread waits to enter, the top of [mainStack]. A lock
+     * shared between methods names nobody here; every thread is still in the dump, and a running one with an app frame is shown.
+     */
+    fun likelyHolder(mainStack: List<String>, threads: List<Pair<String, List<String>>>): Pair<String, List<String>>? {
+        val method = mainStack.firstOrNull()?.substringBefore('(') ?: return null
+        return threads.firstOrNull { (title, frames) -> "(BLOCKED)" !in title && frames.any { it.substringBefore('(') == method } }
     }
 
     fun historyLine(r: StartupWindow.Record, version: String): String =
@@ -934,9 +1020,9 @@ object StartupText {
         return "${h["version"] ?: "?"} ${h["startKind"] ?: "?"}, first frame $frame, longest stall $stall, $outcome"
     }
 
-    /** `install`, `update` or `no`: from the newest history line's version, and on an empty history from the package's own times. */
-    fun firstStart(lastHistoryLine: String?, version: String, firstInstall: Long, lastUpdate: Long): String = when {
-        lastHistoryLine != null -> if (lastHistoryLine.substringBefore(' ') == version) "no" else "update"
+    /** `install`, `update` or `no`: this start against the package's update time at the last start ([lastSeen]; null before the first). */
+    fun firstStart(lastSeen: Long?, firstInstall: Long, lastUpdate: Long): String = when {
+        lastSeen == lastUpdate -> "no"
         firstInstall == lastUpdate -> "install"
         else -> "update"
     }
@@ -964,6 +1050,32 @@ object StartupText {
         2 -> StartupWindow.WARM
         3 -> StartupWindow.HOT
         else -> null
+    }
+
+    /**
+     * Threads with one state and one stack as one section, `thread name (STATE) and 40 more like it`: a cold view has held 301
+     * threads, most of them blocked at one place, and each section is a stack long. Every thread stays counted; a dump stays small.
+     */
+    fun collapseThreads(threads: List<Pair<String, List<String>>>): List<Pair<String, List<String>>> {
+        val groups = LinkedHashMap<Pair<String, List<String>>, MutableList<String>>()
+        for ((title, frames) in threads) groups.getOrPut(title.substringAfterLast(" (") to frames) { ArrayList() } += title
+        return groups.map { (key, titles) -> (titles.first() + if (titles.size > 1) " and ${titles.size - 1} more like it" else "") to key.second }
+    }
+
+    /** The system's reason a process ended, in words; `ApplicationExitInfo.REASON_USER_REQUESTED` (10) by its own name. */
+    fun exitName(reason: Int, words: String): String = if (reason == 10) "user-requested, $words" else words
+
+    /** `ApplicationStartInfo`'s `START_TIMESTAMP_*`. */
+    fun startStampName(stamp: Int): String = when (stamp) {
+        0 -> "launch"
+        1 -> "fork"
+        2 -> "application created"
+        3 -> "bind"
+        4 -> "first frame"
+        5 -> "fully drawn"
+        6 -> "first render thread frame"
+        7 -> "first composition"
+        else -> "stamp $stamp"
     }
 
     /** `ApplicationStartInfo`'s `START_REASON_*`. */
@@ -1000,11 +1112,14 @@ object StartupText {
         r.firstFrameMs?.let { header["firstFrameMs"] = it.toString() }
         header["elapsedMs"] = r.elapsedMs.toString()
         header["longestStallMs"] = r.longestStallMs.toString()
-        top?.let { (ms, _, mark) ->
-            header["topFreezeMs"] = ms.toString()
-            header["topFreezeMark"] = mark
+        top?.let {
+            header["topFreezeMs"] = it.ms.toString()
+            header["topFreezeMarkMs"] = it.markMs.toString()
+            header["topFreezeMark"] = it.mark
+            header["topFreezeShare"] = "${it.top} of ${it.samples}"
         }
-        header["blockingFrame"] = top?.second ?: "-"
+        header["blockingFrame"] = top?.frame ?: "-"
+        header["mapMs"] = r.mapMs.toString()
         header["activity"] = r.activitySeen.toString()
         load?.let { header["processStartToAttachMs"] = it.toString() }
         header += head
@@ -1014,7 +1129,7 @@ object StartupText {
         val stalls = r.stalls.sortedByDescending { it.ms }
         if (stalls.isNotEmpty()) sections += S_STALLS to stalls.take(MAX_STALLS).map(::stallLine) + (if (stalls.size > MAX_STALLS) listOf("and ${stalls.size - MAX_STALLS} shorter") else emptyList())
         val held = r.marks.filter { it.ms != null && it.samples > 0 && it.ms >= MIN_STACK_MS }.sortedByDescending { it.ms }
-        if (held.isNotEmpty()) sections += S_BLOCKED to held.map(::blockedLine)
+        if (held.isNotEmpty()) sections += S_BLOCKED to held.map { m -> blockedLine(m, r.lockDumps.firstOrNull { it.mark == m.name }) }
         val timeline = ArrayList<String>()
         if (load != null) timeline += "${seconds(0)} to ${seconds(load)} loading and field initialisers (not sampled)"
         r.marks.mapTo(timeline, ::timelineLine)
@@ -1022,11 +1137,17 @@ object StartupText {
         for (s in r.snapshots) {
             sections += "$S_SNAPSHOT ${s.afterMs / 1000} s after the first frame" to s.counters + ("not idle because: " + s.blockers.joinToString(", ").ifEmpty { "-" })
         }
-        // The stacks, the longest hold first.
-        val stacks = ArrayList<Triple<Long, String, List<String>>>()
-        for (s in stalls.take(MAX_STACKS)) if (s.stack.isNotEmpty()) stacks += Triple(s.ms, "main in the stall at ${seconds(s.atMs)} (${s.top} of ${s.samples} samples)", s.stack)
-        for (m in held.take(MAX_STACKS)) if (m.stack.isNotEmpty()) stacks += Triple(m.ms ?: 0, "main under ${m.name} (${m.top} of ${m.samples} samples)", m.stack)
-        for ((_, title, frames) in stacks.sortedByDescending { it.first }) sections += title to frames.take(MAX_FRAMES)
+        // The stacks: a start stuck before its first frame shows those steps' first, the longest first; else the longest hold first.
+        val stallStacks = stalls.take(MAX_STACKS).filter { it.stack.isNotEmpty() }.map { Triple(it.ms, "main in the stall at ${seconds(it.atMs)} (${it.top} of ${it.samples} samples)", it.stack) }
+        val stepStacks = held.take(MAX_STACKS).filter { it.stack.isNotEmpty() }.map { Triple(it.ms ?: 0L, "main under ${it.name} (${it.top} of ${it.samples} samples)", it.stack) }
+        val stacks = if (r.frozeBeforeFrame) stepStacks + stallStacks else (stepStacks + stallStacks).sortedByDescending { it.first }
+        for ((_, title, frames) in stacks) sections += title to frames.take(MAX_FRAMES)
+        // The lock's holder right after main's stacks; then every other thread at that moment.
+        for (d in r.lockDumps) {
+            val holder = d.holder
+            if (holder != null) sections += "${holder.first}, $LOCK_HOLDER while main was blocked under ${d.mark}" to holder.second
+            for ((title, frames) in collapseThreads(d.threads.filter { it !== holder })) sections += "$title, while main was blocked under ${d.mark}" to frames
+        }
         for (s in r.snapshots) for ((title, frames) in s.threads) sections += "$title, ${s.afterMs / 1000} s after the first frame" to frames
         sections += S_HISTORY to history.takeLast(HISTORY_KEEP)
         return MainWatchdog.Dump.format(header, sections)
@@ -1060,7 +1181,9 @@ object StartupLeftover {
         val header = LinkedHashMap(dump.header)
         header["outcome"] = StartupWindow.ENDED
         val reasons = header["reasons"].orEmpty().split(',').filter { it.isNotEmpty() && it != "-" }
-        header["reasons"] = (reasons + StartupWindow.REASON_NOT_FINISHED).distinct().joinToString(",")
+        // A first frame that never came is not a first frame over its limit: the start did not finish, whatever the figure so far.
+        val kept = if (header["firstFrameMs"] == null) reasons - StartupWindow.REASON_FIRST_FRAME else reasons
+        header["reasons"] = (kept + StartupWindow.REASON_NOT_FINISHED).distinct().joinToString(",")
         exitReason?.let { header["exitReason"] = it.toString() }
         exitName?.let { header["exitReasonName"] = it }
         val sections = dump.sections.filter { it.first != StartupText.S_HISTORY } + (StartupText.S_HISTORY to history)

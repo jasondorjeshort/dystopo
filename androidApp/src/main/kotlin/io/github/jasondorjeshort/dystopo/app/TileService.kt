@@ -305,7 +305,12 @@ class TileService(
     private val contourCache get() = ContourCache.get()
 
     /** T38: tiles no pack covers come from the configured server ([OnlineTiles]); null when none is set. */
-    val online: OnlineTiles? = OnlineService.get().tilesFor(packs, "${ContourCache.VERSION}-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag")
+    val online: OnlineTiles? = run {
+        StartupTrace.mark("OnlineService.get") // T228, a mark of its own: it runs on the main thread at launch
+        val service = OnlineService.get()
+        StartupTrace.mark("OnlineService.tilesFor")
+        service.tilesFor(packs, "${ContourCache.VERSION}-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag").also { StartupTrace.mark("TileService's rest") }
+    }
 
     /** Tiles generating at once (T63: also the server's generation pool size, [GEN_THREADS]). */
     val contourPermits = GEN_THREADS

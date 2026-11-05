@@ -209,7 +209,11 @@ class MapController {
                 runCatching { MapOrientation.onCameraIdle(m) } // T100: a move that was not ours ends following
             }
             MapOrientation.install(m) // T100: pan, fling and rotate gestures; the persisted orientation
-            loadStyle(styleJson(), onStyle)
+            StartupTrace.mark("map ready: the style's JSON") // T228
+            val style = styleJson()
+            StartupTrace.mark("map ready: setStyle")
+            loadStyle(style, onStyle)
+            StartupTrace.mark("map ready: done")
         }
     }
 

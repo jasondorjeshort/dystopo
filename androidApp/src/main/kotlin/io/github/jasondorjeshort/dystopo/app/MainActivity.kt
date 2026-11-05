@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
 
         StartupTrace.mark("setContent")
         setContent {
+            StartupTrace.composing("first composition begins") // T228
             // Follow pack switches, downloads and /reload: DystopoApp swaps its TileService, so the attribution
             // line and the no-pack message are recomposed from the current one.
             // T144: the credit line is made off the UI thread (a pack's attribution is its metadata, read once from the
@@ -149,14 +151,18 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         StartupTrace.started()
         super.onStart()
+        StartupTrace.mark("mapView.onStart")
         mapView.onStart()
+        StartupTrace.mark("MapOrientation.setForeground")
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
+        StartupTrace.mark("startDeviceLocation")
         if (Foreground.activityStarted()) app.map.setForeground(true) // T150: the polling loops resume; device fixes again
     }
 
     override fun onResume() {
         StartupTrace.resumed()
         super.onResume()
+        StartupTrace.mark("mapView.onResume")
         mapView.onResume()
         MainWatchdog.resumed() // T144: the UI-thread watchdog ticks while the activity is in the foreground
     }
@@ -204,30 +210,50 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
+    // T228: StartupTrace.composing names the first composition's steps, so a long splash is attributed (marks only, until the first frame).
     Box(Modifier.fillMaxSize()) {
+        StartupTrace.composing("compose the map view")
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+        StartupTrace.composing("compose TrackControls")
         io.github.jasondorjeshort.dystopo.app.tracking.TrackControls() // T31: record/stop, tracks list, track overlay
+        StartupTrace.composing("compose RouteControls")
         io.github.jasondorjeshort.dystopo.app.routing.RouteControls() // T45: long-press route planning, route overlay and card
+        StartupTrace.composing("compose TripControls")
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
+        StartupTrace.composing("compose AttributionLine")
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
+        StartupTrace.composing("compose OnlineOverlay")
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
+        StartupTrace.composing("compose SearchOverlay")
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
+        StartupTrace.composing("compose NavOverlay")
         io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
+        StartupTrace.composing("compose PressureCard")
         io.github.jasondorjeshort.dystopo.app.readout.PressureCard() // T178: the pressure-fall warning's card, under the search box and the nav card
+        StartupTrace.composing("compose RecenterButton and ScaleBar")
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
+        StartupTrace.composing("compose FirstRunCard")
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
+        StartupTrace.composing("compose UpdateOverlay")
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
+        StartupTrace.composing("compose RoutesSheet and TracksSheet")
         io.github.jasondorjeshort.dystopo.app.trips.RoutesSheet() // T219: the Routes list and the Tracks sheet, over the map's own controls
         io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet()
+        StartupTrace.composing("compose SettingsSheet")
         SettingsSheet() // T33: units, text size, warm-up
+        StartupTrace.composing("compose StorageScreen and SyncStatusSheet")
         io.github.jasondorjeshort.dystopo.app.storage.StorageScreen() // T74: what each store uses, budgets, Clear
         io.github.jasondorjeshort.dystopo.app.sync.SyncStatusSheet() // T51: sync status
+        StartupTrace.composing("compose PacksOverlay and AreasOverlay")
         io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen
         io.github.jasondorjeshort.dystopo.app.areas.AreasOverlay() // T75: offline areas (from the pack list), outlines on the map
+        StartupTrace.composing("compose ShareOverlay and QrScannerOverlay")
         io.github.jasondorjeshort.dystopo.app.share.ShareOverlay() // T54: Share screen (LAN listener + NSD while open)
         io.github.jasondorjeshort.dystopo.app.share.QrScannerOverlay() // T57: the Share screen's QR scanner
+        StartupTrace.composing("compose GlanceView and HelpHost")
         io.github.jasondorjeshort.dystopo.app.readout.GlanceView() // T210: the glance view (a tap on the readout bar), over every screen but help
         io.github.jasondorjeshort.dystopo.app.help.HelpHost() // T109, T115: the open help pop-up, last so it is over every screen above
+        SideEffect { StartupTrace.composing("composition applied: layout and draw") }
     }
 }

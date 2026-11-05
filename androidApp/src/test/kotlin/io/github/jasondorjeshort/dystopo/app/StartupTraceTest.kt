@@ -142,6 +142,8 @@ class StartupTraceTest {
         assertEquals("$app.Foo.slow(Foo.kt:7)", MainWatchdog.blockingFrame(stall.stack))
         assertEquals(sampled, stall.top)
         assertEquals(sampled, stall.samples)
+        assertEquals("user-requested, force-stopped", StartupText.exitName(10, "force-stopped"))
+        assertEquals("not responding (ANR)", StartupText.exitName(6, "not responding (ANR)"))
         assertTrue(stall.ended)
         assertEquals(listOf(StartupWindow.REASON_STALL), r.reasons)
     }
@@ -169,6 +171,18 @@ class StartupTraceTest {
         assertEquals(pack.samples, pack.states["disk"])
         assertEquals("$app.PmTiles.header(PmTiles.kt:40)", MainWatchdog.blockingFrame(pack.stack))
         assertTrue(r.stalls.isEmpty())
+    }
+
+    @Test
+    fun aSampleBelongsToTheMarkInForceWhenItsStackWasRead() {
+        val w = window(StartupWindow.WARM)
+        w.mark("first", 1_000)
+        val inForce = w.markInForce()
+        w.mark("second", 1_050) // the main thread passed a mark while the worker read the stack
+        w.addSample("running", 10, holdStack, inForce)
+        val lines = w.record(1_100, null).marks
+        assertEquals(1, lines.first { it.name == "first" }.samples)
+        assertEquals(0, lines.first { it.name == "second" }.samples)
     }
 
     @Test
@@ -327,7 +341,11 @@ class StartupTraceTest {
         val shown = r.shown()
         assertTrue("the process ended during the start" in shown && "the user stopped the app" in shown, shown)
         assertTrue("under DystopoApp.onCreate, at Foo.slow(Foo.kt:7)" in shown, shown)
-        assertEquals("Startup freeze: 5.1 s, at Foo.slow, process ended (0.1.21-alpha)", r.title())
+        assertEquals("Startup freeze: 5.3 s, at Foo.slow, process ended (0.1.21-alpha)", r.title(), "the time on the splash, at the step that took longest")
+        assertEquals("cold", r.dump.header["startKind"])
+        assertEquals("false", r.dump.header["activity"], "killed during DystopoApp.onCreate")
+        assertTrue(shown.indexOf("What held the main thread") < shown.indexOf("Timeline"), shown)
+        assertEquals(listOf(StartupWindow.REASON_NOT_FINISHED), r.dump.header["reasons"]!!.split(','), "not a first frame over its limit: there was none")
         assertEquals(listOf(line), r.dump.sections.first { it.first == StartupText.S_HISTORY }.second)
     }
 
@@ -394,15 +412,14 @@ class StartupTraceTest {
     }
 
     @Test
-    fun theBodyPutsStallsAndWhatHeldTheThreadBeforeTheStartsLengthAndStaysUnderTheLimit() {
+    fun theBodyLeadsWithWhatHeldTheThreadBeforeTheFirstFrameThenStallsAndStaysUnderTheLimit() {
         val r = big(stalls = 2, marks = 12)
         val link = IssueLink.build(r, Scrub.Known())
         assertFalse(link.titleOnly, "a full report still gets a body")
         assertTrue(link.encodedBodyLength in 1..IssueLink.MAX_BODY, "${link.encodedBodyLength}")
         val body = assertNotNull(link.body)
-        val order = listOf("Main thread stalls", "What held the main thread", "Timeline", "Start: cold", "```").map { body.indexOf(it).also { i -> assertTrue(i >= 0, "$it missing: $body") } }
+        val order = listOf("What held the main thread", "Main thread stalls", "Timeline", "Start: cold", "```").map { body.indexOf(it).also { i -> assertTrue(i >= 0, "$it missing: $body") } }
         assertEquals(order.sorted(), order, body)
-        assertTrue(body.indexOf("The main thread stopped answering") < body.indexOf("The first frame took").let { if (it < 0) Int.MAX_VALUE else it }, body)
         assertTrue(URLDecoder.decode(link.url.substringAfter("&body="), "UTF-8") == body)
         // The rest is on the clipboard: the deep stack's later frames and the whole timeline.
         val clip = assertNotNull(link.clipboard)
@@ -420,17 +437,37 @@ class StartupTraceTest {
     }
 
     @Test
-    fun theTitleNamesTheLongestHoldNotTheStartsLength() {
+    fun theTitleNamesTheTimeToTheFirstFrameAtTheStepThatTookLongest() {
         val w = coldTo(window(), frameAt = 15_500, packMs = 14_000)
         val r = report(w.also { it.fullyLoaded(15_600) }, 15_700)
-        assertEquals("Startup freeze: 14.0 s, at PmTiles.header (0.1.21-alpha)", r.title())
-        // A stall longer than the held step takes the title.
+        assertEquals("Startup freeze: 14.5 s, at PmTiles.header (0.1.21-alpha)", r.title(), "14.5 s on the splash, 14 of it in the longest step")
+        assertTrue(r.shown().startsWith("Dystopo problem report: Startup freeze\nThe first frame took 14.50 s, over the 5.00 s limit for a cold start.\n"), r.shown().take(300))
+        assertTrue(r.shown().indexOf("What held the main thread") < r.shown().indexOf("Timeline"), r.shown().take(300))
+        assertTrue("14.00 s under PackSet.open, at PmTiles.header(PmTiles.kt:40)" in r.shown(), r.shown().take(500))
+        // A start stuck on the splash that also stalled later: the splash leads, even past a longer stall.
+        val both = coldTo(window(), frameAt = 6_500, packMs = 5_000)
+        both.fullyLoaded(6_600)
+        val beat = both.step(6_700)
+        for (t in 7_000L..16_000L step 100) if (both.step(t).sample) both.addSample("waiting", 0, holdStack)
+        both.answered(beat.seq, 16_100)
+        val rb0 = report(both, 16_200)
+        assertEquals("Startup freeze: 5.5 s, at PmTiles.header (0.1.21-alpha)", rb0.title())
+        assertTrue(rb0.shown().indexOf("What held the main thread") < rb0.shown().indexOf("Main thread stalls"), rb0.shown().take(300))
+        assertTrue(rb0.dump.sections.first { it.first.startsWith("main ") }.first.startsWith("main under PackSet.open"), "the longest step's stack comes first")
+        // With a healthy first frame, a stall takes the title.
         val b = coldTo(window(), frameAt = 2_000)
         b.fullyLoaded(2_100)
         val s = b.step(2_200)
         for (t in 2_500L..5_000L step 100) if (b.step(t).sample) b.addSample("waiting", 0, holdStack)
         b.answered(s.seq, 5_200)
         assertEquals("Startup freeze: 3.0 s, at Foo.slow (0.1.21-alpha)", report(b, 5_300).title())
+        // Samples spread over many stacks: the step's own name, not one frame that happened to come up twice.
+        val spread = window(StartupWindow.WARM, at = 1_000)
+        spread.mark("compose SettingsSheet", 1_000)
+        for (i in 0 until 20) spread.addSample("running", 10, listOf("$app.Compose.step$i(Compose.kt:$i)"))
+        spread.firstFrame(4_000)
+        spread.fullyLoaded(4_100)
+        assertEquals("Startup freeze: 3.0 s, at compose SettingsSheet (0.1.21-alpha)", report(spread, 4_200).title())
         // A blank map alone says so.
         val blank = coldTo(window(), frameAt = 2_000)
         run(blank, 2_000, 17_100)
@@ -466,10 +503,67 @@ class StartupTraceTest {
         for (l in lines) assertEquals(l, Scrub.text(l), "the scrub changed a line")
         // Real marks too, with a view's source in them.
         val w = window()
-        for ((i, name) in listOf("attachBaseContext", "AppSettings.load", "BundledAssets.install", "PackSet.open", "collectContourGarbage's identities", "resumePending", "view from fix", "view from saved", "first frame's composition, layout and draw").withIndex()) w.mark(name, 1_200L + i * 137)
+        for ((i, name) in listOf("attachBaseContext and content providers", "AppSettings.load", "BundledAssets.install", "PackSet.open", "collectContourGarbage's identities", "resumePending", "view from fix", "view from saved", "first traversal: attach and Compose's setup", "compose SettingsSheet", "composition applied: layout and draw").withIndex()) w.mark(name, 1_200L + i * 137)
         w.firstFrame(4_000)
         w.fullyLoaded(9_123)
         for (m in w.record(9_200, null).marks) StartupText.timelineLine(m).let { assertEquals(it, Scrub.text(it)) }
+    }
+
+    @Test
+    fun aBlockedMainThreadNamesTheLocksHolderAndWhatItWasDoing() {
+        val of = "$app.tracking.Tracking\$Companion.of(Tracking.kt:849)"
+        val mainStack = listOf(of, "$app.tracking.TrackControlsKt.Controls(TrackControls.kt:80)", "android.view.Choreographer.doFrame(Choreographer.java:1)")
+        val holderFrames = listOf("android.database.sqlite.SQLiteConnection.nativeOpen(Native Method)", "$app.tracking.TrackDb.open(TrackDb.kt:12)", of, "$app.trips.TripCorridors.reconcile(TripCorridors.kt:40)")
+        val w = window(StartupWindow.WARM)
+        w.mark("Tracking.of", 1_000)
+        val inForce = w.markInForce()
+        assertTrue(w.wantsLockDump(inForce))
+        w.addSample(StartupWindow.LOCK, 0, mainStack, inForce)
+        w.addLockDump(inForce, mainStack, listOf(
+            "thread dystopo-corridors (RUNNABLE)" to holderFrames,
+            "thread idle-one (WAITING)" to listOf("java.lang.Object.wait(Native Method)"),
+            "thread other-blocked (BLOCKED)" to listOf(of),
+        ))
+        assertFalse(w.wantsLockDump(inForce), "one dump a step")
+        for (i in 0 until 5) w.addSample(StartupWindow.LOCK, 0, mainStack, inForce)
+        w.firstFrame(4_000)
+        w.fullyLoaded(4_100)
+        val r = report(w, 4_200)
+        assertEquals("Startup freeze: 3.0 s, at Tracking\$Companion.of (0.1.21-alpha)", r.title())
+        val shown = r.shown()
+        assertTrue("3.00 s under Tracking.of, at Tracking\$Companion.of(Tracking.kt:849), 6 of 6 samples, lock 6, CPU 0.00 s, the lock held by dystopo-corridors at TrackDb.open(TrackDb.kt:12)" in shown, shown)
+        val holder = shown.indexOf("thread dystopo-corridors (RUNNABLE), the lock's likely holder while main was blocked under Tracking.of")
+        assertTrue(holder > 0, shown)
+        assertTrue("TrackDb.open(TrackDb.kt:12)" in shown.substring(holder), shown)
+        assertTrue(shown.indexOf("main under Tracking.of") < holder, "main's stack, then the holder's")
+        assertTrue("thread other-blocked (BLOCKED), while main was blocked" in shown, shown)
+        assertFalse("idle-one" in shown, "an idle thread is counted, not shown")
+        // A lock whose stacks name nobody says so by naming nobody, and a blocked thread is never the holder.
+        assertNull(StartupText.likelyHolder(mainStack, listOf("thread a (BLOCKED)" to listOf(of), "thread b (RUNNABLE)" to listOf("$app.Foo.a(Foo.kt:1)"))))
+    }
+
+    @Test
+    fun theLockDumpsStopAtTheirCap() {
+        val w = window(StartupWindow.WARM)
+        val stack = listOf("$app.A.b(A.kt:1)")
+        for (i in 0 until 5) {
+            w.mark("m$i", 1_000L + i)
+            val at = w.markInForce()
+            if (w.wantsLockDump(at)) w.addLockDump(at, stack, emptyList())
+        }
+        assertEquals(StartupWindow.MAX_LOCK_DUMPS, w.record(2_000, null).lockDumps.size)
+    }
+
+    @Test
+    fun threadsWithOneStackAreOneSection() {
+        val one = listOf("$app.Foo.a(Foo.kt:1)")
+        val out = StartupText.collapseThreads(listOf(
+            "thread main (RUNNABLE)" to one,
+            "thread direct-1 (BLOCKED)" to holdStack, "thread direct-2 (BLOCKED)" to holdStack, "thread other (BLOCKED)" to holdStack,
+            "thread direct-3 (WAITING)" to holdStack,
+        ))
+        assertEquals(listOf("thread main (RUNNABLE)", "thread direct-1 (BLOCKED) and 2 more like it", "thread direct-3 (WAITING)"), out.map { it.first })
+        assertTrue(Report.keep(out[1].first, out[1].second), "still kept as a blocked thread")
     }
 
     @Test
@@ -532,10 +626,10 @@ class StartupTraceTest {
 
     @Test
     fun theFirstStartAndTheHistoryLine() {
-        assertEquals("install", StartupText.firstStart(null, "0.1.21-alpha", 5, 5))
-        assertEquals("update", StartupText.firstStart(null, "0.1.21-alpha", 5, 9))
-        assertEquals("no", StartupText.firstStart("0.1.21-alpha cold, first frame 1.20 s, longest stall 0.00 s, finished", "0.1.21-alpha", 5, 9))
-        assertEquals("update", StartupText.firstStart("0.1.20-alpha cold, first frame 1.20 s, longest stall 0.00 s, finished", "0.1.21-alpha", 5, 9))
+        assertEquals("install", StartupText.firstStart(null, 5, 5), "no record, never updated")
+        assertEquals("update", StartupText.firstStart(null, 5, 9), "no record: the first release with a trace")
+        assertEquals("no", StartupText.firstStart(9, 5, 9))
+        assertEquals("update", StartupText.firstStart(7, 5, 9), "the package changed since the last start, the version name or not")
         val w = coldTo(window(), frameAt = 2_000)
         val line = StartupText.historyLine(w.record(2_100, StartupWindow.FINISHED), "0.1.21-alpha")
         assertEquals("0.1.21-alpha cold, first frame 1.00 s, longest stall 0.00 s, finished", line)
