@@ -125,7 +125,7 @@ object FirstRun {
         Thread({
             try {
                 val fix = if (lat != null && lon != null) Triple(lat, lon, "given") else waitForFix(app)
-                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or ${if (AppSettings.server.isNotEmpty()) "choose a pack from the server" else "import pack files"}.")
+                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or ${if (AppSettings.server.isNotEmpty()) "choose a pack from the server" else "import map files you have"}.")
                 lastFix = mapOf("lat" to fix.first, "lon" to fix.second, "source" to fix.third)
                 val box = boxAround(fix.first, fix.second, HALF_SIDE_KM)
                 lastBox = box

@@ -112,7 +112,7 @@ internal fun counted(n: Long, noun: String): String = if (n == 1L) "1 $noun" els
 internal fun enterDetailsShown(choice: Boolean?, discovery: Boolean, scanner: Boolean, addr: String, code: String): Boolean =
     choice ?: (!(discovery || scanner) || (addr.isNotBlank() && code.isBlank()))
 
-/** "Share" next to "Sync now" in the tracks list: opens the Share screen. */
+/** "Share" under the Tracks sheet's overflow (T219): opens the Share screen. */
 @Composable
 fun ShareAction() {
     BasicText(
@@ -256,14 +256,25 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
                 message = null
                 Thread {
                     message = runCatching { session.connect(addr, code) }.fold(
-                        { r -> "Synced with ${r["peerName"] ?: addr}: ${(r["merged"] as? Map<*, *>)?.get("applied")} in, ${r["pushed"]} out" },
-                        { e -> if (e is ShareClient.WrongCodeException) "Wrong code" else "Sync failed: ${e.message}" },
+                        { r -> r["message"] as? String ?: "Synced" }, // T219: AppSync.run's sentence, which starts "Synced with"
+                        { e -> shareSyncFailed(e) },
                     )
                     busy = false
                 }.start()
             }
         }
     }
+}
+
+/**
+ * T220, T219's wording: a sync from this screen that failed: the code refused, what is wrong with what was typed, or T219's
+ * sentence without the exception's address. The screen colours by the "Synced" start, so all of these read as failures.
+ */
+internal fun shareSyncFailed(e: Throwable): String = when (e) {
+    is ShareClient.WrongCodeException -> "Wrong code"
+    is IllegalArgumentException -> "Sync failed: ${e.message}"
+    is Exception -> io.github.jasondorjeshort.dystopo.app.sync.syncFailedSentence("the other phone", e)
+    else -> "Sync failed: ${e.javaClass.simpleName}"
 }
 
 internal const val SHARE_INSTRUCTION = "Give this code to the other phone, on the same Wi-Fi."

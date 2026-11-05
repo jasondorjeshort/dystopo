@@ -31,6 +31,18 @@ class ShareScreenRulesTest {
     }
 
     @Test
+    fun aFailedSyncNeverReadsAsSynced() {
+        // T219's start words, which the screen colours by: only a sync that worked starts "Synced".
+        for (e in listOf(ShareClient.WrongCodeException("no"), IllegalArgumentException("the code is 16 letters"), java.io.IOException("10.0.2.2 timed out"), RuntimeException("boom"), Error("oom"))) {
+            assertFalse(shareSyncFailed(e).startsWith("Synced"), shareSyncFailed(e))
+        }
+        assertEquals("Wrong code", shareSyncFailed(ShareClient.WrongCodeException("no")))
+        assertEquals("Sync failed: could not reach the other phone", shareSyncFailed(java.io.IOException("10.0.2.2 timed out")))
+        assertFalse("10.0.2.2" in shareSyncFailed(java.io.IOException("10.0.2.2 timed out")))
+        assertTrue(shareSyncFailed(IllegalArgumentException("the code is 16 letters")).startsWith("Sync failed:"))
+    }
+
+    @Test
     fun theFirstLineSaysWhatToDoAndTheHintIsAnExample() {
         assertTrue(SHARE_INSTRUCTION.startsWith("Give this code"))
         assertEquals(1, ADDRESS_HINT.count { it == ':' })
