@@ -93,8 +93,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * phone, so poll): `state` `ready|computing|noRoute|mode|noData|error`, the card's `line`, `ms`, `temperature` (`tempC`
  * at the route's lowest point and its `source` `station|synthetic|noStation|stale|noHeight`), `now` and `clockOffsetMs`
  * (`POST /nav/shade` `at=` and `tempC=` apply), and as `devtool shade --best-start` prints them `aim` `shade|sun`, `kind`
- * `pick|current|deadline|none|noDay`, `pick`, `current`, `tomorrow`, the window (`from`, `to`), `walkMin`, `deadline`
- * (the terrain sunset at the end: `kind`, `at`, `terrain`, `byTerrain`), `marginMin`, `latestStart`, `rule`, `table`
+ * `pick|current|deadline|none|any|noDay`, `pick`, `current`, `tomorrow`, the window (`from`, `to`), `walkMin`, `deadline`
+ * (T218: the turn-back clock's at the end: `kind`, `at`, `terrain`, `byTerrain`), `marginMin`, `latestStart`, `rule`, `table`
  * (each start: `start`, `shadeFraction`, `sunFraction`, the minutes in each light, `deadlineMet`, `pass`
  * `grid|refine|current|latest`) and `stats` (`starts`, `rays`, `msPerStart`, `readMs`, `marchMs`, `rereads`).
  */

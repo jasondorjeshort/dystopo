@@ -24,4 +24,13 @@ class RouteBestStartTest {
         assertNotEquals(a, RouteBestStart.keyOf(plan, BestStartAim.SHADE, now + 86_400_000L, 7, 30))
         assertNotEquals(a, RouteBestStart.keyOf(plan, BestStartAim.SHADE, now, 8, 30))
     }
+
+    /** T218: a changed deadline setting is a new sweep. */
+    @Test
+    fun theDeadlineSettingIsPartOfTheKey() {
+        val a = RouteBestStart.keyOf(plan, BestStartAim.SUN, now, 7, 30, "sunset")
+        assertEquals(a, RouteBestStart.keyOf(plan, BestStartAim.SUN, now, 7, 30))
+        assertNotEquals(a, RouteBestStart.keyOf(plan, BestStartAim.SUN, now, 7, 30, "terrain"))
+        assertNotEquals(a, RouteBestStart.keyOf(plan, BestStartAim.SUN, now, 7, 30, "15:00"))
+    }
 }

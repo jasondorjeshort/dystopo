@@ -6,7 +6,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.BuildConfig
+import io.github.jasondorjeshort.dystopo.app.ClockFormat
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.nav.ClockStyle
 import io.github.jasondorjeshort.dystopo.nav.Sun
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -79,11 +81,8 @@ object SunClock {
         else -> floorStep(noonMs) to "noon"
     }
 
-    /** A clock time in [zone], 24-hour like the turn-around clock ("9:12", "16:40"). */
-    fun clock(ms: Long, zone: TimeZone): String {
-        val c = java.util.Calendar.getInstance(zone).apply { timeInMillis = ms }
-        return String.format(Locale.US, "%d:%02d", c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-    }
+    /** A clock time in [zone], in the phone's 12/24-hour form like the turn-around clock (T218: "9:12 AM", "16:40"). */
+    fun clock(ms: Long, zone: TimeZone, style: ClockStyle = ClockFormat.style()): String = ClockFormat.text(ms, zone, style)
 
     /** [zone]'s short name at [ms] ("PDT", "PST"; "GMT+02:00" where the locale has no abbreviation). */
     fun zoneName(zone: TimeZone, ms: Long, locale: Locale = Locale.getDefault()): String =
@@ -97,20 +96,20 @@ object SunClock {
 
     /**
      * The point answer as the long-press card's one line, times in [zone] with the zone named once at the end:
-     * "Sun reaches here 9:12, leaves 16:40 PDT", with each gap when a peak blocks the sun between them
-     * ("Sun reaches here 9:12, hidden 11:05 to 11:40, leaves 16:40 PDT"). [datePrefix] (a day other than today) starts
+     * "Sun reaches here 9:12 AM, leaves 4:40 PM PDT", with each gap when a peak blocks the sun between them
+     * ("Sun reaches here 09:12, hidden 11:05 to 11:40, leaves 16:40 PDT"). [datePrefix] (a day other than today) starts
      * the line ("Sat 2 Nov: sun reaches here ...").
      */
-    fun line(day: Sun.TerrainDay, zone: TimeZone, datePrefix: String? = null, locale: Locale = Locale.getDefault()): String {
+    fun line(day: Sun.TerrainDay, zone: TimeZone, datePrefix: String? = null, locale: Locale = Locale.getDefault(), style: ClockStyle = ClockFormat.style()): String {
         val z = zoneName(zone, day.flat.noonMs, locale)
         val body = when {
             day.alwaysUp -> "sun on this spot all day"
             day.sunlit.isEmpty() -> "no direct sun reaches here"
             else -> {
                 val parts = ArrayList<String>()
-                parts += day.sunriseMs?.let { "sun reaches here ${clock(it, zone)}" } ?: "sun here from the night before"
-                for (g in day.gaps) parts += "hidden ${clock(g.span.startMs, zone)} to ${clock(g.span.endMs, zone)}"
-                parts += day.sunsetMs?.let { "leaves ${clock(it, zone)}" } ?: "still up at midnight"
+                parts += day.sunriseMs?.let { "sun reaches here ${clock(it, zone, style)}" } ?: "sun here from the night before"
+                for (g in day.gaps) parts += "hidden ${clock(g.span.startMs, zone, style)} to ${clock(g.span.endMs, zone, style)}"
+                parts += day.sunsetMs?.let { "leaves ${clock(it, zone, style)}" } ?: "still up at midnight"
                 parts.joinToString(", ") + " $z"
             }
         }

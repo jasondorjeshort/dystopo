@@ -17,6 +17,8 @@ import io.github.jasondorjeshort.dystopo.dem.Terrain
 import io.github.jasondorjeshort.dystopo.dem.TerrainLayer
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.nav.ClockStyle
+import io.github.jasondorjeshort.dystopo.nav.ClockText
 import io.github.jasondorjeshort.dystopo.nav.Deadline
 import io.github.jasondorjeshort.dystopo.nav.DeadlineKind
 import io.github.jasondorjeshort.dystopo.nav.DeadlineSetting
@@ -70,8 +72,9 @@ import kotlin.math.sin
  *
  * T209: `--gpx <route> --start <ISO> --best-start --temp-c <C>` sweeps the start times of `--start`'s day ([BestStart]:
  * every 30 minutes across daylight, then 15 either side of the pick; terrain shade on a hot day by [HotDay], else sun;
- * starts that miss the terrain sunset at the route's end less `--margin-min` excluded) and prints the table, the pick and
- * the planning card's line as JSON (no PNG).
+ * starts that miss the deadline at the route's end less `--margin-min` excluded) and prints the table, the pick and
+ * the planning card's line as JSON (no PNG). T218: `--deadline` is the phone's `turnDeadline` value (sunset by default,
+ * civil, terrain or a typed `HH:MM` in `--zone`), `--clock 12|24` the phone's clock setting for the card's line and the table.
  */
 class ShadeCommand : AreaCommand("shade") {
     override fun help(context: Context) =
@@ -106,6 +109,8 @@ class ShadeCommand : AreaCommand("shade") {
     private val tempC by option("--temp-c", help = "T209: with --best-start, the weather station's air temperature, C (the phone's; a hot day is ${HotDay.THRESHOLD_C} C at the route's lowest point; unset: not hot)").double()
     private val stationEleM by option("--station-ele-m", help = "T209: with --best-start, the station's height, m, for the lapse to the route's lowest point (default: that point's height, no lapse)").double()
     private val marginMin by option("--margin-min", help = "T209: with --best-start, minutes the walk must end before the terrain sunset (the turn-back margin; default ${TurnAround.DEFAULT_MARGIN_MIN})").int().default(TurnAround.DEFAULT_MARGIN_MIN)
+    private val deadlineOpt by option("--deadline", help = "T218: with --best-start, what the walk must finish before: sunset, civil, terrain or a time HH:MM in --zone (the phone's Turn back by setting; default ${DeadlineSetting.DEFAULT})").default(DeadlineSetting.DEFAULT)
+    private val clockOpt by option("--clock", help = "T218: with --best-start, the phone's clock setting for the card's line and the table: 12 or 24 (unset: the table as ISO clock times, the line 24-hour)").choice("12", "24")
     private val out by option("--out", help = "Output PNG (default out/<area>-shade-z<zoom>-<instant>.png)").file()
 
     override fun run() {
@@ -296,8 +301,8 @@ class ShadeCommand : AreaCommand("shade") {
 
     /**
      * T209: the start-time sweep for [path] on the local day of [startMs] at the route's start: the daylight there, the
-     * deadline (the terrain sunset at the route's end, [Deadline.resolve] over the point answer, less `--margin-min`), the
-     * aim from `--temp-c` lapsed from `--station-ele-m` to the route's lowest point, the table, the pick and the line.
+     * deadline (T218: `--deadline` at the route's end by [Deadline.resolve], the terrain form over the point answer, less
+     * `--margin-min`), the aim from `--temp-c` lapsed from `--station-ele-m` to the route's lowest point, the table, the pick and the line.
      */
     private fun bestStartReport(
         file: File, path: NavPath, timing: TurnAround, startMs: Long, clockZone: ZoneId, maxZoom: Int,
@@ -307,20 +312,24 @@ class ShadeCommand : AreaCommand("shade") {
         val (fromMs, toMs) = BestStart.daylight(path, startMs) ?: throw UsageError("no sunrise or sunset at the route's start that day")
         val end = path.points.last()
         val endDay = Sun.dayAt(end.lat, end.lon, startMs)
-        val terrainDay = timings.time("deadline") {
+        val setting = DeadlineSetting.parse(deadlineOpt) ?: throw UsageError("--deadline must be sunset, civil, terrain or HH:MM (got $deadlineOpt)")
+        val terrain = setting.kind == DeadlineKind.TERRAIN
+        val terrainDay = if (!terrain) null else timings.time("deadline") {
             runCatching {
                 if (pyramid != null) ShadeTiles.pointAnswer(pyramid, end.lat, end.lon, endDay.noonMs)
                 else ShadeTiles.pointAnswer(Horizon.terrainAround(end.lat, end.lon, minOf(maxZoom, ShadeTiles.POINT_ZOOM), read = read), end.lat, end.lon, endDay.noonMs)
             }.getOrNull()
         }
-        val deadline = Deadline.resolve(DeadlineSetting(DeadlineKind.TERRAIN), end.lat, end.lon, endDay.noonMs, 0L, terrainDay?.day, noTerrainData = terrainDay == null)
+        val localMidnight = Instant.ofEpochMilli(endDay.noonMs).atZone(clockZone).toLocalDate().atStartOfDay(clockZone).toInstant().toEpochMilli()
+        val deadline = Deadline.resolve(setting, end.lat, end.lon, endDay.noonMs, localMidnight, terrainDay?.day, noTerrainData = terrain && terrainDay == null)
         val lowest = path.points.mapNotNull { it.ele }.minOrNull()
         val atRoute = tempC?.let { t -> if (lowest == null) t else HotDay.atHeight(t, stationEleM ?: lowest, lowest) }
         val aim = BestStartAim.of(atRoute)
         val r = timings.time("sweep") { BestStart.sweep(path, timing, aim, fromMs, toMs, deadline, marginMin, maxZoom, read, currentMs = startMs) }
-        val clock: (Long) -> String = { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).toLocalTime().withNano(0).toString() }
-        // The card's own clock form ("7:30"), as the phone formats it.
-        val cardClock: (Long) -> String = { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).let { "%d:%02d".format(it.hour, it.minute) } }
+        // The card's own clock form, as the phone formats it under its 12/24-hour setting (T218: 24-hour without --clock).
+        val style = ClockStyle.parse(clockOpt) ?: ClockStyle.H24
+        val cardClock: (Long) -> String = { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).let { ClockText.of(it.hour, it.minute, style) } }
+        val clock: (Long) -> String = if (clockOpt != null) cardClock else { ms -> Instant.ofEpochMilli(ms).atZone(clockZone).toLocalTime().withNano(0).toString() }
         // The pick's light as ShadeAlong.compute gives it with its own terrain read (the phone's navigation answer).
         val agree = r.pick?.let { p ->
             val own = timings.time("pickByCompute") { ShadeAlong.compute(path, timing, 0.0, p.startMs, maxZoom, read) }
@@ -332,6 +341,7 @@ class ShadeCommand : AreaCommand("shade") {
             "command" to "shade", "bestStart" to true, "gpx" to file.path, "name" to path.name, "lengthM" to round1(path.totalM),
             "ascentM" to round1(path.totalAscentM), "mode" to mode, "pace" to timing.pace.label, "walkTimeS" to timing.totalS.roundToLong(),
             "zone" to zone, "source" to source, "start" to Instant.ofEpochMilli(startMs).toString(), "startClock" to clock(startMs),
+            "deadlineSetting" to setting.value, "clockStyle" to style.key,
             "temperature" to linkedMapOf(
                 "stationC" to tempC, "stationEleM" to stationEleM, "routeLowestM" to lowest?.let(::round1), "atRouteC" to atRoute?.let(::round1),
                 "thresholdC" to HotDay.THRESHOLD_C, "hot" to HotDay.hot(atRoute),

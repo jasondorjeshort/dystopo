@@ -181,4 +181,67 @@ class BestStartTest {
         assertTrue(m.candidates.all { it.startMs >= morning })
         assertEquals(BestStartKind.CURRENT, m.kind, m.json(clock)["table"].toString())
     }
+
+    /** T218: the deadline at [at] with the walk at the east trail's pace; the sweep from sunrise with the walker's own start [current]. */
+    private fun early(at: Long) = Deadline(DeadlineKind.TIME, at, DeadlineKind.TIME.label)
+
+    private val walkMs = (TurnAround(eastTrail, pace).totalS * 1000).toLong()
+
+    @Test
+    fun startByShowsOnlyWhenTheFinishIsNearTheDeadline() {
+        // The east trail is in shade until mid-morning, so on a cool day a deadline then binds: the later a start that
+        // meets it, the more sun, and a start that misses it has more.
+        val at = day.sunriseMs!! + 330 * 60_000L
+        val oneHourBefore = at - 60 * 60_000L - walkMs
+        val near = sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0, current = oneHourBefore)
+        assertEquals(BestStartKind.DEADLINE, near.kind, near.json(clock).toString())
+        assertTrue(ShadeText.bestStartLine(near, clock)!!.startsWith("Start by "))
+        // The same day and deadline with the walker's own start three hours clear of it: no "Start by", the sun line instead.
+        val threeHoursBefore = at - 3 * 3_600_000L - walkMs
+        val far = sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0, current = threeHoursBefore)
+        assertEquals(BestStartKind.PICK, far.kind, far.json(clock).toString())
+        assertTrue(!ShadeText.bestStartLine(far, clock)!!.startsWith("Start by "), ShadeText.bestStartLine(far, clock))
+        // The suppressed line never names a start that misses the deadline.
+        assertTrue(far.pick!!.deadlineMet)
+        // The edge: exactly the constant is near, a minute further is not.
+        val edge = at - BestStart.START_BY_WITHIN_MIN * 60_000L - walkMs
+        assertEquals(BestStartKind.DEADLINE, sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0, current = edge).kind)
+        assertTrue(sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0, current = edge - 60_000L).kind != BestStartKind.DEADLINE)
+        // Past it: the walker's own start already misses the deadline.
+        val past = sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0, current = at)
+        assertEquals(BestStartKind.DEADLINE, past.kind)
+    }
+
+    @Test
+    fun aTypedDeadlineEarlierThanTheTerrainSunsetMovesTheLatestStartAndIsNamed() {
+        val terrain = Deadline(DeadlineKind.TERRAIN, day.sunsetMs!! - 3_600_000L, Deadline.BEHIND_RIDGE, day.sunsetMs, day.sunsetMs!! - 3_600_000L, TerrainSunset.BEHIND)
+        val at = day.sunriseMs!! + 330 * 60_000L
+        val byTerrain = sweep(eastTrail, BestStartAim.SUN, deadline = terrain, margin = 0)
+        val typed = sweep(eastTrail, BestStartAim.SUN, deadline = early(at), margin = 0)
+        assertTrue(typed.latestStartMs!! < byTerrain.latestStartMs!!, "${typed.latestStartMs} against ${byTerrain.latestStartMs}")
+        assertTrue(typed.latestStartMs!! + walkMs <= at)
+        assertEquals(BestStartKind.DEADLINE, typed.kind, typed.json(clock).toString())
+        assertEquals("Start by ${clock(typed.latestStartMs!!)} to finish before your ${clock(at)} turn-back time", ShadeText.bestStartLine(typed, clock))
+        // Each deadline's own words.
+        val civil = Deadline(DeadlineKind.CIVIL, at, "civil twilight, flat horizon", day.sunsetMs)
+        assertEquals("Start by ${clock(typed.latestStartMs!!)} to finish before the end of civil twilight", ShadeText.bestStartLine(sweep(eastTrail, BestStartAim.SUN, deadline = civil, margin = 0), clock))
+        val flat = Deadline(DeadlineKind.SUNSET, at, "sunset, flat horizon", at)
+        assertEquals("Start by ${clock(typed.latestStartMs!!)} to finish before sunset", ShadeText.bestStartLine(sweep(eastTrail, BestStartAim.SUN, deadline = flat, margin = 0), clock))
+    }
+
+    @Test
+    fun whenEveryStartIsAsSunnyThereIsNoLine() {
+        val flat = TerrainFixture(46.8, -121.7) { _, _ -> 100.0 }
+        val p = NavPath("flat", listOf(point(0.0, -1000.0), point(0.0, 1000.0)))
+        val r = BestStart.sweep(p, TurnAround(p, pace), BestStartAim.SUN, day.sunriseMs!!, day.sunsetMs!!, sunset, 30, 14, flat::grid)
+        assertEquals(BestStartKind.ANY, r.kind, r.json(clock)["table"].toString())
+        assertEquals("any", r.json(clock)["kind"])
+        assertNull(ShadeText.bestStartLine(r, clock))
+        // The walker's own start does not change that: "Your start time is the sunniest" would say nothing.
+        val mine = BestStart.sweep(p, TurnAround(p, pace), BestStartAim.SUN, day.sunriseMs!!, day.sunsetMs!!, sunset, 30, 14, flat::grid, currentMs = day.noonMs)
+        assertEquals(BestStartKind.ANY, mine.kind)
+        // On a hot day with no shade anywhere the line still says so.
+        val hot = BestStart.sweep(p, TurnAround(p, pace), BestStartAim.SHADE, day.sunriseMs!!, day.sunsetMs!!, sunset, 30, 14, flat::grid)
+        assertEquals(BestStartKind.NONE, hot.kind)
+    }
 }

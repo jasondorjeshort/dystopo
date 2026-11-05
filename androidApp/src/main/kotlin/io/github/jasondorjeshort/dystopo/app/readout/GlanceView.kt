@@ -303,11 +303,8 @@ private fun deadlineNow(navigating: Boolean): GlanceLine? {
     return GlanceText.deadline(state, c["colour"] as? String ?: GlanceLine.NORMAL, (c["turnBackMs"] as? Number)?.toLong(), arrival, System.currentTimeMillis(), ::clock)
 }
 
-/** The navigation card's clock text ("14:10"). */
-private fun clock(ms: Long): String {
-    val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
-    return "%d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-}
+/** The navigation card's clock text (T218: the phone's 12/24-hour setting, [io.github.jasondorjeshort.dystopo.app.ClockFormat]). */
+private fun clock(ms: Long): String = io.github.jasondorjeshort.dystopo.app.ClockFormat.text(ms)
 
 private const val REFRESH_MS = 500L
 private const val DIM = 0.6f

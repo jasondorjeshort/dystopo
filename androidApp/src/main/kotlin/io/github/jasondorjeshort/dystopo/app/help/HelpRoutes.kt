@@ -22,8 +22,8 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * - `POST /help/close`: closes the open pop-up (as a tap outside it or Back does); T122: answers once the closed screens'
  *   icons are gone (at most 1 s), so a `/help/open` right after does not open a pop-up on a closing screen. T115: and what `POST /help/open`
  *   brought up for its icon since the last close (the settings sheet or the page it was on, Offline areas, the track bar,
- *   the long-press card, the Storage screen: [HelpScreens]), so the next request starts from the map it found; `closed`
- *   lists them. Screens open before that `/help/open`, or opened by taps since, stay.
+ *   the long-press card, the Storage screen, T218 the glance view: [HelpScreens]), so the next request starts from the map
+ *   it found; `closed` lists them. Screens open before that `/help/open`, or opened by taps since, stay.
  */
 object HelpRoutes {
     /**
@@ -113,7 +113,7 @@ object HelpRoutes {
 
 /**
  * T115: the screens a help text's [HelpText.show] brings up for `POST /help/open` (the settings sheet on a group's page,
- * Offline areas, the track bar, the long-press card, the Storage screen), as they stand; `POST /help/close` closes those
+ * Offline areas, the track bar, the long-press card, the Storage screen, T218 the glance view), as they stand; `POST /help/close` closes those
  * that were not open before ([opened], pure) so a script's next step finds the map it left. Read and closed on the main
  * thread. A new `show` that opens another screen adds it here, or `/help/close` leaves it open.
  */
@@ -124,6 +124,7 @@ internal data class HelpScreens(
     val trackBar: Boolean,
     val longPress: Boolean,
     val storage: Boolean,
+    val glance: Boolean = false, // T218
 ) {
     /** What [now] has open that this did not, by name; `settingsPage` when the sheet was open on another page. */
     fun opened(now: HelpScreens): List<String> = buildList {
@@ -133,6 +134,7 @@ internal data class HelpScreens(
         if (now.trackBar && !trackBar) add(TRACK_BAR)
         if (now.longPress && !longPress) add(LONG_PRESS)
         if (now.storage && !storage) add(STORAGE)
+        if (now.glance && !glance) add(GLANCE)
     }
 
     companion object {
@@ -142,6 +144,7 @@ internal data class HelpScreens(
         const val TRACK_BAR = "trackBar"
         const val LONG_PRESS = "longPress"
         const val STORAGE = "storage"
+        const val GLANCE = "glance"
 
         /** The screens open now (main thread). */
         fun now(): HelpScreens = HelpScreens(
@@ -151,6 +154,7 @@ internal data class HelpScreens(
             trackBar = io.github.jasondorjeshort.dystopo.app.tracking.TrackBar.open,
             longPress = io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu.point != null,
             storage = io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible,
+            glance = io.github.jasondorjeshort.dystopo.app.readout.Glance.open,
         )
 
         /**
@@ -169,6 +173,7 @@ internal data class HelpScreens(
                 TRACK_BAR -> io.github.jasondorjeshort.dystopo.app.tracking.TrackBar.open = false
                 LONG_PRESS -> io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu.cancel()
                 STORAGE -> io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = false
+                GLANCE -> io.github.jasondorjeshort.dystopo.app.readout.Glance.close("help")
             }
             return names
         }

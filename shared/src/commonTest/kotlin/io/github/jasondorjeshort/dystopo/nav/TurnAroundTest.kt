@@ -208,4 +208,41 @@ class TurnAroundTest {
         assertEquals(Sun.day(46.786, -121.735, 2026, 7, 15).sunsetMs, sun.atMs)
         assertEquals("sunset, flat horizon", sun.label)
     }
+
+    /** T218: past the turn-back time the card keeps "out by" and says how late; the speech never says "by" a past time. */
+    @Test
+    fun pastTheTurnBackTimeTheCardSaysHowLateAndTheSpeechSaysNow() {
+        val pace = TurnPace(false) { l, _, _ -> l / 1.25 }
+        val t = TurnAround(outAndBack(5000.0), pace)
+        val style: (Long) -> String = { ms ->
+            val day = ms % (24 * h)
+            ClockText.of((day / h).toInt(), ((day % h) / m).toInt(), ClockStyle.H12)
+        }
+        val s = ClockText.SPACE
+        val first = t.clock(2500.0, sixPm - 3 * h, deadline(), 30)
+        val turnBack = first.turnBackMs!!
+        val late = t.clock(2500.0, turnBack + 12 * m + 30_000, deadline(), 30)
+        assertEquals(TurnState.TURN, late.state)
+        assertEquals(12L, late.lateMin)
+        assertEquals("Turn back now, out by ${style(late.arrivalMs)}", late.text(style))
+        assertEquals("12 min late; the turn-back time was ${style(turnBack)}", late.lateClause(style))
+        assertTrue(style(turnBack).endsWith("${s}PM"))
+        assertTrue(late.label(style).startsWith("12 min late; the turn-back time was ${style(turnBack)}. Your time 6:00${s}PM, 30 min margin"), late.label(style))
+        assertEquals("Turn back now to be out by ${style(late.arrivalMs)}.", late.spoken(style))
+        assertEquals(12L, late.json()["lateMin"])
+        // In its first minute there is no amount to say, and an hour reads in hours.
+        val justNow = t.clock(2500.0, turnBack + 30_000, deadline(), 30)
+        assertEquals(TurnState.TURN, justNow.state)
+        assertNull(justNow.lateClause(style))
+        assertEquals("Turn back now to be out by ${style(justNow.arrivalMs)}.", justNow.spoken(style))
+        assertTrue(justNow.label(style).startsWith("Your time"))
+        val hours = t.clock(2500.0, turnBack + 65 * m, deadline(), 30)
+        assertEquals("1 h 5 min late; the turn-back time was ${style(turnBack)}", hours.lateClause(style))
+        assertEquals("1 h late; the turn-back time was ${style(turnBack)}", t.clock(2500.0, turnBack + 60 * m, deadline(), 30).lateClause(style))
+        // Before it: the time, and no late clause.
+        val margin = t.clock(2500.0, turnBack - 5 * m, deadline(), 30)
+        assertEquals(TurnState.MARGIN, margin.state)
+        assertNull(margin.lateMin)
+        assertEquals("Turn back by ${style(turnBack)} to be out by 6:00${s}PM.", margin.spoken(style))
+    }
 }

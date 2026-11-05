@@ -715,10 +715,7 @@ object NavSession {
     /** The map's bearing as last moved or seen at rest (T100: also a free-rotated map's). */
     private fun lastMapBearing(): Double = io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.bearing
 
-    private fun clock(ms: Long): String {
-        val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
-        return "%d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-    }
+    private fun clock(ms: Long): String = io.github.jasondorjeshort.dystopo.app.ClockFormat.text(ms) // T218
 
     // ---- JSON for the debug routes ----
 

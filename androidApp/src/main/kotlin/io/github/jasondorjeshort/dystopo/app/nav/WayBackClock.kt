@@ -241,10 +241,7 @@ object WayBackClock {
         )
     }
 
-    private fun clock(ms: Long): String {
-        val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
-        return "%d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-    }
+    private fun clock(ms: Long): String = io.github.jasondorjeshort.dystopo.app.ClockFormat.text(ms) // T218
 
     private fun localMidnight(now: Long): Long = java.util.Calendar.getInstance().apply {
         timeInMillis = now
