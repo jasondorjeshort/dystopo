@@ -10,7 +10,7 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
  * - `POST /packs/activate?name=`: switch packs; the camera moves to the pack's bounds.
  * - `POST /packs/download?url=[&name=][&activate=true]`: start (or resume) downloading a pack pair from
  *   a static host; `url` names `<name>-dem.pmtiles`, `<name>-outdoors.pmtiles` or the `<name>` prefix.
- * - `GET /packs/download`: download progress (bytes, percent, rate, resume offsets, HTTP responses); T222: `freeBytes`, and per job
+ * - `GET /packs/download`: download progress (bytes, percent, rate, resume offsets, HTTP responses); T222: `freeBytes` (usable now, or the figure below; the check itself also counts cached files the system would clear), and per job
  *   what its row says: `word` (`waiting`, `downloading`, `paused`, `stopped`), `sentence`, `actions` (their labels), `failure`
  *   (`connection`, `server`, `notFound`, `damaged`, `refused`, `build`, `space`, `other`), `shortBytes`, `resumedAtLaunch`; `error` stays the raw text.
  * - `POST /packs/download/retry?name=` (T222): Retry and Resume now: a stopped or paused job runs again from its part files.

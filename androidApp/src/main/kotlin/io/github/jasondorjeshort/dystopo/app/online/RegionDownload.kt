@@ -53,9 +53,11 @@ import kotlin.math.floor
  * in memory only: a failure there reads "Download stopped" with [retry], which builds again, and a kill leaves nothing. From the
  * download phase on, the job's state file carries the wrap-up ([regionBlock], run by [PackDownloader] through [recordFinished]),
  * so the area's record is written when the download finishes, after a kill or a Retry too. This object follows such a job at
- * launch and after a Retry ([adopt]), so the map's overlay shows it as it shows one it started: `paused` is a state here too. A
- * free-space check ([PackDownloader.shortBy] on [estimateBytes], then the downloader's on the manifest's exact sizes) stops the
- * job with `failed` and Not enough space before anything is built.
+ * launch and after a Retry ([adopt]), so the map's overlay shows it as it shows one it started: `paused` is a state here too.
+ * Space is checked on known sizes only: the downloader's check on the manifest's exact sizes (or a plain URL's first response),
+ * and for a pack built on the phone the finished archives before they are copied in. Nothing is refused before a build: the only
+ * figure then is [AreaManifest.estimate]'s, an upper end for the DEM, which would refuse a box that fits; a disk that fills during
+ * a build reads Not enough space too ([DownloadStatus.classify]).
  */
 class RegionDownload(private val service: OnlineService, private val app: DystopoApp) {
     init {
@@ -134,12 +136,6 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         startedAt = System.currentTimeMillis()
         builtAt = 0L
         finishedAt = 0L
-        // T222: nothing is built or fetched for a download that cannot fit; the same check runs on the exact sizes before the bytes.
-        PackManager.get(app).downloads.shortBy(estimateBytes(box, lo..hi))?.let { short ->
-            stop(PackDownloader.NotEnoughSpace(short), build = true)
-            finishedAt = System.currentTimeMillis()
-            return json()
-        }
         state = "building"
         Thread({ run(server, packName, box, lo..hi) }, "online-region-download").apply { isDaemon = true }.start()
         return json()
@@ -328,6 +324,11 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             builtAt = System.currentTimeMillis()
             state = "downloading" // installing: the archives are copied into the packs dir and opened
             build = result
+            // T222: the archives' sizes are known now; they are copied in beside the build's own files.
+            PackManager.get(app).downloads.shortBy(local.outputs().sumOf { it.length() })?.let { short ->
+                local.cleanUp()
+                throw PackDownloader.NotEnoughSpace(short)
+            }
             PackManager.get(app).importFiles(local.outputs().map { file ->
                 PackManager.ImportSource(file.name, file.length()) { file.inputStream() }
             }, packName)
@@ -546,24 +547,6 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
             Areas.put(recordOf(packName, block, bytes, System.currentTimeMillis()))
         }
 
-        /**
-         * T222: the size a pack of [box] at [zooms] is expected to reach, by the tile sizes the area estimates use
-         * ([AreaManifest.estimate]; mountain terrain, so an upper end). Pure, tested.
-         */
-        fun estimateBytes(box: PackBounds, zooms: IntRange): Long = zooms.sumOf { z ->
-            val n = count(box, z).toLong()
-            (if (z in OnlineTiles.DEM_MIN_ZOOM..OnlineTiles.DEM_MAX_ZOOM) n * AreaManifest.estimate(AreaManifest.ROUTE_DEM, z) else 0L) +
-                (if (z <= OnlineTiles.OSM_MAX_ZOOM) n * AreaManifest.estimate(AreaManifest.ROUTE_OSM, z) else 0L)
-        }
-
-        private fun count(box: PackBounds, z: Int): Int {
-            val n = 1 shl z
-            val x0 = floor(WebMercator.lonToX(box.minLon, z)).toInt().coerceIn(0, n - 1)
-            val x1 = floor(WebMercator.lonToX(box.maxLon, z)).toInt().coerceIn(0, n - 1)
-            val y0 = floor(WebMercator.latToY(box.maxLat, z)).toInt().coerceIn(0, n - 1)
-            val y1 = floor(WebMercator.latToY(box.minLat, z)).toInt().coerceIn(0, n - 1)
-            return (x1 - x0 + 1) * (y1 - y0 + 1)
-        }
 
         /**
          * What the overlay says about the vector half of a server build job ([build] is its JSON): `outdoors,
@@ -594,8 +577,16 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
 
         /** Tiles a build of [box] at [zooms] writes: DEM tiles (from z6) plus OSM tiles (to z14), as the server counts them. */
         fun tileCount(box: PackBounds, zooms: IntRange): Int {
-            val dem = zooms.filter { it in OnlineTiles.DEM_MIN_ZOOM..OnlineTiles.DEM_MAX_ZOOM }.sumOf { count(box, it) }
-            val osm = zooms.filter { it <= OnlineTiles.OSM_MAX_ZOOM }.sumOf { count(box, it) }
+            fun count(z: Int): Int {
+                val n = 1 shl z
+                val x0 = floor(WebMercator.lonToX(box.minLon, z)).toInt().coerceIn(0, n - 1)
+                val x1 = floor(WebMercator.lonToX(box.maxLon, z)).toInt().coerceIn(0, n - 1)
+                val y0 = floor(WebMercator.latToY(box.maxLat, z)).toInt().coerceIn(0, n - 1)
+                val y1 = floor(WebMercator.latToY(box.minLat, z)).toInt().coerceIn(0, n - 1)
+                return (x1 - x0 + 1) * (y1 - y0 + 1)
+            }
+            val dem = zooms.filter { it in OnlineTiles.DEM_MIN_ZOOM..OnlineTiles.DEM_MAX_ZOOM }.sumOf(::count)
+            val osm = zooms.filter { it <= OnlineTiles.OSM_MAX_ZOOM }.sumOf(::count)
             return dem + osm
         }
 

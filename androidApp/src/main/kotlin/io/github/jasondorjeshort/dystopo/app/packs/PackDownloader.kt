@@ -367,7 +367,10 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     /** T222: a debug figure for the free space (`POST /packs/download/free`), null for the phone's own. */
     @Volatile var freeOverride: Long? = null
 
-    /** T222: bytes the app can have on the packs' volume: free, plus cached files the system would clear for it. */
+    /**
+     * T222: bytes the app can have on the packs' volume: free, plus cached files the system would clear for it. The reference's
+     * measure (StorageManager.getAllocatableBytes); it may take seconds, so on a worker thread only, and not in a route's JSON.
+     */
     fun freeBytes(): Long = freeOverride ?: try {
         val sm = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.os.storage.StorageManager::class.java)
         sm.getAllocatableBytes(sm.getUuidForPath(dir))
@@ -375,7 +378,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         dir.usableSpace // no such volume known to the system: what the file system says
     }
 
-    /** T222: bytes short of [needBytes], or null when they fit (the free-space check before a download starts). */
+    /** T222: bytes short of [needBytes], or null when they fit (the free-space check on a known size; a worker thread's call). */
     fun shortBy(needBytes: Long): Long? = DownloadStatus.shortBy(needBytes, freeBytes())
 
     /** T222: throws [NotEnoughSpace] when [needBytes] do not fit; when they fit only with cached files cleared, has them cleared. */
@@ -413,7 +416,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
 
     fun snapshot(): List<Map<String, Any?>> = synchronized(jobs) { jobs.values.toList() }.map { it.json() }
 
-    fun json(): Map<String, Any?> = linkedMapOf("active" to activeCount(), "freeBytes" to freeBytes(), "freeOverride" to (freeOverride != null), "jobs" to snapshot())
+    fun json(): Map<String, Any?> = linkedMapOf("active" to activeCount(), "freeBytes" to (freeOverride ?: dir.usableSpace), "freeOverride" to (freeOverride != null), "jobs" to snapshot())
 
     private fun save(job: Job) {
         if (job.cancelled) return

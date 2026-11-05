@@ -3,14 +3,13 @@ package io.github.jasondorjeshort.dystopo.app.online
 import io.github.jasondorjeshort.dystopo.app.packs.DownloadStatus
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
-import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** T222: a region job's wrap-up through a kill, the words of a stop in its build phase, and its estimate for the free-space check. */
+/** T222: a region job's wrap-up through a kill and the words of a stop in its build phase. */
 class RegionWrapUpTest {
     private val area = AreaOfInterest(AreaShape.Box(-121.85, 46.8, -121.7, 46.9), 8, 14, "rainier")
 
@@ -63,16 +62,5 @@ class RegionWrapUpTest {
         val space = OnlineUi("online", null, mapOf("state" to "failed", "sentence" to "Not enough space. Free 300 MB or remove a download.", "actions" to listOf("Storage", "Retry", "Remove")), false)
         assertEquals(listOf("Storage", "Retry"), space.resultActions)
         assertNull(OnlineUi("online", null, mapOf("state" to "idle"), false).result)
-    }
-
-    @Test
-    fun theEstimateGrowsWithTheBoxAndCountsBothHalves() {
-        val small = PackBounds(-121.85, 46.8, -121.7, 46.9)
-        val big = PackBounds(-122.5, 46.0, -121.0, 47.5)
-        assertTrue(RegionDownload.estimateBytes(big, 8..14) > RegionDownload.estimateBytes(small, 8..14))
-        assertTrue(RegionDownload.estimateBytes(small, 8..14) > RegionDownload.estimateBytes(small, 8..12))
-        // One tile at z8: a DEM tile and a vector tile.
-        val one = PackBounds(-121.8, 46.85, -121.79, 46.86)
-        assertEquals(160_000L + 250_000L, RegionDownload.estimateBytes(one, 8..8))
     }
 }
