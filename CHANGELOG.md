@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-05
+
+- T227: Readable release stacks and a freeze's true length
+
 ## v0.1.20-alpha (2026-11-05)
 
 ### 2026-11-05
