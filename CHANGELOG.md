@@ -4,17 +4,19 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.20-alpha (2026-11-05)
+
 ### 2026-11-05
 
 - T224: The map screen's layout, measured in one place: the pure rule, the route that sees every overlap, the chips kept off the credit line
-- T226: A first-launch crash and taps that reach through a sheet (added 2026-11-05 from T222's and T219's verifiers)
+- T226: A first-launch crash and taps that reach through a sheet
 - T222: Downloads that say what happened and what to do next
 - T221: Downloaded areas: a removal you can see, a country that opens on its land, the lines that were missing
 - T220: First launch and the Share screen: one clear first choice, the code first
 
 ### 2026-11-04
 
-- T219: Routes and tracks: named routes, a titled tracks sheet, files saved where the user picks, plain feedback (launched when T217 has merged)
+- T219: Routes and tracks: named routes, a titled tracks sheet, files saved where the user picks, plain feedback
 - T217: The planning card: one primary action, plain names, a quieter header, lines that say they are working
 - T218: Clock times follow the phone's 12/24-hour setting; the turn-back speech and the start-time lines say what is true now
 - T223: Settings and small strings: sentences that parse, round numbers, one toggle, technical details out of the way
