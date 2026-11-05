@@ -12,6 +12,10 @@ Prints one JSON object: `launches` (per launch `amTotalMs`, `amWaitMs`, `launchS
 `reasons`, `marks`), `medians` (`amTotalMs`, `firstFrameMs`, `longestStallMs`) and, cold or warm, the marks' `markMedians` (ms by
 name, the slowest first). Each launch waits for `--wait` s (at most) for the trace's first frame, then `--settle` s before the next;
 a device that is still busy reads as slow, so run it on a quiet one (`android-emulator.md`).
+
+On an emulator with `-gpu host` every cold start of this app grows qemu by about 0.5 GB of private memory, trace on or off, and a
+reboot is the only thing seen to give it back (T228: 85 launches reached 44 GB). So run at most six cold launches a boot and read
+the emulator's private bytes between runs; a warm or hot return, or another app's cold start, costs far less.
 """
 import argparse
 import importlib.util

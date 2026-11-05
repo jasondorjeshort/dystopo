@@ -241,7 +241,10 @@ object StartupTrace {
                 val delta = if (lastCpuMs >= 0 && cpu >= 0) cpu - lastCpuMs else 0L
                 lastCpuMs = cpu
                 val inForce = w.markInForce() // read before the stack: the main thread may pass a mark while the stack is read
-                val stack = mainThread.stackTrace.map(StackTraceElement::toString)
+                val readAt = System.nanoTime()
+                val frames = mainThread.stackTrace // the one step that stops the main thread: its cost is counted ([StartupWindow.stackReadMs])
+                w.stackRead(System.nanoTime() - readAt)
+                val stack = frames.map(StackTraceElement::toString)
                 val state = StartupWindow.classify(mainThread.state.name, stat?.state ?: '?', delta, stack.firstOrNull())
                 w.addSample(state, delta, stack, inForce)
                 // The lock's holder is named by its stack now, while it holds it: the report's own stacks are main's.
@@ -706,6 +709,18 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         return StallLine(sentAt - openAt, silent, mark, top?.key.orEmpty(), top?.value ?: 0, stallSamples, stallCpuMs, LinkedHashMap(stallStates), ended)
     }
 
+    private var stackReads = 0
+    private var stackReadNanos = 0L
+    private var stackReadMaxNanos = 0L
+
+    /** One read of the main thread's stack took [nanos]: an upper bound on how long it stopped that thread. `GET /debug/startup` `sampling`. */
+    @Synchronized
+    fun stackRead(nanos: Long) {
+        stackReads++
+        stackReadNanos += nanos
+        stackReadMaxNanos = maxOf(stackReadMaxNanos, nanos)
+    }
+
     /** The mark a sample taken now belongs to. */
     @Synchronized
     fun markInForce(): Int = marks.lastIndex
@@ -886,6 +901,7 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         return linkedMapOf(
             "id" to id, "kind" to kind, "kindSource" to kindSource, "open" to !closed, "outcome" to (outcome ?: RUNNING), "elapsedMs" to r.elapsedMs,
             "firstFrameMs" to r.firstFrameMs, "styleLoadedMs" to styleLoadedAt.takeIf { it >= 0 }?.minus(openAt), "fullyLoadedMs" to fullyLoadedAt.takeIf { it >= 0 }?.minus(openAt),
+            "sampling" to linkedMapOf("stackReads" to stackReads, "stackReadMs" to stackReadNanos / 1_000_000, "stackReadMaxMs" to stackReadMaxNanos / 1_000_000),
             "activitySeen" to activitySeen, "longestStallMs" to r.longestStallMs, "mapNotDrawn" to mapNotDrawn, "thresholdMs" to r.thresholdMs, "reasons" to r.reasons,
             "marks" to r.marks.map { linkedMapOf("name" to it.name, "atMs" to it.atMs, "ms" to it.ms, "samples" to it.samples, "cpuMs" to it.cpuMs, "states" to it.states, "frame" to MainWatchdog.blockingFrame(it.stack)) },
             "stalls" to r.stalls.map { linkedMapOf("atMs" to it.atMs, "ms" to it.ms, "mark" to it.mark, "frame" to MainWatchdog.blockingFrame(it.stack), "top" to it.top, "samples" to it.samples, "cpuMs" to it.cpuMs, "states" to it.states, "ended" to it.ended) },

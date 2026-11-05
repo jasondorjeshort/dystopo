@@ -10,7 +10,7 @@ import java.io.File
  * - `GET /debug/startup`: `state` (`open`, `closed`, `none`), `open`, `window` (the open window, else the last one closed:
  *   `id`, `kind`, `kindSource`, `outcome`, `elapsedMs`, `firstFrameMs`, `styleLoadedMs`, `fullyLoadedMs`, `longestStallMs`,
  *   `mapNotDrawn`, `thresholdMs`, `reasons`, `marks` with `name`, `atMs`, `ms`, `samples`, `cpuMs`, `states`, `frame`; `stalls`
- *   with `atMs`, `ms`, `mark`, `frame`, `top`, `samples`, `cpuMs`, `states`, `ended`; `snapshots`; `lockDumps`), `head` (the header's phone
+ *   with `atMs`, `ms`, `mark`, `frame`, `top`, `samples`, `cpuMs`, `states`, `ended`; `snapshots`; `lockDumps`; `sampling`: `stackReads`, `stackReadMs`, `stackReadMaxMs`, the cost of reading the main stack), `head` (the header's phone
  *   state), `thresholds`, `tuning`, `pendingStall`, `history`, `traces`, `progress`.
  * - `POST /debug/startup/stall?at=appOnCreate|activityOnCreate|onStart|afterFirstFrame&ms=1..120000`: holds the main thread
  *   that long at that point of the next launch, then is forgotten (kept in a file, so a force-stopped process's next one sees
