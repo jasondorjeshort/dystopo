@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-05
+
+- T220: First launch and the Share screen: one clear first choice, the code first
+
 ### 2026-11-04
 
 - T219: Routes and tracks: named routes, a titled tracks sheet, files saved where the user picks, plain feedback (launched when T217 has merged)
