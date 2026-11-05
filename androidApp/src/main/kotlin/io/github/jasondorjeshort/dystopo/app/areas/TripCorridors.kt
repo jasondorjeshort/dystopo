@@ -134,9 +134,9 @@ object TripCorridors {
     }
 
     /** Remove on an area card (`DELETE /areas/{id}`): a trip's corridor removed by hand is not made again until Keep offline. */
-    fun userRemove(id: String): Map<String, Any?> {
+    fun userRemove(id: String, chunkDelayMs: Long = 0): Map<String, Any?> {
         val r = Areas.get(id)
-        val out = Areas.remove(id)
+        val out = Areas.remove(id, chunkDelayMs) // T221: the debug route's slow deletes
         r?.tripId?.let { load(); setNotKept(it, true) }
         return out
     }

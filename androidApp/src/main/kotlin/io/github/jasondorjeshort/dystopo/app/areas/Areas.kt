@@ -191,6 +191,24 @@ object Areas : VersionPins {
     /** The Areas screen is open. */
     var screenOpen by mutableStateOf(false)
 
+    /**
+     * T221: an area on its way out, for its row: [record] as it was, the tiles deleted so far of [total] (null until they
+     * are counted, and for an area with no tiles to count, a pack). In memory only ([remove] says what a kill leaves).
+     */
+    data class Removal(val record: Record, val startedAt: Long, val done: Int = 0, val total: Int? = null)
+
+    /** T221: the removals under way, oldest first, for the Areas screen and `GET /areas` (Compose state, replaced on every chunk). */
+    var removals by mutableStateOf<List<Removal>>(emptyList())
+        private set
+
+    /** T221: the ids of the rows whose detail (zooms, bounds) a tap has opened; screen state, never saved. */
+    var detailOpen by mutableStateOf<Set<String>>(emptySet())
+
+    /** T221: a row tapped: its detail opens, or closes. */
+    fun toggleDetail(id: String) {
+        detailOpen = if (id in detailOpen) detailOpen - id else detailOpen + id
+    }
+
     @Volatile private var current: AreaPins = AreaPins.NONE
     /** Covers pinned for a while by [AheadPrefetch] (navigation), by key, with the versions they were fetched at (T95). */
     private val transient = LinkedHashMap<String, Pair<Map<Int, TileSet>, Map<String, Map<String, String>>>>()
@@ -355,37 +373,56 @@ object Areas : VersionPins {
 
     /**
      * Removes [id]: a pack-backed area deletes its pack; a corridor's tiles that no other pinned area holds are
-     * dropped from the cache. Returns what went.
+     * dropped from the cache. Returns what went; the caller's thread does the work, so this takes as long as the deletes.
+     *
+     * T221: the row stays, reading "Removing" with its progress ([removals]), until the tiles are gone; they go in chunks
+     * with a counter ([TileCache.clearWhere]), and each chunk asks the pins again, so a tile another pinned area holds stays,
+     * even one it pinned during the removal. The record leaves the areas file first and the removal is in memory only:
+     * **a kill mid-removal** forgets the row, the area is gone from the list at the next launch, and the tiles not deleted
+     * yet are no longer pinned, so they are ordinary entries the cache budget evicts, as a kill left them before T221.
+     * [chunkDelayMs] waits after each chunk (`DELETE /areas/{id}?chunkDelayMs=` only), so a screenshot can catch the row.
      */
-    fun remove(id: String): Map<String, Any?> {
+    fun remove(id: String, chunkDelayMs: Long = 0): Map<String, Any?> {
         val r = get(id) ?: throw NoSuchElementException("no area '$id'")
         AreaDownload.cancel(r.id)
+        val t0 = System.currentTimeMillis()
         synchronized(this) {
+            removals = removals + Removal(r, t0) // before the record leaves [list], so the row never blinks
             records.remove(r.id)
             changed()
         }
-        val t0 = System.currentTimeMillis()
-        val m = manifest(r.id) ?: manifestOf(r) // T151: read before the file goes (it was deleted first, so the manifest was always remade)
-        manifestFile(r.id).delete()
-        synchronized(manifestMemo) { manifestMemo.remove(r.id) }
-        var tilesDeleted = 0
-        var pack: Map<String, Any?>? = null
-        if (r.pack != null && PackManager.get(app).find(r.pack) != null) pack = runCatching { PackManager.get(app).delete(r.pack) }.getOrElse { mapOf("error" to it.message) }
-        val cache = OnlineService.get(app).cache
-        if (m != null) {
-            // T151: one pass over the cache's index, each key looked up in the manifest's rows; before, every tile of the
-            // manifest was a prefix scan of the whole index (123 s for a cancelled France download of 934 tiles).
-            val items = m.items.filterIsInstance<TilesItem>()
-            val byPrefix = HashMap<String, TilesItem>()
-            for (item in items) for (p in keyPrefixes(item.route, r.source)) byPrefix[p] = item
-            tilesDeleted = cache.clearWhere { k ->
-                val t = parseTileKey(k)
-                val item = t?.let { byPrefix[it.prefix] }
-                item != null && t.ext == item.ext && item.tiles[t.z]?.contains(t.x, t.y) == true && !isPinned(k)
+        try {
+            val m = manifest(r.id) ?: manifestOf(r) // T151: read before the file goes (it was deleted first, so the manifest was always remade)
+            manifestFile(r.id).delete()
+            synchronized(manifestMemo) { manifestMemo.remove(r.id) }
+            var tilesDeleted = 0
+            var pack: Map<String, Any?>? = null
+            if (r.pack != null && PackManager.get(app).find(r.pack) != null) pack = runCatching { PackManager.get(app).delete(r.pack) }.getOrElse { mapOf("error" to it.message) }
+            val cache = OnlineService.get(app).cache
+            if (m != null) {
+                // T151: one pass over the cache's index, each key looked up in the manifest's rows; before, every tile of the
+                // manifest was a prefix scan of the whole index (123 s for a cancelled France download of 934 tiles).
+                val items = m.items.filterIsInstance<TilesItem>()
+                val byPrefix = HashMap<String, TilesItem>()
+                for (item in items) for (p in keyPrefixes(item.route, r.source)) byPrefix[p] = item
+                tilesDeleted = cache.clearWhere(
+                    onChunk = { done, total ->
+                        progress(r, done, total)
+                        if (chunkDelayMs > 0 && total > 0) Thread.sleep(chunkDelayMs)
+                    },
+                    matches = removalMatcher(byPrefix, ::isPinned),
+                )
             }
+            val unheld = dropUnheld() // T95: and its tiles of an older version that no other area holds
+            return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted + unheld, "pack" to pack, "ms" to System.currentTimeMillis() - t0)
+        } finally {
+            synchronized(this) { removals = removals.filter { it.record !== r } }
         }
-        val unheld = dropUnheld() // T95: and its tiles of an older version that no other area holds
-        return linkedMapOf("removed" to r.id, "tilesDeleted" to tilesDeleted + unheld, "pack" to pack, "ms" to System.currentTimeMillis() - t0)
+    }
+
+    /** T221: the counter of [r]'s removal, from [TileCache.clearWhere]. */
+    private fun progress(r: Record, done: Int, total: Int) = synchronized(this) {
+        removals = removals.map { if (it.record === r) it.copy(done = done, total = total) else it }
     }
 
     /** T91: told (on its own thread, so no lock is held) when the pins change, so the cache recounts its pinned bytes. */
@@ -554,8 +591,9 @@ object Areas : VersionPins {
         return linkedMapOf(
             "areas" to all.map { r ->
                 r.json() + mapOf("olderThanSource" to older(r), "fromOtherSource" to fromOtherSource(r)) + shapeJson(r) +
+                    mapOf("detailOpen" to (r.id in detailOpen), "detailLines" to areaDetailLines(r.area)) + // T221: behind a tap on the row
                     if (withCoverage) mapOf("coverage" to coverage(r)) else emptyMap()
-            },
+            } + removals.map { removalJson(it) }, // T221: until its tiles are gone
             "pinned" to all.count { it.pinned }, "transientPins" to transientCount,
             // T140 (ADR 0041 §2): the records in each file, and the entries kept as they were (no id or bounds).
             "files" to mapOf("areas" to all.count { it.readableByV1 }, "areas2" to all.count { !it.readableByV1 } + unreadable.size), "unreadable" to unreadable.size,
@@ -670,6 +708,22 @@ internal class AreaFiles(val records: List<Areas.Record>, val unreadable: List<M
         }
     }
 }
+
+/**
+ * T221: which cache keys removing an area deletes: a tile of its manifest ([byPrefix]: the key prefixes `<source>/<route>`
+ * it may sit under, to the manifest's item) that no pinned area holds ([pinned]; the area itself has left the pins by
+ * then). Pure, tested.
+ */
+internal fun removalMatcher(byPrefix: Map<String, TilesItem>, pinned: (String) -> Boolean): (String) -> Boolean = { k ->
+    val t = parseTileKey(k)
+    val item = t?.let { byPrefix[it.prefix] }
+    item != null && t.ext == item.ext && item.tiles[t.z]?.contains(t.x, t.y) == true && !pinned(k)
+}
+
+/** T221: a removal in `GET /areas` and `GET /areas/{id}`: the record with `state` "removing" and the counter, as the row reads it. */
+internal fun removalJson(x: Areas.Removal, now: Long = System.currentTimeMillis()): Map<String, Any?> = x.record.json() + mapOf(
+    "state" to "removing", "removing" to linkedMapOf("done" to x.done, "total" to x.total, "line" to removingLine(x.done, x.total), "ms" to now - x.startedAt),
+)
 
 /** T151: a tile cache key `<prefix>/<z>/<x>/<y>.<ext>` taken apart; null for any other key (a halo variant, a non-tile). */
 internal class TileKey(val prefix: String, val z: Int, val x: Int, val y: Int, val ext: String)

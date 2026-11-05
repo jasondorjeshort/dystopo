@@ -89,6 +89,9 @@ private val Teal = Color(0xFF00796B)
  * T151: an interrupted download (the app closed, the network stopped answering) is partial, so Retry shows at once, and
  * its card adds [resumeLine] ("Continues by itself", with the minutes during a backoff) while [ResumeCheck] will carry it on.
  * The coverage the sheet polls every 1.5 s is counted row by row ([Areas.coverage]).
+ *
+ * T221: a row keeps its name, kind, state and size; a tap on it opens its zooms and bounds ([areaDetailLines]). Remove leaves
+ * the row where it is, reading [removingLine] with no actions ([RemovingRow]), until the tiles are gone.
  */
 @Composable
 fun AreasOverlay() {
@@ -165,9 +168,13 @@ private fun AreasSheet() {
                 )
             }
             val items = Areas.list
-            if (items.isEmpty()) BasicText("No areas yet.", style = TextStyle(color = Ink, fontSize = 14.sp))
+            val removing = Areas.removals // T221
+            if (items.isEmpty() && removing.isEmpty()) BasicText("No areas yet.", style = TextStyle(color = Ink, fontSize = 14.sp))
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (r in items) AreaRow(r, coverage[r.id])
+                for (row in rowsInPlace(items, removing)) when (row) {
+                    is Areas.Record -> AreaRow(row, coverage[row.id])
+                    is Areas.Removal -> RemovingRow(row)
+                }
             }
         }
     }
@@ -187,7 +194,8 @@ private fun PickerButton(text: String, onClick: () -> Unit) {
 private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
     r.opaque?.let { NeedsNewerCard(r, it); return } // T140
     var renaming by remember(r.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
-    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    val detail = r.id in Areas.detailOpen // T221
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Areas.toggleDetail(r.id) }.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         renaming?.let { t ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.weight(1f).border(1.dp, Color(0xFFE2D8C6), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 5.dp)) {
@@ -200,6 +208,7 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
             BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
             // T91 (the T75 follow-up): a pack-backed area has no Pin or Unpin; the card says why.
             BasicText(if (r.pack != null) "KEPT AS A PACK" else if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned || r.pack != null) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+            BasicText(if (detail) " ▾" else " ▸", style = TextStyle(color = Muted, fontSize = 13.sp)) // T221: the row opens
         }
         val kind = when {
             r.pack != null -> "Region pack ${r.pack}"
@@ -210,15 +219,13 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
             else -> "Box"
         }
         val share = (cov?.get("share") as? Number)?.toDouble()
-        BasicText(
-            "$kind · ${zoomText(r.area)} · ${r.state}", // T170: with the elevation cap of a medium area
-            style = TextStyle(color = Ink, fontSize = 13.sp),
-        )
+        BasicText("$kind · ${r.state}", style = TextStyle(color = Ink, fontSize = 13.sp)) // T221: the zooms are behind the tap
         BasicText(
             (if (r.pack != null) mb((cov?.get("packBytes") as? Number)?.toLong() ?: r.bytes) else "${mb(r.bytes)} downloaded (about ${mb(r.estimateBytes)} planned)") +
                 (share?.let { String.format(Locale.US, " · %.0f%% on this phone", it * 100) } ?: ""),
             style = TextStyle(color = Muted, fontSize = 12.sp),
         )
+        if (detail) for (line in areaDetailLines(r.area)) BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp))
         if (r.pack != null) BasicText(PACK_NOTE, style = TextStyle(color = Muted, fontSize = 12.sp))
         val older = !Areas.older(r).isNullOrEmpty() // T95
         // T106: from a source the phone no longer reads (its server changed) is older too, said as such.
@@ -237,6 +244,38 @@ private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
             Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
         }
     }
+}
+
+/** T221: an area on its way out ([Areas.remove]): its name and size stay, the state is the progress, nothing to tap. */
+@Composable
+private fun RemovingRow(x: Areas.Removal) {
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        BasicText(x.record.name, style = TextStyle(color = Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(removingLine(x.done, x.total), style = TextStyle(color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+        BasicText(mb(x.record.bytes), style = TextStyle(color = Muted, fontSize = 12.sp))
+    }
+}
+
+/**
+ * T221: a removing row's state: "Removing" until the tiles are counted (and for an area with none to count, a pack), then
+ * "Removing: 1,200 of 4,000 tiles". Pure, tested.
+ */
+internal fun removingLine(done: Int, total: Int?): String = when {
+    total == null || total == 0 -> "Removing"
+    else -> String.format(Locale.US, "Removing: %,d of %,d %s", done, total, if (total == 1) "tile" else "tiles")
+}
+
+/**
+ * T221: the rows in order: [records] as they are, each of the [removals] (out of the list by then) back where it was by the
+ * time it was made, so a row that stays does not jump. Pure, tested.
+ */
+internal fun rowsInPlace(records: List<Areas.Record>, removals: List<Areas.Removal>): List<Any> {
+    val rows = ArrayList<Any>(records)
+    for (x in removals) {
+        val at = rows.indexOfFirst { row -> (if (row is Areas.Removal) row.record.createdAt else (row as Areas.Record).createdAt) > x.record.createdAt }
+        if (at < 0) rows += x else rows.add(at, x)
+    }
+    return rows
 }
 
 /**
@@ -538,3 +577,11 @@ internal fun polygonParts(rings: List<List<AreaPoint>>): List<Pair<List<AreaPoin
  */
 internal fun zoomText(area: io.github.jasondorjeshort.dystopo.areas.AreaOfInterest): String =
     "z${area.minZoom}-${area.maxZoom}" + (area.demMaxZoom?.let { ", elevation to z$it" } ?: "")
+
+/**
+ * T221: what a tap on an area's row opens: "Zooms z8-14, elevation to z13" ([zoomText]) and "Bounds 46.70, -121.90 to 46.95,
+ * -121.50" (south-west to north-east, latitude first, as the catalog's rows print a box). Pure, tested.
+ */
+internal fun areaDetailLines(area: io.github.jasondorjeshort.dystopo.areas.AreaOfInterest): List<String> = area.bounds.let { b ->
+    listOf("Zooms ${zoomText(area)}", String.format(Locale.US, "Bounds %.2f, %.2f to %.2f, %.2f", b.minLat, b.minLon, b.maxLat, b.maxLon))
+}

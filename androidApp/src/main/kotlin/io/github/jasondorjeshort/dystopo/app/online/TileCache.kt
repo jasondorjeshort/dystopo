@@ -266,14 +266,34 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
      */
     fun clearUnkept(): Int = clearWhere { !keep(it) }
 
-    /** T74: deletes every entry whose key [matches] (a source's tiles of an old content version); returns how many went. */
-    fun clearWhere(matches: (String) -> Boolean): Int {
-        val gone = synchronized(this) {
-            val keys = index.keys.filter(matches)
-            keys.mapNotNull { k -> index.remove(k)?.let { forget(k, it); k } }
+    /**
+     * T74: deletes every entry whose key [matches] (a source's tiles of an old content version); returns how many went.
+     *
+     * T221: in chunks of [chunk] entries, so a country's tiles leave as a counter can follow and the map's lookups get the
+     * lock between chunks. The keys are listed under the lock and [matches] walks the list outside it (it went over a whole
+     * index under the lock before); then each chunk is asked again under the lock, so a tile an area pinned meanwhile stays,
+     * leaves the index, and its files go outside the lock. A key refused the first time is not asked again (a predicate may
+     * count what it refuses). [onChunk], outside the lock, hears the entries deleted so far and how many matched at the
+     * start: first (0, total), then after every chunk. A chunk not reached yet is untouched: its tiles still read.
+     */
+    fun clearWhere(chunk: Int = CLEAR_CHUNK, onChunk: ((deleted: Int, total: Int) -> Unit)? = null, matches: (String) -> Boolean): Int {
+        require(chunk > 0) { "chunk $chunk" }
+        val listed = synchronized(this) { ArrayList(index.keys) }
+        val keys = listed.filter(matches)
+        onChunk?.invoke(0, keys.size)
+        var deleted = 0
+        var from = 0
+        while (from < keys.size) {
+            val part = keys.subList(from, minOf(from + chunk, keys.size))
+            val gone = synchronized(this) {
+                part.filter(matches).mapNotNull { k -> index.remove(k)?.let { forget(k, it); k } }
+            }
+            gone.forEach { fileOf(it).delete() }
+            deleted += gone.size
+            from += part.size
+            onChunk?.invoke(deleted, keys.size)
         }
-        gone.forEach { fileOf(it).delete() }
-        return gone.size
+        return deleted
     }
 
     private fun trim() {
@@ -307,6 +327,9 @@ class TileCache(val dir: File, maxBytes: Long, private val clock: () -> Long = S
 
     companion object {
         const val TOUCH_INTERVAL_MS = 60_000L
+
+        /** T221: the entries [clearWhere] deletes at a time. */
+        const val CLEAR_CHUNK = 256
 
         /** T106: what follows a contour tile's name in the key of a variant made with halo tiles missing ([OnlineTiles.contourKey]). */
         const val HALO_INFIX = ".halo-"

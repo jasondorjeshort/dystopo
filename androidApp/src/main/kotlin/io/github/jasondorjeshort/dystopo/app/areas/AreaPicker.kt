@@ -413,6 +413,8 @@ object AreaPicker {
             },
             "country" to (m as? Mode.Country)?.let { c -> Countries.byCode(c.code)?.let { linkedMapOf("code" to it.code, "name" to it.name, "nameLong" to it.nameLong, "toleranceM" to it.toleranceM) } },
             "filter" to filter,
+            // T221: what the camera fitted, and the point at the middle of the band above the card (`GET /camera`'s centre lies below it, under the card's share).
+            "fit" to lastFit?.let { linkedMapOf("box" to listOf(it.minLon, it.minLat, it.maxLon, it.maxLat), "centre" to listOf(it.centerLat, it.centerLon)) },
             "region" to (m as? Mode.Region)?.let { r -> // T153
                 linkedMapOf(
                     "bbox" to listOf(r.box.minLon, r.box.minLat, r.box.maxLon, r.box.maxLat), "viewZoom" to r.viewZoom,
@@ -425,8 +427,12 @@ object AreaPicker {
         )
     }
 
+    /** T221: the box of the last [fit], for `GET /areas/picker` `fit`. */
+    @Volatile private var lastFit: PackBounds? = null
+
     /** The camera on [b] in the band above the card. */
     private fun fit(b: PackBounds) {
+        lastFit = b
         runCatching { io.github.jasondorjeshort.dystopo.app.packs.fitAbove(b, 1.0 - CARD_SHARE) }
     }
 
@@ -548,14 +554,22 @@ internal fun presetLabel(m: Double, units: ContourUnits): String =
 internal fun typedRadius(text: String, units: ContourUnits): Double? =
     text.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 && it.isFinite() }?.let { it * if (units == ContourUnits.FEET) MILE_M else 1000.0 }
 
-/** T142: the box to fit a country to: its own box, or the largest part's when the country lies across the antimeridian. */
+/**
+ * T142: the box to fit a country to. T221: its largest part plus every part within one span of it (the gap between the two
+ * boxes, per axis, is at most the largest part's width and height), so France opens on the mainland and Corsica while New
+ * Zealand, Japan, Indonesia and the United States keep their main group; what lies further stays in the download, only out
+ * of the first view. Across the antimeridian a part on the far side counts as far (T142's case: a box must not wrap the
+ * world). Pure, tested.
+ */
 internal fun countryBox(rings: List<List<AreaPoint>>): PackBounds {
     val parts = PolygonRings.outer(rings)
-    val spans = parts.map { r -> r.minOf { it.lon } to r.maxOf { it.lon } }
-    val all = PolygonRings.bounds(rings, 0.0)
-    if (spans.none { it.first <= -179.9 } || spans.none { it.second >= 179.9 }) return PackBounds(all.minLon, all.minLat, all.maxLon, all.maxLat)
-    val big = parts.maxByOrNull { PolygonRings.ringAreaM2(it) }!!
-    return PolygonRings.bounds(listOf(big), 0.0).let { PackBounds(it.minLon, it.minLat, it.maxLon, it.maxLat) }
+    val big = PolygonRings.bounds(listOf(parts.maxByOrNull { PolygonRings.ringAreaM2(it) }!!), 0.0)
+    val near = parts.filter { part ->
+        val b = PolygonRings.bounds(listOf(part), 0.0)
+        maxOf(b.minLon - big.maxLon, big.minLon - b.maxLon) <= big.maxLon - big.minLon &&
+            maxOf(b.minLat - big.maxLat, big.minLat - b.maxLat) <= big.maxLat - big.minLat
+    }
+    return PolygonRings.bounds(near, 0.0).let { PackBounds(it.minLon, it.minLat, it.maxLon, it.maxLat) }
 }
 
 private const val MILE_M = 1609.344

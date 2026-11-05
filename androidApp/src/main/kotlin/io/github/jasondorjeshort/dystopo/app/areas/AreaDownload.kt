@@ -460,7 +460,7 @@ object AreaDownload {
                     error = j.error ?: when {
                         j.pausedBy != null && j.state == "partial" -> RESUME_PAUSED // T156
                         j.stalled != null && j.state == "partial" -> RESUME_STALLED // T151
-                        j.failed.get() > 0 -> "${j.failed.get()} tiles could not be fetched." // T151: it continues by itself (the card says when)
+                        j.failed.get() > 0 -> failedTilesLine(j.failed.get()) // T151: it continues by itself (the card says when)
                         else -> null
                     },
                     // T95: a whole run counts what the area holds now (fetched plus already cached; an Update's old tiles are gone).
@@ -894,11 +894,12 @@ internal fun budgetSize(budgetMb: Long): String = when {
 /**
  * T140 (ADR 0041 §5): the summary, "About 170 MB (1,300 tiles) at full detail"; "at less detail" for z8 to z13, the zooms
  * otherwise. T157: "at medium detail" for z8 to z14 with the elevation to z13 ([demMaxZoom]); another capped range says
- * both ("at zoom 8 to 14, elevation to 12"). Pure, tested.
+ * both ("at zoom 8 to 14, elevation to 12"). T221: the medium line names its cap as the Areas card's [zoomText] does,
+ * "at medium detail, elevation to z13". Pure, tested.
  */
 internal fun sizeLine(bytes: Long, tiles: Int, minZoom: Int, maxZoom: Int, demMaxZoom: Int? = null): String {
     val detail = when {
-        demMaxZoom != null && minZoom == AreaDetail.MIN_ZOOM && maxZoom == AreaDetail.MEDIUM.maxZoom && demMaxZoom == AreaDetail.MEDIUM.demMaxZoom -> "at ${detailWord(AreaDetail.MEDIUM)} detail"
+        demMaxZoom != null && minZoom == AreaDetail.MIN_ZOOM && maxZoom == AreaDetail.MEDIUM.maxZoom && demMaxZoom == AreaDetail.MEDIUM.demMaxZoom -> "at ${detailWord(AreaDetail.MEDIUM)} detail, elevation to z$demMaxZoom"
         demMaxZoom != null -> "at zoom $minZoom to $maxZoom, elevation to $demMaxZoom"
         maxZoom >= io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.DEM_MAX_ZOOM -> "at ${detailWord(AreaDetail.FULL)} detail"
         minZoom == 8 && maxZoom == AreaDownload.LESS_DETAIL_MAX_ZOOM -> "at ${detailWord(AreaDetail.LESS)} detail"
@@ -906,6 +907,9 @@ internal fun sizeLine(bytes: Long, tiles: Int, minZoom: Int, maxZoom: Int, demMa
     }
     return "About ${aboutSize(bytes)} (${String.format(java.util.Locale.US, "%,d", tiles)} tiles) $detail"
 }
+
+/** T221: why a download came up short, "1 tile could not be fetched." or "3 tiles could not be fetched.". Pure, tested. */
+internal fun failedTilesLine(n: Int): String = if (n == 1) "1 tile could not be fetched." else "$n tiles could not be fetched."
 
 /**
  * T192 (T189's follow-up): the pack path's size line counts the trail graph that comes with the pack (or is built on the

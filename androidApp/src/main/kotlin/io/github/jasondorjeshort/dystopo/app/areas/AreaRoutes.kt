@@ -44,7 +44,13 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   setting) and evicts unpinned tiles down to it; answers the cache before and after and every area's coverage,
  *   which is how "pinned areas survive a trim" is checked.
  * - `GET /areas/prefetch`, `POST /areas/prefetch?on=0|1`: "ahead on the route" while navigating ([AheadPrefetch]).
- * - `POST /areas/ui?open=1|0`: the Areas screen.
+ * - `POST /areas/ui?open=1|0`: the Areas screen. T221: `detail=<id>` taps that area's row (its zooms and bounds open or close).
+ * - T221, a removal you can see: `DELETE /areas/{id}` answers when the tiles are gone (`ms`, `tilesDeleted`); until then the area
+ *   stays in `GET /areas` and `GET /areas/{id}` with `state` `removing` and `removing` (`done`, `total`, `line` as the row reads
+ *   it, `ms`). `chunkDelayMs=N` (0 to 10000) waits after each chunk of 256 tiles, so a screenshot can catch the row.
+ *   Each area in `GET /areas` has `detailOpen` and `detailLines` (what a tap on its row opens). The removal is in memory only.
+ *   `GET /areas/picker` `fit`: the camera's last fitted `box` (a country's: `countryBox`) and its `centre`, the point at the middle
+ *   of the band above the card; `GET /camera`'s centre lies below that point, since the card covers the map's lower part.
  * - T130, the corridor every trip keeps ([TripCorridors]): `GET /areas/trips` (the width setting `widthM`, `notKept`
  *   trips, `notes` (why a trip has none: over the budget, no source), `queued`, `refusals`, `lastRun` and every trip's
  *   `corridors` with their width); `POST /areas/trips[?wait=ms]` runs a reconcile (answers after it with `wait`). A
@@ -157,12 +163,16 @@ object AreaRoutes {
             }
             "POST" to "/areas/ui" -> {
                 val open = r.query["open"] != "0"
-                app.map.onMain { Areas.screenOpen = open }
+                app.map.onMain {
+                    Areas.screenOpen = open
+                    r.query["detail"]?.let { d -> Areas.get(d)?.let { Areas.toggleDetail(it.id) } } // T221: as a tap on the row
+                }
                 return Response.json(mapOf("open" to open))
             }
         }
         val m = item.matchEntire(r.path) ?: return Response.notFound()
         val id = m.groupValues[1]
+        if (r.method == "GET" && m.groupValues[2].isEmpty()) Areas.removals.firstOrNull { it.record.id == id }?.let { return Response.json(removalJson(it)) } // T221
         val rec = Areas.get(id) ?: throw NoSuchElementException("no area '$id'")
         return when (r.method to m.groupValues[2]) {
             "GET" to "" -> Response.json(rec.json() + mapOf("olderThanSource" to Areas.older(rec), "coverage" to Areas.coverage(rec), "manifest" to Areas.manifest(rec.id)?.summary()))
@@ -170,7 +180,8 @@ object AreaRoutes {
             "POST" to "/pin" -> Response.json(TripCorridors.userPin(rec.id, r.query["on"] != "0").json()) // T130: on a trip's corridor, also Keep offline or Stop keeping
             "POST" to "/retry" -> Response.json(retry(rec), 202) // T106: the card's Retry (a download again)
             "POST" to "/dismiss" -> Response.json(mapOf("area" to Areas.dismiss(rec.id)?.json(), "removed" to (Areas.get(rec.id) == null))) // T106
-            "DELETE" to "" -> Response.json(TripCorridors.userRemove(rec.id)) // T130: a trip's corridor removed by hand is not made again
+            // T130: a trip's corridor removed by hand is not made again. T221: `chunkDelayMs` slows the deletes for a screenshot.
+            "DELETE" to "" -> Response.json(TripCorridors.userRemove(rec.id, r.query["chunkDelayMs"]?.toLongOrNull()?.coerceIn(0, 10_000) ?: 0))
             "POST" to "/rename" -> Response.json(rename(rec.id, r.query["name"] ?: throw IllegalArgumentException("name=<new name>")).json()) // T142
             else -> Response.notFound()
         }
