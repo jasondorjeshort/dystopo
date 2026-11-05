@@ -183,12 +183,39 @@ class IdentityRulesTest {
         assertEquals(Reason.SOFTWARE_LEVEL.lift, shown.lift)
         assertEquals(soft.codes.distinct().size, shown.reasons.size)
         assertEquals("Why? (${shown.reasons.size} reasons)", shown.why)
-        assertTrue(shown.reasons.first().startsWith(Reason.SOFTWARE_LEVEL.message), shown.reasons.first())
+        assertEquals("Found for the reason above: attestation software, key software.", shown.reasons.first())
         assertFalse("more reason" in shown.sentence + shown.lift)
 
         val one = IdentityRules.shown(IdentityRules.Phase.READY, AttestationPolicy.release().evaluate(TestChainMint.mint(spec(), root, now), root.anchors, JavaSecurityVerifier, now, null))
         assertEquals("Why?", one.why)
         assertEquals(Reason.UNKNOWN_SIGNER.lift, one.lift)
+    }
+
+    @Test fun everyReasonLineReadsWithItsSeparator() {
+        fun v(reasons: List<Refusal>) = Verdict(Verdict.Status.REFUSE, reasons, null, null, null, 0, null, now, null)
+        fun found(r: Reason) = "found ${r.code}"
+        for (lone in Reason.entries) {
+            val shown = IdentityRules.shown(IdentityRules.Phase.READY, v(listOf(Refusal(lone, found(lone)))))
+            assertEquals(listOf("Found for the reason above: ${found(lone)}."), shown.reasons)
+            assertTrue(lone.message.replaceFirstChar { it.lowercaseChar() } in shown.sentence, lone.code) // not dropped: in view
+            assertEquals(lone.lift, shown.lift, lone.code)
+        }
+        // Each reason in second place, behind one that sorts before it, keeps its whole line.
+        val all = Reason.entries.map { Refusal(it, found(it)) }
+        val first = IdentityRules.primaryReason(all)!!.reason
+        val lines = IdentityRules.shown(IdentityRules.Phase.READY, v(all)).reasons
+        assertEquals(Reason.entries.size, lines.size)
+        assertEquals("Found for the reason above: ${found(first)}.", lines.first())
+        for (r in Reason.entries - first) {
+            assertTrue("${r.message} ${r.lift} Found: ${found(r)}." in lines, r.code)
+        }
+        // Raw text: a stop of its own is not doubled, repeats fold into one, none adds no "Found".
+        val many = v(listOf(Refusal(Reason.MALFORMED, "a."), Refusal(Reason.REVOKED, "b."), Refusal(Reason.REVOKED, "b."), Refusal(Reason.REVOKED, "c"), Refusal(Reason.EXPIRED, " ")))
+        assertEquals(
+            listOf("Found for the reason above: a.", "${Reason.REVOKED.message} ${Reason.REVOKED.lift} Found: b; c.", "${Reason.EXPIRED.message} ${Reason.EXPIRED.lift}"),
+            IdentityRules.shown(IdentityRules.Phase.READY, many).reasons,
+        )
+        assertEquals("Why? (3 reasons)", IdentityRules.shown(IdentityRules.Phase.READY, many).why)
     }
 
     @Test fun getIdentityKeepsItsLine() {
