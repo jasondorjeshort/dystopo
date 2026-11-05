@@ -212,4 +212,21 @@ except Exception as e:
     assert ac.refused(e) and fetched and s.counters["forwardRestores"] == 1, (e, fetched, s.counters)
 assert ac.refused(ConnectionRefusedError()) and not ac.refused(ConnectionResetError())
 
+# T224: the tour file's rotation, the forbidden pairs of GET /layout, and the strip's plate against its rectangle.
+step = ac.parse_cards("@cards 46.7864,-121.7366;46.8024,-121.7289 scale=2.0 rotation=1")
+assert step["rotation"] == "1" and step["scale"] == "2.0", step
+assert ac.parse_cards("@cards 1,2;3,4")["rotation"] == "0"
+forbidden = [{"a": "M99", "b": "M11"}, {"a": "M41", "b": "M99"}, {"a": "M8", "b": "M99"}, {"a": "M98", "b": "M11"}, {"a": "M41", "b": "M98"}]
+assert ac.layout_forbidden(forbidden) == forbidden
+assert ac.layout_forbidden([{"a": "M85", "b": "M11"}, {"a": "M59", "b": "M92"}]) == []
+assert ac.layout_forbidden(None) == []
+assert ac.pair_names([{"a": "M85", "b": "M59", "aName": "navigationCard", "bName": "planningCard"}]) == ["navigationCard x planningCard"]
+ras = ac.Raster(60, 40)
+ac.fill(ras, 0, 0, 60, 40, (90, 110, 70))
+ac.fill(ras, 20, 10, 25, 20, (0xF6, 0xF1, 0xE4))  # the plate: x 20 to 45, y 10 to 30
+ac.fill(ras, 28, 16, 8, 8, (0x2B, 0x24, 0x20))  # its text, which the scan must not reach
+assert ac.plate_edges(ras, [20, 10, 45, 30], (0xF6, 0xF1, 0xE4)) == [20, 10, 45, 30]
+assert ac.plate_edges(ras, [21, 10, 45, 29], (0xF6, 0xF1, 0xE4)) == [20, 10, 45, 30], "the drawn edges, not the rectangle's"
+assert ac.plate_edges(ras, [0, 0, 5, 5], (0xF6, 0xF1, 0xE4)) == [None, None, None, None], "no plate near this rectangle"
+
 print("test_android_check: ok")

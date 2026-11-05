@@ -106,10 +106,17 @@ private fun navCardCap(maxHeight: Dp, top: Dp): Dp {
     val shownPanels = if (panels.trackPanelsTop > panels.trackPanelsBottom) panels.trackPanelsTop else 0.dp
     val floor = maxOf(io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom, shownPanels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop)
     val bottomPad = if (floor > 0.dp) floor + 6.dp else with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + 32.dp
-    val online = io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChips?.let { with(density) { (it[3] - it[1]).toDp() } } ?: 0.dp
+    // T224: the online column's and the right-hand chips' own heights count while they are hidden too: a card that took
+    // their room once they hid would keep them hidden for good (the chips hide rather than sit under the credit line).
+    val online = maxOf(
+        io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChips?.let { with(density) { (it[3] - it[1]).toDp() } } ?: 0.dp,
+        with(density) { chips.ownHeightPx(io.github.jasondorjeshort.dystopo.app.TopChips.Chip.ONLINE).toDp() },
+    )
     val left = 6.dp + online + panels.mapRowDp(density)
     val lowestRight = maxOf(chips.routesChipBottom, chips.trackColumnBottom)
-    val right = if (chips.navCardBottom > 0.dp && lowestRight > chips.navCardBottom) lowestRight - chips.navCardBottom + 8.dp else 0.dp
+    val below = if (chips.navCardBottom > 0.dp && lowestRight > chips.navCardBottom) lowestRight - chips.navCardBottom else 0.dp
+    val own = with(density) { chips.rightStackPx(density.density).toDp() }
+    val right = maxOf(below, own).let { if (it > 0.dp) it + 8.dp else 0.dp }
     val bands = io.github.jasondorjeshort.dystopo.app.routing.CardBands
     val measured = bands.navBand(maxHeight.value, top.value, bottomPad.value, left.value, right.value)
     // The least the card keeps (landscape at font scale 2.0 leaves no band at all under it): its header, actions and two

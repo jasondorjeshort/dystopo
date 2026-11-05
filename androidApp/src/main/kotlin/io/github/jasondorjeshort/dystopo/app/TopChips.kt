@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -28,7 +29,7 @@ import androidx.compose.ui.node.invalidateMeasurement
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
-import androidx.compose.ui.unit.offset
+import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 
 /**
  * T65: the right-hand chip column under the top row (search, Settings, Packs) stacks instead of hiding:
@@ -57,7 +58,15 @@ object TopChips {
      * the layout pass that measured the card ([followNavCard]), so a turn text that wraps moves the Waypoint and Tracks
      * chips down in the same frame (T137 saw them a layout pass late in about 2 of 15 samples).
      */
-    fun trackColumn(): Modifier = followNavCard(Chip.TRACKS, TRACKS_TOP)
+    fun trackColumn(): Modifier = followNavCard(Chip.TRACKS, TRACKS_TOP).composed {
+        val inset = with(LocalDensity.current) { COLUMN_PADDING.toPx() }
+        DisposableEffect(Unit) { onDispose { trackColumnPx = null; publishRightLeft() } }
+        // T224: the column's own rectangle (its caller adds [COLUMN_PADDING] on both sides, inside this modifier).
+        Modifier.onGloballyPositioned { c ->
+            trackColumnPx = px(c).also { it[0] += inset; it[2] -= inset }
+            publishRightLeft()
+        }
+    }
 
     /**
      * The Routes chip's place (top-right): just below the track controls once they have been measured. T110: it also
@@ -68,8 +77,12 @@ object TopChips {
         Modifier.padding(end = 8.dp).then(followNavCard(Chip.ROUTES, ROUTES_TOP)) // T146: below the track controls in the same pass
             .composed {
                 val density = LocalDensity.current
-                DisposableEffect(Unit) { onDispose { routesChipBottom = 0.dp } }
-                Modifier.onGloballyPositioned { c -> edge(c, density).let { if (it != routesChipBottom) routesChipBottom = it } }
+                DisposableEffect(Unit) { onDispose { routesChipBottom = 0.dp; routesChipPx = null; publishRightLeft() } }
+                Modifier.onGloballyPositioned { c ->
+                    edge(c, density).let { if (it != routesChipBottom) routesChipBottom = it }
+                    routesChipPx = px(c) // T224
+                    publishRightLeft()
+                }
             }
 
     /** T110: bottom edge of the Routes chip from the window top (0 while it is not shown). */
@@ -124,6 +137,98 @@ object TopChips {
     /** T146: the chip columns that follow the navigation card in the same layout pass. */
     enum class Chip { ONLINE, TRACKS, ROUTES }
 
+    /** T224: why a chip column is not drawn: the card above it left it no room above the credit line. */
+    const val NO_ROOM_ABOVE_CREDIT = "noRoomAboveCredit"
+
+    /**
+     * T224 (pure, `TopChipsTest`; the clamp of [chipTopPx]'s columns against the credit line): the height left to a column
+     * that starts at [topPx], down to [gapPx] above the credit line ([creditFromBottomPx] from the bottom of a window
+     * [windowPx] tall; with none measured yet, down to the window's bottom).
+     */
+    fun chipRoomPx(windowPx: Int, creditFromBottomPx: Int, topPx: Int, gapPx: Int): Int =
+        windowPx - (if (creditFromBottomPx > 0) creditFromBottomPx + gapPx else 0) - topPx
+
+    /** T224 (pure): whether a column's own height fits its room. A chip that does not fit hides; it never shrinks and never goes under the line. */
+    fun chipFits(roomPx: Int, ownPx: Int): Boolean = roomPx > 0 && ownPx <= roomPx
+
+    /** T224 (pure): the columns under the card: the track bar and the Routes chip with their gaps (px; 0 when neither is up). */
+    fun stackPx(tracksPx: Int, routesPx: Int, gapPx: Int): Int =
+        (if (tracksPx > 0) gapPx + tracksPx else 0) + (if (routesPx > 0) gapPx + routesPx else 0)
+
+    /** T224: why each column is hidden right now (`GET /layout`, `GET /nav` `layout.chipsHidden`); absent when drawn. */
+    private val hiddenBecause = java.util.concurrent.ConcurrentHashMap<Chip, String>()
+
+    fun hiddenReason(kind: Chip): String? = hiddenBecause[kind]
+
+    private val onlineOwn = mutableStateOf(0)
+    private val tracksOwn = mutableStateOf(0)
+    private val routesOwn = mutableStateOf(0)
+    private fun own(kind: Chip) = when (kind) { Chip.ONLINE -> onlineOwn; Chip.TRACKS -> tracksOwn; Chip.ROUTES -> routesOwn }
+
+    /** T224: a column's own height as last measured (px), kept while it is hidden, 0 once it leaves the composition. Compose state. */
+    fun ownHeightPx(kind: Chip): Int = own(kind).value
+
+    /** T224: the height the right-hand chips want under the navigation card ([stackPx] over [ownHeightPx]). */
+    fun rightStackPx(density: Float): Int = stackPx(ownHeightPx(Chip.TRACKS), ownHeightPx(Chip.ROUTES), Math.round(GAP.value * density))
+
+    /** T224: a column's own width as last measured (px), for `GET /layout`'s function. */
+    private val ownWidths = java.util.EnumMap<Chip, Int>(Chip::class.java)
+    fun ownWidthPx(kind: Chip): Int = ownWidths[kind] ?: 0
+
+    internal fun chipMeasured(kind: Chip, ownPx: Int, widthPx: Int) {
+        own(kind).let { if (it.value != ownPx) it.value = ownPx }
+        ownWidths[kind] = widthPx
+    }
+
+    internal fun chipShown(kind: Chip) {
+        if (hiddenBecause.remove(kind) != null && kind == Chip.TRACKS) for (f in followers.toList()) if (f.kind == Chip.ROUTES) f.invalidateMeasurement()
+    }
+
+    /** T224: [kind] is not placed this pass: what it published goes, since its position callbacks do not run unplaced. */
+    internal fun chipHidden(kind: Chip, reason: String) {
+        hiddenBecause[kind] = reason
+        when (kind) {
+            Chip.ONLINE -> MapInsets.onlineChipsHidden()
+            Chip.TRACKS -> {
+                if (trackColumnTop != 0.dp) trackColumnTop = 0.dp
+                if (trackColumnBottom != 0.dp) trackColumnBottom = 0.dp
+                trackColumnPx = null
+                trackMeasured(0)
+            }
+            Chip.ROUTES -> {
+                if (routesChipBottom != 0.dp) routesChipBottom = 0.dp
+                routesChipPx = null
+            }
+        }
+        publishRightLeft()
+    }
+
+    /** T224: the track bar's chip row's height as measured in this pass (px): the clamp is on the row, and the open list shortens to fit. */
+    var trackRowPx = 0
+        private set
+
+    internal fun trackRowMeasured(px: Int) { trackRowPx = px }
+
+    /** T224: on the track bar's chip row; see [trackRowPx]. */
+    fun trackRow(): Modifier = Modifier.then(TrackRowElement)
+
+    /** T224: rectangles in px from the window's top left, for `GET /layout`; null while not drawn. */
+    @Volatile var trackColumnPx: FloatArray? = null
+    @Volatile var routesChipPx: FloatArray? = null
+    @Volatile var topRowPx: FloatArray? = null
+
+    /** T224: the left edge of the right-hand chips (px; 0 when none shows), which bounds the readout strip. Compose state. */
+    var rightColumnLeftPx by mutableStateOf(0f)
+        private set
+
+    private fun publishRightLeft() {
+        val left = listOfNotNull(trackColumnPx?.get(0), routesChipPx?.get(0)).minOrNull() ?: 0f
+        if (left != rightColumnLeftPx) rightColumnLeftPx = left
+    }
+
+    /** T224: [c]'s bounds as `left, top, right, bottom` in px from the window's top left. */
+    fun px(c: LayoutCoordinates): FloatArray = c.boundsInRoot().let { floatArrayOf(it.left, it.top, it.right, it.bottom) }
+
     /**
      * T146: the navigation card's bottom edge (px from the window top, 0 while hidden) as placed in the current layout
      * pass, and the track controls' bottom as measured in it. Not Compose state: a change remeasures the chip columns
@@ -158,7 +263,12 @@ object TopChips {
         else {
             followers -= f
             followTops.remove(f.kind)
-            if (f.kind == Chip.TRACKS) trackMeasured(0)
+            hiddenBecause.remove(f.kind) // T224
+            own(f.kind).value = 0
+            if (f.kind == Chip.TRACKS) {
+                trackRowPx = 0
+                trackMeasured(0)
+            }
         }
     }
 
@@ -202,6 +312,7 @@ object TopChips {
         "navTurnText" to io.github.jasondorjeshort.dystopo.app.nav.TurnText.last,
         // T146: the edges the chip columns followed in the last layout pass and the tops they were measured at (px).
         "follow" to followJson,
+        "chipsHidden" to hiddenBecause.entries.associate { (k, v) -> k.name.lowercase() to v }, // T224: why a column is not drawn
         "drawCheck" to drawCheck(),
     )
 
@@ -240,8 +351,11 @@ object TopChips {
     fun overlap(a: FloatArray?, b: FloatArray?): Boolean =
         a != null && b != null && a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 
-    private val GAP = 6.dp
+    internal val GAP = 6.dp
     private val SEARCH_WIDTH = 220.dp
+
+    /** T224: the padding `tracking/TrackControls.kt` gives the track column on both sides. */
+    private val COLUMN_PADDING = 8.dp
 
     /**
      * T91: the font scale the floating map chips follow at most. They sit in fixed places around the map, and at
@@ -273,6 +387,10 @@ private class FollowElement(val kind: TopChips.Chip, val fallbackPx: Int) : Modi
  * the Routes chip), which the card's [navCardEdge] writes while it is placed; the writer remeasures this node in the
  * same pass. The track controls report their bottom as they are measured, for the Routes chip below them. The column's
  * parent spans the window from its top (the map screen's boxes), so a top in the parent is a top in the window.
+ *
+ * T224: a column with no room above the credit line hides (nothing placed; [TopChips.chipFits]) rather than sit under it,
+ * read from [AttributionInsets.bottom] in this measure. The Routes chip hides with the track bar it sits under. The track
+ * column is measured within its room, so an open tracks list scrolls in what is left; the clamp itself is on its chip row.
  */
 internal class FollowNode(var kind: TopChips.Chip, var fallbackPx: Int) : Modifier.Node(), LayoutModifierNode {
     override fun onAttach() = TopChips.follower(this, true)
@@ -280,10 +398,37 @@ internal class FollowNode(var kind: TopChips.Chip, var fallbackPx: Int) : Modifi
 
     override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
         val top = TopChips.chipTopPx(kind, TopChips.navCardBottomPx, TopChips.searchBottom.roundToPx(), TopChips.trackBottomPx, fallbackPx, density)
-        val p = measurable.measure(constraints.offset(vertical = -top))
+        val room = TopChips.chipRoomPx(constraints.maxHeight, AttributionInsets.bottom.roundToPx(), top, TopChips.GAP.roundToPx())
+        val maxHeight = if (kind == TopChips.Chip.TRACKS) room.coerceAtLeast(0) else Constraints.Infinity
+        val p = measurable.measure(constraints.copy(minHeight = 0, maxHeight = maxHeight))
+        val own = if (kind == TopChips.Chip.TRACKS && TopChips.trackRowPx > 0) TopChips.trackRowPx else p.height
         TopChips.followMeasured(kind, top)
+        val fits = TopChips.chipFits(room, own) && !(kind == TopChips.Chip.ROUTES && TopChips.hiddenReason(TopChips.Chip.TRACKS) != null)
+        TopChips.chipMeasured(kind, if (fits) maxOf(own, p.height) else own, p.width)
+        if (!fits) {
+            TopChips.chipHidden(kind, TopChips.NO_ROOM_ABOVE_CREDIT)
+            return layout(0, 0) {}
+        }
+        TopChips.chipShown(kind)
         if (kind == TopChips.Chip.TRACKS) TopChips.trackMeasured(top + p.height)
         return layout(constraints.constrainWidth(p.width), constraints.constrainHeight(p.height + top)) { p.place(0, top) }
+    }
+}
+
+/** T224: [TopChips.trackRow]'s element. */
+private object TrackRowElement : ModifierNodeElement<TrackRowNode>() {
+    override fun create() = TrackRowNode()
+    override fun update(node: TrackRowNode) {}
+    override fun equals(other: Any?) = other === this
+    override fun hashCode() = 7224
+}
+
+/** T224: measures the track bar's chip row free of the height left to it, for [FollowNode] above it in the same pass. */
+private class TrackRowNode : Modifier.Node(), LayoutModifierNode {
+    override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
+        val p = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+        TopChips.trackRowMeasured(p.height)
+        return layout(p.width, constraints.constrainHeight(p.height)) { p.place(0, 0) }
     }
 }
 

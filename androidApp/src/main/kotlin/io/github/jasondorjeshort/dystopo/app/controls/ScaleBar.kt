@@ -125,6 +125,13 @@ object ScaleBarLayout {
     @Volatile var windowHeightPx = 0f
     @Volatile var density = 1f
 
+    /**
+     * T224: the bar's plate as last placed (px; 0 before that), kept while it is hidden. Compose state: the cards'
+     * reservation for its line (`BottomPanels.mapRowDp`) reads the height, measured where T212 estimated it.
+     */
+    var plateWidthPx by mutableStateOf(0)
+    var plateHeightPx by mutableStateOf(0)
+
     /** T115: the bottom edge of the top-left column (search box, online indicator) the bar stays below, dp from the window top. */
     @Volatile var topLeftBottomDp = 0f
 
@@ -322,6 +329,8 @@ fun ScaleBar() {
                     var r = c
                     while (true) r = r.parentLayoutCoordinates ?: break
                     ScaleBarLayout.boundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom)
+                    if (c.size.width != ScaleBarLayout.plateWidthPx) ScaleBarLayout.plateWidthPx = c.size.width // T224
+                    if (c.size.height != ScaleBarLayout.plateHeightPx) ScaleBarLayout.plateHeightPx = c.size.height
                     ScaleBarLayout.windowHeightPx = r.size.height.toFloat()
                     ScaleBarLayout.density = density.density
                     ScaleBarLayout.shown = true
@@ -385,21 +394,31 @@ fun ScaleBar() {
             val ceiling = maxOf(if (topLeft > 0.dp) (topLeft + TOP_LEFT_GAP).roundToPx() else 0, cardCeiling)
             val noRoom = if (cardCeiling > 0 && cardCeiling >= (topLeft + TOP_LEFT_GAP).roundToPx()) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BELOW_WARNING_CARD else if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT
             val natural = strip.maxIntrinsicWidth(constraints.maxHeight)
+            // T224 (the premises' item 12's third fix): the right-hand chips bound the strip as the top-left column does.
+            // Read in this measure, so a chip that moves re-places the strip.
+            val chipLeft = TopChips.rightColumnLeftPx.toInt()
+            val chipBottom = maxOf(TopChips.trackColumnBottom, TopChips.routesChipBottom).roundToPx()
+            val start = STRIP_START.roundToPx()
+            val aboveMax0 = (constraints.maxWidth - start - reserve).coerceAtLeast(0)
+            val elevationH = strip.minIntrinsicHeight(aboveMax0)
+            val elevationW = strip.minIntrinsicWidth(constraints.maxHeight)
+            val aboveRoom = StripBounds.room(start, top - gap, ceiling, aboveMax0, elevationH, chipLeft, chipBottom, gap)
+            val besideRoom = StripBounds.room(x, constraints.maxHeight - bottomPx, ceiling, besideMax, elevationH, chipLeft, chipBottom, gap)
+            val besideMaxNow = besideRoom.maxWidthPx
             // T204: above while at least the elevation fits there (the strip leaves entries out); else beside with fewer
             // (the strip's min intrinsic width and height are the elevation's alone).
-            val aboveFits = room && top - gap - ceiling >= strip.minIntrinsicHeight((constraints.maxWidth - STRIP_START.roundToPx() - reserve).coerceAtLeast(0))
-            if (besideMax >= STRIP_MIN_BESIDE.roundToPx() && (natural <= besideMax || (!aboveFits && strip.minIntrinsicWidth(constraints.maxHeight) <= besideMax))) {
-                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = besideMax, maxHeight = (constraints.maxHeight - bottomPx - ceiling).coerceAtLeast(0))) // T204: the room it has
+            val aboveFits = room && top - gap - aboveRoom.ceilingPx >= elevationH && elevationW <= aboveRoom.maxWidthPx
+            if (besideMaxNow >= STRIP_MIN_BESIDE.roundToPx() && (natural <= besideMaxNow || (!aboveFits && elevationW <= besideMaxNow))) {
+                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = besideMaxNow, maxHeight = (constraints.maxHeight - bottomPx - besideRoom.ceilingPx).coerceAtLeast(0))) // T204: the room it has
                 val y = constraints.maxHeight - bottomPx - p.height
-                if (y >= ceiling && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMax, natural, besideMax) }
-                else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(noRoom)
+                if (y >= besideRoom.ceilingPx && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMaxNow, natural, besideMax) }
+                else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (besideRoom.byChips) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BESIDE_CHIPS else noRoom)
             } else {
-                val start = STRIP_START.roundToPx()
-                val aboveMax = (constraints.maxWidth - start - reserve).coerceAtLeast(0)
-                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = aboveMax, maxHeight = (top - gap - ceiling).coerceAtLeast(0))) // T204: the strip leaves entries out to fit
+                val aboveMax = aboveRoom.maxWidthPx
+                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = aboveMax, maxHeight = (top - gap - aboveRoom.ceilingPx).coerceAtLeast(0))) // T204: the strip leaves entries out to fit
                 val y = top - gap - p.height // the bar's top edge is its plate's (its padding is below)
-                if (room && y >= ceiling && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax, natural, besideMax) }
-                else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(noRoom)
+                if (room && y >= aboveRoom.ceilingPx && elevationW <= aboveMax && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax, natural, besideMax) }
+                else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (aboveRoom.byChips) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BESIDE_CHIPS else noRoom)
             }
         }
         if (!room) ScaleBarLayout.hide(
@@ -417,6 +436,25 @@ fun ScaleBar() {
             if (room) bar.place(0, top)
             stripPlace?.let { (p, x, y) -> p.place(x, y) }
         }
+    }
+}
+
+/**
+ * T224 (pure, `StripBoundsTest`): the room the readout strip has once the right-hand chips (Waypoint and Tracks, Routes)
+ * are counted. Px from the window's top left. A strip whose widest reach [x] + [maxWidthPx] stays [gapPx] short of
+ * [chipLeftPx], or chips that end above its [ceilingPx], change nothing. Otherwise it stays under the chips' bottom edge
+ * while that leaves the elevation's height ([minHeightPx]) above [bottomPx], and else it keeps its ceiling and stops
+ * [gapPx] short of the chips' left edge (no room there either: the width comes out too small and the strip hides).
+ */
+internal object StripBounds {
+    class Room(val ceilingPx: Int, val maxWidthPx: Int, val byChips: Boolean)
+
+    fun room(x: Int, bottomPx: Int, ceilingPx: Int, maxWidthPx: Int, minHeightPx: Int, chipLeftPx: Int, chipBottomPx: Int, gapPx: Int): Room {
+        val noChips = chipBottomPx <= 0 || chipLeftPx <= 0 || x + maxWidthPx + gapPx <= chipLeftPx || chipBottomPx + gapPx <= ceilingPx
+        if (noChips) return Room(ceilingPx, maxWidthPx, false)
+        val under = chipBottomPx + gapPx
+        if (bottomPx - under >= minHeightPx) return Room(under, maxWidthPx, true)
+        return Room(ceilingPx, (chipLeftPx - gapPx - x).coerceAtLeast(0), true)
     }
 }
 

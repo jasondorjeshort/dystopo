@@ -174,6 +174,9 @@ class Routes(private val app: DystopoApp) {
         // T213: GET /divergence, POST /divergence/run|dismiss|undismiss
         io.github.jasondorjeshort.dystopo.app.divergence.DivergenceRoutes.handle(app, r)?.let { return it }
         // end T213
+        // T224
+        LayoutRoutes.handle(app, r)?.let { return it } // GET /layout
+        // end T224
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
