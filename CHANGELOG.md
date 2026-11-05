@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-04
+
+- T225: Proposal: one name and one list for downloaded maps, and what the status chip says
+
 ## v0.1.19-alpha (2026-11-03)
 
 ### 2026-11-03
