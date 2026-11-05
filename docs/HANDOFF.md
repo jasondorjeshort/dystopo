@@ -7,7 +7,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Now
 
-- **Wave 29 is open: trace the startup freezes.** T227 merged (readable stacks, ADR 0058; a freeze's true length). T228 next (a trace of every start, through Report a problem). Recommended to the owner, not yet on the board: a task after T228 that moves the launch's disk work off the main thread. `git branch -r --list 'origin/task/*'` shows what is pushed.
+- **Wave 29 is open: trace the startup freezes.** T227 merged (readable stacks, ADR 0058; a freeze's true length). T228 next (a trace of every start, through Report a problem). The owner's freeze is the screen stuck on the splash during the opening. T229, to plan after T228's figures: the launch's disk work off the main thread. `git branch -r --list 'origin/task/*'` shows what is pushed.
 - Wave 28 is closed and v0.1.20-alpha is published (T217 to T226).
 - **New rule, ADR 0057:** one Gradle-using agent at a time unless the owner says wider. The `wave` skill's per-task
   figure is now 1.25 points (wave 28's close read 5.5 under its figure).
@@ -22,7 +22,7 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Waiting on user
 
-- The startup freeze: is the map already on screen and ignoring touch, or is the screen blank or on the splash? Decides T228's focus and how much the launch task matters.
+- The startup freeze: on the first open after an update only, or on other opens too?
 - ADR 0056: should "pack" also leave the code, routes and JSON keys, or only what people read (assumed)? The location
   permission: at launch or on the tap (T220; the board's list). The Stop chip hiding on a phone on its side: the layout's second half.
 - "Keep north up": rename or keep (T176). The map screen's top row: regroup behind a Menu or not.

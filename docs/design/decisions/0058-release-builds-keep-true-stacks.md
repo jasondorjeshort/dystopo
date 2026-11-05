@@ -31,8 +31,8 @@ Every frame in a report reads as the source does, on the phone and in the issue,
 
 Costs:
 - APK size, arm64: 23,318,145 to 25,394,604 bytes, +2.08 MB or 8.9%; renaming accounts for only 0.13 MB of it. Universal: +2.08 MB of 59.8 MB.
-- Speed is measured only on an x86_64 emulator with a host GPU, against `-dontobfuscate` alone: cold `am start -W`, 20 starts each, median 1086 ms against 1124 ms, within the noise; frames over 12 pans, 50th percentile 18 to 21 ms and 90th 34 to 48 ms in both. **No real phone has been compared.** Compose without R8's optimising may be slower there. The owner's complaint is the app freezing, not how long things take to open (owner, 2026-11-05), so what would count against this is main-thread stalls and panning, not the start's length.
-- A start whose stalls change on the first release carrying this may be this change, not a fix. The freeze reports read against it say which build they came from.
+- Speed is measured only on an x86_64 emulator with a host GPU, against `-dontobfuscate` alone: cold `am start -W`, 20 starts each, median 1086 ms against 1124 ms, within the noise; frames over 12 pans, 50th percentile 18 to 21 ms and 90th 34 to 48 ms in both. **No real phone has been compared.** Compose without R8's optimising may be slower there. The owner's freeze is the screen stuck on the splash during the opening (owner, 2026-11-05), which is the time this change could lengthen through the first composition, so the first frame on a phone is what counts against it, with panning.
+- A splash that gets longer or shorter on the first release carrying this may be this change, not a fix. The freeze reports read against it say which build they came from.
 
 Supersede this when the phone comparison below shows a cost, or when the freezes are understood and the project prefers the size and speed back (`mapping.txt` then becomes the route, with the frame test reworked).
 
