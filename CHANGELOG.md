@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-05
 
+- T222: Downloads that say what happened and what to do next
 - T221: Downloaded areas: a removal you can see, a country that opens on its land, the lines that were missing
 - T220: First launch and the Share screen: one clear first choice, the code first
 
