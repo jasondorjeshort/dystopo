@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-05
 
+- T224: The map screen's layout, measured in one place: the pure rule, the route that sees every overlap, the chips kept off the credit line
 - T226: A first-launch crash and taps that reach through a sheet (added 2026-11-05 from T222's and T219's verifiers)
 - T222: Downloads that say what happened and what to do next
 - T221: Downloaded areas: a removal you can see, a country that opens on its land, the lines that were missing

@@ -1,16 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-05, at commit ceb4066a, by main session (wave 28, 9 of 10 merged)
+Updated: 2026-11-05, at commit ce25b455, by main session (wave 28, all merged; the sweep next)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
 wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Now
 
-- **Wave 28 runs one Gradle-using agent at a time** (the owner, 2026-11-04, after seven builds left 2 GB free; the
-  board's wave paragraph). T225, T223, T218, T217, T219, T220, T221, T222 and T226 are merged; T224, the last, is running.
-  T224 was stopped part-way: its work is in its worktree, unpushed, unchecked and
-  uncommitted. Resume it with its agent, or a new one in that worktree.
+- **Wave 28's ten tasks are merged** (T217 to T226; T226 came from the verifiers' findings). The owner's rule of one
+  Gradle-using agent at a time held from 2026-11-04 on (the board's wave paragraph). The sweep is next.
 - The wave's common brief and wait script are outside the repo, in the `.scratch` folder of the worktrees' folder
   [no-check: outside the repo]. Host ports 8701 to 8708 and consoles 5570 to 5584 went to the implementers in task
   order; verifiers take host 8721 up and consoles 5600 up.
@@ -18,11 +16,12 @@ wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Next
 
-1. As T224 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence.
-2. Delete the merged `origin/task/T138` in the last cleanup.
-3. After the last merge: the sweep (it checks the labels `tools/android-ui.py` taps), the release, the close.
+1. The sweep (`sweep` skill): it runs `android-ui.py update` and `upgrade`, which no task could. Its findings are the
+   next wave's sweep task.
+2. On a green sweep: the release, without asking (ADR 0024; the `release` skill).
+3. The close (`wave` skill): the meter reading against the 16.5, the wave's record, Later.
 4. The next wave's candidates: one rule for state made off the main thread (T226), the layout authority's second half with ADR 0053's build step 2 and the top-row
-   regroup (T224's design note), T225's build tasks once the owner chooses, the two ready Plans.
+   regroup (T224's design note), ADR 0056's build tasks, the two ready Plans.
 5. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's, the sentinel rule.
 
 ## Waiting on user
