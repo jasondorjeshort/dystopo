@@ -25,7 +25,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   T110: only for a bar that is shown and fitted at the live camera (it refits every 500 ms; the route waits up to
  *   [FIT_WAIT_MS] for that); otherwise `readBack` is null and `readBackSkipped` says why (`hidden`, `fitBehindCamera`).
  *   Before, a hidden bar kept its last lengths and the read-back compared them with a camera that had moved.
- * - `POST /scalebar?both=on|off`: the Map options row "Scale bar" (one unit or both; T110: synced, `app.scaleBar.both`
+ * - `POST /scalebar?both=on|off`: the Map options row "Scale bar: Both units" (one unit or both; T110: synced, `app.scaleBar.both`
  *   in `GET /sync/status` › `settingsSync`); answers like `GET` once the bar has redrawn. Anything else for `both` is a 400.
  *
  * T161, the live readout's strip on the bar's line ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]):

@@ -135,7 +135,7 @@ object MapLayout {
         val routeUp = BottomPanels.routeCardTop.value > 0f
         val creditRect = MapInsets.creditPx
         val tracks = own(TopChips.Chip.TRACKS)
-        // The track bar's own row when a list is open: the rule places the chips, not the list.
+        // The track bar's own row when a panel is open under it: the rule places the chips, not the panel.
         val trackBar = tracks?.let { if (TopChips.trackRowPx > 0) OverlaySize(it.width, TopChips.trackRowPx / d) else it }
         val search = TopChips.searchBottom.value
         return OverlayInput(

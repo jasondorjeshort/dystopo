@@ -203,7 +203,7 @@ object TopChips {
         publishRightLeft()
     }
 
-    /** T224: the track bar's chip row's height as measured in this pass (px): the clamp is on the row, and the open list shortens to fit. */
+    /** T224: the track bar's chip row's height as measured in this pass (px): the clamp is on the row, and an open panel under it gets what is left. */
     var trackRowPx = 0
         private set
 
@@ -390,7 +390,8 @@ private class FollowElement(val kind: TopChips.Chip, val fallbackPx: Int) : Modi
  *
  * T224: a column with no room above the credit line hides (nothing placed; [TopChips.chipFits]) rather than sit under it,
  * read from [AttributionInsets.bottom] in this measure. The Routes chip hides with the track bar it sits under. The track
- * column is measured within its room, so an open tracks list scrolls in what is left; the clamp itself is on its chip row.
+ * column is measured within its room, so an open panel under the chips (the activity picker, the recording's lines) gets
+ * what is left; the clamp itself is on its chip row.
  */
 internal class FollowNode(var kind: TopChips.Chip, var fallbackPx: Int) : Modifier.Node(), LayoutModifierNode {
     override fun onAttach() = TopChips.follower(this, true)

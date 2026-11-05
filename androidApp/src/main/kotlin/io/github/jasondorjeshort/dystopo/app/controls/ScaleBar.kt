@@ -69,6 +69,11 @@ object ScaleBarSettings {
     /** T110: creates the Compose state now; call on the main thread from `Application.onCreate` (sync reads it from other threads). */
     fun prepare() {
         if (!loaded) load()
+        // T224: the measured plates and the chips' left edge are Compose state too, and their owners are otherwise first
+        // touched on a debug thread (`GET /scalebar`, `GET /readout`); T226's rule, `android-app.md`.
+        ScaleBarLayout.plateHeightPx
+        io.github.jasondorjeshort.dystopo.app.readout.StripLayout.elevationPlatePx
+        TopChips.rightColumnLeftPx
     }
 
     /**
