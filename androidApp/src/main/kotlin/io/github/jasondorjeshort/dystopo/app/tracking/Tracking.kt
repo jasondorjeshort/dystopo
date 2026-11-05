@@ -829,12 +829,15 @@ class Tracking private constructor(private val app: DystopoApp) {
         /**
          * T226: makes, on the main thread from `Application.onCreate`, the Compose state that the first thread to reach this
          * class would otherwise make, without opening the store: [TrackingUiState]; [TerrainSource]'s, which this class's
-         * constructor starts; [Trips]' and [TripCorridors]', since the corridors' thread is what gets here first at launch
-         * (`TripCorridors.reconcile`, `Trips.store`); and this package's objects, which `TrackRoutes` touches on a debug thread.
+         * constructor starts, and through it the pressure trend's (`TerrainSource.update`, `Barometer.want`,
+         * `PressureWatch.onListenerStart`); [Trips]' and [TripCorridors]', since the corridors' thread is what gets here first
+         * at launch (`TripCorridors.reconcile`, `Trips.store`); and this package's objects, which `TrackRoutes` touches on a
+         * debug thread.
          */
         fun prepare() {
             TrackingUiState.prepare()
             TerrainSource.display
+            io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.card
             io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen
             io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.queued
             ActivityPicker.target
