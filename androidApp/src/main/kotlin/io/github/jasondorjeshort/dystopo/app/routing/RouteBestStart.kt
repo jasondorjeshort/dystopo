@@ -46,9 +46,10 @@ import java.util.concurrent.TimeUnit
  * T209: the start time for a planned route on the phone, over `shared`'s [BestStart]: the start of today (from now on;
  * tomorrow once today has no start that finishes in time) with the most terrain shade on a hot day and the most sun
  * otherwise, as one line on the route card ([BestStartLine], [ShadeText.bestStartLine]) and `GET /route` `bestStart`.
- * Never stored. One worker thread below normal priority, as [NavShade]'s; the last [CACHE] answers are kept by the route's
- * points, its mode, the aim and the local date, so the card and the debug route share one computation per plan (the
- * [RouteWater] and [RouteExposure] pattern).
+ * Never stored. One worker thread at normal priority (T218, the emulator, Paradise to Longmire, plan to line, three fresh
+ * processes each: 3.5 s below normal against 3.2 s, and 3.7 to 5.3 s against 3.1 to 3.3 s with the map moving); the last
+ * [CACHE] answers are kept by the route's points, its mode, the aim, the local date and the deadline, so the card and the
+ * debug route share one computation per plan (the [RouteWater] and [RouteExposure] pattern).
  *
  * - **The terrain**: the DEM pack under the route's start ([io.github.jasondorjeshort.dystopo.app.options.ShadeService.pyramidAt],
  *   as navigation's terrain shade reads it), read once for every start.
@@ -93,7 +94,7 @@ object RouteBestStart {
     private const val CACHE = 6
     private const val TAG = "DystopoBestStart"
 
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-best-start").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-best-start").apply { isDaemon = true; priority = Thread.NORM_PRIORITY } }
     private val cache = object : LinkedHashMap<Key, Future<Result>>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Future<Result>>?) = size > CACHE
     }
