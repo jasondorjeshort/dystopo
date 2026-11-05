@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.routing.ImportText
 import java.io.File
 import java.util.Locale
 
@@ -54,14 +55,13 @@ private val Paper = Color(0xEEFFFCF5)
 private val RecordRed = Color(0xFFC62828)
 private val Link = Color(0xFF2C7BB6)
 private val Magenta = Color(0xFFD01C8B)
+private val SheetPaper = Color(0xFFFFFCF5)
 
 /**
  * The track controls on the map (T31, T40): record/pause/resume/stop with the live distance, point
  * count and time; a Waypoint chip, always shown (T91: at the current fix, recording or not; a long-press
- * on the map offers one too, [LongPressMenu]); a "Tracks" list (tap a track to show it, "Profile" for its
- * elevation profile, "Report" for its trip report in the print dialog (T198), "GPX" to export it to the files dir, "Import" for a GPX from the files dir or
- * the system file picker); the waypoint sheet (rename or delete; opened by tapping a waypoint on the
- * map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view. T180: the recording panel has
+ * on the map offers one too, [LongPressMenu]); the "Tracks" chip, which opens the Tracks sheet ([TracksSheet]); the
+ * waypoint sheet (rename or delete; opened by tapping a waypoint on the map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view. T180: the recording panel has
  * the way back ([WayBackLine]): the turn-around clock, where the way back goes, and "The way back starts here".
  */
 @Composable
@@ -81,14 +81,9 @@ private fun BoxScope.Controls() {
         onDispose { tracking.overlay.unbind(); io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.unbind() }
     }
     val ui = tracking.ui
-    var listOpen by remember { mutableStateOf(false) }
     // T49: the track chips fold into one chip, so they cover as little of the map (and its peak labels) as the Packs button.
     // T109: held in [TrackBar], so `POST /help/open?key=tracks.bar` can unfold it.
     var barOpen by TrackBar::open
-    var importOpen by remember { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) Thread { importUri(tracking, uri) }.start()
-    }
     // T81: POST_NOTIFICATIONS (Android 13+), asked once at the first recording; when allowed, the running
     // recording's notification is posted at once. Refused: recording goes on without it.
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -136,18 +131,18 @@ private fun BoxScope.Controls() {
                     if (ui.recording) {
                         Chip(if (ui.paused) "Resume" else "Pause") { Thread { if (tracking.ui.paused) tracking.resume() else tracking.pause() }.start() }
                     }
-                    Chip("Tracks") { listOpen = !listOpen }
+                    Chip("Tracks") { if (TrackBar.listOpen) TrackBar.closeList() else TrackBar.listOpen = true }
                     Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
                         // T172: Record opens the activity picker (the remembered activity marked); a choice starts the recording.
                         if (tracking.ui.recording) Thread { tracking.stop() }.start()
-                        else if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else ActivityPicker.openForRecord()
+                        else if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else { TrackBar.closeList(); ActivityPicker.openForRecord() }
                     }
                     io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, stop and keep
-                    Chip("\u00D7") { barOpen = false; listOpen = false }
+                    Chip("\u00D7") { barOpen = false; TrackBar.closeList() }
                 }
             }
             EstimateChip() // T203: the terrain estimate, recording or not
-            if (barOpen) ActivityPickerPanel(onRecordStarted) // T172
+            if (barOpen && !TrackBar.listOpen) ActivityPickerPanel(onRecordStarted) // T172; T219: a track's in the Tracks sheet
             if (barOpen && ui.recording) {
                 Panel {
                     BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
@@ -159,46 +154,6 @@ private fun BoxScope.Controls() {
                     )
                     RecordingStateLine(ui)
                     WayBackLine(tracking) // T180
-                }
-            }
-            if (barOpen && listOpen) {
-                Panel(Modifier.widthIn(max = 300.dp).heightIn(max = 380.dp)) {
-                    // T115 (T110's follow-up): the actions wrap whole; in a Row at font scale 2.0 "Share" broke mid-word.
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Action("Import") { importOpen = !importOpen }
-                        io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
-                        io.github.jasondorjeshort.dystopo.app.share.ShareAction() // T54: phone-to-phone sync
-                        if (importOpen) Action("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
-                    }
-                    if (importOpen) ImportList(tracking) { importOpen = false }
-                    if (ui.tracks.isEmpty()) BasicText("No tracks yet", style = TextStyle(color = Ink, fontSize = 13.sp))
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(ui.tracks, key = { it.id }) { t ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val km = ui.distances[t.id]?.let { "  " + UnitFormat.distance(it, AppSettings.units) } ?: ""
-                                Column(Modifier.widthIn(max = 170.dp)) {
-                                    BasicText(
-                                        (if (t.id == ui.shownId) "● " else "") + t.name + "\n" + t.points + " pts" + km + if (t.recording) "  recording" else "",
-                                        style = TextStyle(color = Ink, fontSize = 13.sp),
-                                        modifier = Modifier.clickable { Thread { tracking.show(t.id) }.start() },
-                                    )
-                                    ActivityLine(t.id, t.name, t.activity) // T172: changeable afterwards
-                                }
-                                // T198: "Report" under "Profile" (stacked, so the row stays inside the list's width): the trip report in the print dialog.
-                                Column {
-                                    Action("Profile") { Thread { tracking.showProfile(t.id) }.start() }
-                                    Action("Report") {
-                                        io.github.jasondorjeshort.dystopo.app.print.SheetPrint.printReport(app, t.id) { why -> why?.let { msg -> Thread { tracking.refreshUi("Report failed: $msg") }.start() } }
-                                    }
-                                }
-                                Action("Go") { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start() } // T61: navigate
-                                Action("GPX") { Thread { tracking.export(t.id)?.let { tracking.refreshUi("Saved ${it.name}") } }.start() }
-                                io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51
-                            }
-                        }
-                    }
-                    ui.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 11.sp)) }
                 }
             }
         }
@@ -226,6 +181,138 @@ private fun BoxScope.Controls() {
         ui.profile?.let { ProfilePanel(tracking, it) }
     }
 }
+
+/**
+ * T219: the Tracks sheet, a sheet over the lower part of the map like the Routes list, so the chips above it stay where they
+ * are (the audit's finding 8; the survey `route-card-and-lists.md`). The title with the count, Close; Import visible, Sync now,
+ * Sync status and Share under one overflow; a row per track with its name, date, distance and activity, one visible action,
+ * Go, and Profile, Report and Export GPX in its own overflow. A tap on a row shows the track and closes the sheet, so it can
+ * be seen; Go and Profile close it too. `POST /tracks/ui` opens it and either overflow. One line in `MainActivity`.
+ */
+@Composable
+fun TracksSheet() {
+    if (!TrackBar.listOpen) return
+    val app = DystopoApp.instance
+    val tracking = remember { Tracking.of(app) }
+    val ui = tracking.ui
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) Thread { importUri(tracking, uri) }.start()
+    }
+    androidx.activity.compose.BackHandler { TrackBar.closeList() }
+    val maxHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.7f
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = maxHeight)
+                .background(SheetPaper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).navigationBarsPadding().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BasicText(tracksTitle(ui.tracks.size), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                SheetAction("Close") { TrackBar.closeList() }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SheetAction("Import") { TrackBar.importOpen = !TrackBar.importOpen }
+                if (TrackBar.importOpen) SheetAction("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    io.github.jasondorjeshort.dystopo.app.routing.OverflowDots(MORE_ACTIONS) { TrackBar.moreOpen = !TrackBar.moreOpen }
+                }
+            }
+            if (TrackBar.moreOpen) {
+                // T115 (T110's follow-up): the actions wrap whole; in a Row at font scale 2.0 "Share" broke mid-word.
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    io.github.jasondorjeshort.dystopo.app.sync.SyncNowAction() // T44
+                    io.github.jasondorjeshort.dystopo.app.share.ShareAction() // T54: phone-to-phone sync
+                }
+            }
+            if (TrackBar.importOpen) ImportList(tracking) { TrackBar.importOpen = false }
+            ui.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)) }
+            if (ActivityPicker.target != null && ActivityPicker.target != ActivityPicker.NEW) ActivityPickerPanel { } // T172: a track's activity
+            if (ui.tracks.isEmpty()) BasicText("No tracks yet", style = TextStyle(color = Ink, fontSize = 14.sp))
+            LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(ui.tracks, key = { it.id }) { t -> TrackRow(tracking, ui, t) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackRow(tracking: Tracking, ui: Tracking.UiState, t: io.github.jasondorjeshort.dystopo.store.TrackSummary) {
+    val app = DystopoApp.instance
+    val open = TrackBar.rowMore == t.id
+    val distance = (ui.distances[t.id] ?: ui.distanceM.takeIf { t.id == ui.activeId })?.let { UnitFormat.distance(it, AppSettings.units) }
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f)) {
+                BasicText(
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp))
+                        append((if (t.id == ui.shownId) "● " else "") + t.name)
+                        pop()
+                        append("\n" + trackRowLine(io.github.jasondorjeshort.dystopo.app.trips.shortDate(t.createdAt), distance, t.recording))
+                    },
+                    style = TextStyle(color = Ink, fontSize = 13.sp),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        Thread { tracking.show(t.id) }.start()
+                        TrackBar.closeList()
+                    },
+                )
+                ActivityLine(t.id, t.name, t.activity) // T172: changeable afterwards
+                io.github.jasondorjeshort.dystopo.app.sync.SyncConflictNote(t.id) // T51
+            }
+            // One verb for following, as on the route card (T217); T61: navigate.
+            BasicText(
+                "Go",
+                style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                modifier = Modifier.clickable {
+                    Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startTrack(t.id) }.start()
+                    TrackBar.closeList()
+                }.border(1.dp, Link, RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 7.dp),
+            )
+            io.github.jasondorjeshort.dystopo.app.routing.OverflowDots("$MORE_ACTIONS for ${t.name}") { TrackBar.rowMore = if (open) null else t.id }
+        }
+        if (open) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End)) {
+                SheetAction("Profile") {
+                    Thread { tracking.showProfile(t.id) }.start()
+                    TrackBar.closeList()
+                }
+                // T198: the trip report in the print dialog.
+                SheetAction("Report") {
+                    TrackBar.rowMore = null
+                    io.github.jasondorjeshort.dystopo.app.print.SheetPrint.printReport(app, t.id) { why -> why?.let { msg -> Thread { tracking.refreshUi("Report failed: $msg") }.start() } }
+                }
+                SheetAction(EXPORT_GPX) {
+                    TrackBar.rowMore = null
+                    io.github.jasondorjeshort.dystopo.app.SaveFile.track(t.id)
+                }
+            }
+        }
+    }
+}
+
+/** T219: an action on the Tracks sheet: a link's look with a thumb's height. */
+@Composable
+private fun SheetAction(text: String, onClick: () -> Unit) {
+    Box(Modifier.heightIn(min = 44.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        BasicText(text, style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+    }
+}
+
+/** T219: the Tracks sheet's title: "Tracks · 3" (one text, so the chip's "Tracks" stays the only one by that name). Pure, tested. */
+internal fun tracksTitle(count: Int): String = "Tracks · $count"
+
+/** T219: a track row's second line: the date, then the distance, or that it is recording. Pure, tested. */
+internal fun trackRowLine(date: String, distance: String?, recording: Boolean): String =
+    listOfNotNull(date, distance, "recording".takeIf { recording }).joinToString(" · ")
+
+/** T219: the overflows' name for a screen reader and `uiautomator dump` (the same as the route card's, T217). */
+internal const val MORE_ACTIONS = "More actions"
+internal const val EXPORT_GPX = "Export GPX"
+
+/** T219: the Import list with nothing in it, without the app's private path. */
+internal const val IMPORT_LIST_EMPTY = "No GPX files in the app yet. Pick file to choose one on this phone."
 
 /**
  * T159: the recording's state ([Tracking.UiState.state]) as one line under the live stats in the recording panel, the
@@ -278,15 +365,15 @@ private fun ImportList(tracking: Tracking, onDone: () -> Unit) {
     var files by remember { mutableStateOf<List<File>?>(null) }
     LaunchedEffect(Unit) { Thread { files = tracking.importableFiles() }.start() }
     val list = files ?: return
-    if (list.isEmpty()) BasicText("No .gpx files in ${tracking.filesDir.path}", style = TextStyle(color = Ink, fontSize = 11.sp))
+    if (list.isEmpty()) BasicText(IMPORT_LIST_EMPTY, style = TextStyle(color = Ink, fontSize = 12.sp))
     for (f in list.take(8)) {
         BasicText(
             f.name,
-            style = TextStyle(color = Link, fontSize = 12.sp),
+            style = TextStyle(color = Link, fontSize = 13.sp),
             modifier = Modifier.clickable {
-                Thread { runCatching { tracking.importFile(f.name) }.onFailure { tracking.refreshUi("Import failed: ${it.message}") } }.start()
+                Thread { importing(tracking, f.name) { tracking.importFile(f.name) } }.start()
                 onDone()
-            },
+            }.padding(vertical = 4.dp),
         )
     }
 }
@@ -305,9 +392,26 @@ private fun ActivityLine(id: String?, name: String?, activity: io.github.jasondo
     )
 }
 
-/** T109: whether the track bar is unfolded (Record, Pause, Tracks); Compose state, main thread. */
+/** T109: whether the track bar is unfolded (Record, Pause, Tracks); T219: and the Tracks sheet's state. Compose state, main thread. */
 object TrackBar {
     var open by mutableStateOf(false)
+
+    /** T219: the Tracks sheet is open (`POST /tracks/ui?open=1`). */
+    var listOpen by mutableStateOf(false)
+    var importOpen by mutableStateOf(false)
+
+    /** T219: the sheet's overflow (Sync now, Sync status, Share) is open. */
+    var moreOpen by mutableStateOf(false)
+
+    /** T219: the track whose row has its overflow open. */
+    var rowMore by mutableStateOf<String?>(null)
+
+    fun closeList() {
+        listOpen = false
+        importOpen = false
+        moreOpen = false
+        rowMore = null
+    }
 }
 
 /**
@@ -318,7 +422,7 @@ internal val TRACK_BAR_HELP: List<io.github.jasondorjeshort.dystopo.app.help.Hel
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.bar", "Recording tracks", "The map, top right: Tracks, then the bar", show = { TrackBar.open = true }) {
         "Record starts a track; it goes on with the screen off and the app in the background, its notification saying " +
             "how (recording, waiting for GPS, paused). Pause holds it; Stop ends it and keeps it in the Tracks list " +
-            "(profile, Go to follow it, GPX to save a file). Waypoint marks where you are; long-press the map for another place."
+            "(Go to follow it, three dots for a GPX file). Waypoint marks where you are; long-press the map for another place."
     },
 )
 
@@ -331,17 +435,36 @@ internal fun dropHere(tracking: Tracking) {
     }
 }
 
-/** Reads a picked document and imports it (off the main thread). */
+/** Reads a picked document and imports it (off the main thread). T219: its line from the start. */
 private fun importUri(tracking: Tracking, uri: Uri) {
     val app = DystopoApp.instance
+    val file = runCatching {
+        app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }.getOrNull()
+    val shown = file ?: ImportText.THE_FILE
+    importing(tracking, shown) {
+        val text = app.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: error("cannot open the file")
+        try {
+            tracking.importGpx(text, file?.substringBeforeLast('.') ?: "Imported track", shown)
+        } catch (e: io.github.jasondorjeshort.dystopo.gpx.GpxException) {
+            // T219: no track in it: its routes go to Routes, so "has no route or track" is true when it is said.
+            val r = io.github.jasondorjeshort.dystopo.app.trips.Trips.import(text)
+            tracking.refreshUi(ImportText.routes(r.imported.size, r.skipped.size, shown))
+        }
+    }
+}
+
+/** T219: an import's sentences around [block] ([ImportText]): the start at once, the failures; its end is the import's own. */
+private fun importing(tracking: Tracking, file: String, block: () -> Unit) {
+    tracking.refreshUi(ImportText.start(file))
+    ImportText.hold()
     try {
-        val name = app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }?.substringBeforeLast('.') ?: "Imported track"
-        val text = app.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: error("cannot open $uri")
-        tracking.importGpx(text, name)
+        block()
+    } catch (e: io.github.jasondorjeshort.dystopo.gpx.GpxException) {
+        tracking.refreshUi(ImportText.NOTHING)
     } catch (e: Exception) {
-        tracking.refreshUi("Import failed: ${e.message}")
+        android.util.Log.w("DystopoTracks", "import of $file failed", e)
+        tracking.refreshUi(ImportText.failed(file))
     }
 }
 

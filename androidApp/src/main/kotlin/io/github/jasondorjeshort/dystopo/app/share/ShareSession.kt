@@ -139,7 +139,7 @@ class ShareSession private constructor(private val app: DystopoApp) {
         connecting = true
         try {
             val (peer, sample) = ShareClient.hello(target, c)
-            val name = (peer["name"] as? String) ?: addr
+            val name = (peer["name"] as? String) ?: "the other phone" // T219: no address in the sentence
             // T57: paged like any HTTP sync, with the same post-merge steps and a clock check against the other phone.
             val report = sync.run(target.baseUrl, name, ShareClient.transport(target, c), pageOps) {
                 ClockCheck.of(listOfNotNull(sample), name, System.currentTimeMillis())

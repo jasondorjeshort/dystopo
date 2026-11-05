@@ -456,6 +456,9 @@ object RouteSession {
         }
     }
 
+    /** T219: a line on the card ([io.github.jasondorjeshort.dystopo.app.SaveFile]'s "Saved ..."). */
+    fun say(text: String) = ui { message = text }
+
     /** Writes the current route as GPX into `files/exports/`; null when there is none. */
     fun exportGpx(): File? {
         val p = plan ?: return null

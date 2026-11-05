@@ -95,7 +95,7 @@ class RelaySession private constructor(private val app: DystopoApp) {
         val base = server!!
         return try {
             val r = synchronized(t) {
-                sync.run("relay:$base", "the relay at ${AppSync.shortName(base)}", t, 0) {
+                sync.run("relay:$base", "the relay", t, 0) { // T219: no address in the sentence
                     ClockCheck.of(samples.all().takeLast(20), AppSync.shortName(base), System.currentTimeMillis())
                 }
             }

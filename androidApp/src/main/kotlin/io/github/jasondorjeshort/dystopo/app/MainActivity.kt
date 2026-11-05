@@ -46,6 +46,9 @@ class MainActivity : ComponentActivity() {
         app.map.onLocationPermissionChanged()
     }
 
+    /** T219: the system's save dialog, for Export GPX ([SaveFile]). */
+    val saveFile = registerForActivityResult(SaveFile.contract()) { SaveFile.finished(it) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapViewport.prepare() // T162: its Compose state, on the main thread before the first composition
@@ -199,6 +202,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
+        io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet() // T219: the Tracks sheet, over the map's own controls
         SettingsSheet() // T33: units, text size, warm-up
         io.github.jasondorjeshort.dystopo.app.storage.StorageScreen() // T74: what each store uses, budgets, Clear
         io.github.jasondorjeshort.dystopo.app.sync.SyncStatusSheet() // T51: sync status

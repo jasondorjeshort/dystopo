@@ -140,7 +140,7 @@ class AppSync private constructor(private val app: DystopoApp) {
         require(target.isNotBlank()) { "no sync peer: pass with=<url|file> or set one (POST /sync/settings?peer=)" }
         val samples = ClockSamples()
         val transport = transport(target, samples)
-        return run(target, shortName(target), transport, pageOps) { ClockCheck.of(samples.all(), shortName(target), System.currentTimeMillis()) }
+        return run(target, peerLabel(target), transport, pageOps) { ClockCheck.of(samples.all(), peerLabel(target), System.currentTimeMillis()) }
     }
 
     /**
@@ -161,15 +161,12 @@ class AppSync private constructor(private val app: DystopoApp) {
                 val settings = if (r.merged.applied > 0) runCatching { SettingsSync.pull(app) }.getOrElse { mapOf("error" to it.message) } else null
                 val check = runCatching(clock).getOrNull()
                 check?.let { rememberClock(it) }
-                val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target, "at" to System.currentTimeMillis()) + r.json() +
-                    mapOf("settings" to settings, "clock" to check?.json())
-                remember(json)
                 val m = r.merged
-                tracking.refreshUi(
-                    "Synced with $label: ${m.applied} in, ${r.pushed} out" +
-                        (if (m.conflicts.isNotEmpty()) ", ${m.conflicts.size} edited on two devices" else "") +
-                        (check?.message()?.let { ". $it" } ?: ""),
-                )
+                val sentence = syncedSentence(label, m.applied, r.pushed, m.conflicts.size) + (check?.message()?.let { ". $it" } ?: "") // T219
+                val json = linkedMapOf<String, Any?>("ok" to true, "peer" to target, "at" to System.currentTimeMillis()) + r.json() +
+                    mapOf("settings" to settings, "clock" to check?.json(), "message" to sentence)
+                remember(json)
+                tracking.refreshUi(sentence)
                 if (m.applied > 0) tracking.refreshOverlay(force = true)
                 return json
             } catch (e: Exception) {
@@ -184,7 +181,7 @@ class AppSync private constructor(private val app: DystopoApp) {
                     linkedMapOf("ok" to false, "peer" to target, "at" to System.currentTimeMillis(), "error" to (refusal ?: "${e.javaClass.simpleName}: ${e.message}")) +
                         (if (refusal != null) mapOf("refused" to "format", "detail" to e.message) else emptyMap()),
                 )
-                tracking.refreshUi(if (refusal != null) "Sync refused: $refusal" else "Sync failed: ${e.message}")
+                tracking.refreshUi(if (refusal != null) "Sync refused: $refusal" else syncFailedSentence(label, e)) // T219: the address only in Sync status
                 throw e
             } finally {
                 running = false
@@ -286,6 +283,9 @@ class AppSync private constructor(private val app: DystopoApp) {
         }
 
         fun shortName(peer: String) = peer.removePrefix("http://").removePrefix("https://").removePrefix("file:")
+
+        /** T219: what the sync sentence calls [peer]: "your server" for a URL (its address is in Sync status), a file peer by its name. */
+        fun peerLabel(peer: String) = if (peer.startsWith("http://") || peer.startsWith("https://")) "your server" else shortName(peer)
 
         val gzip: (ByteArray) -> ByteArray = { b -> ByteArrayOutputStream(b.size / 2 + 64).also { o -> GZIPOutputStream(o).use { it.write(b) } }.toByteArray() }
         val gunzip: (ByteArray) -> ByteArray = { b -> GZIPInputStream(b.inputStream()).use { it.readBytes() } }

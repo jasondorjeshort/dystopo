@@ -37,6 +37,11 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   (`returning`, `headingBack`, `flips`, `flipsAt`, `alongM`, `totalM`, `offM`), the `clock`, `text`, `label`, `ui`.
  *   `POST /tracks/wayback?here=1` is the recording card's "The way back starts here" (the recording's last point; kept per
  *   device, never synced); `POST /tracks/wayback?reset=1` goes back to the rule. 409 when nothing records.
+ * - T219, the Tracks sheet ([io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet]): `POST /tracks/ui?open=1|0` opens or
+ *   closes it (and unfolds the bar), `&more=1|0` its overflow, `&rowMore=<track id or none>` a row's overflow,
+ *   `&importHoldMs=` holds the next import after its start line, for a screenshot; `GET /tracks/ui` answers `open`, `title`,
+ *   `count`, `moreOpen`, `overflow`, `rowMore`, `rowOverflow`, `message`, `rows` (`id`, `name`, `line`, `activity`, `shown`,
+ *   `action`), `saveFile` ([io.github.jasondorjeshort.dystopo.app.SaveFile.json]).
  * - `GET /tracks/settings`; `POST /tracks/settings?gapS=600`: the automatic new-segment gap in
  *   seconds (0 = never split on time), persisted.
  * - `GET /tracks/{id}` (summary, stats, waypoints, T159 `gaps`), `GET /tracks/{id}.gpx` (the GPX export, ids in
@@ -114,6 +119,23 @@ object TrackRoutes {
                 return null
             }
             "GET" to "/tracks" -> return Response.json(overview(t))
+            "GET" to "/tracks/ui" -> return Response.json(sheetJson(t))
+            "POST" to "/tracks/ui" -> { // T219
+                p.s("importHoldMs")?.toLongOrNull()?.let { io.github.jasondorjeshort.dystopo.app.routing.ImportText.holdMs = it.coerceIn(0, 30_000) }
+                app.map.onMain {
+                    val bar = io.github.jasondorjeshort.dystopo.app.tracking.TrackBar
+                    when (p.s("open")) {
+                        "1" -> { bar.open = true; bar.listOpen = true }
+                        "0" -> bar.closeList()
+                    }
+                    when (p.s("more")) {
+                        "1" -> bar.moreOpen = true
+                        "0" -> bar.moreOpen = false
+                    }
+                    p.s("rowMore")?.let { bar.rowMore = it.takeUnless { id -> id == "none" } }
+                }
+                return Response.json(sheetJson(t))
+            }
             "POST" to "/waypoint" -> {
                 val lat = p.d("lat")
                 val lon = p.d("lon")
@@ -334,6 +356,28 @@ object TrackRoutes {
         } catch (e: IllegalArgumentException) {
             Response.json(mapOf("error" to "import failed: ${e.message}"), 400)
         }
+    }
+
+    /** T219: `GET /tracks/ui`: the Tracks sheet as drawn. */
+    private fun sheetJson(t: Tracking): Map<String, Any?> = DystopoApp.instance.map.onMain {
+        val bar = io.github.jasondorjeshort.dystopo.app.tracking.TrackBar
+        val ui = t.ui
+        val units = AppSettings.units
+        linkedMapOf(
+            "open" to bar.listOpen, "title" to io.github.jasondorjeshort.dystopo.app.tracking.tracksTitle(ui.tracks.size), "count" to ui.tracks.size,
+            "moreOpen" to bar.moreOpen, "overflow" to listOf("Sync now", "Sync status", "Share"), "rowMore" to bar.rowMore,
+            "rowOverflow" to listOf("Profile", "Report", io.github.jasondorjeshort.dystopo.app.tracking.EXPORT_GPX),
+            "message" to ui.message, "importOpen" to bar.importOpen,
+            "rows" to ui.tracks.map { s ->
+                val distance = (ui.distances[s.id] ?: ui.distanceM.takeIf { s.id == ui.activeId })?.let { io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(it, units) }
+                linkedMapOf(
+                    "id" to s.id, "name" to s.name,
+                    "line" to io.github.jasondorjeshort.dystopo.app.tracking.trackRowLine(io.github.jasondorjeshort.dystopo.app.trips.shortDate(s.createdAt), distance, s.recording),
+                    "activity" to s.activity?.let { io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.label(it) }, "shown" to (s.id == ui.shownId), "action" to "Go",
+                )
+            },
+            "saveFile" to io.github.jasondorjeshort.dystopo.app.SaveFile.json(),
+        )
     }
 
     private fun waypoint(t: Tracking, trackId: String?, p: Params): Response {

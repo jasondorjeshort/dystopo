@@ -586,7 +586,7 @@ fun RouteControls() {
                         for (item in more.items) OverflowItem(item) {
                             RouteSession.moreOpen = false
                             when (item.id) {
-                                CardActions.EXPORT_GPX.id -> Thread { RouteSession.exportGpx() }.start() // T219 switches this line to the save dialog
+                                CardActions.EXPORT_GPX.id -> plan?.let { p -> io.github.jasondorjeshort.dystopo.app.SaveFile.route(p, RouteSession.from, RouteSession.to) } // T219: the system's save dialog
                             }
                         }
                     }
@@ -596,7 +596,7 @@ fun RouteControls() {
                     for (a in actions) when (a.id) {
                         CardActions.GO.id -> CardAction(a, row) { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
                         // T60's Keep: stored as a trip (synced, its corridor offline), clearing the plan.
-                        CardActions.SAVE.id -> CardAction(a, row) { plan?.let { p -> RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p) } } }
+                        CardActions.SAVE.id -> CardAction(a, row) { plan?.let { p -> val f = RouteSession.from; val t = RouteSession.to; RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p, from = f, to = t) } } } // T219: the ends name it
                         CardActions.TURN_ON.id -> CardAction(a, row) {
                             when (RouteSession.locationState()) {
                                 "noPermission" -> askLocation.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
@@ -1064,7 +1064,7 @@ private fun CardAction(item: CardActions.Item, modifier: Modifier, onClick: () -
 
 /** T217: the overflow's three dots, named for a screen reader and `uiautomator dump` by [label]. */
 @Composable
-private fun OverflowDots(label: String, onClick: () -> Unit) {
+internal fun OverflowDots(label: String, onClick: () -> Unit) {
     Box(
         Modifier.size(ACTION_TARGET).semantics { contentDescription = label }.clickable(onClick = onClick).drawBehind {
             val r = 2.dp.toPx()
