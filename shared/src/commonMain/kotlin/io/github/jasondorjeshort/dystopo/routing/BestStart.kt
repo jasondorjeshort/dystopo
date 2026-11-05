@@ -44,6 +44,9 @@ enum class BestStartKind(val key: String) {
     /** No start meets the aim's light at all: "No terrain shade along this route today". */
     NONE("none"),
 
+    /** T218: every start that finishes in time is as sunny (or as shady) as any other: no line, there is nothing to choose. */
+    ANY("any"),
+
     /** No daylight to sweep (no sunrise or sunset that day): no line. */
     NO_DAY("noDay"),
 }
@@ -144,7 +147,7 @@ class BestStartResult(
         },
         "marginMin" to marginMin, "latestStartMs" to latestStartMs, "latestStart" to latestStartMs?.let { clock?.invoke(it) },
         "rule" to linkedMapOf(
-            "stepMin" to BestStart.STEP_MIN, "refineMin" to BestStart.REFINE_MIN, "tieMin" to BestStart.TIE_MIN,
+            "stepMin" to BestStart.STEP_MIN, "refineMin" to BestStart.REFINE_MIN, "tieMin" to BestStart.TIE_MIN, "startByWithinMin" to BestStart.START_BY_WITHIN_MIN,
             "hotDayC" to HotDay.THRESHOLD_C, "objective" to "the fraction of walking time in ${if (aim == BestStartAim.SHADE) "terrain shade" else "sun"}",
         ),
         "table" to candidates.map { it.json(clock) },
@@ -161,11 +164,14 @@ class BestStartResult(
  *   of the grid's pick.
  * - **The objective**: the minutes in the aim's light (the stretches' minutes, so what the navigation card would say),
  *   that is the fraction of the walking time, which the pace fixes whatever the start. Starts within [TIE_MIN] minutes of
- *   the best tie; among them the walker's own start, else the nearest to it (the earliest without one).
- * - **The deadline** ([Deadline.resolve], the terrain sunset at the route's end): a start whose walk ends after it less
- *   [marginMin] is excluded (the turn-back clock's margin). When a start that misses it has more of the light and the
- *   latest start that meets it is as good as any that does, or no start does, the line is the deadline's ("Start by 6:30
- *   to finish before terrain sunset").
+ *   the best tie; among them the walker's own start, else the nearest to it (the earliest without one). T218: when every
+ *   start that meets the deadline ties, the kind is [BestStartKind.ANY] and there is no line.
+ * - **The deadline** ([Deadline.resolve], T218: the one the turn-back clock counts to, by the `turnDeadline` setting at the
+ *   route's end): a start whose walk ends after it less [marginMin] is excluded (the turn-back clock's margin). When a
+ *   start that misses it has more of the light and the latest start that meets it is as good as any that does, or no
+ *   start does, the line is the deadline's ("Start by 6:30 to finish before sunset"). T218: only when the finish at the
+ *   walker's own start (else at the start chosen) is within [START_BY_WITHIN_MIN] of the deadline or past it; further off,
+ *   the line is the one it would be with no deadline binding, a start that still meets it.
  * - **The terrain** is read once for every start ([sharedWindows]: the samples' places do not move with the start, so the
  *   fine layer is the same for all; the coarse layer is the union of each start's reach toward its sun, a zoom coarser
  *   only when that union would pass [ShadeAlong.MAX_CELLS]); a start whose rays reach past it falls back to
@@ -185,6 +191,13 @@ object BestStart {
 
     /** Below this many minutes in the aim's light at the best start, there is nothing to suggest ([BestStartKind.NONE]). */
     const val MIN_SHOWN_MIN = 1.0
+
+    /**
+     * T218: "Start by" shows when the finish is within this many minutes of the deadline or past it. The project's own
+     * number, stated in the help text: no source gives a margin, the nearest precedents being user-set lead alerts (the
+     * survey `clock-times-and-deadlines.md`, section (c)).
+     */
+    const val START_BY_WITHIN_MIN = 120
 
     /** The deadline's latest start is shown on this many minutes. */
     const val LATEST_ROUND_MIN = 5
@@ -311,12 +324,17 @@ object BestStart {
         val ok = done.values.filter { it.deadlineMet }
         val bestOk = ok.maxOfOrNull { it.minutes(aim) } ?: 0.0
         val latestOk = ok.maxByOrNull { it.startMs }
+        // T218: how near the deadline the walker's own start (else the one chosen) finishes decides whether "Start by" shows.
+        val deadlineAt = deadline?.atMs
+        val near = deadlineAt != null && chosen != null && (currentMs ?: chosen.startMs) + walkMs >= deadlineAt - START_BY_WITHIN_MIN * MIN_MS
         var kind = when {
             chosen == null -> if (latest != null) BestStartKind.DEADLINE else BestStartKind.NO_DAY
             bestAll < MIN_SHOWN_MIN -> BestStartKind.NONE
             // The deadline binds: a start that misses it has more of the light, and the latest start that meets it is as
             // good as any that does (the light grows toward the deadline, or no start in time has any).
-            bestAll > bestOk + TIE_MIN && latestOk != null && latestOk.minutes(aim) >= bestOk - TIE_MIN -> BestStartKind.DEADLINE
+            near && bestAll > bestOk + TIE_MIN && latestOk != null && latestOk.minutes(aim) >= bestOk - TIE_MIN -> BestStartKind.DEADLINE
+            // T218: nothing to choose between the starts that finish in time.
+            ok.size >= 2 && bestOk - ok.minOf { it.minutes(aim) } <= TIE_MIN -> BestStartKind.ANY
             chosen.startMs == currentMs -> BestStartKind.CURRENT
             else -> BestStartKind.PICK
         }

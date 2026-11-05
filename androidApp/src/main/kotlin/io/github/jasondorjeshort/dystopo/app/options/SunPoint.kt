@@ -15,20 +15,23 @@ import java.util.TimeZone
 object SunPoint {
     /**
      * One answer: [state] is `working`, `done`, `noData` (no elevation under the point) or `error`; [line] what the card
-     * shows; [day] the terrain day behind it.
+     * shows (T218: with a [day] written when it is read, in the phone's 12/24-hour form then); [day] the terrain day behind it.
      */
     class Answer(
         val lat: Double,
         val lon: Double,
         val date: LocalDate,
         val state: String,
-        val line: String,
+        private val text: String?,
         val day: Sun.TerrainDay? = null,
         val zone: TimeZone = TimeZone.getDefault(),
         val sweepMs: Double? = null,
         val totalMs: Double? = null,
         val horizonZoom: Int? = null,
+        private val datePrefix: String? = null,
     ) {
+        val line: String get() = text ?: SunClock.line(day!!, zone, datePrefix)
+
         fun json(): Map<String, Any?> = linkedMapOf(
             "state" to state, "line" to line, "date" to date.toString(), "zone" to zone.id,
             "sunriseMs" to day?.sunriseMs, "sunsetMs" to day?.sunsetMs,
@@ -62,8 +65,8 @@ object SunPoint {
                 ?: return Answer(lat, lon, date, "noData", NO_DATA, zone = zone)
             val prefix = if (date == LocalDate.now(zone.toZoneId())) null else SunClock.dateLabel(date)
             Answer(
-                lat, lon, date, "done", SunClock.line(a.day, zone, prefix), a.day, zone,
-                sweepMs = a.sweepMs, totalMs = Math.round((System.nanoTime() - t0) / 1e5) / 10.0, horizonZoom = a.zoom,
+                lat, lon, date, "done", null, a.day, zone,
+                sweepMs = a.sweepMs, totalMs = Math.round((System.nanoTime() - t0) / 1e5) / 10.0, horizonZoom = a.zoom, datePrefix = prefix,
             )
         } catch (e: Exception) {
             android.util.Log.w("Dystopo", "sun point answer failed", e)

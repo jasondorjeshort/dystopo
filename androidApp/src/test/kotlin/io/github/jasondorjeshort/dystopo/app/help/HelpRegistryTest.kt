@@ -248,4 +248,21 @@ class HelpRegistryTest {
         assertEquals(null, HelpUi.openKey)
         assertEquals(null, HelpUi.popup)
     }
+
+    // T218: POST /help/close takes back the glance view that POST /help/open brought up, and the start line's help states its number.
+    @Test
+    fun closeTakesBackTheGlanceViewOpenOpened() {
+        val none = HelpScreens(settings = false, settingsGroup = null, areas = false, trackBar = false, longPress = false, storage = false)
+        val open = none.copy(glance = true)
+        assertEquals(listOf(HelpScreens.GLANCE), none.opened(open))
+        assertEquals(listOf(HelpScreens.GLANCE), HelpScreens.toClose(none, listOf(HelpScreens.GLANCE), open))
+        assertEquals(emptyList(), HelpScreens.toClose(open, listOf(HelpScreens.GLANCE), open), "open before the first /help/open: stays")
+    }
+
+    @Test
+    fun theStartLinesHelpStatesTheStartByRule() {
+        val text = HelpRegistry.byKey("route.bestStart")!!.text(io.github.jasondorjeshort.dystopo.render.ContourUnits.METERS)
+        assertTrue("within ${io.github.jasondorjeshort.dystopo.routing.BestStart.START_BY_WITHIN_MIN / 60} hours" in text, text)
+    }
+    // end T218
 }

@@ -122,4 +122,27 @@ class GlanceTextTest {
         assertEquals("elevation 1650 m · Set at Camp Muir", StripText.line(items.take(1), "Set at Camp Muir"))
         assertNull(StripText.line(emptyList()))
     }
+
+    /** T218: the deadline line reserves the clock's longest form, in both its value and its caption. */
+    @Test
+    fun theDeadlineLineHoldsTheLongestClock() {
+        val s = io.github.jasondorjeshort.dystopo.nav.ClockText.SPACE
+        val longest = io.github.jasondorjeshort.dystopo.nav.ClockText.LONGEST
+        val m = GlanceFit.Measure { text, px, _ -> text.length * px * 0.6f to px * 1.2f }
+        val line = GlanceText.deadline("turn", "red", 0L, 0L, 0L) { longest }
+        assertEquals(longest, line.value)
+        assertEquals(longest, line.valueAlso)
+        val v = 100f
+        assertTrue(GlanceFit.lineSize(line, v, m).first >= longest.length * v * 0.6f)
+        val ahead = GlanceText.deadline("ahead", "normal", 3_600_000L, 0L, 0L) { longest }
+        assertEquals("turn back by 12:59${s}PM", ahead.caption)
+        assertEquals(ahead.caption, ahead.captionAlso)
+        // Fitted to a narrow column, what it can draw fits, in each state.
+        val fit = GlanceFit.fit(listOf(line, ahead), 320f, 900f, 12f, 320f, m)
+        assertTrue(fit.fits)
+        for (l in listOf(line, ahead)) {
+            assertTrue(l.value.length * fit.valuePx * 0.6f <= 320f, l.value)
+            assertTrue(l.caption.length * fit.captionPx * 0.6f <= 320f, l.caption)
+        }
+    }
 }

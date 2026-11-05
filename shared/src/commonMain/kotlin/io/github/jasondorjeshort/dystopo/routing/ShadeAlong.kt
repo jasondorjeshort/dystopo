@@ -625,7 +625,10 @@ object ShadeText {
      * (about 1 h 10 min in shade)", "Start at 10:00 for the most sun", "Start by 6:30 to finish before terrain sunset"
      * ("before sunset" when the flat sunset counts), "Your start time is the shadiest" (or "the sunniest"), "No terrain
      * shade along this route today" ("No sun ..."); " tomorrow" after the time when the day swept is tomorrow. [clock]
-     * formats a time ("7:30"). Null with no daylight to sweep.
+     * formats a time ("7:30 AM", [io.github.jasondorjeshort.dystopo.nav.ClockText]). Null with no daylight to sweep, and
+     * T218 when every start is as good ([BestStartKind.ANY]; the survey: staying silent is the low-risk default). T218: the
+     * deadline is the turn-back clock's, and a typed one is named ("Start by 6:30 AM to finish before your 3:00 PM
+     * turn-back time"), so the line and the clock never disagree.
      */
     fun bestStartLine(r: BestStartResult, clock: (Long) -> String): String? {
         val day = if (r.tomorrow) " tomorrow" else ""
@@ -637,9 +640,24 @@ object ShadeText {
                 else "Start at ${clock(p.startMs)}$day for the most sun"
             }
             BestStartKind.CURRENT -> if (shade) "Your start time is the shadiest" else "Your start time is the sunniest"
-            BestStartKind.DEADLINE -> r.latestStartMs?.let { "Start by ${clock(it)}$day to finish before ${if (r.byTerrain) "terrain sunset" else "sunset"}" }
+            BestStartKind.DEADLINE -> r.latestStartMs?.let { "Start by ${clock(it)}$day to finish before ${deadlineWords(r, clock)}" }
             BestStartKind.NONE -> (if (shade) "No terrain shade along this route " else "No sun along this route ") + if (r.tomorrow) "tomorrow" else "today"
-            BestStartKind.NO_DAY -> null
+            BestStartKind.ANY, BestStartKind.NO_DAY -> null
+        }
+    }
+
+    /** T218: what the card's line says until the sweep answers. */
+    const val BEST_START_WORKING = "Working out the best start time"
+
+    /** T218: the deadline as the "Start by" line names it. */
+    private fun deadlineWords(r: BestStartResult, clock: (Long) -> String): String {
+        val d = r.deadline
+        val at = d?.atMs
+        return when {
+            d?.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TIME && at != null -> "your ${clock(at)} turn-back time"
+            d?.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.CIVIL -> "the end of civil twilight"
+            r.byTerrain -> "terrain sunset"
+            else -> "sunset"
         }
     }
 

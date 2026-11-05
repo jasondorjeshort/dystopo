@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.app.ClockFormat
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
@@ -45,15 +46,17 @@ import java.util.concurrent.TimeUnit
  * T209: the start time for a planned route on the phone, over `shared`'s [BestStart]: the start of today (from now on;
  * tomorrow once today has no start that finishes in time) with the most terrain shade on a hot day and the most sun
  * otherwise, as one line on the route card ([BestStartLine], [ShadeText.bestStartLine]) and `GET /route` `bestStart`.
- * Never stored. One worker thread below normal priority, as [NavShade]'s; the last [CACHE] answers are kept by the route's
- * points, its mode, the aim and the local date, so the card and the debug route share one computation per plan (the
- * [RouteWater] and [RouteExposure] pattern).
+ * Never stored. One worker thread at normal priority (T218, the emulator, Paradise to Longmire, plan to line, three fresh
+ * processes each: 3.5 s below normal against 3.2 s, and 3.7 to 5.3 s against 3.1 to 3.3 s with the map moving); the last
+ * [CACHE] answers are kept by the route's points, its mode, the aim, the local date and the deadline, so the card and the
+ * debug route share one computation per plan (the [RouteWater] and [RouteExposure] pattern).
  *
  * - **The terrain**: the DEM pack under the route's start ([io.github.jasondorjeshort.dystopo.app.options.ShadeService.pyramidAt],
  *   as navigation's terrain shade reads it), read once for every start.
  * - **The pace**: navigation's ([TurnPace.of] the mode's [CostModel], T164's fitted pace when the user has one).
- * - **The deadline**: the terrain sunset at the route's end ([Deadline.resolve] over the point answer of that day), less
- *   the turn-back margin (`turnMarginMin`), as the turn-back clock would count it.
+ * - **The deadline**: T218, the one the turn-back clock counts to (`turnDeadline`, [Deadline.resolve] at the route's end:
+ *   sunset, civil twilight, a typed time, or the terrain sunset over the point answer of that day), less the turn-back
+ *   margin (`turnMarginMin`).
  * - **The aim**: [HotDay] at the route's lowest point, from the chosen station's temperature lapsed there
  *   ([PressureSource.stationTemperature], at most 3 hours old; none is not a hot day). Debug: `POST /nav/shade` `at=` and
  *   `tempC=` ([NavShade.clockOffsetMs], [NavShade.syntheticTempC]) apply here too, so an emulator can plan a July morning.
@@ -76,21 +79,22 @@ object RouteBestStart {
     /**
      * The cache's key: everything the sweep reads that can change under the same plan. [marginMin] is the turn-back
      * margin the deadline is counted with (`turnMarginMin`; the verifier's FIX: without it a changed margin kept the old
-     * line); `turnDeadline` is not read (the sweep always counts to the terrain sunset).
+     * line) and [deadline] the `turnDeadline` value (T218). The clock's 12/24-hour form is not in it: the times are
+     * formatted when they are read.
      */
     internal data class Key(
         val points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>, val mode: TravelMode, val aim: BestStartAim,
-        val date: String, val packs: Int, val marginMin: Int,
+        val date: String, val packs: Int, val marginMin: Int, val deadline: String,
     )
 
-    /** The key of [plan]'s sweep at [nowMs] (its local date) for [aim], [packs] (the pack set's identity) and [marginMin]. */
-    internal fun keyOf(plan: PlannedRoute, aim: BestStartAim, nowMs: Long, packs: Int, marginMin: Int): Key =
-        Key(plan.route.points, plan.mode, aim, dateKey(nowMs), packs, marginMin)
+    /** The key of [plan]'s sweep at [nowMs] (its local date) for [aim], [packs] (the pack set's identity), [marginMin] and [deadline]. */
+    internal fun keyOf(plan: PlannedRoute, aim: BestStartAim, nowMs: Long, packs: Int, marginMin: Int, deadline: String = DeadlineSetting.DEFAULT): Key =
+        Key(plan.route.points, plan.mode, aim, dateKey(nowMs), packs, marginMin, deadline)
 
     private const val CACHE = 6
     private const val TAG = "DystopoBestStart"
 
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-best-start").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-best-start").apply { isDaemon = true; priority = Thread.NORM_PRIORITY } }
     private val cache = object : LinkedHashMap<Key, Future<Result>>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Future<Result>>?) = size > CACHE
     }
@@ -126,10 +130,11 @@ object RouteBestStart {
         val now = NavShade.now()
         val packs = runCatching { System.identityHashCode(app.tiles.packs) }.getOrDefault(0)
         val margin = AppSettings.turnMarginMin
-        val key = keyOf(plan, aim, now, packs, margin)
+        val deadline = AppSettings.turnDeadline
+        val key = keyOf(plan, aim, now, packs, margin, deadline)
         synchronized(cache) {
             cache[key]?.let { return it }
-            val f = worker.submit(Callable { compute(plan, path, aim, temp, now, margin) })
+            val f = worker.submit(Callable { compute(plan, path, aim, temp, now, margin, deadline) })
             cache[key] = f
             return f
         }
@@ -141,7 +146,7 @@ object RouteBestStart {
     /** Waits up to [ms] for the result (off the main thread); null for drive or on a timeout. */
     fun await(plan: PlannedRoute, ms: Long = 10_000): Result? = runCatching { start(plan)?.get(ms, TimeUnit.MILLISECONDS) }.getOrNull()
 
-    private fun compute(plan: PlannedRoute, path: NavPath, aim: BestStartAim, temp: Map<String, Any?>, now: Long, marginMin: Int): Result {
+    private fun compute(plan: PlannedRoute, path: NavPath, aim: BestStartAim, temp: Map<String, Any?>, now: Long, marginMin: Int, deadline: String): Result {
         val t0 = SystemClock.elapsedRealtime()
         try {
             val first = path.points.first()
@@ -149,9 +154,11 @@ object RouteBestStart {
             val pyramid = shade.pyramidAt(first.lat, first.lon)
                 ?: return Result(null, SystemClock.elapsedRealtime() - t0, temp, "noData")
             val end = path.points.last()
+            val setting = DeadlineSetting.parse(deadline) ?: DeadlineSetting.SUNSET
+            val terrain = setting.kind == DeadlineKind.TERRAIN // only that form needs the horizon sweep
             val deadlineFor: (Long) -> Deadline = { dayMs ->
-                val a = runCatching { shade.pointAnswer(end.lat, end.lon, dayMs) }.getOrNull()
-                Deadline.resolve(DeadlineSetting(DeadlineKind.TERRAIN), end.lat, end.lon, dayMs, 0L, a?.day, noTerrainData = a == null)
+                val a = if (terrain) runCatching { shade.pointAnswer(end.lat, end.lon, dayMs) }.getOrNull() else null
+                Deadline.resolve(setting, end.lat, end.lon, dayMs, localMidnight(dayMs), a?.day, noTerrainData = terrain && a == null)
             }
             val timing = TurnAround(path, TurnPace.of(CostModel(plan.mode)))
             val r = BestStart.suggest(
@@ -171,22 +178,31 @@ object RouteBestStart {
 
     private fun io.github.jasondorjeshort.dystopo.routing.BestStartStats.msPerStart(): Long = if (starts > 0) (marchMs / starts).toLong() else 0L
 
-    /** `GET /route` `bestStart` (waits up to [waitMs]): `state` `ready|computing|noRoute|mode|noData|error`, the card's `line`, the sweep. */
+    /**
+     * `GET /route` `bestStart` (waits up to [waitMs]): `state` `ready|computing|noRoute|mode|noData|error`, the card's `line`
+     * (T218: its working line while `computing`; null with `kind` `any`), the sweep.
+     */
     fun json(plan: PlannedRoute?, waitMs: Long = 10_000): Map<String, Any?> {
         if (plan == null || plan.route.points.size < 2) return linkedMapOf("state" to "noRoute")
         if (!applies(plan.mode)) return linkedMapOf("state" to "mode", "mode" to plan.mode.label)
-        val r = await(plan, waitMs) ?: return linkedMapOf("state" to "computing")
+        val r = await(plan, waitMs) ?: return linkedMapOf("state" to "computing", "line" to ShadeText.BEST_START_WORKING)
         return linkedMapOf<String, Any?>(
             "state" to r.state, "line" to r.line, "ms" to r.ms, "error" to r.error, "temperature" to r.temperature,
             "now" to clock(NavShade.now()), "clockOffsetMs" to NavShade.clockOffsetMs, "computed" to computed,
         ) + (r.best?.json(::clock) ?: emptyMap())
     }
 
-    /** The card's clock ("7:30"), the phone's zone, as the turn-back clock's. */
-    fun clock(ms: Long): String {
-        val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
-        return "%d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-    }
+    /** The card's clock (T218: "7:30 AM" or "07:30", as the phone is set), the phone's zone, as the turn-back clock's. */
+    fun clock(ms: Long): String = ClockFormat.text(ms)
+
+    /** The start of the phone's local day of [ms]: a typed deadline is that clock time on that day. */
+    private fun localMidnight(ms: Long): Long = java.util.Calendar.getInstance().apply {
+        timeInMillis = ms
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
 
     private fun dateKey(ms: Long): String {
         val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
@@ -204,23 +220,28 @@ private const val RECHECK_MS = 5_000L
 /**
  * T209: the route card's start-time line under the route's terrain line: "Start at 7:30 for the most terrain shade (about
  * 1 h 10 min in shade)", "Start at 10:00 for the most sun", "Start by 6:30 to finish before terrain sunset", "Your start
- * time is the shadiest" ([ShadeText.bestStartLine]), with its help icon. Nothing until the sweep answers, for drive
- * routes, or without elevation data under the route. It follows a changed turn-back margin, hot-day reading or date
- * within [RECHECK_MS] of the new sweep's answer.
+ * time is the shadiest" ([ShadeText.bestStartLine]), with its help icon. T218: "Working out the best start time" until
+ * the sweep answers. Nothing for drive routes, without elevation data under the route, or when every start is as good
+ * ([io.github.jasondorjeshort.dystopo.routing.BestStartKind.ANY]). It follows a changed turn-back margin, deadline,
+ * hot-day reading or date within [RECHECK_MS] of the new sweep's answer, and the phone's 12/24-hour setting within [RECHECK_MS].
  */
 @Composable
 internal fun BestStartLine(plan: PlannedRoute) {
     if (!RouteBestStart.applies(plan.mode)) return
     var res by remember(plan) { mutableStateOf(RouteBestStart.cached(plan)) }
+    var text by remember(plan) { mutableStateOf(res?.line) } // read again on each round: the clock's form may have changed
     // Asked again every few seconds: a changed margin, aim or date is a new key (a new sweep), and the line follows it
     // (the verifier's FIX: the line kept the old margin's answer); an unchanged key answers from the cache at once.
     LaunchedEffect(plan) {
         while (true) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteBestStart.await(plan, 120_000) }?.let { res = it }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { RouteBestStart.await(plan, 120_000) }?.let {
+                res = it
+                text = it.line
+            }
             kotlinx.coroutines.delay(RECHECK_MS)
         }
     }
-    val line = res?.line ?: return
+    val line = (if (res == null) ShadeText.BEST_START_WORKING else text) ?: return
     Row(verticalAlignment = Alignment.CenterVertically) {
         BasicText(line, style = TextStyle(color = BestStartInk, fontSize = 13.sp), modifier = Modifier.weight(1f, fill = false))
         HelpIcon("route.bestStart")
@@ -232,8 +253,9 @@ private const val HOT_C = HotDay.THRESHOLD_C
 /** T209: the start-time line's help text (`HelpRegistry`), here beside its icon. */
 internal val BEST_START_HELP: List<HelpText> = listOf(
     HelpText("route.bestStart", "Start time", "The map: route card", needs = "a planned hike or bike route") {
-        "The start time today with the most terrain shade along the route on a hot day, else the most sun, keeping starts " +
-            "that finish before terrain sunset with your turn-back margin. A hot day is ${HOT_C.toInt()} °C (${Math.round(HOT_C * 9 / 5 + 32)} °F) or more at the " +
-            "route's lowest point, from the weather station. Trees are not counted."
+        "The start with the most terrain shade on a hot day (${HOT_C.toInt()} °C, ${Math.round(HOT_C * 9 / 5 + 32)} °F, at the route's lowest point, from the " +
+            "weather station), else the most sun, finishing before your Turn back by time and margin. \"Start by\" shows " +
+            "only when you would finish within ${BestStart.START_BY_WITHIN_MIN / 60} hours of it or after it. No line when all starts are equal. " +
+            "Trees are not counted."
     },
 )

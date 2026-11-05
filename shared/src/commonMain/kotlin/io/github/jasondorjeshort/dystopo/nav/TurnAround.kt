@@ -226,7 +226,10 @@ data class TurnClock(
     val state: TurnState,
     val colour: String,
 ) {
-    /** The card's line: "Turn back by 14:10", "Turn back now, out by 18:52", "Out by 18:05". [clock] formats a time. */
+    /**
+     * The card's line: "Turn back by 14:10", "Turn back now, out by 18:52", "Out by 18:05". [clock] formats a time as the
+     * phone's setting asks ([ClockText]).
+     */
     fun text(clock: (Long) -> String): String = when (state) {
         TurnState.AHEAD, TurnState.MARGIN -> "Turn back by ${clock(turnBackMs!!)}"
         TurnState.TURN -> "Turn back now, out by ${clock(arrivalMs)}"
@@ -237,9 +240,24 @@ data class TurnClock(
     /**
      * The label under it: "Sunset 19:12, flat horizon, 30 min margin, standard pace". T193, a terrain deadline shows
      * both sunsets: "Sun behind the ridge 16:12, flat horizon 17:42, ..." when the terrain's counts, else the flat one
-     * with the reason ([terrainNote]).
+     * with the reason ([terrainNote]). T218: past the turn-back time the late clause comes first ([lateClause]).
      */
-    fun label(clock: (Long) -> String): String = "${deadlineText(clock)}, $marginMin min margin, $paceLabel"
+    fun label(clock: (Long) -> String): String =
+        (lateClause(clock)?.let { "$it. " } ?: "") + "${deadlineText(clock)}, $marginMin min margin, $paceLabel"
+
+    /** T218: whole minutes past the turn-back time while the clock says to turn back now; null otherwise, and in its first minute. */
+    val lateMin: Long?
+        get() = if (state == TurnState.TURN) turnBackMs?.let { (nowMs - it) / 60_000L }?.takeIf { it >= 1 } else null
+
+    /**
+     * T218: how late the walker is, as its own clause on the card: "12 min late; the turn-back time was 3:00 PM"
+     * ("1 h 5 min late; ..."). Null before a whole minute has passed. The project's own rule: no source documents a
+     * passed deadline (the survey `clock-times-and-deadlines.md`, section (b)).
+     */
+    fun lateClause(clock: (Long) -> String): String? = lateMin?.let { m ->
+        val amount = if (m < 60) "$m min" else "${m / 60} h" + (if (m % 60 != 0L) " ${m % 60} min" else "")
+        "$amount late; the turn-back time was ${clock(turnBackMs!!)}"
+    }
 
     /** T193: the label's first part, the deadline alone ("Sun behind the ridge 16:12, flat horizon 17:42"). */
     fun deadlineText(clock: (Long) -> String): String = deadline.atMs?.let { at ->
@@ -267,15 +285,20 @@ data class TurnClock(
         TerrainSunset.BEHIND, null -> null
     }
 
-    /** The one spoken line, at the margin: "Turn back by 14:10 to be out by sunset." */
+    /**
+     * The one spoken line: at the margin "Turn back by 14:10 to be out by sunset."; T218, once the time has come (a late
+     * start reaches [TurnState.TURN] first) "Turn back now to be out by 18:52.", the arrival the card shows, never "by" a
+     * time already past.
+     */
     fun spoken(clock: (Long) -> String): String {
+        if (state == TurnState.TURN || (turnBackMs != null && turnBackMs <= nowMs)) return "Turn back now to be out by ${clock(arrivalMs)}."
         val by = when (deadline.kind) {
             DeadlineKind.SUNSET -> "sunset"
             DeadlineKind.TERRAIN -> if (deadline.terrain == TerrainSunset.BEHIND) "the time the sun goes behind the ridge" else "sunset" // T193
             DeadlineKind.CIVIL -> "the end of twilight"
             DeadlineKind.TIME -> deadline.atMs?.let(clock) ?: "your time"
         }
-        return "Turn back by ${turnBackMs?.let(clock) ?: "now"} to be out by $by."
+        return (turnBackMs?.let { "Turn back by ${clock(it)}" } ?: "Turn back now") + " to be out by $by."
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
@@ -286,7 +309,7 @@ data class TurnClock(
         ),
         "marginMin" to marginMin, "pace" to paceLabel, "loop" to loop, "alongM" to r1(alongM),
         "retraceS" to retraceS.roundToLong(), "onwardS" to onwardS.roundToLong(), "returnS" to returnS.roundToLong(), "way" to way,
-        "turnBackMs" to turnBackMs, "warnAtMs" to warnAtMs, "arrivalMs" to arrivalMs,
+        "turnBackMs" to turnBackMs, "warnAtMs" to warnAtMs, "arrivalMs" to arrivalMs, "lateMin" to lateMin, // T218
         "arrivalIfTurnedAtMs" to turnBackMs?.let { it + (retraceS * 1000).roundToLong() },
     )
 }

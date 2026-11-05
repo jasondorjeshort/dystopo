@@ -23,6 +23,9 @@ data class GlanceLine(
     val trendSlot: Boolean = false,
     val plusMinusTemplate: String? = plusMinus,
     val otherTemplate: String? = other,
+    /** T218: a second widest caption and value (with no unit) the line must also hold: the fit takes the wider of each. */
+    val captionAlso: String? = null,
+    val valueAlso: String? = null,
 ) {
     /** "1650 m", "↑320 m/h ± 40", "1 h 20 min": the value as one text. */
     val full: String get() = (if (unit.isEmpty()) value else "$value $unit") + (trend?.let { " $it" } ?: "") + (plusMinus?.let { " $it" } ?: "")
@@ -48,9 +51,15 @@ data class GlanceLine(
  * turn-around clock runs (navigating, or a recording's way back) the time to it comes first ([deadline]).
  */
 object GlanceText {
-    /** The widest caption the deadline line shows, and its widest value ("88 h 88" with "min"). */
+    /**
+     * The widest captions the deadline line shows, and its widest values: "88 h 88" with "min", and T218 the clock's
+     * longest form ("12:59 PM"), whichever the phone's setting is, so the line never clips and the type does not change
+     * when the state does.
+     */
     const val DEADLINE_CAPTION_TEMPLATE = "turn back now, out by"
+    val DEADLINE_CAPTION_CLOCK_TEMPLATE = "turn back by ${io.github.jasondorjeshort.dystopo.nav.ClockText.LONGEST}"
     const val DEADLINE_VALUE_TEMPLATE = "88 h 88"
+    const val DEADLINE_CLOCK_TEMPLATE = io.github.jasondorjeshort.dystopo.nav.ClockText.LONGEST
 
     /** The lines in order: the deadline when the clock runs, then the bar's entries. */
     fun lines(items: List<StripItem>, deadline: GlanceLine? = null): List<GlanceLine> =
@@ -65,7 +74,7 @@ object GlanceText {
 
     /**
      * The turn-around clock as a line, from its reading ([state] a `TurnState` key, [colour], [turnBackMs], [arrivalMs])
-     * at [nowMs]; [clock] formats a time as the navigation card does ("14:10"):
+     * at [nowMs]; [clock] formats a time as the navigation card does ("14:10", "2:10 PM"):
      * - before the time (`ahead`, `margin`): "turn back by 14:10" over the time left, "1 h 20 min" (amber in the margin);
      * - at it (`turn`, red): "turn back now, out by" over "18:52";
      * - on the way out (`returning`, `arrival`, `noDeadline`): "out by" over "18:52".
@@ -74,6 +83,7 @@ object GlanceText {
         val base = GlanceLine(
             kind = GlanceLine.DEADLINE, caption = "", value = "", unit = "", colour = colour,
             captionTemplate = DEADLINE_CAPTION_TEMPLATE, valueTemplate = DEADLINE_VALUE_TEMPLATE, unitTemplate = "min",
+            captionAlso = DEADLINE_CAPTION_CLOCK_TEMPLATE, valueAlso = DEADLINE_CLOCK_TEMPLATE,
         )
         return when {
             (state == "ahead" || state == "margin") && turnBackMs != null -> {
@@ -129,13 +139,16 @@ object GlanceFit {
     /** A line's width and height at value size [v]. */
     fun lineSize(l: GlanceLine, v: Float, m: Measure): Pair<Float, Float> {
         val cap = m.size(l.captionTemplate, v * CAPTION, false)
+        val capAlso = l.captionAlso?.let { m.size(it, v * CAPTION, false) }
         val value = m.size(l.valueTemplate, v, true)
+        val valueAlso = l.valueAlso?.let { m.size(it, v, true) }
         var w = value.first
         if (l.unitTemplate.isNotEmpty()) w += m.size(" " + l.unitTemplate, v * UNIT, false).first
         if (l.trendSlot) w += TREND_ARROWS.maxOf { m.size(" $it", v, true).first }
         l.plusMinusTemplate?.let { w += m.size(" $it", v * UNIT, false).first }
         val other = l.otherTemplate?.let { m.size(it, v * OTHER, false) }
-        return maxOf(w, cap.first, other?.first ?: 0f) to (value.second + cap.second + (other?.second ?: 0f))
+        return maxOf(maxOf(w, valueAlso?.first ?: 0f), maxOf(cap.first, capAlso?.first ?: 0f), other?.first ?: 0f) to
+            (maxOf(value.second, valueAlso?.second ?: 0f) + cap.second + (other?.second ?: 0f))
     }
 
     /** Whether [lines] fit [widthPx] by [heightPx] at value size [v] in [cols] columns. */
