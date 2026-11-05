@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -86,11 +85,7 @@ fun TripControls() {
         }
     }
     Box(Modifier.fillMaxSize()) {
-        if (Trips.listOpen) {
-            BackHandler { Trips.listOpen = false }
-            RoutesList()
-            return@Box
-        }
+        if (Trips.listOpen) return@Box // T219: the Routes list is its own sheet ([RoutesSheet])
         if (Trips.editing == null) {
             io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale
                 Box(Modifier.fillMaxSize()) {
@@ -108,11 +103,26 @@ fun TripControls() {
     }
 }
 
+/**
+ * The Routes list. T219: its own line in `MainActivity`, after the map's scale bar, readout, recentre button and credit line,
+ * which drew over its last rows and took their taps; the Tracks sheet stands at the same place.
+ */
+@Composable
+fun RoutesSheet() {
+    if (!Trips.listOpen) return
+    BackHandler { Trips.listOpen = false }
+    Box(Modifier.fillMaxSize()) { RoutesList() }
+}
+
 @Composable
 private fun BoxScope.RoutesList() {
-    // A sheet over the lower part of the map, clear of the search box and the top-right chips.
+    // T219: an import's line is for the sheet it was asked from.
+    DisposableEffect(Unit) { onDispose { io.github.jasondorjeshort.dystopo.app.routing.RouteImportPicker.clearLine() } }
+    // A sheet over the lower part of the map, clear of the search box and the top-right chips. T219: as tall as it needs to be,
+    // up to 70% of the screen (the audit's finding 2: a blank half screen under a short list).
+    val maxHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.7f
     Column(
-        Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.7f)
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = maxHeight)
             .background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).navigationBarsPadding().padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -127,7 +137,7 @@ private fun BoxScope.RoutesList() {
         val items = Trips.list
         if (items.isEmpty()) BasicText(ROUTES_EMPTY, style = TextStyle(color = Ink, fontSize = 14.sp))
         else BasicText("Routes sync with your other devices.", style = TextStyle(color = Ink.copy(alpha = 0.7f), fontSize = 12.sp))
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (r in items) RouteRow(r)
         }
     }
@@ -141,7 +151,8 @@ private fun RouteRow(r: RouteListItem) {
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            BasicText(r.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // T219: two lines: a place-to-place name is long.
+            BasicText(r.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
             // T219: the card's figures (T217's formatter), then the mode by its own name (T108).
             BasicText(
                 io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(r.distanceM, r.ascentM, r.descentM, r.timeS, TravelMode.of(r.mode)) + " " + TravelMode.labelOf(r.mode),
@@ -173,12 +184,12 @@ private fun TripCard(modifier: Modifier) {
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            BasicText(p.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            BasicText(p.name.ifBlank { "Route" }, style = TextStyle(color = Violet, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Action("Done") { Trips.close() }
         }
         BasicText(
-            UnitFormat.distance(s.distanceM, u) + (s.ascentM?.let { " · +" + UnitFormat.elevation(it, u) + " −" + UnitFormat.elevation(s.descentM ?: 0.0, u) } ?: "") +
-                " · " + RouteSummary.hm(s.timeS) + " " + TravelMode.labelOf(s.mode), // T108: an unknown mode by its own name
+            // T219: the figures of the route card and the list (T217's formatter); T108: an unknown mode by its own name.
+            io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(s.distanceM, s.ascentM, s.descentM, s.timeS, TravelMode.of(s.mode)) + " " + TravelMode.labelOf(s.mode),
             style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold),
         )
         val known = TravelMode.known(s.mode)

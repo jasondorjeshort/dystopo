@@ -45,6 +45,15 @@ class TrackSentencesTest {
     }
 
     @Test
+    fun nothingToImportIsFoundBehindTheStoresThread() {
+        // Tracking.call hands a GpxException on as the cause (it read "Could not read" on the phone until this looked there).
+        val bad = io.github.jasondorjeshort.dystopo.gpx.GpxException("no tracks or waypoints")
+        assertTrue(ImportText.nothingToImport(bad))
+        assertTrue(ImportText.nothingToImport(RuntimeException(java.util.concurrent.ExecutionException(bad))))
+        assertFalse(ImportText.nothingToImport(java.io.IOException("cannot open")))
+    }
+
+    @Test
     fun whatAnExportSays() {
         assertEquals("Saved Paradise to Panorama Point as a GPX file", saved("Paradise to Panorama Point"))
         assertEquals("Could not save Walk: no room", saveFailed("Walk", "no room"))

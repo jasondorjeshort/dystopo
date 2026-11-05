@@ -62,15 +62,14 @@ object RouteImportPicker {
             val text = app.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: error("cannot open the file")
             try {
                 routes(text, name, file)
-            } catch (e: io.github.jasondorjeshort.dystopo.gpx.GpxException) {
+            } catch (e: Exception) {
+                if (!ImportText.nothingToImport(e)) throw e
                 tracksInstead(text, name, file)
             }
-        } catch (e: io.github.jasondorjeshort.dystopo.gpx.GpxException) { // neither routes nor tracks, or not GPX at all
-            say(ImportText.NOTHING)
-            linkedMapOf("file" to name, "error" to ImportText.NOTHING, "detail" to e.message)
         } catch (e: Exception) {
-            Log.w(RoutePlanner.TAG, "route import failed", e)
-            val msg = ImportText.failed(file)
+            val nothing = ImportText.nothingToImport(e) // neither routes nor tracks, or not GPX at all
+            if (!nothing) Log.w(RoutePlanner.TAG, "route import failed", e)
+            val msg = if (nothing) ImportText.NOTHING else ImportText.failed(file)
             say(msg)
             linkedMapOf("file" to name, "error" to msg, "detail" to (e.message ?: e.javaClass.simpleName))
         }
@@ -106,6 +105,11 @@ object RouteImportPicker {
         private set
 
     private fun say(text: String) = main.post { line = text }
+
+    /** Main thread: the Routes list closed. */
+    fun clearLine() {
+        line = null
+    }
 
     fun json(): Map<String, Any?> = linkedMapOf("requests" to requests, "launches" to launches, "line" to line, "last" to last)
 
@@ -143,6 +147,9 @@ internal object ImportText {
     }
 
     fun failed(file: String) = "Could not read $file"
+
+    /** Whether [e] says the file holds nothing to import: a `GpxException`, which the store's thread hands on as a cause. */
+    fun nothingToImport(e: Throwable): Boolean = generateSequence(e) { it.cause }.take(8).any { it is io.github.jasondorjeshort.dystopo.gpx.GpxException }
 
     private fun count(n: Int, noun: String) = if (n == 1) "1 $noun" else "$n ${noun}s"
 

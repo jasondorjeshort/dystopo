@@ -212,7 +212,7 @@ fun TracksSheet() {
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SheetAction("Import") { TrackBar.importOpen = !TrackBar.importOpen }
-                if (TrackBar.importOpen) SheetAction("Pick file") { picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
+                if (TrackBar.importOpen) SheetAction("Pick file") { TrackBar.importOpen = false; picker.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "application/octet-stream", "*/*")) }
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     io.github.jasondorjeshort.dystopo.app.routing.OverflowDots(MORE_ACTIONS) { TrackBar.moreOpen = !TrackBar.moreOpen }
                 }
@@ -446,7 +446,8 @@ private fun importUri(tracking: Tracking, uri: Uri) {
         val text = app.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } ?: error("cannot open the file")
         try {
             tracking.importGpx(text, file?.substringBeforeLast('.') ?: "Imported track", shown)
-        } catch (e: io.github.jasondorjeshort.dystopo.gpx.GpxException) {
+        } catch (e: Exception) {
+            if (!ImportText.nothingToImport(e)) throw e
             // T219: no track in it: its routes go to Routes, so "has no route or track" is true when it is said.
             val r = io.github.jasondorjeshort.dystopo.app.trips.Trips.import(text)
             tracking.refreshUi(ImportText.routes(r.imported.size, r.skipped.size, shown))
@@ -460,11 +461,10 @@ private fun importing(tracking: Tracking, file: String, block: () -> Unit) {
     ImportText.hold()
     try {
         block()
-    } catch (e: io.github.jasondorjeshort.dystopo.gpx.GpxException) {
-        tracking.refreshUi(ImportText.NOTHING)
     } catch (e: Exception) {
-        android.util.Log.w("DystopoTracks", "import of $file failed", e)
-        tracking.refreshUi(ImportText.failed(file))
+        val nothing = ImportText.nothingToImport(e)
+        if (!nothing) android.util.Log.w("DystopoTracks", "import of $file failed", e)
+        tracking.refreshUi(if (nothing) ImportText.NOTHING else ImportText.failed(file))
     }
 }
 
