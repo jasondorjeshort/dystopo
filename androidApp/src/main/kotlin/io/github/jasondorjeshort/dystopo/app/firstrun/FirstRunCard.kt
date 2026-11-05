@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.app.firstrun
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -106,10 +108,14 @@ fun FirstRunCard(fallback: String?) {
         // T106: above the update offer when one shows (it covered the card's lower buttons).
         val above = io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop
         Column(
-            Modifier.align(Alignment.BottomCenter).statusBarsPadding()
+            Modifier.align(Alignment.BottomCenter)
+                // T220: at a large font scale the card reaches the top row, which is drawn over it: it stops under the search box.
+                .let { m -> io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom.let { top -> if (top > 0.dp) m.padding(top = top + 4.dp) else m.statusBarsPadding() } }
                 .let { m -> if (above > 0.dp) m.padding(start = 12.dp, end = 12.dp, bottom = above + 8.dp) else m.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 36.dp) }
                 .widthIn(max = 460.dp).fillMaxWidth()
-                .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(16.dp),
+                .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))
+                .pointerInput(Unit) { detectTapGestures { } } // T220: a touch on its paper stays out of the map
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {

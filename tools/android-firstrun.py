@@ -296,10 +296,14 @@ CARD_CHOICES = [
 
 
 def scroll_card(dev, nodes, up=True):
-    """One swipe inside the first-run card: up shows what is below. The card's middle is its widest stretch of text."""
+    """One swipe inside what scrolls: up shows what is below. On the first-run card that is above its pinned links (a swipe
+    below them lands on the map, or on an update card); on a sheet, the screen's middle."""
     box = next((n["bounds"] for n in nodes if n["bounds"] and n["bounds"][1] == 0 and n["bounds"][0] == 0), None)
     w, h = (box[2], box[3]) if box else (1080, 2400)
-    a, b = (h * 62 // 100, h * 34 // 100) if up else (h * 34 // 100, h * 62 // 100)
+    links = dev.find("^Not now$", nodes)
+    low = links["bounds"][1] - h * 3 // 100 if links else h * 62 // 100
+    high = low - h * 22 // 100
+    a, b = (low, high) if up else (high, low)
     dev.shell("input", "swipe", str(w // 2), str(a), str(w // 2), str(b), "500")
     time.sleep(0.8)
 
@@ -329,8 +333,16 @@ def read_card(dev, name, expected):
             "missing": missing, **({"error": f"not on the card: {missing}"} if missing else {})}
 
 
+def hide_keyboard(dev):
+    """T220: Back, only while the keyboard is up (with it down, Back would close the sheet). At font scale 2.0 the
+    keyboard covers Save, whose node stays in the tree, so a tap there landed on the keyboard."""
+    if "mInputShown=true" in dev.shell("dumpsys", "input_method", check_ok=False):
+        dev.shell("input", "keyevent", "4")
+        time.sleep(0.8)
+
+
 def tap_choice(dev, pattern, timeout=15):
-    """Taps a choice on the card (T220), scrolling the card when the font scale has pushed it out of view."""
+    """Taps a choice on the card or a row of a sheet (T220), scrolling when the font scale has pushed it out of view."""
     n, nodes = dev.wait_for(pattern, timeout)
     for up in (True, True, True, False, False, False, False):
         if n:
@@ -504,7 +516,7 @@ def run(args):
         return read_card(dev, "choices", [c for c in CARD_CHOICES if c[0] != "Choose from server"])
 
     def choices_server():
-        dev.tap_text("^Close$")
+        tap_choice(dev, "^Close$", timeout=3)
         n, nodes = dev.wait_for("No map on this phone yet", 20)
         if not n:
             return {"ok": False, "error": "no first-run card after Settings", "texts": dev.texts(nodes)[:30]}
@@ -512,7 +524,14 @@ def run(args):
         return read_card(dev, "choices-server", CARD_CHOICES)
 
     def connected(timeout):
-        n, nodes = dev.wait_for(r"^(Connected: \d+ packs? on|Test failed)", timeout)
+        # T220: at a large font scale the line can be below the sheet's fold.
+        deadline = time.time() + timeout
+        while True:
+            n, nodes = dev.wait_for(r"^(Connected: \d+ packs? on|Test failed)", 8)
+            if n or time.time() > deadline:
+                break
+            if args.font_scale > 1:
+                scroll_card(dev, nodes)
         if not n or n["text"].startswith("Test failed"):
             return None, (n["text"] if n else f"no result (texts: {dev.texts(nodes)[:30]})")
         return n["text"], None
@@ -531,7 +550,8 @@ def run(args):
         dev.shell("input", "text", args.server.replace("&", "\\&"))
         time.sleep(0.5)
         path_typed, _ = dev.screencap("server-typed")
-        dev.tap_text("^Save$")
+        hide_keyboard(dev)
+        tap_choice(dev, "^Save$", timeout=3)
         text, err = connected(60)
         path, _ = dev.screencap("saved")
         if err:
@@ -539,7 +559,7 @@ def run(args):
         return {"result": text, "png": path, "typedPng": path_typed}
 
     def test():
-        dev.tap_text("^Test$")
+        tap_choice(dev, "^Test$", timeout=3)
         time.sleep(1)
         text, err = connected(60)
         path, _ = dev.screencap("tested")
