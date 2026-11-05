@@ -407,8 +407,8 @@ fun ScaleBar() {
             val aboveMax0 = (constraints.maxWidth - start - reserve).coerceAtLeast(0)
             val elevationH = strip.minIntrinsicHeight(aboveMax0)
             val elevationW = strip.minIntrinsicWidth(constraints.maxHeight)
-            val aboveRoom = StripBounds.room(start, top - gap, ceiling, aboveMax0, elevationH, chipLeft, chipBottom, gap)
-            val besideRoom = StripBounds.room(x, constraints.maxHeight - bottomPx, ceiling, besideMax, elevationH, chipLeft, chipBottom, gap)
+            val aboveRoom = StripBounds.room(start, top - gap, ceiling, aboveMax0, natural, elevationH, chipLeft, chipBottom, gap)
+            val besideRoom = StripBounds.room(x, constraints.maxHeight - bottomPx, ceiling, besideMax, natural, elevationH, chipLeft, chipBottom, gap)
             val besideMaxNow = besideRoom.maxWidthPx
             // T204: above while at least the elevation fits there (the strip leaves entries out); else beside with fewer
             // (the strip's min intrinsic width and height are the elevation's alone).
@@ -446,16 +446,18 @@ fun ScaleBar() {
 
 /**
  * T224 (pure, `StripBoundsTest`): the room the readout strip has once the right-hand chips (Waypoint and Tracks, Routes)
- * are counted. Px from the window's top left. A strip whose widest reach [x] + [maxWidthPx] stays [gapPx] short of
- * [chipLeftPx], or chips that end above its [ceilingPx], change nothing. Otherwise it stays under the chips' bottom edge
+ * are counted. Px from the window's top left. A strip whose reach ([x] plus its [naturalWidthPx] in one row, at most
+ * [maxWidthPx]) stays [gapPx] short of [chipLeftPx], or chips that end above its [ceilingPx], change nothing (the room to
+ * its right is not the strip's width: on a phone on its side a short strip must not hide for chips it never reaches).
+ * Otherwise it stays under the chips' bottom edge
  * while that leaves the elevation's height ([minHeightPx]) above [bottomPx], and else it keeps its ceiling and stops
  * [gapPx] short of the chips' left edge (no room there either: the width comes out too small and the strip hides).
  */
 internal object StripBounds {
     class Room(val ceilingPx: Int, val maxWidthPx: Int, val byChips: Boolean)
 
-    fun room(x: Int, bottomPx: Int, ceilingPx: Int, maxWidthPx: Int, minHeightPx: Int, chipLeftPx: Int, chipBottomPx: Int, gapPx: Int): Room {
-        val noChips = chipBottomPx <= 0 || chipLeftPx <= 0 || x + maxWidthPx + gapPx <= chipLeftPx || chipBottomPx + gapPx <= ceilingPx
+    fun room(x: Int, bottomPx: Int, ceilingPx: Int, maxWidthPx: Int, naturalWidthPx: Int, minHeightPx: Int, chipLeftPx: Int, chipBottomPx: Int, gapPx: Int): Room {
+        val noChips = chipBottomPx <= 0 || chipLeftPx <= 0 || x + minOf(maxWidthPx, naturalWidthPx) + gapPx <= chipLeftPx || chipBottomPx + gapPx <= ceilingPx
         if (noChips) return Room(ceilingPx, maxWidthPx, false)
         val under = chipBottomPx + gapPx
         if (bottomPx - under >= minHeightPx) return Room(under, maxWidthPx, true)

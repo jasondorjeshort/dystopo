@@ -1113,25 +1113,30 @@ def pair_names(overlap_list):
 
 
 def plate_edges(ras, rect, colour, reach=6, tolerance=3):
-    """T224: where a plate of one colour is really drawn around `rect` ([left, top, right, bottom], px): along lines through the
-    middle of each side, the first and last pixel within `reach` of the side that has the colour, moving from outside in, so
-    the text inside the plate is not reached. None for a side with no such pixel (the plate is covered, or off the picture)."""
+    """T224: where a plate of one colour is really drawn around `rect` ([left, top, right, bottom], px): along several lines
+    through each side, away from its rounded corners, the first pixel within `reach` of the side that has the colour, moving
+    from outside in, so the text inside the plate is not reached; the innermost over the lines, since a map the colour of
+    the plate reads as plate on some of them. None for a side with no such pixel (covered, or off the picture)."""
     def is_plate(x, y):
         if not (0 <= x < ras.w and 0 <= y < ras.h):
             return False
         return all(abs(a - b) <= tolerance for a, b in zip(ras.px(x, y)[:3], colour))
     left, top, right, bottom = [int(v) for v in rect]
-    midx, midy = (left + right) // 2, (top + bottom) // 2
-    def first(points):
-        for p, (x, y) in points:
-            if is_plate(x, y):
+    rows = [top + (bottom - top) * k // 8 for k in range(2, 7)]
+    cols = [left + (right - left) * k // 8 for k in range(2, 7)]
+    def first(line, is_inside):
+        for p in line:
+            if is_inside(p):
                 return p
         return None
+    def side(lines, pick):
+        found = [v for v in lines if v is not None]
+        return pick(found) if found else None
     return [
-        first([(x, (x, midy)) for x in range(left - reach, left + reach + 1)]),
-        first([(y, (midx, y)) for y in range(top - reach, top + reach + 1)]),
-        (lambda v: None if v is None else v + 1)(first([(x, (x, midy)) for x in range(right + reach, right - reach - 1, -1)])),
-        (lambda v: None if v is None else v + 1)(first([(y, (midx, y)) for y in range(bottom + reach, bottom - reach - 1, -1)])),
+        side([first(range(left - reach, left + reach + 1), lambda x: is_plate(x, y)) for y in rows], max),
+        side([first(range(top - reach, top + reach + 1), lambda y: is_plate(x, y)) for x in cols], max),
+        (lambda v: None if v is None else v + 1)(side([first(range(right + reach - 1, right - reach - 1, -1), lambda x: is_plate(x, y)) for y in rows], min)),
+        (lambda v: None if v is None else v + 1)(side([first(range(bottom + reach - 1, bottom - reach - 1, -1), lambda y: is_plate(x, y)) for x in cols], min)),
     ]
 
 
@@ -1355,6 +1360,8 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         c["navScrollDescribed"] = descs is None or any(x.startswith("Navigation details") for x in descs)
         rep["shots"]["navigation"] = screencap(exe, serial, f"{shot_stem}-cards-navigation{ext}")
         view_layout("navigation")
+        rep["navigation"]["drawCheck"] = nl.get("drawCheck")  # T146: frames drawn with a chip column under the card
+        rep["navigation"]["chipsHidden"] = nl.get("chipsHidden")  # T224
         # T224 (T210's glance step): the glance view at this font scale and rotation, while navigating; closed again.
         glance = server.json("/readout/glance?open=1", method="POST", timeout=60)
         time.sleep(1)

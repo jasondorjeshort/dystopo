@@ -301,7 +301,7 @@ object TopChips {
         "routesChipTopDp" to if (trackColumnBottom > 0.dp) (trackColumnBottom + GAP).value else null,
         "routesChipBottomDp" to routesChipBottom.value, "topRightBottomDp" to topRightBottom.value, // T110
         // The track controls clear the navigation card when they start below its bottom edge.
-        "tracksClearOfNavCard" to (navCardBottom == 0.dp || trackColumnTop >= navCardBottom),
+        "tracksClearOfNavCard" to (navCardBottom == 0.dp || trackColumnTop >= navCardBottom || hiddenReason(Chip.TRACKS) != null), // T224: hidden is clear
         // T137: the navigation card's and the online indicator column's rectangles (px, left, top, right, bottom; null when
         // hidden) and whether they overlap; the online column starts below the card while navigating (onlineColumn()).
         "navCardPx" to navCardPx?.map { Math.round(it) },

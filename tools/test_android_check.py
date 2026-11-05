@@ -228,5 +228,7 @@ ac.fill(ras, 28, 16, 8, 8, (0x2B, 0x24, 0x20))  # its text, which the scan must 
 assert ac.plate_edges(ras, [20, 10, 45, 30], (0xF6, 0xF1, 0xE4)) == [20, 10, 45, 30]
 assert ac.plate_edges(ras, [21, 10, 45, 29], (0xF6, 0xF1, 0xE4)) == [20, 10, 45, 30], "the drawn edges, not the rectangle's"
 assert ac.plate_edges(ras, [0, 0, 5, 5], (0xF6, 0xF1, 0xE4)) == [None, None, None, None], "no plate near this rectangle"
+ac.fill(ras, 17, 18, 3, 2, (0xF6, 0xF1, 0xE4))  # a patch of map the plate's colour beside one line of its left side
+assert ac.plate_edges(ras, [20, 10, 45, 30], (0xF6, 0xF1, 0xE4))[0] == 20, "the innermost over the lines"
 
 print("test_android_check: ok")
