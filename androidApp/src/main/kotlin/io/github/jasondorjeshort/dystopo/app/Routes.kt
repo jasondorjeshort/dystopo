@@ -162,6 +162,7 @@ class Routes(private val app: DystopoApp) {
         io.github.jasondorjeshort.dystopo.app.help.HelpRoutes.handle(app, r)?.let { return it } // T109: GET /help, POST /help/open?key=, POST /help/close
         io.github.jasondorjeshort.dystopo.app.settings.DiagnosticsRoutes.handle(app, r)?.let { return it } // T143: GET /diagnostics, POST /diagnostics/copy, POST /diagnostics/reset
         io.github.jasondorjeshort.dystopo.app.reports.ReportRoutes.handle(app, r)?.let { return it } // T145: GET /reports, GET|DELETE /reports/{id}, POST /reports/ui|open, POST /debug/crash
+        StartupRoutes.handle(app, r)?.let { return it } // T228: GET /debug/startup, POST /debug/startup/stall|thresholds
         io.github.jasondorjeshort.dystopo.app.debug.DebugRoutes.handle(app, r)?.let { return it } // T150: the other /debug/... routes (watchdog, freeze, cpu, strictmode)
         io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedRoutes.handle(app, r)?.let { return it } // T182: GET|POST /viewshed, /viewshed/close|sort|select|bench
         PrintRoutes.handle(app, r)?.let { return it } // T183: GET|POST /print, POST /print/ui

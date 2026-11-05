@@ -53,7 +53,8 @@ import kotlin.concurrent.thread
  * ([Report.shown], scrubbed), with the privacy notice above **Open GitHub issue**, which puts that text on the
  * clipboard and then opens the prefilled issue page ([IssueLink]) in the browser, and **Delete**. Nothing is sent by the
  * app: the tester reads the page, signs in and submits. No email option (the crash-report survey: it needs a mailbox and
- * sends unseen through a third-party mail app).
+ * sends unseen through a third-party mail app). T228: **Report the last start** shows the newest start's trace the same way,
+ * for a start that felt slow but passed the thresholds; it has no Delete.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -62,8 +63,9 @@ fun ReportRow() {
     val selected = ReportUi.selected
     LaunchedEffect(ReportUi.revision, selected) {
         val loaded = withContext(Dispatchers.IO) { ReportUi.load(selected) }
-        ReportUi.items = loaded.first
-        ReportUi.open = loaded.second
+        ReportUi.items = loaded.items
+        ReportUi.open = loaded.open
+        ReportUi.lastStart = loaded.lastStart
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BasicText("Report a problem", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
@@ -79,6 +81,14 @@ fun ReportRow() {
                 }
             }
         }
+        ReportUi.lastStart?.let { last ->
+            FlowRow(Modifier.padding(top = 2.dp)) {
+                Option(LAST_START, last == selected) {
+                    ReportUi.message = null
+                    ReportUi.selected = if (last == selected) null else last
+                }
+            }
+        }
         val open = ReportUi.open?.takeIf { it.id == selected }
         if (open != null) {
             Box(
@@ -88,10 +98,10 @@ fun ReportRow() {
             ) {
                 BasicText(open.text, style = TextStyle(color = Ink, fontSize = 11.sp, fontFamily = FontFamily.Monospace))
             }
-            BasicText(NOTICE, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 12.sp))
+            BasicText(if (open.startup) "$NOTICE $NOTICE_STARTUP" else NOTICE, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 12.sp))
             FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Option(OPEN_ISSUE, false) { ReportUi.message = openIssue(context, open) }
-                Option(DELETE, false) {
+                if (open.id != ReportUi.lastStart) Option(DELETE, false) {
                     val id = open.id
                     ReportUi.selected = null
                     ReportUi.message = null
@@ -131,13 +141,17 @@ object ReportUi {
     data class Item(val id: String, val label: String, val kind: String, val atMs: Long, val headline: String?)
 
     /** The report on show: its scrubbed text and the link made from it. */
-    data class Open(val id: String, val text: String, val link: IssueLink.Link)
+    data class Open(val id: String, val text: String, val link: IssueLink.Link, val startup: Boolean)
+
+    /** What the row reads on a worker: the list, the report on show and the newest start's trace (T228). */
+    data class Loaded(val items: List<Item>, val open: Open?, val lastStart: String?)
 
     var selected by mutableStateOf<String?>(null)
     var revision by mutableStateOf(0)
     var items by mutableStateOf<List<Item>?>(null)
     var open by mutableStateOf<Open?>(null)
     var message by mutableStateOf<String?>(null)
+    var lastStart by mutableStateOf<String?>(null)
 
     /** The text Open GitHub issue last put on the clipboard, and the link it opened (for the routes). */
     @Volatile var copied: String? = null
@@ -149,26 +163,30 @@ object ReportUi {
     }
 
     /** The list and the [selected] report's text and link (a worker thread: lists the folders [Reports.known] reads). */
-    fun load(selected: String?): Pair<List<Item>, Open?> {
+    fun load(selected: String?): Loaded {
+        io.github.jasondorjeshort.dystopo.app.StartupTrace.flushForRead() // T228: the start in progress, so a freeze a moment ago is here
         val reports = Reports.all()
         val items = reports.map { Item(it.id, label(it), it.kind, it.atMs, it.headline) }
-        val open = selected?.let { id -> reports.firstOrNull { it.id == id } }?.let { prepare(it) }
-        return items to open
+        val open = selected?.let { id -> reports.firstOrNull { it.id == id } ?: Reports.get(id) }?.let { prepare(it) }
+        return Loaded(items, open, Reports.lastStart()?.id)
     }
 
     fun prepare(r: Report): Open {
         val known = Reports.known()
-        return Open(r.id, r.shown(known), IssueLink.build(r, known))
+        return Open(r.id, r.shown(known), IssueLink.build(r, known), r.isStartup)
     }
 
     fun label(r: Report): String = r.kindLabel + ", " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(r.atMs))
 }
 
-const val INTRO = "Crashes, freezes and closes of the app on this phone, the last five kept. Tap one to read it. Nothing leaves the phone unless you open an issue."
+const val INTRO = "Crashes, freezes and closes of the app on this phone, the last five kept, and the last three freezes at startup. Tap one to read it. Nothing leaves the phone unless you open an issue."
 const val NONE = "No problems recorded."
 const val NOTICE = "This report will be posted publicly on GitHub under your account. It contains the app version, your phone model, " +
     "your Android version and the error details. Locations, place names and pack names have been removed. It does not contain " +
     "your maps, tracks or searches. Read it before you submit; nothing is sent until you do."
+const val NOTICE_STARTUP = "A startup report also lists how long each step of the start took, where the app was waiting, the recent starts' times, " +
+    "the phone's free memory, temperature state and battery saver, and how many packs you have and their total size, without their names."
+const val LAST_START = "Report the last start"
 const val OPEN_ISSUE = "Open GitHub issue"
 const val DELETE = "Delete"
 const val CLIP_LABEL = "Dystopo problem report"

@@ -8,6 +8,7 @@ import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.BuildConfig
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.MainWatchdog
+import io.github.jasondorjeshort.dystopo.app.StartupTrace
 import io.github.jasondorjeshort.dystopo.reports.Scrub
 import java.io.File
 
@@ -28,8 +29,10 @@ import java.io.File
 object Reports {
     const val TAG = "DystopoReports"
     const val KEEP = 5
+    /** T228: `startup-` reports have their own quota and never push out a crash, a freeze or a kill. */
+    const val KEEP_STARTUP = 3
     private const val SEEN = ".exits-seen"
-    val PREFIXES = listOf(MainWatchdog.PREFIX, CrashCapture.PREFIX, ExitImport.PREFIX)
+    val PREFIXES = listOf(MainWatchdog.PREFIX, CrashCapture.PREFIX, ExitImport.PREFIX, StartupTrace.PREFIX)
 
     @Volatile private var dir: File? = null
     @Volatile var lastImport: Map<String, Any?>? = null
@@ -107,9 +110,11 @@ object Reports {
         f.bufferedReader().useLines { lines -> lines.take(8).firstOrNull { it.startsWith("atMs: ") }?.removePrefix("atMs: ")?.trim()?.toLong() }
     }.getOrNull()
 
-    /** Keeps the newest [KEEP] reports of every kind together. */
+    /** Keeps the newest [KEEP] reports of every kind together, and apart from them the newest [KEEP_STARTUP] `startup-` ones. */
     fun prune(d: File = dir()) {
-        list(d).drop(KEEP).forEach { it.delete() }
+        val (startups, others) = list(d).partition { it.name.startsWith(StartupTrace.PREFIX) }
+        others.drop(KEEP).forEach { it.delete() }
+        startups.drop(KEEP_STARTUP).forEach { it.delete() }
     }
 
     fun read(f: File): Report? = runCatching { Report(f.name.removeSuffix(".txt"), MainWatchdog.Dump.parse(f.readText())) }.getOrNull()
@@ -117,9 +122,13 @@ object Reports {
     /** The kept reports, newest first (unreadable files left out). */
     fun all(): List<Report> = list().mapNotNull(::read)
 
-    fun get(id: String): Report? = list().firstOrNull { it.name == "$id.txt" }?.let(::read)
+    /** A kept report, or a kept trace (T228: Report the last start; hidden from [all]). */
+    fun get(id: String): Report? = (list() + StartupTrace.traces(dir())).firstOrNull { it.name == "$id.txt" }?.let(::read)
 
     fun delete(id: String): Boolean = list().firstOrNull { it.name == "$id.txt" }?.delete() == true
+
+    /** T228: the newest start's trace, for Report the last start. */
+    fun lastStart(): Report? = StartupTrace.traces(dir()).firstOrNull()?.let(::read)
 
     /**
      * The names this phone knows a report could carry, for [Scrub.Known]: its packs, its offline areas (names and
@@ -174,7 +183,7 @@ object CrashCapture {
     fun format(atMs: Long, thread: String, e: Throwable, system: Map<String, String>, others: Map<Thread, Array<StackTraceElement>> = emptyMap()): String {
         val frames = e.stackTrace.map(StackTraceElement::toString)
         val all = generateSequence(e) { it.cause }.take(8).toList()
-        val appFrame = all.flatMap { it.stackTrace.map(StackTraceElement::toString) }.firstOrNull { it.startsWith(MainWatchdog.APP_PACKAGE) && !it.startsWith(CrashCapture::class.java.name) }
+        val appFrame = all.flatMap { it.stackTrace.map(StackTraceElement::toString) }.firstOrNull { MainWatchdog.isAppFrame(it) && !it.startsWith(CrashCapture::class.java.name) }
         val header = linkedMapOf(
             "kind" to "crash", "atMs" to atMs.toString(), "at" to Report.utc(atMs), "thread" to thread,
             "exception" to describe(e), "appFrame" to (appFrame ?: "-"),
@@ -231,7 +240,7 @@ object ExitImport {
     fun format(kind: String, reason: Int, atMs: Long, pid: Int, description: String?, pssKb: Long, rssKb: Long, trace: String?, system: Map<String, String>): String {
         val sections = trace?.let(::threads).orEmpty()
         val main = sections.firstOrNull { it.first.startsWith("\"main\"") }
-        val appFrame = main?.second?.firstOrNull { it.startsWith(MainWatchdog.APP_PACKAGE) }
+        val appFrame = main?.second?.let(MainWatchdog::blockingFrame)
         val header = linkedMapOf(
             "kind" to kind, "atMs" to atMs.toString(), "at" to Report.utc(atMs),
             "reason" to reason.toString(), "reasonName" to io.github.jasondorjeshort.dystopo.app.settings.Diagnostics.reasonName(reason),

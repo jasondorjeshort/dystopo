@@ -21,7 +21,8 @@ import java.util.TimeZone
  * [FreezeDetector.sampleEveryMs] (200 ms), so the dump names the frame the main thread spent the whole freeze in
  * rather than wherever it happened to be at 3 s. It ticks only between the activity's
  * `onResume` and `onPause` ([resumed], [paused]; the clock restarts on resume), never before the first frame after
- * the process started (the cold start's long first frame is not a freeze), and skips while a debugger is attached.
+ * the process started (the cold start's long first frame is not a freeze), never while a start's window is open (T228:
+ * [StartupTrace] reports that time, and arms this from its close), and skips while a debugger is attached.
  * Both thresholds are overridable for tests (`POST /debug/watchdog?beatMs=&freezeMs=`, not persisted). The rule it
  * guards: the UI thread never takes a lock and never does disk or network I/O.
  *
@@ -114,7 +115,14 @@ object MainWatchdog {
         thread?.interrupt()
     }
 
-    private fun armed(): Boolean = resumed && firstFrameSeen && !android.os.Debug.isDebuggerConnected()
+    /** T228: no dump while a start's window is open ([StartupTrace] reports that time); armed again from its close. */
+    private fun armed(): Boolean = resumed && firstFrameSeen && !android.os.Debug.isDebuggerConnected() && !StartupTrace.isOpen
+
+    /** T228: a start's window closed: the clock starts over, so one freeze gives one report and there is no gap. */
+    fun startupClosed() {
+        detector.reset()
+        thread?.interrupt()
+    }
 
     private fun loop() {
         val mainThread = Looper.getMainLooper().thread
@@ -158,12 +166,23 @@ object MainWatchdog {
     fun list(d: File? = dir): List<File> =
         d?.listFiles { f -> f.isFile && f.name.startsWith(PREFIX) && f.name.endsWith(".txt") }?.sortedByDescending { it.name }.orEmpty()
 
-    /** The topmost frame of [stack] in the app's own package (the watchdog's own frames excepted), or null. */
-    fun blockingFrame(stack: List<String>): String? = stack.firstOrNull { it.startsWith(APP_PACKAGE) && !it.startsWith(MainWatchdog::class.java.name) && !it.startsWith(FreezeDetector::class.java.name) }
+    /** The topmost frame of [stack] in the app's own code, or null: see [isAppFrame]. */
+    fun blockingFrame(stack: List<String>): String? = stack.firstOrNull(::isAppFrame)
+
+    /**
+     * Whether [frame] is the app's own code a reader wants named: in our package, not this watchdog's or the start trace's
+     * own, and not lambda plumbing. T228: a release stack carries `Foo.$r8$lambda$...(Foo.kt:0)` and
+     * `Foo$$ExternalSyntheticLambda3.run(R8$$SyntheticClass:0)` below the real frames (ADR 0058; D8 writes the same in a debug
+     * build), the topmost app frames when the lambda is a reference to a platform method; they name no line.
+     */
+    fun isAppFrame(frame: String): Boolean = frame.startsWith(APP_PACKAGE) && OWN_FRAMES.none(frame::startsWith) && PLUMBING.none(frame::contains)
+
+    private val OWN_FRAMES = listOf("$APP_PACKAGE.app.MainWatchdog", "$APP_PACKAGE.app.FreezeDetector", "$APP_PACKAGE.app.StartupTrace", "$APP_PACKAGE.app.StartupWindow")
+    private val PLUMBING = listOf("\$\$ExternalSynthetic", "\$\$SyntheticClass", "\$r8\$", "-\$\$Nest\$")
 
     /** `GET /debug/watchdog`: thresholds, state, counters and the dumps on the device (newest first, with their headers). */
     fun json(): Map<String, Any?> = linkedMapOf(
-        "armed" to armed(), "resumed" to resumed, "firstFrameSeen" to firstFrameSeen,
+        "armed" to armed(), "resumed" to resumed, "firstFrameSeen" to firstFrameSeen, "startupWindowOpen" to StartupTrace.isOpen,
         "debugger" to runCatching { android.os.Debug.isDebuggerConnected() }.getOrNull(),
         "beatMs" to detector.beatMs, "freezeMs" to detector.freezeMs, "sampleEveryMs" to detector.sampleEveryMs,
     ) + detector.json() + linkedMapOf(

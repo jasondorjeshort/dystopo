@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import android.app.Application
+import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import org.maplibre.android.MapLibre
@@ -32,25 +33,44 @@ class DystopoApp : Application() {
     /** T57: `/stats` tile counters for the whole process, shared by every [TileService] it opens. */
     val tileCounters = TileCounters()
 
+    /** T228: the start trace begins here, with a thread of its own; what ran before this is loading and field initialisers. */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        StartupTrace.attach(base)
+    }
+
+    // T228: StartupTrace.mark names each step of the launch; a step lasts until the next mark (marks only, nothing moved).
     override fun onCreate() {
+        StartupTrace.mark("DystopoApp.onCreate")
         super.onCreate()
         instance = this
+        StartupRoutes.stallPoint("appOnCreate")
+        StartupTrace.mark("the Compose state's prepare")
         if (BuildConfig.DEBUG) io.github.jasondorjeshort.dystopo.app.debug.StrictModeCounts.install() // T150: counted by app frame, no penalty; release builds untouched
         io.github.jasondorjeshort.dystopo.app.nav.NavSession.prepare() // T86: its Compose state is made here, on the main thread, before any composition
         io.github.jasondorjeshort.dystopo.app.areas.Areas.prepare() // T87: the same for the offline areas' state (AheadPrefetch's thread reads Areas)
         io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.prepare() // T110: the same for the scale bar's option (sync reads it on its threads)
+        StartupTrace.mark("Tracking.prepare")
         io.github.jasondorjeshort.dystopo.app.tracking.Tracking.prepare() // T226: the same for the tracks' and trips' state (the corridors' thread builds Tracking at launch)
+        StartupTrace.mark("MapLibre.getInstance")
         MapLibre.getInstance(this)
         MapLibre.setConnected(true) // T38: every tile comes from our loopback server; MapLibre's own offline check would stop even those
+        StartupTrace.mark("AppSettings.load")
         AppSettings.load(this)
         map.onUnitsSeeded = { Thread({ reload() }, "units-reload").start() } // T33: a first fix seeded the units
+        StartupTrace.mark("BundledAssets.install")
         io.github.jasondorjeshort.dystopo.app.firstrun.BundledAssets.install(this) // T80: glyphs and sprites from the APK
         published = openTiles()
+        StartupTrace.mark("style-prime, watchdog, reports and cache budget start")
         Thread({ runCatching { published.style() } }, "style-prime").apply { isDaemon = true }.start() // T144: reads each pack's metadata once, off the UI thread, so the map's first style() there takes no pack lock
         MainWatchdog.start(this) // T144: the UI-thread watchdog (every build)
         io.github.jasondorjeshort.dystopo.app.reports.Reports.start(this) // T145: the crash handler, and the exit records read on a worker
         io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) // T112: one budget over the caches (its own thread)
-        io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending() // T29: finish interrupted pack downloads
+        StartupTrace.mark("PackManager.get")
+        val downloads = io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads
+        StartupTrace.mark("resumePending")
+        downloads.resumePending() // T29: finish interrupted pack downloads
+        StartupTrace.mark("Routes and the loopback servers")
         val routes = Routes(this)
         // T57: in debug builds the debug routes live on a second loopback server on a random port, announced
         // only in logcat with the token; 8686 then answers like a release build (map routes only, no /health).
@@ -63,7 +83,9 @@ class DystopoApp : Application() {
             Log.e(LocalServer.TAG, "server failed to start on port ${BuildConfig.SERVER_PORT}", e)
         }
         if (BuildConfig.DEBUG_ENDPOINTS) startDebugServer(routes)
+        StartupTrace.mark("Updater.start")
         io.github.jasondorjeshort.dystopo.app.update.Updater.start(this) // T83: daily update check (release builds), a verified download kept across restarts
+        StartupTrace.appCreated()
     }
 
     /**
@@ -112,17 +134,21 @@ class DystopoApp : Application() {
     fun packRoots() = listOfNotNull(filesDir, getExternalFilesDir(null))
 
     private fun openTiles(skip: Set<String> = emptySet()): TileService {
+        StartupTrace.mark("PackSet.open")
         val packs = PackSet.open(packRoots(), skip) // T41: every usable pack
         // T33: the first pack opened seeds the units preference (once; see AppSettings.seedUnits).
         packs.dem?.header?.let { h -> AppSettings.seedUnits((h.minLat + h.maxLat) / 2, (h.minLon + h.maxLon) / 2, "pack:${packs.name ?: "default"}") }
         collectContourGarbage()
+        StartupTrace.mark("TileService")
         tileCounters.serviceOpens.incrementAndGet()
         return TileService(packs, cacheDir, BuildConfig.SERVER_PORT, token, tileCounters) // T57: cumulative counters
     }
 
     /** T41: contour (and T49 cliff) caches of every pack file on the device stay (switches, restarts); only orphans go (background). */
     fun collectContourGarbage() {
+        StartupTrace.mark("collectContourGarbage's identities")
         val identities = PackSet.catalog(packRoots()).flatMap { it.files }.map(::packIdentity).toSet()
+        StartupTrace.mark("ContourCache.collectGarbage")
         ContourCache.collectGarbage(this, identities)
     }
 

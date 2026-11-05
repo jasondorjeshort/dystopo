@@ -49,15 +49,24 @@ class MainActivity : ComponentActivity() {
     /** T219: the system's save dialog, for Export GPX ([SaveFile]). */
     val saveFile = registerForActivityResult(SaveFile.contract()) { SaveFile.finished(it) }
 
+    // T228: StartupTrace.mark names each step of the launch; a step lasts until the next mark (marks only, nothing moved).
     override fun onCreate(savedInstanceState: Bundle?) {
+        StartupTrace.activityCreated()
         super.onCreate(savedInstanceState)
+        StartupRoutes.stallPoint("activityOnCreate")
+        StartupTrace.mark("MapViewport.prepare")
         MapViewport.prepare() // T162: its Compose state, on the main thread before the first composition
+        StartupTrace.mark("startCamera")
         val start = startCamera(savedInstanceState)
+        StartupTrace.mark("MapView")
         mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
+        StartupTrace.mark("mapView.onCreate")
         mapView.onCreate(savedInstanceState)
+        StartupTrace.mark("map.attach")
         app.map.activity = this
         io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
         app.map.attach(mapView, styleJson = { app.tiles.style() })
+        StartupTrace.mark("links and intents")
         DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
         io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(intent) // T57: dystopo://share links
         addOnNewIntentListener { io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(it) }
@@ -67,6 +76,7 @@ class MainActivity : ComponentActivity() {
         // Dark status-bar icons: the map, the pack list and the sheets are all light (paper) under the bar.
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
 
+        StartupTrace.mark("setContent")
         setContent {
             // Follow pack switches, downloads and /reload: DystopoApp swaps its TileService, so the attribution
             // line and the no-pack message are recomposed from the current one.
@@ -87,6 +97,7 @@ class MainActivity : ComponentActivity() {
             MapScreen(mapView, shown.attribution, shown.message)
         }
 
+        StartupTrace.mark("permissions")
         val wanted = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (wanted.none { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) permissionRequest.launch(wanted)
     }
@@ -102,6 +113,7 @@ class MainActivity : ComponentActivity() {
         DeepLink.camera(intent)?.let { link ->
             val t = link.target
             app.map.opened(OpenView.Choice(OpenView.Source.DEEP_LINK, t?.let { ViewAt(it.latitude, it.longitude, link.zoom, link.bearing, System.currentTimeMillis()) }), null, null, null)
+            StartupTrace.mark("view from link") // T228: the source's name, never a coordinate
             return link
         }
         val fix = runCatching { LastFix.get() }.getOrNull()
@@ -109,6 +121,7 @@ class MainActivity : ComponentActivity() {
         val pack = runCatching { packView() }.getOrNull()
         val choice = if (savedInstanceState != null) OpenView.Choice(OpenView.Source.RESTORED, null) else OpenView.choose(fix, saved, pack)
         app.map.opened(choice, fix, saved, pack)
+        StartupTrace.mark("view from ${choice.source.name.lowercase()}") // T228: the source's name, never a coordinate
         val v = choice.view ?: ViewAt(0.0, 0.0, WORLD_ZOOM, 0.0, 0L)
         return CameraPosition.Builder().target(LatLng(v.lat, v.lon)).zoom(v.zoom).bearing(v.bearing).build()
     }
@@ -134,6 +147,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStart() {
+        StartupTrace.started()
         super.onStart()
         mapView.onStart()
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
@@ -141,6 +155,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onResume() {
+        StartupTrace.resumed()
         super.onResume()
         mapView.onResume()
         MainWatchdog.resumed() // T144: the UI-thread watchdog ticks while the activity is in the foreground
@@ -153,6 +168,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        StartupTrace.stopped()
         SavedView.flush() // T162: a view still waiting for its write
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(false) // T100: no compass in the background
         if (Foreground.activityStopped()) app.map.setForeground(false) // T150: no device fixes and no polling in the background

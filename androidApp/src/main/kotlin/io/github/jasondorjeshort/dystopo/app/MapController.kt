@@ -102,7 +102,7 @@ class MapController {
      * MapLibre's idle event alone is not enough: it can stay unfired for long stretches, so it only
      * shortens the `rendering` wait. `/screenshot` adds a pixel check on top (see [stableSnapshot]).
      */
-    fun idleBlockers(now: Long = SystemClock.elapsedRealtime()): List<String> {
+    fun idleBlockers(now: Long = SystemClock.elapsedRealtime(), repair: Boolean = true): List<String> { // T228: repair false is the start trace's look, which must not cure what it reports
         val reasons = ArrayList<String>()
         if (map == null) reasons += "mapNotReady"
         if (!styleLoaded) reasons += "styleLoading"
@@ -114,7 +114,7 @@ class MapController {
         if (now - lastFrameAt < QUIET_MS && !mapLibreIdle) reasons += "rendering"
         val busyAt = maxOf(lastCameraAt, lastTileAt(), lastPartialFrameAt, lastNotLoadedAt)
         if (reasons.isEmpty() && now - busyAt < QUIET_MS) reasons += "settling"
-        if ((!fullyLoaded || !lastFrameFully) && pending == 0 && !animating && now - lastFrameAt > STUCK_MS) kickRepaint(now)
+        if (repair && (!fullyLoaded || !lastFrameFully) && pending == 0 && !animating && now - lastFrameAt > STUCK_MS) kickRepaint(now)
         return reasons
     }
 
@@ -167,6 +167,7 @@ class MapController {
     private fun sampleLoaded(view: MapView, fallback: Boolean) {
         val loaded = nativeFullyLoaded(view) ?: fallback
         fullyLoaded = loaded
+        if (loaded) StartupTrace.fullyLoaded() // T228
         if (!loaded) lastNotLoadedAt = SystemClock.elapsedRealtime()
     }
 
@@ -221,6 +222,7 @@ class MapController {
         mapLibreIdle = false
         m.setStyle(Style.Builder().fromJson(json)) { style ->
             styleLoaded = true
+            StartupTrace.styleLoaded() // T228
             enableLocation(style)
             onStyle(style)
         }

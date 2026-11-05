@@ -16,7 +16,8 @@ import java.io.File
  * - `GET /reports`: reads the exit records not seen yet first (`import`: `records`, `written`, `skipped`; `launchImport`:
  *   what the read at launch found), then the kept
  *   reports newest first (`reports`: `id`, `kind`, `label` as the row lists it, `at`, `atMs`, `headline`, `bytes`, `file`,
- *   `header` as written, unscrubbed), `keep`, `exitSupported`.
+ *   `header` as written, unscrubbed), `keep`, `keepStartup`, `lastStart` (T228: the id of the trace Report the last start shows,
+ *   readable with the routes below; hidden from `reports`), `exitSupported`. T228: a window still open is written first, marked `running`.
  * - `GET /reports/{id}`: one report as the row shows it: `text` (scrubbed, what the row shows), `title`,
  *   `link` (`url`, `urlLength`, `encodedBodyLength`, `frames`, `titleOnly`, `clipboard` (what Open GitHub issue copies, null when the body is complete), `body`), and `header`.
  * - `DELETE /reports/{id}`: deletes it (`deleted`).
@@ -55,10 +56,12 @@ object ReportRoutes {
 
     private fun list(app: DystopoApp): Map<String, Any?> {
         val import = Reports.importExits(app)
+        io.github.jasondorjeshort.dystopo.app.StartupTrace.flushForRead() // T228
         val files = Reports.list()
         return linkedMapOf(
             "exitSupported" to (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R),
-            "launchImport" to Reports.launchImport, "import" to import, "keep" to Reports.KEEP, "dir" to Reports.dir().path,
+            "launchImport" to Reports.launchImport, "import" to import, "keep" to Reports.KEEP, "keepStartup" to Reports.KEEP_STARTUP, "dir" to Reports.dir().path,
+            "lastStart" to Reports.lastStart()?.id,
             "reports" to files.mapNotNull { f ->
                 Reports.read(f)?.let { rep ->
                     linkedMapOf("id" to rep.id, "kind" to rep.kind, "label" to ReportUi.label(rep), "at" to rep.dump.header["at"], "atMs" to rep.atMs,
