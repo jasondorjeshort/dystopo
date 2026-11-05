@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
@@ -253,8 +255,8 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     // recursed in Compose's inset padding until the main thread froze and the stack overflowed (main's screen did it too).
     key(catalogOpen) {
     Column(
-        (if (catalogOpen) Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(PacksUi.CATALOG_SHEET).background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).border(1.dp, Line, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-        else Modifier.fillMaxSize().background(Paper).statusBarsPadding())
+        (if (catalogOpen) Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(PacksUi.CATALOG_SHEET).background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).border(1.dp, Line, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).pointerInput(Unit) { detectTapGestures { } }
+        else Modifier.fillMaxSize().background(Paper).pointerInput(Unit) { detectTapGestures { } }.statusBarsPadding()) // T226: a tap on its paper stays out of the overlay's chips beneath
             .navigationBarsPadding().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
