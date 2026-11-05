@@ -12,9 +12,11 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  * pack routes). The release build has none of these; there the same actions are taps (tools/android-firstrun.py).
  * - `GET /firstrun`: whether the first-run card shows (`noPack`, `dismissed`, `cardVisible`), the server, the
  *   card's message, the "around me" step (`aroundMe`, `fix`, `box`), the region download, the last import
- *   and the last server test.
+ *   and the last server test. T220: what the card draws: `body` (the state's sentence), `choices` in order (`id`
+ *   `download|look|server|import`, `label`, `sentence`, `weight` `filled|outlined|text`, `primary`), `primary` (the filled
+ *   choice's id), `notNowLine`, `estimateBytes` (null: no fix or no source yet, and the card names no size).
  * - `POST /firstrun/download[?lat=&lon=]`: "Download the map around me" (the device's fix unless given).
- * - T80 `POST /firstrun/show[?lat=&lon=]`: "Show the map around me" (camera to the fix, card aside, nothing saved).
+ * - T80 `POST /firstrun/show[?lat=&lon=]`: "Just look at the map" (camera to the fix, card aside, nothing saved).
  * - T80 `GET /firstrun/direct`: the phone's own source reading (`enabled`, `active`, session bytes and cap, requests,
  *   DEM tiles rendered and their ms, OpenFreeMap tiles, the source cache). T88: `rangeStalls` (range reads that got no
  *   byte for 4 s, dropped and retried), `stages` (ms summed over threads: `renderWaitMs` waiting for a render permit,

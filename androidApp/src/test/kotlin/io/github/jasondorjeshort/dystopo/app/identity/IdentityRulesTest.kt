@@ -5,6 +5,7 @@ import io.github.jasondorjeshort.dystopo.identity.JavaSecurityVerifier
 import io.github.jasondorjeshort.dystopo.identity.KeyDescription
 import io.github.jasondorjeshort.dystopo.identity.PolicyLists
 import io.github.jasondorjeshort.dystopo.identity.Reason
+import io.github.jasondorjeshort.dystopo.identity.Refusal
 import io.github.jasondorjeshort.dystopo.identity.Verdict
 import java.io.File
 import kotlin.test.Test
@@ -124,6 +125,107 @@ class IdentityRulesTest {
         assertTrue(IdentityRules.line(IdentityRules.Phase.KEYS_UNAVAILABLE, null).text.contains("no attestation keys"))
         assertTrue(IdentityRules.line(IdentityRules.Phase.ERROR, null, "boom").text.endsWith(": boom"))
         assertTrue(IdentityRules.line(IdentityRules.Phase.NONE, null).text.startsWith("Checking"))
+    }
+
+    /** T220: every verdict the line can read, each lone reason and all of them together. */
+    private fun verdicts(): List<Verdict> {
+        fun v(status: Verdict.Status, reasons: List<Refusal>, chainEnd: Long? = null) = Verdict(status, reasons, null, null, null, 0, chainEnd, now, null)
+        return listOf(v(Verdict.Status.ACCEPT, emptyList()), v(Verdict.Status.STALE, emptyList(), now - 10 * day), v(Verdict.Status.REFUSE, emptyList())) +
+            Reason.entries.map { v(Verdict.Status.REFUSE, listOf(Refusal(it, "found ${it.code}"))) } +
+            v(Verdict.Status.REFUSE, Reason.entries.map { Refusal(it, "found ${it.code}") })
+    }
+
+    @Test fun everyPhaseAndVerdictKeepsItsSentenceAndLiftInView() {
+        val cases = IdentityRules.Phase.entries.filter { it != IdentityRules.Phase.READY }.map { Triple(it, null as Verdict?, "boom" as String?) } +
+            Triple(IdentityRules.Phase.READY, null, null) + verdicts().map { Triple(IdentityRules.Phase.READY, it, null) }
+        assertEquals(6 + Reason.entries.size + 4, cases.size)
+        for ((phase, verdict, error) in cases) {
+            val line = IdentityRules.line(phase, verdict, error)
+            val shown = IdentityRules.shown(phase, verdict, error)
+            val where = "$phase ${verdict?.status} ${verdict?.reasons?.map { it.reason }}"
+            assertEquals(line.text, shown.sentence, where) // the sentence is the line's, whole
+            assertEquals(line.ok, shown.ok, where)
+            val inView = listOfNotNull(shown.sentence, shown.lift).joinToString(" ")
+            if (verdict != null && verdict.status == Verdict.Status.REFUSE) {
+                IdentityRules.primaryReason(verdict.reasons)?.let { assertEquals(it.reason.lift, shown.lift, where) }
+            }
+            // A second sentence of the line is the lift, unless it is the reason (offline) or the detail (accepted).
+            if (phase != IdentityRules.Phase.OFFLINE && verdict?.status != Verdict.Status.ACCEPT && verdict?.status != Verdict.Status.REFUSE) assertEquals(line.detail, shown.lift, where)
+            // Every lift the line has is in view; the words are ADR 0051's.
+            if (phase == IdentityRules.Phase.OFFLINE) assertTrue("Connect to the internet" in inView, where)
+            assertFalse("official" in (inView + shown.reasons).lowercase(), where)
+            assertEquals(shown.reasons.isNotEmpty(), shown.why != null, where)
+        }
+    }
+
+    @Test fun onlyTheReasonsFold() {
+        val offline = IdentityRules.shown(IdentityRules.Phase.OFFLINE, null)
+        assertEquals("Connect to the internet once to set up sharing.", offline.sentence)
+        assertEquals(listOf("This phone makes its identity key while online."), offline.reasons)
+        assertEquals("Why?", offline.why)
+
+        val keys = IdentityRules.shown(IdentityRules.Phase.KEYS_UNAVAILABLE, null)
+        assertEquals("Try again later while online.", keys.lift)
+        assertEquals(null, keys.why)
+
+        val ok = IdentityRules.shown(IdentityRules.Phase.READY, debugVerdict(spec()))
+        assertEquals("This phone can prove it runs the signed app.", ok.sentence)
+        assertEquals(listOf("Its key is held in the phone's secure hardware (TEE)."), ok.reasons)
+
+        val stale = IdentityRules.shown(IdentityRules.Phase.READY, debugVerdict(spec(notAfter = now - 10 * day)))
+        assertEquals("Connect to the internet so it renews.", stale.lift)
+
+        // An emulator-like chain: the first reason's lift in view, every reason behind the tap, in the line's order.
+        val soft = AttestationPolicy.release().evaluate(
+            TestChainMint.mint(spec(level = KeyDescription.SecurityLevel.SOFTWARE, locked = false), root, now), PolicyLists.release.anchors, JavaSecurityVerifier, now, null,
+        )
+        val shown = IdentityRules.shown(IdentityRules.Phase.READY, soft)
+        assertEquals(Reason.SOFTWARE_LEVEL.lift, shown.lift)
+        assertEquals(soft.codes.distinct().size, shown.reasons.size)
+        assertEquals("Why? (${shown.reasons.size} reasons)", shown.why)
+        assertEquals("Found for the reason above: attestation software, key software.", shown.reasons.first())
+        assertFalse("more reason" in shown.sentence + shown.lift)
+
+        val one = IdentityRules.shown(IdentityRules.Phase.READY, AttestationPolicy.release().evaluate(TestChainMint.mint(spec(), root, now), root.anchors, JavaSecurityVerifier, now, null))
+        assertEquals("Why?", one.why)
+        assertEquals(Reason.UNKNOWN_SIGNER.lift, one.lift)
+    }
+
+    @Test fun everyReasonLineReadsWithItsSeparator() {
+        fun v(reasons: List<Refusal>) = Verdict(Verdict.Status.REFUSE, reasons, null, null, null, 0, null, now, null)
+        fun found(r: Reason) = "found ${r.code}"
+        for (lone in Reason.entries) {
+            val shown = IdentityRules.shown(IdentityRules.Phase.READY, v(listOf(Refusal(lone, found(lone)))))
+            assertEquals(listOf("Found for the reason above: ${found(lone)}."), shown.reasons)
+            assertTrue(lone.message.replaceFirstChar { it.lowercaseChar() } in shown.sentence, lone.code) // not dropped: in view
+            assertEquals(lone.lift, shown.lift, lone.code)
+        }
+        // Each reason in second place, behind one that sorts before it, keeps its whole line.
+        val all = Reason.entries.map { Refusal(it, found(it)) }
+        val first = IdentityRules.primaryReason(all)!!.reason
+        val lines = IdentityRules.shown(IdentityRules.Phase.READY, v(all)).reasons
+        assertEquals(Reason.entries.size, lines.size)
+        assertEquals("Found for the reason above: ${found(first)}.", lines.first())
+        for (r in Reason.entries - first) {
+            assertTrue("${r.message} ${r.lift} Found: ${found(r)}." in lines, r.code)
+        }
+        // Raw text: a stop of its own is not doubled, repeats fold into one, none adds no "Found".
+        val many = v(listOf(Refusal(Reason.MALFORMED, "a."), Refusal(Reason.REVOKED, "b."), Refusal(Reason.REVOKED, "b."), Refusal(Reason.REVOKED, "c"), Refusal(Reason.EXPIRED, " ")))
+        assertEquals(
+            listOf("Found for the reason above: a.", "${Reason.REVOKED.message} ${Reason.REVOKED.lift} Found: b; c.", "${Reason.EXPIRED.message} ${Reason.EXPIRED.lift}"),
+            IdentityRules.shown(IdentityRules.Phase.READY, many).reasons,
+        )
+        assertEquals("Why? (3 reasons)", IdentityRules.shown(IdentityRules.Phase.READY, many).why)
+    }
+
+    @Test fun getIdentityKeepsItsLine() {
+        // T220: the route's `line` is still text, detail and ok, the refusal's "(n more reasons)" included.
+        val soft = AttestationPolicy.release().evaluate(
+            TestChainMint.mint(spec(level = KeyDescription.SecurityLevel.SOFTWARE, locked = false), root, now), PolicyLists.release.anchors, JavaSecurityVerifier, now, null,
+        )
+        val map = IdentityRules.line(IdentityRules.Phase.READY, soft).toMap()
+        assertEquals(setOf("text", "detail", "ok"), map.keys)
+        assertTrue((map["detail"] as String).endsWith("more reasons)"), map["detail"] as String)
     }
 
     @Test fun signerOnlyRefusalPassesTheHardwarePolicy() {

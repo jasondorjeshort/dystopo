@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.app.firstrun
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,9 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -42,12 +47,14 @@ private val Paper = Color(0xFFFFFCF5)
 private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
 private val Red = Color(0xFFB0302A)
+private val Link = Color(0xFF2C7BB6)
 
 private class CardUi(val noPack: Boolean, val server: String, val progress: String?, val importing: Boolean, val direct: Boolean, val notice: String? = null)
 
 /**
- * T79: the first-run card over the map while no pack is installed: what is missing and the three ways to
- * get a map ([FirstRun]). Hidden while the pack list or the settings sheet is open, and after "Not now"
+ * T79: the first-run card over the map while no pack is installed: what is missing and the ways to get a map, each
+ * with its sentence and one of them filled ([firstRunChoices], T220). The choices scroll when the font scale outgrows
+ * the screen; the progress, the message and the two links stay in view under them. Hidden while the pack list or the settings sheet is open, and after "Not now"
  * (then [fallback], the plain no-pack line, shows when the map is empty). Drawn by one line in the map screen,
  * which also hosts the file picker ([ImportPickerHost]).
  */
@@ -85,6 +92,7 @@ fun FirstRunCard(fallback: String?) {
     )
     val show = ui.noPack && !FirstRun.dismissed && !PacksUi.visible && !SettingsUi.visible && !cardsBelow
     FirstRunCardState.visible = show
+    LaunchedEffect(tick, show) { if (show) FirstRun.refreshEstimate(app) } // T220: the size in the first choice's sentence
     FirstRunCardState.yieldedTo = if (ui.noPack && !FirstRun.dismissed && cardsBelow) "bottomCards" else null
     Box(Modifier.fillMaxSize()) {
         if (!show) {
@@ -101,46 +109,63 @@ fun FirstRunCard(fallback: String?) {
         val above = io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop
         Column(
             Modifier.align(Alignment.BottomCenter)
+                // T220: at a large font scale the card reaches the top row, which is drawn over it: it stops under the search box.
+                .let { m -> io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom.let { top -> if (top > 0.dp) m.padding(top = top + 4.dp) else m.statusBarsPadding() } }
                 .let { m -> if (above > 0.dp) m.padding(start = 12.dp, end = 12.dp, bottom = above + 8.dp) else m.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 36.dp) }
                 .widthIn(max = 460.dp).fillMaxWidth()
-                .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp)).padding(16.dp),
+                .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))
+                .pointerInput(Unit) { detectTapGestures { } } // T220: a touch on its paper stays out of the map
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            BasicText("No map on this phone yet", style = TextStyle(color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold))
-            BasicText(
-                when {
-                    ui.server.isNotEmpty() -> "Server: ${ui.server}"
-                    ui.direct && ui.notice != null -> ui.notice
-                    ui.direct -> "The map comes straight from public sources (OpenStreetMap via OpenFreeMap, Copernicus, USGS and national surveys). Download the area around you to use it offline. A Dystopo server in ${Screens.SETTINGS} › ${Screens.SOURCES} is faster."
-                    else -> "No server set. Set one in ${Screens.SETTINGS} › ${Screens.SOURCES} to download maps, or import pack files you have."
-                },
-                style = TextStyle(color = Muted, fontSize = 13.sp),
-            )
-            CardButton("Download the map around me", primary = true) { FirstRun.message = null; FirstRun.downloadAroundMe() }
-            if (ui.direct || ui.server.isNotEmpty()) CardButton("Show the map around me") { FirstRun.message = null; FirstRun.showAroundMe() } // T80
-            if (ui.server.isNotEmpty() || !ui.direct) CardButton("Choose from server") { FirstRun.message = null; FirstRun.chooseFromServer() }
-            CardButton("Import pack files") { FirstRun.message = null; ImportPicker.request() }
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                BasicText("No map on this phone yet", style = TextStyle(color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold))
+                BasicText(firstRunBody(ui.server, ui.direct, ui.notice), style = TextStyle(color = Muted, fontSize = 13.sp))
+                firstRunChoices(ui.server, ui.direct, FirstRun.estimateBytes, AppSettings.units).forEach { c ->
+                    ChoiceBlock(c) {
+                        FirstRun.message = null
+                        when (c.id) {
+                            "download" -> FirstRun.downloadAroundMe()
+                            "look" -> FirstRun.showAroundMe() // T80
+                            "server" -> FirstRun.chooseFromServer()
+                            else -> ImportPicker.request()
+                        }
+                    }
+                }
+            }
             ui.progress?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Download failed")) Red else Accent, fontSize = 13.sp)) }
             FirstRun.message?.let { BasicText(it, style = TextStyle(color = if (it.contains("failed") || it.contains("permission")) Red else Accent, fontSize = 13.sp)) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                BasicText(Screens.SETTINGS, Modifier.clickable { SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp), style = TextStyle(color = Color(0xFF2C7BB6), fontSize = 14.sp, fontWeight = FontWeight.Bold))
-                BasicText("Not now", Modifier.clickable { FirstRun.dismissed = true }.padding(vertical = 4.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    BasicText(Screens.SETTINGS, Modifier.clickable { SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp), style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    BasicText("Not now", Modifier.clickable { FirstRun.dismissed = true }.padding(vertical = 4.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
+                }
+                BasicText(NOT_NOW_LINE, style = TextStyle(color = Muted, fontSize = 12.sp))
             }
         }
     }
 }
 
+/** T220: a choice and its sentence: a filled or outlined button, or a text action. */
 @Composable
-private fun CardButton(label: String, primary: Boolean = false, onClick: () -> Unit) {
-    BasicText(
-        label,
-        style = TextStyle(color = if (primary) Paper else Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
-        modifier = Modifier.fillMaxWidth()
-            .background(if (primary) Accent else Color(0xFFF4EDE0), RoundedCornerShape(10.dp))
-            .border(1.dp, if (primary) Accent else Line, RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-    )
+private fun ChoiceBlock(choice: FirstRunChoice, onClick: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if (choice.weight == ChoiceWeight.TEXT) {
+            BasicText(choice.label, Modifier.clickable(onClick = onClick).padding(vertical = 4.dp), style = TextStyle(color = Link, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+        } else {
+            val filled = choice.weight == ChoiceWeight.FILLED
+            BasicText(
+                choice.label,
+                style = TextStyle(color = if (filled) Paper else Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
+                modifier = Modifier.fillMaxWidth()
+                    .background(if (filled) Accent else Paper, RoundedCornerShape(10.dp))
+                    .border(1.dp, Accent, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onClick)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            )
+        }
+        BasicText(choice.sentence, style = TextStyle(color = Muted, fontSize = 13.sp))
+    }
 }
 
 private fun mb(bytes: Long) = String.format(Locale.US, "%.1f MB", bytes / 1048576.0)

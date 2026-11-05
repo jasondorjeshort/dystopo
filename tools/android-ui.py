@@ -1366,6 +1366,10 @@ def part_features(args):
         dev.tap(dev.find("^Share$", nodes))
         n, nodes = dev.wait_for(CODE.pattern, 20)
         png = dev.screencap("share")[0]
+        details = dev.find(r"Details$", nodes)  # T220: the address list folds under "Details"
+        if details:
+            dev.tap(details)
+            nodes = dev.nodes()
         addr = next((t for t in dev.texts(nodes) if t.startswith("Address:")), None)
         close_sheet(dev)
         return {"ok": bool(n), "codeShape": bool(n), "address": bool(addr), "png": png,

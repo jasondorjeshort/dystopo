@@ -50,6 +50,7 @@ private val Red = Color(0xFFB0302A)
  */
 class OnlineUi(
     val state: String, val view: OnlineView?, val download: Map<String, Any?>, val running: Boolean, val notice: String? = null, val direct: Boolean = false,
+    val firstRunCard: Boolean = false,
 ) {
     enum class Dot { GREEN, GREY, RED }
 
@@ -84,8 +85,8 @@ class OnlineUi(
         return String.format(Locale.US, "%s %s%s: %.0f%%", phase, download["name"], kind, pct)
     }
 
-    /** "Download this region" is offered: online, a view, not all pack, nothing running. */
-    val offerDownload: Boolean get() = !running && state == "online" && view != null && view.source != OnlineTiles.PACK
+    /** "Download this region" is offered: online, a view, not all pack, nothing running; T220: not while the first-run card is up (its first choice is the same thing). */
+    val offerDownload: Boolean get() = !running && state == "online" && view != null && view.source != OnlineTiles.PACK && !firstRunCard
 
     /** The line after a finished or failed download, or null. */
     val result: Pair<String, Dot?>? get() = when (download["state"]) {
@@ -98,7 +99,7 @@ class OnlineUi(
         /** The snapshot for camera [cam] (read on the UI thread, source unknown): everything else is read here, on a worker. */
         fun make(service: OnlineService, app: DystopoApp, cam: OnlineView?): OnlineUi {
             val view = cam?.let { it.withSource(OnlineView.sourceFor(app, it)) }
-            return OnlineUi(service.state(), view, service.region.json(), service.region.running, if (service.isDirect) service.direct.notice() else null, service.isDirect)
+            return OnlineUi(service.state(), view, service.region.json(), service.region.running, if (service.isDirect) service.direct.notice() else null, service.isDirect, io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.visible)
         }
     }
 }

@@ -11,7 +11,7 @@ import io.github.jasondorjeshort.dystopo.identity.Verdict
 /**
  * T216: the phone half's rules that need no Android (ADR 0051, stage 1a), so the unit tests run them on the JVM:
  * the debug policy, when keys are renewed, when the revocation list is refetched, and the Share screen's self-check
- * line.
+ * line. T220: [shown] is how the screen draws that line: its sentence and its lift in view, the reasons behind "Why?".
  */
 object IdentityRules {
     const val DAY = 86_400_000L
@@ -105,6 +105,58 @@ object IdentityRules {
                     listOfNotNull(first?.reason?.lift, if (more > 0) "($more more ${if (more == 1) "reason" else "reasons"})" else null).joinToString(" "),
                     false,
                 )
+            }
+        }
+    }
+
+    /**
+     * T220: the self-check line as the Share screen draws it: [sentence] and [lift] always in view (ADR 0051: every verdict
+     * is shown with reasons and a lift, and the owner reads this line for the ADR's first prediction), [reasons] behind a
+     * tap on the same screen. [count] is how many distinct reasons a refusal has. `GET /identity` keeps [line].
+     */
+    data class Shown(val sentence: String, val lift: String?, val reasons: List<String>, val count: Int, val ok: Boolean) {
+        /** The fold's label, or null when there is nothing to fold. */
+        val why: String? get() = when {
+            reasons.isEmpty() -> null
+            count > 1 -> "Why? ($count reasons)"
+            else -> "Why?"
+        }
+
+        fun toMap(): Map<String, Any?> = linkedMapOf("sentence" to sentence, "lift" to lift, "why" to why, "reasons" to reasons, "ok" to ok)
+    }
+
+    /**
+     * The line of [phase] and [verdict] split for the screen, from [line] so the two cannot differ. Offline, the sentence is
+     * the lift itself and the line's second sentence is the reason; when accepted, the second sentence (where the key is
+     * held) is the detail; a refusal's lift is its first reason's, and every reason folds, the first reason first
+     * ([reasonLines]).
+     */
+    fun shown(phase: Phase, verdict: Verdict?, error: String? = null): Shown {
+        val l = line(phase, verdict, error)
+        val status = if (phase == Phase.READY) verdict?.status else null
+        return when {
+            phase == Phase.OFFLINE || status == Verdict.Status.ACCEPT -> Shown(l.text, null, listOfNotNull(l.detail), 0, l.ok)
+            status == Verdict.Status.REFUSE -> {
+                val lines = reasonLines(verdict!!.reasons)
+                Shown(l.text, primaryReason(verdict.reasons)?.reason?.lift, lines, verdict.reasons.distinctBy { it.reason }.size, l.ok)
+            }
+            else -> Shown(l.text, l.detail, emptyList(), 0, l.ok)
+        }
+    }
+
+    /**
+     * One line per distinct reason, in [LINE_ORDER]: its message, its lift, then "Found: " and what the check found, which
+     * is raw text of any shape (some of it holds parentheses, as messages and lifts do). The first reason's message and lift
+     * are already in view above the fold, so its line is what the check found alone.
+     */
+    private fun reasonLines(reasons: List<Refusal>): List<String> {
+        val first = primaryReason(reasons)?.reason
+        return reasons.groupBy { it.reason }.entries.sortedBy { LINE_ORDER.indexOf(it.key) }.mapNotNull { (reason, refusals) ->
+            val found = refusals.map { it.detail.trim().trimEnd('.') }.filter { it.isNotEmpty() }.distinct().joinToString("; ")
+            when {
+                reason != first -> listOf(reason.message, reason.lift, if (found.isEmpty()) "" else "Found: $found.").filter { it.isNotEmpty() }.joinToString(" ")
+                found.isEmpty() -> null
+                else -> "Found for the reason above: $found."
             }
         }
     }

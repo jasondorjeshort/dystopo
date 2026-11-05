@@ -2,7 +2,7 @@
 
     python -I tools/android-firstrun.py --serial emulator-5652 --server http://192.168.1.20:9021 [--apk <apk>]
                                         [--lat 46.786 --lon -121.736] [--import out/rainier-dem.pmtiles,out/rainier-outdoors.pmtiles]
-                                        [--out out/firstrun]
+                                        [--choose-pack rainier] [--font-scale 2.0] [--out out/firstrun]
 
 The release build has no debug routes, so this script only uses what a person on the phone has: it finds
 on-screen text with `uiautomator dump` (Compose text is in the accessibility tree), taps with `adb shell
@@ -18,10 +18,15 @@ Flow (each step is one entry in the JSON report, with the screenshot it took):
   location    `adb emu geo fix` at --lat/--lon (the emulator's GPS; default Paradise, Mount Rainier)
   launch      start the app; answer the location dialog with "While using the app"
   card        the first-run card shows ("No map on this phone yet")
+  choices     T220: every choice of the card with its sentence, scrolling the card when the font scale outgrows the
+              screen, each page a screenshot (`labels`, `sentences`, `pngs`, `missing`, `scrolls`)
   settings    tap Settings, type --server into Settings > Sources, Save; the sheet must say "Connected: N packs"
   test        tap Test; again "Connected: N packs on <server>" (N is reported)
-  download    close Settings, tap "Download the map around me"; wait until the card is gone and the region pack
-              is on the map (the server builds it first: up to --timeout seconds)
+  choices-server  T220: close Settings; the same with a server set, "Choose from server" among them
+  download    tap "Download the map around me"; wait until the card is gone and the region pack is on the map (the
+              server builds it first: up to --timeout seconds)
+  choose      T220, with --choose-pack instead of download: tap "Choose from server", Download on that pack's row, wait
+              for it to be installed, Close; the card is gone (the server builds nothing)
   map         raw frames (`screencap` without -p, T105) until contour brown covers at least --contour-min of the map
               area (the rule tools/android-release.ps1 uses: contours #8c5523 over paper or hillshade) and the screen
               holds still for 2 s; the settled frame is saved as a PNG
@@ -29,15 +34,19 @@ With --import (files on the host): uninstall and install again, push the files t
 tap "Import pack files" on the card, pick them in the system file picker, and wait for the map the same way
 (`import` and `import-map` steps). Exit 0 when every step passed; one JSON object on stdout.
 
+T220, --font-scale: the system font scale for the whole run (`settings put system font_scale`), put back at the end;
+`fontScale` and `fontScaleBefore` in the report. --until stops after a step, so the card alone at 2.0 is
+`--font-scale 2.0 --until choices-server` (server) or `--direct --font-scale 2.0 --until show-rainier`.
+
 T80, --direct (no --server): the release install with no server and no pack reads the public sources itself.
   install          fresh install (network on)
-  show-rainier     geo fix at Rainier, launch, the card, "Show the map around me": seconds from the tap, by raw frames
+  show-rainier     geo fix at Rainier, launch, the card and its choices (T220), "Just look at the map": seconds from the tap, by raw frames
                    (T105), to the first contours (`firstContoursS`: MapLibre's coarse fallback lines count), to the
                    view's own lines (`fullContoursS`: the first frame with half the settled contour share) and to a
                    screen that then holds still for 5 s (`settledS`); a settle over --direct-budget (90 s) fails the
                    step. PNGs of those three frames only.
   show-mont-blanc  the same at Mont Blanc (Copernicus and swissALTI3D) after a restart (the card is back)
-  mobile-data      T83 (no Wi-Fi gates): wifi off, mobile data on, "Show the map around me" at Paradise renders from
+  mobile-data      T83 (no Wi-Fi gates): wifi off, mobile data on, "Just look at the map" at Paradise renders from
                    the sources, and no screen text asks for Wi-Fi or mentions mobile data; wifi back on
   download         "Download the map around me" at --download-at: the phone builds the pack itself
   offline          wifi and mobile data off, restart: the downloaded place renders with contours; network back on
@@ -275,6 +284,78 @@ class Device:
         return n
 
 
+# T220: the first-run card's choices and how each one's sentence starts (the survey first-run-and-share.md). The labels
+# accept the app before T220 too ("Show the map around me"), so this tool can still drive an older APK.
+LOOK = r"^(Just look at the map|Show the map around me)$"
+CARD_CHOICES = [
+    ("Download the map around me", r"^Saves about \d+ (km|mi) around you on this phone so it works without signal\."),
+    ("Just look at the map", r"^Moves the map to where you are\."),
+    ("Choose from server", r"^Pick from the maps your server already has\."),
+    ("Import pack files", r"^Use map files you already have\."),
+]
+
+
+def scroll_card(dev, nodes, up=True):
+    """One swipe inside what scrolls: up shows what is below. On the first-run card that is above its pinned links (a swipe
+    below them lands on the map, or on an update card); on a sheet, the screen's middle."""
+    box = next((n["bounds"] for n in nodes if n["bounds"] and n["bounds"][1] == 0 and n["bounds"][0] == 0), None)
+    w, h = (box[2], box[3]) if box else (1080, 2400)
+    links = dev.find("^Not now$", nodes)
+    low = links["bounds"][1] - h * 3 // 100 if links else h * 62 // 100
+    high = low - h * 22 // 100
+    a, b = (low, high) if up else (high, low)
+    dev.shell("input", "swipe", str(w // 2), str(a), str(w // 2), str(b), "500")
+    time.sleep(0.8)
+
+
+def read_card(dev, name, expected):
+    """T220: walks the card from its top and notes each of `expected`'s choices and sentences on screen, a screenshot per
+    page. At font scale 2.0 the choices can outgrow the screen; the card scrolls and the walk follows it, and goes back up."""
+    labels, sentences, pngs = {}, {}, []
+    scrolls = 0
+    for page in range(5):
+        nodes = dev.nodes()
+        for label, sentence in expected:
+            if dev.find("^" + re.escape(label) + "$", nodes):
+                labels[label] = True
+            n = dev.find(sentence, nodes)
+            if n:
+                sentences[label] = n["text"] or n["desc"]
+        pngs.append(dev.screencap(f"{name}-{page + 1}")[0])
+        if len(labels) == len(expected) and len(sentences) == len(expected):
+            break
+        scroll_card(dev, nodes)
+        scrolls += 1
+    for _ in range(scrolls):
+        scroll_card(dev, dev.nodes(), up=False)
+    missing = [label for label, _ in expected if label not in labels or label not in sentences]
+    return {"ok": not missing, "labels": sorted(labels), "sentences": sentences, "pngs": pngs, "png": pngs[0], "scrolls": scrolls,
+            "missing": missing, **({"error": f"not on the card: {missing}"} if missing else {})}
+
+
+def hide_keyboard(dev):
+    """T220: Back, only while the keyboard is up (with it down, Back would close the sheet). At font scale 2.0 the
+    keyboard covers Save, whose node stays in the tree, so a tap there landed on the keyboard."""
+    if "mInputShown=true" in dev.shell("dumpsys", "input_method", check_ok=False):
+        dev.shell("input", "keyevent", "4")
+        time.sleep(0.8)
+
+
+def tap_choice(dev, pattern, timeout=15):
+    """Taps a choice on the card or a row of a sheet (T220), scrolling when the font scale has pushed it out of view."""
+    n, nodes = dev.wait_for(pattern, timeout)
+    for up in (True, True, True, False, False, False, False):
+        if n:
+            break
+        scroll_card(dev, nodes, up)
+        nodes = dev.nodes()
+        n = dev.find(pattern, nodes)
+    if not n:
+        raise RuntimeError(f"no '{pattern}' on the card (texts: {dev.texts(nodes)[:25]})")
+    dev.tap(n)
+    return n
+
+
 def raw_raster(raw):
     """A raw `screencap` (little-endian width, height, pixel format, and since API 28 a colour space, then 4 bytes a
     pixel) as an RGB Raster."""
@@ -430,8 +511,27 @@ def run(args):
             return {"ok": False, "error": "no first-run card", "texts": dev.texts(nodes)[:30], "png": path}
         return {"png": path, "texts": [t for t in dev.texts(nodes) if "server" in t.lower() or "map" in t.lower()][:6]}
 
+    def choices():
+        # With no server set the release reads the public sources: no "Choose from server" yet.
+        return read_card(dev, "choices", [c for c in CARD_CHOICES if c[0] != "Choose from server"])
+
+    def choices_server():
+        tap_choice(dev, "^Close$", timeout=3)
+        n, nodes = dev.wait_for("No map on this phone yet", 20)
+        if not n:
+            return {"ok": False, "error": "no first-run card after Settings", "texts": dev.texts(nodes)[:30]}
+        time.sleep(1)
+        return read_card(dev, "choices-server", CARD_CHOICES)
+
     def connected(timeout):
-        n, nodes = dev.wait_for(r"^(Connected: \d+ packs? on|Test failed)", timeout)
+        # T220: at a large font scale the line can be below the sheet's fold.
+        deadline = time.time() + timeout
+        while True:
+            n, nodes = dev.wait_for(r"^(Connected: \d+ packs? on|Test failed)", 8)
+            if n or time.time() > deadline:
+                break
+            if args.font_scale > 1:
+                scroll_card(dev, nodes)
         if not n or n["text"].startswith("Test failed"):
             return None, (n["text"] if n else f"no result (texts: {dev.texts(nodes)[:30]})")
         return n["text"], None
@@ -450,7 +550,8 @@ def run(args):
         dev.shell("input", "text", args.server.replace("&", "\\&"))
         time.sleep(0.5)
         path_typed, _ = dev.screencap("server-typed")
-        dev.tap_text("^Save$")
+        hide_keyboard(dev)
+        tap_choice(dev, "^Save$", timeout=3)
         text, err = connected(60)
         path, _ = dev.screencap("saved")
         if err:
@@ -458,16 +559,46 @@ def run(args):
         return {"result": text, "png": path, "typedPng": path_typed}
 
     def test():
-        dev.tap_text("^Test$")
+        tap_choice(dev, "^Test$", timeout=3)
         time.sleep(1)
         text, err = connected(60)
         path, _ = dev.screencap("tested")
         m = re.search(r"Connected: (\d+) pack", text or "")
         return {"ok": err is None, "result": text, "error": err, "packs": int(m.group(1)) if m else None, "png": path}
 
-    def download():
+    def choose():
+        # T220: the server flow's entry: the pack list with "From server" open, the pack's Download, Close.
+        tap_choice(dev, "^Choose from server$")
+        name, nodes = dev.wait_for(re.escape(args.choose_pack), 30)
+        list_png = dev.screencap("choose-list")[0]
+        if not name:
+            return {"ok": False, "error": f"no pack {args.choose_pack} under From server", "texts": dev.texts(nodes)[:30], "png": list_png}
+        below = [n for n in nodes if n["text"] == "Download" and n["bounds"] and n["bounds"][1] >= name["bounds"][1]]
+        if not below:
+            return {"ok": False, "error": "no Download on the pack's row", "texts": dev.texts(nodes)[:30], "png": list_png}
+        dev.tap(below[0])
+        t0 = time.time()
+        while time.time() - t0 < args.timeout:
+            nodes = dev.nodes()
+            if dev.find("^Delete$", nodes) and not dev.find("^Downloading", nodes):
+                break
+            failed = next((t for t in dev.texts(nodes) if "failed" in t.lower()), None)
+            if failed:
+                return {"ok": False, "error": failed, "png": dev.screencap("choose-failed")[0], "listPng": list_png}
+            time.sleep(2)
+        else:
+            return {"ok": False, "error": f"not installed after {args.timeout} s", "png": dev.screencap("choose-timeout")[0], "listPng": list_png}
+        wait = round(time.time() - t0, 1)
+        done_png = dev.screencap("choose-installed")[0]
         dev.tap_text("^Close$")
-        dev.tap_text("^Download the map around me$")
+        time.sleep(2)
+        texts = dev.texts()
+        if "No map on this phone yet" in texts:
+            return {"ok": False, "error": "the card is still up after the pack was installed", "png": dev.screencap("choose-card")[0], "listPng": list_png}
+        return {"pack": args.choose_pack, "waitS": wait, "listPng": list_png, "png": done_png}
+
+    def download():
+        tap_choice(dev, "^Download the map around me$")
         t0 = time.time()
         seen = []
         while time.time() - t0 < args.timeout:
@@ -489,10 +620,12 @@ def run(args):
     def map_step(name):
         return lambda: settle_map(dev, name, args.contour_min, args.settle_timeout)
 
-    flow = [("install", install), ("location", location), ("launch", start), ("card", card), ("settings", settings),
-            ("test", test), ("download", download), ("map", map_step("map"))]
+    flow = [("install", install), ("location", location), ("launch", start), ("card", card), ("choices", choices), ("settings", settings),
+            ("test", test), ("choices-server", choices_server), ("choose", choose) if args.choose_pack else ("download", download), ("map", map_step("map"))]
     if args.until:
-        flow = flow[:[n for n, _ in flow].index(args.until) + 1]
+        names = [n for n, _ in flow]
+        if args.until in names:
+            flow = flow[:names.index(args.until) + 1]
     ok = all(step(n, fn) for n, fn in flow)  # all() stops at the first failure
 
     if args.import_files and (ok or args.import_anyway):
@@ -515,7 +648,7 @@ def run(args):
 
         def import_pick():
             names = [os.path.basename(f) for f in files]
-            dev.tap_text("^Import pack files$")
+            tap_choice(dev, "^Import pack files$")
             time.sleep(2)
             first, nodes = dev.wait_for(re.escape(names[0]), 8)
             if not first:
@@ -622,10 +755,17 @@ def run_direct(args):
             if any("server" in t.lower() and "No server set" in t for t in texts):
                 return {"ok": False, "error": "the card asks for a server (no direct sources)", "texts": texts[:20]}
             time.sleep(2)  # a fix to arrive after the location dialog
-            dev.tap_text("^Show the map around me$")
+            card = read_card(dev, f"{place}-choices", [c for c in CARD_CHOICES if c[0] != "Choose from server"])
+            if args.until == f"show-{place}" and not card["ok"]:
+                return {**card, "place": place, "cardPng": card_png}
+            if args.until == f"show-{place}":
+                return {**card, "place": place, "cardPng": card_png, "stoppedBefore": "the tap"}
+            tap_choice(dev, LOOK)
             t0 = time.time()
             r = timed_map(dev, place, args.contour_min, args.direct_timeout, t0)
-            r.update(place=place, cardPng=card_png, permissionDialog=launched)
+            r.update(place=place, cardPng=card_png, permissionDialog=launched, choices={k: card[k] for k in ("sentences", "missing", "pngs", "scrolls")})
+            if not card["ok"]:
+                r.update(ok=False, error=card["error"])
             if r["ok"] and r.get("settledS") is not None and r["settledS"] > args.direct_budget:
                 r.update(ok=False, error=f"settled after {r['settledS']} s, over the {args.direct_budget} s budget")
             return r
@@ -653,7 +793,7 @@ def run_direct(args):
             if not n:
                 return {"ok": False, "error": "no first-run card", "texts": dev.texts(nodes)[:30]}
             time.sleep(2)
-            dev.tap_text("^Show the map around me$")
+            tap_choice(dev, LOOK)
             t0 = time.time()
             r = timed_map(dev, "mobile-data", args.contour_min, args.direct_timeout, t0)
             gated = [t for t in dev.texts() if "Wi-Fi" in t or "mobile data" in t.lower()]
@@ -674,7 +814,7 @@ def run_direct(args):
         if not n:
             return {"ok": False, "error": "no first-run card", "texts": dev.texts(nodes)[:30]}
         time.sleep(2)
-        dev.tap_text("^Download the map around me$")
+        tap_choice(dev, "^Download the map around me$")
         t0 = time.time()
         seen = []
         while time.time() - t0 < args.timeout:
@@ -708,6 +848,10 @@ def run_direct(args):
 
     flow = [("install", install), ("show-rainier", show("rainier", True)), ("show-mont-blanc", show("mont-blanc", False)),
             ("mobile-data", mobile_data), ("download", download), ("offline", offline)]
+    if args.until:
+        names = [n for n, _ in flow]
+        if args.until in names:
+            flow = flow[:names.index(args.until) + 1]
     ok = all(step(n, fn) for n, fn in flow)
     report["ok"] = ok and all(s["ok"] for s in steps)
     report["screenshots"] = [s.get("png") for s in steps if s.get("png")]
@@ -729,8 +873,10 @@ def main():
     ap.add_argument("--lon", type=float, default=-121.736)
     ap.add_argument("--import", dest="import_files", default="", help="comma-separated pack files on the host to import through the picker")
     ap.add_argument("--import-anyway", action="store_true", help="run the import flow even when the server flow failed")
-    ap.add_argument("--until", choices=["card", "settings", "test", "download"], default="",
-                    help="stop after this step (e.g. test: only read a server's catalog, never ask it to build)")
+    ap.add_argument("--until", choices=["card", "choices", "settings", "test", "choices-server", "choose", "download", "show-rainier"], default="",
+                    help="stop after this step (e.g. test: only read a server's catalog, never ask it to build; with --direct, show-rainier stops at the card, before the tap)")
+    ap.add_argument("--choose-pack", default="", help="T220: the server flow through \"Choose from server\": download this pack from the list instead of \"Download the map around me\" (the server builds nothing)")
+    ap.add_argument("--font-scale", type=float, default=0, help="T220: the system font scale for the run (1.0, 2.0), put back at the end")
     ap.add_argument("--timeout", type=float, default=300, help="seconds for the server build and download")
     ap.add_argument("--settle-timeout", type=float, default=90)
     ap.add_argument("--contour-min", type=float, default=0.002)
@@ -738,7 +884,18 @@ def main():
     args = ap.parse_args()
     if not args.direct and not args.server:
         ap.error("--server is required unless --direct")
-    report = run_direct(args) if args.direct else run(args)
+    dev = Device(args.serial, os.path.abspath(args.out))
+    before = None
+    if args.font_scale:
+        before = dev.shell("settings", "get", "system", "font_scale", check_ok=False).strip()
+        dev.shell("settings", "put", "system", "font_scale", str(args.font_scale))
+    try:
+        report = run_direct(args) if args.direct else run(args)
+    finally:
+        if args.font_scale:
+            dev.shell("settings", "put", "system", "font_scale", before if before and before != "null" else "1.0", check_ok=False)
+    if args.font_scale:
+        report.update(fontScale=args.font_scale, fontScaleBefore=before)
     report.update(capture_report())
     print(json.dumps(report, indent=1))
     sys.exit(0 if report["ok"] else 1)

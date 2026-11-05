@@ -122,6 +122,7 @@ class InstallIdentity private constructor(private val context: Context) {
 
     /** The Share screen's line for the current state. */
     fun line(): IdentityRules.Line = IdentityRules.line(phase, lastVerdict, error?.get("message") as? String)
+    fun shown(): IdentityRules.Shown = IdentityRules.shown(phase, lastVerdict, error?.get("message") as? String) // T220
 
     private fun challenge(): ByteArray? = (state["challenge"] as? String)?.let { Base64.getDecoder().decode(it) }
 
