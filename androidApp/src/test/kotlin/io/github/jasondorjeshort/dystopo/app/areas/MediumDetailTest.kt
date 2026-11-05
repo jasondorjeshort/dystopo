@@ -57,7 +57,7 @@ class MediumDetailTest {
 
     @Test
     fun theSizeLinesAndTheChoices() {
-        assertEquals("About 60 MB (900 tiles) at medium detail", sizeLine(60 * mb, 900, 8, 14, 13))
+        assertEquals("About 60 MB (900 tiles) at medium detail, elevation to z13", sizeLine(60 * mb, 900, 8, 14, 13)) // T221: the cap, as the Areas card says it
         assertEquals("About 60 MB (900 tiles) at zoom 8 to 14, elevation to 12", sizeLine(60 * mb, 900, 8, 14, 12))
         assertEquals("About 1.5 GB (12,000 tiles) at zoom 8 to 14", sizeLine(1536 * mb, 12_000, 8, 14))
         assertEquals("Medium detail (about 60 MB)", detailChoiceLine(AreaDetail.MEDIUM, 60 * mb))

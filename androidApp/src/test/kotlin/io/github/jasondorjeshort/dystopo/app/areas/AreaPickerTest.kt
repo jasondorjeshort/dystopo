@@ -5,7 +5,9 @@ import io.github.jasondorjeshort.dystopo.areas.AreaManifest
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
+import io.github.jasondorjeshort.dystopo.areas.PolygonRings
 import io.github.jasondorjeshort.dystopo.boundaries.Countries
+import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -225,5 +227,73 @@ class AreaPickerTest {
         val che = countryBox(Countries.byCode("CHE")!!.rings)
         assertTrue(che.minLon > 5 && che.maxLon < 11, "$che")
         assertNotNull(che)
+    }
+
+    /** T221: the fitted box of the country [code], and its parts' boxes, as the picker's first view reads them. */
+    private fun fitted(code: String): Pair<PackBounds, List<PackBounds>> {
+        val rings = Countries.byCode(code)!!.rings.map { AreaOfInterest.openRing(it) }
+        return countryBox(rings) to PolygonRings.outer(rings).map { PolygonRings.bounds(listOf(it), 0.0) }
+    }
+
+    private fun PackBounds.holds(lat: Double, lon: Double) = lat in minLat..maxLat && lon in minLon..maxLon
+
+    private fun PackBounds.holds(b: PackBounds) = b.minLon >= minLon && b.maxLon <= maxLon && b.minLat >= minLat && b.maxLat <= maxLat
+
+    @Test
+    fun franceOpensOnTheMainland() { // T221: the overseas parts stay in the download, out of the first view
+        val (b, parts) = fitted("FRA")
+        assertTrue(parts.size > 2, "France has overseas parts: ${parts.size}")
+        assertTrue(b.centerLat in 42.0..50.0 && b.centerLon in -2.0..7.0, "centre on the mainland: $b")
+        assertTrue(b.minLon > -6 && b.maxLon < 10 && b.minLat > 41 && b.maxLat < 52, "nothing overseas: $b")
+        assertTrue(b.holds(42.1, 9.1), "Corsica is near: $b")
+    }
+
+    @Test
+    fun newZealandKeepsBothIslands() {
+        val (b, _) = fitted("NZL")
+        assertTrue(b.holds(-44.0, 170.5), "South Island: $b")
+        assertTrue(b.holds(-39.0, 175.5), "North Island: $b")
+        assertTrue(b.maxLon - b.minLon < 20, "one side of 180: $b")
+        assertTrue(b.centerLat in -47.0..-34.0 && b.centerLon in 166.0..179.0, "$b")
+    }
+
+    @Test
+    fun indonesiaKeepsItsMainGroup() {
+        val (b, _) = fitted("IDN")
+        for ((name, at) in listOf("Sumatra" to (0.0 to 102.0), "Java" to (-7.5 to 110.0), "Kalimantan" to (0.0 to 114.0), "Sulawesi" to (-2.0 to 121.0))) {
+            assertTrue(b.holds(at.first, at.second), "$name: $b")
+        }
+        assertTrue(b.centerLat in -8.0..2.0 && b.centerLon in 100.0..125.0, "the centre is in the group: $b")
+    }
+
+    @Test
+    fun theUnitedStatesKeepAlaskaAndHawaii() {
+        val (b, _) = fitted("USA")
+        assertTrue(b.holds(39.0, -98.0), "the lower 48: $b")
+        assertTrue(b.holds(64.0, -150.0), "Alaska: $b")
+        assertTrue(b.holds(20.0, -155.5), "Hawaii: $b")
+        assertTrue(b.centerLat in 25.0..71.0 && b.centerLon in -168.0..-67.0, "the centre is in the main group: $b")
+        assertTrue(b.maxLon - b.minLon < 180, "one side of 180: $b")
+    }
+
+    @Test
+    fun otherArchipelagosStayWhole() {
+        assertTrue(fitted("JPN").first.let { it.holds(43.5, 142.5) && it.holds(36.0, 138.0) && it.holds(32.5, 131.0) }, "Hokkaido, Honshu, Kyushu")
+        assertTrue(fitted("MYS").first.let { it.holds(4.0, 102.0) && it.holds(3.0, 113.0) }, "the peninsula and Borneo")
+    }
+
+    @Test
+    fun theFittedBoxHoldsEveryPartWithinOneSpanOfTheLargest() { // a dozen countries, against the rule's own words
+        for (code in listOf("FRA", "NZL", "IDN", "USA", "JPN", "MYS", "NOR", "ESP", "PRT", "RUS", "CHE", "FJI")) {
+            val (b, parts) = fitted(code)
+            val rings = Countries.byCode(code)!!.rings.map { AreaOfInterest.openRing(it) }
+            val big = PolygonRings.bounds(listOf(PolygonRings.outer(rings).maxByOrNull { PolygonRings.ringAreaM2(it) }!!), 0.0)
+            assertTrue(b.holds(big), "$code: the largest part")
+            for (p in parts) {
+                val gapLon = maxOf(p.minLon - big.maxLon, big.minLon - p.maxLon)
+                val gapLat = maxOf(p.minLat - big.maxLat, big.minLat - p.maxLat)
+                if (gapLon <= big.maxLon - big.minLon && gapLat <= big.maxLat - big.minLat) assertTrue(b.holds(p), "$code: near part $p in $b")
+            }
+        }
     }
 }
