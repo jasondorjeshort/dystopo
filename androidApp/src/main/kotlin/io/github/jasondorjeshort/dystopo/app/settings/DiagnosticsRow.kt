@@ -5,18 +5,22 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -33,6 +37,10 @@ import kotlinx.coroutines.withContext
  * up confirm a copy themselves, so the toast is shown only below). [DiagnosticsUi.shown] is the snapshot on screen, what
  * `GET /diagnostics?shown=1` and `POST /diagnostics/copy` read. T172: under the memory, the live or last track's numbers
  * ([Diagnostics.trackLines]: points marked, gaps by reason, the watchdog's restarts while recording).
+ *
+ * T223: a normal visit to About and advanced should not read as a developer report, so all of that folds under "Technical
+ * details", collapsed each time the page opens; the heading and Show both open it ([DiagnosticsUi.foldOpen],
+ * `POST /diagnostics/fold`). The reading still happens when the page opens, as `GET /diagnostics?shown=1` expects.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -43,21 +51,29 @@ fun DiagnosticsRow() {
     LaunchedEffect(refresh) {
         snap = withContext(Dispatchers.Default) { Diagnostics.read(context.applicationContext) }.also { DiagnosticsUi.shown = it }
     }
+    DisposableEffect(Unit) { onDispose { DiagnosticsUi.foldOpen = false } } // collapsed again the next time the page opens
+    val open = DiagnosticsUi.foldOpen
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        BasicText("Diagnostics", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
-        BasicText("How much memory the app uses and how the last recording went, read when this page opens. Nothing leaves the phone unless you copy it.", style = TextStyle(color = Muted, fontSize = 11.sp))
-        val s = snap
-        if (s == null) BasicText("Reading…", style = TextStyle(color = Muted, fontSize = 13.sp))
-        else {
-            for (l in Diagnostics.nowLines(s)) Value(l)
-            BasicText(Diagnostics.LAST_SESSION, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
-            for (l in Diagnostics.lastSessionLines(s)) Value(l)
-            BasicText(Diagnostics.trackHeading(s), Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)) // T172
-            for (l in Diagnostics.trackLines(s)) Value(l)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText("Technical details", Modifier.weight(1f).clickable { DiagnosticsUi.foldOpen = !open }.padding(vertical = 6.dp), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+            Option(if (open) "Hide" else "Show", false) { DiagnosticsUi.foldOpen = !open }
         }
-        FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Option("Refresh", false) { refresh++ }
-            Option("Copy report", false) { snap?.let { copyReport(context, it) } }
+        BasicText("How much memory the app uses and how the last recording went, read when this page opens. Nothing leaves the phone unless you copy it.", style = TextStyle(color = Muted, fontSize = 11.sp))
+        if (open) {
+            BasicText("Diagnostics", Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
+            val s = snap
+            if (s == null) BasicText("Reading…", style = TextStyle(color = Muted, fontSize = 13.sp))
+            else {
+                for (l in Diagnostics.nowLines(s)) Value(l)
+                BasicText(Diagnostics.LAST_SESSION, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold))
+                for (l in Diagnostics.lastSessionLines(s)) Value(l)
+                BasicText(Diagnostics.trackHeading(s), Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)) // T172
+                for (l in Diagnostics.trackLines(s)) Value(l)
+            }
+            FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Option("Refresh", false) { refresh++ }
+                Option("Copy report", false) { snap?.let { copyReport(context, it) } }
+            }
         }
     }
 }
@@ -84,4 +100,7 @@ object DiagnosticsUi {
 
     /** The text Copy report last put on the clipboard. */
     @Volatile var copied: String? = null
+
+    /** T223: whether the "Technical details" fold is open; the row closes it when it leaves the screen. Main thread. */
+    var foldOpen by mutableStateOf(false)
 }

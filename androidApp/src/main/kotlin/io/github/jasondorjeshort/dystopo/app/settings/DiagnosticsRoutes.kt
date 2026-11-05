@@ -22,15 +22,25 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   opened), then reads the clipboard back on the main thread: `copied`, `clipboard`, `equal`, and the snapshot as
  *   `GET /diagnostics` gives it (`diagnostics`), so the copied numbers can be compared with the JSON's.
  * - `POST /diagnostics/reset`: clears the persisted mark ([HeapMark.reset]); answers like `GET /diagnostics`.
+ * - T223, `POST /diagnostics/fold?open=1|0`: opens or closes the row's "Technical details" fold, as a tap does; answers
+ *   `foldOpen`. `GET /diagnostics` also says `foldOpen`.
  */
 object DiagnosticsRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
         "GET" to "/diagnostics" -> {
-            if (r.query["shown"] == "1") DiagnosticsUi.shown?.let { Response.json(Diagnostics.json(it)) }
+            if (r.query["shown"] == "1") DiagnosticsUi.shown?.let { Response.json(Diagnostics.json(it) + ("foldOpen" to DiagnosticsUi.foldOpen)) }
                 ?: Response.json(mapOf("error" to "the Diagnostics row has not opened in this process"), 404)
-            else Response.json(Diagnostics.json(Diagnostics.read(app)))
+            else Response.json(Diagnostics.json(Diagnostics.read(app)) + ("foldOpen" to DiagnosticsUi.foldOpen))
         }
         "POST" to "/diagnostics/copy" -> copyRoute(app)
+        "POST" to "/diagnostics/fold" -> when (r.query["open"]) {
+            "1", "0" -> {
+                val open = r.query["open"] == "1"
+                app.map.onMain { DiagnosticsUi.foldOpen = open }
+                Response.json(mapOf("foldOpen" to open))
+            }
+            else -> Response.json(mapOf("error" to "open must be 1 or 0"), 400)
+        }
         "POST" to "/diagnostics/reset" -> {
             HeapMark.reset()
             Response.json(Diagnostics.json(Diagnostics.read(app)))

@@ -16,6 +16,15 @@ class PrintSheetTest {
     }
 
     @Test
+    fun theSourcesLineSeparatesEachPacksCredit() { // T223: "Elevation:" no longer runs on from "OpenMapTiles"
+        fun pack(role: String, text: String) = io.github.jasondorjeshort.dystopo.attribution.PackMetadata(role, "$role.pmtiles", mapOf("attribution" to text))
+        val credits = io.github.jasondorjeshort.dystopo.attribution.PackAttribution.compose(
+            listOf(pack("osm", "&copy; OpenStreetMap contributors (ODbL 1.0) &copy; OpenMapTiles"), pack("dem", "Elevation: USGS 3DEP")),
+        )
+        assertEquals("© OpenStreetMap contributors (ODbL 1.0) © OpenMapTiles · Elevation: USGS 3DEP", PhoneSheet.sourcesLine(credits.copy(sources = emptyList())))
+    }
+
+    @Test
     fun rowOffersTheSurveyedScales() {
         assertEquals(listOf("1:10,000", "1:25,000", "1:50,000", "Fit the view"), PRINT_SCALES.map { it.first })
         assertEquals(25_000.0, PRINT_SCALES[1].second)
