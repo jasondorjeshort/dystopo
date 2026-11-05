@@ -51,7 +51,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * line by the settings now), `drawnHeadline` (the one the card last drew), `basis` (the line under it), `actions` (each
  * `id`, `label`, `primary`, `style` `filled|outlined|text|overflow`; the overflow's `items`), `moreOpen`, and `lines`:
  * `water`, `exposure`, `bestStart`, `pastEffort`, each `state` `working|ready|none` and `text`, the words on the card (null
- * for a line that draws no working state of its own here). `ui.summary` is `headline`.
+ * for `pastEffort`, which draws no working line). `ui.summary` is `headline`.
  * - `POST /route/more?open=1|0`: opens or closes the card's three-dot overflow (a tap on it); answers `card`.
  * - `POST /route/lines?holdMs=<n>`: the next water and terrain computations wait `n` ms first (0 clears), so the working
  *   state can be read and viewed; answers `holdMs`. An answer already computed for the same points still shows at once.

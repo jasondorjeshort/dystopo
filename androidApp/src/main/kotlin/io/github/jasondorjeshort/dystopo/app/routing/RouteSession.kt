@@ -17,6 +17,7 @@ import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
+import io.github.jasondorjeshort.dystopo.routing.ShadeText
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -513,7 +514,7 @@ object RouteSession {
             "lines" to linkedMapOf(
                 "water" to if (p == null) LineState.NONE_JSON else RouteWater.lineJson(p.route.points, units),
                 "exposure" to if (p == null) LineState.NONE_JSON else RouteExposure.lineJson(p.route.points, p.mode, units),
-                "bestStart" to LineState.of(p?.let { RouteBestStart.start(it) }, null) { it.line },
+                "bestStart" to LineState.of(p?.let { RouteBestStart.start(it) }, ShadeText.BEST_START_WORKING) { it.line },
                 "pastEffort" to LineState.of(p?.let { PaceSettings.pastEffortStarted(it.route.points, it.mode) }, null) { PaceSettings.pastEffortLine(it) },
             ),
         )
