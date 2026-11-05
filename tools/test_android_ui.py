@@ -313,4 +313,26 @@ assert not ui.is_save_button({"pkg": "io.github.jasondorjeshort.dystopo", "text"
 closes = [{"text": "Close", "bounds": [0, 0, 1, 1], "id": "tracks"}, {"text": "Done", "bounds": [0, 0, 1, 1]}, {"text": "Close", "bounds": [2, 2, 3, 3], "id": "status"}]
 assert ui.top_close(closes)["id"] == "status" and ui.top_close([]) is None
 
+# A node's place counts once two dumps agree: a page still moving is not tapped.
+class Moving:
+    def __init__(self):
+        self.tops = iter([300, 200, 100, 100])
+
+    def nodes(self):
+        return [{"text": "Refresh", "bounds": [0, next(self.tops), 10, 10]}]
+
+    def find(self, pattern, nodes):
+        return nodes[0]
+
+    def texts(self):
+        return []
+
+
+real_sleep = ui.time.sleep
+ui.time.sleep = lambda s: None
+try:
+    assert ui.settled(Moving(), "^Refresh$")["bounds"][1] == 100
+finally:
+    ui.time.sleep = real_sleep
+
 print("test_android_ui: ok")

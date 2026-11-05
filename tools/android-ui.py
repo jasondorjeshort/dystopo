@@ -2768,6 +2768,20 @@ def mb_of(value):
     return float(m.group(1)) if m else None
 
 
+def settled(dev, pattern, timeout=10):
+    """The node matching [pattern] once two dumps agree on where it is: after a swipe the page can still be moving, and a tap
+    at the first dump's place then lands on the row that moved there (T223's longer page: Map data and sources)."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        n = dev.find(pattern, dev.nodes())
+        if n and last and n["bounds"] == last["bounds"]:
+            return n
+        last = n
+        time.sleep(0.5)
+    raise RuntimeError(f"'{pattern}' did not settle on screen within {timeout} s (texts: {dev.texts()[:25]})")
+
+
 def read_diagnostics(dev, timeout=40):
     """Settings > About and advanced, scrolled down to the Diagnostics row until its Copy report, T223's "Technical
     details" fold opened on the way (a tap on its heading or Show; "Hide" can show twice on the page, the Updates row has
@@ -2791,7 +2805,10 @@ def read_diagnostics(dev, timeout=40):
         lines = merge_screens(lines, dev.texts(nodes))
         if dev.find("^Max heap: ", nodes):
             shots.append(dev.screencap("diagnostics")[0])
-        if dev.find("^Copy report$", nodes) and "Max heap" in diagnostics_sections(lines)["now"]:
+        # Well inside the page: at the sheet's lower edge its node is taller than what shows, and a tap at the node's centre
+        # falls through the sheet's padding to the map's credit line, which opens Map data and sources.
+        copy_row = dev.find("^Copy report$", nodes)
+        if copy_row and copy_row["bounds"][3] <= h * 9 // 10 and "Max heap" in diagnostics_sections(lines)["now"]:
             return lines, shots, nodes
         dev.shell("input", "swipe", str(w // 2), str(h * 3 // 4), str(w // 2), str(h * 2 // 5), "600")
         time.sleep(1)
@@ -2826,15 +2843,16 @@ def part_diagnostics(args):
                 "pngs": shots, **({} if ok else {"error": "Diagnostics row: " + ", ".join(k for k, v in checks.items() if not v)})}
 
     def copy():
-        dev.tap_text("^Copy report$")
+        dev.tap(settled(dev, "^Copy report$"))
         time.sleep(1.5)
         png = dev.screencap("copied")[0]  # Android 13 and up show their own copy confirmation; below, the app's toast
         return {**alive_and_clean(dev), "png": png}
 
     def refresh():
-        dev.tap_text("^Refresh$")
-        n, _nodes = dev.wait_for("^Max heap: ", 10)
-        return {"ok": n is not None, **({} if n else {"error": "no Max heap line after Refresh"})}
+        dev.tap(settled(dev, "^Refresh$"))
+        # Any live line: with the fold's page scrolled to Refresh, the first of them can be above the screen.
+        n, _nodes = dev.wait_for("^(" + "|".join(DIAG_NOW) + "): ", 10)
+        return {"ok": n is not None, **({} if n else {"error": "no Diagnostics line after Refresh"})}
 
     def after_force_stop():
         close_sheet(dev)
