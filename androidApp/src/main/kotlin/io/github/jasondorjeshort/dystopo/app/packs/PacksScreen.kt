@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -248,6 +249,9 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     // T53: with the server section open the list takes the lower part of the screen and the map, with the
     // catalog outlines, shows above it.
     Box(Modifier.fillMaxSize()) {
+    // T222: a fresh node for each form. Updating one node from the sheet's modifiers (no status bar padding) to the full screen's
+    // recursed in Compose's inset padding until the main thread froze and the stack overflowed (main's screen did it too).
+    key(catalogOpen) {
     Column(
         (if (catalogOpen) Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(PacksUi.CATALOG_SHEET).background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).border(1.dp, Line, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
         else Modifier.fillMaxSize().background(Paper).statusBarsPadding())
@@ -339,6 +343,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                 Chip("Import files") { ImportPicker.request() }
             }
         }
+    }
     }
     }
 }
