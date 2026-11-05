@@ -1,14 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-05, at commit 9d14efd3, by main session (wave 28, 8 of 10 merged)
+Updated: 2026-11-05, at commit ceb4066a, by main session (wave 28, 9 of 10 merged)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
 wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Now
 
 - **Wave 28 runs one Gradle-using agent at a time** (the owner, 2026-11-04, after seven builds left 2 GB free; the
-  board's wave paragraph). T225, T223, T218, T217, T219, T220, T221 and T222 are merged; T226 (new) is running. Then T224.
+  board's wave paragraph). T225, T223, T218, T217, T219, T220, T221, T222 and T226 are merged; T224, the last, is running.
   T224 was stopped part-way: its work is in its worktree, unpushed, unchecked and
   uncommitted. Resume it with its agent, or a new one in that worktree.
 - The wave's common brief and wait script are outside the repo, in the `.scratch` folder of the worktrees' folder
@@ -18,10 +18,10 @@ wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Next
 
-1. As T226 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence, then T224.
-2. Go on down the order, one at a time.
+1. As T224 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence.
+2. Delete the merged `origin/task/T138` in the last cleanup.
 3. After the last merge: the sweep (it checks the labels `tools/android-ui.py` taps), the release, the close.
-4. The next wave's candidates: the layout authority's second half with ADR 0053's build step 2 and the top-row
+4. The next wave's candidates: one rule for state made off the main thread (T226), the layout authority's second half with ADR 0053's build step 2 and the top-row
    regroup (T224's design note), T225's build tasks once the owner chooses, the two ready Plans.
 5. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's, the sentinel rule.
 
