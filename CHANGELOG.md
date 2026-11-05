@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-04
 
+- T223: Settings and small strings: sentences that parse, round numbers, one toggle, technical details out of the way
 - T225: Proposal: one name and one list for downloaded maps, and what the status chip says
 
 ## v0.1.19-alpha (2026-11-03)
