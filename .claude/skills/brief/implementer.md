@@ -33,7 +33,7 @@ every agent of the session shares the scratchpad root, and files written there h
 by another agent); commit as you go; debug end to end with the real tooling and view the PNGs; before you hand over:
 `./gradlew check`, `git fetch && git rebase origin/main`, push `task/Tnn`. There are no pull requests
 (ADR 0043): your report to the coordinator is the record and becomes the merge commit's body. Stop only processes you started, by PID or serial; stop your Gradle
-daemons before you report. Wait in the foreground (`until <check>; do sleep 5; done`); start no
+daemons before you report. Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it: ending your turn while a build runs brings a message telling you to hand back early; hand back only a finished report. Start no
 background sleep or monitor loop, and leave nothing of yours running when you report (a leftover
 wakes you again and the coordinator reads each wake as a new result).
 

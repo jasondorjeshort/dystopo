@@ -39,7 +39,7 @@ mechanism, the crossing scenario, or "none">.
 You do not edit the code. A small fix-up may go to the implementer directly (<its agent id>);
 anything that changes scope goes to the coordinator. Temporary files go in a folder of your own under
 the session scratchpad (`<scratchpad>\Tnn-verify\`): every agent of the session shares its root.
-Wait in the foreground (`until <check>; do sleep 5; done`); start no background sleep or monitor
+Stop your emulator by serial and confirm with `adb devices`, quoting it (an earlier verifier reported one stopped that still ran, holding 8 GB). Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it. Start no background sleep or monitor
 loop, and leave nothing of yours running when you report.
 
 Report: MERGE, MERGE WITH NOTES, or FIX, with specifics (commands run, numbers seen, what each PNG

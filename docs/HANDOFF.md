@@ -1,35 +1,30 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-05, at commit ce25b455, by main session (wave 28, all merged; the sweep next)
-Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
-wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
+Updated: 2026-11-05, by main session (wave 28 closed, v0.1.20-alpha published)
+Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (no open wave; Later),
+`docs/tasks/wave-28.md`, ADR 0056, ADR 0057.
 
 ## Now
 
-- **Wave 28's ten tasks are merged** (T217 to T226; T226 came from the verifiers' findings). The owner's rule of one
-  Gradle-using agent at a time held from 2026-11-04 on (the board's wave paragraph). The sweep is next.
-- The wave's common brief and wait script are outside the repo, in the `.scratch` folder of the worktrees' folder
-  [no-check: outside the repo]. Host ports 8701 to 8708 and consoles 5570 to 5584 went to the implementers in task
-  order; verifiers take host 8721 up and consoles 5600 up.
-- Meter at launch: 73 on the 7-day, 1 on the 5-hour; with the figured 16.5 points, 89.5 against the hold of 97.
+- **No wave is open.** Wave 28 is closed and v0.1.20-alpha is published (T217 to T226). The sweep was green.
+- **New rule, ADR 0057:** one Gradle-using agent at a time unless the owner says wider. The `wave` skill's per-task
+  figure is now 1.25 points (wave 28's close read 5.5 under its figure).
+- The live viewer on 8765 was up at the last check. The T224b design note is in the body of T224's merge commit.
 
 ## Next
 
-1. The sweep (`sweep` skill): it runs `android-ui.py update` and `upgrade`, which no task could. Its findings are the
-   next wave's sweep task.
-2. On a green sweep: the release, without asking (ADR 0024; the `release` skill).
-3. The close (`wave` skill): the meter reading against the 16.5, the wave's record, Later.
-4. The next wave's candidates: one rule for state made off the main thread (T226), the layout authority's second half with ADR 0053's build step 2 and the top-row
-   regroup (T224's design note), ADR 0056's build tasks, the two ready Plans.
-5. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's, the sentinel rule.
+1. The next wave's candidates: one rule for state made off the main thread (T226), the layout authority's second half
+   with ADR 0053's build step 2 and the top-row regroup (T224's merge commit: three tasks), ADR 0056's build tasks
+   (B1a, B1b, B3, B2), the two ready Plans. One at a time, so size it to the owner's patience as well as the meter.
+2. A Hatchery-rooted session: the pending carry-backs plus T190's two, T201's, the sentinel rule, ADR 0057's rule.
 
 ## Waiting on user
 
-- Any change to wave 28's "For the owner" list (the board's wave paragraph). ADR 0056: should "pack" also leave the
-  code, routes and JSON keys, or only what people read (assumed)?
+- ADR 0056: should "pack" also leave the code, routes and JSON keys, or only what people read (assumed)? The location
+  permission: at launch or on the tap (T220; the board's list). The Stop chip hiding on a phone on its side: the layout's second half.
 - "Keep north up": rename or keep (T176). The map screen's top row: regroup behind a Menu or not.
-- v0.1.19-alpha on the phone (`GET /identity`, the board's phone checks); proposals 0054 and 0055's choices;
+- v0.1.20-alpha on the phone (`GET /identity`, the board's phone checks); proposals 0054 and 0055's choices;
   ADR 0053's Category column; the rest of the board's Owner actions.
 
 ## Open findings

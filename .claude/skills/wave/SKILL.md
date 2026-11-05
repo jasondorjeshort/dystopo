@@ -61,8 +61,9 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    why not in the wave paragraph; launch after the edits, re-plan on a blocking one.
 3. Size the wave by its whole cost, not by whether its launch fits (ADR 0048): per task an
    implementer, a verifier, one fix round with its re-verify and the merge, plus the wave's fixed cost
-   of research agents, the critic, the post-wave sweep and the release. Figures: 1.5 points of the
-   7-day meter per task and 3 per wave (revised 2026-11-02 from the closes of waves 22, 23 and 26, which
+   of research agents, the critic, the post-wave sweep and the release. Figures: 1.25 points of the
+   7-day meter per task and 3 per wave (revised 2026-11-05 from wave 28's close, 11 points for 10 tasks; before that
+   1.5, revised 2026-11-02 from the closes of waves 22, 23 and 26, which
    read 24, 25 and about 5 points for 18, 14 and 6 tasks against the starting 3 and 5 read off waves 20
    and 21; the ADR 0048 scan outcome and finding
    `docs/findings/2026-11-02-wave-cost-figure-overstated-three-closes.md`); revised at each close from the
@@ -70,7 +71,8 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    meter at planning plus that cost is at or under the 7-day hold `policy.json` sets, and otherwise
    plan a smaller wave or wait for the reset (the 5-hour meter keeps its own line, Resume step 4).
    Write the allowance into the wave paragraph as one sentence: the meter at planning, the task
-   count, the cost assumed, the figure it adds up to. Still 5 to 8 implementers at once; a wave
+   count, the cost assumed, the figure it adds up to. One Gradle-using agent at a time unless the owner says wider (ADR 0057), so a wave
+   states its order; agents with no Gradle or emulator may run alongside; a wave
    larger than the budget is not launched in halves on the same meter.
 4. Brief each implementer with the `brief` skill (`implementer.md`), its own worktree, ports and
    emulator; set the model explicitly (Opus-class).
