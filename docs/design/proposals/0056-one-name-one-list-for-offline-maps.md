@@ -1,7 +1,7 @@
 # 0056. One name and one list for downloaded maps, and what the status chip says
 
 Date: 2026-11-04
-Status: under review (the noun is the owner's choice, ADR 0031; nothing is built by this task)
+Status: promoted to ADR 0056
 
 Paths without a root are under `androidApp/src/main/kotlin/io/github/jasondorjeshort/dystopo/app/`. Every `file:line` is
 read at the fork of this task, commit 96b5e019. T217, T218 and T220 to T224 are changing some of these files while this
