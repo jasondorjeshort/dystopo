@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-04
 
+- T217: The planning card: one primary action, plain names, a quieter header, lines that say they are working
 - T218: Clock times follow the phone's 12/24-hour setting; the turn-back speech and the start-time lines say what is true now
 - T223: Settings and small strings: sentences that parse, round numbers, one toggle, technical details out of the way
 - T225: Proposal: one name and one list for downloaded maps, and what the status chip says
