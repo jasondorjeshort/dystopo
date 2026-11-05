@@ -104,7 +104,12 @@ object SaveFile {
 
     fun json(): Map<String, Any?> = linkedMapOf("launches" to launches, "waitingForDialog" to (pending != null), "last" to last)
 
-    const val MIME = "application/gpx+xml"
+    /**
+     * What the dialog is told the file is. The phone knows no extension for GPX's own type, and a documents provider then
+     * takes the whole name for the stem, so a second save beside the first was "walk.gpx (1)"; with this one the name's
+     * extension stands ("walk (1).gpx", seen on the emulator).
+     */
+    const val MIME = "application/octet-stream"
     private const val TAG = "DystopoSaveFile"
 }
 
