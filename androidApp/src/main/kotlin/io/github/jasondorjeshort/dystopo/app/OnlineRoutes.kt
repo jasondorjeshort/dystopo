@@ -28,7 +28,9 @@ object OnlineRoutes {
         val s = OnlineService.get(app)
         return try {
             when (r.method to r.path) {
-                "GET" to "/online" -> Response.json(s.json(OnlineView.current(app)?.json()))
+                "GET" to "/online" -> OnlineView.current(app).let { v -> // T220: `offerDownload`, the region button's rule
+                    Response.json(s.json(v?.json()) + mapOf("offerDownload" to io.github.jasondorjeshort.dystopo.app.online.OnlineUi.make(s, app, v).offerDownload))
+                }
                 "GET" to "/online/download" -> Response.json(s.region.json())
                 "POST" to "/online/download" -> Response.json(startDownload(app, s, r), 202)
                 "DELETE" to "/online/download", "POST" to "/online/download/cancel" -> Response.json(s.region.cancel())

@@ -43,7 +43,7 @@ fun DirectSourcesRows() {
     var mobile by remember { mutableStateOf(DirectPrefs.onMobileData(app)) }
     var mb by remember { mutableStateOf(DirectPrefs.sessionMb(app)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        BasicText("With no server the phone reads the public sources itself.", style = TextStyle(color = Muted, fontSize = 11.sp))
+        BasicText("With no server the phone reads the public sources itself: OpenStreetMap via OpenFreeMap, Copernicus, USGS and national surveys. A Dystopo server is faster.", style = TextStyle(color = Muted, fontSize = 11.sp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) { // T103: wraps at font scale 2.0; T109: choices centred on the help icon
             BasicText("Mobile data", Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
             HelpIcon("direct.mobileData", Modifier.align(Alignment.CenterVertically)) // T109

@@ -39,6 +39,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
@@ -59,6 +60,16 @@ object ShareUi {
     /** T72: the code typed to join another phone through the server relay. */
     var relayCode by mutableStateOf("")
 
+    /** T220: the folds of the screen: the identity line's reasons, the link and addresses; closed each time it opens. */
+    var whyOpen by mutableStateOf(false)
+    var detailsOpen by mutableStateOf(false)
+
+    /** T220: "Enter details instead" opened (true) or closed (false) by a tap; null: [enterDetailsShown]'s default. */
+    var enterChoice by mutableStateOf<Boolean?>(null)
+
+    /** T220: what the fold last drew (for `GET /share/status`). */
+    @Volatile var enterShown = false
+
     /** Where the fields came from: `link` (a tapped `dystopo://share` link), `qr` (the scanner), `scan` (`POST /share/scan`), or null (typed). */
     var prefilledFrom by mutableStateOf<String?>(null)
 
@@ -75,6 +86,9 @@ object ShareUi {
 
     fun json(): Map<String, Any?> = linkedMapOf("addr" to addr, "codeSet" to code.isNotEmpty(), "from" to prefilledFrom, "prefills" to prefills)
 
+    /** T220: `POST /share/ui` and `ui` in `GET /share/status`. Main thread. */
+    fun foldsJson(): Map<String, Any?> = linkedMapOf("whyOpen" to whyOpen, "detailsOpen" to detailsOpen, "enterChoice" to enterChoice, "enterShown" to enterShown)
+
     /** Start and stop in order, off the main thread (opening and closing quickly must end stopped). */
     val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-share").apply { isDaemon = true } }
 }
@@ -86,6 +100,17 @@ private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
 private val Link = Color(0xFF2C7BB6)
 private val Bad = Color(0xFFB0302A)
+
+/** T220: "1 change", "3 changes". Pure, tested. */
+internal fun counted(n: Long, noun: String): String = if (n == 1L) "1 $noun" else "$n ${noun}s"
+
+/**
+ * T220: whether "Enter details instead" is open: the user's tap if there was one; else closed while the nearby list or
+ * the scanner can do the job (the survey `first-run-and-share.md`: no surveyed app asks for an address in its main flow),
+ * open when a phone is chosen and its code is still to type. Pure, tested.
+ */
+internal fun enterDetailsShown(choice: Boolean?, discovery: Boolean, scanner: Boolean, addr: String, code: String): Boolean =
+    choice ?: (!(discovery || scanner) || (addr.isNotBlank() && code.isBlank()))
 
 /** "Share" next to "Sync now" in the tracks list: opens the Share screen. */
 @Composable
@@ -108,12 +133,23 @@ fun ShareOverlay() {
     val session = ShareSession.of(DystopoApp.instance)
     DisposableEffect(Unit) {
         ShareUi.worker.execute { runCatching { session.start() } }
-        onDispose { ShareUi.worker.execute { session.stop() } }
+        onDispose {
+            ShareUi.worker.execute { session.stop() }
+            ShareUi.whyOpen = false
+            ShareUi.detailsOpen = false
+            ShareUi.enterChoice = null
+        }
     }
     BackHandler { ShareUi.visible = false }
     ShareScreen(session) { ShareUi.visible = false }
 }
 
+/**
+ * T220 (the survey `first-run-and-share.md`): what to do comes first. The title and Close and, under the scrolling part,
+ * the sync line, "Scan QR code" and "Sync" stay in view at any font scale; between them, one line of what to do with the
+ * code, the code, the QR, the identity line, then "Details" (the addresses and the link), the nearby phones and "Enter
+ * details instead", then the maps and the relay.
+ */
 @Composable
 private fun ShareScreen(session: ShareSession, close: () -> Unit) {
     var status by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) }
@@ -129,65 +165,77 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().background(Paper).statusBarsPadding().navigationBarsPadding().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(Modifier.fillMaxSize().background(Paper).statusBarsPadding().navigationBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             BasicText("Share with a nearby phone", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
             Chip("Close") { close() }
         }
-        BasicText(
-            "While this screen is open, a phone on the same network can sync tracks, waypoints and routes with this one. Give it the code. Farther away: sync via server, below.",
-            style = TextStyle(color = Muted, fontSize = 14.sp),
-        )
-        IdentityLine() // T216: the attested identity's self-check (ADR 0051)
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            BasicText(SHARE_INSTRUCTION, style = TextStyle(color = Ink, fontSize = 15.sp))
 
-        // This phone: code, address, QR.
-        val listeningNow = status["listening"] == true
-        val shownCode = status["code"] as? String
-        val port = (status["port"] as? Number)?.toInt()
-        @Suppress("UNCHECKED_CAST") val addresses = (status["addresses"] as? List<String>).orEmpty()
-        Column(Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            BasicText(status["name"] as? String ?: "This phone", style = TextStyle(color = Muted, fontSize = 13.sp))
-            if (listeningNow && shownCode != null) {
-                BasicText("Code", style = TextStyle(color = Muted, fontSize = 13.sp))
-                BasicText(ShareCode.format(shownCode), style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace))
-                BasicText("The link is encrypted with this code; only a phone that has it can sync.", style = TextStyle(color = Muted, fontSize = 12.sp))
-                BasicText(
-                    if (addresses.isEmpty()) "No network address: connect to Wi-Fi" else "Address: " + addresses.joinToString(", ") { "$it:$port" },
-                    style = TextStyle(color = Ink, fontSize = 15.sp),
-                )
-                (status["uri"] as? String)?.let { uri ->
-                    val qr = remember(uri) { runCatching { QrCode.encode(uri) }.getOrNull() }
-                    if (qr != null) {
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrImage(qr) }
-                        BasicText(uri, style = TextStyle(color = Muted, fontSize = 11.sp))
+            // This phone: the code and the QR.
+            val listeningNow = status["listening"] == true
+            val shownCode = status["code"] as? String
+            val port = (status["port"] as? Number)?.toInt()
+            @Suppress("UNCHECKED_CAST") val addresses = (status["addresses"] as? List<String>).orEmpty()
+            val uri = status["uri"] as? String
+            Column(Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (listeningNow && shownCode != null) {
+                    BasicText("Code", style = TextStyle(color = Muted, fontSize = 13.sp))
+                    BasicText(ShareCode.format(shownCode), style = TextStyle(color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace))
+                    if (uri != null) {
+                        val qr = remember(uri) { runCatching { QrCode.encode(uri) }.getOrNull() }
+                        if (qr != null) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { QrImage(qr) }
                     }
+                    if (addresses.isEmpty()) BasicText("No network address: connect to Wi-Fi", style = TextStyle(color = Ink, fontSize = 15.sp))
+                    @Suppress("UNCHECKED_CAST") val gate = status["gate"] as? Map<String, Any?>
+                    val refused = (gate?.get("refused") as? Number)?.toLong() ?: 0L
+                    if (refused > 0) BasicText("${counted(refused, "wrong code")} refused", style = TextStyle(color = Bad, fontSize = 13.sp))
+                    @Suppress("UNCHECKED_CAST") (status["lastIncoming"] as? Map<String, Any?>)?.let {
+                        BasicText("Last sync from a phone: ${counted((it["applied"] as? Number)?.toLong() ?: 0L, "change")} received", style = TextStyle(color = Accent, fontSize = 13.sp))
+                    }
+                    ServingLines(status) // T78: who is fetching maps from this phone, and how much
+                } else {
+                    BasicText("Starting...", style = TextStyle(color = Muted, fontSize = 14.sp))
                 }
-                @Suppress("UNCHECKED_CAST") val gate = status["gate"] as? Map<String, Any?>
-                val refused = (gate?.get("refused") as? Number)?.toLong() ?: 0L
-                if (refused > 0) BasicText("Wrong codes refused: $refused", style = TextStyle(color = Bad, fontSize = 13.sp))
-                @Suppress("UNCHECKED_CAST") (status["lastIncoming"] as? Map<String, Any?>)?.let {
-                    BasicText("Last sync from a phone: ${it["applied"]} changes received", style = TextStyle(color = Accent, fontSize = 13.sp))
-                }
-                ServingLines(status) // T78: who is fetching maps from this phone, and how much
-            } else {
-                BasicText("Starting...", style = TextStyle(color = Muted, fontSize = 14.sp))
             }
+            IdentityLine() // T216: the attested identity's self-check (ADR 0051)
+
+            // T220: what a person rarely needs: this phone's name and address, the link, what the code does.
+            Fold("Details", ShareUi.detailsOpen, { ShareUi.detailsOpen = it }) {
+                BasicText(status["name"] as? String ?: "This phone", style = TextStyle(color = Muted, fontSize = 13.sp))
+                if (addresses.isNotEmpty()) BasicText("Address: " + addresses.joinToString(", ") { "$it:$port" }, style = TextStyle(color = Ink, fontSize = 15.sp))
+                uri?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
+                BasicText("While this screen is open, a phone on the same network can sync tracks, waypoints and routes with this one.", style = TextStyle(color = Muted, fontSize = 13.sp))
+                BasicText("The link is encrypted with this code; only a phone that has it can sync.", style = TextStyle(color = Muted, fontSize = 13.sp))
+            }
+
+            // The other side: discovered phones, then the fields.
+            BasicText("Sync with another phone", style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
+            val found = session.peers.peers()
+            if (found.isEmpty()) BasicText("Looking for phones on this network...", style = TextStyle(color = Muted, fontSize = 13.sp))
+            found.forEach { p ->
+                BasicText(
+                    "${p.name}  (${p.hostPort})",
+                    style = TextStyle(color = Link, fontSize = 14.sp),
+                    modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).clickable { ShareUi.addr = p.hostPort ?: ""; ShareUi.prefilledFrom = null; ShareUi.enterChoice = null }.padding(10.dp),
+                )
+            }
+            val discovery = (status["nsd"] as? Map<*, *>)?.get("discoveryStartedAt") != null
+            val scanner = remember { DystopoApp.instance.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY) }
+            val enterOpen = enterDetailsShown(ShareUi.enterChoice, discovery, scanner, addr, code)
+            ShareUi.enterShown = enterOpen
+            Fold("Enter details instead", enterOpen, { ShareUi.enterChoice = it }) {
+                Field("Other phone's address", addr, KeyboardType.Uri, hint = ADDRESS_HINT) { ShareUi.addr = it; ShareUi.prefilledFrom = null }
+                Field("Code", code, KeyboardType.Ascii) { ShareUi.code = codeInput(it) }
+            }
+
+            PeerMapsSection(status, addr, code) // T78
+            RelaySection(status)
+            Spacer(Modifier.height(8.dp))
         }
 
-        // The other side: discovered phones, address and code.
-        BasicText("Sync with another phone", style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
-        val found = session.peers.peers()
-        if (found.isEmpty()) BasicText("Looking for phones on this network...", style = TextStyle(color = Muted, fontSize = 13.sp))
-        found.forEach { p ->
-            BasicText(
-                "${p.name}  (${p.hostPort})",
-                style = TextStyle(color = Link, fontSize = 14.sp),
-                modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).clickable { ShareUi.addr = p.hostPort ?: ""; ShareUi.prefilledFrom = null }.padding(10.dp),
-            )
-        }
+        // T220: outside the scroll, so they are never clipped (pinning is the survey's inference, not a surveyed fact).
         // T57: a tapped share link or a scanned code fills the fields; the user still taps Sync.
         ShareUi.prefilledFrom?.let { from ->
             BasicText(
@@ -195,12 +243,15 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
                 style = TextStyle(color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Medium),
             )
         }
-        Field("Address (host:port)", addr, KeyboardType.Uri) { ShareUi.addr = it; ShareUi.prefilledFrom = null }
-        Field("Code", code, KeyboardType.Ascii) { ShareUi.code = codeInput(it) }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("Scan QR code") { ScanUi.visible = true } // T57: the in-app scanner
-            Chip(if (busy) "Syncing..." else "Sync") {
-                if (busy || addr.isBlank()) return@Chip
+        message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Synced")) Accent else Bad, fontSize = 14.sp)) }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActionButton("Scan QR code", filled = true, enabled = true, Modifier.weight(1f)) { ScanUi.visible = true } // T57: the in-app scanner
+            ActionButton(if (busy) "Syncing..." else "Sync", filled = false, enabled = addr.isNotBlank(), Modifier.weight(1f)) {
+                if (busy) return@ActionButton
+                if (addr.isBlank()) {
+                    message = NO_PHONE_YET
+                    return@ActionButton
+                }
                 busy = true
                 message = null
                 Thread {
@@ -212,32 +263,50 @@ private fun ShareScreen(session: ShareSession, close: () -> Unit) {
                 }.start()
             }
         }
-        message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Synced")) Accent else Bad, fontSize = 14.sp)) }
+    }
+}
 
-        PeerMapsSection(status, addr, code) // T78
-        RelaySection(status)
-        Spacer(Modifier.height(24.dp))
+internal const val SHARE_INSTRUCTION = "Give this code to the other phone, on the same Wi-Fi."
+internal const val ADDRESS_HINT = "192.168.1.20:8841"
+internal const val NO_PHONE_YET = "Scan the other phone's code or enter its details first."
+
+/** T220: a heading that opens what it folds, on the same screen; [onToggle] gets the new state. */
+@Composable
+private fun Fold(label: String, open: Boolean, onToggle: (Boolean) -> Unit, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        BasicText(
+            (if (open) "\u25BE " else "\u25B8 ") + label,
+            Modifier.fillMaxWidth().clickable { onToggle(!open) }.padding(vertical = 6.dp),
+            style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+        )
+        if (open) content()
     }
 }
 
 /**
  * T216: the self-check line (ADR 0051, stage 1a): whether this phone can prove it runs the signed app, by the release
- * policy, with the reason and its lift when it cannot. Opening the Share screen is the identity's first use: the key is
- * made then (online only), off the main thread ([InstallIdentity.ensure]).
+ * policy. Opening the Share screen is the identity's first use: the key is made then (online only), off the main thread
+ * ([InstallIdentity.ensure]). T220: its sentence and its lift are always in view; the reasons open on a tap, here on the
+ * screen ([IdentityRules.shown]).
  */
 @Composable
 private fun IdentityLine() {
     val identity = remember { InstallIdentity.get(DystopoApp.instance) }
-    var line by remember { mutableStateOf(identity.line()) }
+    var line by remember { mutableStateOf(identity.shown()) }
     LaunchedEffect(Unit) {
         line = withContext(Dispatchers.IO) {
             runCatching { identity.ensure("share screen") }
-            identity.line()
+            identity.shown()
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        BasicText(line.text, style = TextStyle(color = if (line.ok) Accent else Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
-        line.detail?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+        BasicText(line.sentence, style = TextStyle(color = if (line.ok) Accent else Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+        line.lift?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) }
+        line.why?.let { why ->
+            Fold(why, ShareUi.whyOpen, { ShareUi.whyOpen = it }) {
+                line.reasons.forEach { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+            }
+        }
     }
 }
 
@@ -247,15 +316,14 @@ private fun ServingLines(status: Map<String, Any?>) {
     @Suppress("UNCHECKED_CAST") val serving = status["serving"] as? Map<String, Any?> ?: return
     @Suppress("UNCHECKED_CAST") val fetchers = (serving["fetchers"] as? List<Map<String, Any?>>).orEmpty().filter { ((it["requests"] as? Number)?.toLong() ?: 0L) > 0 }
     if (fetchers.isEmpty()) {
-        BasicText("Phones with the code can also download this phone's maps.", style = TextStyle(color = Muted, fontSize = 12.sp))
-        return
+        return // T220: the sentence that stood here moved to the maps section, with what it is about
     }
     BasicText("Maps sent from this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
     fetchers.forEach { f ->
         val bytes = (f["bytes"] as? Number)?.toLong() ?: 0L
         val tiles = (f["tiles"] as? Number)?.toLong() ?: 0L
         @Suppress("UNCHECKED_CAST") val files = (f["files"] as? Map<String, Any?>).orEmpty().keys
-        val what = listOfNotNull(files.takeIf { it.isNotEmpty() }?.joinToString(", "), if (tiles > 0) "$tiles tiles" else null).joinToString("; ")
+        val what = listOfNotNull(files.takeIf { it.isNotEmpty() }?.joinToString(", "), if (tiles > 0) counted(tiles, "tile") else null).joinToString("; ")
         BasicText("${f["name"] ?: "A phone"}: ${mb(bytes)}${if (what.isEmpty()) "" else " ($what)"}", style = TextStyle(color = Accent, fontSize = 13.sp))
     }
 }
@@ -293,12 +361,12 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
 
     BasicText("Maps from a nearby phone", style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
     BasicText(
-        "A phone with maps can pass them on: enter its address and code above, then tap Use its maps. Downloads are checked against the other phone's list, and work offline afterwards.",
+        "A phone with maps can pass them on: scan its code or enter its details above, then tap Use its maps. Downloads are checked against the other phone's list, and work offline afterwards. Phones with the code can also download this phone's maps.",
         style = TextStyle(color = Muted, fontSize = 13.sp),
     )
     Chip(if (busy) "Working..." else "Use its maps") {
         if (addr.isBlank()) { message = "Enter the other phone's address and code"; return@Chip }
-        run { PeerSources.add(addr, code).let { p -> "Connected to ${p.name}: ${p.catalog?.packs?.size ?: 0} packs" } }
+        run { PeerSources.add(addr, code).let { p -> "Connected to ${p.name}: ${counted((p.catalog?.packs?.size ?: 0).toLong(), "pack")}" } }
     }
     message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Connected") || it.startsWith("Downloading") || it.startsWith("Forgot")) Accent else Bad, fontSize = 14.sp)) }
     peers.forEach { p ->
@@ -455,7 +523,7 @@ private fun QrImage(qr: QrCode) {
 }
 
 @Composable
-private fun Field(label: String, value: String, type: KeyboardType, onChange: (String) -> Unit) {
+private fun Field(label: String, value: String, type: KeyboardType, hint: String? = null, onChange: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         BasicText(label, style = TextStyle(color = Muted, fontSize = 13.sp))
         BasicTextField(
@@ -464,8 +532,26 @@ private fun Field(label: String, value: String, type: KeyboardType, onChange: (S
             keyboardOptions = KeyboardOptions(keyboardType = type),
             textStyle = TextStyle(color = Ink, fontSize = 16.sp),
             modifier = Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(6.dp)).padding(10.dp),
+            decorationBox = { inner ->
+                if (value.isEmpty() && hint != null) BasicText(hint, style = TextStyle(color = Muted, fontSize = 16.sp)) // T220: an example, not a value
+                inner()
+            },
         )
     }
+}
+
+/** T220: the two actions under the scrolling part: "Scan QR code" filled; "Sync" dimmed until a phone or address is set. */
+@Composable
+private fun ActionButton(label: String, filled: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    BasicText(
+        label,
+        style = TextStyle(color = if (filled) Paper else if (enabled) Accent else Muted, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
+        modifier = modifier
+            .background(if (filled) Accent else Paper, RoundedCornerShape(10.dp))
+            .border(1.dp, if (filled || enabled) Accent else Line, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+    )
 }
 
 @Composable

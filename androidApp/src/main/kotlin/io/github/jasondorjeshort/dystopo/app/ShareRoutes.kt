@@ -25,7 +25,10 @@ import io.github.jasondorjeshort.dystopo.app.share.ShareUi
  *   decodes it with the scanner's decoder; a share link fills the Share screen (source `scan`) and opens it.
  *   JSON: `text`, `version`, `level`, `corrected`, `ms`, `prefill`; 422 with the decoder's progress when no code.
  * - `GET /share/scan`: the camera scanner's state (frames, reads, last text); `POST /share/scan/ui?open=1|0`.
- * - `GET /share/status` adds `prefill` (the fields a link or scan filled).
+ * - `GET /share/status` adds `prefill` (the fields a link or scan filled). T220: `ui` (`whyOpen`, `detailsOpen`,
+ *   `enterChoice`, `enterShown`) and `identityShown` (the identity line as the screen draws it: `sentence` and `lift` in
+ *   view, `why` the fold's label, `reasons` behind it, `ok`). `POST /share/ui?why=0|1&details=0|1&enter=0|1` opens or
+ *   closes the screen's folds as a tap does. `GET /identity` is unchanged.
  */
 object ShareRoutes {
     /** T57: decode a posted image as the camera scanner would. */
@@ -63,7 +66,22 @@ object ShareRoutes {
                     app.map.onMain { ShareUi.visible = false }
                     Response.json(session.stop())
                 }
-                "GET" to "/share/status", "GET" to "/share" -> Response.json(session.status() + mapOf("prefill" to app.map.onMain { ShareUi.json() }))
+                "GET" to "/share/status", "GET" to "/share" -> Response.json(
+                    session.status() + mapOf(
+                        "prefill" to app.map.onMain { ShareUi.json() },
+                        "ui" to app.map.onMain { ShareUi.foldsJson() }, // T220
+                        "identityShown" to io.github.jasondorjeshort.dystopo.app.identity.InstallIdentity.get(app).shown().toMap(), // T220
+                    ),
+                )
+                "POST" to "/share/ui" -> { // T220: the screen's folds, as a tap would
+                    val on = { key: String -> r.query[key]?.let { it == "1" } }
+                    Response.json(app.map.onMain {
+                        on("why")?.let { ShareUi.whyOpen = it }
+                        on("details")?.let { ShareUi.detailsOpen = it }
+                        on("enter")?.let { ShareUi.enterChoice = it }
+                        ShareUi.foldsJson()
+                    })
+                }
                 "POST" to "/share/scan" -> scan(app, r)
                 "GET" to "/share/scan" -> Response.json(ScanUi.json())
                 "POST" to "/share/scan/ui" -> {

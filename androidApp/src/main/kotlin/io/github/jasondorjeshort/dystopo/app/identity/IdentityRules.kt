@@ -11,7 +11,7 @@ import io.github.jasondorjeshort.dystopo.identity.Verdict
 /**
  * T216: the phone half's rules that need no Android (ADR 0051, stage 1a), so the unit tests run them on the JVM:
  * the debug policy, when keys are renewed, when the revocation list is refetched, and the Share screen's self-check
- * line.
+ * line. T220: [shown] is how the screen draws that line: its sentence and its lift in view, the reasons behind "Why?".
  */
 object IdentityRules {
     const val DAY = 86_400_000L
@@ -108,6 +108,48 @@ object IdentityRules {
             }
         }
     }
+
+    /**
+     * T220: the self-check line as the Share screen draws it: [sentence] and [lift] always in view (ADR 0051: every verdict
+     * is shown with reasons and a lift, and the owner reads this line for the ADR's first prediction), [reasons] behind a
+     * tap on the same screen. [count] is how many distinct reasons a refusal has. `GET /identity` keeps [line].
+     */
+    data class Shown(val sentence: String, val lift: String?, val reasons: List<String>, val count: Int, val ok: Boolean) {
+        /** The fold's label, or null when there is nothing to fold. */
+        val why: String? get() = when {
+            reasons.isEmpty() -> null
+            count > 1 -> "Why? ($count reasons)"
+            else -> "Why?"
+        }
+
+        fun toMap(): Map<String, Any?> = linkedMapOf("sentence" to sentence, "lift" to lift, "why" to why, "reasons" to reasons, "ok" to ok)
+    }
+
+    /**
+     * The line of [phase] and [verdict] split for the screen, from [line] so the two cannot differ. Offline, the sentence is
+     * the lift itself and the line's second sentence is the reason; when accepted, the second sentence (where the key is
+     * held) is the detail; a refusal's lift is its first reason's, and every reason folds with its message and detail, the
+     * first reason first.
+     */
+    fun shown(phase: Phase, verdict: Verdict?, error: String? = null): Shown {
+        val l = line(phase, verdict, error)
+        val status = if (phase == Phase.READY) verdict?.status else null
+        return when {
+            phase == Phase.OFFLINE || status == Verdict.Status.ACCEPT -> Shown(l.text, null, listOfNotNull(l.detail), 0, l.ok)
+            status == Verdict.Status.REFUSE -> {
+                val lines = reasonLines(verdict!!.reasons)
+                Shown(l.text, primaryReason(verdict.reasons)?.reason?.lift, lines, lines.size, l.ok)
+            }
+            else -> Shown(l.text, l.detail, emptyList(), 0, l.ok)
+        }
+    }
+
+    /** One line per distinct reason, in [LINE_ORDER]: its message, its lift, what the check found. */
+    private fun reasonLines(reasons: List<Refusal>): List<String> =
+        reasons.groupBy { it.reason }.entries.sortedBy { LINE_ORDER.indexOf(it.key) }.map { (reason, refusals) ->
+            val found = refusals.map { it.detail }.filter { it.isNotBlank() }.distinct().joinToString("; ")
+            listOf(reason.message, reason.lift, found).filter { it.isNotBlank() }.joinToString(" ")
+        }
 
     private fun where(level: KeyDescription.SecurityLevel?): String = when (level) {
         KeyDescription.SecurityLevel.STRONG_BOX -> "a separate security chip (StrongBox)"
