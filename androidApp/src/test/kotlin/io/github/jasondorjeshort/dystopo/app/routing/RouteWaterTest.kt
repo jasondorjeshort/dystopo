@@ -39,14 +39,36 @@ class RouteWaterTest {
     )
     private val lengthM = 14_000.0
 
+    /** T217: every form the card line can take reads as a sentence: "the next is ..." with several, no "next" with one. */
+    @Test
+    fun theCardLineReadsForEveryCountAndKind() {
+        val dry = item(100.0, cls = WaterClass.MAY_RUN_DRY)
+        val gully = item(150.0, cls = WaterClass.USUALLY_DRY, basis = WaterBasis.TERRAIN)
+        fun line(vararg items: WaterItem) = WaterText.cardLine(items.toList(), m)
+        // One item.
+        assertEquals("Water: 1 crossing, likely flowing in 1.20 km", line(item(1_200.0)))
+        assertEquals("Water: 1 crossing, likely flowing at the start", line(item(10.0)))
+        assertEquals("Water: 1 crossing, not likely flowing", line(dry))
+        assertEquals("Water: 1 place, a mapped spring in 1.20 km", line(item(1_200.0, WaterKind.SPRING)))
+        assertEquals("Water: 1 place, a mapped water tap at the start", line(item(10.0, WaterKind.TAP)))
+        assertEquals("Water: 1 place, a lake or pond in 1.20 km", line(item(1_200.0, WaterKind.LAKE)))
+        // Several, by what the next source is.
+        assertEquals("Water: 2 crossings, the next is likely flowing in 1.20 km", line(dry, item(1_200.0)))
+        assertEquals("Water: 2 crossings, none likely flowing", line(dry, gully))
+        assertEquals("Water: 2 places, the next is likely flowing at the start", line(item(10.0), item(1_200.0, WaterKind.LAKE)))
+        assertEquals("Water: 2 places, the next is a mapped spring in 1.20 km", line(dry, item(1_200.0, WaterKind.SPRING)))
+        assertEquals("Water: 2 places, the next is a mapped water tap at the start", line(item(10.0, WaterKind.TAP), item(1_200.0, WaterKind.LAKE)))
+        assertEquals("Water: 2 places, the next is a lake or pond in 1.20 km", line(dry, item(1_200.0, WaterKind.LAKE)))
+    }
+
     @Test
     fun theCardLineNamesTheCountAndTheFirstSource() {
-        assertEquals("Water: 5 places, the next likely flowing in 1.20 km", WaterText.cardLine(walk, m))
-        assertEquals("Water: 2 crossings, the next likely flowing in 1.20 km", WaterText.cardLine(walk.take(2), m))
-        assertEquals("Water: 1 crossing, none likely flowing", WaterText.cardLine(walk.take(1), m))
+        assertEquals("Water: 5 places, the next is likely flowing in 1.20 km", WaterText.cardLine(walk, m))
+        assertEquals("Water: 2 crossings, the next is likely flowing in 1.20 km", WaterText.cardLine(walk.take(2), m))
+        assertEquals("Water: 1 crossing, not likely flowing", WaterText.cardLine(walk.take(1), m))
         assertEquals("Water: none found along the route", WaterText.cardLine(emptyList(), m))
-        assertEquals("Water: 1 place, the next a mapped spring in 1.9 mi", WaterText.cardLine(listOf(walk[3]), ContourUnits.FEET))
-        assertEquals("Water: 1 place, the next a lake or pond at the start", WaterText.cardLine(listOf(item(10.0, WaterKind.LAKE)), m))
+        assertEquals("Water: 1 place, a mapped spring in 1.9 mi", WaterText.cardLine(listOf(walk[3]), ContourUnits.FEET))
+        assertEquals("Water: 1 place, a lake or pond at the start", WaterText.cardLine(listOf(item(10.0, WaterKind.LAKE)), m))
         assertEquals("Longest stretch without water: 6.50 km", WaterText.longestLine(walk, lengthM, m))
         assertNull(WaterText.longestLine(walk.take(1), lengthM, m), "no source at all: the card line says so")
     }

@@ -160,14 +160,19 @@ object WaterText {
     /** Under the list: where the words come from. */
     const val HINT = "From the map and the terrain, not reports: check locally, conditions change."
 
-    /** The route card's line, which opens the list: "Water: 3 crossings, the next likely flowing in 1.2 km". */
+    /**
+     * The route card's line, which opens the list: "Water: 3 crossings, the next is likely flowing in 1.2 km", "Water: 2
+     * places, the next is a mapped water tap at the start". With one item there is no "next": "Water: 1 place, a mapped
+     * spring in 1.2 km", "Water: 1 crossing, not likely flowing". Only streams can be without a source, so that form is
+     * always crossings.
+     */
     fun cardLine(items: List<WaterItem>, units: ContourUnits): String {
         if (items.isEmpty()) return "Water: none found along the route"
         val n = items.size
         val noun = if (items.all { it.kind == WaterKind.STREAM }) (if (n == 1) "crossing" else "crossings") else (if (n == 1) "place" else "places")
-        val next = items.firstOrNull { it.isSource } ?: return "Water: $n $noun, none likely flowing"
+        val next = items.firstOrNull { it.isSource } ?: return "Water: $n $noun, " + if (n == 1) "not likely flowing" else "none likely flowing"
         val at = if (next.alongM < PASS_M) "at the start" else "in ${UnitFormat.distance(next.alongM, units)}"
-        return "Water: $n $noun, the next ${sourceWords(next)} $at"
+        return "Water: $n $noun, " + (if (n == 1) "" else "the next is ") + "${sourceWords(next)} $at"
     }
 
     /** The route card's second line: "Longest stretch without water: 6.2 km" (null with no source at all, the card says so). */
@@ -214,7 +219,7 @@ object WaterText {
 
     /**
      * The navigation card's line: "Water in 1.2 km: stream, likely flowing". T192: the label in lower case after the
-     * colon, as the route card's line ("the next likely flowing") and the spoken line ("water: stream, ...") have it.
+     * colon, as the route card's line ("the next is likely flowing") and the spoken line ("water: stream, ...") have it.
      */
     fun navLine(item: WaterItem, aheadM: Double, units: ContourUnits): String {
         val what = item.label.replaceFirstChar { it.lowercase() }

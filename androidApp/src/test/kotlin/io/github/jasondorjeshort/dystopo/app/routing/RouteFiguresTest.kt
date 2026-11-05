@@ -39,6 +39,20 @@ class RouteFiguresTest {
     }
 
     @Test
+    fun metricFiguresReadInMetresAndKilometres() {
+        val metres = ContourUnits.METERS
+        // The distance by UnitFormat's rule: metres under 1 km, then two, one and no decimals.
+        assertEquals("800 m · up 40 m · 0:15", RouteFigures.line(800.0, 40.0, 0.0, "0:15", metres))
+        assertEquals("12.4 km · up 950 m, down 610 m · about 4:30", RouteFigures.line(12_400.0, 950.0, 610.0, "about 4:30", metres))
+        assertEquals("120 km · up 950 m, down 610 m · 2:10", RouteFigures.line(120_000.0, 950.0, 610.0, "2:10", metres))
+        // The 30 m floor under "down", in metres.
+        assertEquals("2.90 km · up 402 m · 1:15", RouteFigures.line(2900.0, 402.0, 29.9, "1:15", metres))
+        assertEquals("2.90 km · up 402 m, down 30 m · 1:15", RouteFigures.line(2900.0, 402.0, 30.0, "1:15", metres))
+        assertEquals("2.90 km · up 402 m, down 31 m · 1:15", RouteFigures.line(2900.0, 402.0, 31.0, "1:15", metres))
+        assertEquals("2.90 km · down 30 m · typical 0:35", RouteFigures.line(2900.0, 0.0, 30.0, "typical 0:35", metres))
+    }
+
+    @Test
     fun theTimeKeepsTheHedgeTheSettingChooses() {
         assertEquals("about 4:30", RouteFigures.time(16200.0, range, rangeForm = true))
         assertEquals("typical 1:15", RouteFigures.time(4500.0, typical, rangeForm = true))

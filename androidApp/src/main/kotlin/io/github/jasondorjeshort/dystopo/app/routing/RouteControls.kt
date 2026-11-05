@@ -372,7 +372,7 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * offers Turn on location (the permission prompt, or the phone's location settings). When no path is found it offers
  * Try Crow (the straight line, with its notice under the chips). Go comes first among the actions.
  *
- * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, next likely flowing in
+ * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, the next is likely flowing in
  * 1.2 km" and the longest stretch without water, the first line opening the list ([WaterText.row]); the next card line
  * (T184) sits under that one composable. T195: under the water line, the route's terrain ([ExposureLine]): "1.2 km on
  * slopes over 30 degrees, facing north and east; 0.4 km over 35 degrees", opening its sheet.
@@ -853,7 +853,7 @@ internal object WaterUi {
 }
 
 /**
- * T187: water along a route on a card ([RouteWater], [WaterText]): the line "Water: 3 crossings, next likely flowing in
+ * T187: water along a route on a card ([RouteWater], [WaterText]): the line "Water: 3 crossings, the next is likely flowing in
  * 1.2 km", which opens and closes the list ([onToggle]), and "Longest stretch without water: 6.2 km" under it; open, each
  * item in route order with its distance along the route, its class and basis, and the gap to the next (scrolls past a
  * few rows), then where the words come from. T217: "Looking for water along the route" until the water is computed. Nothing
