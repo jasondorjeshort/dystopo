@@ -41,10 +41,10 @@ fun UpdateRow() {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         BasicText("Updates", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
         var details by remember { mutableStateOf(false) }
-        val upToDate = s.phase == Updater.Phase.UP_TO_DATE
+        val upToDate = s.message == UpdateText.upToDate(Updater.ownName) // not "No release with an APK", the same phase
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             BasicText(
-                if (upToDate) s.message.orEmpty() else UpdateText.thisBuild(Updater.ownName),
+                if (upToDate) UpdateText.upToDate(Updater.ownName) else UpdateText.thisBuild(Updater.ownName),
                 Modifier.weight(1f, fill = false).clickable { details = !details }.padding(vertical = 4.dp),
                 style = TextStyle(color = if (upToDate) Accent else Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
             )
@@ -65,9 +65,9 @@ fun UpdateRow() {
             }
         }
         val line = when (s.phase) {
-            Updater.Phase.IDLE, Updater.Phase.UP_TO_DATE -> null // T223: the line above says it
+            Updater.Phase.IDLE -> null
             Updater.Phase.DOWNLOADING -> s.message + if (s.totalBytes > 0) String.format(Locale.US, ": %.1f of %.1f MB", s.bytes / 1048576.0, s.totalBytes / 1048576.0) else ""
-            else -> s.message
+            else -> s.message.takeUnless { upToDate } // T223: the line above says it
         }
         line?.let {
             val bad = s.phase == Updater.Phase.REFUSED || s.phase == Updater.Phase.FAILED || it.startsWith("Install failed")
