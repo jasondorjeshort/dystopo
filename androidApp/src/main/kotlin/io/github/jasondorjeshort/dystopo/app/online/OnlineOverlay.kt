@@ -91,9 +91,13 @@ class OnlineUi(
     /** The line after a finished or failed download, or null. */
     val result: Pair<String, Dot?>? get() = when (download["state"]) {
         "done" -> if (view?.source == OnlineTiles.PACK) ("Saved as pack ${download["name"]}" + (download["packLabel"]?.let { " · $it" } ?: "")) to null else null
-        "failed" -> "Download failed: ${download["error"]}" to Dot.RED
+        "failed" -> ((download["sentence"] as? String) ?: "Download failed: ${download["error"]}") to Dot.RED // T222
+        "paused" -> (download["sentence"] as? String)?.let { it to null } // T222
         else -> null
     }
+
+    /** T222: what the map offers beside the result line (the row in the pack list has Remove too). */
+    val resultActions: List<String> get() = (download["actions"] as? List<*>).orEmpty().map { it.toString() }.filter { it != "Remove" }
 
     companion object {
         /** The snapshot for camera [cam] (read on the UI thread, source unknown): everything else is read here, on a worker. */
@@ -167,6 +171,12 @@ fun OnlineOverlay() {
                 }
             }
             u.result?.let { (text, dot) -> Small(text, if (dot == null) Ink else color(dot)) {} }
+            u.resultActions.forEach { a -> // T222
+                Button(a) {
+                    if (a == io.github.jasondorjeshort.dystopo.app.firstrun.Screens.STORAGE) io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true
+                    else thread(name = "region-retry") { service.region.retry() }
+                }
+            }
             message?.let { Small(it, Red) { message = null } }
         }
     } }

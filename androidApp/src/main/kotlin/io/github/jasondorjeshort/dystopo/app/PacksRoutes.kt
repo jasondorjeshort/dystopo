@@ -10,11 +10,16 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
  * - `POST /packs/activate?name=`: switch packs; the camera moves to the pack's bounds.
  * - `POST /packs/download?url=[&name=][&activate=true]`: start (or resume) downloading a pack pair from
  *   a static host; `url` names `<name>-dem.pmtiles`, `<name>-outdoors.pmtiles` or the `<name>` prefix.
- * - `GET /packs/download`: download progress (bytes, percent, rate, resume offsets, HTTP responses).
+ * - `GET /packs/download`: download progress (bytes, percent, rate, resume offsets, HTTP responses); T222: `freeBytes`, and per job
+ *   what its row says: `word` (`waiting`, `downloading`, `paused`, `stopped`), `sentence`, `actions` (their labels), `failure`
+ *   (`connection`, `server`, `notFound`, `damaged`, `refused`, `build`, `space`, `other`), `shortBytes`, `resumedAtLaunch`; `error` stays the raw text.
+ * - `POST /packs/download/retry?name=` (T222): Retry and Resume now: a stopped or paused job runs again from its part files.
+ * - `POST /packs/region/retry` (T222): the same for the region job, which builds again when it stopped before its download.
+ * - `POST /packs/download/free?bytes=` (T222): a figure for the free space, for the free-space check; without `bytes`, the phone's own again.
  * - `DELETE /packs/{name}` (or `POST /packs/delete?name=`): delete a pack, cancelling its download.
- * - `POST /packs/ui?show=true|false[&catalog=1|0]`: open or close the pack list screen (for screenshots);
+ * - `POST /packs/ui?show=true|false[&catalog=1|0][&detail=]`: open or close the pack list screen (for screenshots);
  *   `catalog=1` opens the "From server" section too (list in the lower part, catalog outlines on the map,
- *   camera fitted to them).
+ *   camera fitted to them). T222: `detail=pack:<name>`, `cat:<id>` or `job:<name>` opens that row's detail, as a tap on it does (empty: none).
  *
  * T53, the server's pack catalog (`GET /catalog` on the server set in `/settings?server=`):
  * - `GET /packs/catalog[?refresh=1][&server=]`: the catalog with each pack's status on this device
@@ -44,6 +49,12 @@ object PacksRoutes {
                     Response.json(job.json())
                 }
                 r.method == "GET" && r.path == "/packs/download" -> Response.json(m.downloads.json())
+                r.method == "POST" && r.path == "/packs/download/retry" -> Response.json(m.downloads.retry(r.query["name"] ?: return bad("name required")).json()) // T222
+                r.method == "POST" && r.path == "/packs/region/retry" -> Response.json(io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).region.retry()) // T222
+                r.method == "POST" && r.path == "/packs/download/free" -> { // T222
+                    m.downloads.freeOverride = r.query["bytes"]?.toLongOrNull()
+                    Response.json(m.downloads.json())
+                }
                 r.method == "POST" && r.path == "/packs/delete" -> Response.json(m.delete(r.query["name"] ?: return bad("name required")))
                 r.method == "POST" && r.path == "/packs/ui" -> {
                     val show = r.query["show"] != "false"
@@ -52,8 +63,9 @@ object PacksRoutes {
                         PacksUi.visible = show
                         if (catalog != null) PacksUi.catalogOpen = catalog
                         if (catalog == true) PacksUi.fitRequest++
+                        r.query["detail"]?.let { PacksUi.detail = it.ifEmpty { null } } // T222
                     }
-                    Response.json(mapOf("visible" to show, "catalogOpen" to app.map.onMain { PacksUi.catalogOpen }, "firstVisibleItem" to PacksUi.firstVisibleItem, "localRows" to PacksUi.localRows)) // T57
+                    Response.json(mapOf("visible" to show, "detail" to app.map.onMain { PacksUi.detail }, "catalogOpen" to app.map.onMain { PacksUi.catalogOpen }, "firstVisibleItem" to PacksUi.firstVisibleItem, "localRows" to PacksUi.localRows)) // T57
                 }
                 // T53: the server's catalog
                 r.method == "GET" && r.path == "/packs/catalog" -> {

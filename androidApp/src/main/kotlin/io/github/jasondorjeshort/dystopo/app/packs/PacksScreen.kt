@@ -67,6 +67,14 @@ object PacksUi {
     /** T57: bumped by `POST /packs/catalog/refresh` (and the Refresh chip) to reload the open catalog section. */
     var catalogRefresh by mutableStateOf(0)
 
+    /** T222: the row whose detail is open (`pack:<name>`, `cat:<id>`, `job:<name>`); a tap on a row or `POST /packs/ui?detail=` sets it. */
+    var detail by mutableStateOf<String?>(null)
+
+    /** T222: a tap on a row: its detail opens, or closes. */
+    fun toggle(key: String) {
+        detail = if (detail == key) null else key
+    }
+
     /** T57: the list's first visible row and how many local pack rows there are (for `POST /packs/ui` answers). */
     @Volatile var firstVisibleItem = 0
     @Volatile var localRows = 0
@@ -80,11 +88,15 @@ private val Muted = Color(0xFF6B5A4A)
 private val Paper = Color(0xFFFFFCF5)
 private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
+private val Bad = Color(0xFFB0302A)
 
 /**
  * The region-pack entry point on the map: a "Packs" button, and when open, a full-screen list of the
- * packs on the device (tap to show one; the camera jumps to it), with delete and a URL download box
- * showing progress. Drawn over the map by one line in MainActivity's map screen.
+ * packs on the device, with delete and a URL download box showing progress. Drawn over the map by one line
+ * in MainActivity's map screen.
+ *
+ * T222: a row is a name, a size and one state word; a tap opens its detail (the zoom range, the corners, the file names and
+ * Show on map, which is what the tap did before). A download's row says what happened and what to do next ([DownloadStatus]).
  */
 @Composable
 fun PacksOverlay() {
@@ -150,6 +162,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     var active by remember { mutableStateOf<String?>(null) }
     var used by remember { mutableStateOf<Set<String>>(emptySet()) }
     var jobs by remember { mutableStateOf<List<Map<String, Any?>>>(emptyList()) }
+    var region by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) } // T222
     var url by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableStateOf(0) }
@@ -190,6 +203,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
     LaunchedEffect(refresh) {
         while (true) {
             val (p, a, j) = withContext(Dispatchers.IO) { Triple(manager.list(), manager.activeName(), manager.downloads.snapshot()) }
+            region = withContext(Dispatchers.IO) { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(DystopoApp.instance).region.json() }
             packs = p
             active = a
             used = manager.inUse().toSet() // T41: every usable pack is on the map
@@ -204,6 +218,30 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
             val result = runCatching(block)
             message = result.exceptionOrNull()?.let { "$label failed: ${it.message}" }
             refresh++
+        }
+    }
+
+    // T222: the controls of a download's row.
+    fun jobAction(j: Map<String, Any?>, action: String) {
+        val name = j["name"] as? String ?: return
+        when (action) {
+            DownloadStatus.Action.RESUME_NOW.label, DownloadStatus.Action.RETRY.label -> background("Trying again") { manager.downloads.retry(name) }
+            DownloadStatus.Action.STORAGE.label -> openStorage(close)
+            else -> background("Removing $name") {
+                // An update's stopped download goes; the pack it would have updated stays.
+                if (j["update"] == true) manager.downloads.cancel(name) else manager.delete(name)
+                io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(DystopoApp.instance).region.dismiss(name)
+            }
+        }
+    }
+
+    // T222: the region job stopped before it had a download (its build, or the free-space check): nothing is kept of it.
+    fun regionAction(action: String) {
+        val r = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(DystopoApp.instance).region
+        when (action) {
+            DownloadStatus.Action.RETRY.label -> background("Trying again") { r.retry() }
+            DownloadStatus.Action.STORAGE.label -> openStorage(close)
+            else -> background("Removing") { r.dismiss(null) }
         }
     }
 
@@ -233,8 +271,14 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                     onShow = { background("Opening ${p.info.name}") { manager.activate(p.info.name); close() } },
                     onDelete = { background("Deleting ${p.info.name}") { manager.delete(p.info.name) } })
             }
-            // Catalog downloads have their progress in the catalog row.
-            items(jobs.filter { j -> !catalogOpen || rows.none { it.pack.name == j["name"] } }, key = { "job-" + it["name"] }) { j -> JobRow(j) }
+            // T222: a region job that stopped before it had a download has no job of its own.
+            if (region["state"] == "failed" && jobs.none { it["name"] == region["name"] }) {
+                item(key = "job-region") { JobRow(region) { regionAction(it) } }
+            }
+            // Catalog downloads have their progress in the catalog row. T222: a finished job's row is the pack's.
+            items(jobs.filter { j -> j["state"] != "done" && j["state"] != "cancelled" && j["graphOnly"] != true && (!catalogOpen || rows.none { it.pack.name == j["name"] }) }, key = { "job-" + it["name"] }) { j ->
+                JobRow(j) { a -> jobAction(j, a) }
+            }
             // T53: "From server"
             item(key = "server-header") {
                 Row(
@@ -255,7 +299,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                         catalogLoading -> "Loading the catalog from $server..."
                         catalogError != null -> "Catalog unavailable: $catalogError. Check the server in ${Screens.SETTINGS} › ${Screens.SOURCES} ›"
                         rows.isEmpty() -> "$server has no packs."
-                        else -> "${rows.size} packs on $server"
+                        else -> "${DownloadStatus.count(rows.size, "pack")} on $server"
                     }
                     val linked = server == null || catalogError != null
                     BasicText(
@@ -271,6 +315,7 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                         onDownload = { background("Downloading ${r.pack.name}") { client.download(r.pack.id) } },
                         onUpdate = { background("Updating ${r.pack.name}") { client.update(r.pack.name) } },
                         onDelete = { background("Deleting ${r.pack.name}") { manager.delete(r.pack.name) } },
+                        onJobAction = { a -> r.job?.let { jobAction(it, a) } },
                     )
                 }
             }
@@ -306,29 +351,39 @@ private val StatusColors = mapOf(
     CatalogStatus.CHECKING to Color(0xFF808080),
 )
 
-/** T53: one pack of the server's catalog: name and status, zooms, size, profile, build date, area, and its actions. */
+/**
+ * T53: one pack of the server's catalog: name, status and size, and its actions; T222: a tap also opens the zooms, the profile,
+ * the build date and the area, and a stopped or paused download says so with its own controls.
+ */
 @Composable
-private fun CatalogRow(r: PackCatalogClient.Row, onShow: () -> Unit, onDownload: () -> Unit, onUpdate: () -> Unit, onDelete: () -> Unit) {
+private fun CatalogRow(r: PackCatalogClient.Row, onShow: () -> Unit, onDownload: () -> Unit, onUpdate: () -> Unit, onDelete: () -> Unit, onJobAction: (String) -> Unit) {
     val p = r.pack
     val color = StatusColors.getValue(r.status)
+    val key = "cat:${p.id}"
+    val job = r.job
+    val halted = (job?.get("word") as? String)?.takeIf { it == DownloadStatus.WORD_PAUSED || it == DownloadStatus.WORD_STOPPED }
     Column(
-        Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).clickable(onClick = onShow).padding(12.dp),
+        Modifier.fillMaxWidth().border(1.dp, Line, RoundedCornerShape(8.dp)).clickable { PacksUi.toggle(key); onShow() }.padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(p.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold))
-            BasicText(CatalogOverlay.statusText(r.status).uppercase(Locale.US), style = TextStyle(color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+            if (halted != null) BasicText(halted.uppercase(Locale.US), style = TextStyle(color = if (halted == DownloadStatus.WORD_STOPPED) Bad else Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+            else BasicText(CatalogOverlay.statusText(r.status).uppercase(Locale.US), style = TextStyle(color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold))
         }
-        val parts = listOfNotNull(
-            if (p.minZoom != null && p.maxZoom != null) "z${p.minZoom}-${p.maxZoom}" else null,
-            mb(p.bytes),
-            p.profile ?: "terrain only",
-            p.builtDate?.let { "built $it" },
-        )
-        BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
-        p.bounds?.let { b -> BasicText(area(b), style = TextStyle(color = Muted, fontSize = 12.sp)) }
-        val job = r.job
-        if (r.status == CatalogStatus.DOWNLOADING && job != null) {
+        BasicText(DownloadStatus.sizeText(p.bytes), style = TextStyle(color = Ink, fontSize = 14.sp))
+        if (PacksUi.detail == key) {
+            val parts = listOfNotNull(
+                if (p.minZoom != null && p.maxZoom != null) "z${p.minZoom}-${p.maxZoom}" else null,
+                p.profile ?: "terrain only",
+                p.builtDate?.let { "built $it" },
+            )
+            BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
+            p.bounds?.let { b -> BasicText(area(b), style = TextStyle(color = Muted, fontSize = 12.sp)) }
+            (job?.get("error") as? String)?.takeIf { halted != null }?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3) }
+        }
+        if (halted != null) (job?.get("sentence") as? String)?.let { BasicText(it, style = TextStyle(color = if (halted == DownloadStatus.WORD_STOPPED) Bad else Muted, fontSize = 13.sp)) }
+        else if (r.status == CatalogStatus.DOWNLOADING && job != null) {
             val done = (job["bytesDone"] as? Number)?.toLong() ?: 0L
             val total = (job["bytesTotal"] as? Number)?.toLong()
             val fraction = if (total != null && total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -337,9 +392,9 @@ private fun CatalogRow(r: PackCatalogClient.Row, onShow: () -> Unit, onDownload:
                 Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(color, RoundedCornerShape(3.dp)))
             }
         }
-        if (job?.get("state") == "failed") (job["error"] as? String)?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 3) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
-            when (r.status) {
+            if (halted != null) JobActions(job, onJobAction)
+            else when (r.status) {
                 CatalogStatus.AVAILABLE -> Chip("Download", onClick = onDownload)
                 CatalogStatus.UPDATE -> { Chip("Update", onClick = onUpdate); Chip("Delete", onClick = onDelete) }
                 CatalogStatus.INSTALLED, CatalogStatus.CHECKING -> Chip("Delete", onClick = onDelete)
@@ -362,52 +417,92 @@ private fun area(b: PackBounds): String {
 private fun PackRow(p: PackManager.Listed, isActive: Boolean, onMap: Boolean, onShow: () -> Unit, onDelete: () -> Unit) {
     val info = p.info
     val b = info.bounds
+    val key = "pack:${info.name}"
     Column(
         Modifier.fillMaxWidth()
             .border(if (isActive) 2.dp else 1.dp, if (isActive) Accent else Line, RoundedCornerShape(8.dp))
-            .clickable(enabled = info.usable, onClick = onShow) // T41: tap to go there (and make it primary)
+            .clickable { PacksUi.toggle(key) } // T222: the detail; Show on map is in it (T41's tap to go there)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(info.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold))
-            if (isActive) BasicText("PRIMARY", style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold))
-            else if (onMap) BasicText("ON MAP", style = TextStyle(color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
+            val word = DownloadStatus.packWord(isActive, onMap, info.usable, info.dem != null, info.vector != null)
+            BasicText(word, style = TextStyle(color = if (isActive) Accent else if (word == "INCOMPLETE") Bad else Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
             Spacer(Modifier.width(10.dp))
             Chip("Delete", onClick = onDelete)
         }
-        val parts = listOfNotNull(
-            (info.dem ?: info.vector)?.let { "z${it.minZoom}-${it.maxZoom}" },
-            mb(info.bytes),
-            if (info.vector == null) "terrain only" else if (info.dem == null) "map only" else "terrain + map", // T65: vector-only packs
-            "incomplete".takeIf { !info.usable && !(info.dem == null && info.vector != null) },
-        )
-        BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
-        if (b != null) {
-            BasicText(
-                String.format(Locale.US, "%.3f, %.3f to %.3f, %.3f", b.minLat, b.minLon, b.maxLat, b.maxLon),
-                style = TextStyle(color = Muted, fontSize = 12.sp),
+        BasicText(DownloadStatus.sizeText(info.bytes), style = TextStyle(color = Ink, fontSize = 14.sp))
+        if (PacksUi.detail == key) {
+            val parts = listOfNotNull(
+                (info.dem ?: info.vector)?.let { "z${it.minZoom}-${it.maxZoom}" },
+                DownloadStatus.contentsWord(info.dem != null, info.vector != null), // T65: vector-only packs
             )
+            BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
+            if (b != null) {
+                BasicText(
+                    String.format(Locale.US, "%.3f, %.3f to %.3f, %.3f", b.minLat, b.minLon, b.maxLat, b.maxLon),
+                    style = TextStyle(color = Muted, fontSize = 12.sp),
+                )
+            }
+            p.files.files.forEach { BasicText(it.name, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+            if (info.attribution.isNotEmpty()) BasicText(info.attribution, style = TextStyle(color = Muted, fontSize = 11.sp), maxLines = 2)
+            p.errors.forEach { BasicText(it, style = TextStyle(color = Bad, fontSize = 12.sp)) }
+            if (info.usable) Chip("Show on map", Modifier.padding(top = 4.dp), onClick = onShow)
         }
-        if (info.attribution.isNotEmpty()) BasicText(info.attribution, style = TextStyle(color = Muted, fontSize = 11.sp), maxLines = 2)
-        p.errors.forEach { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp)) }
     }
 }
 
+/**
+ * T222: a download's row, or the region job's when it stopped before it had one: the name, one state word, the sentence, the
+ * progress while there is any, the controls; a tap shows the raw error and the files.
+ */
 @Composable
-private fun JobRow(j: Map<String, Any?>) {
+private fun JobRow(j: Map<String, Any?>, onAction: (String) -> Unit) {
+    val name = j["name"]?.toString().orEmpty()
+    val key = "job:$name"
+    val word = j["word"] as? String ?: ""
+    val stopped = word == DownloadStatus.WORD_STOPPED
     val done = (j["bytesDone"] as? Number)?.toLong() ?: 0L
     val total = (j["bytesTotal"] as? Number)?.toLong()
     val fraction = if (total != null && total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-    Column(Modifier.fillMaxWidth().background(Color(0xFFF4EDE0), RoundedCornerShape(8.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        val rate = (j["bytesPerSec"] as? Number)?.toLong()?.let { " · ${it / 1024} KB/s" }.orEmpty()
-        BasicText("Download ${j["name"]}: ${j["state"]}", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-        BasicText("${mb(done)} of ${total?.let(::mb) ?: "?"}$rate", style = TextStyle(color = Muted, fontSize = 13.sp))
-        Box(Modifier.fillMaxWidth().height(6.dp).background(Line, RoundedCornerShape(3.dp))) {
-            Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(Accent, RoundedCornerShape(3.dp)))
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFFF4EDE0), RoundedCornerShape(8.dp)).clickable { PacksUi.toggle(key) }.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+            BasicText(word.uppercase(Locale.US), style = TextStyle(color = if (stopped) Bad else Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
         }
-        (j["error"] as? String)?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp)) }
+        (j["sentence"] as? String)?.let { BasicText(it, style = TextStyle(color = if (stopped) Bad else Ink, fontSize = 14.sp)) }
+        if (j.containsKey("bytesDone") && (done > 0 || !stopped)) {
+            val rate = (j["bytesPerSec"] as? Number)?.toLong()?.takeIf { word == DownloadStatus.WORD_DOWNLOADING }?.let { " · ${it / 1024} KB/s" }.orEmpty()
+            BasicText("${mb(done)} of ${total?.let(::mb) ?: "?"}$rate", style = TextStyle(color = Muted, fontSize = 13.sp))
+            Box(Modifier.fillMaxWidth().height(6.dp).background(Line, RoundedCornerShape(3.dp))) {
+                Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(Accent, RoundedCornerShape(3.dp)))
+            }
+        }
+        if (PacksUi.detail == key) {
+            ((j["errorDetail"] ?: j["error"]) as? String)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+            (j["files"] as? List<*>).orEmpty().forEach { f -> (f as? Map<*, *>)?.get("file")?.let { BasicText(it.toString(), style = TextStyle(color = Muted, fontSize = 12.sp)) } }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { JobActions(j, onAction) }
     }
+}
+
+/** T222: the row's controls, by their labels. Remove on an update's download leaves the installed pack, and says so. */
+@Composable
+private fun JobActions(j: Map<String, Any?>?, onAction: (String) -> Unit) {
+    (j?.get("actions") as? List<*>).orEmpty().forEach { a ->
+        val action = a.toString()
+        Chip(if (action == DownloadStatus.Action.REMOVE.label && j?.get("update") == true) "Cancel update" else action) { onAction(action) }
+    }
+}
+
+/** T222: the way to the Storage screen from a download that does not fit. */
+private fun openStorage(close: () -> Unit) {
+    close()
+    io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true
 }
 
 @Composable
