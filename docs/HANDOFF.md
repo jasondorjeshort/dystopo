@@ -1,15 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-04, at commit ce6bfad4, by main session (wave 28, 2 of 9 merged)
+Updated: 2026-11-04, at commit 3d971c6c, by main session (wave 28, 3 of 9 merged)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (the open
 wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Now
 
 - **Wave 28 runs one Gradle-using agent at a time** (the owner, 2026-11-04, after seven builds left 2 GB free; the
-  board's wave paragraph). T225 and T223 are merged; T218 is running. Then T217, T219, T220, T221, T222, T224.
-  T217, T220, T221, T222 and T224 were stopped part-way: their work is in their worktrees, unpushed and unchecked
+  board's wave paragraph). T225, T223 and T218 are merged; T217 is running. Then T219, T220, T221, T222, T224.
+  T220, T221, T222 and T224 were stopped part-way: their work is in their worktrees, unpushed and unchecked
   (T224's uncommitted). Resume each with its agent, or a new one in its worktree.
 - The wave's common brief and wait script are outside the repo, in the `.scratch` folder of the worktrees' folder
   [no-check: outside the repo]. Host ports 8701 to 8708 and consoles 5570 to 5584 went to the implementers in task
@@ -18,8 +18,8 @@ wave 28, T217 to T225; the last record `docs/tasks/wave-27.md`), ADR 0053.
 
 ## Next
 
-1. As T218 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence, then T217.
-2. On T217's merge: launch T219, then go on down the order, one at a time.
+1. As T217 reports: its verifier (Sonnet-class), then the merge by the `wave` skill's sequence, then T219.
+2. Go on down the order, one at a time.
 3. After the last merge: the sweep (it checks the labels `tools/android-ui.py` taps), the release, the close.
 4. The next wave's candidates: the layout authority's second half with ADR 0053's build step 2 and the top-row
    regroup (T224's design note), T225's build tasks once the owner chooses, the two ready Plans.
