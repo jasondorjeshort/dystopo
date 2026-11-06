@@ -43,6 +43,7 @@ Decided: names stay readable rather than publishing mapping files and retracing.
 **Goal:** the `airport-gates` rule's `minzoom` 14 becomes 15 in `DefaultOsmStyle.kt`; the docs that say z14 for the labels say z15 (the packs keep the points at z14, overzoomed: no profile change, no pack rebuild).
 **Owns:** `shared/.../style/DefaultOsmStyle.kt` (that rule), its tests and goldens if they move, `docs/reference/android-app.md` (the Airport gates row), `tilebuild/PROFILE.md` only where it describes the drawing zoom. [no-check: path abbreviated with ...]
 **Done when:** `check` green; a devtool render of `sea-tac` at z14 shows no gate label and at z15 shows them; `tools/demo-check.py` at SEA z14 reads 0 placed gate labels and z15 some.
+**Status: merged.** Labels from z15; verifier MERGE, no notes.
 
 ### T231. An emulator guard in the boot script (small; before T230)
 **Why:** the owner, 2026-11-06: "I've had too many problems with them eating up all my ram use", and the guard should be automated, not the coordinator's watch. Finding `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md` (44 GB in 51 minutes, unread).
