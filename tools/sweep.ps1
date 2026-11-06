@@ -128,9 +128,12 @@ param(
     [int]$EmuMemory = 0,
     # T233: the sweep keeps its emulator under T231's guard. -EmuLimitGB is the guard's private-bytes limit for every
     # emulator the sweep boots (android-emu.ps1 -PrivateLimitGB; task agents keep policy.json's 8 GB); before each device
-    # part (and each device tour run) an emulator of the sweep's own whose qemu private bytes are past -EmuRebootGB is
-    # stopped, left 60 s, and booted again, as is one that is gone. The free-RAM floor is policy.json's, as for every
-    # emulator. 0 takes the defaults, measured in T233 (docs/reference/android-emulator.md, The emulator cap).
+    # part (and each device tour run, and first-run's --direct run) an emulator of the sweep's own whose qemu private bytes
+    # are past -EmuRebootGB is stopped, left 60 s, and booted again, as is one that is gone. The free-RAM floor is
+    # policy.json's, as for every emulator. 0 takes the defaults, measured in T233: a boot ends at 4.4 to 4.8 GB; the
+    # largest runs grew it by 3.1 and 3.7 GB (a device tour run) and 3.9 to over 4.0 GB (first-run --direct), every other
+    # part by 0 to 1.5 GB. So 6 GB to reboot (a boot plus a GB or so of small parts) and 12 GB for the guard: the threshold
+    # plus the largest run plus half of it again (docs/reference/android-emulator.md, The emulator cap).
     [double]$EmuLimitGB = 0,
     [double]$EmuRebootGB = 0,
     # T191 (finding 2026-10-31, a 9.5 h hang): the ceiling in seconds of every part, the wait on its programs done with
@@ -211,7 +214,7 @@ $emuMemoryArgs = @(if ($EmuMemory -gt 0) { '-Memory'; "$EmuMemory" }) # T170: ev
 # T233: the guard's limit for every emulator the sweep boots, and the reboot threshold (the param block says why).
 if ($EmuLimitGB -lt 0 -or $EmuRebootGB -lt 0) { throw '-EmuLimitGB and -EmuRebootGB are sizes in GB, or 0 for the defaults' }
 if (-not $EmuLimitGB) { $EmuLimitGB = 12 }
-if (-not $EmuRebootGB) { $EmuRebootGB = 7 }
+if (-not $EmuRebootGB) { $EmuRebootGB = 6 }
 if ($EmuRebootGB -ge $EmuLimitGB) { throw "-EmuRebootGB ($EmuRebootGB) must be under -EmuLimitGB ($EmuLimitGB)" }
 $emuMemoryArgs += @('-PrivateLimitGB', "$EmuLimitGB")
 if ($env:JAVA_HOME) { $env:PATH = (Join-Path $env:JAVA_HOME 'bin') + ';' + $env:PATH }
