@@ -3467,14 +3467,17 @@ if (['EL', 'ES'].some((g) => selected(g) || (opt.only && opt.only.startsWith(g))
   }
   if (selected('EL14')) {
     const P = require('./policy.js');
-    const bad = [['max 0', { emulators: { max: 0, lockDir: 'x' } }], ['max "2"', { emulators: { max: '2' } }], ['unknown key', { emulators: { cap: 2 } }]];
+    const bad = [['max 0', { emulators: { max: 0, lockDir: 'x' } }], ['max "2"', { emulators: { max: '2' } }], ['unknown key', { emulators: { cap: 2 } }],
+      ['privateLimitGB 0', { emulators: { privateLimitGB: 0 } }], ['freeFloorGB "4"', { emulators: { freeFloorGB: '4' } }]];
     const problems = [];
     for (const [what, obj] of bad) if (!P.load(scratchPolicy(`el14-${what.replace(/\W/g, '')}`, obj)).error) problems.push(`${what} loaded without error`);
     const good = P.load(elPolicy);
     if (good.error || good.policy.emulators.max !== 2 || good.policy.emulators.lockDir !== fwd(elDir)) problems.push(`good policy: ${good.error || JSON.stringify(good.policy.emulators)}`);
     const none = P.load(POLICIES.none).policy.emulators;
-    if (none.max !== 2 || none.lockDir !== '~/.dystopo/emulators') problems.push(`defaults ${JSON.stringify(none)}`);
-    report('EL14', 'policy.js: the emulators block (max an integer from 1, lockDir text, no other key; defaults 2 and ~/.dystopo/emulators)', problems.length === 0, problems.join('; '));
+    if (none.max !== 2 || none.lockDir !== '~/.dystopo/emulators' || none.privateLimitGB !== 8 || none.freeFloorGB !== 4 || none.bootCostGB !== 5) problems.push(`defaults ${JSON.stringify(none)}`);
+    const gb = P.load(scratchPolicy('el14-gb', { emulators: { privateLimitGB: 7.5 } }));
+    if (gb.error || gb.policy.emulators.privateLimitGB !== 7.5 || gb.policy.emulators.max !== 2) problems.push(`privateLimitGB 7.5: ${gb.error || JSON.stringify(gb.policy.emulators)}`);
+    report('EL14', 'policy.js: the emulators block (max an integer from 1, lockDir text, the three GB figures positive numbers, no other key; defaults 2, ~/.dystopo/emulators, 8, 4, 5)', problems.length === 0, problems.join('; '));
   }
   if (selected('EL15')) {
     const home = path.join(scratch, 'el15-home');

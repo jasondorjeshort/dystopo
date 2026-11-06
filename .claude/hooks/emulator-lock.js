@@ -14,7 +14,8 @@
 // The lock files themselves are written by tools/android-emu.ps1: one JSON file per emulator,
 // <lockDir>/emulator-<console port>.json with { serial, consolePort, avd, owner, pid (the qemu process
 // owning the console port), emulatorPid (its emulator.exe parent), hostPort, checkout, bootedBy (the
-// script's PID while booting), startedAt, state }. lockDir and the cap come from the `emulators` block
+// script's PID while booting), startedAt, state, guardPid (T231: tools/android-emu-guard.ps1, which stops that emulator
+// alone past emulators.privateLimitGB or under freeFloorGB and ends with it) }. lockDir and the cap come from the `emulators` block
 // of policy.json (policy.js; default ~/.dystopo/emulators, max 2), one folder for the whole machine
 // so a lock binds across worktrees. docs/reference/android-emulator.md, "The emulator cap".
 //
