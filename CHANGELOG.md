@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.21-alpha (2026-11-06)
+
 ### 2026-11-06
 
 - T233: The sweep under the emulator guard
