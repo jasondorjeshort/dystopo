@@ -1,13 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-05, by main session (T227 merged, T228 at its verifier)
+Updated: 2026-11-06, by main session (T230 added at the owner's word, highest priority)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (wave 29),
 `docs/tasks/wave-28.md`, ADR 0056, ADR 0057.
 
 ## Now
 
 - **Wave 29 is open: trace the startup freezes.** T227 merged (readable stacks, ADR 0058; a freeze's true length). T228 is pushed and at its verifier (a trace of every start, through Report a problem). The owner's freeze is the screen stuck on the splash during the opening. On the emulator no unexplained hold appeared, so the cause awaits a trace from the owner's phone: release after T228, then plan T229 (the launch's disk work off the main thread) from it. Inventory: `out/wave29-research/` [no-check: gitignored]. `git branch -r --list 'origin/task/*'` shows what is pushed.
+- **T230 (airport gate labels, a map option, gate search) is the next launch, highest priority** (owner, 2026-11-06,
+  "later today"). Its research report is untracked in the main checkout's `reports/` [no-check: untracked]; give the brief its path.
 - Wave 28 is closed and v0.1.20-alpha is published (T217 to T226).
 - **New rule, ADR 0057:** one Gradle-using agent at a time unless the owner says wider. The `wave` skill's per-task
   figure is now 1.25 points (wave 28's close read 5.5 under its figure).
