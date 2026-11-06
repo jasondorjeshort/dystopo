@@ -229,6 +229,29 @@ class OutdoorsProfileTest {
     }
 
     @Test
+    fun airportGatesCarryTheirNumber() {
+        // T230: a gate node with `ref` is a z14 point in `aeroway`, labelled with the number alone.
+        val gate = process(point(mapOf("aeroway" to "gate", "ref" to "B12", "name" to "Gate B12"))).layer("aeroway")
+        assertEquals(mapOf("class" to "gate", "ref" to "B12"), gate.getAttrsAtZoom(14))
+        assertEquals(14, gate.minZoom)
+        assertFalse(gate.isPolygon)
+        // Only a name: the name is the label.
+        assertEquals("S5", process(point(mapOf("aeroway" to "gate", "name" to "S5"))).layer("aeroway").getAttrsAtZoom(14)["ref"])
+        // Neither: dropped.
+        assertTrue(process(point(mapOf("aeroway" to "gate"))).none { it.layer == "aeroway" })
+        assertTrue(process(point(mapOf("aeroway" to "gate", "ref" to " ; "))).none { it.layer == "aeroway" })
+        // Several gates in one ref, shown as written with `;` as `/`.
+        assertEquals("B12/B14", process(point(mapOf("aeroway" to "gate", "ref" to "B12;B14"))).layer("aeroway").getAttrsAtZoom(14)["ref"])
+        assertEquals("A1/A2/A3", OutdoorsProfile.gateLabel("A1; A2 ;A3", null))
+        // A gate mapped as an area becomes its point on surface; other aeroways are not written.
+        val area = process(area(mapOf("aeroway" to "gate", "ref" to "N3"), size = 0.0005)).layer("aeroway")
+        assertFalse(area.isPolygon)
+        assertEquals("N3", area.getAttrsAtZoom(14)["ref"])
+        assertEquals("D7", process(line(mapOf("aeroway" to "gate", "ref" to "D7"))).layer("aeroway").getAttrsAtZoom(14)["ref"])
+        assertTrue(process(line(mapOf("aeroway" to "taxiway", "ref" to "A"))).none { it.layer == "aeroway" })
+    }
+
+    @Test
     fun relationsAttachRoutesAndAdminLevels() {
         val route = OsmElement.Relation(5, mapOf("type" to "route", "route" to "hiking", "name" to "Wonderland Trail", "network" to "rwn"), emptyList())
         assertEquals(listOf<OsmRelationInfo>(OutdoorsProfile.RouteInfo(5, "Wonderland Trail", null, "rwn")), profile.preprocessOsmRelation(route))
@@ -292,6 +315,7 @@ class OutdoorsProfileTest {
         landcoverWaterAndLanduse()
         parksAndWilderness()
         outdoorPoisAndPlaces()
+        airportGatesCarryTheirNumber()
         relationsAttachRoutesAndAdminLevels()
         roadsCarryDriveData()
         val docs = OutdoorsSchema.LAYERS.associateBy { it.name }
@@ -331,7 +355,7 @@ class OutdoorsProfileTest {
         assertTrue("OpenStreetMap" in profile.attribution())
         assertTrue("ODbL" in profile.attribution())
         assertEquals("dystopo-outdoors", profile.name())
-        assertEquals("2", meta["dystopo:profile_version"]) // T73: packs with drive data
+        assertEquals("3", meta["dystopo:profile_version"]) // T73: packs with drive data; T230: with airport gates
 
         val extra = Attribution.extraMetadata("washington", null, Attribution.OUTDOORS_SOURCE_IDS, Attribution.OUTDOORS_SCHEMA)
         assertEquals("osm,osm-water-polygons,natural-earth,openmaptiles", extra["dystopo:provenance"])

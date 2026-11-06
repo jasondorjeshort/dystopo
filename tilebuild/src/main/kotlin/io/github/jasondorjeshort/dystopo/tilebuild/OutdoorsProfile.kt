@@ -16,7 +16,8 @@ import kotlin.math.roundToInt
  * Layer names and class values follow OpenMapTiles wherever the data is the same (water, landcover,
  * transportation, place, mountain_peak, ...), so a style written for OpenMapTiles tiles keeps working;
  * trails carry extra attributes (`sac_scale`, `trail_visibility`, `surface_detail`, hiking routes, ...)
- * and backcountry points of interest get their own `outdoor_poi` layer. Written against Planetiler's
+ * and backcountry points of interest get their own `outdoor_poi` layer; airport gates (T230) go in `aeroway` as in
+ * OpenMapTiles. Written against Planetiler's
  * [Profile] API; no code from the OpenMapTiles profile.
  */
 class OutdoorsProfile(
@@ -117,6 +118,18 @@ class OutdoorsProfile(
         )
 
         fun elevationMeters(value: Any?): Double? = runCatching { Parse.meters(value) }.getOrNull()
+
+        /** T230: airport gates are written at this zoom only (the profile's top zoom). */
+        const val GATE_MIN_ZOOM = 14
+
+        /**
+         * T230: a gate's label, the number alone as OSM has it: `ref`, else `name`; a `ref` holding several gates
+         * (`B12;B14`) is written `B12/B14`. Null when the gate has neither (it is then not written).
+         */
+        fun gateLabel(ref: String?, name: String?): String? {
+            val raw = ref?.trim()?.takeIf { it.isNotEmpty() } ?: name?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return raw.split(';').map { it.trim() }.filter { it.isNotEmpty() }.joinToString("/").takeIf { it.isNotEmpty() }
+        }
     }
 
     /** A hiking/foot route relation, attached to its member ways. */
@@ -180,6 +193,7 @@ class OutdoorsProfile(
     }
 
     private fun processOsm(f: SourceFeature, features: FeatureCollector) {
+        gate(f, features)
         if (f.isPoint) {
             peak(f, features)
             place(f, features)
@@ -484,6 +498,24 @@ class OutdoorsProfile(
         f.getString("operator")?.let { point.setAttr("operator", it) }
         accessRestriction(f)?.let { point.setAttr("access", it) }
         if (f.hasTag("fee", "yes")) point.setAttr("fee", 1)
+    }
+
+    /**
+     * T230: an airport gate (`aeroway=gate`, nearly always a node; a way gives its point on surface, or its middle when
+     * open) as a point in `aeroway`, the OpenMapTiles layer and class, so one style rule draws both schemas. The label
+     * is the number alone ([gateLabel]); a gate with neither `ref` nor `name` is dropped. At the top zoom only.
+     */
+    private fun gate(f: SourceFeature, features: FeatureCollector) {
+        if (!f.hasTag("aeroway", "gate")) return
+        val label = gateLabel(f.getString("ref"), f.getString("name")) ?: return
+        val point = when {
+            f.isPoint -> features.point("aeroway")
+            f.canBePolygon() -> features.pointOnSurface("aeroway")
+            f.canBeLine() -> features.lineMidpoint("aeroway")
+            else -> return
+        }
+        point.setAttr("class", "gate").setAttr("ref", label).setMinZoom(GATE_MIN_ZOOM.coerceAtMost(maxZoom))
+            .setBufferPixels(LABEL_BUFFER)
     }
 
     private fun poiClass(f: SourceFeature): Triple<String, String?, Int>? {
