@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-31
+verified: 2026-11-06
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -23,6 +23,21 @@ At most `emulators.max` emulators run on the machine at once (`.claude/hooks/pol
 emulator cap reached: 2 of 2 running (emulators.max in .claude/hooks/policy.json; locks in C:\Users\<you>\.dystopo\emulators): emulator-5666 (dystopo35-T190, owner T190, pid 1234, since 18:55, <checkout>); emulator-5668 (...). Not booting dystopo35-T190c on emulator-5670. Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).
 ```
 Two scripts booting at once take turns on a mutex, so both never see the same free slot. `-Stop` removes the lock with the emulator; an emulator of the AVD already running keeps its lock or is adopted. `node .claude/hooks/emulator-lock.js --locks` lists the folder with each lock's liveness. The sweep boots through the script (`device-boot`, and `bothunits`' second emulator on `-MatrixEmuPort`), so its two emulators are the cap; `-Matrix` boots more and is refused past it.
+
+**The guard and admission by RAM (T231).** The cap counts emulators; RAM decides too, since a debug cold launch adds about 0.5 GB to the qemu process's private bytes and nothing gives it back (finding `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`). Every boot or adoption by the script starts `tools/android-emu-guard.ps1` beside the emulator, hidden and detached, its PID in the lock as `guardPid`, its log `out\emulator-guard-<avd>.log` in the booting checkout (a line per new GB of private bytes, the start, the stop and the end). Every 2 s it reads the qemu PID's private bytes and the PC's available RAM. It stops its own emulator when the private bytes pass `emulators.privateLimitGB`, or when available RAM stays under `freeFloorGB` for 30 s. In that second case another emulator with more private bytes and a running guard is stopped first. The stop is the one `emulator-stop.js` does, by the lock's PID after the image check: console `emu kill`, then the PID after 20 s, then the `emulator.exe` parent. The lock is removed, and a line with the figures goes to `lockDir/stop.log` and the guard's log:
+```
+guard pid 30748: emulator-5572 (dystopo35-T231, owner T231, pid 9828): private bytes 3.6 GB over the limit 3 GB (free RAM 17.5 GB, floor 4 GB); stopped by console kill; lock removed
+```
+The guard ends with its emulator: when the PID is gone, the lock is removed, or it has made its stop. `-Stop` waits for it and stops it by PID after 30 s, after checking that PID still runs the guard script. A boot during which the guard stopped the emulator fails with the guard's lines in the message. A boot first waits up to `-RamWaitMinutes` (default 5) while available RAM is under `bootCostGB` plus `freeFloorGB`, plus what any emulator still booting will take (its boot cost less its private bytes so far). It then refuses with the figures:
+```
+not enough free RAM to boot dystopo35-T231 on emulator-5572: 12.9 GB free, 105.0 GB needed (boot cost 5 GB + floor 100 GB; ...). Emulators locked: emulator-5570 (dystopo35-T228v, owner T228v, private 6.3 GB). ...
+```
+`emulators.max` stays the ceiling. The defaults in `.claude/hooks/policy.json` are measured for the second PC (48 GB):
+- `privateLimitGB` is 8. A boot at `-Memory 3072` takes 4.6 to 4.9 GB, so the limit leaves room for about six debug cold launches, the interim cap briefs used. Two emulators at the limit hold 16 GB.
+- `freeFloorGB` is 4, about a twelfth of the PC, which leaves the desktop, a browser and a build's peak room. The finding's incident was at 0.2 GB. The 30 s it must last lets a short spike pass.
+- `bootCostGB` is 5, the 4.9 GB measured below. A boot therefore needs 9 GB available.
+
+`-PrivateLimitGB`, `-FreeFloorGB` and `-BootCostGB` override the defaults for one boot (tests set them low on an emulator of their own); the guard of another emulator keeps its own figures. A guard costs about 80 MB private and little CPU (1.4 s over its first 90 s, mostly its start). Emulators booted before T231, or around the script, have no guard; re-running the script on one (adoption) gives it one.
 
 **Close on done.** A `SubagentStop` hook (`.claude/hooks/emulator-stop.js`) stops the ending agent's emulators and removes their locks. The agent is identified by the hook input's `agent_id` (Claude Code 2.1.316 sends `agent_id`, `agent_type` and `agent_transcript_path` to `SubagentStop`, and `agent_id` to every `PreToolUse` inside a subagent): the `PreToolUse` hook `emulator-lock.js` records the `-Avd` of each `android-emu.ps1` or `sweep.ps1` command a subagent runs (`lockDir/agents/<agent_id>.json`; the sweep's AVD family by prefix), and the stop hook adds the `-Avd` lines of the agent's own transcript. It stops only by the PID in the lock and only after checking that PID still runs an emulator binary (`qemu-system-*`, `emulator*`), never by name: first `adb emu kill` when the console answers with the lock's AVD, then the PID itself after 20 s; each stop is a line in `lockDir/stop.log` and a message in the session. The AVD stays (`-Stop -Delete` removes it). Stop your emulator yourself after your last check anyway; the hook is the net for an agent cut off before its cleanup. An agent continued after it ended (`SendMessage`) finds its emulator stopped and boots it again.
 

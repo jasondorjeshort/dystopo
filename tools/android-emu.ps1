@@ -108,7 +108,15 @@ param(
     [string]$Server = '',
     # T190: who holds this emulator's lock (the task or role of the brief, e.g. T190 or T190-verify); default: the AVD
     # name without its dystopoNN- prefix. Named in the refusal when the cap is reached.
-    [string]$Owner = ''
+    [string]$Owner = '',
+    # T231: the guard and admission by RAM, for this boot only (0: the emulators block of .claude/hooks/policy.json).
+    # The guard (tools\android-emu-guard.ps1) stops this emulator when its qemu private bytes pass -PrivateLimitGB or the
+    # PC's free RAM stays under -FreeFloorGB; a boot waits up to -RamWaitMinutes, then refuses, while free RAM is under
+    # -BootCostGB plus -FreeFloorGB (plus what emulators still booting will take).
+    [double]$PrivateLimitGB = 0,
+    [double]$FreeFloorGB = 0,
+    [double]$BootCostGB = 0,
+    [int]$RamWaitMinutes = 5
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -228,19 +236,31 @@ function Connect-DebugServer {
 # when the live locks plus running emulators without a lock reach max, naming them. .claude/hooks/emulator-stop.js
 # stops an ending subagent's emulators by the PID in the lock; -Stop removes the lock. Same liveness rule as
 # .claude/hooks/emulator-lock.js (node .claude/hooks/emulator-lock.js --locks lists them).
+# T231: a boot also waits for, then refuses without, enough free RAM (Test-EmuRam), and starts a guard beside the emulator
+# (tools\android-emu-guard.ps1, its PID in the lock as guardPid) that stops this emulator alone past a private-bytes limit
+# or under a free-RAM floor, and ends with it.
 $emuImage = '^(qemu-system-[\w.-]+|emulator\d*)(\.exe)?$'
+# T231: privateLimitGB, freeFloorGB and bootCostGB (defaults 8, 4 and 5; the reasoning is in
+# docs/reference/android-emulator.md, The emulator cap); -PrivateLimitGB, -FreeFloorGB and -BootCostGB override them
+# for one boot.
 function Get-EmuPolicy {
-    $max = 2; $dir = '~/.dystopo/emulators'
+    $max = 2; $dir = '~/.dystopo/emulators'; $limit = 8.0; $floor = 4.0; $cost = 5.0
     $file = Join-Path $repoRoot '.claude\hooks\policy.json'
     if (Test-Path $file) {
         try {
             $e = (Get-Content -Raw $file | ConvertFrom-Json).emulators
             if ($e -and $e.max) { $max = [int]$e.max }
             if ($e -and $e.lockDir) { $dir = [string]$e.lockDir }
+            if ($e -and $e.privateLimitGB) { $limit = [double]$e.privateLimitGB }
+            if ($e -and $e.freeFloorGB) { $floor = [double]$e.freeFloorGB }
+            if ($e -and $e.bootCostGB) { $cost = [double]$e.bootCostGB }
         } catch { Write-Warning "cannot read the emulators block of ${file}: $_ (using max $max, $dir)" }
     }
+    if ($PrivateLimitGB -gt 0) { $limit = $PrivateLimitGB }
+    if ($FreeFloorGB -gt 0) { $floor = $FreeFloorGB }
+    if ($BootCostGB -gt 0) { $cost = $BootCostGB }
     if ($dir -eq '~' -or $dir -match '^~[\\/]') { $dir = Join-Path $env:USERPROFILE $dir.Substring(1).TrimStart('\', '/') }
-    [pscustomobject]@{ Max = $max; Dir = [IO.Path]::GetFullPath($dir) }
+    [pscustomobject]@{ Max = $max; Dir = [IO.Path]::GetFullPath($dir); LimitGB = $limit; FloorGB = $floor; CostGB = $cost }
 }
 function Get-ProcImage([int]$id) {
     if ($id -le 0) { return '' }
@@ -311,6 +331,11 @@ function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch
                 throw ("emulator cap reached: $($holders.Count) of $($pol.Max) running (emulators.max in .claude/hooks/policy.json; locks in $($pol.Dir)): " +
                     ($holders -join '; ') + ". Not booting $avd on $serial. Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).")
             }
+            # T231: admission by RAM, read again under the mutex (Wait-EmuRam waited outside it; the early check waits after).
+            if (-not $CheckOnly) {
+                $short = Test-EmuRam $pol $serial $avd
+                if ($short) { throw $short }
+            }
         }
         if ($CheckOnly) { return }
         $script:emuLockOwner = if ($Owner) { $Owner } else { $avd -replace '^dystopo\d*-', '' }
@@ -352,6 +377,79 @@ function Remove-EmulatorLock([string]$serial, [string]$avd) {
     }
 }
 
+# T231: admission by RAM. Free means available physical memory (GlobalMemoryStatusEx, Task Manager's Available). A boot
+# needs the boot cost plus the floor free, plus what the emulators still booting will take (each live lock's boot cost less
+# the private bytes its qemu holds so far), so two boots in a row do not both count the same free GB. Returns the refusal
+# text, or nothing when there is room.
+Add-Type -AssemblyName Microsoft.VisualBasic
+function Get-FreeBytes { [double](New-Object Microsoft.VisualBasic.Devices.ComputerInfo).AvailablePhysicalMemory }
+function Format-Gb([double]$bytes) { '{0:n1} GB' -f ($bytes / 1GB) }
+function Test-EmuRam($pol, [string]$serial, [string]$avd) {
+    $free = Get-FreeBytes
+    $reserved = 0.0; $running = @()
+    foreach ($x in @(Get-EmuLocks $pol.Dir | Where-Object { $_.Live -and $_.Lock.serial -ne $serial })) {
+        $priv = 0.0
+        if ($x.Lock.pid) { $p = Get-Process -Id ([int]$x.Lock.pid) -ErrorAction SilentlyContinue; if ($p) { $priv = [double]$p.PrivateMemorySize64 } }
+        $reserved += [Math]::Max(0.0, $pol.CostGB * 1GB - $priv)
+        $running += "$($x.Lock.serial) ($($x.Lock.avd), owner $($x.Lock.owner), $(if ($x.Lock.pid) { "private $(Format-Gb $priv)" } else { 'booting' }))"
+    }
+    $need = ($pol.CostGB + $pol.FloorGB) * 1GB + $reserved
+    if ($free -ge $need) { return }
+    "not enough free RAM to boot $avd on ${serial}: $(Format-Gb $free) free, $(Format-Gb $need) needed (boot cost $($pol.CostGB) GB + floor $($pol.FloorGB) GB" +
+        $(if ($reserved -gt 0) { " + $(Format-Gb $reserved) still to come for emulators booting" } else { '' }) +
+        "; emulators.bootCostGB and freeFloorGB in .claude/hooks/policy.json, -BootCostGB and -FreeFloorGB for one boot). Emulators locked: " +
+        $(if ($running) { $running -join '; ' } else { 'none' }) + '. Close programs or wait in the foreground until RAM is free, then boot again.'
+}
+# Waits up to -RamWaitMinutes for room (a line a minute), then throws the refusal with the wait.
+function Wait-EmuRam([string]$serial, [string]$avd) {
+    $pol = Get-EmuPolicy
+    $deadline = (Get-Date).AddMinutes([Math]::Max(0, $RamWaitMinutes))
+    $nextSay = Get-Date
+    while ($true) {
+        $short = Test-EmuRam $pol $serial $avd
+        if (-not $short) { return }
+        if ((Get-Date) -ge $deadline) { throw "$short (waited $RamWaitMinutes min; -RamWaitMinutes)" }
+        if ((Get-Date) -ge $nextSay) { Write-Host "waiting for RAM (up to $RamWaitMinutes min): $short"; $nextSay = (Get-Date).AddMinutes(1) }
+        Start-Sleep -Seconds 10
+    }
+}
+
+# T231: the guard beside the emulator (tools\android-emu-guard.ps1, hidden and detached like the emulator, T87), its PID
+# written into the lock as guardPid. Started once per lock: a lock whose guard still runs keeps it.
+function Test-GuardPid($id) {
+    $id -and (Get-ProcImage ([int]$id)) -match '^(powershell|pwsh)\.exe$'
+}
+function Start-EmulatorGuard([string]$file, [string]$serial, [string]$avd) {
+    $l = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+    if (Test-GuardPid $l.guardPid) { Write-Host "guard: pid $($l.guardPid) already watches $serial"; return }
+    $pol = Get-EmuPolicy
+    $guardLog = Join-Path $repoRoot "out\emulator-guard-$avd.log"
+    New-Item -ItemType Directory -Force (Split-Path $guardLog) | Out-Null
+    $ps = Join-Path $PSHOME 'powershell.exe'
+    $q = { param($s) '"' + $s + '"' }
+    $argLine = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File $(& $q (Join-Path $PSScriptRoot 'android-emu-guard.ps1')) " +
+        "-LockFile $(& $q $file) -Serial $serial -Avd $avd -LimitGB $($pol.LimitGB) -FloorGB $($pol.FloorGB) " +
+        "-Log $(& $q $guardLog) -Adb $(& $q $adb)"
+    $g = Start-Process -FilePath $ps -ArgumentList $argLine -WindowStyle Hidden -PassThru
+    $l = Get-Content -Raw -LiteralPath $file | ConvertFrom-Json
+    $h = @{}; foreach ($p in $l.PSObject.Properties) { $h[$p.Name] = $p.Value }
+    $h.guardPid = $g.Id
+    Write-EmuLock $file $h
+    $script:guardLog = $guardLog; $script:guardPid = $g.Id
+    Write-Host "guard: pid $($g.Id) stops $serial past $($pol.LimitGB) GB private or under $($pol.FloorGB) GB free (log: $guardLog)"
+}
+# -Stop: the guard notices its emulator gone within a few seconds; one still running after 30 s is stopped by its PID,
+# after checking that PID still runs the guard script.
+function Stop-EmulatorGuard($id) {
+    if (-not (Test-GuardPid $id)) { return }
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Test-GuardPid $id) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+    if (-not (Test-GuardPid $id)) { Write-Host "guard pid $id ended"; return }
+    $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$id)" -ErrorAction SilentlyContinue).CommandLine
+    if ($cmd -match 'android-emu-guard\.ps1') { Stop-Process -Id ([int]$id) -Force; Write-Host "guard pid $id stopped" }
+    else { Write-Warning "guard pid $id now runs something else; left alone" }
+}
+
 # 0. -Stop: kill this AVD's emulator and drop its forward.
 if ($Stop) {
     if ($NoEmulator) { throw '-Stop applies to emulators only' }
@@ -364,6 +462,9 @@ if ($Stop) {
             $s = $candidate
         }
     } else { $s = Find-AvdSerial }
+    # T231: the guards of this AVD's locks, read before the locks go.
+    $guards = @(Get-EmuLocks (Get-EmuPolicy).Dir | Where-Object { $_.Lock -and $_.Lock.avd -eq $Avd -and (-not $s -or $_.Lock.serial -eq $s) -and $_.Lock.guardPid } |
+        ForEach-Object { $_.Lock.guardPid })
     if (-not $s) {
         $elsewhere = Find-AvdSerial
         if ($elsewhere -and $Delete) { throw "AVD $Avd runs as $elsewhere, not on -EmuPort $EmuPort; stop that one before deleting" }
@@ -378,6 +479,7 @@ if ($Stop) {
         if ((Get-AdbDevices).ContainsKey($s)) { Write-Warning "$s still listed by adb after 60 s" } else { Write-Host "$s stopped" }
     }
     Remove-EmulatorLock $s $Avd # T190: the lock goes with the emulator (a lock whose emulator still runs is kept)
+    if (-not $s -or -not (Get-AdbDevices).ContainsKey($s)) { foreach ($g in $guards) { Stop-EmulatorGuard $g } }
     if ($Delete) {
         $ini = Join-Path $env:ANDROID_AVD_HOME "$Avd.ini"
         $dir = Join-Path $env:ANDROID_AVD_HOME "$Avd.avd"
@@ -417,7 +519,12 @@ if ($Forward) {
 }
 
 # T190: refuse past the cap before building or creating anything (taken for real just before the boot, below).
-if (-not $NoEmulator -and -not (Find-AvdSerial)) { Get-EmulatorLock "emulator-$(if ($EmuPort) { $EmuPort } else { 'any' })" $Avd -CheckOnly }
+# T231: and wait for RAM, or refuse with the figures (read again just before the boot).
+if (-not $NoEmulator -and -not (Find-AvdSerial)) {
+    $early = "emulator-$(if ($EmuPort) { $EmuPort } else { 'any' })"
+    Get-EmulatorLock $early $Avd -CheckOnly
+    Wait-EmuRam $early $Avd
+}
 
 # 1. Build (optional) and the AVD.
 if ($Build) {
@@ -542,15 +649,18 @@ if ($NoEmulator) {
         if ($NetSpeed) { $emuArgs += @('-netspeed', $NetSpeed) }
         if ($NetDelay) { $emuArgs += @('-netdelay', $NetDelay) }
         foreach ($f in @($Feature | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) { $emuArgs += @('-feature', $f) }
+        Wait-EmuRam $script:serial $Avd # T231: waits for RAM outside the mutex; Get-EmulatorLock reads it again inside
         Get-EmulatorLock $script:serial $Avd # T190: refuses past the cap, naming the holders
         Write-Host ("starting emulator " + ($emuArgs -join ' ') + "  (log: $log)")
         $proc = Start-Detached $emulator $emuArgs $log
+        Start-EmulatorGuard $script:emuLock $script:serial $Avd # T231
     }
 }
 if (-not $proc -and -not $NoEmulator) {
     # T190: an emulator of this AVD already running keeps its lock, or gets one (adopted, no cap check: it runs already).
     Get-EmulatorLock $script:serial $Avd -Adopt
     Update-EmulatorLockPid $script:emuLock ([int]($script:serial -replace 'emulator-', ''))
+    Start-EmulatorGuard $script:emuLock $script:serial $Avd # T231: one that has none gets a guard
 }
 if (-not $proc -and -not $NoEmulator -and $PSBoundParameters.ContainsKey('Gpu')) {
     Write-Warning "$script:serial is already running; -Gpu $Gpu applies only at boot (use -Stop first to change it)"
@@ -567,7 +677,9 @@ while ($true) {
     if ($proc -and -not $script:emuLockPid) { Update-EmulatorLockPid $script:emuLock ([int]($script:serial -replace 'emulator-', '')) }
     if ($proc -and $proc.HasExited) {
         $tail = if (Test-Path $log) { (Get-Content $log -Tail 10) -join "`n" } else { '' }
-        throw "emulator exited (code $($proc.ExitCode)) before booting. Log tail:`n$tail"
+        # T231: a guard that stopped it says why in its log's last lines.
+        $guardSays = if ($script:guardLog -and (Test-Path $script:guardLog)) { @(Get-Content $script:guardLog -Tail 2 | Where-Object { $_ -match "guard pid $($script:guardPid)\b" }) -join "`n" } else { '' }
+        throw "emulator exited (code $($proc.ExitCode)) before booting.$(if ($guardSays) { " Its guard:`n$guardSays`n" }) Log tail:`n$tail"
     }
     if ((Get-Date) -gt $deadline) { throw "emulator did not boot within $BootTimeoutMinutes minutes" }
     Start-Sleep -Seconds 5

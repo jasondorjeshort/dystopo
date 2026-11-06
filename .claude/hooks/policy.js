@@ -89,8 +89,9 @@ const DEFAULTS = {
   privacy: { allow: ['user'], identities: [] },
   // Dystopo departure (T190, ADR 0038's table): the machine-wide emulator cap, read by tools/android-emu.ps1
   // and emulator-lock.js / emulator-stop.js. max: live emulators at once; lockDir: one folder for the whole
-  // machine (a leading ~ is the home folder), never inside a checkout.
-  emulators: { max: 2, lockDir: '~/.dystopo/emulators' },
+  // machine (a leading ~ is the home folder), never inside a checkout. T231: privateLimitGB, freeFloorGB and bootCostGB
+  // are tools/android-emu-guard.ps1's limit and floor and the boot's admission by RAM (android-emulator.md).
+  emulators: { max: 2, lockDir: '~/.dystopo/emulators', privateLimitGB: 8, freeFloorGB: 4, bootCostGB: 5 },
 };
 
 const isStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string' && s !== '');
@@ -106,6 +107,7 @@ const TYPES = {
   percent: (v) => typeof v === 'number' && v >= 0 && v <= 100,
   percentOrNull: (v) => v === null || TYPES.percent(v),
   seconds: (v) => Number.isInteger(v) && v > 0,
+  gigabytes: (v) => typeof v === 'number' && Number.isFinite(v) && v > 0,
   stale: (v) => v === 'allow' || v === 'deny',
   text: (v) => typeof v === 'string' && v !== '',
   // null, or an object with a non-empty argv "command" and an optional "timeoutSeconds", an integer
@@ -142,7 +144,7 @@ const SCHEMA = {
   edit: { capExempt: 'patterns', anchorExempt: 'patterns', formatters: 'formatters' },
   update: { exclude: 'patterns' },
   privacy: { allow: 'literals', identities: 'identities' },
-  emulators: { max: 'count', lockDir: 'text' },
+  emulators: { max: 'count', lockDir: 'text', privateLimitGB: 'gigabytes', freeFloorGB: 'gigabytes', bootCostGB: 'gigabytes' },
 };
 
 // Walks value against schema, merging over defaults. Throws on the first problem.
