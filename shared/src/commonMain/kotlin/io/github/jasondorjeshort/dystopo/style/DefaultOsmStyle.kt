@@ -221,7 +221,7 @@ object DefaultOsmStyle {
      "minzoom": 14, "text": "{name}", "size": 10, "color": "#222222", "halo-color": "#f6f1e4dd", "halo-width": 1.3,
      "marker": {"shape": "circle", "size": 5.5, "color": "#222222"}, "text-optional": true, "spacing": 150},
     {"id": "airport-gates", "type": "symbol", "source-layer": "aeroway", "geometry": "point", "filter": {"class": "gate", "ref": true},
-     "minzoom": 14, "text": "{ref}", "size": 9.5, "color": "#3a3f47", "halo-color": "#f6f1e4dd", "halo-width": 1.3, "spacing": 100},
+     "minzoom": 15, "text": "{ref}", "size": 9.5, "color": "#3a3f47", "halo-color": "#f6f1e4dd", "halo-width": 1.3, "spacing": 100},
     {"id": "outdoor-pois", "type": "symbol", "source-layer": "poi",
      "filter": {"subclass": ["viewpoint", "camp_site", "shelter", "alpine_hut", "wilderness_hut", "spring", "waterfall", "drinking_water"]},
      "minzoom": 14, "text": "{name}", "size": 10, "color": "#3d3a36", "halo-color": "#f6f1e4dd", "halo-width": 1.3,

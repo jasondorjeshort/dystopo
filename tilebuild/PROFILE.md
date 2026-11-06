@@ -43,7 +43,7 @@ describe the same schema; a test fails if a layer or attribute is missing here.
   polygons (both are part of the auxiliary data tilebuild already downloads). Lake centerlines are not used.
 - **Airport gates (version 3, T230).** `aeroway=gate` points go in an `aeroway` layer at z14 with the gate's number in
   `ref`, the OpenMapTiles layer, class and attribute names, so the one style rule draws OpenFreeMap packs too (their
-  `aeroway` layer has gates as points with `ref`). The label is the number alone, as OSM has it: no airport is attached
+  `aeroway` layer has gates as points with `ref`). The style draws the labels from z15 (T232; the points stay at z14, overzoomed: z14 placed 1 of 103 at Seattle-Tacoma, z15 about 6). The label is the number alone, as OSM has it: no airport is attached
   and nothing is corrected here (a wrong number is fixed in OSM). `dystopo:profile_version` is `3` from this version
   on; packs built before it carry no gates, and the phone's Airport gates row says so.
 - Not included (yet): buildings, house numbers, runways, taxiways and aprons, town POIs (`poi`), contour lines (those
