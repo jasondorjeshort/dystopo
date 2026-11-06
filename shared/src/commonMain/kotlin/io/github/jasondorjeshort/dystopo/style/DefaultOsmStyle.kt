@@ -38,7 +38,8 @@ package io.github.jasondorjeshort.dystopo.style
  * thin where water likely runs all year, dashed where seasonal, faint dots where likely dry, so a mapped stream
  * always reads on top. Off on the phone unless the map options turn it on (`drainage`).
  * Airport gates (T230, `aeroway` class `gate` in both schemas) are their number alone (`ref`: "B12"), small plain
- * dark grey text with no marker, from z14, placed after parking; the phone's Airport gates option hides them.
+ * dark grey text with no marker, from z14, placed after the outdoor POI markers and before trail and road names (at an
+ * airport the gate numbers matter more than the service roads' names); the phone's Airport gates option hides them.
  * Park boundaries are green dashes; wilderness areas (outdoors class `wilderness`, OpenMapTiles
  * `wilderness_area`) teal dots, so the two read apart where they overlap, over a faint teal fill
  * (under the contours, like the land cover tints) so the inside of a wilderness reads as such.
@@ -72,7 +73,7 @@ package io.github.jasondorjeshort.dystopo.style
  * springs, caves, and parking last. Toilets, picnic sites and guideposts are not drawn.
  *
  * Labels draw last, sized for a phone at the default text scale, with paper-colored halos like the
- * contour labels; places and peaks claim space first, then huts, water, the main POIs, trail and
+ * contour labels; places and peaks claim space first, then huts, water, the main POIs, airport gates, trail and
  * road names, ridge names, and last parking and unnamed features. Contour labels give way to all of
  * them. Ridge names come from `natural_line` (outdoors) or from `mountain_peak` lines (OpenMapTiles);
  * the outdoors `mountain_peak` ridge/arete/cliff label points are not drawn (the line labels say
@@ -219,6 +220,8 @@ object DefaultOsmStyle {
     {"id": "caves", "type": "symbol", "source-layer": "outdoor_poi", "geometry": "point", "filter": {"class": "cave"},
      "minzoom": 14, "text": "{name}", "size": 10, "color": "#222222", "halo-color": "#f6f1e4dd", "halo-width": 1.3,
      "marker": {"shape": "circle", "size": 5.5, "color": "#222222"}, "text-optional": true, "spacing": 150},
+    {"id": "airport-gates", "type": "symbol", "source-layer": "aeroway", "geometry": "point", "filter": {"class": "gate", "ref": true},
+     "minzoom": 14, "text": "{ref}", "size": 9.5, "color": "#3a3f47", "halo-color": "#f6f1e4dd", "halo-width": 1.3, "spacing": 100},
     {"id": "outdoor-pois", "type": "symbol", "source-layer": "poi",
      "filter": {"subclass": ["viewpoint", "camp_site", "shelter", "alpine_hut", "wilderness_hut", "spring", "waterfall", "drinking_water"]},
      "minzoom": 14, "text": "{name}", "size": 10, "color": "#3d3a36", "halo-color": "#f6f1e4dd", "halo-width": 1.3,
@@ -241,8 +244,6 @@ object DefaultOsmStyle {
     {"id": "parking", "type": "symbol", "source-layer": "outdoor_poi", "geometry": "point", "filter": {"class": "parking", "!subclass": "street_side"},
      "minzoom": 14, "text": "", "size": 10, "color": "#2b5fa8", "halo-color": "#f6f1e4dd", "halo-width": 1.3,
      "marker": {"shape": "square", "size": 8, "color": "#2b5fa8", "text": "P"}, "text-optional": true, "spacing": 60},
-    {"id": "airport-gates", "type": "symbol", "source-layer": "aeroway", "geometry": "point", "filter": {"class": "gate", "ref": true},
-     "minzoom": 14, "text": "{ref}", "size": 9.5, "color": "#3a3f47", "halo-color": "#f6f1e4dd", "halo-width": 1.3, "spacing": 100},
     {"id": "peaks-unnamed", "type": "symbol", "source-layer": "mountain_peak", "geometry": "point",
      "filter": {"class": ["peak", "volcano", "hill"], "name": false}, "minzoom": 12,
      "text": "{elevation}", "size": 10.5, "color": "#3b2a1a", "halo-color": "#f6f1e4dd", "halo-width": 1.3,
