@@ -1,18 +1,16 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-06, by main session (T228 merged; T231 at check; T230 next)
+Updated: 2026-11-06, by main session (T228 and T231 merged; T230 launched)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (wave 29),
 `docs/tasks/wave-28.md`, ADR 0056, ADR 0057.
 
 ## Now
 
 - **Wave 29 is open: trace the startup freezes.** T227 merged (readable stacks, ADR 0058; a freeze's true length). T228 merged 2026-11-06 (a trace of every start, through Report a problem). The owner's freeze is the screen stuck on the splash during the opening. On the emulator no unexplained hold appeared, so the cause awaits a trace from the owner's phone: release next (after a sweep), then plan T229 (the launch's disk work off the main thread) from it. Inventory: `out/wave29-research/` [no-check: gitignored]. `git branch -r --list 'origin/task/*'` shows what is pushed.
-- **T231 (the emulator guard in `tools/android-emu.ps1`)**: built and live-tested, its `check` running before its push;
-  the implementer's report is in `out/wave29-reports/` [no-check: gitignored]; then its verifier and merge.
-- **T230 (airport gate labels, a map option, gate search) launches after T231 merges, highest priority** (owner,
+- **T231 merged** (the emulator guard in `tools/android-emu.ps1`); its cleanup chore is not yet run.
+- **T230 (airport gate labels, a map option, gate search) is launched, highest priority** (owner,
   2026-11-06). Its research report is untracked in the main checkout's `reports/` [no-check: untracked]; give the brief its path.
-- The T228 cleanup chore is not yet run (worktrees `T228`, `T228-verify`, branch, AVD `dystopo35-T228v`).
 - Wave 28 is closed and v0.1.20-alpha is published (T217 to T226).
 - **New rule, ADR 0057:** one Gradle-using agent at a time unless the owner says wider. The `wave` skill's per-task
   figure is now 1.25 points (wave 28's close read 5.5 under its figure).
@@ -36,5 +34,5 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 
 ## Open findings
 
-- `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: at most six cold launches a boot until T231's guard merges.
+- `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: at most six cold launches a boot; T231's guard now stops an emulator past 8 GB.
 - `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T189 ships the graph; the phone next.

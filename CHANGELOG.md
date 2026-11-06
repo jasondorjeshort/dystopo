@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-06
 
+- T231: An emulator guard in the boot script
 - T228: A trace of every start, reported through Report a problem
 
 ### 2026-11-05
