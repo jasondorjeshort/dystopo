@@ -67,6 +67,13 @@ tree is killed by its PID, the part's `steps.tsv` line reads `timeout` and names
 Python device tools bound every subprocess wait (`android_debug.run_bounded`), and a step that cannot start a
 process (WinError 1455, the paging file full) fails at once with `hostOutOfMemory`.
 
+T233, under T231's emulator guard: the sweep's boots pass `-EmuLimitGB` (12) to the guard, and before each device part,
+each device tour run and first-run's `--direct` run its own emulator is stopped, left 60 s and booted again when the
+qemu private bytes read from its lock pass `-EmuRebootGB` (6) or it is gone; each part's `steps.tsv` line gives its
+private bytes at the start, peak and end and any reboot (`device\emu-private.tsv`, `device\emu-reboots.log`), and a part
+that loses its emulator is killed 20 s later and reads `guard-stop` (with the guard's line) or `emulator-gone`; an
+empty report or an error outside the parts no longer keeps the summary and the sheet from being written.
+
 From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
 `tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
 `tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).
