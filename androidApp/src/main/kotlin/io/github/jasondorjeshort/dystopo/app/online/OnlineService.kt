@@ -36,7 +36,9 @@ import java.util.concurrent.atomic.AtomicLong
  * left without.
  */
 class OnlineService private constructor(private val app: DystopoApp) {
+    init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: TileCache") } // T228
     val cache = TileCache(File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024) // T41: the cap is a setting
+    init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: after TileCache") } // T228
 
     @Volatile var fetcher: OnlineFetcher? = null
         private set
@@ -45,7 +47,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
     @Volatile var peers: List<String> = emptyList()
         private set
 
+    init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: RegionDownload and Areas.attach") } // T228
     val region = RegionDownload(this, app)
+    init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: the rest") } // T228
 
     /**
      * T80: the phone's own readers of the elevation sources and OpenFreeMap, used when no server is set

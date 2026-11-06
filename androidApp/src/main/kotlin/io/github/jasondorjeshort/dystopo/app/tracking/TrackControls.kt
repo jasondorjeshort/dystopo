@@ -75,7 +75,11 @@ fun TrackControls() {
 @Composable
 private fun BoxScope.Controls() {
     val app = DystopoApp.instance
-    val tracking = remember { Tracking.of(app) }
+    val tracking = remember {
+        // T228: synchronized, and dystopo-corridors usually builds it at launch holding that monitor through the database open
+        io.github.jasondorjeshort.dystopo.app.StartupTrace.composing("Tracking.of")
+        Tracking.of(app).also { io.github.jasondorjeshort.dystopo.app.StartupTrace.composing("compose TrackControls after Tracking.of") }
+    }
     val mapView = app.map.mapView
     DisposableEffect(mapView) {
         mapView?.let { tracking.overlay.bind(it); io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.bind(it) } // T188: the shade layer

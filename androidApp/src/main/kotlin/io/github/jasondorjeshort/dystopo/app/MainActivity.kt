@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,15 +50,24 @@ class MainActivity : ComponentActivity() {
     /** T219: the system's save dialog, for Export GPX ([SaveFile]). */
     val saveFile = registerForActivityResult(SaveFile.contract()) { SaveFile.finished(it) }
 
+    // T228: StartupTrace.mark names each step of the launch; a step lasts until the next mark (marks only, nothing moved).
     override fun onCreate(savedInstanceState: Bundle?) {
+        StartupTrace.activityCreated()
         super.onCreate(savedInstanceState)
+        StartupRoutes.stallPoint("activityOnCreate")
+        StartupTrace.mark("MapViewport.prepare")
         MapViewport.prepare() // T162: its Compose state, on the main thread before the first composition
+        StartupTrace.mark("startCamera")
         val start = startCamera(savedInstanceState)
+        StartupTrace.mark("MapView")
         mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
+        StartupTrace.mark("mapView.onCreate")
         mapView.onCreate(savedInstanceState)
+        StartupTrace.mark("map.attach")
         app.map.activity = this
         io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
         app.map.attach(mapView, styleJson = { app.tiles.style() })
+        StartupTrace.mark("links and intents")
         DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
         io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(intent) // T57: dystopo://share links
         addOnNewIntentListener { io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(it) }
@@ -67,7 +77,9 @@ class MainActivity : ComponentActivity() {
         // Dark status-bar icons: the map, the pack list and the sheets are all light (paper) under the bar.
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
 
+        StartupTrace.mark("setContent")
         setContent {
+            StartupTrace.composing("first composition begins") // T228
             // Follow pack switches, downloads and /reload: DystopoApp swaps its TileService, so the attribution
             // line and the no-pack message are recomposed from the current one.
             // T144: the credit line is made off the UI thread (a pack's attribution is its metadata, read once from the
@@ -87,6 +99,7 @@ class MainActivity : ComponentActivity() {
             MapScreen(mapView, shown.attribution, shown.message)
         }
 
+        StartupTrace.mark("permissions")
         val wanted = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (wanted.none { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) permissionRequest.launch(wanted)
     }
@@ -102,6 +115,7 @@ class MainActivity : ComponentActivity() {
         DeepLink.camera(intent)?.let { link ->
             val t = link.target
             app.map.opened(OpenView.Choice(OpenView.Source.DEEP_LINK, t?.let { ViewAt(it.latitude, it.longitude, link.zoom, link.bearing, System.currentTimeMillis()) }), null, null, null)
+            StartupTrace.mark("view from link") // T228: the source's name, never a coordinate
             return link
         }
         val fix = runCatching { LastFix.get() }.getOrNull()
@@ -109,6 +123,7 @@ class MainActivity : ComponentActivity() {
         val pack = runCatching { packView() }.getOrNull()
         val choice = if (savedInstanceState != null) OpenView.Choice(OpenView.Source.RESTORED, null) else OpenView.choose(fix, saved, pack)
         app.map.opened(choice, fix, saved, pack)
+        StartupTrace.mark("view from ${choice.source.name.lowercase()}") // T228: the source's name, never a coordinate
         val v = choice.view ?: ViewAt(0.0, 0.0, WORLD_ZOOM, 0.0, 0L)
         return CameraPosition.Builder().target(LatLng(v.lat, v.lon)).zoom(v.zoom).bearing(v.bearing).build()
     }
@@ -134,14 +149,20 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStart() {
+        StartupTrace.started()
         super.onStart()
+        StartupTrace.mark("mapView.onStart")
         mapView.onStart()
+        StartupTrace.mark("MapOrientation.setForeground")
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
+        StartupTrace.mark("startDeviceLocation")
         if (Foreground.activityStarted()) app.map.setForeground(true) // T150: the polling loops resume; device fixes again
     }
 
     override fun onResume() {
+        StartupTrace.resumed()
         super.onResume()
+        StartupTrace.mark("mapView.onResume")
         mapView.onResume()
         MainWatchdog.resumed() // T144: the UI-thread watchdog ticks while the activity is in the foreground
     }
@@ -153,6 +174,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        StartupTrace.stopped()
         SavedView.flush() // T162: a view still waiting for its write
         io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(false) // T100: no compass in the background
         if (Foreground.activityStopped()) app.map.setForeground(false) // T150: no device fixes and no polling in the background
@@ -188,30 +210,50 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
+    // T228: StartupTrace.composing names the first composition's steps, so a long splash is attributed (marks only, until the first frame).
     Box(Modifier.fillMaxSize()) {
+        StartupTrace.composing("compose the map view")
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+        StartupTrace.composing("compose TrackControls")
         io.github.jasondorjeshort.dystopo.app.tracking.TrackControls() // T31: record/stop, tracks list, track overlay
+        StartupTrace.composing("compose RouteControls")
         io.github.jasondorjeshort.dystopo.app.routing.RouteControls() // T45: long-press route planning, route overlay and card
+        StartupTrace.composing("compose TripControls")
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
+        StartupTrace.composing("compose AttributionLine")
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
+        StartupTrace.composing("compose OnlineOverlay")
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
+        StartupTrace.composing("compose SearchOverlay")
         io.github.jasondorjeshort.dystopo.app.search.SearchOverlay() // T39: place search box
+        StartupTrace.composing("compose NavOverlay")
         io.github.jasondorjeshort.dystopo.app.nav.NavOverlay() // T61: navigation stats bar, off-route banner
+        StartupTrace.composing("compose PressureCard")
         io.github.jasondorjeshort.dystopo.app.readout.PressureCard() // T178: the pressure-fall warning's card, under the search box and the nav card
+        StartupTrace.composing("compose RecenterButton and ScaleBar")
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
+        StartupTrace.composing("compose FirstRunCard")
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
+        StartupTrace.composing("compose UpdateOverlay")
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
+        StartupTrace.composing("compose RoutesSheet and TracksSheet")
         io.github.jasondorjeshort.dystopo.app.trips.RoutesSheet() // T219: the Routes list and the Tracks sheet, over the map's own controls
         io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet()
+        StartupTrace.composing("compose SettingsSheet")
         SettingsSheet() // T33: units, text size, warm-up
+        StartupTrace.composing("compose StorageScreen and SyncStatusSheet")
         io.github.jasondorjeshort.dystopo.app.storage.StorageScreen() // T74: what each store uses, budgets, Clear
         io.github.jasondorjeshort.dystopo.app.sync.SyncStatusSheet() // T51: sync status
+        StartupTrace.composing("compose PacksOverlay and AreasOverlay")
         io.github.jasondorjeshort.dystopo.app.packs.PacksOverlay() // T29: pack list button and screen
         io.github.jasondorjeshort.dystopo.app.areas.AreasOverlay() // T75: offline areas (from the pack list), outlines on the map
+        StartupTrace.composing("compose ShareOverlay and QrScannerOverlay")
         io.github.jasondorjeshort.dystopo.app.share.ShareOverlay() // T54: Share screen (LAN listener + NSD while open)
         io.github.jasondorjeshort.dystopo.app.share.QrScannerOverlay() // T57: the Share screen's QR scanner
+        StartupTrace.composing("compose GlanceView and HelpHost")
         io.github.jasondorjeshort.dystopo.app.readout.GlanceView() // T210: the glance view (a tap on the readout bar), over every screen but help
         io.github.jasondorjeshort.dystopo.app.help.HelpHost() // T109, T115: the open help pop-up, last so it is over every screen above
+        SideEffect { StartupTrace.composing("composition applied: layout and draw") }
     }
 }
