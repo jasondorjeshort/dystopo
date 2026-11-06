@@ -126,6 +126,13 @@ param(
     # T170: the RAM in MB of every emulator the sweep boots (android-emu.ps1 -Memory; the AVD's hw.ramSize too); 0 keeps
     # android-emu.ps1's default (3072, T190).
     [int]$EmuMemory = 0,
+    # T233: the sweep keeps its emulator under T231's guard. -EmuLimitGB is the guard's private-bytes limit for every
+    # emulator the sweep boots (android-emu.ps1 -PrivateLimitGB; task agents keep policy.json's 8 GB); before each device
+    # part (and each device tour run) an emulator of the sweep's own whose qemu private bytes are past -EmuRebootGB is
+    # stopped, left 60 s, and booted again, as is one that is gone. The free-RAM floor is policy.json's, as for every
+    # emulator. 0 takes the defaults, measured in T233 (docs/reference/android-emulator.md, The emulator cap).
+    [double]$EmuLimitGB = 0,
+    [double]$EmuRebootGB = 0,
     # T191 (finding 2026-10-31, a 9.5 h hang): the ceiling in seconds of every part, the wait on its programs done with
     # WaitForExit(ms); at the ceiling the program's process tree is killed by its PID (taskkill /PID <pid> /T /F, never by
     # name), the part's steps.tsv line says "timeout" and names what was killed, and the sweep goes on. -PartTimeouts
@@ -201,6 +208,12 @@ foreach ($jdk in @('C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot', 
 if ($NoDaemon -and "$env:GRADLE_OPTS" -notmatch 'org\.gradle\.daemon=false') { $env:GRADLE_OPTS = ("$env:GRADLE_OPTS -Dorg.gradle.daemon=false").Trim() } # T170
 if ($EmuMemory -lt 0) { throw '-EmuMemory must be a size in MB, or 0 for the default' }
 $emuMemoryArgs = @(if ($EmuMemory -gt 0) { '-Memory'; "$EmuMemory" }) # T170: every emulator the sweep boots (an empty array, never null)
+# T233: the guard's limit for every emulator the sweep boots, and the reboot threshold (the param block says why).
+if ($EmuLimitGB -lt 0 -or $EmuRebootGB -lt 0) { throw '-EmuLimitGB and -EmuRebootGB are sizes in GB, or 0 for the defaults' }
+if (-not $EmuLimitGB) { $EmuLimitGB = 12 }
+if (-not $EmuRebootGB) { $EmuRebootGB = 7 }
+if ($EmuRebootGB -ge $EmuLimitGB) { throw "-EmuRebootGB ($EmuRebootGB) must be under -EmuLimitGB ($EmuLimitGB)" }
+$emuMemoryArgs += @('-PrivateLimitGB', "$EmuLimitGB")
 if ($env:JAVA_HOME) { $env:PATH = (Join-Path $env:JAVA_HOME 'bin') + ';' + $env:PATH }
 $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null)
 $mainCheckout = if ($commonDir) { Split-Path -Parent ($commonDir.Trim() -replace '/', '\') } else { $repo }
@@ -332,8 +345,18 @@ function Run([string]$exe, [string[]]$argv, [string]$stdout, [string]$stderr, [i
     $p = Start-Process -FilePath $exe -ArgumentList (($argv | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WorkingDirectory $repo
     $null = $p.Handle  # makes ExitCode available after the wait
-    $ms = [math]::Max(0, [math]::Min([double][int]::MaxValue, ($deadline - (Get-Date)).TotalMilliseconds))
-    if ($p.WaitForExit([int]$ms)) { return $p.ExitCode }
+    # T233: while a device part runs, the wait is cut into 5 s slices and the emulator's private bytes read between them.
+    while ($true) {
+        $ms = [math]::Max(0, [math]::Min([double][int]::MaxValue, ($deadline - (Get-Date)).TotalMilliseconds))
+        $slice = if ($script:emuWatch) { [math]::Min($ms, 5000) } else { $ms }
+        if ($p.WaitForExit([int]$slice)) { return $p.ExitCode }
+        if ($slice -ge $ms) { break }
+        if (-not $Cleanup -and (Test-EmuLost)) {
+            $killed = Stop-Tree $p.Id
+            $null = $p.WaitForExit(30000)
+            throw "$($script:emuLost); $([IO.Path]::GetFileName($exe)) (PID $($p.Id)) killed by PID (taskkill /T: $(if ($killed) { $killed } else { 'none reported' }))"
+        }
+    }
     $killed = Stop-Tree $p.Id
     $gone = $p.WaitForExit(30000)
     $what = "$([IO.Path]::GetFileName($exe)) (PID $($p.Id)) and its process tree killed by PID (taskkill /T: $(if ($killed) { $killed } else { 'none reported' })$(if (-not $gone) { '; still running 30 s later' }))"
@@ -403,6 +426,102 @@ function Wait-ConsolePorts([int]$emuPort, [string]$avdName, [int]$timeoutS = 50)
     "console ports $($pair -join '/') not free after $timeoutS s ($($parts -join '; ')); not booting $s on them"
 }
 
+# --- T233: the sweep's emulator under T231's guard ----------------------------------------------------------
+# The qemu PID comes from the emulator's lock (emulators.lockDir of .claude/hooks/policy.json, emulator-<EmuPort>.json),
+# checked to still run an emulator image, never found by name. While a device part runs, Run reads its private bytes
+# every 5 s; the part's steps.tsv line gets the figures and device\emu-private.tsv a row. Before each device part (and
+# each device tour run after the first) an emulator the sweep booted is stopped and booted again when its private bytes
+# are past -EmuRebootGB, or when it is gone (its guard or a hand stopped it); a part whose emulator went away while it
+# ran is killed after 20 s and ends failed, with the guard's line when the guard stopped it.
+$emuImage = '^(qemu-system-[\w.-]+|emulator\d*)(\.exe)?$'
+function Get-EmuLockFile {
+    $dir = '~/.dystopo/emulators'
+    try { $e = (Get-Content -Raw (Join-Path $repo '.claude\hooks\policy.json') | ConvertFrom-Json).emulators; if ($e -and $e.lockDir) { $dir = [string]$e.lockDir } } catch { }
+    if ($dir -eq '~' -or $dir -match '^~[\\/]') { $dir = Join-Path $env:USERPROFILE $dir.Substring(1).TrimStart('\', '/') }
+    Join-Path $dir "emulator-$EmuPort.json"
+}
+$emuLockFile = Get-EmuLockFile
+function Format-Gb($bytes) { if ($null -eq $bytes) { 'none' } else { '{0:n1} GB' -f ($bytes / 1GB) } }
+$script:emuWatch = $false     # a device part runs: Run samples
+$script:emuSeen = $false      # the emulator ran at some point of this part
+$script:emuPeak = 0.0         # this part's peak private bytes
+$script:emuRunPeak = 0.0      # the device tour run's peak
+$script:emuGoneSince = $null
+$script:emuLost = ''          # why this part lost its emulator, for its steps.tsv line
+$script:emuBroken = ''        # a reboot failed: the device parts after it fail with this
+$script:emuReboots = 0
+$script:emuPhase = 'debug'    # 'release' from the release part on: a reboot then boots with -BootOnly
+# The sweep's emulator's qemu private bytes, or $null when it does not run. Updates the peaks while a part watches.
+function Read-EmuPrivate {
+    $l = $null
+    try { $l = Get-Content -Raw -LiteralPath $emuLockFile -ErrorAction Stop | ConvertFrom-Json } catch { }
+    if (-not $l -or -not $l.pid -or $l.serial -ne $serial -or $l.avd -ne $Avd) { return $null }
+    $p = Get-Process -Id ([int]$l.pid) -ErrorAction SilentlyContinue
+    if (-not $p -or "$($p.ProcessName).exe" -notmatch $emuImage) { return $null }
+    $b = [double]$p.PrivateMemorySize64
+    if ($script:emuWatch) {
+        $script:emuSeen = $true
+        if ($b -gt $script:emuPeak) { $script:emuPeak = $b }
+        if ($b -gt $script:emuRunPeak) { $script:emuRunPeak = $b }
+    }
+    $b
+}
+# The guard's log of the sweep's AVD (android-emu.ps1 writes it in this checkout's out\) and its stop lines since $skip.
+function Get-GuardLog { Join-Path $repo "out\emulator-guard-$Avd.log" }
+function Get-GuardLineCount { $f = Get-GuardLog; if (Test-Path $f) { @(Get-Content $f).Count } else { 0 } }
+function Get-GuardStops([int]$skip) {
+    $f = Get-GuardLog
+    if (-not (Test-Path $f)) { return @() }
+    @(Get-Content $f | Select-Object -Skip $skip | Where-Object { $_ -match "guard pid \d+: $([regex]::Escape($serial)) \(" } |
+        ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() })
+}
+# Called by Run between its 5 s slices: once the emulator a part was using is gone for 20 s, the part has lost it.
+function Test-EmuLost {
+    if (-not $script:emuWatch -or $script:emuLost) { return $false }
+    $b = Read-EmuPrivate
+    if (-not $script:emuSeen -or $script:emuWatch -eq 'boot') { return $false } # device-boot: android-emu.ps1 reports its own
+    if ($null -ne $b) { $script:emuGoneSince = $null; return $false }
+    if (-not $script:emuGoneSince) { $script:emuGoneSince = Get-Date; return $false }
+    if (((Get-Date) - $script:emuGoneSince).TotalSeconds -lt 20) { return $false }
+    $script:emuLost = Describe-EmuLost
+    $true
+}
+function Describe-EmuLost {
+    $g = @(Get-GuardStops $script:guardSkip)
+    if ($g.Count) { "the emulator's guard stopped $serial while the part ran: $($g[-1])" }
+    else { "$serial stopped while the part ran, not by its guard (no stop line in out\emulator-guard-$Avd.log)" }
+}
+# Before a device part or tour run: reboots the sweep's own emulator when it is past -EmuRebootGB or gone. Returns
+# @{ Ok; Note }: Note is the reboot's line ('' when none was needed); Ok false when the reboot failed.
+function Ensure-Emulator([string]$before) {
+    if ($script:emuBroken) { return @{ Ok = $false; Note = $script:emuBroken } }
+    if (-not $script:emulatorStarted) { return @{ Ok = $true; Note = '' } } # one the sweep did not boot is left as it is
+    $b = Read-EmuPrivate
+    if ($null -ne $b -and $b -le $EmuRebootGB * 1GB) { return @{ Ok = $true; Note = '' } }
+    $why = if ($null -eq $b) { "$serial was not running" } else { "private $(Format-Gb $b) over $EmuRebootGB GB" }
+    $script:emuReboots++
+    $n = $script:emuReboots
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    Write-Host "[sweep] rebooting $serial before ${before}: $why"
+    $null = Run 'powershell.exe' ($emuArgs + @('-Stop')) (Join-Path $dev "emu-reboot$n-stop.log") (Join-Path $dev "emu-reboot$n-stop.err.log") -Cleanup -TimeoutS 300
+    Start-Sleep -Seconds 60 # the finding of 2026-11-05: a boot within about 10 s of a kill can exit at once; 60 s worked
+    $w = Wait-ConsolePorts $EmuPort $Avd
+    $c = if ($w) { $w } else {
+        $bootArgs = if ($script:emuPhase -eq 'release') { @('-BootOnly') } else { @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) }
+        Run 'powershell.exe' ($emuArgs + $bootArgs) (Join-Path $dev "emu-reboot$n.log") (Join-Path $dev "emu-reboot$n.err.log") -Cleanup -TimeoutS 1500
+    }
+    $after = Read-EmuPrivate
+    if ("$c" -ne '0' -or $null -eq $after) {
+        $script:emuBroken = "the reboot of $serial before $before ($why) failed: $(if ($w) { $w } else { "android-emu.ps1 exit $c, device\emu-reboot$n.err.log" })"
+        Add-Content -Encoding utf8 (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $($script:emuBroken)"
+        return @{ Ok = $false; Note = $script:emuBroken }
+    }
+    $line = "rebooted $serial before ${before}: $why; stopped, 60 s, booted again in $([math]::Round($sw.Elapsed.TotalSeconds)) s, private $(Format-Gb $after)"
+    Add-Content -Encoding utf8 (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $line"
+    Write-Host "[sweep] $line"
+    @{ Ok = $true; Note = $line }
+}
+
 # T91: the previous release's APK, pinned and checked: downloads the first asset matching $patterns plus the release's
 # SHA256SUMS.txt into $dir, and stops unless the APK's SHA-256 is the one SHA256SUMS.txt lists for it. Writes
 # previous.json (tag, file, sha256, expected, verified) next to it and returns the file.
@@ -429,6 +548,21 @@ function Get-PreviousApk([string]$tag, [string]$dir, [string[]]$patterns, [strin
 
 function Part([string]$name, [scriptblock]$body) {
     if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and $NoBothUnits) { '-NoBothUnits' } else { 'not selected' }); return $false }
+    # T233: a device part runs on an emulator under the sweep's threshold (rebooted first when past it or gone), and its
+    # private bytes are read while it runs.
+    $device = (-not $NoDevice) -and ($deviceParts -contains $name)
+    $rebootNote = ''
+    if ($device -and $name -ne 'device-boot') {
+        $r = Ensure-Emulator $name
+        if (-not $r.Ok) { Step $name 'error' 0 $r.Note; return $false }
+        $rebootNote = $r.Note
+    }
+    if ($device) {
+        $script:guardSkip = Get-GuardLineCount
+        $script:emuWatch = if ($name -eq 'device-boot') { 'boot' } else { $true }
+        $script:emuSeen = $false; $script:emuPeak = 0.0; $script:emuRunPeak = 0.0; $script:emuGoneSince = $null; $script:emuLost = ''
+        $emuStart = Read-EmuPrivate
+    }
     $t0 = Get-Date
     $sw = [System.Diagnostics.Stopwatch]::StartNew() # the seconds column: monotonic, so a clock change (DST) cannot make it negative
     $note = ''
@@ -439,6 +573,8 @@ function Part([string]$name, [scriptblock]$body) {
     $script:partTimedOut = ''
     if ($InjectHang -eq $name) {
         # T191, a test of the ceiling: a child that starts a grandchild, prints its PID and both sleep past any ceiling.
+        # T233: it also leaves an empty <part>.stdout.json, as a killed device tour does, for the retry count to read.
+        [IO.File]::WriteAllText((Join-Path $Out "$name.stdout.json"), '')
         $body = { Run $py @('-I', '-c', "import subprocess, sys, time; g = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(100000)']); print('grandchild', g.pid, flush=True); time.sleep(100000)") (Join-Path $Out "$name.hang.log") (Join-Path $Out "$name.hang.err.log") }
     }
     try {
@@ -451,9 +587,36 @@ function Part([string]$name, [scriptblock]$body) {
     } finally {
         $script:partDeadline = $null
     }
+    # T233: what the part did to its emulator, and whether it lost it (its guard, or a stop by hand).
+    if ($device) {
+        $emuEnd = Read-EmuPrivate
+        $script:emuWatch = $false
+        if (-not $script:emuLost -and $script:emuSeen -and $null -eq $emuEnd -and $name -ne 'device-boot') { $script:emuLost = Describe-EmuLost }
+        if ($script:emuLost) {
+            $how = if ($script:emuLost -match 'guard stopped') { 'guard-stop' } else { 'emulator-gone' }
+            $rest = if ("$code" -eq 'error') { $note.Replace($script:emuLost, '').TrimStart(';', ' ') } else { (@("the part's own result: $code", $note) | Where-Object { $_ }) -join '; ' }
+            $note = (@($script:emuLost, $rest) | Where-Object { $_ }) -join '; '
+            $code = $how
+        }
+        $peak = if ($script:emuSeen) { $script:emuPeak } else { $null }
+        $mem = "emulator private $(Format-Gb $emuStart) at the start, peak $(Format-Gb $peak), $(Format-Gb $emuEnd) at the end" +
+            $(if ($null -ne $emuStart -and $null -ne $peak) { " (+$(Format-Gb ($peak - $emuStart)) to the peak)" } else { '' })
+        $script:partNote = (@($rebootNote, $script:partNote, $mem) | Where-Object { $_ }) -join '; '
+        $tsv = Join-Path $dev 'emu-private.tsv'
+        if (-not (Test-Path $tsv)) { Set-Content -Encoding ascii $tsv "part`tstartGB`tpeakGB`tendGB`trebooted`tlost" }
+        $g = { param($v) if ($null -eq $v) { '' } else { '{0:f2}' -f ($v / 1GB) } }
+        Add-Content -Encoding ascii $tsv ("$name`t$(& $g $emuStart)`t$(& $g $peak)`t$(& $g $emuEnd)`t$([bool]$rebootNote)`t$($script:emuLost -replace '[\t\r\n]', ' ')")
+    }
     # T185: the retries the part's reports counted (screen captures, adb forwards restored, cut reads) on its steps.tsv line.
-    $n = @{}; foreach ($f in @(Get-ChildItem $Out -Recurse -File -Include "$name.json", '*.stdout.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 })) {
-        foreach ($m in [regex]::Matches((Get-Content -Raw $f.FullName), '"(captureRetries|forwardRestores|incompleteReadRetries)":\s*(\d+)')) { $n[$m.Groups[1].Value] += [int]$m.Groups[2].Value } }
+    # T233: an empty report (a program killed before it wrote one; Get-Content -Raw gives $null) counts nothing, and a
+    # report that cannot be read leaves the counts out; neither may stop the sweep before its summary (2026-11-06).
+    $n = @{}
+    try {
+        foreach ($f in @(Get-ChildItem $Out -Recurse -File -Include "$name.json", '*.stdout.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 })) {
+            $text = "$(Get-Content -Raw -LiteralPath $f.FullName -ErrorAction SilentlyContinue)"
+            if (-not $text) { continue }
+            foreach ($m in [regex]::Matches($text, '"(captureRetries|forwardRestores|incompleteReadRetries)":\s*(\d+)')) { $n[$m.Groups[1].Value] += [int]$m.Groups[2].Value } }
+    } catch { Write-Host "[sweep] $name`: the retry counts were not read ($($_.Exception.Message))" }
     $counts = @($n.Keys | Sort-Object | Where-Object { $n[$_] } | ForEach-Object { '{0} {1}' -f $_, $n[$_] })
     $counts = $counts -join ', '
     if ($counts) { $script:partNote = (@($script:partNote, $counts) | Where-Object { $_ }) -join '; ' }
@@ -573,7 +736,8 @@ $adbExe = Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-P
 $gradle = Join-Path $repo 'gradlew.bat'
 $devtool = Join-Path $repo 'devtool\build\install\devtool\bin\devtool.bat'
 $meta = [ordered]@{ host = 'windows'; startedAt = (Get-Date).ToString('s'); noDevice = [bool]$NoDevice; noDaemon = [bool]$NoDaemon; emuMemoryMb = $EmuMemory
-    commit = "$(& git rev-parse --short HEAD 2>$null)".Trim(); partTimeoutS = $PartTimeout; partTimeoutsS = $ceilings }
+    commit = "$(& git rev-parse --short HEAD 2>$null)".Trim(); partTimeoutS = $PartTimeout; partTimeoutsS = $ceilings
+    emuLimitGB = $EmuLimitGB; emuRebootGB = $EmuRebootGB } # T233
 $meta | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Out 'meta.json')
 
 $emulatorStarted = $false
@@ -718,11 +882,25 @@ try {
         $null = Part 'device-tour' {
             $worst = 0
             $script:partNote = $deviceServerNote
+            $say = { param($t) if ($t) { $script:partNote = (@($script:partNote, $t) | Where-Object { $_ }) -join '; ' } }
             for ($i = 1; $i -le $DeviceTourRuns; $i++) {
+                if ($i -gt 1) {
+                    # T233: each run grows the emulator by about as much as a part does, so the threshold is checked between
+                    # runs too; the reboot's minutes move the part's deadline on, as the release build's do.
+                    $tb = Get-Date
+                    $r = Ensure-Emulator "device tour run $i"
+                    $script:partDeadline = $script:partDeadline + ((Get-Date) - $tb)
+                    & $say $r.Note
+                    if (-not $r.Ok) { $worst = 'error'; break }
+                    $script:emuSeen = $false; $script:emuGoneSince = $null # a new qemu process
+                }
+                $script:emuRunPeak = 0.0
+                $s0 = Read-EmuPrivate
                 # T105: --server sets the app's server again (an emulator the sweep did not boot keeps what it had), and the
                 # first view waits for a quiet device by its load (android-check.py --quiet-cores).
                 $c = Run $py @('-I', 'tools/android-check.py', '--port', "$Port", '--serial', $serial, '--views-file', 'tools/android-tour.txt',
                     '--server', $deviceServerArg, '--out', (Join-Path $dev "tour$i.png")) (Join-Path $dev "tour$i.stdout.json") (Join-Path $dev "tour$i.err.log")
+                & $say "run $i private $(Format-Gb $s0) to a peak of $(Format-Gb $script:emuRunPeak)"
                 if ($c -ne 0) { $worst = $c }
             }
             $worst
@@ -775,6 +953,7 @@ try {
             }
         }
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
+        $script:emuPhase = 'release' # T233: a reboot from here boots only; every release part installs its own APK
         $null = Part 'release' {
             # After the debug parts: it uninstalls the debug build (signed with the other key). T105: the sweep's own copy.
             Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-release.ps1', '-Serial', $serial, '-Apk', (Release-Apk $serial),
@@ -941,6 +1120,11 @@ try {
         Run $py @('-I', 'tools/android-ui.py', 'strings', '--apk', (Join-Path $apkCopies 'androidApp-universal-release.apk'), # T105: the sweep's copy
             '--out', (Join-Path $Out 'ui\strings')) (Join-Path $Out 'apk-strings.json') (Join-Path $Out 'apk-strings.err.log')
     }
+} catch {
+    # T233 (the sweep of 2026-11-06 died here with no summary): an error outside any part is a failed line of its own, and
+    # the summary and the sheet are still written below.
+    $script:emuWatch = $false
+    Step 'sweep' 'error' 0 "the sweep stopped early: $($_.Exception.Message) ($($_.InvocationInfo.PositionMessage -replace '\s+', ' '))"
 } finally {
     foreach ($name in @($script:servers.Keys)) { Stop-Server $name }
     if ($emulatorStarted -and -not $KeepEmulator) {
