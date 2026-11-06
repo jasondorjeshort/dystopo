@@ -188,8 +188,8 @@
     },
     "sea-tac": {
       "bbox": [-122.33, 47.42, -122.27, 47.475],
-      "description": "Seattle-Tacoma International Airport (SEA), WA, USA. Airport gates mapped in OSM (aeroway=gate with ref, about 100), for the gate labels and gate search (T230).",
-      "expectedElevation": [60, 160],
+      "description": "Seattle-Tacoma International Airport (SEA), WA, USA. Airport gates mapped in OSM (aeroway=gate with ref, about 100), for the gate labels and gate search (T230). Its box reaches the valley floor at its south-east corner: 5 m to 155 m measured at z9 to z14 (T233).",
+      "expectedElevation": [5, 155],
       "tags": ["airport"]
     },
     "pacific": {
