@@ -110,7 +110,7 @@ class SettingsLayoutTest {
         for (key in listOf("trails", "water", "landcover", "pois", "boundaries")) {
             assertTrue("change(mapOf(\"$key\" to it))" in options, "the layer '$key' sets a state rather than flipping it")
         }
-        assertEquals(5, Regex("""\bOnOff\(""").findAll(options).count(), "the layers' row, Shade, Drainage, Night and the scale bar's both units")
+        assertEquals(6, Regex("""\bOnOff\(""").findAll(options).count(), "the layers' row, Shade, Drainage, Airport gates (T230), Night and the scale bar's both units")
     }
 
     @Test

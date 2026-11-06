@@ -31,7 +31,7 @@ class WebControlsTest {
         // Every map option the web has is marked, on the element the manifest names.
         val marked = all.filter { it.control != null }.associate { it.id to it.control }
         for ((el, id) in Controls.webElements()) assertEquals(id, marked[el], "#$el")
-        assertEquals(10, marked.size, "nine map option controls and the panel's Hillshade checkbox: $marked")
+        assertEquals(11, marked.size, "ten map option controls (T230: airport gates) and the panel's Hillshade checkbox: $marked")
     }
 
     @Test
