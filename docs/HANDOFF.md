@@ -13,14 +13,9 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   owner's phone. Next: the owner's Startup freeze report, then plan T229 (the launch's disk work off the main thread)
   from it, past a critic. Inventory: `out/wave29-research/` [no-check: gitignored]. The merge reports and notes of
   this session: `out/wave29-reports/` [no-check: gitignored].
-- No task branch or worktree is open. Leftover folders in the worktrees directory (`T223`, `X`, `.scratch`, logs of
-  2 to 5 November) are not worktrees; clear them when convenient.
-- **Emulators:** `tools/android-emu.ps1` runs a RAM guard per emulator (8 GB, 4 GB floor; the sweep 12 GB with reboots
-  past 6 GB). Briefs need no RAM step of their own; a boot can be refused for free RAM.
-- **Rule, ADR 0057:** one Gradle-using agent at a time unless the owner says wider.
-- The airport gate research report is untracked in the main checkout's `reports/` and `research_notes/`
-  [no-check: untracked]; move it under `out/` or commit it, the owner to say.
-- The live viewer on 8765 was up at the last check.
+- No task branch or worktree is open; old folders in the worktrees directory (`T223`, `X`, logs) are not worktrees.
+- `tools/android-emu.ps1` guards each emulator's RAM (T231, T233); one Gradle-using agent at a time (ADR 0057).
+- The gate research is untracked in `reports/` and `research_notes/` [no-check: untracked]; the owner to place it.
 
 ## Next
 
