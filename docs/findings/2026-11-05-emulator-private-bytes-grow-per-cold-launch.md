@@ -34,6 +34,6 @@ Also seen: booting within about 10 s of `emu kill` failed twice with "exited (co
 
 ## Next
 
-- A guard, since anything looping cold launches is exposed: `tools/android-emu.ps1` or `tools/android-startup.py` reads the qemu process's private bytes and stops or warns at 8 GB. Until then a brief caps a boot at six cold launches and reads private bytes between steps (T228's verifier does); only `android-startup.py`'s docstring warns.
+- Done in T231: every boot by `tools/android-emu.ps1` runs a guard that stops that emulator past `emulators.privateLimitGB` (8 GB) of private bytes or under `freeFloorGB` (4 GB) of free RAM, and a boot waits or refuses without the RAM it needs (`docs/reference/android-emulator.md`, The guard and admission by RAM). A brief no longer needs to cap cold launches by hand; an emulator booted before T231 has no guard until the script adopts it.
 - The cause: repeat the growth table with `-gpu swiftshader_indirect`, then with a build from before T228. If software rendering does not grow, the fix may be a mode for launch loops.
 - Whether the sweep's parts are exposed: it boots several times and relaunches for its tours; read the peak in the next sweep.

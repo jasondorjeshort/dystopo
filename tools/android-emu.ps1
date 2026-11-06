@@ -331,9 +331,11 @@ function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch
                 throw ("emulator cap reached: $($holders.Count) of $($pol.Max) running (emulators.max in .claude/hooks/policy.json; locks in $($pol.Dir)): " +
                     ($holders -join '; ') + ". Not booting $avd on $serial. Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).")
             }
-            # T231: admission by RAM, read again under the mutex (Wait-EmuRam waited outside it).
-            $short = Test-EmuRam $pol $serial $avd
-            if ($short) { throw $short }
+            # T231: admission by RAM, read again under the mutex (Wait-EmuRam waited outside it; the early check waits after).
+            if (-not $CheckOnly) {
+                $short = Test-EmuRam $pol $serial $avd
+                if ($short) { throw $short }
+            }
         }
         if ($CheckOnly) { return }
         $script:emuLockOwner = if ($Owner) { $Owner } else { $avd -replace '^dystopo\d*-', '' }
@@ -433,6 +435,7 @@ function Start-EmulatorGuard([string]$file, [string]$serial, [string]$avd) {
     $h = @{}; foreach ($p in $l.PSObject.Properties) { $h[$p.Name] = $p.Value }
     $h.guardPid = $g.Id
     Write-EmuLock $file $h
+    $script:guardLog = $guardLog; $script:guardPid = $g.Id
     Write-Host "guard: pid $($g.Id) stops $serial past $($pol.LimitGB) GB private or under $($pol.FloorGB) GB free (log: $guardLog)"
 }
 # -Stop: the guard notices its emulator gone within a few seconds; one still running after 30 s is stopped by its PID,
@@ -674,7 +677,9 @@ while ($true) {
     if ($proc -and -not $script:emuLockPid) { Update-EmulatorLockPid $script:emuLock ([int]($script:serial -replace 'emulator-', '')) }
     if ($proc -and $proc.HasExited) {
         $tail = if (Test-Path $log) { (Get-Content $log -Tail 10) -join "`n" } else { '' }
-        throw "emulator exited (code $($proc.ExitCode)) before booting. Log tail:`n$tail"
+        # T231: a guard that stopped it says why in its log's last lines.
+        $guardSays = if ($script:guardLog -and (Test-Path $script:guardLog)) { @(Get-Content $script:guardLog -Tail 2 | Where-Object { $_ -match "guard pid $($script:guardPid)\b" }) -join "`n" } else { '' }
+        throw "emulator exited (code $($proc.ExitCode)) before booting.$(if ($guardSays) { " Its guard:`n$guardSays`n" }) Log tail:`n$tail"
     }
     if ((Get-Date) -gt $deadline) { throw "emulator did not boot within $BootTimeoutMinutes minutes" }
     Start-Sleep -Seconds 5
