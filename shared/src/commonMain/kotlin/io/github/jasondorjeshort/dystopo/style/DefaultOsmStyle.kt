@@ -37,6 +37,8 @@ package io.github.jasondorjeshort.dystopo.style
  * mapped data) is a lighter blue than the mapped waterways and drawn under them and under water, from z12: solid
  * thin where water likely runs all year, dashed where seasonal, faint dots where likely dry, so a mapped stream
  * always reads on top. Off on the phone unless the map options turn it on (`drainage`).
+ * Airport gates (T230, `aeroway` class `gate` in both schemas) are their number alone (`ref`: "B12"), small plain
+ * dark grey text with no marker, from z14, placed after parking; the phone's Airport gates option hides them.
  * Park boundaries are green dashes; wilderness areas (outdoors class `wilderness`, OpenMapTiles
  * `wilderness_area`) teal dots, so the two read apart where they overlap, over a faint teal fill
  * (under the contours, like the land cover tints) so the inside of a wilderness reads as such.
@@ -239,6 +241,8 @@ object DefaultOsmStyle {
     {"id": "parking", "type": "symbol", "source-layer": "outdoor_poi", "geometry": "point", "filter": {"class": "parking", "!subclass": "street_side"},
      "minzoom": 14, "text": "", "size": 10, "color": "#2b5fa8", "halo-color": "#f6f1e4dd", "halo-width": 1.3,
      "marker": {"shape": "square", "size": 8, "color": "#2b5fa8", "text": "P"}, "text-optional": true, "spacing": 60},
+    {"id": "airport-gates", "type": "symbol", "source-layer": "aeroway", "geometry": "point", "filter": {"class": "gate", "ref": true},
+     "minzoom": 14, "text": "{ref}", "size": 9.5, "color": "#3a3f47", "halo-color": "#f6f1e4dd", "halo-width": 1.3, "spacing": 100},
     {"id": "peaks-unnamed", "type": "symbol", "source-layer": "mountain_peak", "geometry": "point",
      "filter": {"class": ["peak", "volcano", "hill"], "name": false}, "minzoom": 12,
      "text": "{elevation}", "size": 10.5, "color": "#3b2a1a", "halo-color": "#f6f1e4dd", "halo-width": 1.3,

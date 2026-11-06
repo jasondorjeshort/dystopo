@@ -18,7 +18,7 @@ class ControlsTest {
     @Test
     fun mapOptionsTakeTheirKeysDefaultsAndChoicesFromTheRegistry() {
         assertEquals(
-            listOf("hillshade", "hillshadeIntensity", "slope", "contourInterval", "contourLabels", "trails", "water", "landcover", "pois", "boundaries", "drainage", "night"),
+            listOf("hillshade", "hillshadeIntensity", "slope", "contourInterval", "contourLabels", "trails", "water", "landcover", "pois", "boundaries", "drainage", "airportGates", "night"),
             MapOptions.KEYS.toList(),
         )
         assertEquals(MapControls.ids, MapOptions.KEYS)
@@ -29,7 +29,7 @@ class ControlsTest {
         assertEquals(SlopeShading.OFF, d.slope)
         assertNull(d.contourInterval)
         assertEquals(ContourLabelDensity.NORMAL, d.contourLabels)
-        assertEquals(listOf(true, true, true, true, true, false, false), listOf(d.trails, d.water, d.landcover, d.pois, d.boundaries, d.drainage, d.night))
+        assertEquals(listOf(true, true, true, true, true, false, true, false), listOf(d.trails, d.water, d.landcover, d.pois, d.boundaries, d.drainage, d.airportGates, d.night))
         // MapOptions.json() reports every default as the registry has it.
         val json = d.json(ContourUnits.FEET)
         for (item in MapControls.items) {

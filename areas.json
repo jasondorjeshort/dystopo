@@ -186,6 +186,12 @@
       "expectedElevation": [500, 2200],
       "tags": ["lidar-edge"]
     },
+    "sea-tac": {
+      "bbox": [-122.33, 47.42, -122.27, 47.475],
+      "description": "Seattle-Tacoma International Airport (SEA), WA, USA. Airport gates mapped in OSM (aeroway=gate with ref, about 100), for the gate labels and gate search (T230).",
+      "expectedElevation": [60, 160],
+      "tags": ["airport"]
+    },
     "pacific": {
       "bbox": [-140.08, 9.92, -139.92, 10.08],
       "description": "Open ocean in the central Pacific, 10N 140W. No elevation files at all: the whole grid should be NaN.",

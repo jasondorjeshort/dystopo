@@ -174,6 +174,23 @@ class SearchIndexBuilderTest {
     }
 
     @Test
+    fun airportGatesAreFoundByTheirNumberNearestFirst() {
+        // T230: synthetic gates (both schemas: `aeroway`, class gate, the number in ref); runways are not indexed.
+        val t = Tiles()
+        t.point(14, -121.90, 46.75, "aeroway", "class" to "gate", "ref" to "B12")
+        t.point(14, -121.60, 46.95, "aeroway", "class" to "gate", "ref" to "B12")
+        t.point(14, -121.60, 46.951, "aeroway", "class" to "gate", "ref" to "B14/B15")
+        t.point(14, -121.61, 46.95, "aeroway", "class" to "runway", "ref" to "16L/34R")
+        val idx = SearchIndexBuilder(archive(t), "gates-osm.pmtiles").build()
+        assertEquals(listOf("B12", "B12", "B14/B15"), idx.entries.map { it.name }.sorted())
+        assertTrue(idx.entries.all { it.kind == PlaceKind.GATE })
+        val near = idx.search("b12", lat = 46.95, lon = -121.60)
+        assertEquals(46.95, near.first().entry.lat, 0.001)
+        assertEquals(46.75, idx.search("B12", lat = 46.75, lon = -121.90).first().entry.lat, 0.001)
+        assertEquals("B14/B15", idx.search("B15").single().entry.name)
+    }
+
+    @Test
     fun layerFilterKeepsOnlyNamedLayers() {
         val place = Layer("place", listOf(Feature(7, props("class" to "hamlet", "name" to "Paradise"), Geometry.Points(listOf(TilePoint(10, 20))))), extent)
         val water = Layer("water", listOf(Feature(null, props("class" to "lake"), Geometry.Points(listOf(TilePoint(1, 2))))), extent)
