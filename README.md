@@ -21,7 +21,7 @@ a server and a desktop tool come with it, iOS later.
 <img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
 </p>
 
-**Status (November 2026): alpha, [v0.1.20-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.20-alpha) (one universal APK, server and devtool zips). This release is about using the app: the planning card has one line of figures and one main action; clock times follow the phone's 12 or 24-hour setting; saved routes are named by their places, and GPX export opens the phone's save dialog; first launch offers one clear choice and the Share screen leads with the code; downloads say what happened and what to do next, and a download cut off by closing the app comes back paused; a removed area shows its progress, and a country opens on its land; the Map page's switches match every other setting. A rare first-launch crash is fixed. Tested on emulators; the real-phone checks are still to come.**
+**Status (November 2026): alpha, [v0.1.21-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.21-alpha) (one universal APK, server and devtool zips). This release is about finding why the app sometimes freezes on its splash screen: every start is timed, and a slow one becomes a report you can send through Report a problem, with readable stack frames and a freeze's true length. Airport gate numbers show on the map from close zoom under a new map option, and search finds a gate by its number. Tested on emulators; the real-phone checks are still to come.**
 a release will carry can be built from source today (below). Expect rough edges.
 
 ## Features
