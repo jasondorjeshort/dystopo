@@ -43,6 +43,8 @@ data class MapOptions(
     val night: Boolean = Defaults.night,
     /** T174: the streams derived from the elevation grid (`drainage` layer of a rewritten pack); off unless turned on. */
     val drainage: Boolean = Defaults.drainage,
+    /** T230: the airport gate numbers (`aeroway` gates, outdoors packs from profile 3 and OpenMapTiles packs); on by default. */
+    val airportGates: Boolean = Defaults.airportGates,
 ) {
     init {
         require(hillshadeIntensity in 0.0..1.0) { "hillshadeIntensity must be in 0..1" }
@@ -67,6 +69,7 @@ data class MapOptions(
         LayerGroup.POIS -> pois
         LayerGroup.BOUNDARIES -> boundaries
         LayerGroup.DRAINAGE -> drainage
+        LayerGroup.AIRPORT_GATES -> airportGates
         null -> true
     }
 
@@ -85,13 +88,15 @@ data class MapOptions(
         "pois" to pois,
         "boundaries" to boundaries,
         "drainage" to drainage,
+        "airportGates" to airportGates,
         "night" to if (night) "on" else "off",
         "shadeTiles" to (shade != null),
     )
 
     /** The layer toggles, for the settings sheet and `/settings`. */
     enum class LayerGroup(val key: String) {
-        TRAILS("trails"), WATER("water"), LANDCOVER("landcover"), POIS("pois"), BOUNDARIES("boundaries"), DRAINAGE("drainage");
+        TRAILS("trails"), WATER("water"), LANDCOVER("landcover"), POIS("pois"), BOUNDARIES("boundaries"), DRAINAGE("drainage"),
+        AIRPORT_GATES("airportGates");
 
         companion object {
             private val byId: Map<String, LayerGroup> = buildMap {
@@ -103,6 +108,7 @@ data class MapOptions(
                     .forEach { put(it, POIS) }
                 listOf("wilderness-fill", "park-boundary", "wilderness-boundary", "admin-boundary", "park-names").forEach { put(it, BOUNDARIES) }
                 listOf("drainage-dry", "drainage-seasonal", "drainage-running").forEach { put(it, DRAINAGE) }
+                put("airport-gates", AIRPORT_GATES)
             }
 
             /** The group a style layer id belongs to, or null for layers no toggle hides (roads, peaks, places, contours). */
@@ -113,6 +119,25 @@ data class MapOptions(
     }
 
     companion object {
+        /** T230: the vector tile layer the airport gates are in (both schemas: class `gate`, the number in `ref`). */
+        const val GATE_LAYER = "aeroway"
+
+        /**
+         * T230: whether a vector pack with [metadata] carries airport gates: its `vector_layers` list the
+         * [GATE_LAYER] (OpenMapTiles packs, whose source lists it), or it is an outdoors pack from profile version 3.
+         * An outdoors pack built before has none, and the phone's Airport gates row says so.
+         */
+        fun hasGates(metadata: Map<String, Any?>): Boolean {
+            val layers = metadata["vector_layers"] as? List<*>
+            if (layers != null && layers.any { (it as? Map<*, *>)?.get("id") == GATE_LAYER }) return true
+            if (metadata["dystopo:profile"]?.toString() != "outdoors") return false
+            val v = metadata["dystopo:profile_version"]?.toString()?.trim()?.substringBefore('.')?.toIntOrNull() ?: 0
+            return v >= GATES_PROFILE_VERSION
+        }
+
+        /** T230: the outdoors profile version that added the gates (`tilebuild/PROFILE.md`). */
+        const val GATES_PROFILE_VERSION = 3
+
         /** Contour tile zoom from which a fixed [contourInterval] replaces the table. */
         const val FIXED_INTERVAL_FROM_ZOOM = 11
 
@@ -156,6 +181,7 @@ data class MapOptions(
             params["pois"]?.let { o = o.copy(pois = bool("pois", it)) }
             params["boundaries"]?.let { o = o.copy(boundaries = bool("boundaries", it)) }
             params["drainage"]?.let { o = o.copy(drainage = bool("drainage", it)) }
+            params["airportGates"]?.let { o = o.copy(airportGates = bool("airportGates", it)) }
             params["night"]?.let { o = o.copy(night = bool("night", it)) }
             return o
         }
@@ -187,4 +213,5 @@ private object Defaults {
     val boundaries = MapControls.booleanDefault("boundaries")
     val night = MapControls.booleanDefault("night")
     val drainage = MapControls.booleanDefault("drainage")
+    val airportGates = MapControls.booleanDefault("airportGates")
 }

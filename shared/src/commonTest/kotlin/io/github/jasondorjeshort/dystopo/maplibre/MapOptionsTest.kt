@@ -93,6 +93,26 @@ class MapOptionsTest {
         assertTrue(drainage.all { it in ids(MapOptions(drainage = true)) })
         assertEquals(MapOptions(drainage = true), MapOptions.parse(mapOf("drainage" to "on"), MapOptions(), ContourUnits.FEET))
         assertEquals(false, MapOptions().json(ContourUnits.FEET)["drainage"])
+        // T230: airport gates are on by default and the toggle hides their one layer.
+        assertEquals(listOf("airport-gates"), MapOptions.LayerGroup.ids(MapOptions.LayerGroup.AIRPORT_GATES))
+        assertTrue("airport-gates" in all)
+        assertFalse("airport-gates" in ids(MapOptions(airportGates = false)))
+        assertTrue("peaks" in ids(MapOptions(airportGates = false)) && "huts" in ids(MapOptions(airportGates = false)))
+        assertEquals(MapOptions(airportGates = false), MapOptions.parse(mapOf("airportGates" to "off"), MapOptions(), ContourUnits.FEET))
+        assertEquals(true, MapOptions().json(ContourUnits.FEET)["airportGates"])
+        assertFailsWith<IllegalArgumentException> { MapOptions.parse(mapOf("airportGates" to "maybe"), MapOptions(), ContourUnits.FEET) }
+    }
+
+    @Test
+    fun packsSayWhetherTheyCarryGates() {
+        // T230: an OpenMapTiles pack lists the aeroway layer; an outdoors pack has gates from profile version 3.
+        val omt = mapOf("vector_layers" to listOf(mapOf("id" to "water"), mapOf("id" to "aeroway")))
+        assertTrue(MapOptions.hasGates(omt))
+        assertFalse(MapOptions.hasGates(mapOf("vector_layers" to listOf(mapOf("id" to "water")))))
+        val old = mapOf("dystopo:profile" to "outdoors", "dystopo:profile_version" to "2", "vector_layers" to listOf(mapOf("id" to "water")))
+        assertFalse(MapOptions.hasGates(old))
+        assertTrue(MapOptions.hasGates(old + ("dystopo:profile_version" to "3")))
+        assertFalse(MapOptions.hasGates(emptyMap()))
     }
 
     @Test

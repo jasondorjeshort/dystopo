@@ -131,6 +131,10 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         OptionRow("Drainage", "streams worked out from the terrain, where an offline area has them", help = "map.drainage") {
             OnOff(o.drainage) { change(mapOf("drainage" to if (it) "on" else "off")) }
         }
+        // T230: airport gate numbers; on by default. In packs made before gates were added, the line says so.
+        OptionRow("Airport gates", gatesHint(), help = "map.airportGates") {
+            OnOff(o.airportGates) { change(mapOf("airportGates" to if (it) "on" else "off")) }
+        }
         OptionRow("Night", "dark base, dimmed relief", help = "map.night") {
             OnOff(o.night) { change(mapOf("night" to if (it) "on" else "off")) }
         }
@@ -313,6 +317,23 @@ private fun OptionRow(label: String, hint: String?, help: String? = null, option
     }
 }
 
+/**
+ * T230: the Airport gates row's line. The vector packs the map draws from are read for the gate layer
+ * ([MapOptions.hasGates], from metadata read when the packs opened); an outdoors pack made before profile 3 has none,
+ * and the line says so rather than leaving an empty layer unexplained.
+ */
+private fun gatesHint(): String {
+    val vectors = runCatching { io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.tiles.packs.regions.mapNotNull { it.osm } }
+        .getOrDefault(emptyList())
+    val without = vectors.count { !MapOptions.hasGates(it.metadata) }
+    return when {
+        without == 0 -> "gate numbers at airports, when zoomed in close"
+        without < vectors.size -> "some of your offline areas were made before gates were added and show none until updated"
+        vectors.size == 1 -> "this offline area was made before gates were added and shows none until updated"
+        else -> "your offline areas were made before gates were added and show none until updated"
+    }
+}
+
 /** A value between a minus and a plus chip, kept on one line together. */
 @Composable
 private fun Stepper(value: String, minWidthDp: Int, minus: () -> Unit, plus: () -> Unit, minusLabel: String = "-", plusLabel: String = "+") {
@@ -392,6 +413,11 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
             "Stream lines worked out from an offline area's elevation data, drawn lighter than and under the mapped " +
                 "streams: solid where water likely runs all year, dashed where part of the year, dots where likely dry. " +
                 "They come from the shape of the land alone, so a line may be dry or a stream missing."
+        },
+        HelpText("map.airportGates", "Airport gates", "$place › Airport gates", show = show) { // T230
+            "Shows the gate numbers at airports, such as B12, when you zoom in close, from the map data. Search finds " +
+                "a gate by its number whether this is on or off. An offline area made before gates were added has " +
+                "none until it is updated. A wrong or missing number is fixed in the map data, not in this app."
         },
         HelpText("map.night", "Night", "$place › Night", show = show) {
             "A dark map for use in the dark: a dark base with dimmed relief, easier on your eyes than a bright screen."

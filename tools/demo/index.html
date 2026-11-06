@@ -38,7 +38,7 @@
   Map options (T50; the phone's T47 options, same keys as devtool serve's /style.json): the "Map options" section of the
   panel, or the query string: hillshade=off|single|multi, hillshadeIntensity=0..1, slope=off|avalanche|steepness (T104's two slope shadings, on is avalanche; served
   by devtool serve as /shade/ tiles, so live mode only), contourInterval=auto|<n> in the shown units, night=on, and
-  trails|water|landcover|pois|boundaries=off. Changes apply at once and are written back to the URL;
+  trails|water|landcover|pois|boundaries|airportGates=off (T230: airport gate numbers). Changes apply at once and are written back to the URL;
   window.dystopoOptions has the current set.
 
   Trip editor (T68, live mode only): tools/demo/trips.js adds a Trips box at the top right (T107: planning, the open
@@ -104,6 +104,7 @@
       <label><input type="checkbox" id="opt-landcover" data-control="landcover" checked> land cover</label>
       <label><input type="checkbox" id="opt-pois" data-control="pois" checked> POIs</label>
       <label><input type="checkbox" id="opt-boundaries" data-control="boundaries" checked> boundaries</label>
+      <label><input type="checkbox" id="opt-airportGates" data-control="airportGates" checked> airport gates</label>
     </div>
   </details>
   <div class="hint" id="hint">Scroll to zoom, drag to pan. Demo data covers Rainier NP and surroundings at z8–14; the blank beyond is simply ungenerated. <span id="dem-mode"></span></div>
@@ -525,6 +526,11 @@ const map = new maplibregl.Map({
                   "text-font": ["Noto Sans Regular"], "text-size": 12, "text-anchor": "top", "text-offset": [0, 0.9], "text-max-width": 8,
                   "text-padding": 6, "text-optional": true },
         paint: { "text-color": "#3b2a1a", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
+      // T230: airport gates, the number alone (ref), small and plain, from z14 (both schemas: aeroway, class gate).
+      { id: "airport-gates", type: "symbol", source: "osm", "source-layer": "aeroway", minzoom: 14,
+        filter: ["all", ["==", ["get", "class"], "gate"], ["has", "ref"]],
+        layout: { "text-field": ["get", "ref"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-padding": 1 },
+        paint: { "text-color": "#3a3f47", "text-halo-color": "#f6f1e4", "text-halo-width": 1.4 } },
       { id: "water-names", type: "symbol", source: "osm", "source-layer": "water_name",
         layout: { "text-field": NAME, "text-font": ["Noto Sans Regular"], "text-size": 13 },
         paint: { "text-color": "#2f6ea6", "text-halo-color": "#f6f1e4", "text-halo-width": 1.6 } },
@@ -630,7 +636,7 @@ map.on("load", () => {
     const u = new URL(location.href); u.searchParams.delete("units");
     if (u.href === location.href) location.reload(); else location.href = u.href;
   };
-  document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "wilderness-fill", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "trail-names", "water-names", "peaks", "places"], e.target.checked);
+  document.getElementById("osm").onchange = e => toggle(["glacier", "wood", "wilderness-fill", "park", "wilderness", "water", "waterway", "roads", "tracks", "trails", "trails-mountain", "trails-alpine", "cliff-ticks", "cliffs", "ridges", "ridge-names", "poi-markers", "airport-gates", "trail-names", "water-names", "peaks", "places"], e.target.checked);
 });
 
 // Map options (T50): the phone's T47 options with the same keys as devtool serve's /style.json. Read from the query
@@ -642,6 +648,7 @@ const OPTION_GROUPS = {
   landcover: ["glacier", "wood"],
   pois: ["poi-markers"],
   boundaries: ["wilderness-fill", "park", "wilderness"],
+  airportGates: ["airport-gates"], // T230
 };
 const INTERVALS = CONTROL.contourInterval.choicesByUnits[UNITS === "m" ? "m" : "ft"]; // T208: from the controls document
 const NIGHT = { // layer -> paint overrides at night (dark base, dimmed relief, light ink)
@@ -742,7 +749,7 @@ map.on("load", () => {
   if (!LIVE) $("opt-slope-row").title = "Slope shading comes from devtool serve (/shade/ tiles): open the page from serve --live.";
   $("opt-night").checked = opts.night;
   for (const k of Object.keys(OPTION_GROUPS)) $("opt-" + k).checked = opts[k];
-  if (new URLSearchParams(location.search).toString().match(/hillshade|slope|contourInterval|night|trails|water|landcover|pois|boundaries/)) $("options").open = true;
+  if (new URLSearchParams(location.search).toString().match(/hillshade|slope|contourInterval|night|trails|water|landcover|pois|boundaries|airportGates/)) $("options").open = true;
   const on = (id, f) => { $(id).onchange = e => { f(e.target); applyOptions(); }; };
   on("opt-hillshade", t => { opts.hillshade = t.value; document.getElementById("hill").checked = t.value !== "off"; });
   on("opt-slope", t => { opts.slope = slopeKey(t.value); });

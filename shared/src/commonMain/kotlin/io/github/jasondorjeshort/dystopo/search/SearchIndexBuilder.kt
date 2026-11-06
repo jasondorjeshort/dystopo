@@ -116,7 +116,7 @@ class SearchIndexBuilder(
 
     private fun occurrencesOf(layer: String, f: Feature, z: Int, x: Int, y: Int, extent: Int): List<Occurrence> {
         val props = f.properties
-        val names = NAME_KEYS.mapNotNull { (props[it] as? Value.StringValue)?.value?.trim()?.takeIf { s -> s.isNotEmpty() } }.distinct()
+        val names = (PlaceClassifier.nameKeys(layer) ?: NAME_KEYS).mapNotNull { (props[it] as? Value.StringValue)?.value?.trim()?.takeIf { s -> s.isNotEmpty() } }.distinct()
         // Outdoors packs: the hiking routes a trail piece belongs to ("Wonderland Trail;...") are places of their own.
         val routes = if (layer == "transportation") {
             (props["route_name"] as? Value.StringValue)?.value?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()

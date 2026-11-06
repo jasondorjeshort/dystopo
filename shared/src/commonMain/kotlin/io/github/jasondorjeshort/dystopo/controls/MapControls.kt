@@ -59,12 +59,14 @@ object MapControls {
     val POIS = toggle("pois", true, place(9, 8, "opt-pois"))
     val BOUNDARIES = toggle("boundaries", true, place(10, 9, "opt-boundaries"))
     val DRAINAGE = toggle("drainage", false, place(11))
-    val NIGHT = toggle("night", false, place(12, 4, "opt-night"))
+    /** T230: airport gate numbers (`aeroway` gates); on by default, since they show only at airports. */
+    val AIRPORT_GATES = toggle("airportGates", true, place(12, 10, "opt-airportGates"))
+    val NIGHT = toggle("night", false, place(13, 4, "opt-night"))
 
     /** In `MapOptions.KEYS` order (the order the phone stores and syncs them in). */
     val items: List<ControlItem> = listOf(
         HILLSHADE, HILLSHADE_INTENSITY, SLOPE, CONTOUR_INTERVAL, CONTOUR_LABELS,
-        TRAILS, WATER, LANDCOVER, POIS, BOUNDARIES, DRAINAGE, NIGHT,
+        TRAILS, WATER, LANDCOVER, POIS, BOUNDARIES, DRAINAGE, AIRPORT_GATES, NIGHT,
     )
 
     /** The map option keys, in [items] order. */

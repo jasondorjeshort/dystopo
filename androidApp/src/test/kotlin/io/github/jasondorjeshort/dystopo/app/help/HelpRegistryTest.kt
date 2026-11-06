@@ -91,6 +91,8 @@ class HelpRegistryTest {
             "settings.navSpeech",
             // T174: the drainage row of Map options.
             "map.drainage",
+            // T230: the airport gates row.
+            "map.airportGates",
             // T164: the route times row.
             "settings.pace",
             // T163: the turn-around clock's line on the navigation card and its two settings rows.

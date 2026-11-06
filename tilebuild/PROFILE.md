@@ -41,8 +41,13 @@ describe the same schema; a test fails if a layer or attribute is missing here.
   park instead of on the polygons.
 - **Low zooms.** z0-5 water and z0-4 boundaries come from Natural Earth; ocean from z6 comes from OSM water
   polygons (both are part of the auxiliary data tilebuild already downloads). Lake centerlines are not used.
-- Not included (yet): buildings, house numbers, aeroways, town POIs (`poi`), contour lines (those come from
-  the DEM, not OSM).
+- **Airport gates (version 3, T230).** `aeroway=gate` points go in an `aeroway` layer at z14 with the gate's number in
+  `ref`, the OpenMapTiles layer, class and attribute names, so the one style rule draws OpenFreeMap packs too (their
+  `aeroway` layer has gates as points with `ref`). The label is the number alone, as OSM has it: no airport is attached
+  and nothing is corrected here (a wrong number is fixed in OSM). `dystopo:profile_version` is `3` from this version
+  on; packs built before it carry no gates, and the phone's Airport gates row says so.
+- Not included (yet): buildings, house numbers, runways, taxiways and aprons, town POIs (`poi`), contour lines (those
+  come from the DEM, not OSM).
 
 ## Licensing
 
@@ -212,6 +217,15 @@ Point, z11-14. Backcountry points of interest. Areas (campsites, parking lots) b
 | `operator` | OSM `operator` |
 | `access` | no or private when tagged so |
 | `fee` | 1 when fee=yes |
+
+### `aeroway`
+
+Point, z14 (the top zoom) only. Airport gates (T230; from profile version 3): OSM `aeroway=gate`, nodes and a way's point on surface. The OpenMapTiles layer and class names; its runways, taxiways and aprons are not written.
+
+| Attribute | Meaning |
+|---|---|
+| `class` | gate |
+| `ref` | the gate's number as OSM has it: `ref`, else `name` (a gate with neither is dropped); several gates in one `ref` (`B12;B14`) are written `B12/B14` |
 
 ### `drainage`
 

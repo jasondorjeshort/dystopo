@@ -279,6 +279,28 @@
       }
     },
     {
+      "id": "airportGates",
+      "kind": "setting",
+      "type": "boolean",
+      "default": true,
+      "syncKey": "app.map.airportGates",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 10,
+          "zone": "panel",
+          "elements": ["opt-airportGates"]
+        },
+        "android": {
+          "category": "map",
+          "order": 12,
+          "zone": "settings",
+          "row": "mapOptions"
+        }
+      }
+    },
+    {
       "id": "night",
       "kind": "setting",
       "type": "boolean",
@@ -294,7 +316,7 @@
         },
         "android": {
           "category": "map",
-          "order": 12,
+          "order": 13,
           "zone": "settings",
           "row": "mapOptions"
         }

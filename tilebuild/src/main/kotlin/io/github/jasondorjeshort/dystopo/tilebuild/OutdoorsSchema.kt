@@ -10,8 +10,11 @@ import kotlinx.serialization.json.Json
  */
 object OutdoorsSchema {
     const val NAME = "dystopo-outdoors"
-    /** 2 (T73): `oneway`, `motor_access` and `maxspeed` on roads and tracks, for drive-mode routing. */
-    const val VERSION = "2"
+    /**
+     * 2 (T73): `oneway`, `motor_access` and `maxspeed` on roads and tracks, for drive-mode routing.
+     * 3 (T230): the `aeroway` layer (airport gates).
+     */
+    const val VERSION = "3"
 
     @Serializable
     data class Layer(
@@ -169,6 +172,14 @@ object OutdoorsSchema {
                 "operator" to "OSM `operator`",
                 "access" to "no or private when tagged so",
                 "fee" to "1 when fee=yes",
+            ),
+        ),
+        Layer(
+            "aeroway", "point", 14, 14,
+            "Airport gates (T230; from profile version 3), at z14 only: OSM `aeroway=gate`, nodes and a way's point on surface. The OpenMapTiles layer and class names; its runways, taxiways and aprons are not written.",
+            mapOf(
+                "class" to "gate",
+                "ref" to "the gate's number as OSM has it: `ref`, else `name` (a gate with neither is dropped); several gates in one `ref` (`B12;B14`) are written `B12/B14`",
             ),
         ),
     )

@@ -43,6 +43,9 @@ enum class PlaceKind(val code: Int, val label: String, val weight: Int, val zoom
     /** A named hiking route (outdoors packs: `route_name` on trail pieces). */
     ROUTE(42, "route", 58, 12.0, line = true),
     ROAD(41, "road", 18, 15.0, line = true),
+
+    /** T230: an airport gate, found by its number (`ref` on `aeroway` gates: "B12"). */
+    GATE(50, "gate", 30, 16.0),
     ;
 
     companion object {
@@ -56,14 +59,21 @@ enum class PlaceKind(val code: Int, val label: String, val weight: Int, val zoom
  * Which features of a vector tile are searchable, and as what. Covers both the Dystopo outdoors
  * profile (`tilebuild/PROFILE.md`) and the OpenMapTiles schema (OpenFreeMap packs), which share layer
  * names for places, peaks, water and parks; `outdoor_poi` and `natural_line` exist only in outdoors
- * packs, `poi` only in OpenMapTiles ones. Returns null for features that are not indexed.
+ * packs, `poi` only in OpenMapTiles ones. `aeroway` gates (T230) are in both, named by their `ref`
+ * ([nameKeys]); the layer's runways, taxiways and aprons are not indexed. Returns null for features that are not indexed.
  */
 object PlaceClassifier {
     /** Layers worth decoding for search; everything else in a tile is skipped. */
     val LAYERS = setOf(
         "place", "mountain_peak", "water_name", "waterway", "park", "outdoor_poi", "poi",
-        "natural_line", "transportation_name", "transportation", "aerodrome_label",
+        "natural_line", "transportation_name", "transportation", "aerodrome_label", "aeroway",
     )
+
+    /**
+     * T230: the attributes a feature of [layer] is named by, in order of preference, or null for the builder's usual
+     * name keys. A gate is its number alone (`ref`), with no airport attached (the owner, 2026-11-06).
+     */
+    fun nameKeys(layer: String): List<String>? = if (layer == "aeroway") listOf("ref") else null
 
     fun classify(layer: String, cls: String?, subclass: String?): PlaceKind? = when (layer) {
         "place" -> when (cls) {
@@ -121,6 +131,7 @@ object PlaceClassifier {
             else -> PlaceKind.POI
         }
         "aerodrome_label" -> PlaceKind.POI
+        "aeroway" -> if (cls == "gate") PlaceKind.GATE else null
         "transportation_name", "transportation" -> when (cls) {
             "path", "track" -> PlaceKind.TRAIL
             "aerialway" -> PlaceKind.POI
