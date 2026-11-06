@@ -345,10 +345,10 @@ function Run([string]$exe, [string[]]$argv, [string]$stdout, [string]$stderr, [i
     $p = Start-Process -FilePath $exe -ArgumentList (($argv | ForEach-Object { Quote $_ }) -join ' ') -NoNewWindow -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WorkingDirectory $repo
     $null = $p.Handle  # makes ExitCode available after the wait
-    # T233: while a device part runs, the wait is cut into 5 s slices and the emulator's private bytes read between them.
+    # T233: while a device part runs, the wait is cut into 2 s slices (the guard reads every 2 s too) and the emulator's private bytes read between them.
     while ($true) {
         $ms = [math]::Max(0, [math]::Min([double][int]::MaxValue, ($deadline - (Get-Date)).TotalMilliseconds))
-        $slice = if ($script:emuWatch) { [math]::Min($ms, 5000) } else { $ms }
+        $slice = if ($script:emuWatch) { [math]::Min($ms, 2000) } else { $ms }
         if ($p.WaitForExit([int]$slice)) { return $p.ExitCode }
         if ($slice -ge $ms) { break }
         if (-not $Cleanup -and (Test-EmuLost)) {
@@ -429,7 +429,7 @@ function Wait-ConsolePorts([int]$emuPort, [string]$avdName, [int]$timeoutS = 50)
 # --- T233: the sweep's emulator under T231's guard ----------------------------------------------------------
 # The qemu PID comes from the emulator's lock (emulators.lockDir of .claude/hooks/policy.json, emulator-<EmuPort>.json),
 # checked to still run an emulator image, never found by name. While a device part runs, Run reads its private bytes
-# every 5 s; the part's steps.tsv line gets the figures and device\emu-private.tsv a row. Before each device part (and
+# every 2 s; the part's steps.tsv line gets the figures and device\emu-private.tsv a row. Before each device part (and
 # each device tour run after the first) an emulator the sweep booted is stopped and booted again when its private bytes
 # are past -EmuRebootGB, or when it is gone (its guard or a hand stopped it); a part whose emulator went away while it
 # ran is killed after 20 s and ends failed, with the guard's line when the guard stopped it.
@@ -475,7 +475,7 @@ function Get-GuardStops([int]$skip) {
     @(Get-Content $f | Select-Object -Skip $skip | Where-Object { $_ -match "guard pid \d+: $([regex]::Escape($serial)) \(" } |
         ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() })
 }
-# Called by Run between its 5 s slices: once the emulator a part was using is gone for 20 s, the part has lost it.
+# Called by Run between its 2 s slices: once the emulator a part was using is gone for 20 s, the part has lost it.
 function Test-EmuLost {
     if (-not $script:emuWatch -or $script:emuLost) { return $false }
     $b = Read-EmuPrivate
@@ -504,22 +504,44 @@ function Ensure-Emulator([string]$before) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     Write-Host "[sweep] rebooting $serial before ${before}: $why"
     $null = Run 'powershell.exe' ($emuArgs + @('-Stop')) (Join-Path $dev "emu-reboot$n-stop.log") (Join-Path $dev "emu-reboot$n-stop.err.log") -Cleanup -TimeoutS 300
-    Start-Sleep -Seconds 60 # the finding of 2026-11-05: a boot within about 10 s of a kill can exit at once; 60 s worked
-    $w = Wait-ConsolePorts $EmuPort $Avd
-    $c = if ($w) { $w } else {
-        $bootArgs = if ($script:emuPhase -eq 'release') { @('-BootOnly') } else { @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) }
-        Run 'powershell.exe' ($emuArgs + $bootArgs) (Join-Path $dev "emu-reboot$n.log") (Join-Path $dev "emu-reboot$n.err.log") -Cleanup -TimeoutS 1500
+    # Two tries, each after 60 s (the finding of 2026-11-05: a boot within about 10 s of a kill can exit at once; 60 s
+    # worked). In T233's measuring run one boot 60 s after a stop found the console ports listening again although the
+    # wait just before had found them free ("ports 5640/5641 are in use"); the second try is for that.
+    $bootArgs = if ($script:emuPhase -eq 'release') { @('-BootOnly') } else { @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) }
+    $fails = @()
+    $after = $null
+    foreach ($try in 1, 2) {
+        Start-Sleep -Seconds 60
+        $w = Wait-ConsolePorts $EmuPort $Avd
+        $log = Join-Path $dev "emu-reboot$n-$try"
+        $c = if ($w) { $w } else { Run 'powershell.exe' ($emuArgs + $bootArgs) "$log.log" "$log.err.log" -Cleanup -TimeoutS 1500 }
+        $after = Read-EmuPrivate
+        if ("$c" -eq '0' -and $null -ne $after) { break }
+        $first = @(Get-Content "$log.err.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' }) | Select-Object -First 1
+        $fails += "try $try$(if ($w) { ": $w" } else { ": android-emu.ps1 exit $c$(if ($first) { " ($($first.Trim()))" }), device\emu-reboot$n-$try.err.log; console ports held by $(Describe-PortHolder @($EmuPort, ($EmuPort + 1)) $EmuPort)" })"
+        Write-Host "[sweep] reboot of $serial, $($fails[-1])"
+        $after = $null
     }
-    $after = Read-EmuPrivate
-    if ("$c" -ne '0' -or $null -eq $after) {
-        $script:emuBroken = "the reboot of $serial before $before ($why) failed: $(if ($w) { $w } else { "android-emu.ps1 exit $c, device\emu-reboot$n.err.log" })"
-        Add-Content -Encoding utf8 (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $($script:emuBroken)"
+    if ($null -eq $after) {
+        $script:emuBroken = "the reboot of $serial before $before ($why) failed: $($fails -join '; ')"
+        Add-Content -Encoding ascii (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $($script:emuBroken)"
         return @{ Ok = $false; Note = $script:emuBroken }
     }
-    $line = "rebooted $serial before ${before}: $why; stopped, 60 s, booted again in $([math]::Round($sw.Elapsed.TotalSeconds)) s, private $(Format-Gb $after)"
-    Add-Content -Encoding utf8 (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $line"
+    $line = "rebooted $serial before ${before}: $why; stopped and booted again in $([math]::Round($sw.Elapsed.TotalSeconds)) s with the 60 s wait$(if ($fails.Count) { " (after $($fails -join '; '))" }), private $(Format-Gb $after)"
+    Add-Content -Encoding ascii (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $line"
     Write-Host "[sweep] $line"
     @{ Ok = $true; Note = $line }
+}
+# Inside a part, between two runs that each grow the emulator by about as much as a part (the device tour's runs, and
+# first-run's two installs): the same check, its reboot's minutes moving the part's deadline on, as the release build's
+# do. The reboot's line goes on the part's steps.tsv line. Returns false when the reboot failed.
+function Ensure-EmulatorBetween([string]$before) {
+    $tb = Get-Date
+    $r = Ensure-Emulator $before
+    if ($script:partDeadline) { $script:partDeadline = $script:partDeadline + ((Get-Date) - $tb) }
+    if ($r.Note) { $script:partNote = (@($script:partNote, $r.Note) | Where-Object { $_ }) -join '; ' }
+    if ($r.Ok -and $r.Note) { $script:emuSeen = $false; $script:emuGoneSince = $null } # a new qemu process
+    $r.Ok
 }
 
 # T91: the previous release's APK, pinned and checked: downloads the first asset matching $patterns plus the release's
@@ -884,16 +906,9 @@ try {
             $script:partNote = $deviceServerNote
             $say = { param($t) if ($t) { $script:partNote = (@($script:partNote, $t) | Where-Object { $_ }) -join '; ' } }
             for ($i = 1; $i -le $DeviceTourRuns; $i++) {
-                if ($i -gt 1) {
-                    # T233: each run grows the emulator by about as much as a part does, so the threshold is checked between
-                    # runs too; the reboot's minutes move the part's deadline on, as the release build's do.
-                    $tb = Get-Date
-                    $r = Ensure-Emulator "device tour run $i"
-                    $script:partDeadline = $script:partDeadline + ((Get-Date) - $tb)
-                    & $say $r.Note
-                    if (-not $r.Ok) { $worst = 'error'; break }
-                    $script:emuSeen = $false; $script:emuGoneSince = $null # a new qemu process
-                }
+                # T233: each run grows the emulator by about as much as a part does (3.1 and 3.7 GB measured), so the
+                # threshold is checked between runs too.
+                if ($i -gt 1 -and -not (Ensure-EmulatorBetween "device tour run $i")) { $worst = 'error'; break }
                 $script:emuRunPeak = 0.0
                 $s0 = Read-EmuPrivate
                 # T105: --server sets the app's server again (an emulator the sweep did not boot keeps what it had), and the
@@ -983,13 +998,21 @@ try {
             $cfgPath = Join-Path $fdir 'server.json'
             $cfg | ConvertTo-Json | Set-Content -Encoding ascii $cfgPath
             Start-Server 'firstrun-server' (Join-Path $repo 'server\build\install\server\bin\server.bat') @('--config', $cfgPath) $fp '/healthz' 180
+            $say = { param($t) $script:partNote = (@($script:partNote, $t) | Where-Object { $_ }) -join '; ' }
+            $script:emuRunPeak = 0.0; $s0 = Read-EmuPrivate
             try {
                 $c1 = Run $py @('-I', 'tools/android-firstrun.py', '--serial', $serial, '--apk', $relApk, '--server', "http://${lan}:$fp", '--out', $fdir,
                     '--import', "$dem,$osm") (Join-Path $Out 'first-run.json') (Join-Path $Out 'first-run.err.log')
             } finally { Stop-Server 'firstrun-server' }
+            & $say "server run private $(Format-Gb $s0) to a peak of $(Format-Gb $script:emuRunPeak)"
+            # T233: the --direct run alone grew the emulator by over 4 GB in T233's measuring run, so the threshold is checked
+            # before it as between two parts.
+            if (-not (Ensure-EmulatorBetween 'first-run --direct')) { return 'error' }
+            $script:emuRunPeak = 0.0; $s0 = Read-EmuPrivate
             # T91 (the T81 and T83 follow-up): the same fresh release install with no server, through the public sources.
             $c2 = Run $py @('-I', 'tools/android-firstrun.py', '--serial', $serial, '--apk', $relApk, '--direct', '--out', (Join-Path $fdir 'direct')) `
                 (Join-Path $Out 'first-run-direct.json') (Join-Path $Out 'first-run-direct.err.log')
+            & $say "direct run private $(Format-Gb $s0) to a peak of $(Format-Gb $script:emuRunPeak)"
             if ("$c1" -ne '0') { $c1 } else { $c2 }
         }
 
