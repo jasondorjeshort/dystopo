@@ -32,7 +32,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
 enum class SettingsRow(val id: String, val group: SettingsGroup, val label: String, val drawnBy: String, val since: String) {
     SOURCES("sources", SettingsGroup.DATA, Screens.SOURCES, "SettingsPages", "T79"),
     STORAGE("storage", SettingsGroup.DATA, Screens.STORAGE, "SettingsPages", "T74"),
-    OFFLINE_AREAS("offlineAreas", SettingsGroup.DATA, "Offline areas", "SettingsPages", "T103"),
+    OFFLINE_AREAS("offlineAreas", SettingsGroup.DATA, Screens.OFFLINE_MAPS, "SettingsPages", "T103"), // T235: the list's name; the id stays (ADR 0053)
     MAP_OPTIONS("mapOptions", SettingsGroup.MAP, "Map", "MapOptionsSection", "T47"),
     UNITS("units", SettingsGroup.DISPLAY, "Units", "SettingsPages", "T33"),
     TEXT_SIZE("textSize", SettingsGroup.DISPLAY, "Text size", "SettingsPages", "T33"),

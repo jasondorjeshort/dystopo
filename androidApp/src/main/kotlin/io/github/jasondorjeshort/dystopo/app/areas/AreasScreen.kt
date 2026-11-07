@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,6 +98,10 @@ private val Teal = Color(0xFF00796B)
  * T234 (ADR 0056, B1a): the list is the one list of offline maps ([OfflineMapList]): every pack on the phone, however it
  * arrived, joined with the area records, the downloads and the removals, one row each ([MapRow]: a name, a state word, a
  * size; a tap opens the rest and the actions). `GET /areas/rows` reports it.
+ *
+ * T235 (ADR 0056 B1b): the list is drawn by the Offline maps screen (`packs/PacksScreen.kt`, full screen on opening) from the
+ * parts here ([MapRow], [PickerButton], [CorridorWidthRow], [rowAction]); this overlay keeps the picker's card over the map and
+ * the country list's sheet, both with T226's tap guard, and the outlines.
  */
 @Composable
 fun AreasOverlay() {
@@ -112,95 +118,89 @@ private fun AreasSheet() {
         if (!open && AreaPicker.mode != null) AreaPicker.close() // T142: closed from elsewhere (help, settings): the picker goes too
     }
     if (!open) return
-    var inputs by remember { mutableStateOf<OfflineMapList.Inputs?>(null) } // T234: the one list's inputs, gathered off the UI thread
-    var refresh by remember { mutableStateOf(0) } // T234: bumped when a row's action ends, so the list reads again at once
-    var removing by remember { mutableStateOf<Set<String>>(emptySet()) } // T234: rows whose Remove runs (a pack has no T221 removal)
-    var pinned by remember { mutableStateOf(0L) } // T142: the country rows' budget test (read here: the UI thread takes no lock)
-    LaunchedEffect(refresh) {
-        while (true) {
-            val i = withContext(Dispatchers.IO) { offlineMapInputs(app) }
-            pinned = withContext(Dispatchers.IO) { runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.pinnedBytes }.getOrDefault(0L) }
-            inputs = i
-            AreaOutlines.show(Areas.list)
-            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1500) // T150: paused in the background
-        }
-    }
-    // T142: drawing, around a point and a country's summary are a card over the map; the country list is this sheet.
+    // T142: drawing, around a point and a country's summary are a card over the map; the country list is a sheet of its own.
+    // T235 (ADR 0056 B1b): the list itself is the Offline maps screen's (`packs/PacksScreen.kt`), which `Areas.screenOpen` opens.
     val picker = AreaPicker.mode
     if (picker != null && picker != AreaPicker.Mode.Countries) {
         PickerCard()
         return
     }
-    val countries = picker == AreaPicker.Mode.Countries
-    BackHandler { if (countries) AreaPicker.close() else Areas.screenOpen = false }
+    if (picker == AreaPicker.Mode.Countries) CountrySheet()
+}
+
+/** T142: the country list's sheet ([COUNTRY_SHEET] of the window), over the map; Back returns to the list it came from. */
+@Composable
+private fun CountrySheet() {
+    val app = DystopoApp.instance
+    var pinned by remember { mutableStateOf(0L) } // T142: the country rows' budget test (read here: the UI thread takes no lock)
+    LaunchedEffect(Unit) {
+        while (true) {
+            pinned = withContext(Dispatchers.IO) { runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.pinnedBytes }.getOrDefault(0L) }
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1500) // T150: paused in the background
+        }
+    }
+    BackHandler { AreaPicker.close() }
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(if (countries) COUNTRY_SHEET else SHEET)
-                .background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).navigationBarsPadding().padding(14.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(COUNTRY_SHEET)
+                .background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+                .pointerInput(Unit) { detectTapGestures { } } // T235 (T226's guard): a tap on its paper stays out of the map and the controls beneath
+                .navigationBarsPadding().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText(if (countries) CHOOSE_COUNTRY else "Offline areas", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
-                    if (!countries) HelpIcon("areas.offline") // T109
-                }
-                if (countries) Action("Back") { AreaPicker.close() } else Action("Close") { Areas.screenOpen = false }
+                BasicText(CHOOSE_COUNTRY, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
+                Action("Back") { AreaPicker.close() }
             }
-            if (countries) { // T142
-                CountryListPane(pinned)
-                return@Column
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BasicText(
-                    AREAS_INTRO,
-                    Modifier.weight(1f, fill = false),
-                    style = TextStyle(color = Muted, fontSize = 12.sp),
-                )
-                HelpIcon("areas.corridor") // T109
-            }
-            // T142 (ADR 0041 §5): the picker's ways in from the sheet; "Keep offline around here" is on the long-press card and a search result.
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PickerButton(CHOOSE_COUNTRY) { AreaPicker.openCountries() }
-                PickerButton(DRAW_AREA) { AreaPicker.startDraw(null) }
-            }
-            CorridorWidthRow() // T130
-            // T234 (ADR 0056, B1a): one row per offline map however it arrived ([OfflineMapList]): the packs, the area records, the
-            // downloads and the removals joined; the records and the removals as they change (Compose state), the rest from the poll.
-            // A running download is its row's state word (the line above the list that said "Downloading ..." went).
-            val base = inputs
-            val records = Areas.list
-            val removals = Areas.removals // T221
-            val rows = remember(base, records, removals, removing) {
-                base?.let { OfflineMapList.rows(it.copy(records = records, removals = removals, removing = removing)) }.orEmpty()
-            }
-            if (base != null && rows.isEmpty()) BasicText("No areas yet.", style = TextStyle(color = Ink, fontSize = 14.sp))
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (row in rows) androidx.compose.runtime.key(row.id) {
-                    MapRow(row, row.detailKey in Areas.detailOpen) { action ->
-                        when (action) {
-                            OfflineMapList.STORAGE -> { Areas.screenOpen = false; io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true }
-                            else -> {
-                                if (action == OfflineMapList.REMOVE) removing = removing + row.id
-                                thread(name = "dystopo-offline-map-row") {
-                                    val result = runCatching { runRowAction(row, action, base ?: OfflineMapList.Inputs(), app) }
-                                    result.exceptionOrNull()?.let { android.util.Log.w(Areas.TAG, "${row.id}: $action failed", it) }
-                                    app.map.onMain {
-                                        if (action == OfflineMapList.REMOVE) removing = removing - row.id
-                                        refresh++
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            CountryListPane(pinned)
         }
     }
 }
 
-/** T142: a picker button of the sheet (outlined, so it reads as a way in rather than an area's action). */
+/**
+ * T235 (ADR 0056 B1b): a tap on a row's action ([MapRow]) on the Offline maps screen: Storage opens it, anything else runs on a
+ * worker ([runRowAction]); [removing] marks a Remove while it runs, and [done] is called on the UI thread after.
+ */
+internal fun rowAction(row: OfflineMapList.Row, action: String, inputs: OfflineMapList.Inputs?, removing: (String, Boolean) -> Unit, done: () -> Unit) {
+    val app = DystopoApp.instance
+    if (action == OfflineMapList.STORAGE) {
+        Areas.screenOpen = false
+        io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true
+        return
+    }
+    if (action == OfflineMapList.REMOVE) removing(row.id, true)
+    thread(name = "dystopo-offline-map-row") {
+        val result = runCatching { runRowAction(row, action, inputs ?: OfflineMapList.Inputs(), app) }
+        result.exceptionOrNull()?.let { android.util.Log.w(Areas.TAG, "${row.id}: $action failed", it) }
+        app.map.onMain {
+            if (action == OfflineMapList.REMOVE) removing(row.id, false)
+            done()
+        }
+    }
+}
+
+/** T235: the outlines of the rows a record does not draw: a pack with no record, by its bounds (west, south, east, north). */
+internal fun packBoxes(rows: List<OfflineMapList.Row>): Map<String, List<Double>> =
+    rows.filter { it.pack != null && it.recordId == null && it.bounds?.size == 4 }.associate { it.id to it.bounds!! }
+
+/** T235: the list's title help ([AREAS_HELP]'s first text, kept beside it); the Offline maps screen places it after its title. */
 @Composable
-private fun PickerButton(text: String, onClick: () -> Unit) {
+internal fun OfflineMapsHelpIcon() {
+    HelpIcon("areas.offline") // T109
+}
+
+/** T130, T235: the list's line under the title, with the corridors' help ([AREAS_HELP]'s second text). */
+@Composable
+internal fun IntroLine() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BasicText(AREAS_INTRO, Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp))
+        HelpIcon("areas.corridor") // T109
+    }
+}
+
+/** T142: a picker button of the list (outlined, so it reads as a way in rather than a map's action). */
+@Composable
+internal fun PickerButton(text: String, onClick: () -> Unit) {
     BasicText(
         text,
         style = TextStyle(color = Teal, fontSize = 14.sp, fontWeight = FontWeight.Bold),
@@ -216,7 +216,7 @@ private fun PickerButton(text: String, onClick: () -> Unit) {
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun MapRow(row: OfflineMapList.Row, open: Boolean, onAction: (String) -> Unit) {
+internal fun MapRow(row: OfflineMapList.Row, open: Boolean, onAction: (String) -> Unit) {
     var renaming by remember(row.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
     Column(
         Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Areas.toggleDetail(row.detailKey) }.padding(10.dp),
@@ -305,7 +305,9 @@ internal fun runRowAction(row: OfflineMapList.Row, action: String, inputs: Offli
     return when (action) {
         OfflineMapList.SHOW_ON_MAP -> {
             val b = row.bounds ?: throw IllegalStateException("${row.id} has no bounds")
-            linkedMapOf("camera" to io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b[0], b[1], b[2], b[3]), 1.0 - SHEET))
+            // T235 (ADR 0056): the list drops to its lower height, the map above it fitted to the row, and "Full list" goes back.
+            app.map.onMain { io.github.jasondorjeshort.dystopo.app.packs.PacksUi.lowered = true }
+            linkedMapOf("camera" to io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b[0], b[1], b[2], b[3])))
         }
         OfflineMapList.SHOW_FIRST -> manager.activate(p ?: throw IllegalStateException("${row.id} is not a pack"), moveCamera = false)
         OfflineMapList.UPDATE -> if (p != null) manager.catalogClient.update(p).json() else record().let { r -> AreaDownload.start(r.area, r.name, r.tripId) }
@@ -376,8 +378,6 @@ internal fun polygonLine(areaM2: Double, units: ContourUnits): String {
     return "Area of $n $unit"
 }
 
-private const val SHEET = 0.55f
-
 /** T142: the country list's sheet (taller: the map above it shows nothing the list needs). */
 private const val COUNTRY_SHEET = 0.8f
 
@@ -402,10 +402,10 @@ internal fun corridorLine(lengthM: Double, bufferM: Double, units: ContourUnits,
     (if (trip) "Trip corridor " else "Corridor ") + "${UnitFormat.distance(lengthM, units)}, ${UnitFormat.distance(bufferM, units)} each side"
 
 /** T130: the sheet's line under the title. */
-internal const val AREAS_INTRO = "Pinned areas stay on this phone until you unpin or remove them. Every trip keeps its corridor here."
+internal const val AREAS_INTRO = "Saved maps stay on this phone until you remove them. Every trip keeps the map along its route here."
 
 /** T130: the width row's label, and a width chip's text ([TripCorridor.WIDTH_CHOICES_M]; 0 is Off) in the units setting. Pure, tested. */
-internal const val CORRIDOR_WIDTH_LABEL = "Keep each trip offline:"
+internal const val CORRIDOR_WIDTH_LABEL = "Download each trip's map:"
 internal fun corridorWidthChip(m: Int, units: ContourUnits): String = if (m == 0) "Off" else UnitFormat.distance(m.toDouble(), units)
 
 /** T136: applies settings the sheet changed as `POST /settings` does (validated, saved, synced). */
@@ -417,7 +417,7 @@ private fun settingsApply(params: Map<String, Any?>) {
 /** T130: the trip corridor's width, each side of the route ([TripCorridors.applyWidth]; `POST /settings?tripCorridorM=`). */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun CorridorWidthRow() {
+internal fun CorridorWidthRow() {
     var width by remember(io.github.jasondorjeshort.dystopo.app.SettingsUi.revision) { mutableStateOf(AppSettings.tripCorridorM) } // T136: a synced width shows
     val units = AppSettings.units
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -445,13 +445,12 @@ private fun CorridorWidthRow() {
 internal val AREAS_HELP: List<HelpText> = run {
     val show = { Areas.screenOpen = true }
     listOf(
-        HelpText("areas.offline", "Offline areas", "Offline areas (${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.DATA_AND_STORAGE}, or Packs)", show = show) {
-            "Offline areas keep part of the map on this phone for use with no signal. A pinned area stays until you " +
-                "unpin or remove it; an unpinned one is cleared first when space runs short. A region pack is never " +
-                "cleared and needs no pin. Pinned areas share a budget of ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(AppSettings.pinnedCacheMb)}, set in " +
-                "Storage; a download past it is refused."
+        HelpText("areas.offline", io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS} (${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.DATA_AND_STORAGE}, or the chip on the map)", show = show) {
+            "Offline maps keep the map on this phone for use with no signal. A map from your server, a file or a region " +
+                "download stays until you remove it. A drawn area, a country or a trip's map counts in a budget of " +
+                "${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(AppSettings.pinnedCacheMb)}, set in ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.STORAGE}; one that reads May be cleared goes first when space runs short."
         },
-        HelpText("areas.corridor", "Corridors", "Offline areas, the line under the title", show = show) { units ->
+        HelpText("areas.corridor", "Corridors", "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, the line under the title", show = show) { units ->
             corridorHelp(AppSettings.tripCorridorM, units)
         },
     )
@@ -459,17 +458,18 @@ internal val AREAS_HELP: List<HelpText> = run {
 
 /**
  * T130: the corridors' help text: every trip keeps the map within the width each side (or, off, only the trips you keep by
- * hand), counted in the budget; Stop keeping or Unpin. In the units setting. Pure, tested.
+ * hand), counted in the budget; Remove lets it go. In the units setting. Pure, tested. T235: in ADR 0056's words, naming no
+ * button of the trip card (B2 renames them).
  */
 internal fun corridorHelp(widthM: Int, units: ContourUnits): String {
     val w = UnitFormat.distance((if (widthM > 0) widthM else TripCorridor.DEFAULT_WIDTH_M).toDouble(), units)
-    val head = if (widthM > 0) "Every trip keeps the map within $w each side of its route offline; editing the trip updates it, deleting it frees it."
-    else "Trips are not kept offline on their own; Keep offline on a trip keeps the map within $w each side."
-    return "$head It counts in the offline areas' budget, and the trip says when it does not fit. Stop keeping, or Unpin here, lets it go."
+    val head = if (widthM > 0) "Every trip downloads the map within $w each side of its route; editing the trip updates it, deleting it frees it."
+    else "Trips do not download their map on their own; a trip's card can download the map within $w each side."
+    return "$head It counts in the offline maps' budget, and the trip says when it does not fit. Remove it on the trip's card or here to let it go."
 }
 
-/** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). */
-internal const val PACK_NOTE = "A region pack is never evicted, so it needs no pin; it stays until you remove it."
+/** T91: why a pack-backed area has no Pin or Unpin (also the 409 of `POST /areas/{id}/pin?on=0`). T235: in ADR 0056's words. */
+internal const val PACK_NOTE = "This offline map is never cleared, so it has no Keep on this phone; it stays until you remove it."
 
 @Composable
 private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
@@ -505,9 +505,22 @@ object AreaOutlines {
     /** T136: the ids drawn now (empty while the sheet is closed). */
     @Volatile private var drawn: Set<String> = emptySet()
 
-    fun show(records: List<Areas.Record>) {
+    /** T235: the boxes of packs with no record drawn now ([packBoxes]: row id to west, south, east, north). */
+    @Volatile var boxes = 0
+        private set
+
+    fun show(records: List<Areas.Record>, packBoxes: Map<String, List<Double>> = emptyMap()) {
         drawn = records.map { it.id }.toSet()
         val fs = ArrayList<Feature>()
+        for ((id, b) in packBoxes) { // T235 (ADR 0056): a pack with no record is outlined by its bounds, as a box area is
+            val ring = listOf(
+                Point.fromLngLat(b[0], b[1]), Point.fromLngLat(b[2], b[1]), Point.fromLngLat(b[2], b[3]),
+                Point.fromLngLat(b[0], b[3]), Point.fromLngLat(b[0], b[1]),
+            )
+            fs += Feature.fromGeometry(Polygon.fromLngLats(listOf(ring))).apply { addStringProperty("kind", "box"); addStringProperty("id", id) }
+            fs += Feature.fromGeometry(LineString.fromLngLats(ring)).apply { addStringProperty("kind", "line"); addStringProperty("id", id) }
+        }
+        boxes = packBoxes.size
         for (r in records) {
             when (val s = r.area.shape) {
                 is AreaShape.Box -> {
@@ -573,7 +586,7 @@ object AreaOutlines {
             val parts = polygonParts(s.rings)
             linkedMapOf("id" to r.id, "drawn" to (r.id in shown), "parts" to parts.size, "holes" to parts.sumOf { it.second.size }, "points" to s.rings.sumOf { it.size })
         }
-        return linkedMapOf("features" to features, "corridors" to corridors, "polygons" to polygons)
+        return linkedMapOf("features" to features, "packBoxes" to boxes, "corridors" to corridors, "polygons" to polygons)
     }
 
     private fun install() {

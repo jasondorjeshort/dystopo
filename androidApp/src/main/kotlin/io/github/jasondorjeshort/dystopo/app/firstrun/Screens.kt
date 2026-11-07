@@ -3,13 +3,14 @@ package io.github.jasondorjeshort.dystopo.app.firstrun
 /**
  * T79: the screens a user-facing message may send the user to, in one place. The alpha's "No server set
  * (Settings)" pointed at a screen without the field it promised; `ScreenNamesTest` now checks every string
- * in the app that names a screen (`(Packs)`, `in Settings`, `Settings › Sources`, `the Routes list`, ...)
+ * in the app that names a screen (`(Offline maps)`, `in Settings`, `Settings › Sources`, `the Routes list`, ...)
  * against this list, and that each screen here has a chip or a link with that label that opens it.
  * A new screen or settings section goes here first.
  */
 object Screens {
     const val SETTINGS = "Settings"
-    const val PACKS = "Packs"
+    /** T235 (ADR 0056 B1b): the one list of offline maps (the Packs screen and the Offline areas sheet were two). */
+    const val OFFLINE_MAPS = "Offline maps"
     const val TRACKS = "Tracks"
     const val ROUTES = "Routes"
     const val SHARE = "Share"
@@ -37,8 +38,8 @@ object Screens {
      * T115: Settings' groups are its pages, the group list draws their titles).
      */
     val ALL: Map<String, Set<String>> = mapOf(
-        SETTINGS to setOf(SOURCES, STORAGE) + SETTINGS_GROUPS,
-        PACKS to setOf("From server"),
+        SETTINGS to setOf(SOURCES, STORAGE, OFFLINE_MAPS) + SETTINGS_GROUPS, // T235: the Settings row bears the list's name
+        OFFLINE_MAPS to setOf("From server"),
         TRACKS to emptySet(),
         ROUTES to emptySet(),
         SHARE to emptySet(),

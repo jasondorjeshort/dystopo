@@ -204,7 +204,8 @@ class MainActivity : ComponentActivity() {
         /** T162: the world view with no pack, no fix and no saved view (the map's minimum zoom). */
         const val WORLD_ZOOM = 3.0
 
-        const val NO_PACK = "No region pack. Download the map around you or choose a pack from your server (set it in Settings › Sources), or import pack files (Packs)."
+        /** T235 (ADR 0056): in its words; the list is "Offline maps". */
+        const val NO_PACK = "No offline map here. Download the map around you or choose one from your server (set it in Settings › Sources), or import one (Offline maps)."
     }
 }
 

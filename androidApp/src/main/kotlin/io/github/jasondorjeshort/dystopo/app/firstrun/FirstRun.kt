@@ -252,7 +252,7 @@ internal data class FirstRunChoice(val id: String, val label: String, val senten
 }
 
 /** T220: what "Not now" means for later, under the card's links. */
-internal const val NOT_NOW_LINE = "You can download later from ${Screens.PACKS}."
+internal const val NOT_NOW_LINE = "You can download later from ${Screens.OFFLINE_MAPS}."
 
 /**
  * T220 (the survey `first-run-and-share.md`, the critic's objection 16): the card's choices in order. The size is said

@@ -45,7 +45,7 @@ class SettingsLayoutTest {
         // Rows added after T103, each by its task.
         val later = all.filter { it["since"] in AFTER_T103 }.map { it["label"] as String }
         assertEquals(beforeT103.sorted(), (labels - added.toSet() - later.toSet()).sorted())
-        assertEquals(listOf("Offline areas", "Sync status", "Share", "Credits"), added)
+        assertEquals(listOf("Offline maps", "Sync status", "Share", "Credits"), added) // T235: the Offline areas row is "Offline maps"
         assertEquals(
             listOf(
                 "Position button", "Position button: Close zoom", "Keep north up", // T176 (the Map page, second in list order)

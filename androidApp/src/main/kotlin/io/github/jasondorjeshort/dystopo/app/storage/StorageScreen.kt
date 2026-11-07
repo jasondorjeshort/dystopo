@@ -320,11 +320,12 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
                     }
                 }
             }
-            if (key == Storage.PACKS) Chip("Packs ›", false) {
+            // T235 (ADR 0056): both rows lead to the one list.
+            if (key == Storage.PACKS) Chip("${Screens.OFFLINE_MAPS} ›", false) {
                 StorageUi.visible = false
                 PacksUi.visible = true
             }
-            if (key == Storage.PINNED) Chip("Offline areas ›", false) {
+            if (key == Storage.PINNED) Chip("${Screens.OFFLINE_MAPS} ›", false) {
                 StorageUi.visible = false
                 io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true
             }
