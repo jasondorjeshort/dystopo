@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-07
 
+- T235: ADR 0056 B1b: one list, one name
 - T234: ADR 0056 B1a: the rows of one list
 
 ## v0.1.22-alpha (2026-11-07)
