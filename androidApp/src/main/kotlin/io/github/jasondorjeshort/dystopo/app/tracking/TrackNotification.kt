@@ -164,10 +164,12 @@ class TrackNotification(private val context: Context) {
 /** T159: the notification's Pause, Resume and Stop, and its dismissal ([TrackNotification]). Not exported. */
 class TrackActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val t = Tracking.of(context)
+        val app = context.applicationContext
         val pending = goAsync()
         Thread {
             try {
+                // T229: on the thread, which waits for the tracker (a tap after a process death starts the process here).
+                val t = Tracking.of(app)
                 when (intent.action) {
                     TrackNotification.ACTION_PAUSE -> t.pause()
                     TrackNotification.ACTION_RESUME -> t.resume()

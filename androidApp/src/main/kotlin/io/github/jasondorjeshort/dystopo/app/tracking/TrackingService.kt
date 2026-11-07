@@ -19,6 +19,10 @@ import android.util.Log
  *
  * T178: the barometer's trend samples while this service runs a recording (`readout/PressureWatch.setRecording`), so
  * the pressure-fall warning works with the screen off.
+ *
+ * T229: the system calls these callbacks on the main thread, and in a process it restarted for a recording before the
+ * tracker is built ([Tracking.start]'s thread); they are the one place that waits for it there ([Tracking.awaitReady],
+ * at most [Tracking.WAIT_MS]), as the service's own build of it did before. No screen waits behind them in that case.
  */
 class TrackingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -30,7 +34,7 @@ class TrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         instance = this
-        val t = Tracking.of(this)
+        val t = Tracking.awaitReady(this)
         creating = false
         if (intent == null) t.onServiceRestarted()
         try {
@@ -57,13 +61,13 @@ class TrackingService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        Tracking.of(this).onTaskRemoved()
+        Tracking.awaitReady(this).onTaskRemoved()
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
         creating = false
-        Tracking.of(this).onServiceDestroyed()
+        Tracking.awaitReady(this).onServiceDestroyed()
         io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.setRecording(false) // T178
         if (instance === this) instance = null
         super.onDestroy()

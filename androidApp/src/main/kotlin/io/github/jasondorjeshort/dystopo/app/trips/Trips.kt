@@ -56,6 +56,7 @@ import java.util.concurrent.Executors
  */
 object Trips {
     private val app: DystopoApp get() = DystopoApp.instance
+    /** T229: off the main thread this waits for the tracker [Tracking.start] builds; nothing here builds it (the corridors' thread at launch included). */
     private val tracking: Tracking get() = Tracking.of(app)
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-trips").apply { isDaemon = true } }

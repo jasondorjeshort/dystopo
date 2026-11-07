@@ -28,7 +28,7 @@ import java.net.NetworkInterface
  * [AppSync.run] (paged, conflicts, synced settings, the clock check against the other phone's `now`).
  */
 class ShareSession private constructor(private val app: DystopoApp) {
-    private val tracking = Tracking.of(app)
+    private val tracking: Tracking get() = Tracking.of(app) // T229: not in the constructor, which a share link reaches in the first composition
     val peers = PeerList().also { it.onResolved = PeerSources::onDiscovered } // T78: known codes are tried on every phone found
     private val nsd = ShareNsd(app, peers)
 

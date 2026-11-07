@@ -86,15 +86,14 @@ fun SyncNowAction() {
 
 private fun syncInBackground() {
     val sync = AppSync.of(DystopoApp.instance)
-    val tracking = Tracking.of(DystopoApp.instance)
+    val tracking = { Tracking.of(DystopoApp.instance) } // T229: on the thread, which waits for the tracker; the main thread never does
     val peer = sync.defaultPeer
     if (peer.isBlank()) { // T219: said, where it was silent
-        tracking.refreshUi(SYNC_NO_PEER)
+        Thread { runCatching { tracking().refreshUi(SYNC_NO_PEER) } }.start()
         return
     }
     if (sync.running) return
-    tracking.refreshUi("Syncing with ${AppSync.peerLabel(peer)}") // T219
-    Thread { runCatching { sync.syncNow() } }.start()
+    Thread { runCatching { tracking().refreshUi("Syncing with ${AppSync.peerLabel(peer)}"); sync.syncNow() } }.start() // T219
 }
 
 /** T219: Sync now with no server and no peer set. */
@@ -128,7 +127,7 @@ fun SyncConflictNote(id: String) {
         style = TextStyle(color = Warn, fontSize = 11.sp, fontWeight = FontWeight.Bold),
         modifier = Modifier.clickable {
             val c = list.first()
-            Tracking.of(DystopoApp.instance).refreshUi("${c["field"]}: kept \"${c["kept"]}\", other device had \"${c["lost"]}\"")
+            Thread { Tracking.of(DystopoApp.instance).refreshUi("${c["field"]}: kept \"${c["kept"]}\", other device had \"${c["lost"]}\"") }.start() // T229: off the main thread
             sync.dismiss(id)
         },
     )

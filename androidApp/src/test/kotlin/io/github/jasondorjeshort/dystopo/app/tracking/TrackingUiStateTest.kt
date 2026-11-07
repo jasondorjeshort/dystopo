@@ -8,6 +8,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -61,5 +63,81 @@ class TrackingUiStateTest {
         val prepared = onCreate.indexOf("Tracking.prepare()")
         assertTrue(prepared >= 0, "Application.onCreate must call Tracking.prepare()")
         assertTrue(prepared < onCreate.indexOf("openTiles()"), "openTiles() starts the online service, which starts the corridors' thread")
+        // T229: the tracker's own thread starts after the state and the settings, before the corridors' thread can ask for it.
+        val started = onCreate.indexOf("Tracking.start(")
+        assertTrue(started > prepared && started > onCreate.indexOf("AppSettings.load(") && started < onCreate.indexOf("openTiles()"), "Tracking.start after prepare and AppSettings.load, before openTiles")
+        val controls = File(app, "tracking/TrackControls.kt").readText()
+        assertFalse(Regex("""remember\s*\{\s*Tracking\.of""").containsMatchIn(controls), "the composition reads TrackingUiState.tracking; it never waits for the tracker")
+    }
+
+    // ---- T229: the tracker built on its own thread ----
+
+    private class Box(val n: Int)
+
+    /** Off the main thread a caller before readiness waits for it, and one after gets it at once. */
+    @Test fun aCallerOffTheMainThreadWaitsForReadinessAndOneAfterGetsItAtOnce() {
+        val ready = TrackerReady<Box>({ false })
+        var got: Box? = null
+        val waiter = thread(name = "dystopo-corridors") { got = ready.await(5_000, { "test" }) }
+        Thread.sleep(100)
+        assertTrue(waiter.isAlive, "the caller waits while the tracker is being built")
+        val built = Box(1)
+        ready.set(built)
+        waiter.join(5_000)
+        assertSame(built, got)
+        assertSame(built, ready.await(1, { "after" }))
+    }
+
+    /** On the main thread before readiness: a failed check that names the caller, never a silent null; after it, the value. */
+    @Test fun theMainThreadBeforeReadinessFailsByName() {
+        val ready = TrackerReady<Box>({ true })
+        val e = assertFailsWith<IllegalStateException> { ready.await(5_000, { "LiveReadout.hook(LiveReadout.kt:169)" }) }
+        assertTrue(e.message!!.contains("LiveReadout.hook(LiveReadout.kt:169)"), e.message)
+        assertTrue(e.message!!.contains("main thread"), e.message)
+        val built = Box(2)
+        ready.set(built)
+        assertSame(built, ready.await(5_000, { "main after" }))
+    }
+
+    /** The service's callbacks may wait on the main thread ([Tracking.awaitReady]); a failed build lets the caller build it. */
+    @Test fun theServiceWaitsOnTheMainThreadAndAFailedBuildIsTheCallersToRetry() {
+        val ready = TrackerReady<Box>({ true })
+        thread { Thread.sleep(50); ready.set(Box(3)) }
+        assertEquals(3, ready.await(5_000, { "TrackingService.onStartCommand" }, allowMain = true)!!.n)
+        val failing = TrackerReady<Box>({ false })
+        failing.failed(IllegalStateException("database locked"))
+        assertNull(failing.await(5_000, { "corridors" }))
+        assertTrue(failing.failure is IllegalStateException)
+        assertFailsWith<java.util.concurrent.TimeoutException> { TrackerReady<Box>({ false }).await(50, { "nobody builds" }) }
+    }
+
+    /** The Record rule: a tap before readiness waits ("Starting"), a second tap meanwhile is refused, the first runs once when ready. */
+    @Test fun aTapBeforeReadinessIsQueuedOnceAndRunOnce() {
+        val ready = TrackerReady<Box>({ false })
+        val runs = java.util.concurrent.atomic.AtomicInteger()
+        val waiting = java.util.Collections.synchronizedList(ArrayList<Boolean>())
+        fun tap() = ready.once(5_000, { "ActivityPicker.choose" }, { error("no fallback build") }, { waiting += it }) { b -> runs.incrementAndGet(); b.n }
+        var first: Int? = -1
+        val t1 = thread { first = tap() }
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!ready.waiting && System.currentTimeMillis() < deadline) Thread.sleep(5)
+        assertTrue(ready.waiting, "the first tap waits")
+        assertNull(tap(), "a second tap while the first waits does nothing")
+        assertEquals(0, runs.get())
+        ready.set(Box(7))
+        t1.join(5_000)
+        assertEquals(7, first)
+        assertEquals(1, runs.get(), "run once")
+        assertEquals(listOf(true, false), waiting.toList(), "Starting shown, then cleared")
+        assertFalse(ready.waiting)
+        assertEquals(7, tap(), "after readiness a tap acts at once")
+        assertEquals(2, runs.get())
+        assertEquals(listOf(true, false), waiting.toList(), "no Starting once ready")
+    }
+
+    @Test fun theRecordChipSaysStartingWhileARecordingWaits() {
+        assertEquals("Record", recordChipLabel(recording = false, starting = false))
+        assertEquals(RECORD_STARTING, recordChipLabel(recording = false, starting = true))
+        assertEquals("Stop", recordChipLabel(recording = true, starting = true))
     }
 }

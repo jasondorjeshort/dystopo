@@ -16,6 +16,9 @@ a device that is still busy reads as slow, so run it on a quiet one (`android-em
 On an emulator with `-gpu host` every cold start of this app grows qemu by about 0.5 GB of private memory, trace on or off, and a
 reboot is the only thing seen to give it back (T228: 85 launches reached 44 GB). So run at most six cold launches a boot and read
 the emulator's private bytes between runs; a warm or hot return, or another app's cold start, costs far less.
+Boot through `tools/android-emu.ps1`, whose guard (T231) stops the emulator past its private-bytes limit or under the free-RAM floor and
+logs both to `out/emulator-guard-<avd>.log` (`android-emulator.md`); a run the guard cut short ends in an adb error. Clear an earlier
+run's thresholds and pending stall first (`POST /debug/startup/thresholds?clear=1`, `POST /debug/startup/stall?clear=1`).
 """
 import argparse
 import importlib.util

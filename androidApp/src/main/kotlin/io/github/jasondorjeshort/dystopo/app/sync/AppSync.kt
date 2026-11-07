@@ -54,7 +54,7 @@ import java.util.zip.GZIPOutputStream
  * differ by minutes or more.
  */
 class AppSync private constructor(private val app: DystopoApp) {
-    private val tracking = Tracking.of(app)
+    private val tracking: Tracking get() = Tracking.of(app) // T229: not in the constructor, which the sync sheets reach on the main thread
     private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /** Where `.dsync` files are read and written. */

@@ -51,13 +51,15 @@ class DystopoApp : Application() {
         io.github.jasondorjeshort.dystopo.app.areas.Areas.prepare() // T87: the same for the offline areas' state (AheadPrefetch's thread reads Areas)
         io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.prepare() // T110: the same for the scale bar's option (sync reads it on its threads)
         StartupTrace.mark("Tracking.prepare")
-        io.github.jasondorjeshort.dystopo.app.tracking.Tracking.prepare() // T226: the same for the tracks' and trips' state (the corridors' thread builds Tracking at launch)
+        io.github.jasondorjeshort.dystopo.app.tracking.Tracking.prepare() // T226: the same for the tracks' and trips' state (threads reach Tracking at launch)
         StartupTrace.mark("MapLibre.getInstance")
         MapLibre.getInstance(this)
         MapLibre.setConnected(true) // T38: every tile comes from our loopback server; MapLibre's own offline check would stop even those
         StartupTrace.mark("AppSettings.load")
         AppSettings.load(this)
         map.onUnitsSeeded = { Thread({ reload() }, "units-reload").start() } // T33: a first fix seeded the units
+        StartupTrace.mark("Tracking.start")
+        io.github.jasondorjeshort.dystopo.app.tracking.Tracking.start(this, BuildConfig.DEBUG_ENDPOINTS) // T229: built on its own thread, so neither the first frame nor the corridors' thread waits on a build
         StartupTrace.mark("BundledAssets.install")
         io.github.jasondorjeshort.dystopo.app.firstrun.BundledAssets.install(this) // T80: glyphs and sprites from the APK
         published = openTiles()

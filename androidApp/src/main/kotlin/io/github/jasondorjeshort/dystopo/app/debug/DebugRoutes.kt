@@ -27,6 +27,9 @@ import java.io.File
  * - T150 `GET /debug/strictmode`: the StrictMode violations counted by app frame ([StrictModeCounts.json]);
  *   `POST /debug/strictmode?clear=1` forgets them; `POST /debug/strictmode/violate` reads the APK's first byte on the UI
  *   thread (a disk read the thread policy reports) and answers with the frame it was counted under.
+ * - T229 `POST /debug/tracking/delay?ms=0..120000`: holds the tracker's construction ([Tracking.start]) that long in the
+ *   next launch, once (a file, so a force-stop keeps it; `ms=0` forgets it), so the window before `GET /tracks` reads
+ *   `ready: true` can be seen: the chips drawn without the tracker, "Starting" on the Record chip. Answers `pendingDelayMs`.
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -42,6 +45,11 @@ object DebugRoutes {
                 val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 1..60_000 } ?: return Response.json(mapOf("error" to "ms must be 1..60000"), 400)
                 Handler(Looper.getMainLooper()).post { freezeUi(ms) }
                 Response.json(mapOf("posted" to true, "ms" to ms))
+            }
+            "POST" to "/debug/tracking/delay" -> { // T229
+                val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
+                io.github.jasondorjeshort.dystopo.app.tracking.Tracking.delayNextStart(app, ms)
+                Response.json(mapOf("pendingDelayMs" to io.github.jasondorjeshort.dystopo.app.tracking.Tracking.pendingDelayMs(app)))
             }
             "GET" to "/debug/cpu" -> Response.json(cpu())
             "GET" to "/debug/strictmode" -> Response.json(StrictModeCounts.json())
