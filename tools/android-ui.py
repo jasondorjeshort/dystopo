@@ -49,7 +49,8 @@ Parts:
                a second tap, centred and close, keeps the zoom (a tap never zooms out); screenshots on the fix, panned,
                recentred and after the second tap.
   network      the emulator's network throttled (`emu network speed/delay`) and the server killed mid-download
-               (Packs > From server, a pack from --server's catalog) and mid-sync (the sync sheet): the app says the
+               (Offline maps > More ways to add a map > From server, a pack from --server's catalog; T235, the Packs
+               screen before) and mid-sync (the sync sheet): the app says the
                transfer failed, stays alive, and the retry succeeds once the server is back. Needs --server-cmd
                (how to start the server; the part starts and kills it by PID) and --server.
   matrix       one device configuration (the sweep's -Matrix boots each: minimum API, tablet; and on one boot
@@ -686,7 +687,8 @@ def part_bothunits(args):
     both phones under --out (`<nn>-<step>-<phone>.png`, the receiving phone's in the step's `png`), so the sweep's sheet
     shows the bar that was carried. T143 (T136's follow-up): the trip corridor's width the same way (`a-width-to-b`: A sets
     --width-m, B must report it in GET /settings, GET /areas/trips and its synced value; the receiving phone's screenshot
-    shows its Offline areas sheet with the width row), then both phones back to the width A had (`width-restore`)."""
+    shows its Offline maps list with the width row; T235, the Offline areas sheet before), then both phones back to the
+    width A had (`width-restore`)."""
     if not (args.serial2 and args.port and args.port2 and args.server):
         return fail("bothunits needs --serial, --port, --serial2, --port2 and --server (the peer as the emulators reach it)")
     a = DebugServer(args.port, args.serial)
@@ -1936,6 +1938,36 @@ def throttle(dev, speed, delay):
 # T222's "Download stopped: the connection dropped." as well as the older failure lines.
 FAILED = r"(?i)(fail|error|could not|couldn.t|interrupted|refused|unreachable|timed out|timeout|reset|stopped)"
 
+# T235 (ADR 0056 B1b): the one list's labels, each accepting the Packs screen's too until the sweep has passed on both.
+PACKS_CHIP = r"^(Packs|Offline maps)$"
+ADD_FOLD = r"^[▸▾] More ways to add a map$"
+FROM_SERVER = r"^([▸▾] )?From server$"
+
+
+def pack_saved(texts, saved_before=0):
+    """A catalog download finished: the catalog row's INSTALLED (or the Packs screen's words), `Saved as` on the first-run
+    card, or one more row of the one list reading Saved than before the tap (another map's row may read Saved already)."""
+    if any(t in ("INSTALLED", "ACTIVE", "ON MAP", "IN USE") for t in texts):
+        return True
+    if any(re.match(r"^(Installed|Saved as)", t) for t in texts):
+        return True
+    return texts.count("Saved") > saved_before
+
+
+def open_fold_header(dev, pattern, swipes=3):
+    """Taps a folded header (`▸ ...`) of the one list open, scrolling the list up to find it; an open one (`▾`) or one
+    that is not there (an older APK without the fold) is left. Returns the header's node or None."""
+    for i in range(swipes + 1):
+        n, nodes = dev.wait_for(pattern, 5 if i else 10)
+        if n:
+            if n["text"].startswith("▸"):
+                dev.tap(n)
+            return n
+        w, h, _d = screen(dev)
+        dev.shell("input", "swipe", str(w // 2), str(h * 4 // 5), str(w // 2), str(h * 2 // 5), "500")
+        time.sleep(1)
+    return None
+
 
 def part_network(args):
     if args.server_config and not args.server_cmd:
@@ -1967,10 +1999,13 @@ def part_network(args):
         return {"ok": ok, "settings": line, **({} if ok else {"error": f"the server's catalog needs a pack: {line}"})}
 
     def packs_screen():
-        dev.tap_text("^Packs$")
-        n, nodes = dev.wait_for("From server", 10)
-        if n and n["text"].startswith("▸"):
-            dev.tap(n)
+        # T235 (ADR 0056 B1b): the chip opens the one list; the catalog is under the fold "More ways to add a map" (open by
+        # itself on an empty list, at the list's foot otherwise), then "From server". The Packs screen's labels still work.
+        dev.tap_text(PACKS_CHIP)
+        n, nodes = dev.wait_for(f"{ADD_FOLD}|{FROM_SERVER}", 10)
+        if not (n and re.search(FROM_SERVER, n["text"]) and not dev.find(ADD_FOLD, nodes)):  # the Packs screen has no fold
+            open_fold_header(dev, ADD_FOLD)
+        open_fold_header(dev, FROM_SERVER)
         d, nodes = dev.wait_for("^(Download|Resume|Retry)$", 30)
         return d, nodes
 
@@ -1978,7 +2013,7 @@ def part_network(args):
         st["throttle"] = throttle(dev, args.net_speed, args.net_delay)
         d, nodes = packs_screen()
         if not d:
-            return fail("no Download button in Packs > From server", texts=dev.texts(nodes)[:25])
+            return fail("no Download button in Offline maps > From server", texts=dev.texts(nodes)[:25])
         dev.tap(d)
         t0 = time.time()
         seen = None
@@ -2009,11 +2044,12 @@ def part_network(args):
         if not d:
             return fail("no Download/Retry button after the failure", texts=dev.texts(nodes)[:25])
         label = d["text"]
+        saved_before = dev.texts(nodes).count("Saved")
         dev.tap(d)
         t0 = time.time()
         while time.time() - t0 < 600:
             texts = dev.texts()
-            if any(t in ("INSTALLED", "ACTIVE", "ON MAP", "IN USE") for t in texts) or any(re.match(r"^(Installed|Saved as pack)", t) for t in texts):
+            if pack_saved(texts, saved_before):
                 break
             if not any(t.startswith("Downloading") for t in texts) and any(re.search(FAILED, t) for t in texts if "rainier" not in t):
                 return fail("the retry failed too", texts=texts[:25])
@@ -2123,8 +2159,8 @@ def part_matrix(args):
         if not app_pid(dev):
             return fail(f"the app is not running (crash: {crash_reason(crash_lines(dev))})")
         nodes = dev.nodes()
-        names = ["search", "Tracks", "Routes", "Settings", "Packs"]
-        found = {k: dev.find(f"^{k}$", nodes) for k in names[1:]}
+        names = ["search", "Tracks", "Routes", "Settings", "Offline maps"]
+        found = {k: dev.find(PACKS_CHIP if k == "Offline maps" else f"^{k}$", nodes) for k in names[1:]}  # T235: "Packs" before
         found["search"] = next((n for n in nodes if n["cls"] == "android.widget.EditText" and n["bounds"] and n["bounds"][3] < h // 4), None)
         missing = [k for k, n in found.items() if not n]
         boxes = {k: n["bounds"] for k, n in found.items() if n}
