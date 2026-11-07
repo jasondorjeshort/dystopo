@@ -75,18 +75,20 @@ fun TrackControls() {
 @Composable
 private fun BoxScope.Controls() {
     val app = DystopoApp.instance
-    val tracking = remember {
-        // T228: synchronized, and dystopo-corridors usually builds it at launch holding that monitor through the database open
-        io.github.jasondorjeshort.dystopo.app.StartupTrace.composing("Tracking.of")
-        Tracking.of(app).also { io.github.jasondorjeshort.dystopo.app.StartupTrace.composing("compose TrackControls after Tracking.of") }
-    }
+    // T229: the tracker is built on its own thread (Tracking.start); until it is ready this is null and the chips draw from
+    // TrackingUiState.ui's defaults. The actions take it with Tracking.of on the threads they start, which wait for it.
+    val tracking = TrackingUiState.tracking
     val mapView = app.map.mapView
     DisposableEffect(mapView) {
-        mapView?.let { tracking.overlay.bind(it); io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.bind(it) } // T188: the shade layer
+        mapView?.let { io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.bind(it) } // T188: the shade layer
         LongPressMenu.install() // T91: a long-press offers a waypoint or a route
-        onDispose { tracking.overlay.unbind(); io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.unbind() }
+        onDispose { io.github.jasondorjeshort.dystopo.app.options.SunShadeLayer.unbind() }
     }
-    val ui = tracking.ui
+    DisposableEffect(mapView, tracking) { // T229: bound once the tracker is ready
+        if (mapView != null) tracking?.overlay?.bind(mapView)
+        onDispose { tracking?.overlay?.unbind() }
+    }
+    val ui = TrackingUiState.ui
     // T49: the track chips fold into one chip, so they cover as little of the map (and its peak labels) as the Packs button.
     // T109: held in [TrackBar], so `POST /help/open?key=tracks.bar` can unfold it.
     var barOpen by TrackBar::open
@@ -94,7 +96,7 @@ private fun BoxScope.Controls() {
     // recording's notification is posted at once. Refused: recording goes on without it.
     val context = androidx.compose.ui.platform.LocalContext.current
     val notificationAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) tracking.repostNotification()
+        if (granted) TrackingUiState.tracking?.repostNotification() // T229: after a recording started, so the tracker is ready
         BatteryExemption.onRecord(context) // T172: after the system's dialog, so the two never stack
     }
     // T172: what a recording started from the activity picker asks, each at most once: the notification permission, then
@@ -129,18 +131,20 @@ private fun BoxScope.Controls() {
                 itemVerticalAlignment = Alignment.CenterVertically, // T109: the chips centred on the help icon's taller target
             ) {
                 // T91: a waypoint at the current fix at any time, folded or not, recording or not.
-                Chip("Waypoint") { Thread { dropHere(tracking) }.start() }
+                Chip("Waypoint") { Thread { dropHere(tracker()) }.start() }
                 if (!barOpen) {
                     // Folded: one chip; while recording it shows the live distance in red.
                     Chip(if (ui.recording) "\u25CF " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
                 } else {
                     if (ui.recording) {
-                        Chip(if (ui.paused) "Resume" else "Pause") { Thread { if (tracking.ui.paused) tracking.resume() else tracking.pause() }.start() }
+                        Chip(if (ui.paused) "Resume" else "Pause") { Thread { val t = tracker(); if (t.ui.paused) t.resume() else t.pause() }.start() }
                     }
                     Chip("Tracks") { if (TrackBar.listOpen) TrackBar.closeList() else TrackBar.listOpen = true }
-                    Chip(if (ui.recording) "Stop" else "Record", if (ui.recording) RecordRed else Ink) {
+                    Chip(recordChipLabel(ui.recording, TrackingUiState.starting), if (ui.recording) RecordRed else Ink) {
                         // T172: Record opens the activity picker (the remembered activity marked); a choice starts the recording.
-                        if (tracking.ui.recording) Thread { tracking.stop() }.start()
+                        // T229: "Starting" while a choice waits for the tracker (Tracking.once); a tap then changes nothing.
+                        if (TrackingUiState.starting) return@Chip
+                        if (TrackingUiState.ui.recording) Thread { tracker().stop() }.start()
                         else if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else { TrackBar.closeList(); ActivityPicker.openForRecord() }
                     }
                     io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, stop and keep
@@ -159,7 +163,7 @@ private fun BoxScope.Controls() {
                         style = TextStyle(color = Ink, fontSize = 13.sp),
                     )
                     RecordingStateLine(ui)
-                    WayBackLine(tracking) // T180
+                    WayBackLine() // T180
                 }
             }
         }
@@ -183,8 +187,8 @@ private fun BoxScope.Controls() {
         BatteryExemptionCard() // T172: once, on the first Record
         LongPressCard() // T91
         io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSheet() // T182: what can I see from here
-        ui.selectedWaypoint?.let { WaypointSheet(tracking, it) }
-        ui.profile?.let { ProfilePanel(tracking, it) }
+        ui.selectedWaypoint?.let { WaypointSheet(it) }
+        ui.profile?.let { ProfilePanel(it) }
     }
 }
 
@@ -198,11 +202,11 @@ private fun BoxScope.Controls() {
 @Composable
 fun TracksSheet() {
     if (!TrackBar.listOpen) return
-    val app = DystopoApp.instance
-    val tracking = remember { Tracking.of(app) }
-    val ui = tracking.ui
+    // T229: until the tracker is ready the sheet says so under its title (TRACKS_STARTING) and has no actions or rows yet.
+    val tracking = TrackingUiState.tracking
+    val ui = TrackingUiState.ui
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) Thread { importUri(tracking, uri) }.start()
+        if (uri != null) Thread { importUri(tracker(), uri) }.start()
     }
     androidx.activity.compose.BackHandler { TrackBar.closeList() }
     val maxHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.7f
@@ -217,6 +221,10 @@ fun TracksSheet() {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 BasicText(tracksTitle(ui.tracks.size), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold))
                 SheetAction("Close") { TrackBar.closeList() }
+            }
+            if (tracking == null) {
+                BasicText(TRACKS_STARTING, style = TextStyle(color = Ink, fontSize = 14.sp))
+                return@Column
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SheetAction("Import") { TrackBar.importOpen = !TrackBar.importOpen }
@@ -311,6 +319,20 @@ private fun SheetAction(text: String, onClick: () -> Unit) {
 /** T219: the Tracks sheet's title: "Tracks · 3" (one text, so the chip's "Tracks" stays the only one by that name). Pure, tested. */
 internal fun tracksTitle(count: Int): String = "Tracks · $count"
 
+/** T229: the Tracks sheet before the tracker is ready, and the Record chip while a choice waits for it ([Tracking.once]). */
+internal const val TRACKS_STARTING = "Starting…"
+internal const val RECORD_STARTING = "Starting"
+
+/** T229: the Record chip's word: Stop while recording, [RECORD_STARTING] while a recording waits for the tracker, else Record. Pure, tested. */
+internal fun recordChipLabel(recording: Boolean, starting: Boolean): String = when {
+    recording -> "Stop"
+    starting -> RECORD_STARTING
+    else -> "Record"
+}
+
+/** T229: the tracker on a thread the caller started (it waits there until the tracker is ready); never on the main thread. */
+private fun tracker(): Tracking = Tracking.of(DystopoApp.instance)
+
 /** T219: a track row's second line: the date, then the distance, or that it is recording. Pure, tested. */
 internal fun trackRowLine(date: String, distance: String?, recording: Boolean): String =
     listOfNotNull(date, distance, "recording".takeIf { recording }).joinToString(" · ")
@@ -341,7 +363,7 @@ private fun RecordingStateLine(ui: Tracking.UiState) {
  * or before the first fix.
  */
 @Composable
-private fun WayBackLine(tracking: Tracking) {
+private fun WayBackLine() {
     val w = io.github.jasondorjeshort.dystopo.app.nav.NavUiState.wayBack ?: return
     val (bg, ink) = when (w.colour) {
         "red" -> RecordRed to Color.White
@@ -356,7 +378,7 @@ private fun WayBackLine(tracking: Tracking) {
     BasicText(w.sourceLine, style = TextStyle(color = Ink, fontSize = 12.sp))
     Action(io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.STARTS_HERE) {
         Thread {
-            val ok = tracking.wayBackHere()
+            val ok = tracker().wayBackHere()
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 android.widget.Toast.makeText(DystopoApp.instance, if (ok) WAY_BACK_SET else WAY_BACK_NO_POINT, android.widget.Toast.LENGTH_SHORT).show()
             }
@@ -477,7 +499,7 @@ private fun importing(tracking: Tracking, file: String, block: () -> Unit) {
 }
 
 @Composable
-private fun WaypointSheet(tracking: Tracking, w: io.github.jasondorjeshort.dystopo.store.StoredWaypoint) {
+private fun WaypointSheet(w: io.github.jasondorjeshort.dystopo.store.StoredWaypoint) {
     var name by remember(w.waypoint.id) { mutableStateOf(w.waypoint.name) }
     Panel(Modifier.fillMaxWidth()) {
         BasicText("Waypoint", style = TextStyle(color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold))
@@ -493,19 +515,19 @@ private fun WaypointSheet(tracking: Tracking, w: io.github.jasondorjeshort.dysto
             style = TextStyle(color = Ink, fontSize = 11.sp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Action("Rename") { val n = name.trim(); if (n.isNotEmpty()) Thread { tracking.renameWaypoint(wp.id, n) }.start() }
-            Action("Delete", RecordRed) { Thread { tracking.deleteWaypoint(wp.id) }.start() }
-            Action("Close") { Thread { tracking.selectWaypoint(null) }.start() }
+            Action("Rename") { val n = name.trim(); if (n.isNotEmpty()) Thread { tracker().renameWaypoint(wp.id, n) }.start() }
+            Action("Delete", RecordRed) { Thread { tracker().deleteWaypoint(wp.id) }.start() }
+            Action("Close") { Thread { tracker().selectWaypoint(null) }.start() }
         }
     }
 }
 
 @Composable
-private fun ProfilePanel(tracking: Tracking, p: Tracking.ProfileView) {
+private fun ProfilePanel(p: Tracking.ProfileView) {
     Panel(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BasicText(p.name, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold), modifier = Modifier.widthIn(max = 220.dp))
-            Action("Close") { Thread { tracking.showProfile(null) }.start() }
+            Action("Close") { Thread { tracker().showProfile(null) }.start() }
         }
         val s = p.stats
         BasicText(

@@ -170,7 +170,10 @@ object TripCorridors {
         runCatching { worker.submit { }.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }
     }
 
-    /** See the class comment. Runs on the corridors' thread; returns what it did (also `lastRun`). */
+    /**
+     * See the class comment. Runs on the corridors' thread; returns what it did (also `lastRun`). T229: at launch its
+     * first store read ([Trips.store]) waits for the tracker built on its own thread ([io.github.jasondorjeshort.dystopo.app.tracking.Tracking.start]); it no longer builds it.
+     */
     fun reconcile(why: String): Map<String, Any?> {
         load()
         val t0 = System.currentTimeMillis()

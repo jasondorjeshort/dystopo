@@ -105,6 +105,8 @@ object TrackRoutes {
         if (r.path != "/tracks" && !r.path.startsWith("/tracks/") && !r.path.startsWith("/location") && r.path != "/waypoint" && !r.path.startsWith("/map/longpress")) return null
         io.github.jasondorjeshort.dystopo.app.tracking.ActivityPicker.handle(app, r)?.let { return it } // T172: the picker, a track's activity
         io.github.jasondorjeshort.dystopo.app.tracking.BatteryExemption.handle(app, r)?.let { return it } // T172: the battery card
+        // T229: before the tracker is ready, GET /tracks answers at once with `ready: false` (Tracking.readiness) instead of waiting.
+        if (r.method == "GET" && r.path == "/tracks" && Tracking.readyOrNull == null) return Response.json(Tracking.readiness())
         val t = Tracking.of(app)
         val p = params(r)
         when (r.method to r.path) {
@@ -118,7 +120,7 @@ object TrackRoutes {
                 }
                 return null
             }
-            "GET" to "/tracks" -> return Response.json(overview(t))
+            "GET" to "/tracks" -> return Response.json(Tracking.readiness() + overview(t)) // T229: ready first
             "GET" to "/tracks/ui" -> return Response.json(sheetJson(t))
             "POST" to "/tracks/ui" -> { // T219
                 p.s("importHoldMs")?.toLongOrNull()?.let { io.github.jasondorjeshort.dystopo.app.routing.ImportText.holdMs = it.coerceIn(0, 30_000) }

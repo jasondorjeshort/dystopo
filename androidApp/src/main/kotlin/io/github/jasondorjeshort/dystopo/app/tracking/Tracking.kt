@@ -209,8 +209,10 @@ class Tracking private constructor(private val app: DystopoApp) {
             post { watch.begin(SystemClock.elapsedRealtime()); startTicker() }
             // T180: the way back of the resumed recording, from what it holds (its override is per device, kept).
             post { runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.rebuild(resumed, recordedPoints()) } }
-            // The system restarting the service creates this object from its onStartCommand, which goes on by itself.
-            if (!TrackingService.creating) startService()
+            // The system restarting the service goes on by itself from its onStartCommand. T229: this object is built on its own
+            // thread from Application.onCreate, which can finish before the restarted service's onCreate runs; asked on the
+            // main thread, the question comes after the service's create message, which the system queued with the process start.
+            main.post { if (!TrackingService.creating && TrackingService.instance == null) startService() }
         }
         // T159: back in the foreground, a recording whose service is down starts it again (allowed now), and the overlay
         // and the controls catch up with what was recorded in the background.
@@ -824,15 +826,32 @@ class Tracking private constructor(private val app: DystopoApp) {
 
         private fun gapMsOf(seconds: Long): Long? = if (seconds <= 0) null else seconds * 1000
 
-        @Volatile private var instance: Tracking? = null
+        /** T229: how long a caller off the main thread (and a service callback, [awaitReady]) waits for the tracker, as [call] does. */
+        const val WAIT_MS = 30_000L
+
+        /** T229: the debug builds' file holding the next launch's construction ([delayNextStart]). */
+        private const val DELAY_FILE = ".tracking-delay"
+
+        private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+        /** T229: the one [Tracking] of the process; see [start]. */
+        private val ready = TrackerReady<Tracking>({ Looper.myLooper() == Looper.getMainLooper() }) { t ->
+            mainHandler.post { TrackingUiState.tracking = t }
+        }
+
+        /** T229: when the tracker was ready (ms after the process started), how long its construction took, and the debug delay it waited. */
+        @Volatile private var readyAtMs: Long? = null
+        @Volatile private var buildMs: Long? = null
+        @Volatile private var delayedMs = 0L
+        @Volatile private var builder: Thread? = null
 
         /**
          * T226: makes, on the main thread from `Application.onCreate`, the Compose state that the first thread to reach this
          * class would otherwise make, without opening the store: [TrackingUiState]; [TerrainSource]'s, which this class's
          * constructor starts, and through it the pressure trend's (`TerrainSource.update`, `Barometer.want`,
-         * `PressureWatch.onListenerStart`); [Trips]' and [TripCorridors]', since the corridors' thread is what gets here first
-         * at launch (`TripCorridors.reconcile`, `Trips.store`); and this package's objects, which `TrackRoutes` touches on a
-         * debug thread.
+         * `PressureWatch.onListenerStart`); [Trips]' and [TripCorridors]', whose threads reach this class at launch
+         * (`TripCorridors.reconcile`, `Trips.store`); and this package's objects, which `TrackRoutes` touches on a
+         * debug thread. T229: since then nobody but [start]'s thread builds the tracker; the corridors' thread waits for it.
          */
         fun prepare() {
             TrackingUiState.prepare()
@@ -846,23 +865,174 @@ class Tracking private constructor(private val app: DystopoApp) {
             LongPressMenu.sun
         }
 
-        fun of(context: Context): Tracking = instance ?: synchronized(this) {
-            instance ?: Tracking(context.applicationContext as DystopoApp).also { instance = it }
+        /**
+         * T229: builds the tracker on a thread of its own (`dystopo-tracking-start`), from `Application.onCreate` after
+         * [prepare] and the settings' load, so no other thread builds it and the main thread never waits for it: the
+         * constructor opens the track database (migrating it after an update), scans the sync log and makes worker round
+         * trips. Once built it is [of]'s answer and, posted to the main thread, [TrackingUiState.tracking]. In debug builds
+         * a delay set by `POST /debug/tracking/delay` ([delayNextStart]) holds the construction first, once.
+         */
+        fun start(app: DystopoApp, debug: Boolean) {
+            val t0 = SystemClock.elapsedRealtime()
+            Thread({
+                if (debug) runCatching { takeDelay(app) }.getOrDefault(0L).takeIf { it > 0 }?.let { delayedMs = it; Thread.sleep(it) }
+                try {
+                    build(app)
+                    Log.i(TAG, "tracker ready ${SystemClock.elapsedRealtime() - t0} ms after its start (built in $buildMs ms)")
+                } catch (e: Throwable) {
+                    // The next caller off the main thread builds it again, as every caller did before T229.
+                    Log.e(TAG, "the tracker could not be built", e)
+                    ready.failed(e)
+                }
+            }, "dystopo-tracking-start").apply { isDaemon = true }.start()
         }
+
+        private fun build(app: DystopoApp): Tracking = synchronized(this) {
+            ready.value ?: run {
+                builder = Thread.currentThread()
+                val t0 = SystemClock.elapsedRealtime()
+                try {
+                    Tracking(app).also {
+                        buildMs = SystemClock.elapsedRealtime() - t0
+                        readyAtMs = SystemClock.elapsedRealtime() - app.startedAt
+                        ready.set(it)
+                    }
+                } finally {
+                    builder = null
+                }
+            }
+        }
+
+        /**
+         * The tracker. T229: off the main thread it waits for [start]'s thread, at most [WAIT_MS] (after a failed start it
+         * builds it itself); on the main thread it answers once the tracker is ready, and before that it is a programming
+         * error that names its caller (never a silent null): the main thread reads [TrackingUiState.tracking], or calls this
+         * from a thread it starts.
+         */
+        fun of(context: Context): Tracking {
+            ready.value?.let { return it }
+            check(Thread.currentThread() !== builder) { "Tracking.of inside the tracker's own construction, from ${callerOf()}" }
+            return ready.await(WAIT_MS, ::callerOf) ?: build(context.applicationContext as DystopoApp)
+        }
+
+        /**
+         * T229: the one main-thread wait for the tracker: [TrackingService]'s callbacks, which the system calls on the main
+         * thread, also in a process it restarted for a recording with no screen, before the tracker is built.
+         */
+        fun awaitReady(context: Context): Tracking =
+            ready.value ?: ready.await(WAIT_MS, ::callerOf, allowMain = true) ?: build(context.applicationContext as DystopoApp)
+
+        /** T229: the tracker if it is ready, else null; never waits (`GET /tracks`, the controls). */
+        val readyOrNull: Tracking? get() = ready.value
+
+        /**
+         * T229, the task's own rule for a recording asked for before the tracker is ready (no setting, ADR 0044: readiness
+         * is not a preference): the Record chip says "Starting" ([TrackingUiState.starting]) while this waits, then [action]
+         * runs once; a second ask while one waits is refused (null). Off the main thread. Ready already: [action] runs now.
+         */
+        fun <R> once(context: Context, action: (Tracking) -> R): R? =
+            ready.once(WAIT_MS, ::callerOf, { build(context.applicationContext as DystopoApp) }, { waiting ->
+                if (waiting) mainHandler.post { TrackingUiState.starting = true }
+                // After the action's own refreshUi: its posted state reaches the main thread first, so "Record" never flashes.
+                else ready.value?.post { mainHandler.post { TrackingUiState.starting = false } } ?: mainHandler.post { TrackingUiState.starting = false }
+            }, action)
+
+        /** T229: `GET /tracks`' readiness fields (also its whole answer before the tracker is ready). */
+        fun readiness(): Map<String, Any?> = linkedMapOf(
+            "ready" to (ready.value != null), "readyAtMs" to readyAtMs, "buildMs" to buildMs, "delayedMs" to delayedMs,
+            "startWaiting" to ready.waiting, "startError" to ready.failure?.let { "${it.javaClass.simpleName}: ${it.message}" },
+        )
+
+        /** T229, debug builds: holds the next launch's construction [ms] (0 forgets it), once. A file, so a force-stop keeps it. */
+        fun delayNextStart(app: DystopoApp, ms: Long) {
+            val f = File(app.filesDir, DELAY_FILE)
+            if (ms <= 0) f.delete() else f.writeText(ms.toString())
+        }
+
+        fun pendingDelayMs(app: DystopoApp): Long = File(app.filesDir, DELAY_FILE).takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() ?: 0L
+
+        private fun takeDelay(app: DystopoApp): Long = pendingDelayMs(app).also { if (it > 0) File(app.filesDir, DELAY_FILE).delete() }
+
+        /** The first frame outside this file: the caller a failed [check] names. */
+        private fun callerOf(): String = Throwable().stackTrace.firstOrNull {
+            !it.className.startsWith(Tracking::class.java.name) && !it.className.startsWith(TrackerReady::class.java.name)
+        }?.let { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})" } ?: "unknown"
     }
 }
 
 /**
  * T226: the Compose state behind [Tracking.ui], in an object of its own, as [io.github.jasondorjeshort.dystopo.app.nav.NavUiState]
- * does (T86). It was a field of [Tracking], so the thread that built [Tracking] made it, and at launch that is usually
- * `dystopo-corridors` (`TripCorridors.reconcile` reaching the store through `Trips`), in the global snapshot. The constructor
- * opens the track database first, which is slowest on a fresh install. When the first composition's snapshot opened before
- * the state was made, `remember { Tracking.of(app) }` waited for the constructor and the read beside it threw
- * "Reading a state that was created after the snapshot was taken". [Tracking.prepare] now makes it before any composition.
+ * does (T86). It was a field of [Tracking], so the thread that built [Tracking] made it, in the global snapshot; when the
+ * first composition's snapshot opened before the state was made, the read threw "Reading a state that was created after
+ * the snapshot was taken". [Tracking.prepare] makes it before any composition. T229: the tracker itself is built on its
+ * own thread ([Tracking.start]), never by the first composition or the corridors' thread (which waits for it now), and is
+ * published here as [tracking] once built; the controls draw from [ui] from the first frame and bind the overlay when
+ * [tracking] arrives.
  */
 internal object TrackingUiState {
     var ui by mutableStateOf(Tracking.UiState())
 
+    /** T229: the tracker once built (main thread); null until then. */
+    var tracking by mutableStateOf<Tracking?>(null)
+
+    /** T229: a recording asked for before [tracking] was ready waits ([Tracking.once]): the Record chip says "Starting". */
+    var starting by mutableStateOf(false)
+
     /** Forces creation now (call from the main thread, before the first composition). */
     fun prepare() {}
+}
+
+/**
+ * T229: a value built once on another thread, with the wait rules of [Tracking.of]; pure, so `TrackingUiStateTest` runs it.
+ * [isMain] says whether the calling thread is the UI thread; [onReady] gets the value on the thread that [set] it.
+ */
+internal class TrackerReady<T : Any>(private val isMain: () -> Boolean, private val onReady: (T) -> Unit = {}) {
+    private val latch = java.util.concurrent.CountDownLatch(1)
+    private val pending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    @Volatile var value: T? = null
+        private set
+    @Volatile var failure: Throwable? = null
+        private set
+
+    /** An action of [once] is waiting. */
+    val waiting: Boolean get() = pending.get()
+
+    fun set(v: T) {
+        value = v
+        failure = null
+        latch.countDown()
+        onReady(v)
+    }
+
+    fun failed(e: Throwable) {
+        failure = e
+        latch.countDown()
+    }
+
+    /**
+     * The value, waiting at most [waitMs] for it; null when the build failed (the caller may build it). On the main thread
+     * before it is set, a failed check naming [caller], unless [allowMain].
+     */
+    fun await(waitMs: Long, caller: () -> String, allowMain: Boolean = false): T? {
+        value?.let { return it }
+        check(allowMain || !isMain()) { "Tracking.of on the main thread before the tracker is ready, from ${caller()}: read TrackingUiState.tracking, or call it on a thread" }
+        if (!latch.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            throw java.util.concurrent.TimeoutException("the tracker was not ready in $waitMs ms (${caller()})")
+        }
+        return value
+    }
+
+    /** See [Tracking.once]: [onWaiting] true when an action starts to wait, false once it ran (or failed). */
+    fun <R> once(waitMs: Long, caller: () -> String, build: () -> T, onWaiting: (Boolean) -> Unit, action: (T) -> R): R? {
+        value?.let { return action(it) }
+        if (!pending.compareAndSet(false, true)) return null
+        onWaiting(true)
+        try {
+            return action(await(waitMs, caller) ?: build())
+        } finally {
+            pending.set(false)
+            onWaiting(false)
+        }
+    }
 }

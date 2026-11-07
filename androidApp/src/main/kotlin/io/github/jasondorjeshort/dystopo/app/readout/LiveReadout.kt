@@ -166,7 +166,9 @@ object LiveReadout {
     private fun hook() {
         if (hooked) return
         hooked = true
-        runCatching { Tracking.of(DystopoApp.instance).injected.start { onInjectedFix(it) } }
+        // T229: reached in the first composition (ReadoutStrip), so on a thread of its own, which waits for the tracker; on
+        // the main thread before it is ready Tracking.of fails, and this runCatching would leave the readout unhooked for good.
+        Thread({ runCatching { Tracking.of(DystopoApp.instance).injected.start { onInjectedFix(it) } }.onFailure { android.util.Log.w("DystopoReadout", "injected fixes not hooked", it) } }, "readout-hook").start()
         CoroutineScope(Dispatchers.Default).launch { Foreground.flow.collect { refresh() } }
     }
 

@@ -218,12 +218,13 @@ object ActivityPicker {
      * Returns what happened, for the route.
      */
     fun choose(app: DystopoApp, target: String, a: Activity): Map<String, Any?> {
-        val t = Tracking.of(app)
         val result: Map<String, Any?> = if (target == NEW) {
-            remember(app, a)
-            val s = t.start(null, Tracking.Mode.ALL, a)
+            // T229: before the tracker is ready the Record chip says "Starting", this waits, then starts once (Tracking.once).
+            val s = Tracking.once(app) { t -> remember(app, a); t.start(null, Tracking.Mode.ALL, a) }
+                ?: return linkedMapOf("started" to null, "refused" to "a recording is already starting")
             linkedMapOf("started" to s.id, "activity" to a.code)
         } else {
+            val t = Tracking.of(app)
             val recordingIt = t.call { t.recorder.activeId } == target
             if (recordingIt) remember(app, a)
             linkedMapOf("track" to target, "changed" to t.setActivity(target, a), "recording" to recordingIt, "activity" to a.code)
@@ -257,11 +258,11 @@ object ActivityPicker {
         if (r.path == "/tracks/picker" && r.method == "GET") return Response.json(app.map.onMain { json() })
         if (r.path == "/tracks/picker" && r.method == "POST") {
             val open = r.query["open"]?.trim().orEmpty()
-            val t = Tracking.of(app)
             when (open) {
                 "", NEW -> app.map.onMain { TrackBar.open = true; openForRecord() }
                 "close" -> app.map.onMain { close() }
                 else -> {
+                    val t = Tracking.of(app) // T229: only for a track's activity; opening it to record needs no tracker
                     val s = t.call { t.store.summary(open) } ?: return Response.json(mapOf("error" to "open must be new, close or a track id (no track $open)"), 404)
                     app.map.onMain { TrackBar.open = true; openForTrack(s.id, s.name, s.activity) }
                 }
