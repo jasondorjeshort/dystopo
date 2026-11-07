@@ -38,10 +38,10 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
+import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
-import io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp
 import io.github.jasondorjeshort.dystopo.areas.PolygonRings
 import io.github.jasondorjeshort.dystopo.areas.TripCorridor
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
@@ -83,15 +83,19 @@ private val Teal = Color(0xFF00796B)
  * fetched at.
  *
  * T140 (ADR 0041): a polygon area's card says its size on the ground ([polygonLine]), a disc's its radius ([discLine]),
- * and its outline is the rings, filled; a record this build cannot read ([Areas.Record.opaque]) gets the needs-newer card
- * ([NeedsNewerCard]): the sentence, the raw reason under it, Show and Remove only.
+ * and its outline is the rings, filled; a record this build cannot read ([Areas.Record.opaque]) reads "Needs a newer app" with
+ * the sentence and the raw reason behind its tap, Show on map and Remove only (T234).
  *
  * T151: an interrupted download (the app closed, the network stopped answering) is partial, so Retry shows at once, and
  * its card adds [resumeLine] ("Continues by itself", with the minutes during a backoff) while [ResumeCheck] will carry it on.
  * The coverage the sheet polls every 1.5 s is counted row by row ([Areas.coverage]).
  *
  * T221: a row keeps its name, kind, state and size; a tap on it opens its zooms and bounds ([areaDetailLines]). Remove leaves
- * the row where it is, reading [removingLine] with no actions ([RemovingRow]), until the tiles are gone.
+ * the row where it is, reading "Removing" with no actions, until the tiles are gone.
+ *
+ * T234 (ADR 0056, B1a): the list is the one list of offline maps ([OfflineMapList]): every pack on the phone, however it
+ * arrived, joined with the area records, the downloads and the removals, one row each ([MapRow]: a name, a state word, a
+ * size; a tap opens the rest and the actions). `GET /areas/rows` reports it.
  */
 @Composable
 fun AreasOverlay() {
@@ -108,15 +112,15 @@ private fun AreasSheet() {
         if (!open && AreaPicker.mode != null) AreaPicker.close() // T142: closed from elsewhere (help, settings): the picker goes too
     }
     if (!open) return
-    var coverage by remember { mutableStateOf<Map<String, Map<String, Any?>>>(emptyMap()) }
-    var progress by remember { mutableStateOf<Map<String, Any?>?>(null) }
+    var inputs by remember { mutableStateOf<OfflineMapList.Inputs?>(null) } // T234: the one list's inputs, gathered off the UI thread
+    var refresh by remember { mutableStateOf(0) } // T234: bumped when a row's action ends, so the list reads again at once
+    var removing by remember { mutableStateOf<Set<String>>(emptySet()) } // T234: rows whose Remove runs (a pack has no T221 removal)
     var pinned by remember { mutableStateOf(0L) } // T142: the country rows' budget test (read here: the UI thread takes no lock)
-    LaunchedEffect(Unit) {
+    LaunchedEffect(refresh) {
         while (true) {
-            val (c, p) = withContext(Dispatchers.IO) { Areas.all().associate { it.id to Areas.coverage(it) } to AreaDownload.json() }
+            val i = withContext(Dispatchers.IO) { offlineMapInputs(app) }
             pinned = withContext(Dispatchers.IO) { runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.pinnedBytes }.getOrDefault(0L) }
-            coverage = c
-            progress = p
+            inputs = i
             AreaOutlines.show(Areas.list)
             io.github.jasondorjeshort.dystopo.app.Foreground.delay(1500) // T150: paused in the background
         }
@@ -160,20 +164,34 @@ private fun AreasSheet() {
                 PickerButton(DRAW_AREA) { AreaPicker.startDraw(null) }
             }
             CorridorWidthRow() // T130
-            // T106: a refused job is finished too (it read "Downloading ...: 0 of 0 tiles" for as long as the sheet stayed open).
-            progress?.takeIf { it["state"] !in setOf("done", "failed", "cancelled", "partial", "refused") }?.let { p ->
-                BasicText(
-                    "Downloading ${p["name"]}: ${p["done"]} of ${p["planned"]} tiles, ${mb((p["bytes"] as? Number)?.toLong() ?: 0)}",
-                    style = TextStyle(color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-                )
+            // T234 (ADR 0056, B1a): one row per offline map however it arrived ([OfflineMapList]): the packs, the area records, the
+            // downloads and the removals joined; the records and the removals as they change (Compose state), the rest from the poll.
+            // A running download is its row's state word (the line above the list that said "Downloading ..." went).
+            val base = inputs
+            val records = Areas.list
+            val removals = Areas.removals // T221
+            val rows = remember(base, records, removals, removing) {
+                base?.let { OfflineMapList.rows(it.copy(records = records, removals = removals, removing = removing)) }.orEmpty()
             }
-            val items = Areas.list
-            val removing = Areas.removals // T221
-            if (items.isEmpty() && removing.isEmpty()) BasicText("No areas yet.", style = TextStyle(color = Ink, fontSize = 14.sp))
+            if (base != null && rows.isEmpty()) BasicText("No areas yet.", style = TextStyle(color = Ink, fontSize = 14.sp))
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (row in rowsInPlace(items, removing)) when (row) {
-                    is Areas.Record -> AreaRow(row, coverage[row.id])
-                    is Areas.Removal -> RemovingRow(row)
+                for (row in rows) androidx.compose.runtime.key(row.id) {
+                    MapRow(row, row.detailKey in Areas.detailOpen) { action ->
+                        when (action) {
+                            OfflineMapList.STORAGE -> { Areas.screenOpen = false; io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true }
+                            else -> {
+                                if (action == OfflineMapList.REMOVE) removing = removing + row.id
+                                thread(name = "dystopo-offline-map-row") {
+                                    val result = runCatching { runRowAction(row, action, base ?: OfflineMapList.Inputs(), app) }
+                                    result.exceptionOrNull()?.let { android.util.Log.w(Areas.TAG, "${row.id}: $action failed", it) }
+                                    app.map.onMain {
+                                        if (action == OfflineMapList.REMOVE) removing = removing - row.id
+                                        refresh++
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -190,69 +208,131 @@ private fun PickerButton(text: String, onClick: () -> Unit) {
     )
 }
 
+/**
+ * T234 (ADR 0056, B1a): one row of the one list ([OfflineMapList.Row]): its name, its state word and its size; a tap opens what
+ * it holds, whether it counts in the budget, its shape, zooms and bounds, where it came from, and its actions (Show on map,
+ * Show first, Update, Retry, Keep on this phone or Allow clearing, Rename, Remove ...). Rename edits here; [onAction] runs the
+ * rest ([runRowAction]). Replaces T75's area card, T91's pack note on it and T140's needs-newer card (the state word says it).
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun AreaRow(r: Areas.Record, cov: Map<String, Any?>?) {
-    r.opaque?.let { NeedsNewerCard(r, it); return } // T140
-    var renaming by remember(r.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
-    val detail = r.id in Areas.detailOpen // T221
-    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Areas.toggleDetail(r.id) }.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+private fun MapRow(row: OfflineMapList.Row, open: Boolean, onAction: (String) -> Unit) {
+    var renaming by remember(row.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
+    Column(
+        Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Areas.toggleDetail(row.detailKey) }.padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
         renaming?.let { t ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.weight(1f).border(1.dp, Color(0xFFE2D8C6), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 5.dp)) {
                     BasicTextField(t, { renaming = it }, singleLine = true, textStyle = TextStyle(color = Ink, fontSize = 15.sp), modifier = Modifier.fillMaxWidth())
                 }
-                Action("Save") { val n = t.trim(); renaming = null; if (n.isNotEmpty()) thread { runCatching { rename(r.id, n) } } }
+                val id = row.recordId
+                Action("Save") { val n = t.trim(); renaming = null; if (n.isNotEmpty() && id != null) thread { runCatching { rename(id, n) } } }
             }
         }
         if (renaming == null) Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            // T91 (the T75 follow-up): a pack-backed area has no Pin or Unpin; the card says why.
-            BasicText(if (r.pack != null) "KEPT AS A PACK" else if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned || r.pack != null) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
-            BasicText(if (detail) " ▾" else " ▸", style = TextStyle(color = Muted, fontSize = 13.sp)) // T221: the row opens
+            BasicText(row.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(row.state, style = TextStyle(color = toneColor(row.tone), fontSize = 13.sp, fontWeight = FontWeight.Bold))
+            BasicText(if (open) " ▾" else " ▸", style = TextStyle(color = Muted, fontSize = 13.sp)) // T221: the row opens
         }
-        val kind = when {
-            r.pack != null -> "Region pack ${r.pack}"
-            // T140: a disc (the one-point corridor) by its radius, a polygon by its area on the ground.
-            r.area.shape is AreaShape.Corridor && (r.area.shape as AreaShape.Corridor).points.size == 1 && r.tripId == null -> discLine((r.area.shape as AreaShape.Corridor).bufferM, AppSettings.units)
-            r.area.shape is AreaShape.Corridor -> (r.area.shape as AreaShape.Corridor).bufferM.let { b -> corridorLine(r.area.lengthM, if (r.tripId != null) TripCorridor.widthOf(b).toDouble() else b, AppSettings.units, trip = r.tripId != null) } // T106: the units setting; T130: a trip's
-            r.area.shape is AreaShape.Polygon -> polygonLine(PolygonRings.areaM2((r.area.shape as AreaShape.Polygon).rings), AppSettings.units)
-            else -> "Box"
-        }
-        val share = (cov?.get("share") as? Number)?.toDouble()
-        BasicText("$kind · ${r.state}", style = TextStyle(color = Ink, fontSize = 13.sp)) // T221: the zooms are behind the tap
-        BasicText(
-            (if (r.pack != null) mb((cov?.get("packBytes") as? Number)?.toLong() ?: r.bytes) else "${mb(r.bytes)} downloaded (about ${mb(r.estimateBytes)} planned)") +
-                (share?.let { String.format(Locale.US, " · %.0f%% on this phone", it * 100) } ?: ""),
-            style = TextStyle(color = Muted, fontSize = 12.sp),
-        )
-        if (detail) for (line in areaDetailLines(r.area)) BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp))
-        if (r.pack != null) BasicText(PACK_NOTE, style = TextStyle(color = Muted, fontSize = 12.sp))
-        val older = !Areas.older(r).isNullOrEmpty() // T95
-        // T106: from a source the phone no longer reads (its server changed) is older too, said as such.
-        if (older) BasicText(if (Areas.fromOtherSource(r)) OTHER_SOURCE_NOTE else OLDER_NOTE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 12.sp, fontWeight = FontWeight.Bold))
-        r.error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp), maxLines = 2) }
-        // T151: an interrupted download continues by itself (the resume check); Retry stays for the impatient.
-        resumeLine(r, System.currentTimeMillis())?.let { BasicText(it, style = TextStyle(color = Teal, fontSize = 12.sp)) }
-        // T106 (a T91 follow-up): a failed, cut short or refused download offers Retry and Dismiss instead of staying listed as failed.
-        val failed = r.pack == null && r.state != "downloading" && (r.error != null || r.state == "failed" || r.state == "partial")
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
-            if (r.pack == null) Action(if (r.pinned) "Unpin" else "Pin") { thread { runCatching { TripCorridors.userPin(r.id, !r.pinned) } } } // T130: a trip's, also Stop keeping
-            if (r.pack == null && r.state != "downloading") Action(if (failed) "Retry" else if (older) "Update" else "Download again") { thread { runCatching { AreaDownload.start(r.area, r.name, r.tripId) } } }
-            if (failed) Action("Dismiss", Muted) { thread { runCatching { Areas.dismiss(r.id) } } }
-            if (r.pack == null && renaming == null) Action("Rename") { renaming = r.name } // T142
-            Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
+        BasicText(OfflineMapList.sizeText(row.bytes), style = TextStyle(color = Muted, fontSize = 12.sp))
+        if (open) {
+            for (line in row.detail) BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                for (a in row.actions) when (a) {
+                    OfflineMapList.RENAME -> Action(a) { renaming = row.name }
+                    OfflineMapList.REMOVE -> Action(a, Color(0xFFD73027)) { onAction(a) }
+                    OfflineMapList.DISMISS -> Action(a, Muted) { onAction(a) }
+                    else -> Action(a) { onAction(a) }
+                }
+            }
         }
     }
 }
 
-/** T221: an area on its way out ([Areas.remove]): its name and size stay, the state is the progress, nothing to tap. */
-@Composable
-private fun RemovingRow(x: Areas.Removal) {
-    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        BasicText(x.record.name, style = TextStyle(color = Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        BasicText(removingLine(x.done, x.total), style = TextStyle(color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold))
-        BasicText(mb(x.record.bytes), style = TextStyle(color = Muted, fontSize = 12.sp))
+/** T234: a state word's colour by its tone. */
+private fun toneColor(t: OfflineMapList.Tone): Color = when (t) {
+    OfflineMapList.Tone.BUSY -> Teal
+    OfflineMapList.Tone.BAD -> Color(0xFFB0302A)
+    OfflineMapList.Tone.GOOD -> Teal
+    OfflineMapList.Tone.PLAIN -> Muted
+}
+
+/**
+ * T234: the inputs of the one list ([OfflineMapList.rows]), read off the UI thread by the sheet's 1.5 s poll and `GET /areas/rows`:
+ * the packs ([PackManager.list], cached by size and time), the records, the downloads, the region job, the tile area job, the
+ * catalog held ([io.github.jasondorjeshort.dystopo.app.packs.PackCatalogClient.rows], which fetches nothing), and the coverage of
+ * the records with no pack only (a pack-backed record's is a find over the same list).
+ */
+internal fun offlineMapInputs(app: DystopoApp = DystopoApp.instance): OfflineMapList.Inputs {
+    val manager = PackManager.get(app)
+    val now = System.currentTimeMillis()
+    val records = Areas.all()
+    val packs = manager.list().map { l ->
+        val i = l.info
+        OfflineMapList.Pack(
+            i.name, i.bytes, i.usable, i.dem != null, i.vector != null, i.bounds?.toList(), i.minZoom, i.maxZoom, i.attribution,
+            listOfNotNull(l.files.dem, l.files.vector).maxOfOrNull { it.lastModified() } ?: 0L, l.errors,
+        )
+    }
+    val service = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app)
+    return OfflineMapList.Inputs(
+        packs = packs, records = records, removals = Areas.removals,
+        coverage = records.filter { it.pack == null && it.opaque == null }.associate { it.id to (Areas.coverage(it)["share"] as? Number)?.toDouble() },
+        jobs = manager.downloads.snapshot().mapNotNull { OfflineMapList.Job.of(it) },
+        regionJob = runCatching { OfflineMapList.RegionJob.of(service.region.json(), now) }.getOrNull(),
+        areaJob = AreaDownload.job?.let { j -> OfflineMapList.AreaJob(j.id, j.running, (j.json()["percent"] as? Number)?.toDouble(), j.isNew) },
+        queued = TripCorridors.queued,
+        catalog = runCatching { manager.catalogClient.rows() }.getOrDefault(emptyList()).associate { it.pack.name to it.status },
+        older = records.mapNotNull { r -> if (Areas.older(r).isNullOrEmpty()) null else r.id to Areas.fromOtherSource(r) }.toMap(),
+        active = manager.activeName(), units = AppSettings.units, now = now,
+    )
+}
+
+/**
+ * T234: [action] on [row] as its tap does, on the caller's thread (never the UI thread: the deletes take as long as they take):
+ * the sheet's taps and `POST /areas/rows/action`. Remove follows [OfflineMapList.removePlan]; Storage and Rename are the sheet's
+ * own (the route answers Storage by opening it, and Rename is `POST /areas/{id}/rename`).
+ */
+internal fun runRowAction(row: OfflineMapList.Row, action: String, inputs: OfflineMapList.Inputs, app: DystopoApp = DystopoApp.instance): Map<String, Any?> {
+    require(action in row.actions) { "${row.id} offers ${row.actions}, not '$action'" }
+    val manager = PackManager.get(app)
+    val region = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).region
+    val p = row.pack
+    fun record() = row.recordId?.let { Areas.get(it) } ?: throw NoSuchElementException("no area for ${row.id}")
+    fun hasJob(name: String) = manager.downloads.job(name)?.state.let { it == "queued" || it == "running" || it == "paused" || it == "failed" }
+    return when (action) {
+        OfflineMapList.SHOW_ON_MAP -> {
+            val b = row.bounds ?: throw IllegalStateException("${row.id} has no bounds")
+            linkedMapOf("camera" to io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b[0], b[1], b[2], b[3]), 1.0 - SHEET))
+        }
+        OfflineMapList.SHOW_FIRST -> manager.activate(p ?: throw IllegalStateException("${row.id} is not a pack"), moveCamera = false)
+        OfflineMapList.UPDATE -> if (p != null) manager.catalogClient.update(p).json() else record().let { r -> AreaDownload.start(r.area, r.name, r.tripId) }
+        OfflineMapList.DOWNLOAD_AGAIN -> record().let { r -> AreaDownload.start(r.area, r.name, r.tripId) }
+        OfflineMapList.RETRY, OfflineMapList.RESUME_NOW -> when {
+            p == null -> record().let { r -> AreaDownload.start(r.area, r.name, r.tripId) }
+            hasJob(p) -> manager.downloads.retry(p).json()
+            else -> region.retry()
+        }
+        OfflineMapList.DISMISS -> linkedMapOf("area" to Areas.dismiss(record().id)?.json())
+        OfflineMapList.KEEP, OfflineMapList.ALLOW_CLEARING -> TripCorridors.userPin(record().id, action == OfflineMapList.KEEP).json()
+        OfflineMapList.STORAGE -> {
+            app.map.onMain { Areas.screenOpen = false; io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true }
+            linkedMapOf("storage" to true)
+        }
+        OfflineMapList.REMOVE -> {
+            val plan = OfflineMapList.removePlan(row, inputs) ?: throw IllegalStateException("${row.id} offers no Remove")
+            val out = linkedMapOf<String, Any?>("plan" to plan.toString())
+            plan.tripRemove?.let { out["area"] = TripCorridors.userRemove(it) }
+            plan.cancelJob?.let { out["jobCancelled"] = manager.downloads.cancel(it) }
+            if (plan.cancelRegion) out["region"] = region.cancel()
+            out["records"] = plan.records.mapNotNull { id -> Areas.get(id)?.let { Areas.remove(it.id) } }
+            plan.deletePack?.let { name -> if (manager.find(name) != null || hasJob(name)) out["pack"] = manager.delete(name) }
+            plan.dismissRegion?.let { region.dismiss(it) }
+            out
+        }
+        else -> throw IllegalArgumentException("'$action' is the sheet's own (Rename: POST /areas/{id}/rename)")
     }
 }
 
@@ -279,26 +359,6 @@ internal fun rowsInPlace(records: List<Areas.Record>, removals: List<Areas.Remov
 }
 
 /**
- * T140 (ADR 0041 §2): the card of an area this build cannot read: [NeedsNewerApp.USER_SENTENCE] with the raw reason under
- * it; it stays pinned by its box (its tiles are kept), and only Show and Remove act on it.
- */
-@Composable
-private fun NeedsNewerCard(r: Areas.Record, o: Areas.Record.Opaque) {
-    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(r.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            BasicText(if (r.pinned) "PINNED" else "NOT PINNED", style = TextStyle(color = if (r.pinned) Teal else Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold))
-        }
-        BasicText(NeedsNewerApp.USER_SENTENCE, style = TextStyle(color = Color(0xFF9A5B00), fontSize = 13.sp, fontWeight = FontWeight.Bold))
-        BasicText(o.reason, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Action("Show") { thread { val b = r.area.bounds; io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat), 1.0 - SHEET) } }
-            Action("Remove", Color(0xFFD73027)) { thread { runCatching { TripCorridors.userRemove(r.id) } } }
-        }
-    }
-}
-
-/**
  * T140 (ADR 0041 §4): a disc's card line, "Within 5 km of a point" or "Within 3 mi of a point" in the units setting: a
  * whole number of kilometres or miles (the presets) without decimals, else [UnitFormat.distance]. Pure, tested.
  */
@@ -315,8 +375,6 @@ internal fun polygonLine(areaM2: Double, units: ContourUnits): String {
     val n = if (v >= 100) String.format(Locale.US, "%,.0f", v) else String.format(Locale.US, "%.1f", v)
     return "Area of $n $unit"
 }
-
-private fun mb(bytes: Long): String = if (bytes >= 1_048_576) String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0) else String.format(Locale.US, "%d kB", bytes / 1024)
 
 private const val SHEET = 0.55f
 

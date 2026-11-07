@@ -44,7 +44,14 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   setting) and evicts unpinned tiles down to it; answers the cache before and after and every area's coverage,
  *   which is how "pinned areas survive a trim" is checked.
  * - `GET /areas/prefetch`, `POST /areas/prefetch?on=0|1`: "ahead on the route" while navigating ([AheadPrefetch]).
- * - `POST /areas/ui?open=1|0`: the Areas screen. T221: `detail=<id>` taps that area's row (its zooms and bounds open or close).
+ * - `POST /areas/ui?open=1|0`: the Areas screen. T221: `detail=<id>` taps that area's row (its zooms and bounds open or close);
+ *   T234: or a row id of `GET /areas/rows` (`pack:<name>`, `area:<id>`).
+ * - T234 (ADR 0056, B1a), the one list of offline maps ([OfflineMapList]): `GET /areas/rows` gives
+ *   `{rows:[{id,name,bytes,state,tone,detail,actions,pack,recordId,bounds,detailOpen}],count,ms}`, in the sheet's order, one row per
+ *   pack name (`pack:<name>`: on the phone, named by a record, downloading, the region job's) and one per record with no pack or
+ *   unreadable (`area:<id>`); `state` is the row's word as drawn, `actions` the labels its opened row offers. `POST
+ *   /areas/rows/action?id=<row id>&action=<label>` runs one as its tap does (Remove: every record naming the pack, then the pack and
+ *   its download; an update or a trail-network fetch is only stopped) and answers its `result` with the rows after it.
  * - T221, a removal you can see: `DELETE /areas/{id}` answers when the tiles are gone (`ms`, `tilesDeleted`); until then the area
  *   stays in `GET /areas` and `GET /areas/{id}` with `state` `removing` and `removing` (`done`, `total`, `line` as the row reads
  *   it, `ms`). `chunkDelayMs=N` (0 to 10000) waits after each chunk of 256 tiles, so a screenshot can catch the row.
@@ -165,9 +172,18 @@ object AreaRoutes {
                 val open = r.query["open"] != "0"
                 app.map.onMain {
                     Areas.screenOpen = open
-                    r.query["detail"]?.let { d -> Areas.get(d)?.let { Areas.toggleDetail(it.id) } } // T221: as a tap on the row
+                    // T221: as a tap on the row; T234: a row id of `GET /areas/rows` too (`pack:<name>`, `area:<id>`).
+                    r.query["detail"]?.let { d -> Areas.get(d.removePrefix(OfflineMapList.AREA))?.let { Areas.toggleDetail(it.id) } ?: d.takeIf { it.startsWith(OfflineMapList.PACK) }?.let { Areas.toggleDetail(it) } }
                 }
                 return Response.json(mapOf("open" to open))
+            }
+            "GET" to "/areas/rows" -> return Response.json(rowsJson()) // T234
+            "POST" to "/areas/rows/action" -> { // T234: a row's action, as its tap
+                val inputs = offlineMapInputs(app)
+                val id = r.query["id"] ?: throw IllegalArgumentException("id=<row id> (GET /areas/rows)")
+                val row = OfflineMapList.rows(inputs).firstOrNull { it.id == id } ?: throw NoSuchElementException("no row '$id' (GET /areas/rows)")
+                val action = r.query["action"] ?: throw IllegalArgumentException("action=<one of ${row.actions}>")
+                return Response.json(linkedMapOf("id" to id, "action" to action, "result" to runRowAction(row, action, inputs, app)) + rowsJson())
             }
         }
         val m = item.matchEntire(r.path) ?: return Response.notFound()
@@ -301,6 +317,14 @@ object AreaRoutes {
             "pinnedBytes" to pinned, "budgetMb" to budget, "heapTiles" to AreaDownload.heapTiles(), "coverCache" to CountrySizes.coverStats, // T170
             "countries" to rows.map { it.second },
         )
+    }
+
+    /** T234: `GET /areas/rows`: the one list's rows as the sheet draws them, with `detailOpen` per row, and how long the read took. */
+    private fun rowsJson(): Map<String, Any?> {
+        val t0 = System.nanoTime()
+        val rows = OfflineMapList.rows(offlineMapInputs())
+        val open = Areas.detailOpen
+        return linkedMapOf("rows" to rows.map { it.json(it.detailKey in open) }, "count" to rows.size, "ms" to Math.round((System.nanoTime() - t0) / 1e5) / 10.0)
     }
 
     /** T106: Retry on an area card: the same corridor downloaded again (a pack-backed area is a region pack: 409). */
