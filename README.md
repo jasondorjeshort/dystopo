@@ -21,7 +21,7 @@ a server and a desktop tool come with it, iOS later.
 <img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
 </p>
 
-**Status (November 2026): alpha, [v0.1.21-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.21-alpha) (one universal APK, server and devtool zips). This release is about finding why the app sometimes freezes on its splash screen: every start is timed, and a slow one becomes a report you can send through Report a problem, with readable stack frames and a freeze's true length. Airport gate numbers show on the map from close zoom under a new map option, and search finds a gate by its number. Tested on emulators; the real-phone checks are still to come.**
+**Status (November 2026): alpha, [v0.1.22-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.22-alpha) (one universal APK, server and devtool zips). This release makes one change over 0.1.21: opening the app no longer waits for the track database before the map is drawn, the leading suspect for the splash-screen freezes; a Record tap before the recorder is ready says "Starting" and then starts once. The startup timing of 0.1.21 stays, so a slow start still becomes a report you can send through Report a problem. Tested on emulators; the real-phone checks are still to come.**
 a release will carry can be built from source today (below). Expect rough edges.
 
 ## Features
