@@ -8,6 +8,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -25,7 +27,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -43,6 +44,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.areas.IntroLine
+import io.github.jasondorjeshort.dystopo.app.areas.OfflineMapsHelpIcon
+import io.github.jasondorjeshort.dystopo.app.areas.AreaOutlines
+import io.github.jasondorjeshort.dystopo.app.areas.AreaPicker
+import io.github.jasondorjeshort.dystopo.app.areas.Areas
+import io.github.jasondorjeshort.dystopo.app.areas.CHOOSE_COUNTRY
+import io.github.jasondorjeshort.dystopo.app.areas.CorridorWidthRow
+import io.github.jasondorjeshort.dystopo.app.areas.DRAW_AREA
+import io.github.jasondorjeshort.dystopo.app.areas.MapRow
+import io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList
+import io.github.jasondorjeshort.dystopo.app.areas.PickerButton
+import io.github.jasondorjeshort.dystopo.app.areas.offlineMapInputs
+import io.github.jasondorjeshort.dystopo.app.areas.packBoxes
+import io.github.jasondorjeshort.dystopo.app.areas.rowAction
 import io.github.jasondorjeshort.dystopo.app.firstrun.ImportPicker
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.packs.CatalogStatus
@@ -57,12 +72,30 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sinh
 
-/** Whether the pack list is showing (main thread; `POST /packs/ui` sets it too). */
+/**
+ * The Offline maps screen's state (main thread; `POST /packs/ui` and `POST /areas/ui` set it too).
+ *
+ * T235 (ADR 0056 B1b): one list, "Offline maps", for every map on the phone however it arrived; the Packs screen and the Offline
+ * areas sheet were two. [visible] is the Areas state's open flag while no picker card stands over the map, so the top chips and
+ * the first-run card, which read it, hide over the list and the country list and stay during a card on the map.
+ */
 object PacksUi {
-    var visible by mutableStateOf(false)
+    /** The list is up. Setting it opens the list (closing a picker card on the map first) or closes it. */
+    var visible: Boolean
+        get() = Areas.screenOpen && !AreaPicker.onMap()
+        set(v) {
+            if (v && AreaPicker.onMap()) AreaPicker.close()
+            Areas.screenOpen = v
+        }
 
-    /** T53: the "From server" section is open (the list shrinks to the lower part, the map shows the catalog outlines). */
+    /** T53: the "From server" section is open (the list shrinks to the lower part, the map shows the catalog outlines). T235: the fold opens with it. */
     var catalogOpen by mutableStateOf(false)
+
+    /** T235: the list at its lower height after Show on map, the map above it ("Full list" goes back). */
+    var lowered by mutableStateOf(false)
+
+    /** T235: the fold "More ways to add a map" opened (true) or closed (false) by a tap; null: open while the list is empty. */
+    var foldOpen by mutableStateOf<Boolean?>(null)
 
     /** Bumped to make the open screen fit the camera to the catalog again (`POST /packs/ui?catalog=1`). */
     var fitRequest by mutableStateOf(0)
@@ -70,20 +103,29 @@ object PacksUi {
     /** T57: bumped by `POST /packs/catalog/refresh` (and the Refresh chip) to reload the open catalog section. */
     var catalogRefresh by mutableStateOf(0)
 
-    /** T222: the row whose detail is open (`pack:<name>`, `cat:<id>`, `job:<name>`); a tap on a row or `POST /packs/ui?detail=` sets it. */
+    /** T222: the catalog row whose detail is open (`cat:<id>`); T235: the list's rows open through [Areas.detailOpen]. */
     var detail by mutableStateOf<String?>(null)
 
-    /** T222: a tap on a row: its detail opens, or closes. */
+    /** T222: a tap on a catalog row: its detail opens, or closes. */
     fun toggle(key: String) {
         detail = if (detail == key) null else key
     }
 
-    /** T57: the list's first visible row and how many local pack rows there are (for `POST /packs/ui` answers). */
+    /** T57: the list's first visible item and how many rows it has (for `POST /packs/ui` answers; T235: every row of the one list). */
     @Volatile var firstVisibleItem = 0
     @Volatile var localRows = 0
 
-    /** Height of the list while the catalog section is open; the map shows above it. */
+    /** Height of the list while the catalog section is open or after Show on map; the map shows above it. */
     const val CATALOG_SHEET = 0.6f
+
+    /** T235: the screen's own words (ADR 0031: the owner's to adjust); the title is [Screens.OFFLINE_MAPS]. */
+    const val MORE_WAYS = "More ways to add a map"
+    const val FROM_SERVER = "From server"
+    const val EMPTY = "No offline maps yet. Choose a country or draw an area."
+    const val FULL_LIST = "Full list"
+    const val LINK_LINE = "Download from a link (the address of <name>-dem.pmtiles)"
+    const val IMPORT_LINE = "Or import <name>-dem.pmtiles (and -outdoors.pmtiles) from this phone"
+    const val IMPORT = "Import"
 }
 
 private val Ink = Color(0xFF2B2420)
@@ -94,18 +136,18 @@ private val Line = Color(0xFFE2D8C6)
 private val Bad = Color(0xFFB0302A)
 
 /**
- * The region-pack entry point on the map: a "Packs" button, and when open, a full-screen list of the
- * packs on the device, with delete and a URL download box showing progress. Drawn over the map by one line
- * in MainActivity's map screen.
- *
- * T222: a row is a name, a size and one state word; a tap opens its detail (the zoom range, the corners, the file names and
- * Show on map, which is what the tap did before). A download's row says what happened and what to do next ([DownloadStatus]).
+ * The map's way to the offline maps: the "Offline maps" chip beside Settings, and when open the one list (T235, ADR 0056 B1b),
+ * full screen when it opens, and at [PacksUi.CATALOG_SHEET] of the window, the map with the outlines above it, while the
+ * server's catalog is open or after Show on map. Drawn over the map by one line in MainActivity's map screen.
  */
 @Composable
 fun PacksOverlay() {
+    val open = Areas.screenOpen
+    // T235: the list opens full screen each time, with the fold by the list's own rule.
+    LaunchedEffect(open) { if (!open) { PacksUi.catalogOpen = false; PacksUi.lowered = false; PacksUi.foldOpen = null } }
     Box(Modifier.fillMaxSize()) {
         if (!PacksUi.visible) {
-            // T33: the top-right chips in one row (Settings, Packs); track controls sit in the row below (TrackControls).
+            // T33: the top-right chips in one row (Settings, Offline maps); track controls sit in the row below (TrackControls).
             val density = androidx.compose.ui.platform.LocalDensity.current
             io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale, and the search box ends before this row
                 Box(Modifier.fillMaxSize()) {
@@ -117,13 +159,13 @@ fun PacksOverlay() {
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Chip(Screens.SETTINGS) { io.github.jasondorjeshort.dystopo.app.SettingsUi.visible = !io.github.jasondorjeshort.dystopo.app.SettingsUi.visible }
-                        Chip(Screens.PACKS) { PacksUi.visible = true }
+                        Chip(Screens.OFFLINE_MAPS) { PacksUi.visible = true }
                     }
                 }
             }
-        } else {
+        } else if (AreaPicker.mode != AreaPicker.Mode.Countries) { // the country list is a sheet of its own (`areas/AreasScreen.kt`)
             BackHandler { PacksUi.visible = false }
-            PacksScreen(PackManager.get()) { PacksUi.visible = false }
+            OfflineMapsScreen(PackManager.get()) { PacksUi.visible = false }
         }
     }
     // T53: catalog outlines on the map while the server section is open.
@@ -160,32 +202,60 @@ fun fitAbove(b: PackBounds, visible: Double = 1.0 - PacksUi.CATALOG_SHEET): Map<
     }
 }
 
+/** T235: the list's fixed items before the rows (the intro line, the picker's two ways in), for the catalog's scroll target. */
+private const val ITEMS_BEFORE_ROWS = 2
+
+/**
+ * T235 (ADR 0056 B1b, proposal 0056's "The one list, specified"): the title "Offline maps" with its help and Close; the intro
+ * line; "Choose a country" and "Draw an area"; one row per offline map ([OfflineMapList], drawn by [MapRow]: a tap opens its
+ * details and actions) or the empty line; the trip width row; the fold "More ways to add a map" with the server's catalog under
+ * "From server" (its outlines and fit as T53 made them), the link box and Import. The rows are T234's poll, every 1.5 s (0.7 s
+ * while one is busy), with the outlines of every row on the map. T226's tap guard on both heights.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PacksScreen(manager: PackManager, close: () -> Unit) {
-    var packs by remember { mutableStateOf<List<PackManager.Listed>>(emptyList()) }
-    var active by remember { mutableStateOf<String?>(null) }
-    var used by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var jobs by remember { mutableStateOf<List<Map<String, Any?>>>(emptyList()) }
-    var region by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) } // T222
+private fun OfflineMapsScreen(manager: PackManager, close: () -> Unit) {
+    val app = DystopoApp.instance
+    var inputs by remember { mutableStateOf<OfflineMapList.Inputs?>(null) } // T234: the one list's inputs, gathered off the UI thread
+    var refresh by remember { mutableStateOf(0) } // bumped when a row's action ends, so the list reads again at once
+    var removing by remember { mutableStateOf<Set<String>>(emptySet()) } // rows whose Remove runs (a pack has no T221 removal)
     var url by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
-    var refresh by remember { mutableStateOf(0) }
     // T53: the server's catalog
     val client = manager.catalogClient
-    var rows by remember { mutableStateOf<List<PackCatalogClient.Row>>(emptyList()) }
+    var catalogRows by remember { mutableStateOf<List<PackCatalogClient.Row>>(emptyList()) }
     var catalogError by remember { mutableStateOf<String?>(null) }
     var catalogLoading by remember { mutableStateOf(false) }
     val catalogOpen = PacksUi.catalogOpen
     val listState = rememberLazyListState()
 
-    // T57: rows that arrive above the first visible one (the local packs load after the catalog section is
-    // already showing) would keep the list anchored below them, so the local packs sat above the visible top:
-    // start at the top whenever the section opens or the local list changes size.
-    LaunchedEffect(catalogOpen, packs.size) {
-        listState.scrollToItem(0)
-        PacksUi.localRows = packs.size
+    val base = inputs
+    val records = Areas.list
+    val removals = Areas.removals // T221
+    val rows = remember(base, records, removals, removing) {
+        base?.let { OfflineMapList.rows(it.copy(records = records, removals = removals, removing = removing)) }.orEmpty()
     }
+    val empty = base != null && rows.isEmpty()
+    val foldShown = catalogOpen || (PacksUi.foldOpen ?: empty)
+    val low = catalogOpen || PacksUi.lowered
+
+    LaunchedEffect(refresh) {
+        while (true) {
+            val i = withContext(Dispatchers.IO) { offlineMapInputs(app) }
+            inputs = i
+            val now = OfflineMapList.rows(i.copy(records = Areas.list, removals = Areas.removals))
+            AreaOutlines.show(Areas.list, packBoxes(now)) // T235: every row's outline, a pack with no record by its bounds
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (now.any { it.tone == OfflineMapList.Tone.BUSY }) 700 else 1500) // T150: paused in the background
+        }
+    }
+    LaunchedEffect(rows.size) { PacksUi.localRows = rows.size }
     LaunchedEffect(listState.firstVisibleItemIndex) { PacksUi.firstVisibleItem = listState.firstVisibleItemIndex }
+    // T235: the catalog opens with "From server" at the top of the lower list (T222's note: at font scale 2.0 its header sat
+    // clipped below the window until the list scrolled). Rows that load above it later keep it there (the list keeps its key).
+    val serverIndex = ITEMS_BEFORE_ROWS + (if (empty) 1 else rows.size) + 2
+    LaunchedEffect(catalogOpen, PacksUi.fitRequest, base == null, catalogRows.isEmpty()) {
+        if (catalogOpen) listState.scrollToItem(serverIndex)
+    }
 
     LaunchedEffect(catalogOpen, PacksUi.catalogRefresh, PacksUi.fitRequest) {
         if (!catalogOpen) return@LaunchedEffect
@@ -193,26 +263,14 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
         catalogError = withContext(Dispatchers.IO) { runCatching { client.refresh() }.exceptionOrNull()?.message }
         catalogLoading = false
         val first = withContext(Dispatchers.IO) { client.rows() }
-        rows = first
+        catalogRows = first
         CatalogOverlay.show(first)
         withContext(Dispatchers.IO) { CatalogOverlay.framing(first, runCatching { DystopoApp.instance.map.camera() }.getOrNull())?.let { fitAbove(it) } }
         while (true) {
-            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (rows.any { it.status == CatalogStatus.DOWNLOADING || it.status == CatalogStatus.CHECKING }) 700 else 2000) // T150: paused in the background
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (catalogRows.any { it.status == CatalogStatus.DOWNLOADING || it.status == CatalogStatus.CHECKING }) 700 else 2000) // T150: paused in the background
             val r = withContext(Dispatchers.IO) { client.rows() }
-            rows = r
+            catalogRows = r
             CatalogOverlay.show(r)
-        }
-    }
-
-    LaunchedEffect(refresh) {
-        while (true) {
-            val (p, a, j) = withContext(Dispatchers.IO) { Triple(manager.list(), manager.activeName(), manager.downloads.snapshot()) }
-            region = withContext(Dispatchers.IO) { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(DystopoApp.instance).region.json() }
-            packs = p
-            active = a
-            used = manager.inUse().toSet() // T41: every usable pack is on the map
-            jobs = j
-            io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (j.any { it["state"] == "running" || it["state"] == "queued" }) 500 else 2000) // T150: paused in the background
         }
     }
 
@@ -225,78 +283,82 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
         }
     }
 
-    // T222: the controls of a download's row.
+    // T222: the controls of a catalog row's stopped or paused download.
     fun jobAction(j: Map<String, Any?>, action: String) {
         val name = j["name"] as? String ?: return
         when (action) {
             DownloadStatus.Action.RESUME_NOW.label, DownloadStatus.Action.RETRY.label -> background("Trying again") { manager.downloads.retry(name) }
             DownloadStatus.Action.STORAGE.label -> openStorage(close)
             else -> background("Removing $name") {
-                // An update's stopped download goes; the pack it would have updated stays.
+                // An update's stopped download goes; the map it would have updated stays.
                 if (j["update"] == true) manager.downloads.cancel(name) else manager.delete(name)
                 io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(DystopoApp.instance).region.dismiss(name)
             }
         }
     }
 
-    // T222: the region job stopped before it had a download (its build, or the free-space check): nothing is kept of it.
-    fun regionAction(action: String) {
-        val r = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(DystopoApp.instance).region
-        when (action) {
-            DownloadStatus.Action.RETRY.label -> background("Trying again") { r.retry() }
-            DownloadStatus.Action.STORAGE.label -> openStorage(close)
-            else -> background("Removing") { r.dismiss(null) }
-        }
-    }
-
-    // T53: with the server section open the list takes the lower part of the screen and the map, with the
-    // catalog outlines, shows above it.
     Box(Modifier.fillMaxSize()) {
     // T222: a fresh node for each form. Updating one node from the sheet's modifiers (no status bar padding) to the full screen's
     // recursed in Compose's inset padding until the main thread froze and the stack overflowed (main's screen did it too).
-    key(catalogOpen) {
+    key(low) {
     Column(
-        (if (catalogOpen) Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(PacksUi.CATALOG_SHEET).background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).border(1.dp, Line, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).pointerInput(Unit) { detectTapGestures { } }
+        (if (low) Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(PacksUi.CATALOG_SHEET).background(Paper, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).border(1.dp, Line, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)).pointerInput(Unit) { detectTapGestures { } }
         else Modifier.fillMaxSize().background(Paper).pointerInput(Unit) { detectTapGestures { } }.statusBarsPadding()) // T226: a tap on its paper stays out of the overlay's chips beneath
             .navigationBarsPadding().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            BasicText("Region packs", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
-            Chip("Offline areas") { close(); io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true } // T75
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(Screens.OFFLINE_MAPS, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
+                OfflineMapsHelpIcon() // T109
+            }
+            if (low) {
+                Chip(PacksUi.FULL_LIST) { PacksUi.catalogOpen = false; PacksUi.lowered = false }
+                Spacer(Modifier.width(6.dp))
+            }
             Chip("Close") { close() }
         }
         message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 13.sp)) }
         // T79: the import started from here (progress and result come from the importer).
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRun.message?.takeIf { it.startsWith("Import") }?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 13.sp)) }
-        if (packs.isEmpty()) {
-            BasicText("No packs on this device yet. Choose one from your server below, download one by URL, or import pack files.", style = TextStyle(color = Muted, fontSize = 14.sp))
-        }
         LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(packs, key = { it.info.name }) { p ->
-                PackRow(p, isActive = p.info.name == active, onMap = p.info.name in used,
-                    onShow = { background("Opening ${p.info.name}") { manager.activate(p.info.name); close() } },
-                    onDelete = { background("Deleting ${p.info.name}") { manager.delete(p.info.name) } })
-            }
-            // T222: a region job that stopped before it had a download has no job of its own.
-            if (region["state"] == "failed" && jobs.none { it["name"] == region["name"] }) {
-                item(key = "job-region") { JobRow(region) { regionAction(it) } }
-            }
-            // Catalog downloads have their progress in the catalog row. T222: a finished job's row is the pack's.
-            items(jobs.filter { j -> j["state"] != "done" && j["state"] != "cancelled" && j["graphOnly"] != true && (!catalogOpen || rows.none { it.pack.name == j["name"] }) }, key = { "job-" + it["name"] }) { j ->
-                JobRow(j) { a -> jobAction(j, a) }
-            }
-            // T53: "From server"
-            item(key = "server-header") {
-                Row(
-                    Modifier.fillMaxWidth().clickable { PacksUi.catalogOpen = !catalogOpen }.padding(top = 8.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    BasicText((if (catalogOpen) "\u25BE " else "\u25B8 ") + "From server", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
-                    if (catalogOpen) Chip("Refresh") { PacksUi.catalogRefresh++ }
+            item(key = "intro") { IntroLine() }
+            // T142 (ADR 0041 §5): the picker's ways in; the third is on the long-press card and a search result.
+            item(key = "pickers") {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PickerButton(CHOOSE_COUNTRY) { AreaPicker.openCountries() }
+                    PickerButton(DRAW_AREA) { AreaPicker.startDraw(null) }
                 }
             }
-            if (catalogOpen) {
+            if (empty) item(key = "empty") { BasicText(PacksUi.EMPTY, style = TextStyle(color = Ink, fontSize = 14.sp)) }
+            items(rows, key = { it.id }) { row ->
+                MapRow(row, row.detailKey in Areas.detailOpen) { action ->
+                    rowAction(row, action, base, { id, on -> removing = if (on) removing + id else removing - id }) { refresh++ }
+                }
+            }
+            item(key = "width") { CorridorWidthRow() } // T130
+            // T235: the fold, open by itself while the list is empty.
+            item(key = "fold") {
+                Row(
+                    Modifier.fillMaxWidth().clickable { val o = !foldShown; PacksUi.foldOpen = o; if (!o) PacksUi.catalogOpen = false }.padding(top = 8.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BasicText((if (foldShown) "▾ " else "▸ ") + PacksUi.MORE_WAYS, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
+                }
+            }
+            if (foldShown) {
+                // T53: "From server"
+                item(key = "server-header") {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { PacksUi.catalogOpen = !catalogOpen }.padding(start = 12.dp, top = 4.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        BasicText((if (catalogOpen) "▾ " else "▸ ") + PacksUi.FROM_SERVER, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
+                        if (catalogOpen) Chip("Refresh") { PacksUi.catalogRefresh++ }
+                    }
+                }
+            }
+            if (foldShown && catalogOpen) {
                 item(key = "server-status") {
                     // T79: the alpha said "No server set (Settings)." while Settings had no server field; the status now
                     // opens Settings › Sources (the server URL and its Test), and names the server the catalog came from.
@@ -305,8 +367,8 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                         server == null -> "No server set. Set one in ${Screens.SETTINGS} › ${Screens.SOURCES} ›"
                         catalogLoading -> "Loading the catalog from $server..."
                         catalogError != null -> "Catalog unavailable: $catalogError. Check the server in ${Screens.SETTINGS} › ${Screens.SOURCES} ›"
-                        rows.isEmpty() -> "$server has no packs."
-                        else -> "${DownloadStatus.count(rows.size, "pack")} on $server"
+                        catalogRows.isEmpty() -> "$server has no maps."
+                        else -> "${DownloadStatus.count(catalogRows.size, "map")} on $server"
                     }
                     val linked = server == null || catalogError != null
                     BasicText(
@@ -315,35 +377,42 @@ private fun PacksScreen(manager: PackManager, close: () -> Unit) {
                         modifier = if (linked) Modifier.clickable { close(); io.github.jasondorjeshort.dystopo.app.SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp) else Modifier,
                     )
                 }
-                items(rows, key = { "cat-" + it.pack.id }) { r ->
+                items(catalogRows, key = { "cat-" + it.pack.id }) { r ->
                     CatalogRow(
                         r,
                         onShow = { r.pack.bounds?.let { b -> thread { fitAbove(b) } } },
                         onDownload = { background("Downloading ${r.pack.name}") { client.download(r.pack.id) } },
                         onUpdate = { background("Updating ${r.pack.name}") { client.update(r.pack.name) } },
-                        onDelete = { background("Deleting ${r.pack.name}") { manager.delete(r.pack.name) } },
+                        onDelete = { background("Removing ${r.pack.name}") { manager.delete(r.pack.name) } },
                         onJobAction = { a -> r.job?.let { jobAction(it, a) } },
                     )
                 }
             }
-        }
-        if (!catalogOpen) {
-            BasicText("Download a pack (URL of <name>-dem.pmtiles)", style = TextStyle(color = Muted, fontSize = 13.sp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BasicTextField(
-                    url, { url = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = Ink, fontSize = 14.sp),
-                    modifier = Modifier.weight(1f).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(10.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Chip("Download") { if (url.isNotBlank()) background("Starting download") { manager.downloads.start(url) } }
-            }
-            // T79: pack files already on the phone (Downloads, a USB stick, a cloud drive) through the system file picker.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BasicText("Or pick <name>-dem.pmtiles (and -outdoors.pmtiles) on this phone", Modifier.weight(1f), style = TextStyle(color = Muted, fontSize = 13.sp))
-                Spacer(Modifier.width(8.dp))
-                Chip("Import files") { ImportPicker.request() }
+            // The link box and Import, while the catalog is closed (at the lower height the catalog keeps the room, as before).
+            if (foldShown && !catalogOpen) {
+                item(key = "link") {
+                    Column(Modifier.padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BasicText(PacksUi.LINK_LINE, style = TextStyle(color = Muted, fontSize = 13.sp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            BasicTextField(
+                                url, { url = it },
+                                singleLine = true,
+                                textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+                                modifier = Modifier.weight(1f).border(1.dp, Line, RoundedCornerShape(6.dp)).padding(10.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Chip("Download") { if (url.isNotBlank()) background("Starting download") { manager.downloads.start(url) } }
+                        }
+                    }
+                }
+                // T79: map files already on the phone (Downloads, a USB stick, a cloud drive) through the system file picker.
+                item(key = "import") {
+                    Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        BasicText(PacksUi.IMPORT_LINE, Modifier.weight(1f), style = TextStyle(color = Muted, fontSize = 13.sp))
+                        Spacer(Modifier.width(8.dp))
+                        Chip(PacksUi.IMPORT) { ImportPicker.request() }
+                    }
+                }
             }
         }
     }
@@ -360,7 +429,7 @@ private val StatusColors = mapOf(
 )
 
 /**
- * T53: one pack of the server's catalog: name, status and size, and its actions; T222: a tap also opens the zooms, the profile,
+ * T53: one map of the server's catalog: name, status and size, and its actions; T222: a tap also opens the zooms, the profile,
  * the build date and the area, and a stopped or paused download says so with its own controls.
  */
 @Composable
@@ -404,8 +473,8 @@ private fun CatalogRow(r: PackCatalogClient.Row, onShow: () -> Unit, onDownload:
             if (halted != null) JobActions(job, onJobAction)
             else when (r.status) {
                 CatalogStatus.AVAILABLE -> Chip("Download", onClick = onDownload)
-                CatalogStatus.UPDATE -> { Chip("Update", onClick = onUpdate); Chip("Delete", onClick = onDelete) }
-                CatalogStatus.INSTALLED, CatalogStatus.CHECKING -> Chip("Delete", onClick = onDelete)
+                CatalogStatus.UPDATE -> { Chip("Update", onClick = onUpdate); Chip("Remove", onClick = onDelete) }
+                CatalogStatus.INSTALLED, CatalogStatus.CHECKING -> Chip("Remove", onClick = onDelete)
                 CatalogStatus.DOWNLOADING -> {}
             }
         }
@@ -421,84 +490,7 @@ private fun area(b: PackBounds): String {
     return size + String.format(Locale.US, "  ·  %.2f, %.2f to %.2f, %.2f", b.minLat, b.minLon, b.maxLat, b.maxLon)
 }
 
-@Composable
-private fun PackRow(p: PackManager.Listed, isActive: Boolean, onMap: Boolean, onShow: () -> Unit, onDelete: () -> Unit) {
-    val info = p.info
-    val b = info.bounds
-    val key = "pack:${info.name}"
-    Column(
-        Modifier.fillMaxWidth()
-            .border(if (isActive) 2.dp else 1.dp, if (isActive) Accent else Line, RoundedCornerShape(8.dp))
-            .clickable { PacksUi.toggle(key) } // T222: the detail; Show on map is in it (T41's tap to go there)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(info.name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold))
-            val word = DownloadStatus.packWord(isActive, onMap, info.usable, info.dem != null, info.vector != null)
-            BasicText(word, style = TextStyle(color = if (isActive) Accent else if (word == "INCOMPLETE") Bad else Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
-            Spacer(Modifier.width(10.dp))
-            Chip("Delete", onClick = onDelete)
-        }
-        BasicText(DownloadStatus.sizeText(info.bytes), style = TextStyle(color = Ink, fontSize = 14.sp))
-        if (PacksUi.detail == key) {
-            val parts = listOfNotNull(
-                (info.dem ?: info.vector)?.let { "z${it.minZoom}-${it.maxZoom}" },
-                DownloadStatus.contentsWord(info.dem != null, info.vector != null), // T65: vector-only packs
-            )
-            BasicText(parts.joinToString("  ·  "), style = TextStyle(color = Ink, fontSize = 14.sp))
-            if (b != null) {
-                BasicText(
-                    String.format(Locale.US, "%.3f, %.3f to %.3f, %.3f", b.minLat, b.minLon, b.maxLat, b.maxLon),
-                    style = TextStyle(color = Muted, fontSize = 12.sp),
-                )
-            }
-            p.files.files.forEach { BasicText(it.name, style = TextStyle(color = Muted, fontSize = 12.sp)) }
-            if (info.attribution.isNotEmpty()) BasicText(info.attribution, style = TextStyle(color = Muted, fontSize = 11.sp), maxLines = 2)
-            p.errors.forEach { BasicText(it, style = TextStyle(color = Bad, fontSize = 12.sp)) }
-            if (info.usable) Chip("Show on map", Modifier.padding(top = 4.dp), onClick = onShow)
-        }
-    }
-}
-
-/**
- * T222: a download's row, or the region job's when it stopped before it had one: the name, one state word, the sentence, the
- * progress while there is any, the controls; a tap shows the raw error and the files.
- */
-@Composable
-private fun JobRow(j: Map<String, Any?>, onAction: (String) -> Unit) {
-    val name = j["name"]?.toString().orEmpty()
-    val key = "job:$name"
-    val word = j["word"] as? String ?: ""
-    val stopped = word == DownloadStatus.WORD_STOPPED
-    val done = (j["bytesDone"] as? Number)?.toLong() ?: 0L
-    val total = (j["bytesTotal"] as? Number)?.toLong()
-    val fraction = if (total != null && total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-    Column(
-        Modifier.fillMaxWidth().background(Color(0xFFF4EDE0), RoundedCornerShape(8.dp)).clickable { PacksUi.toggle(key) }.padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(name, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-            BasicText(word.uppercase(Locale.US), style = TextStyle(color = if (stopped) Bad else Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold))
-        }
-        (j["sentence"] as? String)?.let { BasicText(it, style = TextStyle(color = if (stopped) Bad else Ink, fontSize = 14.sp)) }
-        if (j.containsKey("bytesDone") && (done > 0 || !stopped)) {
-            val rate = (j["bytesPerSec"] as? Number)?.toLong()?.takeIf { word == DownloadStatus.WORD_DOWNLOADING }?.let { " · ${it / 1024} KB/s" }.orEmpty()
-            BasicText("${mb(done)} of ${total?.let(::mb) ?: "?"}$rate", style = TextStyle(color = Muted, fontSize = 13.sp))
-            Box(Modifier.fillMaxWidth().height(6.dp).background(Line, RoundedCornerShape(3.dp))) {
-                Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(Accent, RoundedCornerShape(3.dp)))
-            }
-        }
-        if (PacksUi.detail == key) {
-            ((j["errorDetail"] ?: j["error"]) as? String)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
-            (j["files"] as? List<*>).orEmpty().forEach { f -> (f as? Map<*, *>)?.get("file")?.let { BasicText(it.toString(), style = TextStyle(color = Muted, fontSize = 12.sp)) } }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { JobActions(j, onAction) }
-    }
-}
-
-/** T222: the row's controls, by their labels. Remove on an update's download leaves the installed pack, and says so. */
+/** T222: a catalog row's download controls, by their labels. Remove on an update's download leaves the installed map, and says so. */
 @Composable
 private fun JobActions(j: Map<String, Any?>?, onAction: (String) -> Unit) {
     (j?.get("actions") as? List<*>).orEmpty().forEach { a ->

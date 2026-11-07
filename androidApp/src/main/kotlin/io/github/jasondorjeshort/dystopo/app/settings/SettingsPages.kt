@@ -43,7 +43,6 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.app.firstrun.Sources
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
-import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 import io.github.jasondorjeshort.dystopo.app.tracking.BatteryExemption
 import io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles
 import io.github.jasondorjeshort.dystopo.model.Activity
@@ -476,8 +475,8 @@ private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dysto
  * T79: Settings › Sources: the Dystopo server (online tiles where no pack covers the view, the pack catalog,
  * "Download the map around me"). Save applies it like `POST /settings?server=` (validated; plain http only to a
  * home-network address, [io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy]) and then tests it;
- * Test fetches the catalog of what is typed and shows the pack count or the error; "Packs ›" opens the pack
- * list with the server's catalog. T103: the first row of Settings › Data and storage.
+ * Test fetches the catalog of what is typed and shows the pack count or the error; "Choose from server ›" (T235; "Packs ›"
+ * before) opens the Offline maps list with the server's catalog. T103: the first row of Settings › Data and storage.
  */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
@@ -526,11 +525,9 @@ private fun SourcesSection() {
                 }
             }
             Option("Test", false) { val value = text; thread(name = "dystopo-server-test") { Sources.test(value) } }
-            Option(Screens.PACKS + " ›", false) {
+            Option("Choose from server ›", false) { // T235 (ADR 0056): the first-run card's words for the same act, and its code
                 SettingsUi.visible = false
-                PacksUi.catalogOpen = true
-                PacksUi.fitRequest++
-                PacksUi.visible = true
+                FirstRun.chooseFromServer()
             }
         }
         val saved = AppSettings.server

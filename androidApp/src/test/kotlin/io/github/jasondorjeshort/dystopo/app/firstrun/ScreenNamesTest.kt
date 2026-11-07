@@ -68,7 +68,7 @@ class ScreenNamesTest {
         val settings = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/settings/SettingsPages.kt").readText() // T103: the sheet's rows
         assertTrue("BasicText(Screens.SOURCES" in settings, "the settings sheet has no Sources heading")
         val packs = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/packs/PacksScreen.kt").readText()
-        assertTrue("\"From server\"" in packs, "the pack list has no From server section")
+        assertTrue("\"From server\"" in packs, "the Offline maps list has no From server section")
     }
 
     @Test
@@ -90,6 +90,15 @@ class ScreenNamesTest {
         assertEquals(null, ScreenRefs.problem(ScreenRefs.find("No server set (Settings).").single()))
         assertEquals(emptyList(), ScreenRefs.find("a 404 from the server (HTTP 404) in Overpass mode"))
         assertEquals(listOf(ScreenRefs.Ref("Settings", "Data and storage")), ScreenRefs.find("Settings › Data and storage › Sources › Mobile data")) // T115
+        // T235 (ADR 0056 B1b): a screen whose name has two words is read whole, in all four forms.
+        assertEquals(listOf(ScreenRefs.Ref("Offline maps", null)), ScreenRefs.find("or import one (Offline maps)."))
+        assertEquals(listOf(ScreenRefs.Ref("Offline maps", null)), ScreenRefs.find("You can download later from Offline maps."))
+        assertEquals(listOf(ScreenRefs.Ref("Offline maps", null)), ScreenRefs.find("Open the Offline maps list."))
+        assertEquals(listOf(ScreenRefs.Ref("Offline maps", "From server")), ScreenRefs.find("Offline maps › From server"))
+        assertEquals(null, ScreenRefs.problem(ScreenRefs.find("Settings › Offline maps").single()))
+        assertEquals(null, ScreenRefs.problem(ScreenRefs.find("Choose one in Offline maps › From server.").single()))
+        assertTrue(ScreenRefs.problem(ScreenRefs.find("Remove it in Offline maps › Downloads.").single()) != null)
+        assertTrue(ScreenRefs.problem(ScreenRefs.find("or import pack files (Packs).").single()) != null) // the old name is no screen now
     }
 }
 
@@ -97,7 +106,12 @@ class ScreenNamesTest {
 object ScreenRefs {
     data class Ref(val screen: String, val section: String?)
 
-    private const val WORD = "[A-Z][a-z]+"
+    /**
+     * A screen's name: T235 (ADR 0056 B1b), the names of [Screens.ALL] that have more than one word ("Offline maps"), longest
+     * first, or one capitalised word (so an unknown screen is still caught).
+     */
+    private val WORD = Screens.ALL.keys.filter { ' ' in it }.sortedByDescending { it.length }
+        .joinToString("") { Regex.escape(it) + "|" }.let { "(?:$it[A-Z][a-z]+)" }
     // T115: a deeper level of a path ("Settings › Data and storage › Sources › Mobile data") is not a screen of its own.
     private val arrow = Regex("(?<!› )($WORD) › ([A-Z][^.,;:)›]*)")
     private val paren = Regex("\\(($WORD)\\)")

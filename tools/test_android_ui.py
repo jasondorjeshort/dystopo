@@ -335,4 +335,45 @@ try:
 finally:
     ui.time.sleep = real_sleep
 
+# T235 (ADR 0056 B1b): the one list's labels, the Packs screen's still accepted.
+for label in ("Packs", "Offline maps"):
+    assert re.search(ui.PACKS_CHIP, label), label
+assert not re.search(ui.PACKS_CHIP, "Offline maps ›") and not re.search(ui.PACKS_CHIP, "Offline areas")
+for header in ("▸ From server", "▾ From server", "From server"):
+    assert re.search(ui.FROM_SERVER, header), header
+assert re.search(ui.ADD_FOLD, "▸ More ways to add a map") and re.search(ui.ADD_FOLD, "▾ More ways to add a map")
+assert not re.search(ui.ADD_FOLD, "From server")
+# A finished catalog download: the catalog row's word, the Packs screen's words, or one more row of the list reading Saved.
+assert ui.pack_saved(["rainier", "INSTALLED"]) and ui.pack_saved(["ACTIVE"]) and ui.pack_saved(["Saved as rainier"])
+assert ui.pack_saved(["default", "Saved", "rainier", "Saved"], saved_before=1)
+assert not ui.pack_saved(["default", "Saved", "rainier", "Downloading 40%"], saved_before=1)
+
+
+class Folded:
+    """A list whose fold is below the window until one swipe, then shows folded."""
+    def __init__(self):
+        self.swipes, self.taps = 0, []
+
+    def wait_for(self, pattern, timeout):
+        n = {"text": "▸ More ways to add a map", "bounds": [0, 0, 1, 1]} if self.swipes else None
+        return (n if n and re.search(pattern, n["text"]) else None), []
+
+    def shell(self, *a):
+        if a[:2] == ("input", "swipe"):
+            self.swipes += 1
+        return "Physical size: 1080x2400" if a[:2] == ("wm", "size") else "Physical density: 420"
+
+    def tap(self, n):
+        self.taps.append(n["text"])
+
+
+ui.time.sleep = lambda s: None
+try:
+    f = Folded()
+    assert ui.open_fold_header(f, ui.ADD_FOLD)["text"].endswith("add a map") and f.swipes == 1 and f.taps == ["▸ More ways to add a map"]
+    g = Folded()
+    assert ui.open_fold_header(g, ui.FROM_SERVER, swipes=2) is None and g.swipes == 3 and not g.taps
+finally:
+    ui.time.sleep = real_sleep
+
 print("test_android_ui: ok")

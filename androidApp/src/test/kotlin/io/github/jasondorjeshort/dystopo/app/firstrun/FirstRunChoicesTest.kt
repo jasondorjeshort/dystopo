@@ -65,7 +65,7 @@ class FirstRunChoicesTest {
         }
         assertTrue("Settings › Sources" in direct)
         assertTrue(none.startsWith("No server set")) // tools/android-firstrun.py keys on it
-        assertEquals("You can download later from Packs.", NOT_NOW_LINE)
+        assertEquals("You can download later from Offline maps.", NOT_NOW_LINE)
     }
 
     @Test

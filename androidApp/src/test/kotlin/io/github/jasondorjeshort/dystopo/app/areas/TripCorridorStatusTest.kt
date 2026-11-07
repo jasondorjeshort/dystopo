@@ -41,7 +41,7 @@ class TripCorridorStatusTest {
             assertTrue(h.length <= 330, "${h.length}: $h")
         }
         assertTrue("${km()} each side" in corridorHelp(1000, m))
-        assertTrue("not kept offline on their own" in corridorHelp(0, m))
+        assertTrue("not download their map on their own" in corridorHelp(0, m)) // T235: ADR 0056's words
         assertTrue(corridorLine(12_000.0, 1000.0, m, trip = true).startsWith("Trip corridor "))
         assertTrue(corridorLine(12_000.0, 1000.0, m, trip = true).endsWith("${km()} each side"))
     }

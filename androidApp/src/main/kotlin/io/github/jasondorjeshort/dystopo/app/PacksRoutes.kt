@@ -4,7 +4,7 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 
 /**
- * Debug routes for region packs (registered with one line in [Routes]):
+ * Debug routes for packs, the files behind the offline maps (registered with one line in [Routes]):
  * - `GET /packs`: every pack on the device (name, bounds, zooms, bytes, attribution, per-archive
  *   header facts) and which one is active.
  * - `POST /packs/activate?name=`: switch packs; the camera moves to the pack's bounds.
@@ -17,9 +17,13 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
  * - `POST /packs/region/retry` (T222): the same for the region job, which builds again when it stopped before its download.
  * - `POST /packs/download/free?bytes=` (T222): a figure for the free space, for the free-space check; without `bytes`, the phone's own again.
  * - `DELETE /packs/{name}` (or `POST /packs/delete?name=`): delete a pack, cancelling its download.
- * - `POST /packs/ui?show=true|false[&catalog=1|0][&detail=]`: open or close the pack list screen (for screenshots);
- *   `catalog=1` opens the "From server" section too (list in the lower part, catalog outlines on the map,
- *   camera fitted to them). T222: `detail=pack:<name>`, `cat:<id>` or `job:<name>` opens that row's detail, as a tap on it does (empty: none).
+ * - `POST /packs/ui?show=true|false[&catalog=1|0][&fold=1|0][&full=1][&detail=]`: open or close the Offline maps list (T235,
+ *   ADR 0056 B1b: the one list, the same as `POST /areas/ui`; for screenshots); `catalog=1` opens the fold "More ways to add a
+ *   map" and its "From server" section (the list at its lower height, catalog outlines on the map, camera fitted to them);
+ *   `fold=1|0` opens or closes the fold alone; `full=1` is the "Full list" action (the full height, the catalog closed). T222:
+ *   `detail=cat:<id>` opens a catalog row's detail and `pack:<name>` (or `job:<name>`) or `area:<id>` a row of the list, as a tap
+ *   on it does (empty: none). Answers `visible`, `detail`, `rowDetail` (the list's open rows), `catalogOpen`, `foldOpen` (null:
+ *   open while the list is empty), `height` (`full` or `lower`), `firstVisibleItem` and `localRows` (every row of the list).
  *
  * T53, the server's pack catalog (`GET /catalog` on the server set in `/settings?server=`):
  * - `GET /packs/catalog[?refresh=1][&server=]`: the catalog with each pack's status on this device
@@ -58,14 +62,30 @@ object PacksRoutes {
                 r.method == "POST" && r.path == "/packs/delete" -> Response.json(m.delete(r.query["name"] ?: return bad("name required")))
                 r.method == "POST" && r.path == "/packs/ui" -> {
                     val show = r.query["show"] != "false"
-                    val catalog = r.query["catalog"]?.let { it == "1" || it == "true" }
-                    app.map.onMain {
+                    fun flag(k: String) = r.query[k]?.let { it == "1" || it == "true" }
+                    val catalog = flag("catalog")
+                    val fold = flag("fold")
+                    val answer = app.map.onMain {
                         PacksUi.visible = show
                         if (catalog != null) PacksUi.catalogOpen = catalog
                         if (catalog == true) PacksUi.fitRequest++
-                        r.query["detail"]?.let { PacksUi.detail = it.ifEmpty { null } } // T222
+                        if (fold != null) { PacksUi.foldOpen = fold; if (!fold) PacksUi.catalogOpen = false } // T235
+                        if (flag("full") == true) { PacksUi.catalogOpen = false; PacksUi.lowered = false } // T235: "Full list"
+                        r.query["detail"]?.let { d -> // T222; T235: a row of the one list opens as its tap does
+                            val row = d.replace(Regex("^job:"), io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList.PACK)
+                            when {
+                                d.isEmpty() -> { PacksUi.detail = null; io.github.jasondorjeshort.dystopo.app.areas.Areas.detailOpen = emptySet() }
+                                d.startsWith("cat:") -> PacksUi.detail = d
+                                row.startsWith(io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList.AREA) -> io.github.jasondorjeshort.dystopo.app.areas.Areas.detailOpen += row.removePrefix(io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList.AREA)
+                                else -> io.github.jasondorjeshort.dystopo.app.areas.Areas.detailOpen += row
+                            }
+                        }
+                        linkedMapOf(
+                            "visible" to show, "detail" to PacksUi.detail, "rowDetail" to io.github.jasondorjeshort.dystopo.app.areas.Areas.detailOpen.toList(),
+                            "catalogOpen" to PacksUi.catalogOpen, "foldOpen" to PacksUi.foldOpen, "height" to (if (PacksUi.catalogOpen || PacksUi.lowered) "lower" else "full"),
+                        )
                     }
-                    Response.json(mapOf("visible" to show, "detail" to app.map.onMain { PacksUi.detail }, "catalogOpen" to app.map.onMain { PacksUi.catalogOpen }, "firstVisibleItem" to PacksUi.firstVisibleItem, "localRows" to PacksUi.localRows)) // T57
+                    Response.json(answer + mapOf("firstVisibleItem" to PacksUi.firstVisibleItem, "localRows" to PacksUi.localRows)) // T57
                 }
                 // T53: the server's catalog
                 r.method == "GET" && r.path == "/packs/catalog" -> {
