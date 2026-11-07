@@ -219,7 +219,8 @@ object OfflineMapList {
             update -> UPDATE_AVAILABLE to Tone.PLAIN
             else -> SAVED to Tone.GOOD
         }
-        val bounds = pack?.bounds ?: newest?.area?.bounds?.toList() ?: region?.bounds
+        // The region job's box also while its download runs (no pack and no record yet), so Show on map has it.
+        val bounds = pack?.bounds ?: newest?.area?.bounds?.toList() ?: i.regionJob?.takeIf { it.name == p }?.bounds
         val detail = ArrayList<String>()
         if (pack != null) detail += if (pack.hasVector && pack.hasDem) HOLDS_ALL else if (pack.hasVector) HOLDS_VECTOR else HOLDS_TERRAIN
         detail += NEVER_CLEARED

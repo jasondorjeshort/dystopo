@@ -323,6 +323,8 @@ class OfflineMapListTest {
         assertEquals("Download stopped", L.rows(failed).single().state)
         assertEquals(L.RemovePlan(dismissRegion = p), L.removePlan(L.rows(failed).single(), failed))
         assertTrue(L.rows(L.Inputs(regionJob = L.RegionJob(p, "done"))).isEmpty(), "a finished region job is its pack's row, not one of its own")
+        val downloading = L.Inputs(regionJob = L.RegionJob(p, "downloading", bounds = listOf(-121.76, 46.77, -121.70, 46.80)), jobs = listOf(L.Job(p, "running", "downloading", percent = 10.0)))
+        assertEquals(listOf(L.SHOW_ON_MAP, L.REMOVE), L.rows(downloading).single().actions, "the region's box while its download runs")
     }
 
     @Test
