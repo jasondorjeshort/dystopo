@@ -6,7 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-07
 
-- T242: The online tile cache's index off the main thread and compact, the snapshot if the day allows (added 2026-11-07 from the owner's phone; launched after T235, a release after it)
+- T242: The online tile cache's index off the main thread and compact (the owner's startup freeze over a large cache)
 - T235: ADR 0056 B1b: one list, one name
 - T234: ADR 0056 B1a: the rows of one list
 
