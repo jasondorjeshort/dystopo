@@ -108,6 +108,8 @@ object OfflineMapList {
         val now: Long = 0L,
         /** Row ids whose Remove runs now (the sheet's; a pack's removal has no [Areas.Removal]): they read Removing. */
         val removing: Set<String> = emptySet(),
+        /** T242: the online cache's index is being built, so an area row's share is unknown: it says [INDEXING_LINE] instead. */
+        val indexing: Boolean = false,
     )
 
     /** How a row's state word reads: [BUSY] rows go first; [BAD] and [GOOD] colour the word. */
@@ -178,6 +180,8 @@ object OfflineMapList {
     const val CLEARED_FIRST = "Counts in the budget; cleared first when space runs short"
     const val SHOWN_FIRST = "Shown first where maps overlap"
     const val REMOVE_STOPS_ONLY = "Remove stops this download; the map stays until you remove it again."
+    /** T242: where an area row's share would be while the online cache's index is built. */
+    const val INDEXING_LINE = io.github.jasondorjeshort.dystopo.app.online.TileCache.INDEXING_LINE
 
     private val LIVE_JOB_STATES = setOf("queued", "running", "paused", "failed")
     private val REGION_STATES = setOf("building", "downloading", "paused", "failed")
@@ -281,7 +285,8 @@ object OfflineMapList {
             shapeLine(r, i.units)?.let { detail += it }
             detail += areaDetailLines(r.area)
             val share = i.coverage[r.id]
-            detail += "${sizeText(r.bytes)} downloaded (about ${sizeText(r.estimateBytes)} planned)" + (share?.let { String.format(Locale.US, " · %.0f%% on this phone", it * 100) } ?: "")
+            detail += "${sizeText(r.bytes)} downloaded (about ${sizeText(r.estimateBytes)} planned)" +
+                (share?.let { String.format(Locale.US, " · %.0f%% on this phone", it * 100) } ?: if (i.indexing) " · $INDEXING_LINE" else "") // T242
             r.source?.let { detail += "From $it" }
             olderFrom?.let { detail += if (it) OTHER_SOURCE_NOTE else OLDER_NOTE }
             r.error?.let { detail += it }

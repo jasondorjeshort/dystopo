@@ -390,6 +390,7 @@ object AreaDownload {
             j.manifest = m
             Areas.saveManifest(m)
             // T91: pinned tiles have their own budget (pinnedCacheMb, Settings › Storage); refuse a download that would pass it.
+            OnlineService.get(app).cache.awaitReady("AreaDownload's pinned budget check") // T242: the pinned bytes are partial until then
             budgetRefusal(j.area, OnlineService.get(app).cache.pinnedBytes, m.bytes, pinnedOwn(Areas.get(j.id)), AppSettings.pinnedCacheMb)?.let { throw Refused(it) }
             // T106: it fits, so it is pinned now, before any tile is fetched (nothing fetched for it is evicted on the way).
             Areas.update(j.id) { if (it.pinned) it else it.copy(pinned = true) }
@@ -647,7 +648,7 @@ object AreaDownload {
         val ok = when (val f = fetcher.get(item.route, path, transform, fresh = true)) { // T95: the current version, so a download again refreshes
             is Fetch.Hit -> {
                 if (!valid(item.route, f.bytes)) {
-                    Areas.cacheKeys(item.route, path, held = false).forEach { OnlineService.get(app).cache.clear(it) }
+                    Areas.cacheKeys(item.route, path, held = false).forEach { OnlineService.get(app).cache.remove(it) } // T242: one key, also while indexing
                     j.invalid.incrementAndGet()
                 } else if (f.cached) {
                     j.cached.incrementAndGet()

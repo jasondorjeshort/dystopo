@@ -37,7 +37,14 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class OnlineService private constructor(private val app: DystopoApp) {
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: TileCache") } // T228
-    val cache = TileCache(File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024) // T41: the cap is a setting
+    /**
+     * T41: the cap is a setting. T242: the constructor returns at once; the index is built on its own thread ([TileCache.state]),
+     * so the launch no longer walks the cache on the main thread (120 s over a cache of tens of GB on a phone).
+     */
+    val cache = TileCache(
+        File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024,
+        walkHook = if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS) indexHold(app) else null, // T242: POST /debug/cache/hold
+    )
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: after TileCache") } // T228
 
     @Volatile var fetcher: OnlineFetcher? = null
@@ -472,7 +479,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
         app.tiles.online?.forgetMissing()
         fetcher?.retryNow() // the map's next requests for tiles that failed in the meantime are not answered from the fetcher's failure memo
         val names = back.toSet()
-        demHaloVariantsDropped.addAndGet(cache.clearWhere { OnlineTiles.namesHaloTile(it, names) }.toLong())
+        // T242: over the whole index, so once it is whole: not on this thread, which also runs the probe, while it is built.
+        val drop = { demHaloVariantsDropped.addAndGet(cache.clearWhere { OnlineTiles.namesHaloTile(it, names) }.toLong()) }
+        if (cache.ready) drop() else cache.whenReady("dem-halo-drop") { drop() }
         demRefresh.recovered(t, back.size)
         if (demRefresh.claim(t)) refreshDemSource()
     }
@@ -785,6 +794,28 @@ class OnlineService private constructor(private val app: DystopoApp) {
                 out += PackMetadata("online-osm", server, mapOf("name" to "Online map", "provenance" to map, "attribution" to credit))
             }
             return out
+        }
+
+        /** T242, debug builds: the file holding the next launch's index walk at its first file ([holdNextIndex]). */
+        private const val INDEX_HOLD_FILE = ".cache-index-hold"
+
+        /** T242, debug builds: holds the next launch's index walk [ms] at its first file (0 forgets it), once, so the window is seen. */
+        fun holdNextIndex(app: DystopoApp, ms: Long) {
+            val f = File(app.filesDir, INDEX_HOLD_FILE)
+            if (ms <= 0) f.delete() else f.writeText(ms.toString())
+        }
+
+        fun pendingIndexHoldMs(app: DystopoApp): Long = File(app.filesDir, INDEX_HOLD_FILE).takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() ?: 0L
+
+        /** The walk's hook in debug builds: at its first file (on its thread) it takes the pending hold and sleeps it. */
+        private fun indexHold(app: DystopoApp): (Long) -> Unit = { n ->
+            if (n == 1L) runCatching {
+                val ms = pendingIndexHoldMs(app)
+                if (ms > 0) {
+                    File(app.filesDir, INDEX_HOLD_FILE).delete()
+                    Thread.sleep(ms)
+                }
+            }
         }
 
         @Volatile private var instance: OnlineService? = null

@@ -30,6 +30,17 @@ import java.io.File
  * - T229 `POST /debug/tracking/delay?ms=0..120000`: holds the tracker's construction ([Tracking.start]) that long in the
  *   next launch, once (a file, so a force-stop keeps it; `ms=0` forgets it), so the window before `GET /tracks` reads
  *   `ready: true` can be seen: the chips drawn without the tracker, "Starting" on the Record chip. Answers `pendingDelayMs`.
+ * - T242 `GET /debug/cache[?gc=1]`: the two tile caches' indexes ([io.github.jasondorjeshort.dystopo.app.online.TileCache.json]
+ *   and its `index`: `state` indexing or ready, `partial`, `entries`, `bytes`, `walked`, `walkMs`, `heapBytes` (the index's
+ *   heap, estimated from its arrays) and `heapBytesPerEntry`), the Java heap in use (`gc=1` collects first), and the last
+ *   fill. `POST /debug/cache/fill?files=1..400000&bytes=16..65536[&clear=1]` writes that many synthetic tiles straight
+ *   into the online cache's directory, in the real key shape (`fill.example_8770/dem@f1/<z>/<x>/<y>.png` and a fifth as
+ *   `osm@f1/.../<y>.pbf`, columns of 256 around Rainier, file times spread over the last 1000 minutes), on a thread of its
+ *   own; the running index does not count them, the next launch's walk does (that is what it is for). `clear=1` deletes
+ *   them instead (through the cache, once its index is whole). Answers at once; `GET /debug/cache`'s `fill` follows it.
+ *   `POST /debug/cache/hold?ms=0..120000` holds the next launch's walk of the online cache that long at its first file, once
+ *   (a file, as the tracking delay), so the `indexing` window can be seen: the one list and the Storage screen saying so,
+ *   a kill mid-index. Answers `pendingHoldMs`.
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -50,6 +61,20 @@ object DebugRoutes {
                 val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
                 io.github.jasondorjeshort.dystopo.app.tracking.Tracking.delayNextStart(app, ms)
                 Response.json(mapOf("pendingDelayMs" to io.github.jasondorjeshort.dystopo.app.tracking.Tracking.pendingDelayMs(app)))
+            }
+            "GET" to "/debug/cache" -> Response.json(cacheJson(app, gc = r.query["gc"] == "1")) // T242
+            "POST" to "/debug/cache/fill" -> { // T242
+                val clear = r.query["clear"] == "1"
+                val files = r.query["files"]?.toIntOrNull()?.takeIf { it in 1..400_000 } ?: if (clear) 0 else return Response.json(mapOf("error" to "files must be 1..400000"), 400)
+                val bytes = r.query["bytes"]?.toIntOrNull()?.takeIf { it in 16..65_536 } ?: if (clear) 0 else return Response.json(mapOf("error" to "bytes must be 16..65536"), 400)
+                if (fill?.get("running") == true) return Response.json(mapOf("error" to "a fill is running", "fill" to fill), 409)
+                startFill(app, files, bytes, clear)
+                Response.json(mapOf("started" to true, "files" to files, "bytes" to bytes, "clear" to clear))
+            }
+            "POST" to "/debug/cache/hold" -> { // T242, as T229's tracking delay
+                val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
+                io.github.jasondorjeshort.dystopo.app.online.OnlineService.holdNextIndex(app, ms)
+                Response.json(mapOf("pendingHoldMs" to io.github.jasondorjeshort.dystopo.app.online.OnlineService.pendingIndexHoldMs(app)))
             }
             "GET" to "/debug/cpu" -> Response.json(cpu())
             "GET" to "/debug/strictmode" -> Response.json(StrictModeCounts.json())
@@ -85,6 +110,76 @@ object DebugRoutes {
     }
 
     @Volatile private var previous: ThreadCpu.Snapshot? = null
+
+    /** T242: the last `POST /debug/cache/fill` (its progress while it runs). */
+    @Volatile private var fill: Map<String, Any?>? = null
+
+    /** T242: the server key the fill writes under, so `clear=1` finds its tiles and nothing else. */
+    private const val FILL_SERVER = "fill.example_8770"
+
+    private fun cacheJson(app: DystopoApp, gc: Boolean): Map<String, Any?> {
+        val rt = Runtime.getRuntime()
+        if (gc) rt.gc()
+        val online = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache
+        return linkedMapOf(
+            "online" to online.json(),
+            "contours" to io.github.jasondorjeshort.dystopo.app.ContourCache.get(app).json(),
+            "javaHeap" to linkedMapOf("usedBytes" to rt.totalMemory() - rt.freeMemory(), "maxBytes" to rt.maxMemory(), "gc" to gc),
+            "fill" to fill,
+        )
+    }
+
+    /**
+     * T242: `POST /debug/cache/fill`: [files] tiles of [bytes] each written straight into the online cache's directory, in
+     * columns of 256 (one leaf directory each) at zooms 16 down to 9 around Rainier, four in five DEM tiles and one in five
+     * vector tiles, file times spread over the last 1000 minutes; or, [clear], those tiles deleted through the cache.
+     */
+    private fun startFill(app: DystopoApp, files: Int, bytes: Int, clear: Boolean) {
+        val cache = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache
+        val t0 = SystemClock.elapsedRealtime()
+        fill = linkedMapOf("running" to true, "files" to files, "bytes" to bytes, "clear" to clear, "done" to 0)
+        Thread({
+            var done = 0
+            var error: String? = null
+            try {
+                if (clear) {
+                    done = cache.clear("$FILL_SERVER/")
+                    File(cache.dir, FILL_SERVER).deleteRecursively() // what the index never saw
+                } else {
+                    val body = ByteArray(bytes) { (it * 31).toByte() }
+                    val now = System.currentTimeMillis()
+                    var z = 16
+                    while (done < files && z >= 9) {
+                        val n = 1 shl z
+                        val cx = ((-121.76 + 180.0) / 360.0 * n).toInt()
+                        val lat = Math.toRadians(46.85)
+                        val cy = ((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2 * n).toInt()
+                        val side = minOf(n, 256)
+                        var col = 0
+                        while (done < files && col < side) {
+                            val x = (cx - side / 2 + col).coerceIn(0, n - 1)
+                            val osm = col % 5 == 4
+                            val dir = File(cache.dir, "$FILL_SERVER/${if (osm) "osm" else "dem"}@f1/$z/$x").apply { mkdirs() }
+                            for (row in 0 until side) {
+                                if (done >= files) break
+                                val y = (cy - side / 2 + row).coerceIn(0, n - 1)
+                                val f = File(dir, "$y.${if (osm) "pbf" else "png"}")
+                                f.writeBytes(body)
+                                f.setLastModified(now - (done % 1000) * 60_000L)
+                                done++
+                                if (done % 1000 == 0) fill = fill.orEmpty() + mapOf("done" to done, "ms" to SystemClock.elapsedRealtime() - t0)
+                            }
+                            col++
+                        }
+                        z--
+                    }
+                }
+            } catch (e: Throwable) {
+                error = "${e.javaClass.simpleName}: ${e.message}"
+            }
+            fill = linkedMapOf("running" to false, "files" to files, "bytes" to bytes, "clear" to clear, "done" to done, "ms" to SystemClock.elapsedRealtime() - t0, "error" to error)
+        }, "debug-cache-fill").apply { isDaemon = true }.start()
+    }
 
     private fun cpu(): Map<String, Any?> {
         val now = ThreadCpu.read()

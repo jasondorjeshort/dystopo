@@ -33,6 +33,8 @@ import java.io.File
  *   (`cache/sources/`, trimmed to its own cap by the readers).
  * The cache numbers are the LRU indexes' (what eviction counts); `walk=1` also walks each directory and reports
  * the bytes of its files (`apparentBytes`, as `du -b`) and the space they take (`diskBytes`, as `du -k` x 1024).
+ * T242: while a cache's index is built (`TileCache.state`), its rows carry `indexing: true`, their bytes are what is
+ * indexed so far, `holds` is empty or null, and the screen says [TileCache.INDEXING_LINE] where a figure would be.
  *
  * T112: `online`, `derived` and `sources` share one total budget ([CacheBudget], `budget` in the JSON: a preset or a
  * custom size, set with [setBudget]); each such row says its `floorBytes` and `share` of the total, and its own cap
@@ -154,9 +156,15 @@ object Storage {
         val online = OnlineService.get(app).cache
         val pinned = online.pinnedBytes // T91
         val derived = ContourCache.get(app)
+        // T242: while a cache's index is built its rows carry `indexing` (the screen says so where the figure goes), the
+        // figures are what is indexed so far, and nothing here waits for the walk (the breakdowns read the whole index).
+        val onlineReady = online.ready
+        val derivedReady = derived.ready && onlineReady
         // T112: the online cache's contour and shade tiles count with the derived row.
-        val (onlineHolds, derivedHolds) = splitHolds(onlineBreakdown(online, pinned = false), derivedBreakdown(derived))
-        val onlineMadeBytes = online.bytesWhere(pinned = false, matches = CacheBudget::onlineDerived)
+        val (onlineHolds, derivedHolds) = splitHolds(
+            if (onlineReady) onlineBreakdown(online, pinned = false) else emptyMap(), if (derived.ready) derivedBreakdown(derived) else emptyMap(),
+        )
+        val onlineMadeBytes = if (onlineReady) online.bytesWhere(pinned = false, matches = CacheBudget::onlineDerived) else 0L
         val onlineFetchedBytes = online.bytes - pinned - onlineMadeBytes
         val onlineFetchedTiles = onlineHolds.values.sumOf { it["tiles"] ?: 0L }
         val derivedBytes = derived.bytes - derived.pinnedBytes + onlineMadeBytes
@@ -186,11 +194,13 @@ object Storage {
                 "setting" to "onlineCacheMb", "clearable" to true, "holds" to onlineHolds, "evictions" to online.evictions.get(),
                 "budgetEvictions" to online.budgetEvictions.get(), // T112
                 "allBytes" to online.bytes, "dirs" to dirsJson(ONLINE),
+                "indexing" to !onlineReady, // T242
             ) + budgetFields(CacheKind.ONLINE, onlineFetchedBytes),
             PINNED to linkedMapOf(
                 "label" to "Offline areas (pinned)", "bytes" to pinned, "entries" to online.pinnedSize, "budgetMb" to AppSettings.pinnedCacheMb,
                 "setting" to "pinnedCacheMb", "clearable" to false, "areas" to areas.count { it.pinned && it.pack == null },
-                "holds" to onlineBreakdown(online, pinned = true), // T95
+                "holds" to if (onlineReady) onlineBreakdown(online, pinned = true) else null, // T95
+                "indexing" to !onlineReady, // T242
                 "olderThanSource" to areas.filter { it.pinned && !io.github.jasondorjeshort.dystopo.app.areas.Areas.older(it).isNullOrEmpty() }.map { it.name }, // T95
             ),
             DERIVED to linkedMapOf<String, Any?>(
@@ -200,6 +210,7 @@ object Storage {
                 "setting" to "contourCacheMb", "clearable" to true, "holds" to derivedHolds, "evictions" to derived.evictions.get(),
                 "budgetEvictions" to derived.budgetEvictions.get(), // T112
                 "dirs" to dirsJson(DERIVED),
+                "indexing" to !derivedReady, // T242: either cache (it counts the online cache's contour and shade tiles)
             ) + budgetFields(CacheKind.DERIVED, derivedBytes),
             SOURCES to linkedMapOf<String, Any?>(
                 "label" to "Source data (no server)", "bytes" to sourcesWalk.apparentBytes, "clearable" to true,
@@ -270,7 +281,8 @@ object Storage {
             "preset" -> BudgetPlan.Preset.of(raw)?.mb ?: return "preset must be one of ${BudgetPlan.Preset.entries.map { it.key }} (got '$raw')"
             else -> {
                 val pct = raw.toIntOrNull()?.takeIf { it in 1..90 } ?: return "percentFree must be a whole number from 1 to 90 (got '$raw')"
-                BudgetPlan.percentOfFreeMb(pct, app.cacheDir.usableSpace, CacheBudget.engine?.used()?.values?.sum() ?: 0L)
+                // T242: what the caches hold is read from their indexes; while one is built, its partial total (no wait)
+                BudgetPlan.percentOfFreeMb(pct, app.cacheDir.usableSpace, (if (CacheBudget.indexing()) null else CacheBudget.engine?.used()?.values?.sum()) ?: (OnlineService.get(app).cache.let { it.bytes - it.pinnedBytes } + ContourCache.get(app).bytes))
             }
         }
         lastBudgetRun = linkedMapOf<String, Any?>("budgetMb" to mb) + (CacheBudget.set(app, mb)?.json() ?: emptyMap())

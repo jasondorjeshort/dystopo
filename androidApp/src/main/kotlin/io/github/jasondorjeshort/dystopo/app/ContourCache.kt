@@ -13,7 +13,9 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Directories are deleted only when nothing can use them again: an older version prefix, or a pack
  * identity no DEM file on the device has (a deleted or replaced pack). Built lazily on the first contour
- * request, off the main thread (the index walks the directory).
+ * request, off the main thread (the index walks the directory). T242: the index is built on a thread of its own, as the
+ * online cache's is ([TileCache.state]): [collectGarbage] waits for it on its thread, [json] answers without the directories
+ * meanwhile, [resize] applies once it is whole.
  */
 object ContourCache {
     /** Bump when contour generation changes what it writes; part of every directory name. */
@@ -93,7 +95,8 @@ object ContourCache {
     fun json(): Map<String, Any?> {
         val c = cache ?: return mapOf("loaded" to false, "maxBytes" to AppSettings.contourCacheMb * MB)
         return c.json() + mapOf(
-            "dirs" to c.byPrefix().map { (k, v) -> mapOf("dir" to k, "tiles" to v.first, "bytes" to v.second) },
+            // T242: null while the index is built (`state`), as the cache's own figures are partial then
+            "dirs" to if (!c.ready) null else c.byPrefix().map { (k, v) -> mapOf("dir" to k, "tiles" to v.first, "bytes" to v.second) },
             "staleFilesDeleted" to staleFilesDeleted.get(),
         )
     }
