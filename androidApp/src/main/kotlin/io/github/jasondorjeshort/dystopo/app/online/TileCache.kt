@@ -552,17 +552,26 @@ class TileCache(
         return found
     }
 
-    /** T112: bytes of the entries [matches] accepts, only the unpinned ones by default ([pinned] null: all). */
+    /**
+     * T112: bytes of the entries [matches] accepts, only the unpinned ones by default ([pinned] null: all). T242: in chunks
+     * of [SCAN_CHUNK] slots under the lock (each key is made again for [matches]), so the map's lookups get it between them.
+     */
     fun bytesWhere(pinned: Boolean? = false, matches: (String) -> Boolean): Long {
         awaitReady("bytesWhere")
         var n = 0L
-        synchronized(lock) {
-            for (s in 0 until index.high) {
-                if (!index.isUsed(s) || (pinned != null && index.isPinned(s) != pinned)) continue
-                if (matches(index.keyOf(s))) n += index.size(s)
+        var from = 0
+        while (true) {
+            val more = synchronized(lock) {
+                val to = minOf(index.high, from + SCAN_CHUNK)
+                for (s in from until to) {
+                    if (!index.isUsed(s) || (pinned != null && index.isPinned(s) != pinned)) continue
+                    if (matches(index.keyOf(s))) n += index.size(s)
+                }
+                from = to
+                to < index.high
             }
+            if (!more) return n
         }
-        return n
     }
 
     /** Deletes every entry whose key starts with [prefix] (all with ""); returns how many went. */

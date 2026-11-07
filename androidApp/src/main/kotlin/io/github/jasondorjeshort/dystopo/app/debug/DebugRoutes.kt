@@ -38,6 +38,9 @@ import java.io.File
  *   `osm@f1/.../<y>.pbf`, columns of 256 around Rainier, file times spread over the last 1000 minutes), on a thread of its
  *   own; the running index does not count them, the next launch's walk does (that is what it is for). `clear=1` deletes
  *   them instead (through the cache, once its index is whole). Answers at once; `GET /debug/cache`'s `fill` follows it.
+ *   `POST /debug/cache/hold?ms=0..120000` holds the next launch's walk of the online cache that long at its first file, once
+ *   (a file, as the tracking delay), so the `indexing` window can be seen: the one list and the Storage screen saying so,
+ *   a kill mid-index. Answers `pendingHoldMs`.
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -67,6 +70,11 @@ object DebugRoutes {
                 if (fill?.get("running") == true) return Response.json(mapOf("error" to "a fill is running", "fill" to fill), 409)
                 startFill(app, files, bytes, clear)
                 Response.json(mapOf("started" to true, "files" to files, "bytes" to bytes, "clear" to clear))
+            }
+            "POST" to "/debug/cache/hold" -> { // T242, as T229's tracking delay
+                val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
+                io.github.jasondorjeshort.dystopo.app.online.OnlineService.holdNextIndex(app, ms)
+                Response.json(mapOf("pendingHoldMs" to io.github.jasondorjeshort.dystopo.app.online.OnlineService.pendingIndexHoldMs(app)))
             }
             "GET" to "/debug/cpu" -> Response.json(cpu())
             "GET" to "/debug/strictmode" -> Response.json(StrictModeCounts.json())
