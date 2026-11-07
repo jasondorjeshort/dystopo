@@ -20,5 +20,9 @@ disagree by thousands of feet, so the estimate's confidence is low and the climb
 
 - Three states for the entry: a figure, "?" when the data is insufficient, a dash when the sources contradict
   (the owner's words), with the rule stated in the help text.
-- The flying activity (T158) choosing GNSS outright over a cabin barometer for both elevation and climb.
+- The flying activity choosing GNSS outright over a cabin barometer for both elevation and climb. The owner, the
+  same day: "Barometer is not useful in flight mode; that's why it is important to set or recognize that. I did set
+  it in the track but maybe the algorithm tried to do better until the cabin was pressurized." So the activity was
+  set by hand (`tracking/ActivityPicker.kt`, T172) and the barometer still fed the estimate: the rule is that a
+  flying activity, set or detected (T158), turns the barometer off for the readout and the track, not merely down.
 - A replay test with a fixed cabin pressure and a descending GNSS profile reading a negative climb.

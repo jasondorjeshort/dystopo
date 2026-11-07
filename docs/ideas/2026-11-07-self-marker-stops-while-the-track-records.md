@@ -23,4 +23,6 @@ pressure altitude, thousands of feet under the GNSS height. The "few minutes" wo
 - Reproduce with a replay of the flight's track and a fixed cabin pressure (`POST /location`, the barometer's
   injected pressure), reading `GET /readout` and the puck's position each second.
 - Whether the puck should follow the recorder's fixes rather than its own listener while a recording runs.
-- A flying activity's rule for the barometer: in a pressurised cabin GNSS wins outright (T158 detects flying).
+- A flying activity's rule for the barometer: off, GNSS only. The owner had set the activity to flying by hand
+  in the track and the barometer still fed the estimate ("maybe the algorithm tried to do better until the cabin
+  was pressurized"); the sibling idea on climb carries the rule.
