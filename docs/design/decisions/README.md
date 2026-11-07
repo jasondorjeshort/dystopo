@@ -46,6 +46,7 @@ Status: `proposed` (waits for the owner: anything humans see or touch), `accepte
 | [0056-one-name-one-list-for-offline-maps.md](0056-one-name-one-list-for-offline-maps.md) | "Offline map" is the one noun a user reads (the owner's choice); one list joins the packs with the area records; the status chip has two parts in plain words with a tap. Specified in proposal 0056; build tasks B1a, B1b, B3 and B2 |
 | [0057-one-gradle-using-agent-at-a-time.md](0057-one-gradle-using-agent-at-a-time.md) | One Gradle-using agent at a time unless the owner says wider: implementer, verifier and merge, then the next task; agents with no Gradle or emulator may run alongside (owner, 2026-11-04) |
 | [0058-release-builds-keep-true-stacks.md](0058-release-builds-keep-true-stacks.md) | Release builds keep true stacks: `-dontobfuscate` and `-dontoptimize` with line numbers, shrinking on, no mapping file; +2.08 MB (8.9%); reverse if a phone comparison shows a cost |
+| [0059-no-built-in-server-locations.md](0059-no-built-in-server-locations.md) | No built-in server locations: every server is the user's setting, a link's or a discovered peer's; public data and distribution sources (GitHub, OSM, USGS, the registry) may be named; the owner's instance is one of many |
 
 Template (also in the `adr` skill):
 

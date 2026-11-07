@@ -1,10 +1,10 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-04-areas-update-themselves-by-how-you-use-them.md, 2026-11-02-pack-updates-as-deltas.md]
+related: [2026-11-04-areas-update-themselves-by-how-you-use-them.md, 2026-11-02-pack-updates-as-deltas.md, 2026-11-01-federated-instances-announce-their-packs.md]
 ---
 
-# Downloads as a synchronisation in cells, modelled on a game downloader, not on map apps
+# Downloads as a synchronisation in cells over one content-addressed store, modelled on a game downloader
 
 The owner, 2026-11-07, with a large area download running during a release: "We want this to behave sanely: a
 synchronization rather than a monolithic pull. Where we record the areas that are downloaded and pull them cell
@@ -26,6 +26,14 @@ row completes counts as a failure, and five such stop the download with Retry (`
 on a country at z14 can give up with most tiles cached. The owner's cell is that unit, made smaller and given a
 fetched-at time.
 
+The owner on the two wider shapes, 2026-11-07: one content-addressed store for everything downloaded, so the tile
+cache, packs and the phone-to-phone transport (ADR 0051) speak one model and a phone syncs missing cells from a
+server, a friend's phone or any instance through one protocol, with a delta update being the cells whose hash
+changed: "Absolutely we should do this - downloading is a major pain with the sizes that topo stuff has and it
+needs to just work in the background." And an always-on helper that keeps a phone's wanted cells fresh so the
+phone only ever catches up: "an excellent plan", for any instance the user chose or a peer, never a built-in
+address of the owner's (ADR 0059: the application is distributed, with no central server).
+
 ## Open
 
 - The research question (ADR 0044, technical variant, before the design): how a well-regarded downloader
@@ -34,6 +42,10 @@ fetched-at time.
   record of wanted areas. Map apps are not the benchmark here, on the owner's word.
 - The cell: its size (a bounded run of tiles, or a fixed tile count), its fetched-at time, the "sufficiently out
   of date" test, and whether the failure count moves with it.
-- Whether a pack download joins the model (chunks with hashes) or stays a byte resume.
+- Whether a pack download joins the model (chunks with hashes) or stays a byte resume; whether the content
+  address is per cell or per tile with cells as the transfer unit; how the phone-to-phone transport and a
+  federated instance announce what they hold.
+- The always-on helper: what an instance keeps built for a phone that told it its wanted areas, how the phone
+  catches up within the visible data limits (ADR 0023), and the sweep's own server as the test instance.
 - The real-phone checks still owed from T151 and T156: a long download with the app closed and the screen off,
   one over a service loss, and one over a reboot without the network.
