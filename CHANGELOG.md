@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-07
+
+- T229: The launch's first frame does not wait for the track database
+
 ## v0.1.21-alpha (2026-11-06)
 
 ### 2026-11-06
