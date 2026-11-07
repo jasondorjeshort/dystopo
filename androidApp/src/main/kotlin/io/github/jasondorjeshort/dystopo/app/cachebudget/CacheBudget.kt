@@ -69,7 +69,11 @@ object CacheBudget {
         return OnlineFetcher.DERIVED_FROM_DEM.any { route.startsWith(it) }
     }
 
-    /** Hooks the caches up on this object's thread (the contour cache's index walks its directory) and checks once. */
+    /**
+     * Hooks the caches up on this object's thread (the contour cache's index walks its directory) and checks once. T242:
+     * the check runs once both caches' indexes are whole ([indexed]), on this object's thread: a run reads and evicts over
+     * the whole index, which waits for the walk (minutes over a large cache) and would hold this thread meanwhile.
+     */
     @Synchronized
     fun start(app: DystopoApp) {
         if (started) return
@@ -91,19 +95,29 @@ object CacheBudget {
                 engine = e
                 online.onWrite = ::poke
                 derived.onWrite = ::poke
-                run(e)
+                // T242: the first run once both indexes are whole (each queues on its own; the second to finish runs it).
+                val first = { if (indexed(e)) executor.execute { runCatching { run(e) } } }
+                online.whenReady("cache-budget-first", first)
+                derived.whenReady("cache-budget-first", first)
             } catch (t: Throwable) {
                 Log.e(LocalServer.TAG, "cache budget failed to start", t)
             }
         }
-        // A task that throws would cancel the schedule, so nothing escapes.
-        executor.scheduleWithFixedDelay({ runCatching { engine?.let { e -> if (e.refreshedOverBytes() > 0) run(e) } } }, TICK_S, TICK_S, TimeUnit.SECONDS)
+        // A task that throws would cancel the schedule, so nothing escapes. T242: not while an index is built.
+        executor.scheduleWithFixedDelay({ runCatching { engine?.let { e -> if (indexed(e) && e.refreshedOverBytes() > 0) run(e) } } }, TICK_S, TICK_S, TimeUnit.SECONDS)
     }
+
+    /** T242: whether every tile cache of [e] has its whole index (a run before then would wait for the walk). */
+    private fun indexed(e: BudgetEngine): Boolean = e.stores.all { it !is TileCacheStore || it.cache.ready }
+
+    /** T242: `GET /storage`'s `budget.indexing`: an index is still being built, so the kinds' bytes are not read yet. */
+    fun indexing(): Boolean = engine?.let { !indexed(it) } ?: false
 
     /** A cache wrote a tile: schedule a run when the kinds are over the total (one at a time; backs off when stuck). */
     fun poke() {
         val e = engine ?: return
         pokes.incrementAndGet()
+        if (!indexed(e)) return // T242: the totals are partial; the first run comes once the indexes are whole
         val last = lastRun
         if (last != null && !last.fits && System.currentTimeMillis() - last.at < STUCK_BACKOFF_MS) return
         if (e.overBytes() <= 0) return
@@ -123,15 +137,16 @@ object CacheBudget {
     /**
      * Sets the total to [mb] (the caller checked [BudgetPlan.RANGE_MB]), evicts down to it at once on this object's
      * thread, then sets both caps to it (a lower total trims through the budget first, so the view's tiles stay).
-     * Returns the run.
+     * Returns the run. T242: while an index is built no run (null): the caps are set, the caches apply them once whole,
+     * and the first run follows ([start]); the 60 s wait no longer meets a walk.
      */
     fun set(app: DystopoApp, mb: Long): BudgetEngine.Run? {
         AppSettings.setCacheBudgetMb(mb)
         start(app)
         val run = executor.submit<BudgetEngine.Run?> {
             val e = engine ?: return@submit null
-            val r = run(e)
-            lastRun = r
+            val r = if (indexed(e)) run(e) else null
+            if (r != null) lastRun = r
             AppSettings.setCapsFromBudget(mb)
             DirectSources.budgetTotalBytes = mb * BudgetPlan.MB // T127: the sources' own trim follows the total too
             OnlineService.get(app).cache.resize(mb * BudgetPlan.MB)
@@ -145,7 +160,8 @@ object CacheBudget {
     fun json(): Map<String, Any?> {
         val total = AppSettings.cacheBudgetMb * BudgetPlan.MB
         val e = engine
-        val used = e?.used()
+        val building = e != null && !indexed(e)
+        val used = if (building) null else e?.used() // T242: the kinds' bytes read the whole index; not while it is built
         val sum = used?.values?.sum()
         return linkedMapOf(
             "totalMb" to AppSettings.cacheBudgetMb,
@@ -170,6 +186,7 @@ object CacheBudget {
             "lastRun" to lastRun?.json(),
             "guard" to guard.json(),
             "loaded" to (e != null),
+            "indexing" to building, // T242
         )
     }
 }

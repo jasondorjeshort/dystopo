@@ -37,7 +37,11 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class OnlineService private constructor(private val app: DystopoApp) {
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: TileCache") } // T228
-    val cache = TileCache(File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024) // T41: the cap is a setting
+    /**
+     * T41: the cap is a setting. T242: the constructor returns at once; the index is built on its own thread ([TileCache.state]),
+     * so the launch no longer walks the cache on the main thread (120 s over a cache of tens of GB on a phone).
+     */
+    val cache = TileCache(File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024)
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: after TileCache") } // T228
 
     @Volatile var fetcher: OnlineFetcher? = null
@@ -472,7 +476,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
         app.tiles.online?.forgetMissing()
         fetcher?.retryNow() // the map's next requests for tiles that failed in the meantime are not answered from the fetcher's failure memo
         val names = back.toSet()
-        demHaloVariantsDropped.addAndGet(cache.clearWhere { OnlineTiles.namesHaloTile(it, names) }.toLong())
+        // T242: over the whole index, so once it is whole: not on this thread, which also runs the probe, while it is built.
+        val drop = { demHaloVariantsDropped.addAndGet(cache.clearWhere { OnlineTiles.namesHaloTile(it, names) }.toLong()) }
+        if (cache.ready) drop() else cache.whenReady("dem-halo-drop") { drop() }
         demRefresh.recovered(t, back.size)
         if (demRefresh.claim(t)) refreshDemSource()
     }

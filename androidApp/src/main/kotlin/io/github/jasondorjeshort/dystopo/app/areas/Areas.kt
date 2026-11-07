@@ -48,6 +48,9 @@ import java.io.File
  */
 object Areas : VersionPins {
     const val TAG = "DystopoAreas"
+
+    /** T242: [coverage]'s `why` while the online cache's index is built (the share is unknown until it is whole). */
+    const val INDEXING = "indexing"
     private val app: DystopoApp get() = DystopoApp.instance
     private val dir: File by lazy { File(app.filesDir, "areas").apply { mkdirs() } }
     private val file: File get() = File(dir, "areas.json")
@@ -296,15 +299,20 @@ object Areas : VersionPins {
     fun attach(service: OnlineService) {
         load()
         service.cache.keep = ::isPinned
-        onPinsChanged = { service.cache.recountPinned() } // T91: pinned bytes have their own budget
-        rowsOf(service.cache) // T151: the cache's keys as rows, for coverage
+        onPinsChanged = { service.cache.recountPinned() } // T91: pinned bytes have their own budget; T242: on its thread, once the index is whole
+        // T151: the cache's keys as rows, for coverage; T242: once the index is whole, on its thread (it walked the keys here on the main thread)
+        service.cache.whenReady("areas-rows") { rowsOf(service.cache) }
         AheadPrefetch.start()
         TripCorridors.request("start") // T130: trips saved, synced or deleted while the app was not running
         ResumeCheck.install() // T151: the foreground trigger
         ResumeCheck.request(ResumeCheck.TRIGGER_START) // T151: interrupted downloads resume from their cursor
     }
 
-    /** T151: the online cache's keys as rows ([CachedRows]), kept by its [TileCache.onIndex] hook; one per cache. */
+    /**
+     * T151: the online cache's keys as rows ([CachedRows]), kept by its [TileCache.onIndex] hook; one per cache. T242: built
+     * once the cache's index is whole ([TileCache.forEachKey] waits for it, off the main thread); [coverage] answers
+     * `indexing` until then.
+     */
     @Volatile private var cacheRows: Pair<io.github.jasondorjeshort.dystopo.app.online.TileCache, CachedRows>? = null
 
     private val rowsLock = Any() // not the object's lock: the cache calls [isPinned] under its own lock
@@ -528,7 +536,8 @@ object Areas : VersionPins {
 
     /**
      * What of [r] is on the device now: tiles present (in a pack, or in the cache under the area's source) out of
-     * the manifest's tiles; a pack-backed area is complete while its pack is installed.
+     * the manifest's tiles; a pack-backed area is complete while its pack is installed. T242: while the online cache's
+     * index is built, `share` null, `why` [INDEXING] and `indexing` true, at once (it waited for the walk before).
      */
     fun coverage(r: Record): Map<String, Any?> {
         if (r.pack != null) {
@@ -537,8 +546,11 @@ object Areas : VersionPins {
         }
         val t0 = System.nanoTime()
         val m = manifest(r.id) ?: return linkedMapOf("share" to null, "why" to "no manifest")
+        val cache = OnlineService.get(app).cache
+        // T242: no waiting for the cache's index (minutes over a large cache): the share is unknown until it is whole.
+        if (!cache.ready) return linkedMapOf("share" to null, "why" to INDEXING, "indexing" to true)
         val packs = runCatching { app.tiles.packs }.getOrNull()
-        val rows = rowsOf(OnlineService.get(app).cache)
+        val rows = rowsOf(cache)
         var have = 0L
         var total = 0L
         var inPacks = 0L
@@ -597,7 +609,8 @@ object Areas : VersionPins {
             "pinned" to all.count { it.pinned }, "transientPins" to transientCount,
             // T140 (ADR 0041 §2): the records in each file, and the entries kept as they were (no id or bounds).
             "files" to mapOf("areas" to all.count { it.readableByV1 }, "areas2" to all.count { !it.readableByV1 } + unreadable.size), "unreadable" to unreadable.size,
-            "pinnedBySource" to pinnedBySource(cache.byPrefix(1, pinned = true), current), // T106 (ADR 0030's deferred item)
+            // T106 (ADR 0030's deferred item); T242: null while the cache's index is built (`cache.state`)
+            "pinnedBySource" to if (cache.ready) pinnedBySource(cache.byPrefix(1, pinned = true), current) else null,
             "cache" to cache.json(), "download" to AreaDownload.json(), "prefetch" to AheadPrefetch.json(),
             "cacheRows" to cacheRows?.second?.let { mapOf("tiles" to it.size, "spans" to it.spanCount) }, // T151: the cache's keys as rows (coverage)
             "outline" to AreaOutlines.json(all), // T106: the corridor polygons; T136: of every kept corridor, drawn or not

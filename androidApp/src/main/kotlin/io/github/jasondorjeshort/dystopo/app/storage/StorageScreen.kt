@@ -152,7 +152,7 @@ private fun BudgetSection(b: Map<String, Any?>, stores: Map<String, Map<String, 
                 BasicText("Cache budget", Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
                 HelpIcon("storage.budget") // T115 (T109's follow-up)
             }
-            BasicText("${mb(used)} of ${size(totalMb)}", style = TextStyle(color = Ink, fontSize = 13.sp))
+            BasicText(if (b["indexing"] == true) io.github.jasondorjeshort.dystopo.app.online.TileCache.INDEXING_LINE else "${mb(used)} of ${size(totalMb)}", style = TextStyle(color = Ink, fontSize = 13.sp)) // T242
         }
         // One bar for the total: each kind's part in its colour, then what is left.
         Row(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(Line)) {
@@ -264,6 +264,7 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
             }
             BasicText(
                 when {
+                    s["indexing"] == true -> io.github.jasondorjeshort.dystopo.app.online.TileCache.INDEXING_LINE // T242: the index is built
                     inBudget -> mb(bytes) // T112: the share goes under the bar (it squeezed the label at font scale 2.0)
                     budget != null -> "${mb(bytes)} of ${size(budget)}"
                     else -> mb(bytes)

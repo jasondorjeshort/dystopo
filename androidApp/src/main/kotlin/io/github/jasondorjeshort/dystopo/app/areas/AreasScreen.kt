@@ -287,6 +287,7 @@ internal fun offlineMapInputs(app: DystopoApp = DystopoApp.instance): OfflineMap
         catalog = runCatching { manager.catalogClient.rows() }.getOrDefault(emptyList()).associate { it.pack.name to it.status },
         older = records.mapNotNull { r -> if (Areas.older(r).isNullOrEmpty()) null else r.id to Areas.fromOtherSource(r) }.toMap(),
         active = manager.activeName(), units = AppSettings.units, now = now,
+        indexing = !service.cache.ready, // T242
     )
 }
 
