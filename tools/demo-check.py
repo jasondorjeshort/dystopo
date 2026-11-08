@@ -674,7 +674,7 @@ CONTROLS_JS = """() => {
     if (e.closest('[data-control^="flow:"]')) continue;
     const cls = Object.keys(MAPLIBRE).find(c => e.classList.contains(c));
     if (cls && placed.has("maplibregl." + MAPLIBRE[cls])) continue;
-    missing.push({ element: name(e), attribute: cls ? 'list "maplibregl.' + MAPLIBRE[cls] + '" in an item\'s web elements'
+    missing.push({ element: name(e), attribute: cls ? 'list "maplibregl.' + MAPLIBRE[cls] + '" in the web elements of an item'
       : 'data-control="' + (placed.get(e.id) || "<id>") + '" (an item of the controls document) or data-control="flow:<parent-id>"' });
   }
   for (const f of document.querySelectorAll('[data-control^="flow:"]')) {
