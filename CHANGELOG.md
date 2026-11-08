@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-07
 
+- T241: Layout A2: the measuring node, and `GET /layout` read from it
 - T238: Layout A1: ADR 0053's build step 2, the manifest's whole surface
 - T237: ADR 0056 B2: the words
 - T236: ADR 0056 B3: what the status chip says
