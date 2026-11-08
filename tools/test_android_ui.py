@@ -376,4 +376,19 @@ try:
 finally:
     ui.time.sleep = real_sleep
 
+# T243: the long-press card's nodes from its coordinate line to Cancel, and another element's node inside it (478deae5's
+# strip, drawn above the card, its semantics node left under it); the window holding the card is not one.
+def card_node(text, b, desc="", click=True):
+    return {"text": text, "desc": desc, "cls": "TextView", "clickable": click, "bounds": b, "pkg": ui.PACKAGE}
+
+
+card = [card_node("", [0, 0, 1080, 2400], click=False), card_node("46.80241, -121.72892", [47, 1822, 907, 1859], click=False),
+        card_node("Route to here", [47, 2026, 262, 2063]), card_node("Waypoint here", [304, 2026, 534, 2152]),
+        card_node("Cancel", [885, 2101, 1011, 2219]), card_node("© OpenStreetMap contributors", [16, 2219, 1064, 2345])]
+strip = card_node("", [0, 2063, 404, 2189], desc="elevation 61 ft · climb – ft/h")
+actions, intruders = ui.card_intruders(card + [strip, card_node("", [336, 1619, 740, 1745], desc="the strip where it is drawn")])
+assert list(actions) == ["Route to here", "Waypoint here", "Cancel"], actions
+assert intruders == [["elevation 61 ft · climb – ft/h", [0, 2063, 404, 2189]]], intruders
+assert ui.card_intruders(card) == (actions, []) and ui.card_intruders(card[:1]) == ({}, [])
+
 print("test_android_ui: ok")
