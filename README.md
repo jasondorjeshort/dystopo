@@ -21,7 +21,7 @@ a server and a desktop tool come with it, iOS later.
 <img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
 </p>
 
-**Status (November 2026): alpha, [v0.1.23-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.23-alpha) (one universal APK, server and devtool zips), with wave 30 merged on `main` after it: the launch no longer waits for the track database or the tile cache's index (the owner's startup freezes), downloaded areas and packs are one list, "Offline maps", with one noun everywhere a person reads, the status chip says in plain words what it knows, every control of both clients is in one manifest, and the map screen's compass, chips and side columns are placed by one measured rule. Tested on emulators; the real-phone checks are still to come.**
+**Status (November 2026): alpha, [v0.1.24-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.24-alpha) (one universal APK, server and devtool zips), the close of wave 30: the launch no longer waits for the track database or the tile cache's index (the owner's startup freezes), downloaded areas and packs are one list, "Offline maps", with one noun everywhere a person reads, the status chip says in plain words what it knows, every control of both clients is in one manifest, and the map screen's compass, chips and side columns are placed by one measured rule. Tested on emulators; the real-phone checks are still to come.**
 a release will carry can be built from source today (below). Expect rough edges.
 
 ## Features

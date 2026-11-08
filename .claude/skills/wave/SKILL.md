@@ -61,8 +61,11 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    why not in the wave paragraph; launch after the edits, re-plan on a blocking one.
 3. Size the wave by its whole cost, not by whether its launch fits (ADR 0048): per task an
    implementer, a verifier, one fix round with its re-verify and the merge, plus the wave's fixed cost
-   of research agents, the critic, the post-wave sweep and the release. Figures: 1.25 points of the
-   7-day meter per task and 3 per wave (revised 2026-11-05 from wave 28's close, 11 points for 10 tasks; before that
+   of research agents, the critic, the post-wave sweep and the release. Figures: 2.5 points of the
+   7-day meter per task, 3 per wave and 2.5 per release (revised 2026-11-08 from wave 30's close: 45 points for
+   eleven tasks, three releases, two critics and a day of idea and triage work, against 15.5 figured at 1.25 a
+   task, so the serial model's implementer-plus-verifier pairs cost about twice wave 28's; before that 1.25,
+   revised 2026-11-05 from wave 28's close, 11 points for 10 tasks; before that
    1.5, revised 2026-11-02 from the closes of waves 22, 23 and 26, which
    read 24, 25 and about 5 points for 18, 14 and 6 tasks against the starting 3 and 5 read off waves 20
    and 21; the ADR 0048 scan outcome and finding
