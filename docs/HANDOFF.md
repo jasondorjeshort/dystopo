@@ -3,27 +3,26 @@
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-11-08, by main session (wave 30 closed: eleven tasks merged, v0.1.24-alpha published; wave 31 to plan)
 Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skill, `docs/TASKS.md` (Later and the
-ideas of 2026-11-07), the wave 30 record once the chore writes it, ADR 0056, ADR 0057, ADR 0059.
+ideas of 2026-11-07), `docs/tasks/wave-30.md`, ADR 0056, ADR 0057, ADR 0059.
 
 ## Now
 
 - **Wave 30 is closed.** T229, T234 to T243 (eleven tasks, T242 and T243 added mid-wave) are merged in series; the
-  post-wave sweep is green after T243; **v0.1.24-alpha is published** (tag on 42cdfe7c, versionCode 1299). The record
-  move is the next chore; its follow-ups then land in Later. Reports and notes: `out/wave30-reports/` [no-check: gitignored].
+  post-wave sweep is green after T243; **v0.1.24-alpha is published** (tag on 42cdfe7c, versionCode 1299); the record
+  is written and its follow-ups are in Later. Reports and notes: `out/wave30-reports/` [no-check: gitignored].
 - **Cost:** the 7-day meter 27 to 72 across the wave; the `wave` skill's figure is now 2.5 a task, 3 a wave, 2.5 a
   release. Free RAM 11 to 23 GB throughout; the guard stopped emulators five times at 8 or 12 GB and lost none.
 - No task branch or worktree is open. The live server on 8765 is up. The gate research stays untracked [no-check: untracked].
 
 ## Next
 
-1. A Haiku chore moves wave 30 to its record (`docs/tasks/README.md` recipe, `bash "$S" 30 30`); read the lifted
-   follow-ups, strike what is taken, commit and push.
-2. Plan wave 31 (the `wave` skill, with a critic): the candidates are the ideas of 2026-11-07 (the launch budget and
+1. Plan wave 31 (the `wave` skill, with a critic): the candidates are the ideas of 2026-11-07 (the launch budget and
    the launch state machine; downloads as a synchronisation in cells, researched against a game downloader; the
    diagnostic dump; the flight reports' fourteen: the barometer off when flying, the turn-back card off by default,
    the tracks manager, the geodesic line route, the offline zoom fallback and basemap, the render cache), T242's
    snapshot, Layout C (the owner's Menu choice first), the 28 unprepared state objects (T240), the two ready Plans;
    then a Hatchery-rooted session for the carry-backs (ADR 0057's rule, T190's two, T201's, the sentinel, T231's guard).
+2. Before the next launch: read the 7-day meter (72 at the close, resets 2026-11-12) against the revised figures.
 
 ## Waiting on user
 
