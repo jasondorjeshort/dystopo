@@ -58,6 +58,7 @@ import io.github.jasondorjeshort.dystopo.app.areas.PickerButton
 import io.github.jasondorjeshort.dystopo.app.areas.offlineMapInputs
 import io.github.jasondorjeshort.dystopo.app.areas.packBoxes
 import io.github.jasondorjeshort.dystopo.app.areas.rowAction
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.firstrun.ImportPicker
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.packs.CatalogStatus
@@ -152,7 +153,7 @@ fun PacksOverlay() {
             io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale, and the search box ends before this row
                 Box(Modifier.fillMaxSize()) {
                     Row(
-                        Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).onGloballyPositioned { c ->
+                        Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).control("settingsAndPacks").onGloballyPositioned { c -> // T238: the tag
                             with(density) { c.positionInRoot().x.toDp() }.let { if (it != io.github.jasondorjeshort.dystopo.app.TopChips.topRowLeft) io.github.jasondorjeshort.dystopo.app.TopChips.topRowLeft = it }
                             io.github.jasondorjeshort.dystopo.app.TopChips.topRowPx = io.github.jasondorjeshort.dystopo.app.TopChips.px(c) // T224: GET /layout
                         },

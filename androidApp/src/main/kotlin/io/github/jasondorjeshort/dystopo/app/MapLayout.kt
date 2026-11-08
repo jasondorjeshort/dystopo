@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import android.view.View
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import io.github.jasondorjeshort.dystopo.app.controls.RecenterLayout
@@ -18,6 +20,15 @@ import io.github.jasondorjeshort.dystopo.ui.OverlayInput
 import io.github.jasondorjeshort.dystopo.ui.OverlayLayout
 import io.github.jasondorjeshort.dystopo.ui.OverlayPlacement
 import io.github.jasondorjeshort.dystopo.ui.OverlaySize
+
+/**
+ * T238 (ADR 0053 §5 part c, build step 2): names this element as the controls manifest's item [id] (an Android
+ * placement outside zone `settings` in `shared/.../controls/`), as a semantics test tag the device tour and
+ * `GET /controls` read. One call on the element's outermost measured node, where it publishes its rectangle to
+ * `GET /layout`; `ControlIdsTest` reads every call (a literal id) against the manifest both ways. T241 makes this node
+ * measure its content for [MapLayout]; today it only tags.
+ */
+fun Modifier.control(id: String): Modifier = this.testTag(id)
 
 /**
  * T224: the map screen's layout as it is and as the pure rule ([OverlayLayout]) would place it, for `GET /layout`

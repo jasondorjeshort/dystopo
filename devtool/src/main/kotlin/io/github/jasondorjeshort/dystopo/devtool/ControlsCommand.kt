@@ -15,7 +15,8 @@ import java.io.File
 
 /**
  * T208 (ADR 0053 §2): writes the controls document, `tools/demo/controls.json`, from the registry in `shared`
- * (`controls/`), and prints one JSON report: the file, whether it changed, the counts, each item's placement per
+ * (`controls/`), and prints one JSON report: the file, whether it changed, the counts (T238: `byClient`, the items
+ * each client places, those only it places and its zones' counts), each item's placement per
  * platform and the document itself. `--check` writes nothing and exits 1 when the file differs. `./gradlew
  * updateGoldens` runs it; `ControlsDocumentTest` fails when the committed file is stale.
  */
@@ -44,11 +45,20 @@ class ControlsCommand : CliktCommand(name = "controls") {
             "version" to ControlsDocument.VERSION,
             "categories" to Controls.categories.size,
             "items" to Controls.items.size,
+            // T238: per client, how many items it places and in which zones (every zone of its list, 0 when unused).
+            "byClient" to Platform.entries.associate { p ->
+                val placed = Controls.placedOn(p)
+                p.key to linkedMapOf(
+                    "items" to placed.size,
+                    "onlyHere" to placed.count { it.platforms.size == 1 },
+                    "byZone" to p.zones.associateWith { z -> placed.count { it.placements.getValue(p).zone == z } },
+                )
+            },
             "placed" to Controls.items.map { item ->
                 linkedMapOf<String, Any?>("id" to item.id).apply {
                     for (p in Platform.entries) {
                         val pl = item.placements[p]
-                        put(p.key, pl?.let { "${it.category} / ${it.zone}" + (it.row?.let { r -> " / $r" } ?: "") })
+                        put(p.key, pl?.let { "${it.category} / ${it.zone}" + (it.row?.let { r -> " / $r" } ?: "") + (it.elements.takeIf { e -> e.isNotEmpty() }?.let { e -> " / " + e.joinToString() } ?: "") })
                     }
                 }
             },

@@ -52,9 +52,11 @@ makes it answer with a denial (as a user's Block; navigator.permissions says den
 its hash within --tolerance degrees (default 0.01) and 0.05 zoom (`expect` in the JSON; VIEW's |src=, |req=, |WxH apply).
 Every report carries `start` (window.dystopoStart: which view opened and why). --token sets the page's field through the
 page, since it shows only with a stored token or ?tools=1.
-T208: the first view's `controls` entry is ADR 0053's DOM rule: every control of the Map options section and every
-element the controls document places on the web carries `data-control` (`missing`, `absent` name the element and the
-attribute); skipped on a page with no controls document.
+T208: the first view's `controls` entry is ADR 0053's DOM rule; T238 (build step 2) widens it to every input, select,
+button and summary of the live DOM: each carries `data-control` naming an item of the controls document or sits inside
+an element with `data-control="flow:<item>"` (MapLibre's own buttons count by their control's class, which the item's
+web elements list as `maplibregl.X`); `missing` names an element with neither, `unknown` an attribute naming no item,
+`absent` a panel element the document places that the page lacks; skipped on a page with no controls document.
 T208 (T205's follow-up): a tour view whose width crosses the 520 px breakpoint from the page's last load is loaded again
 at its size (`reloaded` in its report), since the page picks its phone layout on load; `scaleClear` also reports
 `creditsCompact`.
@@ -644,30 +646,47 @@ SCALE_CLEAR_JS = """() => {
 }"""
 
 
-# T208 (ADR 0053 §5 part b, the DOM rule): every interactive element in scope carries data-control="<id>" (an item of
-# the controls document, window.dystopoControls) or sits inside an element with data-control="flow:<parent-id>"; and
-# every element the document places on the web is on the page. Build step 1's scope, as WebControlsTest's: the
-# controls inside the Map options section (details#options, not its own summary) and the elements the document names.
+# T208 (ADR 0053 §5 part b, the DOM rule), widened by T238 (build step 2) to every interactive element of the live DOM:
+# each input, select, button and summary carries data-control="<id>" (an item of the controls document,
+# window.dystopoControls) or sits inside an element with data-control="flow:<parent-id>"; MapLibre's own control buttons
+# carry nothing and count by their class (MAPLIBRE below), which the item's web elements list as maplibregl.X. `unknown`:
+# an attribute (or a flow container) naming no item. `absent`: an element a panel item names that the page lacks (the
+# Trips box and MapLibre's live-only controls are left to WebControlsTest, which reads the source of every mode).
 # null when the page has no controls document (the pack-mode stand-in page).
 CONTROLS_JS = """() => {
   const doc = window.dystopoControls;
   if (!doc) return null;
+  const items = new Map(doc.items.map(i => [i.id, i]));
   const placed = new Map();
   for (const item of doc.items) for (const id of ((item.placement || {}).web || {}).elements || []) placed.set(id, item.id);
-  const section = document.getElementById("options");
-  if (!section) return { ok: false, reason: "the page has no details#options (step 1's scope): restore it, or move the scope in demo-check.py and WebControls.kt" };
-  const own = section.querySelector(":scope > summary");
-  const scope = new Set([...section.querySelectorAll("input, select, button, summary")].filter(e => e !== own));
-  for (const id of placed.keys()) { const e = document.getElementById(id); if (e) scope.add(e); }
-  const name = e => "<" + e.tagName.toLowerCase() + (e.id ? ' id="' + e.id + '"' : "") + ">";
-  const missing = [];
-  for (const e of scope) {
-    if (e.hasAttribute("data-control") || e.closest('[data-control^="flow:"]')) continue;
-    missing.push({ element: name(e), attribute: 'data-control="' + (placed.get(e.id) || "<id>") + '" (an item of the controls document) or data-control="flow:<parent-id>"' });
+  const MAPLIBRE = { "maplibregl-ctrl-zoom-in": "NavigationControl", "maplibregl-ctrl-zoom-out": "NavigationControl",
+    "maplibregl-ctrl-compass": "NavigationControl", "maplibregl-ctrl-geolocate": "GeolocateControl",
+    "maplibregl-ctrl-attrib-button": "AttributionControl" };
+  const name = e => "<" + e.tagName.toLowerCase() + (e.id ? ' id="' + e.id + '"' : "") + (e.className && typeof e.className === "string" ? ' class="' + e.className + '"' : "") + ">";
+  const missing = [], unknown = [];
+  const all = [...document.querySelectorAll("input, select, button, summary")];
+  for (const e of all) {
+    const own = e.getAttribute("data-control");
+    if (own !== null) {
+      if (!items.has(own.replace(/^flow:/, ""))) unknown.push({ element: name(e), attribute: 'data-control="' + own + '"' });
+      continue;
+    }
+    if (e.closest('[data-control^="flow:"]')) continue;
+    const cls = Object.keys(MAPLIBRE).find(c => e.classList.contains(c));
+    if (cls && placed.has("maplibregl." + MAPLIBRE[cls])) continue;
+    missing.push({ element: name(e), attribute: cls ? 'list "maplibregl.' + MAPLIBRE[cls] + '" in an item\'s web elements'
+      : 'data-control="' + (placed.get(e.id) || "<id>") + '" (an item of the controls document) or data-control="flow:<parent-id>"' });
   }
-  const absent = [...placed.entries()].filter(([id, item]) => { const e = document.getElementById(id); return !e || e.getAttribute("data-control") !== item; })
+  for (const f of document.querySelectorAll('[data-control^="flow:"]')) {
+    const parent = f.getAttribute("data-control").slice(5);
+    if (!items.has(parent)) unknown.push({ element: name(f), attribute: 'data-control="flow:' + parent + '"' });
+  }
+  const absent = [...placed.entries()].filter(([id, item]) => !id.startsWith("maplibregl.") && ((items.get(item).placement.web || {}).zone === "panel"))
+    .filter(([id, item]) => { const e = document.getElementById(id); return !e || e.getAttribute("data-control") !== item; })
     .map(([id, item]) => ({ element: id, attribute: 'data-control="' + item + '"' }));
-  return { ok: !missing.length && !absent.length, checked: scope.size, missing, absent, items: doc.items.length };
+  return { ok: !missing.length && !unknown.length && !absent.length, checked: all.length,
+           flows: all.filter(e => !e.hasAttribute("data-control") && e.closest('[data-control^="flow:"]')).length,
+           missing, unknown, absent, items: doc.items.length };
 }"""
 
 

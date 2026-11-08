@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.gpx.GpxFormat
 import io.github.jasondorjeshort.dystopo.readout.FallAlert
@@ -480,6 +481,7 @@ fun PressureCard() {
             modifier = Modifier
                 .padding(top = top, start = leftDp)
                 .width(widthDp)
+                .control("warningCard") // T238
                 .onGloballyPositioned { l -> l.boundsInRoot().let { b -> PressureWatch.cardBoundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom); PressureWatch.setCardBottom(b.bottom) } }
                 .background(Plate, RoundedCornerShape(8.dp))
                 .padding(horizontal = 14.dp, vertical = padV),

@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
 import io.github.jasondorjeshort.dystopo.tiles.HillshadeMode
+import io.github.jasondorjeshort.dystopo.ui.OverlayIds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -13,7 +14,10 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** T208 (ADR 0053 build step 1): the registry's map options against `MapOptions`, and the manifest's own rules. */
+/**
+ * T208 (ADR 0053 build step 1): the registry's map options against `MapOptions`, and the manifest's own rules; T238
+ * (step 2): the rest of the shared surface, the items of one client, and `GET /layout`'s elements as manifest items.
+ */
 class ControlsTest {
     @Test
     fun mapOptionsTakeTheirKeysDefaultsAndChoicesFromTheRegistry() {
@@ -72,19 +76,26 @@ class ControlsTest {
     @Test
     fun everyItemIsPlacedByTheManifestsRules() {
         val ids = Controls.items.map { it.id }
-        assertEquals(ids.size, ids.toSet().size, "item ids are unique")
+        assertEquals(ids.size, ids.toSet().size, "item ids are unique: ${ids.groupBy { it }.filterValues { it.size > 1 }.keys}")
         assertEquals(Controls.categories.map { it.order }, (1..Controls.categories.size).toList())
         for (item in Controls.items) {
             assertTrue(item.placements.isNotEmpty(), "${item.id} has no placement")
             for ((p, pl) in item.placements) {
                 assertNotNull(Controls.category(pl.category), "${item.id}: no category ${pl.category}")
                 assertTrue(pl.zone in p.zones, "${item.id}: zone ${pl.zone} is not one of ${p.key}'s ${p.zones}")
-                if (p == Platform.WEB) assertTrue(pl.elements.isNotEmpty(), "${item.id}: a web placement names the page's elements")
                 if (p == Platform.ANDROID && pl.zone == "settings") assertNotNull(pl.row, "${item.id}: a settings placement names its row")
+                if (p == Platform.ANDROID && pl.zone != "settings") assertNull(pl.row, "${item.id}: only a settings placement names a row")
+                if (p == Platform.WEB) assertTrue(pl.row == null && pl.inventory.isEmpty(), "${item.id}: a web placement names elements only")
             }
-            if (item.kind == ControlKind.SETTING) {
-                assertNotNull(item.type, item.id)
-                assertEquals("app.map.${item.id}", item.syncKey, "map options sync as app.map.<key> (SettingsSync.syncedKey)")
+            // A registry item carries its values; an item whose values stay in code (or of one client) carries none.
+            if (item.default != null || item.choices.isNotEmpty() || item.min != null) assertNotNull(item.type, "${item.id}: values without a type")
+            if (item.type != null) assertEquals(ControlKind.SETTING, item.kind, item.id)
+            val sync = item.syncKey
+            if (sync != null) {
+                assertEquals(ControlKind.SETTING, item.kind, "${item.id}: only a setting syncs")
+                assertTrue(Platform.ANDROID in item.placements, "${item.id}: the phone is what syncs")
+                // SettingsSync.syncedKey: map options as app.map.<key>, every other setting as app.<key>.
+                assertEquals(if (item.id in MapOptions.KEYS) "app.map.${item.id}" else "app.${item.id}", sync, item.id)
             }
         }
         for (p in Platform.entries) for (c in Controls.categories) {
@@ -94,7 +105,27 @@ class ControlsTest {
         val web = Controls.webElements()
         assertEquals("hillshade", web["hill"])
         assertEquals("hillshade", web["opt-hillshade"])
-        assertEquals(listOf("hillshadeIntensity", "contourLabels", "drainage"), Controls.items.filter { Platform.WEB !in it.placements }.map { it.id })
+        assertEquals("orientationButton", web["maplibregl.NavigationControl"])
+        assertEquals(listOf("hillshadeIntensity", "contourLabels", "drainage"), MapControls.items.filter { Platform.WEB !in it.placements }.map { it.id })
+        // The items of both clients (ADR 0053's shared surface) and the files each kind lives in.
+        for (item in MapControls.items + SharedControls.items) assertTrue(Platform.ANDROID in item.placements, item.id)
+        for (item in AndroidControls.items) assertEquals(listOf(Platform.ANDROID), item.platforms, item.id)
+        for (item in PageControls.items) assertEquals(listOf(Platform.WEB), item.platforms, item.id)
+        assertEquals("${Controls.DIR}/SharedControls.kt", Controls.sourceOf("units"))
+        assertEquals("${Controls.DIR}/", Controls.sourceOf("nothing"))
+    }
+
+    @Test
+    fun theLayoutsElementsAreItemsWithTheirInventoryRows() {
+        // T224's GET /layout ids (OverlayIds) and their M-numbers are the manifest's phone map elements (T238).
+        for ((layoutId, name) in OverlayIds.NAMES) {
+            val item = assertNotNull(Controls.item(name), "GET /layout's element $layoutId ($name) is not a manifest item: add it to ${Controls.DIR}/AndroidControls.kt")
+            val pl = assertNotNull(item.placements[Platform.ANDROID], name)
+            assertTrue(pl.zone != "settings", name)
+            assertEquals(OverlayIds.CONTROLS[layoutId].orEmpty(), pl.inventory, "$name's inventory rows are GET /layout's")
+        }
+        // The two elements GET /layout does not list yet (T241 adds them).
+        for (id in listOf("firstRunCard", "onlineCard")) assertEquals("card", Controls.item(id)!!.placements[Platform.ANDROID]!!.zone)
     }
 
     @Test
@@ -104,7 +135,13 @@ class ControlsTest {
         assertEquals(ControlsDocument.VERSION.toLong(), (doc["version"] as Number).toLong())
         @Suppress("UNCHECKED_CAST")
         val items = doc["items"] as List<Map<String, Any?>>
-        assertEquals(MapOptions.KEYS.toList(), items.map { it["id"] })
+        assertEquals(MapOptions.KEYS.toList(), items.map { it["id"] }.take(MapOptions.KEYS.size), "the map options come first")
+        assertEquals(Controls.items.map { it.id }, items.map { it["id"] })
+        // An item of one client carries only its id, kind, platforms and placement; a phone map element its inventory rows.
+        assertEquals(listOf("id", "kind", "platforms", "placement"), items.first { it["id"] == "search" }.keys.toList())
+        @Suppress("UNCHECKED_CAST")
+        val search = (items.first { it["id"] == "search" }["placement"] as Map<String, Map<String, Any?>>)["android"]!!
+        assertEquals(listOf("M3", "M4", "M5", "M6", "M7"), search["inventory"])
         val ci = items.first { it["id"] == "contourInterval" }
         assertEquals(listOf("auto"), ci["choices"])
         @Suppress("UNCHECKED_CAST")

@@ -142,13 +142,13 @@ export function install({ map, base, units, panel, token }) {
 
   const box = document.createElement("details");
   box.id = "trips";
-  box.innerHTML = `<summary>Trips</summary>
-    <div class="row"><button id="trip-plan" type="button" aria-pressed="false">Plan a route</button>
-      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Crow</option></select></label></div>
+  box.innerHTML = `<summary data-control="routesChip">Trips</summary>
+    <div class="row"><button id="trip-plan" type="button" aria-pressed="false" data-control="planningCard">Plan a route</button>
+      <label>Mode <select id="trip-mode" data-control="flow:planningCard"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Crow</option></select></label></div>
     <div class="hint" id="trip-mode-note" hidden>${CROW_NOTICE}</div>
     <div class="hint">Click the start, then the end. Click again to add a stop; drag a numbered point to move it, right-click it to remove it.</div>
     <div id="trip-status" role="status"></div>
-    <section id="trip-card" hidden>
+    <section id="trip-card" data-control="flow:planningCard" hidden>
       <input id="trip-name" placeholder="Trip name" value="Route" aria-label="Trip name">
       <div class="stats"><span>Distance <b id="trip-dist"></b></span><span>Time <b id="trip-time"></b></span>
         <span>Climb <b id="trip-up"></b></span><span>Descent <b id="trip-down"></b></span></div>
@@ -162,7 +162,7 @@ export function install({ map, base, units, panel, token }) {
     </section>
     <h3>Saved trips</h3>
     <ul id="trip-list"></ul>
-    <div class="row" id="trip-sync-row"><button id="trip-push" type="button" title="Send the trips saved in this browser to this server, where a phone that syncs with it finds them">Send to server</button><button id="trip-dsync" type="button" title="Download this browser's trips as a .dsync file a phone can sync with">.dsync file</button></div>`;
+    <div class="row" id="trip-sync-row" data-control="flow:routesChip"><button id="trip-push" type="button" title="Send the trips saved in this browser to this server, where a phone that syncs with it finds them">Send to server</button><button id="trip-dsync" type="button" title="Download this browser's trips as a .dsync file a phone can sync with">.dsync file</button></div>`;
   document.body.appendChild(box);
   // Open on a wide screen; on a phone both boxes start closed and opening one closes the other (they would overlap).
   const phone = matchMedia("(max-width: 520px)");
@@ -561,8 +561,8 @@ export function install({ map, base, units, panel, token }) {
       const label = document.createElement("span");
       label.textContent = t.name + " · " + fmtDist(t.distanceM || 0) + (t.pulled ? " (from the server)" : "");
       label.title = t.mode ? t.mode + (t.pack ? ", map " + t.pack : "") : "";
-      const open = document.createElement("button"); open.type = "button"; open.textContent = "Open"; open.onclick = () => api.load(t.id);
-      const del = document.createElement("button"); del.type = "button"; del.textContent = "Delete"; del.onclick = () => api.del(t.id);
+      const open = document.createElement("button"); open.type = "button"; open.dataset.control = "flow:routesChip"; open.textContent = "Open"; open.onclick = () => api.load(t.id);
+      const del = document.createElement("button"); del.type = "button"; del.dataset.control = "flow:routesChip"; del.textContent = "Delete"; del.onclick = () => api.del(t.id);
       li.append(label, open, del);
       ul.appendChild(li);
     }

@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.routing.PlaceName
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 
@@ -506,6 +507,7 @@ fun RouteControls() {
                 if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
             }
                 .widthIn(max = 420.dp)
+                .control("planningCard") // T238
                 .onGloballyPositioned { c ->
                     fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it }
                     BottomPanels.routeCardTopFromWindowTopDp = with(density) { c.positionInRoot().y.toDp().value }

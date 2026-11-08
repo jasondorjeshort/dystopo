@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.TopChips
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
 import java.util.concurrent.ConcurrentHashMap
 
@@ -241,7 +242,7 @@ fun RecenterButton() {
         ) {
             if (n >= 3) {
                 RoundButton(
-                    Modifier.onGloballyPositioned { record("lock", it) }
+                    Modifier.control("lockButton").onGloballyPositioned { record("lock", it) } // T238: the tag
                         .semantics { contentDescription = "Orientation lock"; stateDescription = if (o.locked) "Locked" else "Unlocked"; role = Role.Button },
                     onClick = {
                         Thread {
@@ -253,7 +254,7 @@ fun RecenterButton() {
             }
             if (n >= 2) {
                 RoundButton(
-                    Modifier.onGloballyPositioned { record("orientation", it) }
+                    Modifier.control("orientationButton").onGloballyPositioned { record("orientation", it) } // T238
                         .semantics {
                             contentDescription = "Orientation"; stateDescription = o.orientation.label; role = Role.Button
                             if (n == 2) customActions = listOf(CustomAccessibilityAction(lockLabel) { longPress(); true })
@@ -265,7 +266,7 @@ fun RecenterButton() {
             }
             RoundButton(
                 // "Recenter" stays the name (tools find the button by it); the orientation is its state.
-                Modifier.onGloballyPositioned { record("position", it) }
+                Modifier.control("positionButton").onGloballyPositioned { record("position", it) } // T238
                     .semantics {
                         contentDescription = "Recenter"; stateDescription = o.orientation.label; role = Role.Button
                         if (n <= 2) customActions = listOf(CustomAccessibilityAction(lockLabel) { longPress(); true })

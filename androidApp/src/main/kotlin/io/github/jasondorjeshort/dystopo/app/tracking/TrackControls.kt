@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.tracking
 
 import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -111,6 +112,7 @@ private fun BoxScope.Controls() {
             // Below the Packs button (T29), which sits in the top-right corner; T65: below the navigation card while
             // navigating, and measured so the Routes chip stacks under this column (TopChips).
             Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.trackColumn()).padding(start = 8.dp, end = 8.dp)
+                .control("waypointAndTracks") // T238
                 .onGloballyPositioned { c ->
                     val chips = io.github.jasondorjeshort.dystopo.app.TopChips
                     chips.edge(c, density, top = true).let { if (it != chips.trackColumnTop) chips.trackColumnTop = it }

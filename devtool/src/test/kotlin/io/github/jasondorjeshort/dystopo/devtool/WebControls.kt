@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.devtool
 
 import io.github.jasondorjeshort.dystopo.controls.ControlItem
+import io.github.jasondorjeshort.dystopo.controls.ControlKind
+import io.github.jasondorjeshort.dystopo.controls.Controls
 import io.github.jasondorjeshort.dystopo.controls.Platform
 
 /**
@@ -16,17 +18,22 @@ import io.github.jasondorjeshort.dystopo.controls.Platform
  *
  * The rules ([refusals]), each refusal naming its lift (ADR 0053's table): (1) an element in scope with neither
  * `data-control="<id>"` nor a place inside an element with `data-control="flow:<parent-id>"`; (2) a `data-control` id
- * (or flow parent) the manifest lacks, or an element whose id the item's web placement does not list; (3) a manifest
- * web element the page lacks. Build step 1's scope for rule 1 ([inStep1Scope]): the controls inside the Map options
- * section (`details#options`, not its own summary, which step 2 places with the panel's other disclosures) and every
- * element the manifest names; build step 2 widens it to every element of the three files.
+ * (or flow parent, on an element or on a flow's container) the manifest lacks, or an element whose id the item's web
+ * placement does not list; (3) a manifest web element the page lacks, or a web item (other than a display) no element
+ * of the page carries. A `maplibregl.X` control carries the item whose web placement lists `maplibregl.X` (the page
+ * cannot set an attribute on MapLibre's own buttons; `demo-check.py` maps their classes on the live DOM).
+ *
+ * Scope of rule 1: build step 2 (T238, `allInScope`, what `WebControlsTest` applies) is every element of the three
+ * files. Build step 1's narrower scope ([inStep1Scope]: the controls inside the Map options section and every element
+ * the manifest names) stays for the reader's own tests of it.
  *
  * Regex readers: when an anchor they rely on is missing they fail naming the pattern ([anchorMissing]), not with a
  * parse error.
  */
 object WebControls {
     val FILES = listOf("tools/demo/index.html", "tools/demo/trips.js", "tools/demo/trip-sync.js")
-    const val MANIFEST = "shared/src/commonMain/kotlin/io/github/jasondorjeshort/dystopo/controls/MapControls.kt"
+    /** The manifest's directory; a refusal names the file of the item it concerns ([Controls.sourceOf]). */
+    const val MANIFEST = Controls.DIR
     const val ATTR = "data-control"
     const val FLOW = "flow:"
 
@@ -145,37 +152,61 @@ object WebControls {
         val scope = index?.let { scopeSpan(it) }
         if (index != null && scope == null && !allInScope) out += anchorMissing(FILES[0], SCOPE_OPEN + " ... " + SCOPE_CLOSE)
         val flows = texts.mapValues { (_, t) -> flowSpans(t) }
+        // What each element carries: its own attribute, or for MapLibre's control the item that lists its class.
+        fun idOf(e: Element) = e.id ?: e.tag.takeIf { e.source == "addControl" }
+        fun controlOf(e: Element) = e.control ?: if (e.source == "addControl") webElements[e.tag] else null
+        fun manifestOf(id: String) = if (byId[id] != null) Controls.sourceOf(id) else "$MANIFEST/"
         for (e in elements) {
             val inFlow = flows[e.file].orEmpty().any { e.offset in it && it.first != e.offset }
+            val c = controlOf(e)
             // Rule 1: an element with neither attribute.
-            if (e.control == null && !inFlow && (allInScope || inStep1Scope(e, scope, webElements.keys, index))) {
+            if (c == null && !inFlow && (allInScope || inStep1Scope(e, scope, webElements.keys, index))) {
                 val item = e.id?.let { webElements[it] }
                 out += "${e.where}: ${e.label} has no $ATTR attribute. Fix: add $ATTR=\"${item ?: "<id>"}\" naming its item " +
-                    "(an item with a web placement in $MANIFEST, added there if the control is new), or $ATTR=\"$FLOW<parent-id>\" " +
-                    "if it is an action inside the flow of a placed item"
+                    "(an item with a web placement in $MANIFEST/, added there if the control is new), or $ATTR=\"$FLOW<parent-id>\" " +
+                    "if it is an action inside the flow of a placed item" +
+                    (if (e.source == "addControl") "; for a MapLibre control, list \"${e.tag}\" in its item's web elements" else "")
                 continue
             }
-            val c = e.control ?: continue
+            c ?: continue
             // Rule 2: an id the manifest lacks, or an element the item's web placement does not list.
             val id = c.removePrefix(FLOW)
             val item = byId[id]
             if (item == null) {
                 out += "${e.where}: ${e.label} has $ATTR=\"$c\", and the manifest has no item \"$id\". Fix: add the item with a web " +
-                    "placement in $MANIFEST, or correct the attribute to an item's id"
+                    "placement in $MANIFEST/, or correct the attribute to an item's id"
                 continue
             }
-            if (!c.startsWith(FLOW) && e.id != null && e.id !in item.placements[Platform.WEB]?.elements.orEmpty()) {
-                out += "${e.where}: ${e.label} has $ATTR=\"$c\", and the item \"$id\" in $MANIFEST does not list the element " +
-                    "\"${e.id}\" in its web placement. Fix: add \"${e.id}\" to that placement's elements, or correct the attribute"
+            val own = idOf(e)
+            if (!c.startsWith(FLOW) && own != null && own !in item.placements[Platform.WEB]?.elements.orEmpty()) {
+                out += "${e.where}: ${e.label} has $ATTR=\"$c\", and the item \"$id\" in ${manifestOf(id)} does not list the element " +
+                    "\"$own\" in its web placement. Fix: add \"$own\" to that placement's elements, or correct the attribute"
             }
         }
-        // Rule 3: a manifest web element the page lacks.
-        for (item in items) for (el in item.placements[Platform.WEB]?.elements.orEmpty()) {
-            if (elements.none { it.id == el && it.control == item.id }) {
-                val found = elements.firstOrNull { it.id == el }
-                out += "the manifest's item \"${item.id}\" ($MANIFEST, web placement) names the element \"$el\", which " +
-                    (if (found == null) "none of ${FILES.joinToString()} has" else "${found.where} has without $ATTR=\"${item.id}\"") +
-                    ". Fix: give the page's element id=\"$el\" and $ATTR=\"${item.id}\", or remove \"$el\" from the item's web placement"
+        // Rule 2 for a flow's container (a <details>, <section>, <ul> or <div> marking the actions inside it).
+        for ((f, t) in texts) {
+            val clean = withoutComments(t)
+            for (m in FLOW_OPEN.findAll(clean)) {
+                val parent = m.groupValues[2]
+                if (byId[parent] == null) out += "$f:${lineOf(clean, m.range.first)}: <${m.groupValues[1]}> has $ATTR=\"$FLOW$parent\", and the " +
+                    "manifest has no item \"$parent\". Fix: add the item with a web placement in $MANIFEST/, or name a placed item's id"
+            }
+        }
+        // Rule 3: a manifest web element the page lacks, or a web item no element carries.
+        for (item in items) {
+            val place = item.placements[Platform.WEB] ?: continue
+            for (el in place.elements) {
+                if (elements.none { idOf(it) == el && controlOf(it) == item.id }) {
+                    val found = elements.firstOrNull { idOf(it) == el }
+                    out += "the manifest's item \"${item.id}\" (${manifestOf(item.id)}, web placement) names the element \"$el\", which " +
+                        (if (found == null) "none of ${FILES.joinToString()} has" else "${found.where} has without $ATTR=\"${item.id}\"") +
+                        ". Fix: give the page's element id=\"$el\" and $ATTR=\"${item.id}\", or remove \"$el\" from the item's web placement"
+                }
+            }
+            if (item.kind != ControlKind.DISPLAY && elements.none { controlOf(it) == item.id }) {
+                out += "the manifest's item \"${item.id}\" (${manifestOf(item.id)}) has a web placement, and no element of " +
+                    "${FILES.joinToString()} carries $ATTR=\"${item.id}\". Fix: put the attribute on the page's control for it, " +
+                    "or remove the item's web placement"
             }
         }
         return out

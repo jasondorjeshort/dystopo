@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.attribution.HtmlText
 
 /**
@@ -71,6 +72,7 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
+            .control("creditLine") // T238
             .onGloballyPositioned { c ->
                 // The line sits at the bottom-left; its top edge measured from the window bottom is what panels must clear.
                 val fromBottom: Dp = with(density) { (rootHeight(c) - c.positionInRoot().y).toDp() }

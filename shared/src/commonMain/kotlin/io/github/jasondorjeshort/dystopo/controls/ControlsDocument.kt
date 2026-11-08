@@ -13,7 +13,9 @@ import io.github.jasondorjeshort.dystopo.maplibre.JsonWriter
  * - `categories`: `id`, `title`, `order`.
  * - `items`: `id` (the phone settings key), `kind`, `type`, `choices`, `choicesByUnits` (`ft`, `m`), `default`, `min`,
  *   `max`, `syncKey`, `platforms`, and `placement` per platform: `category`, `order`, `zone`, and `elements` (web
- *   element ids carrying `data-control="<id>"`) or `row` (the Android settings row). Absent fields are left out.
+ *   element ids carrying `data-control="<id>"`, or `maplibregl.X` for a control the page adds), `row` (the Android
+ *   settings row) or `inventory` (the controls inventory's rows an Android map element holds, as `GET /layout` lists
+ *   them). Absent fields are left out: an item of one client carries only `id`, `kind`, `platforms` and `placement`.
  */
 object ControlsDocument {
     const val VERSION = 1
@@ -45,6 +47,7 @@ object ControlsDocument {
                 p.key to linkedMapOf<String, Any?>("category" to pl.category, "order" to pl.order, "zone" to pl.zone).apply {
                     if (pl.elements.isNotEmpty()) put("elements", pl.elements)
                     pl.row?.let { put("row", it) }
+                    if (pl.inventory.isNotEmpty()) put("inventory", pl.inventory)
                 }
             },
         )

@@ -321,6 +321,998 @@
           "row": "mapOptions"
         }
       }
+    },
+    {
+      "id": "units",
+      "kind": "setting",
+      "type": "choice",
+      "choices": ["ft", "m"],
+      "syncKey": "app.units",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "display",
+          "order": 1,
+          "zone": "panel",
+          "elements": ["unitsel"]
+        },
+        "android": {
+          "category": "display",
+          "order": 1,
+          "zone": "settings",
+          "row": "units"
+        }
+      }
+    },
+    {
+      "id": "textScale",
+      "kind": "setting",
+      "syncKey": "app.textScale",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "display",
+          "order": 2,
+          "zone": "panel",
+          "elements": ["text"]
+        },
+        "android": {
+          "category": "display",
+          "order": 2,
+          "zone": "settings",
+          "row": "textSize"
+        }
+      }
+    },
+    {
+      "id": "mapOptions",
+      "kind": "link",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 0,
+          "zone": "panel"
+        },
+        "android": {
+          "category": "map",
+          "order": 0,
+          "zone": "settings",
+          "row": "mapOptions"
+        }
+      }
+    },
+    {
+      "id": "scaleBar.both",
+      "kind": "setting",
+      "syncKey": "app.scaleBar.both",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 14,
+          "zone": "settings",
+          "row": "mapOptions"
+        }
+      }
+    },
+    {
+      "id": "printSheet",
+      "kind": "action",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 14,
+          "zone": "panel"
+        },
+        "android": {
+          "category": "map",
+          "order": 19,
+          "zone": "settings",
+          "row": "printSheet"
+        }
+      }
+    },
+    {
+      "id": "scaleBar",
+      "kind": "display",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 17,
+          "zone": "map-corner"
+        },
+        "android": {
+          "category": "map",
+          "order": 26,
+          "zone": "map-lower-left"
+        }
+      }
+    },
+    {
+      "id": "positionButton",
+      "kind": "action",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 16,
+          "zone": "map-corner",
+          "elements": ["maplibregl.GeolocateControl"]
+        },
+        "android": {
+          "category": "map",
+          "order": 23,
+          "zone": "map-lower-right",
+          "inventory": ["M96", "M97"]
+        }
+      }
+    },
+    {
+      "id": "orientationButton",
+      "kind": "action",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 15,
+          "zone": "map-corner",
+          "elements": ["maplibregl.NavigationControl"]
+        },
+        "android": {
+          "category": "map",
+          "order": 24,
+          "zone": "map-lower-right",
+          "inventory": ["M95", "M97"]
+        }
+      }
+    },
+    {
+      "id": "creditLine",
+      "kind": "link",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "about",
+          "order": 2,
+          "zone": "map-corner",
+          "elements": ["maplibregl.AttributionControl"]
+        },
+        "android": {
+          "category": "about",
+          "order": 6,
+          "zone": "map-lower-left",
+          "inventory": ["M99"]
+        }
+      }
+    },
+    {
+      "id": "routesChip",
+      "kind": "link",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "navigation",
+          "order": 1,
+          "zone": "trips"
+        },
+        "android": {
+          "category": "navigation",
+          "order": 29,
+          "zone": "map-right",
+          "inventory": ["M41"]
+        }
+      }
+    },
+    {
+      "id": "planningCard",
+      "kind": "action",
+      "platforms": ["web", "android"],
+      "placement": {
+        "web": {
+          "category": "navigation",
+          "order": 2,
+          "zone": "trips",
+          "elements": ["trip-plan"]
+        },
+        "android": {
+          "category": "navigation",
+          "order": 31,
+          "zone": "card",
+          "inventory": ["M59", "M60", "M61", "M62", "M63", "M64", "M65", "M66", "M67", "M68", "M69", "M70", "M71", "M72", "M73"]
+        }
+      }
+    },
+    {
+      "id": "sources",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 1,
+          "zone": "settings",
+          "row": "sources"
+        }
+      }
+    },
+    {
+      "id": "storage",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 2,
+          "zone": "settings",
+          "row": "storage"
+        }
+      }
+    },
+    {
+      "id": "offlineAreas",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 3,
+          "zone": "settings",
+          "row": "offlineAreas"
+        }
+      }
+    },
+    {
+      "id": "mapControls",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 15,
+          "zone": "settings",
+          "row": "mapControls"
+        }
+      }
+    },
+    {
+      "id": "recenterZoom",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 16,
+          "zone": "settings",
+          "row": "recenterZoom"
+        }
+      }
+    },
+    {
+      "id": "orientationLock",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 17,
+          "zone": "settings",
+          "row": "orientationLock"
+        }
+      }
+    },
+    {
+      "id": "viewRange",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 18,
+          "zone": "settings",
+          "row": "viewRange"
+        }
+      }
+    },
+    {
+      "id": "showDivergence",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 20,
+          "zone": "settings",
+          "row": "showDivergence"
+        }
+      }
+    },
+    {
+      "id": "routeSnap",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 1,
+          "zone": "settings",
+          "row": "routeSnap"
+        }
+      }
+    },
+    {
+      "id": "navSpeech",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 2,
+          "zone": "settings",
+          "row": "navSpeech"
+        }
+      }
+    },
+    {
+      "id": "navStale",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 3,
+          "zone": "settings",
+          "row": "navStale"
+        }
+      }
+    },
+    {
+      "id": "navSnooze",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 4,
+          "zone": "settings",
+          "row": "navSnooze"
+        }
+      }
+    },
+    {
+      "id": "pace",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 5,
+          "zone": "settings",
+          "row": "pace"
+        }
+      }
+    },
+    {
+      "id": "turnDeadline",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 6,
+          "zone": "settings",
+          "row": "turnDeadline"
+        }
+      }
+    },
+    {
+      "id": "turnMargin",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 7,
+          "zone": "settings",
+          "row": "turnMargin"
+        }
+      }
+    },
+    {
+      "id": "trackActivity",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 8,
+          "zone": "settings",
+          "row": "trackActivity"
+        }
+      }
+    },
+    {
+      "id": "trackAccuracy",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 9,
+          "zone": "settings",
+          "row": "trackAccuracy"
+        }
+      }
+    },
+    {
+      "id": "trackAutoPause",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 10,
+          "zone": "settings",
+          "row": "trackAutoPause"
+        }
+      }
+    },
+    {
+      "id": "trackFallback",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 11,
+          "zone": "settings",
+          "row": "trackFallback"
+        }
+      }
+    },
+    {
+      "id": "trackInterval",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 12,
+          "zone": "settings",
+          "row": "trackInterval"
+        }
+      }
+    },
+    {
+      "id": "trackBattery",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 13,
+          "zone": "settings",
+          "row": "trackBattery"
+        }
+      }
+    },
+    {
+      "id": "readoutSpeed",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 14,
+          "zone": "settings",
+          "row": "readoutSpeed"
+        }
+      }
+    },
+    {
+      "id": "readoutClimb",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 15,
+          "zone": "settings",
+          "row": "readoutClimb"
+        }
+      }
+    },
+    {
+      "id": "readoutCourse",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 16,
+          "zone": "settings",
+          "row": "readoutCourse"
+        }
+      }
+    },
+    {
+      "id": "readoutElevation",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 17,
+          "zone": "settings",
+          "row": "readoutElevation"
+        }
+      }
+    },
+    {
+      "id": "readoutBarometer",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 18,
+          "zone": "settings",
+          "row": "readoutBarometer"
+        }
+      }
+    },
+    {
+      "id": "readoutBar",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 19,
+          "zone": "settings",
+          "row": "readoutBar"
+        }
+      }
+    },
+    {
+      "id": "climbWindow",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 20,
+          "zone": "settings",
+          "row": "climbWindow"
+        }
+      }
+    },
+    {
+      "id": "pressureFallWarning",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 21,
+          "zone": "settings",
+          "row": "pressureFallWarning"
+        }
+      }
+    },
+    {
+      "id": "waterAlongRoute",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 22,
+          "zone": "settings",
+          "row": "waterAlongRoute"
+        }
+      }
+    },
+    {
+      "id": "waterSpoken",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 23,
+          "zone": "settings",
+          "row": "waterSpoken"
+        }
+      }
+    },
+    {
+      "id": "timeEstimateForm",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 24,
+          "zone": "settings",
+          "row": "timeEstimateForm"
+        }
+      }
+    },
+    {
+      "id": "shadeSpoken",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 25,
+          "zone": "settings",
+          "row": "shadeSpoken"
+        }
+      }
+    },
+    {
+      "id": "setHeight",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 26,
+          "zone": "settings",
+          "row": "setHeight"
+        }
+      }
+    },
+    {
+      "id": "estimatePosition",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 27,
+          "zone": "settings",
+          "row": "estimatePosition"
+        }
+      }
+    },
+    {
+      "id": "syncStatus",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "sync",
+          "order": 1,
+          "zone": "settings",
+          "row": "syncStatus"
+        }
+      }
+    },
+    {
+      "id": "share",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "sync",
+          "order": 2,
+          "zone": "settings",
+          "row": "share"
+        }
+      }
+    },
+    {
+      "id": "updates",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "about",
+          "order": 1,
+          "zone": "settings",
+          "row": "updates"
+        }
+      }
+    },
+    {
+      "id": "diagnostics",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "about",
+          "order": 2,
+          "zone": "settings",
+          "row": "diagnostics"
+        }
+      }
+    },
+    {
+      "id": "reports",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "about",
+          "order": 3,
+          "zone": "settings",
+          "row": "reports"
+        }
+      }
+    },
+    {
+      "id": "warmup",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "about",
+          "order": 4,
+          "zone": "settings",
+          "row": "warmup"
+        }
+      }
+    },
+    {
+      "id": "credits",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "about",
+          "order": 5,
+          "zone": "settings",
+          "row": "credits"
+        }
+      }
+    },
+    {
+      "id": "settingsAndPacks",
+      "kind": "link",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 4,
+          "zone": "map-top",
+          "inventory": ["M1", "M2"]
+        }
+      }
+    },
+    {
+      "id": "onlineIndicator",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 5,
+          "zone": "map-top",
+          "inventory": ["M8", "M9", "M10"]
+        }
+      }
+    },
+    {
+      "id": "onlineCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 6,
+          "zone": "card"
+        }
+      }
+    },
+    {
+      "id": "firstRunCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "data",
+          "order": 7,
+          "zone": "card",
+          "inventory": ["M102", "M103", "M104", "M105", "M106", "M107"]
+        }
+      }
+    },
+    {
+      "id": "search",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 21,
+          "zone": "map-top",
+          "inventory": ["M3", "M4", "M5", "M6", "M7"]
+        }
+      }
+    },
+    {
+      "id": "compass",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 22,
+          "zone": "map-right"
+        }
+      }
+    },
+    {
+      "id": "lockButton",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 25,
+          "zone": "map-lower-right",
+          "inventory": ["M94"]
+        }
+      }
+    },
+    {
+      "id": "waypointAndTracks",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 28,
+          "zone": "map-right",
+          "inventory": ["M11", "M12", "M13", "M14", "M15", "M16"]
+        }
+      }
+    },
+    {
+      "id": "tripCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 30,
+          "zone": "card",
+          "inventory": ["M45", "M46", "M47", "M48", "M49", "M50", "M51", "M52", "M53", "M54", "M55", "M56", "M57", "M58"]
+        }
+      }
+    },
+    {
+      "id": "navigationCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 32,
+          "zone": "card",
+          "inventory": ["M85", "M86", "M87", "M88", "M89", "M90", "M91"]
+        }
+      }
+    },
+    {
+      "id": "warningCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 33,
+          "zone": "card",
+          "inventory": ["M92", "M93"]
+        }
+      }
+    },
+    {
+      "id": "readoutStrip",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 34,
+          "zone": "map-lower-left",
+          "inventory": ["M98"]
+        }
+      }
+    },
+    {
+      "id": "updateCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "about",
+          "order": 7,
+          "zone": "card",
+          "inventory": ["M108", "M109", "M110", "M111", "M112"]
+        }
+      }
+    },
+    {
+      "id": "panel",
+      "kind": "link",
+      "platforms": ["web"],
+      "placement": {
+        "web": {
+          "category": "about",
+          "order": 1,
+          "zone": "panel"
+        }
+      }
+    },
+    {
+      "id": "contours",
+      "kind": "setting",
+      "platforms": ["web"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 11,
+          "zone": "panel",
+          "elements": ["contours"]
+        }
+      }
+    },
+    {
+      "id": "osm",
+      "kind": "setting",
+      "platforms": ["web"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 12,
+          "zone": "panel",
+          "elements": ["osm"]
+        }
+      }
+    },
+    {
+      "id": "osmArchive",
+      "kind": "setting",
+      "platforms": ["web"],
+      "placement": {
+        "web": {
+          "category": "map",
+          "order": 13,
+          "zone": "panel",
+          "elements": ["osmsel"]
+        }
+      }
+    },
+    {
+      "id": "buildMap",
+      "kind": "link",
+      "platforms": ["web"],
+      "placement": {
+        "web": {
+          "category": "data",
+          "order": 1,
+          "zone": "panel"
+        }
+      }
+    },
+    {
+      "id": "serverToken",
+      "kind": "setting",
+      "platforms": ["web"],
+      "placement": {
+        "web": {
+          "category": "data",
+          "order": 2,
+          "zone": "panel",
+          "elements": ["packtoken"]
+        }
+      }
     }
   ]
 }
