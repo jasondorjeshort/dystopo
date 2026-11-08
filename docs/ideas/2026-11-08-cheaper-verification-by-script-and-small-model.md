@@ -14,7 +14,7 @@ then an eye on the screenshots. The first five are scripts whose output is JSON;
 
 ## Open
 
-- A verifier script (`tools/verify-task.ps1` or Python): given a branch, it makes the detached worktree, copies the
+- A verifier script (`tools/verify-task.ps1` or Python [no-check: the script this idea proposes]): given a branch, it makes the detached worktree, copies the
   packs, runs `check --no-daemon`, boots the emulator through `android-emu.ps1` with the guard limit the brief gives,
   runs the tour and any named tool parts, reads the guard log's lowest free and peak private, scans the commit
   messages and the report, stops and deletes the emulator, and writes one JSON summary; the verifier agent reads
