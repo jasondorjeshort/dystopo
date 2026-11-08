@@ -21,7 +21,7 @@ a server and a desktop tool come with it, iOS later.
 <img src="docs/images/android-tour-sheet.png" width="49%" alt="Device tour contact sheet: ten views of Mount Rainier on the Android emulator, all passing">
 </p>
 
-**Status (November 2026): alpha, [v0.1.22-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.22-alpha) (one universal APK, server and devtool zips). This release makes one change over 0.1.21: opening the app no longer waits for the track database before the map is drawn, the leading suspect for the splash-screen freezes; a Record tap before the recorder is ready says "Starting" and then starts once. The startup timing of 0.1.21 stays, so a slow start still becomes a report you can send through Report a problem. Tested on emulators; the real-phone checks are still to come.**
+**Status (November 2026): alpha, [v0.1.23-alpha](https://github.com/jasondorjeshort/dystopo/releases/tag/v0.1.23-alpha) (one universal APK, server and devtool zips). This release opens the app at once over a large download: the cached tiles are counted in the background while the map works from disk, in a fifth of the memory, where 0.1.22 counted them before the first screen and froze for minutes over 40 GB. Downloaded areas and packs are one list, "Offline maps", with one state word per row and a row's details on a tap. Tested on emulators; the real-phone checks are still to come.**
 a release will carry can be built from source today (below). Expect rough edges.
 
 ## Features
