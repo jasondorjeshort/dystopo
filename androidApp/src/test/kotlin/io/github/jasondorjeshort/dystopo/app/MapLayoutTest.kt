@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.ui.OverlayElement
 import io.github.jasondorjeshort.dystopo.ui.OverlayIds
 import io.github.jasondorjeshort.dystopo.ui.OverlayPlacement
 import io.github.jasondorjeshort.dystopo.ui.OverlayState
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -17,6 +18,8 @@ import kotlin.test.assertTrue
 /**
  * T224: what `GET /layout` reports from the elements' rectangles ([MapLayout]); T241: the nodes' record ([MeasuredControls]);
  * T239: the rule's targets through it, and what makes a placed node be placed or measured again in the same frame.
+ * T243: a semantics node left where its element is not drawn ([MeasuredControls.semanticsAway]), and the order that keeps
+ * it with its element: [control]'s node before its tag, and nothing of the element's semantics or input before [control].
  */
 class MapLayoutTest {
     private fun seen(id: String, vararg r: Float, state: String = "shown", within: String? = null) =
@@ -296,5 +299,82 @@ class MapLayoutTest {
         assertEquals(2, c.entriesFor("readoutStrip"))
         assertEquals(1, strip.remeasures, "measured before the rule gave it a width: measured again within it")
         assertEquals(600, c.constrain(strip.slot, Constraints(maxWidth = 1080, maxHeight = 2400)).maxWidth)
+    }
+
+    @Test
+    fun aSemanticsNodeLeftBehindIsAway() {
+        val c = MeasuredControls()
+        val strip = c.attach("readoutStrip", null)
+        val bar = c.attach("scaleBar", null)
+        val routes = c.attach("routesChip", null)
+        c.measured(strip, IntSize(404, 126))
+        c.measured(bar, IntSize(166, 74))
+        c.measured(routes, IntSize(190, 84))
+        c.placed(strip, floatArrayOf(336f, 1619f, 740f, 1745f))
+        c.placed(bar, floatArrayOf(21f, 1661f, 187f, 1735f))
+        c.placed(routes, floatArrayOf(870f, 360f, 1060f, 444f))
+        // 478deae5 under the long-press card: the strip and the scale bar drawn where the rule put them, their semantics
+        // nodes left at the bottom left where the scale bar's own Layout places them, over the card.
+        val semantics = mapOf(
+            "readoutStrip" to listOf(floatArrayOf(0f, 2063f, 404f, 2189f)),
+            "scaleBar" to listOf(floatArrayOf(21f, 2189f, 187f, 2253f)),
+            "routesChip" to listOf(floatArrayOf(870.4f, 359.6f, 1060.4f, 443.6f)), // where it is drawn, to the rounding
+        )
+        val away = c.semanticsAway(semantics)
+        assertEquals(listOf("readoutStrip", "scaleBar"), away.map { it["id"] }, "$away")
+        assertEquals(listOf(336, 1619, 740, 1745), away[0]["rectPx"])
+        assertEquals(listOf(listOf(0, 2063, 404, 2189)), away[0]["semanticsPx"])
+        // Where the fix puts them: with their drawing. A tag on two nodes (the way-back card) passes when one matches.
+        val fixed = semantics + mapOf(
+            "readoutStrip" to listOf(floatArrayOf(0f, 2063f, 404f, 2189f), floatArrayOf(336f, 1619f, 740f, 1745f)),
+            "scaleBar" to listOf(floatArrayOf(21f, 1661f, 187f, 1735f)),
+        )
+        assertTrue(c.semanticsAway(fixed).isEmpty())
+        // Not judged: an element with no semantics rectangle, one not laid out, one the rule hides.
+        assertTrue(c.semanticsAway(semantics - "readoutStrip" - "scaleBar").isEmpty())
+        assertEquals(listOf("scaleBar"), c.semanticsAway(semantics, laidOut = setOf("scaleBar", "routesChip")).map { it["id"] })
+        c.hidden(strip, "noRoom")
+        assertEquals(listOf("scaleBar"), c.semanticsAway(semantics).map { it["id"] })
+    }
+
+    /** The code of [f] with comments blanked and its lines kept, as `ControlIdsTest` reads it. */
+    private fun code(f: File): String = f.readText().replace("\r\n", "\n")
+        .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL)) { m -> m.value.replace(Regex("[^\n]"), " ") }
+        .replace(Regex("//[^\n]*")) { m -> " ".repeat(m.value.length) }
+
+    @Test
+    fun theControlNodeComesBeforeTheTag() {
+        // T243: a semantics modifier outside the node stays where the parent put the node, and the layout node's whole
+        // semantics node with it (Compose bounds it by its outermost semantics modifier), while the node draws the content
+        // at the rule's rectangle.
+        val body = code(File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/MapLayout.kt"))
+            .substringAfter("fun Modifier.control(id: String): Modifier =").substringBefore("\n").trim()
+        val node = body.indexOf("ControlElement(id)")
+        val tag = body.indexOf("testTag(id)")
+        assertTrue(node >= 0 && tag > node, "Modifier.control must read this.then(ControlElement(id)).testTag(id), the tag inside the node (T243); it reads: $body")
+    }
+
+    @Test
+    fun nothingOfAnElementsSemanticsOrInputComesBeforeItsControl() {
+        // T243: at every `.control(` call the chain from its `Modifier` up to the call holds only what places the element
+        // (align, padding, insets, size limits): a description, a click or a pointer handler before it stays behind.
+        val before = Regex("""\b(semantics|clearAndSetSemantics|testTag|clickable|combinedClickable|pointerInput|toggleable|selectable|focusable|draggable|scrollable|verticalScroll|horizontalScroll)\b""")
+        val call = Regex("""(?<!fun Modifier)\.control\(""")
+        val bad = ArrayList<String>()
+        var calls = 0
+        File("src/main/kotlin").walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.sortedBy { it.path }.forEach { f ->
+            val t = code(f)
+            for (m in call.findAll(t)) {
+                calls++
+                val start = t.lastIndexOf("Modifier", m.range.first)
+                val chain = if (start < 0) "" else t.substring(start, m.range.first)
+                val hit = before.find(chain) ?: continue
+                val line = t.substring(0, m.range.first).count { it == '\n' } + 1
+                bad += "androidApp/src/main/kotlin/${f.invariantSeparatorsPath.substringAfter("src/main/kotlin/")}:$line: " +
+                    "'${hit.value}' comes before .control(: move it after the call, inside the control node (T243)"
+            }
+        }
+        assertTrue(calls >= 15, "the reader found $calls .control( calls (19 at T243)")
+        assertTrue(bad.isEmpty(), bad.joinToString("\n"))
     }
 }
