@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-08
 
+- T243: The long-press card's "Route to here" node sat above its drawing after T239 (the control tag's modifier order)
 - T240: One check for Compose state made off the main thread
 - T239: Layout B: the compass, the chips and the side columns read the rule
 
