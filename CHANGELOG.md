@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.23-alpha (2026-11-07)
+
 ### 2026-11-07
 
 - T242: The online tile cache's index off the main thread and compact (the owner's startup freeze over a large cache)

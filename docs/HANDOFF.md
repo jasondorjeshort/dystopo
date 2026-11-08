@@ -14,16 +14,13 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
   T240 (small, last): implementer (Opus), verifier (Sonnet), merge, next launch; each brief lists what merged ahead.
 - **RAM is watched** (the owner's word): free RAM read before each launch and after each merge into the log entry;
   every report quotes the guard log's lowest free and peak private bytes; a guard stop or under 6 GB holds the next
-  launch. Readings 17.5 to 22.6 GB free so far; the guard stopped emulators three times at 8 GB on cold-launch loops
-  (about 0.5 GB per launch, expected); a launch-heavy task's boot passes `-PrivateLimitGB 12` from now on.
-- The live server on 8765 is up. The gate research is untracked in `reports/` and `research_notes/` [no-check: untracked].
+  launch. Readings 13 to 23 GB free so far; a launch-heavy task's boot passes `-PrivateLimitGB 12` (12 boots, no stop since).
 
 ## Next
 
 1. Publish v0.1.23-alpha from its verified draft, record it; launch T236 (its brief carries T242's `TileCache.state`,
    `partial` getters and `INDEXING_LINE`, and T235's list).
-2. The owner's reports on v0.1.23-alpha: the large download again, and whether the start stays quick over it.
-3. After the wave: the ideas of 2026-11-07 (the launch budget and state machine, downloads in cells, the diagnostic
+2. After the wave: the ideas of 2026-11-07 (the launch budget and state machine, downloads in cells, the diagnostic
    dump, the flight report's nine), T242's snapshot, Layout C, the two ready Plans, a chore for T227's push-pack
    daemon and T231's lock gap, and a Hatchery-rooted session for the carry-backs.
 
@@ -40,4 +37,4 @@ Resume: this file, `docs/reference/machines.md` (the second PC), the `wave` skil
 ## Open findings
 
 - `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: guarded; the cause open; a snapshot next.
-- `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T189 ships the graph; the phone next.
+  `docs/findings/2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: T189 ships the graph; the phone next.
