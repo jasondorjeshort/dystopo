@@ -6,7 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-08
 
-- T240: One check for Compose state made off the main thread (small; last)
+- T240: One check for Compose state made off the main thread
 - T239: Layout B: the compass, the chips and the side columns read the rule
 
 ### 2026-11-07
