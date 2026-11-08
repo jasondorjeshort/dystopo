@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: bug
-related: [2026-10-13-auto-download-when-zoomed-in.md, 2026-11-07-downloads-as-a-synchronisation-in-cells.md]
+related: [2026-10-13-auto-download-when-zoomed-in.md, 2026-11-07-downloads-as-a-synchronisation-in-cells.md, 2026-11-07-rendered-tiles-cached-on-disk.md]
 ---
 
 # Zooming in offline loses the roads that wider zooms showed; serve the nearest cached ancestor instead of nothing
@@ -19,11 +19,27 @@ request had simply not answered yet. Nothing was discarded: the wider zoom's til
 closer zoom's tiles had never been fetched. The cache budget (`cachebudget/CacheBudget.kt`) can also evict unpinned
 tiles under pressure, but that is the second question.
 
+On the second flight the same day (v0.1.22-alpha): "even tiles displayed minutes ago can disappear. I scrolled all
+across the US and now only a fraction is visible. This isn't unique to dystopo; it's the exact same thing I see in
+every offline navigation app. Later it all disappeared... and then all came back. It kept appearing and
+disappearing throughout the flight. Once it disappeared and once appeared while I was watching (not touching)." The
+screenshot shows a wide view with the lower-left quarter drawn and the rest bare. And over an area downloaded
+beforehand: "even there it blanked out when I was zoomed too far out." A downloaded area has a lowest zoom (T157's
+detail levels), below which nothing is on the phone, so a wide view over it is bare; and a view that comes and goes
+while nothing is touched points at the loopback server's answers changing (a 404 after a timeout, a reload after a
+burst of slow tiles, T188's note) rather than at the cache.
+
 ## Open
 
 - Offline, answer a missing vector or raster tile with the nearest cached ancestor, overzoomed (a vector tile can
   be served as is with the child's bounds, MapLibre clips; a raster or DEM tile is cropped and scaled), marked so
   the chip can say "from a wider zoom"; the same fallback T155's follow-up asks for DEM tiles that failed online.
+- A view that disappears while untouched: reproduce offline with the request log (`GET /requests`), reading what
+  the server answered for a tile that was drawn and then was not; MapLibre's retry and its own tile cache size are
+  the suspects.
+- A wide view is never bare: a small low-zoom basemap of the world (z0 to z6 or so, a few tens of MB) bundled or
+  fetched once with the first download, so zooming out over any downloaded area shows the continent; the
+  downloaded area's lowest zoom shown on its row.
 - The sweep's device tour gets an offline step: fetch a view at z9, go offline, zoom to z14, assert the roads
   stay.
 - The discard balance the owner names: what the budget evicts first when a view has both a wide and a close

@@ -16,8 +16,16 @@ says climb is hidden most of the time in the air on GNSS alone. In a pressurised
 disagree by thousands of feet, so the estimate's confidence is low and the climb falls back to 0, which reads as
 "level". A value the app does not know should not read as a number.
 
+On the second flight the same day the owner gave the rule a shape: "Barometer should have three modes: auto,
+always used, never used. Always used may make sense in a hurricane and never used... I dunno... but in auto we
+should immediately fall back to not using it rather than go inconsistent. This is just my guess though; a research
+agent should look into it more."
+
 ## Open
 
+- A barometer setting with three values, auto, always and never (ADR 0044: the research agent on how altimeter
+  apps and watches expose the barometer, and what "auto" should key on: the activity, the disagreement with GNSS,
+  the pressure's rate of change), with auto falling back to GNSS at once on a disagreement rather than blending.
 - Three states for the entry: a figure, "?" when the data is insufficient, a dash when the sources contradict
   (the owner's words), with the rule stated in the help text.
 - The flying activity choosing GNSS outright over a cabin barometer for both elevation and climb. The owner, the
