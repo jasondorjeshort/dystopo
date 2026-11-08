@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.search
 
 import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -143,6 +144,7 @@ fun SearchOverlay() {
         Column(
             // T91: ends before the Settings chip; its bottom edge places the online indicator below it.
             Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp).width(io.github.jasondorjeshort.dystopo.app.TopChips.searchWidth())
+                .control("search") // T238
                 .onGloballyPositioned { c ->
                     // Without the open result list, which covers the indicator on purpose.
                     if (!ui.open || ui.hits.isEmpty()) io.github.jasondorjeshort.dystopo.app.TopChips.edge(c, density).let { if (it != io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom) io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom = it }
