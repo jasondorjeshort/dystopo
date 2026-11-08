@@ -125,7 +125,7 @@ object FirstRun {
         Thread({
             try {
                 val fix = if (lat != null && lon != null) Triple(lat, lon, "given") else waitForFix(app)
-                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or ${if (AppSettings.server.isNotEmpty()) "choose a pack from the server" else "import map files you have"}.")
+                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or ${if (AppSettings.server.isNotEmpty()) "choose a map from the server" else "import a map"}.")
                 lastFix = mapOf("lat" to fix.first, "lon" to fix.second, "source" to fix.third)
                 val box = boxAround(fix.first, fix.second, HALF_SIDE_KM)
                 lastBox = box
@@ -156,7 +156,7 @@ object FirstRun {
         Thread({
             try {
                 val fix = if (lat != null && lon != null) Triple(lat, lon, "given") else waitForFix(app)
-                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or import pack files.")
+                    ?: throw IllegalStateException(if (hasPermission(app)) "No location yet: go outside or turn on location, then try again." else "Location permission is off: allow it for Dystopo, or import a map.")
                 lastFix = mapOf("lat" to fix.first, "lon" to fix.second, "source" to fix.third)
                 app.map.setCamera(fix.first, fix.second, SHOW_ZOOM, 0.0, 0.0)
                 aroundMe = "shown"
@@ -265,7 +265,7 @@ internal fun firstRunChoices(server: String, direct: Boolean, sizeBytes: Long?, 
     add(FirstRunChoice("download", "Download the map around me", "Saves about $width around you on this phone so it works without signal.$size", ChoiceWeight.FILLED))
     if (direct || server.isNotEmpty()) add(FirstRunChoice("look", "Just look at the map", "Moves the map to where you are. It loads over the network as you look and is not saved.", ChoiceWeight.OUTLINED))
     if (server.isNotEmpty()) add(FirstRunChoice("server", "Choose from server", "Pick from the maps your server already has.", ChoiceWeight.TEXT))
-    add(FirstRunChoice("import", "Import pack files", "Use map files you already have.", ChoiceWeight.TEXT))
+    add(FirstRunChoice("import", "Import", "Use map files you already have.", ChoiceWeight.TEXT))
 }
 
 /**

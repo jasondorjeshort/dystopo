@@ -415,21 +415,21 @@ internal fun corridorStatus(widthM: Int, notKept: Boolean, queued: Boolean, note
     return when {
         notKept && !kept -> CorridorStatus("notKept", CORRIDOR_NOT_KEPT, listOf("keep"))
         r != null && kept && (progress != null || r.state == "downloading") ->
-            CorridorStatus("downloading", "Keeping offline, ${side(r.widthM)}: " + (progress?.let { (d, p) -> "$d of $p tiles" } ?: "starting"), listOf("stop"))
-        r != null && kept && r.state == "done" -> CorridorStatus("kept", "Kept offline, ${side(r.widthM)}: ${aboutMb(r.bytes)}", listOf("stop"))
-        r != null && kept -> CorridorStatus("partial", "Kept offline in part, ${side(r.widthM)}" + (r.error?.let { ": $it" } ?: ""), listOf("retry", "stop"))
-        queued && widthM > 0 -> CorridorStatus("queued", "Waiting to keep offline, ${side(widthM)}", listOf("stop"))
-        note != null -> CorridorStatus("refused", "Not kept offline: $note", listOf("areas", "keep"))
+            CorridorStatus("downloading", "Downloading, ${side(r.widthM)}: " + (progress?.let { (d, p) -> "$d of $p tiles" } ?: "starting"), listOf("stop"))
+        r != null && kept && r.state == "done" -> CorridorStatus("kept", "Downloaded, ${side(r.widthM)}: ${aboutMb(r.bytes)}", listOf("stop"))
+        r != null && kept -> CorridorStatus("partial", "Downloaded in part, ${side(r.widthM)}" + (r.error?.let { ": $it" } ?: ""), listOf("retry", "stop"))
+        queued && widthM > 0 -> CorridorStatus("queued", "Waiting to download, ${side(widthM)}", listOf("stop"))
+        note != null -> CorridorStatus("refused", "Not downloaded: $note", listOf("areas", "keep"))
         widthM == 0 -> CorridorStatus("off", CORRIDOR_OFF, listOf("keep", "areas"))
         else -> CorridorStatus("none", CORRIDOR_NONE, listOf("keep"))
     }
 }
 
 /** T130: the trip card when the user stopped keeping this trip offline. */
-internal const val CORRIDOR_NOT_KEPT = "Not kept offline."
+internal const val CORRIDOR_NOT_KEPT = "Not downloaded."
 
 /** T130: the trip card when the width setting is off. */
-internal const val CORRIDOR_OFF = "Trips are not kept offline automatically (Offline areas)."
+internal const val CORRIDOR_OFF = "Trips are not downloaded automatically (Offline maps)."
 
 /** T130: the trip card before its corridor is planned (a moment after a save). */
-internal const val CORRIDOR_NONE = "Not kept offline yet."
+internal const val CORRIDOR_NONE = "Not downloaded yet."

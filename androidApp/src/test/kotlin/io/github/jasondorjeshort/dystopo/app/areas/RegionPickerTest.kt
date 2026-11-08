@@ -45,7 +45,7 @@ class RegionPickerTest {
     @Test
     fun thePathLineSaysWhichPathAndWhy() {
         assertEquals(REGION_PACK_LINE, regionPathLine(packFits = true, detail = DETAIL_FULL))
-        assertEquals("Tiles only: routing needs a smaller box", regionPathLine(packFits = false, detail = DETAIL_FULL))
+        assertEquals("Map only: routing needs a smaller box", regionPathLine(packFits = false, detail = DETAIL_FULL))
         assertEquals(REGION_LESS_LINE, regionPathLine(packFits = true, detail = DETAIL_LESS))
         assertEquals(REGION_LESS_LINE, regionPathLine(packFits = false, detail = DETAIL_LESS))
     }

@@ -20,10 +20,10 @@ Flow (each step is one entry in the JSON report, with the screenshot it took):
   card        the first-run card shows ("No map on this phone yet")
   choices     T220: every choice of the card with its sentence, scrolling the card when the font scale outgrows the
               screen, each page a screenshot (`labels`, `sentences`, `pngs`, `missing`, `scrolls`)
-  settings    tap Settings, type --server into Settings > Sources, Save; the sheet must say "Connected: N packs"
-  test        tap Test; again "Connected: N packs on <server>" (N is reported)
+  settings    tap Settings, type --server into Settings > Sources, Save; the sheet must say "Connected: N maps" ("N packs" before T237)
+  test        tap Test; again "Connected: N maps on <server>" (N is reported)
   choices-server  T220: close Settings; the same with a server set, "Choose from server" among them
-  download    tap "Download the map around me"; wait until the card is gone and the region pack is on the map (the
+  download    tap "Download the map around me"; wait until the card is gone and the offline map is on the map (the
               server builds it first: up to --timeout seconds)
   choose      T220, with --choose-pack instead of download: tap "Choose from server", Download on that pack's row, wait
               for it to be installed, Close; the card is gone (the server builds nothing)
@@ -31,7 +31,7 @@ Flow (each step is one entry in the JSON report, with the screenshot it took):
               area (the rule tools/android-release.ps1 uses: contours #8c5523 over paper or hillshade) and the screen
               holds still for 2 s; the settled frame is saved as a PNG
 With --import (files on the host): uninstall and install again, push the files to the phone's Download folder,
-tap "Import pack files" on the card, pick them in the system file picker, and wait for the map the same way
+tap "Import" on the card ("Import pack files" before T237), pick them in the system file picker, and wait for the map the same way
 (`import` and `import-map` steps). Exit 0 when every step passed; one JSON object on stdout.
 
 T220, --font-scale: the system font scale for the whole run (`settings put system font_scale`), put back at the end;
@@ -291,7 +291,7 @@ CARD_CHOICES = [
     ("Download the map around me", r"^Saves about \d+ (km|mi) around you on this phone so it works without signal\."),
     ("Just look at the map", r"^Moves the map to where you are\."),
     ("Choose from server", r"^Pick from the maps your server already has\."),
-    ("Import pack files", r"^Use map files you already have\."),
+    ("Import|Import pack files|Import map files", r"^Use map files you already have\."),  # T237 (ADR 0056): "Import"
 ]
 
 
@@ -316,7 +316,7 @@ def read_card(dev, name, expected):
     for page in range(5):
         nodes = dev.nodes()
         for label, sentence in expected:
-            if dev.find("^" + re.escape(label) + "$", nodes):
+            if dev.find("^(" + label + ")$", nodes):  # a label may list the old and new words (T237)
                 labels[label] = True
             n = dev.find(sentence, nodes)
             if n:
@@ -527,7 +527,7 @@ def run(args):
         # T220: at a large font scale the line can be below the sheet's fold.
         deadline = time.time() + timeout
         while True:
-            n, nodes = dev.wait_for(r"^(Connected: \d+ packs? on|Test failed)", 8)
+            n, nodes = dev.wait_for(r"^(Connected: \d+ (packs?|maps?) on|Test failed)", 8)
             if n or time.time() > deadline:
                 break
             if args.font_scale > 1:
@@ -563,7 +563,7 @@ def run(args):
         time.sleep(1)
         text, err = connected(60)
         path, _ = dev.screencap("tested")
-        m = re.search(r"Connected: (\d+) pack", text or "")
+        m = re.search(r"Connected: (\d+) (pack|map)", text or "")
         return {"ok": err is None, "result": text, "error": err, "packs": int(m.group(1)) if m else None, "png": path}
 
     def choose():
@@ -648,7 +648,7 @@ def run(args):
 
         def import_pick():
             names = [os.path.basename(f) for f in files]
-            tap_choice(dev, "^Import pack files$")
+            tap_choice(dev, "^(Import pack files|Import|Import map files)$")
             time.sleep(2)
             first, nodes = dev.wait_for(re.escape(names[0]), 8)
             if not first:
@@ -673,7 +673,7 @@ def run(args):
             t0 = time.time()
             while time.time() - t0 < 180:
                 texts = dev.texts()
-                msg = next((t for t in texts if t.startswith(("Imported pack", "Import failed"))), None)
+                msg = next((t for t in texts if t.startswith(("Imported", "Import failed"))), None)
                 if msg and msg.startswith("Import failed"):
                     return {"ok": False, "error": msg, "png": dev.screencap("import-failed")[0]}
                 if "No map on this phone yet" not in texts and "Importing" not in " ".join(texts):

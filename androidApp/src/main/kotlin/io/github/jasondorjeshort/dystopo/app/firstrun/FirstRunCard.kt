@@ -79,7 +79,7 @@ fun FirstRunCard(fallback: String?) {
             region.running -> String.format(Locale.US, "%s %s: %.0f%%", if (r["state"] != "building") "Downloading" else if (OnlineService.get(app).isDirect) "Building on this phone" else "Building on the server", r["name"], (r["percent"] as? Number)?.toDouble() ?: 0.0)
             r["state"] == "failed" -> "Download failed: ${r["error"]}"
             FirstRun.aroundMe == "locating" -> "Finding your location..."
-            manager.downloads.activeCount() > 0 -> "Downloading a pack..."
+            manager.downloads.activeCount() > 0 -> "Downloading a map..."
             else -> null
         }
         OnlineService.get(app).let { o -> CardUi(FirstRun.noPack(app), AppSettings.server, progress, manager.importRunning, o.isDirect, if (o.isDirect) o.direct.notice() else null) }

@@ -195,7 +195,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
     /** Starts (or resumes) downloading the pack [url] names. */
     fun start(url: String, name: String? = null, activate: Boolean = false, region: Map<String, Any?>? = null): Job {
         val source = PackDownload.resolve(url.trim(), name)
-            ?: throw IllegalArgumentException("not a pack URL: '$url' (want http(s)://host/path/<name>-dem.pmtiles or .../<name>)")
+            ?: throw IllegalArgumentException("not the address of a map: '$url' (want http(s)://host/path/<name>-dem.pmtiles or .../<name>)")
         io.github.jasondorjeshort.dystopo.app.firstrun.CleartextPolicy.problem(url)?.let { throw IllegalArgumentException(it) } // T79: refuse at once, not after retries
         return enqueue(source) { Job(source, activate, System.currentTimeMillis(), region = region) }
     }
@@ -217,9 +217,9 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         /** T222: the region job's wrap-up, run when this download finishes. */
         region: Map<String, Any?>? = null,
     ): Job {
-        require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
+        require(PackNames.isValidName(name)) { "invalid map name '$name'" }
         // T65: a vector-only pack (a server's single-file pack) is map data drawn where the DEM comes from another pack or online.
-        require(files.isNotEmpty() || (update && unchanged.isNotEmpty())) { "pack '$name' has no archive to download" }
+        require(files.isNotEmpty() || (update && unchanged.isNotEmpty())) { "the map '$name' has no archive to download" }
         val source = PackSource(name, files[PackRole.DEM]?.first.orEmpty(), files[PackRole.VECTOR]?.first.orEmpty())
         return enqueue(source, update) {
             Job(source, activate, System.currentTimeMillis(), update, catalog, shipped, shippedUrl, region = region).also { job ->
@@ -242,7 +242,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
      * whose catalog offers one for these archives. A job already running for the pack is returned instead.
      */
     fun startGraph(name: String, vector: File, dem: File?, shipped: DerivedFile, url: String, catalog: Map<String, Any?>): Job {
-        require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
+        require(PackNames.isValidName(name)) { "invalid map name '$name'" }
         val source = PackSource(name, dem?.path.orEmpty(), vector.path)
         return enqueue(source, update = true) {
             Job(source, false, System.currentTimeMillis(), update = true, catalog = catalog, shipped = shipped, shippedUrl = url, graphOnly = true,
@@ -259,7 +259,7 @@ class PackDownloader(private val manager: PackManager, private val dir: File) {
         synchronized(jobs) {
             jobs[source.name]?.let { if (it.state == "queued" || it.state == "running") return it }
             val existing = PackRole.entries.any { File(dir, PackNames.fileName(source.name, it)).exists() } // T65: or its vector archive alone
-            require(update || !existing || File(stateDir, "${source.name}.json").exists()) { "pack '${source.name}' is already on the device; DELETE /packs/${source.name} first" }
+            require(update || !existing || File(stateDir, "${source.name}.json").exists()) { "the map '${source.name}' is already on this phone; remove it first" }
             val job = make()
             if (job.region == null) job.region = jobs[source.name]?.region // T222: a new start of a stopped job keeps its wrap-up
             jobs[source.name] = job

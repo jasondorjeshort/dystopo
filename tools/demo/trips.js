@@ -242,14 +242,14 @@ export function install({ map, base, units, panel, token }) {
     // T111: a crow route is straight by definition (T108); its notice says so instead of an "off trail" count.
     if (s.straightM > 0 && reply.mode !== "crow") notes.push(fmtDist(s.straightM) + (reply.mode === "drive" ? " off road (dashed)" : " off trail (dashed)"));
     if (reply.notes.includes("no_graph")) notes.push("No trail data here: straight lines");
-    if (!reply.pack) notes.push("Outside every pack");
+    if (!reply.pack) notes.push("Outside every map");
     const msgs = reply.messages || {};
     if (msgs.drive_unsupported) notes.push(msgs.drive_unsupported); // T73: the pack predates the road data
     else if (reply.mode === "drive" && reply.notes.length) for (const n of reply.notes) if (msgs[n]) notes.push(msgs[n]);
     if (reply.notice && reply.mode !== "crow") notes.push(reply.notice); // T111: crow's is the line under the select
     const long = longRoute(reply);
     if (long && (long.packs.length > 1 || long.overlayTiles > 0)) // T77: a long route across packs
-      notes.push("Planned across " + long.packs.length + (long.packs.length === 1 ? " pack" : " packs") + " (" + long.packs.join(", ") + ") in " +
+      notes.push("Planned across " + long.packs.length + (long.packs.length === 1 ? " map" : " maps") + " (" + long.packs.join(", ") + ") in " +
                  (long.ms / 1000).toFixed(1) + " s" + (long.overlayTiles ? "; " + long.overlayTiles + " tiles through the drive overlay" : "") +
                  (long.level2Tiles ? ", " + long.level2Tiles + " z8 cells" : ""));
     $("trip-notes").textContent = notes.join("; ");
@@ -266,7 +266,7 @@ export function install({ map, base, units, panel, token }) {
       if (!b.isEmpty()) map.fitBounds(b, { padding: fitPadding(), maxZoom: 15, duration: 0 });
     }
     const n = (k, w) => k + " " + w + (k === 1 ? "" : "s");
-    say((reply.pack ? "On pack " + reply.pack : "Outside every pack") + ": " + n(reply.via.length, "point") + ", " + n(reply.legs.length, "leg") + "." +
+    say((reply.pack ? "On map " + reply.pack : "Outside every map") + ": " + n(reply.via.length, "point") + ", " + n(reply.legs.length, "leg") + "." +
         (st.savedPath && st.savedPath !== reply.path ? " Changed since it was saved." : ""));
     renderList();
   }
@@ -560,7 +560,7 @@ export function install({ map, base, units, panel, token }) {
       if (t.id === st.id) li.className = "open";
       const label = document.createElement("span");
       label.textContent = t.name + " · " + fmtDist(t.distanceM || 0) + (t.pulled ? " (from the server)" : "");
-      label.title = t.mode ? t.mode + (t.pack ? ", pack " + t.pack : "") : "";
+      label.title = t.mode ? t.mode + (t.pack ? ", map " + t.pack : "") : "";
       const open = document.createElement("button"); open.type = "button"; open.textContent = "Open"; open.onclick = () => api.load(t.id);
       const del = document.createElement("button"); del.type = "button"; del.textContent = "Delete"; del.onclick = () => api.del(t.id);
       li.append(label, open, del);

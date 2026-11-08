@@ -447,8 +447,8 @@ internal val AREAS_HELP: List<HelpText> = run {
     val show = { Areas.screenOpen = true }
     listOf(
         HelpText("areas.offline", io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS} (${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.DATA_AND_STORAGE}, or the chip on the map)", show = show) {
-            "Offline maps keep the map on this phone for use with no signal. A map from your server, a file or a region " +
-                "download stays until you remove it. A drawn area, a country or a trip's map counts in a budget of " +
+            "Offline maps keep the map on this phone for use with no signal. A map from your server or a file, or one downloaded " +
+                "with routing, stays until you remove it. A drawn area, a country or a trip's map counts in a budget of " +
                 "${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(AppSettings.pinnedCacheMb)}, set in ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.STORAGE}; one that reads May be cleared goes first when space runs short."
         },
         HelpText("areas.corridor", "Corridors", "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, the line under the title", show = show) { units ->

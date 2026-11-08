@@ -109,7 +109,7 @@ class PolygonAreasTest {
         val disc = AreaOfInterest.around(AreaPoint(46.786, -121.735), 5000.0)
         val trip = AreaOfInterest(AreaShape.Corridor(rainierRing, 1000.0), 8, 15)
         assertTrue(budgetRefusal(disc, 1638 * mb, 450 * mb, 0, 2048)!!.startsWith("This area is about"))
-        assertTrue(budgetRefusal(trip, 1638 * mb, 450 * mb, 0, 2048)!!.startsWith("Offline areas would use"))
+        assertTrue(budgetRefusal(trip, 1638 * mb, 450 * mb, 0, 2048)!!.startsWith("Offline maps in the budget would use"))
         assertEquals("disc", shapeName(disc))
         assertEquals("corridor", shapeName(trip))
     }

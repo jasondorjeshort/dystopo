@@ -284,7 +284,7 @@ object AreaDownload {
      * with [Plan.pastHeapLimit] for an area past the tile cache index's comfortable size.
      */
     fun plan(area: AreaOfInterest, withLessDetail: Boolean = true): Plan {
-        require(area.shape !is AreaShape.Box) { "a plan is for a corridor or a polygon; a box is a region pack (Download this region)" }
+        require(area.shape !is AreaShape.Box) { "a plan is for a corridor or a polygon; a box downloads as an offline map with routing (Download this area)" }
         val fetcher = OnlineService.get(app).fetcher ?: throw IllegalStateException(NO_SOURCE)
         val pinned = OnlineService.get(app).cache.pinnedBytes
         val own = pinnedOwn(Areas.get(area.id))
@@ -823,7 +823,7 @@ internal fun budgetError(pinnedBytes: Long, estimateBytes: Long, alreadyBytes: L
     val mb = 1024L * 1024L
     val after = pinnedBytes - minOf(alreadyBytes, pinnedBytes) + estimateBytes
     if (after <= budgetMb * mb) return null
-    return "Offline areas would use about ${aboutMb(after)}, over their ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(budgetMb)} budget: remove an area or raise the budget in Settings › Storage" // T115: "128 GB", not "131072 MB"
+    return "Offline maps in the budget would use about ${aboutMb(after)}, over its ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(budgetMb)}: remove one or raise the budget in Settings › Storage" // T115: "128 GB", not "131072 MB"
 }
 
 /**

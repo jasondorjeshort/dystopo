@@ -79,7 +79,7 @@ object ImportPicker {
         Thread({
             FirstRun.message = try {
                 val r = PackManager.get(DystopoApp.instance).importFiles(sources)
-                "Imported pack ${r["name"]}" + if (r["labels"] == false) " (no label fonts on this phone yet: set a server in ${Screens.SETTINGS} › ${Screens.SOURCES} to fetch them)" else ""
+                "Imported ${r["name"]}" + if (r["labels"] == false) " (no label fonts on this phone yet: set a server in ${Screens.SETTINGS} › ${Screens.SOURCES} to fetch them)" else ""
             } catch (e: Exception) {
                 "Import failed: ${e.message ?: e.javaClass.simpleName}"
             }

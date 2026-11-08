@@ -21,7 +21,7 @@ object ViewshedText {
     const val SORT = "Sort:"
     const val NO_PEAKS = "No named peaks in view."
     const val NO_PEAKS_LAYER = "No named peaks: the offline maps here have no peak names."
-    const val NO_DEM = "No elevation data here: download an offline area around this point first."
+    const val NO_DEM = "No elevation data here: download an offline map around this point first."
     const val NO_FIX = "Waiting for your position."
     const val ON_SKYLINE = "on the skyline"
     const val LEGEND = "Green: ground you can see from here at eye height. Clear: hidden ground."

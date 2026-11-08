@@ -95,10 +95,10 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
     val units = AppSettings.units
     when (row) {
         SettingsRow.SOURCES -> SourcesSection() // T79: first on the first page, so a fresh install finds the server field at once
-        SettingsRow.STORAGE -> Setting(row.label, "packs, online tiles and contours on this phone, with their budgets") { // T74
+        SettingsRow.STORAGE -> Setting(row.label, "offline maps, online tiles and contours on this phone, with their budgets") { // T74
             Option("${Screens.STORAGE} ›", false) { leaveFor { io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true } }
         }
-        SettingsRow.OFFLINE_AREAS -> Setting(row.label, "areas kept on this phone for use with no signal: their size, pin, update or remove") {
+        SettingsRow.OFFLINE_AREAS -> Setting(row.label, "maps kept on this phone for use with no signal: their size, update or remove") {
             Option("${row.label} ›", false) { leaveFor { io.github.jasondorjeshort.dystopo.app.areas.Areas.screenOpen = true } }
         }
         SettingsRow.MAP_OPTIONS -> io.github.jasondorjeshort.dystopo.app.options.MapOptionsSection { change(SettingsRoutes.Parsed.Ok(null, false, null, null, it)) } // T47, placed whole
@@ -193,7 +193,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.REPORTS -> io.github.jasondorjeshort.dystopo.app.reports.ReportRow() // T145: crashes, freezes and kills, Open GitHub issue
         SettingsRow.WARMUP -> {
             val warmup = AppSettings.warmup
-            Setting(row.label, "prepares contours in the background after a pack opens", help = "settings.warmup") {
+            Setting(row.label, "prepares contours in the background after a map opens", help = "settings.warmup") {
                 OnOff(warmup) { change(SettingsRoutes.Parsed.Ok(null, false, null, it)) }
             }
         }
@@ -550,8 +550,8 @@ internal val SETTINGS_HELP: List<HelpText> = run {
     fun at(g: SettingsGroup, row: String) = "${Screens.SETTINGS} › ${g.title} › $row" // T115: groups are sections (Screens)
     listOf(
         HelpText("settings.sources", "Server", at(SettingsGroup.DATA, Screens.SOURCES), show = page(SettingsGroup.DATA)) {
-            "A Dystopo server (your own computer, or one you trust) sends map tiles where no pack covers the view, " +
-                "packs to download, and Download the map around me. Test checks an address; Save keeps it. Plain http " +
+            "A Dystopo server (your own computer, or one you trust) sends map tiles where no offline map covers the view, " +
+                "offline maps to download, and Download the map around me. Test checks an address; Save keeps it. Plain http " +
                 "works only on your home network, https anywhere. With no server, the phone reads the public sources itself."
         },
         HelpText("settings.units", "Units", at(SettingsGroup.DISPLAY, "Units"), show = page(SettingsGroup.DISPLAY)) { units ->
@@ -614,7 +614,7 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "elsewhere through your server."
         },
         HelpText("settings.warmup", "Contour warm-up", at(SettingsGroup.ABOUT, "Contour warm-up"), show = page(SettingsGroup.ABOUT)) {
-            "After a pack opens, the phone prepares its contour lines in the background, so the map draws faster as you " +
+            "After a map opens, the phone prepares its contour lines in the background, so the map draws faster as you " +
                 "move around. Turn it off to save battery; contours are then made when they are first shown."
         },
         // T164

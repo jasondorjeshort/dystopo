@@ -104,8 +104,8 @@ class PackManager private constructor(private val app: DystopoApp) {
      */
     @Synchronized
     fun activate(name: String, moveCamera: Boolean = true): Map<String, Any?> {
-        val pack = find(name) ?: throw NoSuchElementException("no pack '$name'")
-        require(pack.info.usable) { "pack '$name' is not usable (no DEM, or an archive is incomplete): ${pack.errors}" }
+        val pack = find(name) ?: throw NoSuchElementException("no map '$name'")
+        require(pack.info.usable) { "the map '$name' is not usable (no DEM, or an archive is incomplete): ${pack.errors}" }
         val previous = activeName()
         PackSet.storeActive(roots(), name)
         app.reload()
@@ -152,10 +152,10 @@ class PackManager private constructor(private val app: DystopoApp) {
      */
     @Synchronized
     fun delete(name: String): Map<String, Any?> {
-        require(PackNames.isValidName(name)) { "invalid pack name '$name'" }
+        require(PackNames.isValidName(name)) { "invalid map name '$name'" }
         val cancelled = downloads.cancel(name)
         val pack = catalog().firstOrNull { it.name == name }
-        if (pack == null && !cancelled) throw NoSuchElementException("no pack '$name'")
+        if (pack == null && !cancelled) throw NoSuchElementException("no map '$name'")
         val wasActive = activeName() == name
         val wasInUse = name in inUse()
         val files = pack?.files.orEmpty()
@@ -325,9 +325,9 @@ class PackManager private constructor(private val app: DystopoApp) {
                 ?: throw IllegalArgumentException("no terrain file: choose the <name>-dem.pmtiles file (and optionally <name>-outdoors.pmtiles)")
             val vector = roles[io.github.jasondorjeshort.dystopo.packs.PackRole.VECTOR]?.single()
             val names = picked.mapNotNull { it.packName }.distinct()
-            require(names.size <= 1) { "the files belong to different packs: ${names.joinToString()}" }
+            require(names.size <= 1) { "the files belong to different maps: ${names.joinToString()}" }
             val packName = name?.trim()?.ifEmpty { null } ?: names.firstOrNull() ?: importName(dem.displayName)
-            require(PackNames.isValidName(packName)) { "invalid pack name '$packName'" }
+            require(PackNames.isValidName(packName)) { "invalid map name '$packName'" }
             // Same name: close it, then the new files replace its archives (a vector archive it had stays unless replaced).
             synchronized(this) {
                 if (packName in inUse()) app.reload(skip = setOf(packName))
@@ -370,7 +370,7 @@ class PackManager private constructor(private val app: DystopoApp) {
      */
     private fun installImportedGraph(packName: String, part: File, displayName: String): Map<String, Any?> {
         val pack = catalog().firstOrNull { it.name == packName }
-        val vector = pack?.vector ?: return linkedMapOf<String, Any?>("installed" to false, "file" to displayName, "reason" to "the pack has no vector archive").also { part.delete() }
+        val vector = pack?.vector ?: return linkedMapOf<String, Any?>("installed" to false, "file" to displayName, "reason" to "the map has no vector archive").also { part.delete() }
         val why = try {
             val a = FileRangeSource(part).use { src -> io.github.jasondorjeshort.dystopo.routing.GraphTileFile.open { o, l -> src.read(o, l) } }
             val shown = io.github.jasondorjeshort.dystopo.packs.DerivedFile.graph(displayName, displayName, part.length(), "0".repeat(64), a.source.fingerprint, a.source.demFingerprint, tileZoom = a.tileZoom)

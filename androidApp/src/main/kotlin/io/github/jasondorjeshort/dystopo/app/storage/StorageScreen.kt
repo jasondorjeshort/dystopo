@@ -177,7 +177,7 @@ private fun BudgetSection(b: Map<String, Any?>, stores: Map<String, Map<String, 
         BasicText(
             "Online tiles, contours and shading, and source data share it. When it is full, contours and shading go first " +
                 "(the phone can make them again), then the tiles used longest ago; never what is on the map now or on the " +
-                "route ahead, and no kind below its floor. Offline areas and packs are not part of it.",
+                "route ahead, and no kind below its floor. Offline maps are not part of it.",
             style = TextStyle(color = Muted, fontSize = 11.sp),
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -374,19 +374,19 @@ internal val STORAGE_HELP: List<HelpText> = run {
                 "contours and shading go first (the phone can make them again), then what was used longest ago; never " +
                 "what is on the map or on the route ahead. A larger budget keeps more for use with no signal."
         },
-        HelpText("storage.packs", "Packs", at("Packs"), show = show) {
-            "Region packs are maps you downloaded or imported whole: terrain, map data, trails for routes and places " +
-                "for search. They are never cleared to make room; remove one in the pack list."
+        HelpText("storage.packs", STORE_OUTSIDE, at(STORE_OUTSIDE), show = show) {
+            "Offline maps you downloaded with routing and place search, or imported: terrain, map data, trails for " +
+                "routes and places for search. They are never cleared to make room; remove one in ${Screens.OFFLINE_MAPS}."
         },
         HelpText("storage.online", "Online tiles", at("Online tiles"), show = show) {
             "Map, terrain and label tiles downloaded while you looked at the map, from your server or the public " +
                 "sources. A place you visited shows again with no connection until the cache budget needs the room. " +
                 "Clear empties them; the map downloads them again when needed."
         },
-        HelpText("storage.pinned", "Offline areas (pinned)", at("Offline areas (pinned)"), show = show) {
-            "The tiles of the areas you pinned in Offline areas, kept until you unpin or remove the area. They have " +
-                "their own budget, outside the cache budget: a download that would pass it is refused. Raise it here " +
-                "before you pin a long trip."
+        HelpText("storage.pinned", STORE_IN_BUDGET, at(STORE_IN_BUDGET), show = show) {
+            "Offline maps you drew or downloaded as tiles, and each trip's map, kept on this phone until you remove " +
+                "them in ${Screens.OFFLINE_MAPS}. They have their own budget, apart from the cache budget: a download " +
+                "that would pass it is refused. Raise it here before you download a long trip."
         },
         HelpText("storage.derived", "Contours and shading", at("Contours and shading"), show = show) {
             "Contour lines and slope and relief shading the phone made from elevation data. They go first when the " +
@@ -400,15 +400,19 @@ internal val STORAGE_HELP: List<HelpText> = run {
     )
 }
 
-/** One line on what a store holds (pack count, the kinds of tiles). */
+/** T237 (ADR 0056): the two stores of offline maps, named by their clearing rule (also `GET /storage`'s labels). */
+internal const val STORE_OUTSIDE = "Offline maps, outside the budget"
+internal const val STORE_IN_BUDGET = "Offline maps, in the budget"
+
+/** One line on what a store holds (the map count, the kinds of tiles). */
 private fun holdsLine(key: String, s: Map<String, Any?>): String? {
-    if (key == Storage.PACKS) return "${s["count"]} installed; remove one in the pack list"
+    if (key == Storage.PACKS) return "${s["count"]} on this phone; remove one in ${Screens.OFFLINE_MAPS}"
     if (key == Storage.SOURCES) return "Elevation data read by this phone when no server is set"
     @Suppress("UNCHECKED_CAST")
     val holds = s["holds"] as? Map<String, Map<String, Any?>>
     val kinds = holds?.entries?.joinToString(", ") { (k, v) -> "$k ${mb(v["bytes"])}" }
     // T95: what the pinned tiles are, as for the online row (which counts its unpinned tiles only).
-    if (key == Storage.PINNED) return "${s["areas"]} pinned" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; outside the cache budget, kept until unpinned"
+    if (key == Storage.PINNED) return "${s["areas"]} saved" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; outside the cache budget, kept until removed"
     if (holds == null) return null
     if (holds.isEmpty()) return "Empty"
     return kinds
@@ -417,7 +421,7 @@ private fun holdsLine(key: String, s: Map<String, Any?>): String? {
 /** T95: the pinned areas whose source has moved on to newer data, by name. */
 private fun olderLine(s: Map<String, Any?>): String? {
     val names = (s["olderThanSource"] as? List<*>)?.map { it.toString() }?.takeIf { it.isNotEmpty() } ?: return null
-    return "Older than the source: ${names.joinToString(", ")}. Update in Offline areas."
+    return "Older than the source: ${names.joinToString(", ")}. Update in ${Screens.OFFLINE_MAPS}."
 }
 
 private fun mb(v: Any?): String {

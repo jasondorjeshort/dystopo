@@ -490,7 +490,7 @@ class StartupTraceTest {
         val shown = r.shown()
         assertTrue(shown.trimEnd().lines().last().endsWith("finished"), shown.takeLast(200))
         assertTrue(shown.indexOf("Recent starts") > shown.indexOf("    at "), "after the stacks")
-        for (line in listOf("Start: cold, first after an update", "Phone: 120 s since boot, RAM 900 MB free of 3000 MB, thermal none, battery saver off", "Java heap at the first frame: 40 MB of 512 MB, GCs 3", "Packs: 2, 180 MB", "Loading and field initialisers before attachBaseContext, not sampled: 200 ms")) {
+        for (line in listOf("Start: cold, first after an update", "Phone: 120 s since boot, RAM 900 MB free of 3000 MB, thermal none, battery saver off", "Java heap at the first frame: 40 MB of 512 MB, GCs 3", "Offline maps: 2, 180 MB", "Loading and field initialisers before attachBaseContext, not sampled: 200 ms")) {
             assertTrue(line in shown, "$line: $shown")
         }
     }

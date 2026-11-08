@@ -497,11 +497,11 @@ internal const val PATH_PACK = "pack"
 internal const val PATH_AREA = "area"
 
 /** T153: the card's title, the overlay's button. */
-internal const val REGION_TITLE = "Download this region"
+internal const val REGION_TITLE = "Download this area"
 /** T153: the path lines (ADR 0031: the owner's to adjust). */
-internal const val REGION_PACK_LINE = "With routing and place search (a map pack)"
-internal const val REGION_TILES_LINE = "Tiles only: routing needs a smaller box"
-internal const val REGION_LESS_LINE = "Tiles only: routing needs full detail"
+internal const val REGION_PACK_LINE = "With routing and place search"
+internal const val REGION_TILES_LINE = "Map only: routing needs a smaller box"
+internal const val REGION_LESS_LINE = "Map only: routing needs full detail"
 
 /**
  * T142: the default detail: full for a drawn area or a disc; for a country full only when [fullFits], else (T157) medium when
@@ -578,7 +578,7 @@ private const val MILE_M = 1609.344
 
 /** T142: the sheet's two picker buttons and the cards' titles. */
 internal const val DRAW_AREA = "Draw an area"
-internal const val AROUND_HERE = "Keep offline around here"
+internal const val AROUND_HERE = "Download around here"
 /** T142 (ADR 0041 §5): the around flow's sentence. */
 internal const val AROUND_SENTENCE = "Up to 20 km around a point; draw an area for more"
 /** T142: the drawing card's hint. */

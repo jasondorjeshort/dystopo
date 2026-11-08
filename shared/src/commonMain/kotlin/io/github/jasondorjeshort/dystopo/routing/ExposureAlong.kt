@@ -319,7 +319,7 @@ object ExposureAlong {
 object ExposureText {
     /** Under the sheet: what the figures measure (the survey's help text, the ridge rule's sentence after it). */
     val HELP: String =
-        "Steepness of the ground itself around the route, from the pack's elevation model, not the grade of the trail. " +
+        "Steepness of the ground itself around the route, from the map's elevation model, not the grade of the trail. " +
             "Model resolution limits accuracy; slopes near 30 and 35 degrees may differ on the ground. " +
             "This describes terrain; it is not a rating of safety or conditions. " +
             "Along ridges counts ground more than ${RidgeRule.THRESHOLD_M.toInt()} m above the average of the ground ${RidgeRule.RING_M.toInt()} m around it."
