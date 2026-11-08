@@ -92,7 +92,7 @@ fun TripControls() {
         if (Trips.editing == null) {
             io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale
                 Box(Modifier.fillMaxSize()) {
-                    Chip("Routes", Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChip()).control("routesChip")) { // T238 // T65: below the track controls
+                    Chip("Routes", Modifier.align(Alignment.TopEnd).padding(end = 8.dp).control("routesChip").then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChipEdges())) { // T238; T65, T239: under the track controls, where the layout rule puts it
                         Trips.listOpen = true
                         Trips.background { Trips.refresh() }
                     }

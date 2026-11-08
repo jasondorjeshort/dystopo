@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app.tracking
 
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.control
+import io.github.jasondorjeshort.dystopo.app.controlCore
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -109,15 +110,11 @@ private fun BoxScope.Controls() {
     io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
         val density = androidx.compose.ui.platform.LocalDensity.current
         Column(
-            // Below the Packs button (T29), which sits in the top-right corner; T65: below the navigation card while
-            // navigating, and measured so the Routes chip stacks under this column (TopChips).
-            Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.trackColumn()).padding(start = 8.dp, end = 8.dp)
+            // Below the top row (T29), under the navigation card while navigating (T65), the Routes chip under it: T239, where
+            // the layout rule puts it (its control node draws it there, app/MapLayout.kt).
+            Modifier.align(Alignment.TopEnd).padding(start = 8.dp, end = 8.dp)
                 .control("waypointAndTracks") // T238
-                .onGloballyPositioned { c ->
-                    val chips = io.github.jasondorjeshort.dystopo.app.TopChips
-                    chips.edge(c, density, top = true).let { if (it != chips.trackColumnTop) chips.trackColumnTop = it }
-                    chips.edge(c, density).let { if (it != chips.trackColumnBottom) chips.trackColumnBottom = it }
-                },
+                .onGloballyPositioned { c -> io.github.jasondorjeshort.dystopo.app.TopChips.trackColumnAt(c, density) },
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -127,7 +124,7 @@ private fun BoxScope.Controls() {
             val onlineRight = with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineRightPx.toDp() }
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             androidx.compose.foundation.layout.FlowRow(
-                io.github.jasondorjeshort.dystopo.app.TopChips.trackRow().widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW), // T224: the row's height, for the clamp
+                Modifier.controlCore().widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW), // T239: the row the rule fits the bar by
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 itemVerticalAlignment = Alignment.CenterVertically, // T109: the chips centred on the help icon's taller target
@@ -180,8 +177,13 @@ private fun BoxScope.Controls() {
         }.let { m -> // T49: report where the panels are (GET /route layout)
             val density = androidx.compose.ui.platform.LocalDensity.current
             m.onGloballyPositioned { c ->
-                io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsBottom = io.github.jasondorjeshort.dystopo.app.routing.fromWindowBottom(c, density, top = false)
-                io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsTop = io.github.jasondorjeshort.dystopo.app.routing.fromWindowBottom(c, density)
+                val panels = io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
+                val bottom = io.github.jasondorjeshort.dystopo.app.routing.fromWindowBottom(c, density, top = false)
+                val top = io.github.jasondorjeshort.dystopo.app.routing.fromWindowBottom(c, density)
+                val changed = bottom != panels.trackPanelsBottom || top != panels.trackPanelsTop
+                panels.trackPanelsBottom = bottom
+                panels.trackPanelsTop = top
+                if (changed) io.github.jasondorjeshort.dystopo.app.MapLayout.invalidate() // T239: the lower columns stand on them
             }
         },
         verticalArrangement = Arrangement.spacedBy(6.dp),

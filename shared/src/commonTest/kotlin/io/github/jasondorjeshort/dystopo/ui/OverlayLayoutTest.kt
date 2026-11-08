@@ -213,4 +213,181 @@ class OverlayLayoutTest {
             assertNotNull(OverlayIds.NAMES[id], id)
         }
     }
+
+    // ---- T239 (Layout B): the latch, and the placement around cards drawn by their own code ----
+
+    @Test
+    fun theLatchHoldsTheShapeUntilTheWindowTheFontOrTheCardsChange() {
+        // A window on its side, narrow enough that a wider track bar would undo the side column.
+        val base = input(600f, 360f, true, 1f, 0, 1, false, true)
+        val first = OverlayLayout.place(base)
+        assertTrue(first.sideColumn)
+        val wider = base.copy(trackBar = OverlaySize(340f, 36f))
+        assertFalse(OverlayLayout.place(wider).sideColumn, "on its own the wider bar takes the side column away")
+        // The chips re-measured at a new width within the same window, font scale and cards: the shape holds.
+        val held = OverlayLayout.place(wider, first.latch)
+        assertTrue(held.sideColumn)
+        assertEquals(first.latch, held.latch)
+        assertEquals(emptyList(), held.overlaps())
+        // A new window, font scale or set of cards decides again.
+        assertFalse(OverlayLayout.place(wider.copy(windowHeight = 361f), first.latch).sideColumn)
+        assertFalse(OverlayLayout.place(wider.copy(fontScale = 1.5f), first.latch).sideColumn)
+        val withCard = wider.copy(warning = OverlayCard(120f, 90f, 60f, 420f))
+        assertEquals(setOf(OverlayIds.WARNING_CARD), OverlayLayout.place(withCard, first.latch).latch?.cards)
+        assertFalse(OverlayLayout.place(withCard, first.latch).sideColumn)
+    }
+
+    /** [i] with its cards drawn where the rule itself would put them (the warning left out: it follows the chips in the app). */
+    private fun drawnFrom(i: OverlayInput): OverlayInput {
+        val o = OverlayLayout.place(i)
+        fun drawn(c: OverlayCard?, id: String) = c?.let { card -> o[id]?.rect?.let { card.copy(drawn = it) } }
+        return i.copy(
+            navigation = drawn(i.navigation, OverlayIds.NAV_CARD), warning = null, planning = drawn(i.planning, OverlayIds.PLANNING_CARD),
+            trip = drawn(i.trip, OverlayIds.TRIP_CARD), update = drawn(i.update, OverlayIds.UPDATE_CARD), cardsDrawn = true,
+        )
+    }
+
+    @Test
+    fun aroundDrawnCardsTheRectanglesNeverIntersect() = grid { i, _, at ->
+        val j = drawnFrom(i)
+        val o = OverlayLayout.place(j)
+        assertEquals(emptyList(), o.overlaps(), "drawn: $at")
+        for (e in o.elements) {
+            val r = e.rect ?: continue
+            assertTrue(r.left >= 0f && r.top >= 0f && r.right <= j.windowWidth + 0.01f && r.bottom <= j.windowHeight + 0.01f, "drawn: $at: ${e.id} $r")
+        }
+        assertTrue(o.isShown(OverlayIds.CREDIT), at)
+        for ((id, c) in listOf(OverlayIds.NAV_CARD to j.navigation, OverlayIds.PLANNING_CARD to j.planning, OverlayIds.TRIP_CARD to j.trip)) {
+            val d = c?.drawn ?: continue
+            assertEquals(d, o[id]?.rect, "drawn: $at: $id stays where it is drawn")
+        }
+    }
+
+    @Test
+    fun aroundDrawnCardsTheLadderHoldsInEachColumn() = grid { i, _, at ->
+        val j = drawnFrom(i)
+        val o = OverlayLayout.place(j)
+        val lockGone = j.buttons >= 3 && !o.isShown(OverlayIds.LOCK)
+        val orientationGone = j.buttons >= 2 && !o.isShown(OverlayIds.ORIENTATION)
+        if (orientationGone && j.buttons >= 3 && o.isShown(OverlayIds.POSITION)) assertTrue(lockGone, "drawn: $at: the lock before the orientation button")
+        // Where both columns have room, the ladder takes the scale bar only after the other buttons (a column with no room at
+        // any rung hides whole, `noRoom`, and the other keeps its own).
+        if (o.isShown(OverlayIds.POSITION) && o[OverlayIds.SCALE_BAR]?.reason == OverlayLayout.REASON_ORDER) {
+            if (j.buttons >= 2) assertTrue(orientationGone, "drawn: $at: the orientation button before the scale bar")
+        }
+        if (o.entriesDrawn in 1 until j.strip.size) assertFalse(o.isShown(OverlayIds.SCALE_BAR), "drawn: $at: the scale bar before the entries")
+    }
+
+    /** The emulator's upright window at font scale 2.0 with a planning card drawn tall (`GET /layout` on a Pixel 6, dp). */
+    private fun uprightPlanning(planningTop: Float) = OverlayInput(
+        windowWidth = 411.4f, windowHeight = 914.3f, insetTop = 48.8f, insetBottom = 24f, fontScale = 2f,
+        search = OverlaySize(OverlayLayout.SEARCH_WIDTH, 63.2f), topRow = OverlaySize(236.6f, 38.1f), credit = OverlaySize(399.2f, 55.6f),
+        online = OverlaySize(200.4f, 32.4f), trackBar = OverlaySize(106.7f, 82.3f), routes = OverlaySize(86.9f, 38.1f),
+        scaleBar = OverlaySize(79.6f, 41.9f), strip = List(4) { OverlaySize(59.1f, 66.4f) }, buttons = 1,
+        planning = OverlayCard(600f, 140f, 44f, 395.4f, drawn = OverlayRect(8f, planningTop, 403.4f, 822.5f)), cardsDrawn = true,
+    )
+
+    @Test
+    fun aDrawnCardThatLeavesThePositionColumnNoRoomHidesItAlone() {
+        // The position button has no room between the chips and the card (the card's own cap leaves the scale bar's line
+        // room on the left, beside the chips): the column hides alone, and the scale bar and the strip stay above the card.
+        val o = OverlayLayout.place(uprightPlanning(291f))
+        assertEquals(emptyList(), o.overlaps())
+        assertEquals(OverlayState.HIDDEN, o[OverlayIds.POSITION]?.state)
+        assertEquals(OverlayLayout.REASON_NO_ROOM, o[OverlayIds.POSITION]?.reason)
+        assertTrue(o.isShown(OverlayIds.SCALE_BAR))
+        assertEquals(4, o.entriesDrawn)
+        val strip = assertNotNull(o[OverlayIds.STRIP]?.rect)
+        val online = assertNotNull(o[OverlayIds.ONLINE]?.rect)
+        assertTrue(strip.top >= online.bottom, "the strip under the online column: $strip $online")
+        assertTrue(o[OverlayIds.SCALE_BAR]!!.rect!!.bottom <= 291f, "above the card")
+        // With the card lower (it follows the chips a frame later), the button has its room again.
+        assertTrue(OverlayLayout.place(uprightPlanning(330f)).isShown(OverlayIds.POSITION))
+    }
+
+    @Test
+    fun theChipsStartUnderADrawnNavigationCard() {
+        val nav = OverlayRect(8f, 126f, 403f, 380f)
+        val i = uprightPlanning(291f).copy(planning = null, navigation = OverlayCard(270f, 150f, 70f, 395f, drawn = nav))
+        val o = OverlayLayout.place(i)
+        assertEquals(emptyList(), o.overlaps())
+        assertEquals(nav.bottom + 6f, o[OverlayIds.TRACK_BAR]?.rect?.top)
+        assertEquals(nav.bottom + 6f, o[OverlayIds.ONLINE]?.rect?.top)
+        // On its side the chips' column starts under the card only where the card reaches it.
+        val side = input(800f, 360f, true, 1f, 0, 1, false, true).copy(cardsDrawn = true)
+        val narrow = OverlayLayout.place(side.copy(navigation = OverlayCard(200f, 150f, 70f, 400f, drawn = OverlayRect(100f, 90f, 500f, 260f))))
+        assertTrue(narrow.sideColumn)
+        assertTrue(narrow[OverlayIds.TRACK_BAR]!!.rect!!.top < 260f, "beside a card that does not reach the column")
+        val wide = OverlayLayout.place(side.copy(navigation = OverlayCard(200f, 150f, 70f, 700f, drawn = OverlayRect(50f, 90f, 750f, 260f))))
+        assertTrue(wide[OverlayIds.TRACK_BAR]!!.rect!!.top >= 266f, "under a card that reaches it")
+        assertEquals(emptyList(), wide.overlaps())
+    }
+
+    @Test
+    fun theChipsDoNotYieldToTheWarningItFollowsThem() {
+        // The app draws the warning under the chips a frame after they move: one drawn where they go does not hide them.
+        val i = uprightPlanning(291f).copy(planning = null, warning = OverlayCard(150f, 110f, 80f, 395f, drawn = OverlayRect(8f, 130f, 403f, 300f)))
+        val o = OverlayLayout.place(i)
+        assertTrue(o.isShown(OverlayIds.TRACK_BAR))
+        assertTrue(o.isShown(OverlayIds.ROUTES))
+        // The lower columns keep under it.
+        val strip = o[OverlayIds.STRIP]?.rect
+        if (strip != null) assertTrue(strip.top >= 306f)
+        val bar = o[OverlayIds.SCALE_BAR]?.rect
+        if (bar != null) assertTrue(bar.top >= 306f)
+    }
+
+    @Test
+    fun anOpenPanelTakesWhatTheChipsAndThePositionButtonLeave() {
+        val base = uprightPlanning(291f).copy(planning = null)
+        val o = OverlayLayout.place(base.copy(trackPanel = 2000f))
+        val bar = assertNotNull(o[OverlayIds.TRACK_BAR]?.rect)
+        val button = assertNotNull(o[OverlayIds.POSITION]?.rect)
+        assertTrue(o.isShown(OverlayIds.ROUTES), "the chip under the bar keeps its place")
+        assertTrue(bar.height > 82.3f + 100f, "the panel opens: ${bar.height}")
+        assertTrue(o[OverlayIds.ROUTES]!!.rect!!.bottom + 6f <= button.top + 0.01f, "and leaves the button its place")
+        assertEquals(emptyList(), o.overlaps())
+        assertEquals(82.3f + (bar.height - 82.3f), o.trackRoom, 0.01f)
+        // A short panel is drawn whole.
+        val short = OverlayLayout.place(base.copy(trackPanel = 120f))
+        assertEquals(82.3f + 120f, short[OverlayIds.TRACK_BAR]!!.rect!!.height, 0.01f)
+        assertTrue(short.trackRoom > 82.3f + 120f)
+    }
+
+    @Test
+    fun theStripStaysShortOfTheChipsOrUnderThem() {
+        // A narrow upright window with the strip wide enough to reach the chips' edge: it never reaches under a chip.
+        for (w in 300..420 step 10) for (scale in listOf(1f, 2f)) {
+            val i = input(w.toFloat(), 700f, false, scale, 4, 1, false, true).let { drawnFrom(it) }
+            val o = OverlayLayout.place(i)
+            val strip = o[OverlayIds.STRIP]?.rect ?: continue
+            for (chip in listOf(OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.COMPASS)) {
+                val c = o[chip]?.rect ?: continue
+                assertFalse(strip.intersects(c), "$w at $scale: the strip $strip reaches $chip $c")
+            }
+            assertEquals(i.strip.size.coerceAtMost(o.entriesDrawn), o.entriesDrawn)
+            assertTrue(o.stripRoom >= strip.width - 0.01f, "the strip's rows wrap at its room")
+        }
+    }
+
+    @Test
+    fun whereNoEntryFitsTheScaleBarStaysAlone() {
+        // The emulator on its side at font scale 2.0 with a planning card drawn: the strip's entries are taller than the room
+        // above the card, the scale bar is not; the ladder would take the bar first, but its going frees nothing there.
+        val i = OverlayInput(
+            windowWidth = 914.3f, windowHeight = 411.4f, insetLeft = 48.8f, insetTop = 24f, insetBottom = 24f, fontScale = 2f,
+            search = OverlaySize(OverlayLayout.SEARCH_WIDTH, 40.8f), topRow = OverlaySize(236.6f, 38.1f), credit = OverlaySize(849f, 29.7f),
+            online = OverlaySize(200.4f, 32.4f), trackBar = OverlaySize(197.7f, 38.1f), routes = OverlaySize(86.9f, 38.1f),
+            scaleBar = OverlaySize(79.6f, 41.9f), strip = List(4) { OverlaySize(59.1f, 66.4f) }, buttons = 1,
+            planning = OverlayCard(300f, 140f, 44f, 420f, drawn = OverlayRect(247.2f, 170.3f, 667.4f, 345.5f)), cardsDrawn = true,
+        )
+        val o = OverlayLayout.place(i)
+        assertTrue(o.sideColumn)
+        assertEquals(emptyList(), o.overlaps())
+        assertTrue(o.isShown(OverlayIds.SCALE_BAR))
+        assertEquals(OverlayLayout.REASON_NO_ROOM, o[OverlayIds.STRIP]?.reason)
+        assertEquals(0, o.entriesDrawn)
+        assertTrue(o.isShown(OverlayIds.POSITION), "the card does not reach the chips' column, so the button keeps its corner")
+        assertTrue(o[OverlayIds.SCALE_BAR]!!.rect!!.bottom <= 170.3f - 6f + 0.01f)
+    }
 }

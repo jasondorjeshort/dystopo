@@ -193,6 +193,13 @@ class MapController {
             map = m
             m.uiSettings.isAttributionEnabled = false // drawn by the Compose overlay from the packs' metadata
             m.uiSettings.isLogoEnabled = false
+            // T239: the compass's place is the layout rule's (app/MapLayout.kt), under the chips at the right: its margins come
+            // from the rule, and it is off while the rule has no room for it. The rule is asked again when the map turns from
+            // north (MapLibre then shows the compass) or the map's centre leaves the fix (the position button stays then).
+            m.uiSettings.compassGravity = android.view.Gravity.TOP or android.view.Gravity.END
+            MapLayout.compassListener = { t -> placeCompass(view, m, t) }
+            MapLayout.compassTarget?.let { placeCompass(view, m, it) }
+            m.addOnCameraMoveListener { runCatching { MapLayout.cameraMoved(m.cameraPosition.bearing, atRest = false) } }
             m.setMinZoomPreference(3.0)
             m.setMaxZoomPreference(18.0)
             m.addOnCameraMoveStartedListener { reason ->
@@ -207,6 +214,7 @@ class MapController {
                 runCatching { MapViewport.update(m) } // T49: the credit line covers the packs in view
                 runCatching { atRest(m) } // T162: the saved view; a move elsewhere ends the open window
                 runCatching { MapOrientation.onCameraIdle(m) } // T100: a move that was not ours ends following
+                runCatching { MapLayout.cameraMoved(m.cameraPosition.bearing, atRest = true) } // T239: the compass and the off-centre button
             }
             MapOrientation.install(m) // T100: pan, fling and rotate gestures; the persisted orientation
             StartupTrace.mark("map ready: the style's JSON") // T228
@@ -215,6 +223,28 @@ class MapController {
             loadStyle(style, onStyle)
             StartupTrace.mark("map ready: done")
         }
+    }
+
+    /**
+     * T239: MapLibre's compass where the layout rule puts it ([MapLayout.CompassTarget], window px): its top and right
+     * margins (gravity top end) from the map view's own edges, or off while the rule hides it. Main thread; the only place
+     * a compass margin is set.
+     */
+    private fun placeCompass(view: MapView, m: MapLibreMap, t: MapLayout.CompassTarget) {
+        val ui = m.uiSettings
+        val r = t.rectPx
+        if (t.hidden) {
+            if (ui.isCompassEnabled) ui.isCompassEnabled = false
+            return
+        }
+        if (r == null) return
+        val at = IntArray(2)
+        view.getLocationInWindow(at)
+        val width = if (view.width > 0) view.width else view.rootView.width
+        val top = Math.round(r[1] - at[1]).coerceAtLeast(0)
+        val right = Math.round(at[0] + width - r[2]).coerceAtLeast(0)
+        if (!ui.isCompassEnabled) ui.isCompassEnabled = true
+        if (ui.compassMarginTop != top || ui.compassMarginRight != right) ui.setCompassMargins(ui.compassMarginLeft, top, right, ui.compassMarginBottom)
     }
 
     fun loadStyle(json: String, onStyle: (Style) -> Unit = {}) {
