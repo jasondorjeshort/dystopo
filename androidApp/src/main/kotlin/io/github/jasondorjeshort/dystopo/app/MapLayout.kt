@@ -65,8 +65,15 @@ import kotlin.math.ceil
  * the rule's rectangle, wherever its own parent put the node, or not drawn when the rule hides it (its size kept); every
  * other element stays where its parent put it. A change of size, or of a card's rectangle, starts the next pass and asks
  * the placed elements to be placed again in the same frame, so a card that wraps moves the chips with it (T146).
+ *
+ * T243: the node comes first and the tag after it, and so does every semantics and pointer modifier of the element (its
+ * description, `clickable`, `pointerInput`): what lies outside the node stays where the parent put the node, so a tag
+ * outside it left the element's whole semantics node there, the scale bar's and the strip's under the long-press card
+ * after T239 moved their drawing up, and the card's "Route to here" node was cut to a sliver above its text.
+ * `MapLayoutTest` reads this order and every call site; `GET /layout` `semanticsAway` lists an element whose semantics
+ * node is not where it is drawn.
  */
-fun Modifier.control(id: String): Modifier = this.testTag(id).then(ControlElement(id))
+fun Modifier.control(id: String): Modifier = this.then(ControlElement(id)).testTag(id)
 
 /**
  * T239: on the part of a control the rule fits it by (the track bar's chip row): measured free of the height its column
