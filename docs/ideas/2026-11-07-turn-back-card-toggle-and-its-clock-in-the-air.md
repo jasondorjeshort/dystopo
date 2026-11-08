@@ -21,11 +21,18 @@ time was 08:51": a lateness of two weeks, so the turn-back time it compared agai
 stored deadline or anchor from an earlier recording, or a clock-time deadline without its date), a defect beyond the
 drift.
 
+After a third flight the owner settled the default: "Turn back mode really needs to be an option. Flying across
+the country and walking back wasn't the most sane app expectation. But this is really a feature for tracking, not a
+default. Very convenient to enable in a single click, wanted less than half the time, and has to make sane timing
+estimates, a much harder problem than it sounds. Especially if you wanted to hike back to your car and get home by
+midnight! Giving horrible numbers will just lead to it being mocked."
+
 ## Open
 
-- A switch on the track popup (`tracking/TrackControls.kt`, the recording panel) that hides the card for this
-  recording, with the setting it should rest on (ADR 0044: whether to show it at all is a preference; its default
-  by activity).
+- Off by default (the owner's ruling), one tap on the track popup (`tracking/TrackControls.kt`, the recording
+  panel) to turn it on for this recording; a setting for its default is the owner's call after the research.
+- Sane estimates or none: the clock says nothing it cannot stand behind (no figure without an activity-fit pace
+  and a plausible way back), and the estimate's basis is one tap away, as the planning card's is (T217).
 - The clock's pace from the activity (T158's detection: flying, driving, cycling) rather than the hike pace, and
   no card at all for an activity with no walk back (flying).
 - Where the return is to: the start, a chosen waypoint, or none.

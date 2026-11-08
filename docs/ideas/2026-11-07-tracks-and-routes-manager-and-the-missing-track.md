@@ -17,6 +17,10 @@ the previous track's "shown" state in some paths (T171's smoothed line, T180's a
 hidden, replaced on screen by the new recording, or dropped by the recorder's own rules is not readable from the
 map; nothing says "hidden" where it was.
 
+After a third flight the same day: "I really do need a list of tracks made in another window that I can select what
+to show or where to share. Linking to a file sharing tool could automatically sync these, even across tools, letting
+us look at them on the desktop app."
+
 ## Open
 
 - Reproduce: record a track, start a second recording, read `GET /tracks` and the overlay's shown set at each
@@ -25,5 +29,8 @@ map; nothing says "hidden" where it was.
   and route with shown or hidden, dates, lengths, and the actions (show, hide, rename, export, delete), with a
   benchmark of how the established apps lay it out; the owner's question whether settings join it as full
   screens rather than overlays is theirs, after the complexity is known.
+- Sharing from the list: a track or a set of tracks to the system share sheet, and a folder on a file-sharing
+  service the user chooses (the storage access framework's document tree, no service built in, ADR 0059) that the
+  app keeps in sync, so the desktop tooling and the web page read the same files.
 - A hidden track's trace never silently vanishes: the sheet says it is hidden, and the map's long-press menu
   can show it again.

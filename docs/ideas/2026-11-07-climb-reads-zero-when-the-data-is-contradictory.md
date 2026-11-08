@@ -21,6 +21,10 @@ always used, never used. Always used may make sense in a hurricane and never use
 should immediately fall back to not using it rather than go inconsistent. This is just my guess though; a research
 agent should look into it more."
 
+After a third flight: "it does seem to be elevation change breaking the tracking. Once we hit inconsistency in
+barometer we should just stop using it for that time." The auto mode's rule, in the owner's words: on a
+disagreement, the barometer is out until the sources agree again, not blended.
+
 ## Open
 
 - A barometer setting with three values, auto, always and never (ADR 0044: the research agent on how altimeter
