@@ -93,6 +93,11 @@ Device selection: --port is the host port forwarded to the app (tools/android-em
 either it uses the serial that owns the port. adb is also used for the restart and to collect the app's logcat
 warnings during the tour (reported, not checked).
 
+T224, T241: every view and card step reads GET /layout (`layout`: the rectangles each element's Modifier.control node
+published as it was placed, the pairs that overlap, what is hidden and why). --layout-baseline <earlier stem>.json
+compares those rectangles place by place with an earlier run, such as the same tour on the fork's build, and reports the
+ones that moved more than --layout-tolerance-px (1) in `layoutBaseline` and one stderr line; never a failure.
+
 Writes <out stem>-<i>.png per view, <out stem>-sheet.png (a contact sheet, red/green bar per view) and
 <out stem>.json (the summary, also printed to stdout); a table goes to stderr. Exit 1 if any check fails,
 2 if the device or server could not be reached. Needs only the standard library; uses Pillow for PNG
@@ -1094,7 +1099,9 @@ def layout_forbidden(overlap_list):
 
 def layout_read(server):
     """T224: `GET /layout` cut down for a report: the window, the pairs that overlap today, the hidden elements with their
-    reasons, what the pure rule would change and whether its own rectangles overlap; `error` when the route did not answer."""
+    reasons, what the pure rule would change and whether its own rectangles overlap; `error` when the route did not answer.
+    T241: `rects` are read from each element's `Modifier.control` node (none worked out from an edge), the Online chip's
+    card and the first-run card among them while they show; `--layout-baseline` compares them with an earlier run."""
     try:
         lay = server.json("/layout", timeout=30)
     except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
@@ -1110,6 +1117,47 @@ def layout_read(server):
 def pair_names(overlap_list):
     """T224: `a x b` per overlap, for the summary line."""
     return sorted({f"{o.get('aName') or o.get('a')} x {o.get('bName') or o.get('b')}" for o in overlap_list or []})
+
+
+def layout_rects_by_place(summary):
+    """T241: every `GET /layout` read of a summary as {place: {id: rect}}: a tour view by its label (`view <label>`), a
+    card step's view by its font scale, rotation and name (`cards 2.0/0 planning`)."""
+    out = {}
+    for r in summary.get("views") or []:
+        lay = r.get("layout") or {}
+        if "error" not in lay:
+            out[f"view {r.get('label')}"] = lay.get("rects") or {}
+    for st in (summary.get("cardsStep") or {}).get("steps") or []:
+        for name, lay in (st.get("layout") or {}).items():
+            if isinstance(lay, dict) and "error" not in lay:
+                out[f"cards {st.get('scale')}/{st.get('rotation', '0')} {name}"] = lay.get("rects") or {}
+    return out
+
+
+def layout_compare(base, now, tolerance=1):
+    """T241 (`--layout-baseline`): the rectangles of this run against an earlier run's summary, place by place and element
+    by element. An element drawn in both whose sides moved more than `tolerance` px is in `differs` (with `maxDiffPx`);
+    one drawn in only one run is in `onlyBase` or `onlyNow`; places read in one run only are listed, not compared.
+    Reported, never a failure: the content of a view (a credit line's text, the clock) can move a rectangle too."""
+    b, n = layout_rects_by_place(base), layout_rects_by_place(now)
+    rep = {"tolerancePx": tolerance, "places": 0, "compared": 0, "within": 0, "differs": [], "onlyBase": [], "onlyNow": [],
+           "placesOnlyBase": sorted(set(b) - set(n)), "placesOnlyNow": sorted(set(n) - set(b))}
+    for place in sorted(set(b) & set(n)):
+        rep["places"] += 1
+        rb, rn = b[place], n[place]
+        for eid in sorted(set(rb) | set(rn)):
+            if eid not in rn:
+                rep["onlyBase"].append({"place": place, "id": eid, "base": rb[eid]})
+            elif eid not in rb:
+                rep["onlyNow"].append({"place": place, "id": eid, "now": rn[eid]})
+            else:
+                rep["compared"] += 1
+                diff = max(abs(x - y) for x, y in zip(rb[eid], rn[eid]))
+                if diff <= tolerance:
+                    rep["within"] += 1
+                else:
+                    rep["differs"].append({"place": place, "id": eid, "base": rb[eid], "now": rn[eid], "maxDiffPx": diff})
+    return rep
 
 
 def plate_edges(ras, rect, colour, reach=6, tolerance=3):
@@ -1524,6 +1572,10 @@ def main():
     ap.add_argument("--cards-only", action="store_true",
                     help="T212: only the @cards step of --views-file (no views, no background or direct step); with no "
                          "--views-file it reads tools/android-tour.txt")
+    ap.add_argument("--layout-baseline", default="",
+                    help="T241: an earlier run's <stem>.json; GET /layout's rectangles at each view and card step are compared "
+                         "with it (layoutBaseline in the summary; reported, never a failure)")
+    ap.add_argument("--layout-tolerance-px", type=float, default=1.0, help="T241: what --layout-baseline lets a side move, px")
     args = ap.parse_args()
 
     views = [] if (args.direct_only or args.cards_only) else read_views(args)
@@ -1837,6 +1889,12 @@ def main():
     summary["connection"] = {**server.counters, "events": server.events}  # T185: forwards restored, cut reads asked again
     summary["ok"] = (summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
                      and summary["directStep"].get("ok", True) is not False and summary["cardsStep"].get("ok", True) is not False)
+    if args.layout_baseline:  # T241: reported, not part of `ok`
+        try:
+            with open(args.layout_baseline, encoding="utf-8") as f:
+                summary["layoutBaseline"] = {"file": args.layout_baseline, **layout_compare(json.load(f), summary, args.layout_tolerance_px)}
+        except (OSError, ValueError) as e:
+            summary["layoutBaseline"] = {"file": args.layout_baseline, "error": str(e)[:200]}
     with open(stem + ".json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
@@ -1888,6 +1946,12 @@ def main():
               f"same process {r.get('sameProcess')}, OOM lines {len(r.get('oom') or [])}" + (f", error {r['error']}" if r.get("error") else "")
               + (f", live error {live_err}" if live_err else "") + sw,
               file=sys.stderr)
+    lb = summary.get("layoutBaseline")
+    if lb:  # T241
+        print(f"layout against {lb['file']}: " + (f"error {lb['error']}" if "error" in lb else
+              f"{lb['within']}/{lb['compared']} rectangles within {lb['tolerancePx']:g} px at {lb['places']} places; "
+              f"{len(lb['differs'])} differ, {len(lb['onlyBase'])} only before, {len(lb['onlyNow'])} only now"
+              + "".join(f"; {d['place']} {d['id']} {d['maxDiffPx']:g} px" for d in lb["differs"][:8])), file=sys.stderr)
     print(f"{summary['viewsOk']}/{summary['viewsTotal']} views ok; sheet {summary['sheet']}; summary {stem}.json", file=sys.stderr)
     print(json.dumps(summary, indent=2))
     return 0 if summary["ok"] else 1

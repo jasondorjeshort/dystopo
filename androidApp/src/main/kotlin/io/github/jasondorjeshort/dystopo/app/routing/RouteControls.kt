@@ -511,7 +511,6 @@ fun RouteControls() {
                 .onGloballyPositioned { c ->
                     fromWindowBottom(c, density).let { if (it != BottomPanels.routeCardTop) BottomPanels.routeCardTop = it }
                     BottomPanels.routeCardTopFromWindowTopDp = with(density) { c.positionInRoot().y.toDp().value }
-                    io.github.jasondorjeshort.dystopo.app.MapInsets.routeCardPx = io.github.jasondorjeshort.dystopo.app.TopChips.px(c) // T224: GET /layout
                 }
                 .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = padV),
             header = {

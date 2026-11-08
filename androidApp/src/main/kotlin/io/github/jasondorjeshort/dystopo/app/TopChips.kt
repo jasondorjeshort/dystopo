@@ -212,10 +212,9 @@ object TopChips {
     /** T224: on the track bar's chip row; see [trackRowPx]. */
     fun trackRow(): Modifier = Modifier.then(TrackRowElement)
 
-    /** T224: rectangles in px from the window's top left, for `GET /layout`; null while not drawn. */
+    /** T224: rectangles in px from the window's top left, for [rightColumnLeftPx]; null while not drawn. T241: `GET /layout` reads the elements' own nodes. */
     @Volatile var trackColumnPx: FloatArray? = null
     @Volatile var routesChipPx: FloatArray? = null
-    @Volatile var topRowPx: FloatArray? = null
 
     /** T224: the left edge of the right-hand chips (px; 0 when none shows), which bounds the readout strip. Compose state. */
     var rightColumnLeftPx by mutableStateOf(0f)

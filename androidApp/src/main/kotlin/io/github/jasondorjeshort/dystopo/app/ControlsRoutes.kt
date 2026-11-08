@@ -1,11 +1,5 @@
 package io.github.jasondorjeshort.dystopo.app
 
-import android.view.View
-import android.view.ViewGroup
-import androidx.compose.ui.node.RootForTest
-import androidx.compose.ui.semantics.SemanticsNode
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import io.github.jasondorjeshort.dystopo.controls.Controls
 import io.github.jasondorjeshort.dystopo.controls.ControlsDocument
 import io.github.jasondorjeshort.dystopo.controls.Platform
@@ -19,16 +13,18 @@ import io.github.jasondorjeshort.dystopo.controls.Platform
  *   `inventory` (a map element: the controls inventory's rows `GET /layout` lists for it) with `tagged`, how many
  *   nodes carry its `Modifier.control` tag in the window's Compose semantics now (composed, on screen or not: a card
  *   that is down reads 0; the compass is MapLibre's own view and always reads 0). `strayTags`: tags in the window that
- *   name no manifest item. T241 adds whether each element is on screen.
+ *   name no manifest item. T241: `onScreen` beside `tagged`, whether the element is drawn in the window now (its
+ *   `Modifier.control` node placed since its last measure, inside a parent control that is on screen, with an area; the
+ *   compass while MapLibre draws it): `tagged` counts a card that is composed but not placed, `onScreen` does not.
  */
 object ControlsRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
-        "GET" to "/controls" -> Response.json(app.map.onMain { json(tags()) })
+        "GET" to "/controls" -> Response.json(app.map.onMain { MapLayout.tagsInWindow().let { t -> json(t.counts, onScreen(t.laidOut)) } })
         else -> null
     }
 
-    /** `GET /controls`'s answer from the tags [tagged] counts (id to nodes). Pure. */
-    fun json(tagged: Map<String, Int>): Map<String, Any?> {
+    /** `GET /controls`'s answer from the tags [tagged] counts (id to nodes) and the ids [onScreen] now. Pure. */
+    fun json(tagged: Map<String, Int>, onScreen: Set<String> = emptySet()): Map<String, Any?> {
         val placed = Controls.placedOn(Platform.ANDROID)
         val ids = placed.mapTo(HashSet()) { it.id }
         return linkedMapOf(
@@ -43,6 +39,7 @@ object ControlsRoutes {
                     if (p.row != null) put("row", p.row) else {
                         put("inventory", p.inventory)
                         put("tagged", tagged[item.id] ?: 0)
+                        put("onScreen", item.id in onScreen) // T241
                     }
                 }
             },
@@ -50,18 +47,7 @@ object ControlsRoutes {
         )
     }
 
-    /** Every test tag in the window's Compose roots, with how many nodes carry it. Main thread. */
-    private fun tags(): Map<String, Int> {
-        val out = HashMap<String, Int>()
-        fun walk(n: SemanticsNode) {
-            n.config.getOrNull(SemanticsProperties.TestTag)?.let { out[it] = (out[it] ?: 0) + 1 }
-            n.children.forEach(::walk)
-        }
-        fun views(v: View) {
-            if (v is RootForTest) walk(v.semanticsOwner.unmergedRootSemanticsNode)
-            if (v is ViewGroup) for (i in 0 until v.childCount) views(v.getChildAt(i))
-        }
-        DystopoApp.instance.map.mapView?.rootView?.let(::views)
-        return out
-    }
+    /** T241: the ids drawn in the window now, from their nodes ([MapLayout.controls]) whose layout nodes are placed ([laidOut]), and the compass. Main thread. */
+    private fun onScreen(laidOut: Set<String>): Set<String> = MapLayout.controls.onScreen(laidOut) +
+        listOfNotNull(io.github.jasondorjeshort.dystopo.ui.OverlayIds.COMPASS.takeIf { io.github.jasondorjeshort.dystopo.app.readout.CompassView.boundsPx() != null })
 }

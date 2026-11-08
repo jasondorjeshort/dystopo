@@ -231,4 +231,18 @@ assert ac.plate_edges(ras, [0, 0, 5, 5], (0xF6, 0xF1, 0xE4)) == [None, None, Non
 ac.fill(ras, 17, 18, 3, 2, (0xF6, 0xF1, 0xE4))  # a patch of map the plate's colour beside one line of its left side
 assert ac.plate_edges(ras, [20, 10, 45, 30], (0xF6, 0xF1, 0xE4))[0] == 20, "the innermost over the lines"
 
+# T241: --layout-baseline compares GET /layout's rectangles place by place.
+base = {"views": [{"label": "summit-z12", "layout": {"rects": {"M1": [800, 66, 1059, 160], "M3": [21, 66, 593, 192]}}},
+                  {"label": "gone-z9", "layout": {"error": "timed out"}}],
+        "cardsStep": {"steps": [{"scale": "2.0", "rotation": "1", "layout": {"planning": {"rects": {"M59": [10, 300, 900, 1000]}}}}]}}
+now = {"views": [{"label": "summit-z12", "layout": {"rects": {"M1": [801, 66, 1059, 161], "M3": [21, 66, 596, 192], "onlineCard": [21, 278, 704, 563]}}}],
+       "cardsStep": {"steps": [{"scale": "2.0", "rotation": "1", "layout": {"planning": {"rects": {}}}}]}}
+cmp = ac.layout_compare(base, now, 1)
+assert (cmp["places"], cmp["compared"], cmp["within"]) == (2, 2, 1), cmp
+assert [(d["place"], d["id"], d["maxDiffPx"]) for d in cmp["differs"]] == [("view summit-z12", "M3", 3)], cmp
+assert [(d["place"], d["id"]) for d in cmp["onlyNow"]] == [("view summit-z12", "onlineCard")], cmp
+assert [(d["place"], d["id"]) for d in cmp["onlyBase"]] == [("cards 2.0/1 planning", "M59")], cmp
+assert cmp["placesOnlyBase"] == [] and cmp["placesOnlyNow"] == [], "a view whose read failed is no place"
+assert ac.layout_compare(base, now, 3)["differs"] == []
+
 print("test_android_check: ok")

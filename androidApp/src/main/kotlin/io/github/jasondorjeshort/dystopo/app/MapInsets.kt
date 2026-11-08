@@ -47,14 +47,6 @@ object MapInsets {
     var tripCardTop by mutableStateOf(0.dp)
     var updateCardTop by mutableStateOf(0.dp)
 
-    /**
-     * T224: the route card's and the credit line's rectangles (px from the window's top left; null while not drawn), the
-     * two `GET /layout` cannot derive from an edge: their writers are one line each in `routing/RouteControls.kt` and
-     * `about/AttributionLine.kt`.
-     */
-    @Volatile var routeCardPx: FloatArray? = null
-    @Volatile var creditPx: FloatArray? = null
-
     /** T106: the highest of those edges (0 when none shows). */
     val bottomCardsTop: Dp get() = maxOf(tripCardTop, updateCardTop)
 
